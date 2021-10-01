@@ -1,12 +1,12 @@
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
-pub use async_task::Task;
 use backtrace::{Backtrace, BacktraceFmt, BytesOrWideString};
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream as _};
 use rand::prelude::*;
 use smol::{channel, prelude::*, Executor, Timer};
 use std::{
+    any::Any,
     fmt::{self, Debug},
     marker::PhantomData,
     mem,
@@ -23,7 +23,10 @@ use std::{
 };
 use waker_fn::waker_fn;
 
-use crate::{platform, util};
+use crate::{
+    platform::{self, Dispatcher},
+    util,
+};
 
 pub enum Foreground {
     Platform {
@@ -41,6 +44,24 @@ pub enum Background {
         _stop: channel::Sender<()>,
     },
 }
+
+type AnyLocalFuture = Pin<Box<dyn 'static + Future<Output = Box<dyn Any + 'static>>>>;
+type AnyFuture = Pin<Box<dyn 'static + Send + Future<Output = Box<dyn Any + Send + 'static>>>>;
+type AnyTask = async_task::Task<Box<dyn Any + Send + 'static>>;
+type AnyLocalTask = async_task::Task<Box<dyn Any + 'static>>;
+
+pub enum Task<T> {
+    Local {
+        any_task: AnyLocalTask,
+        result_type: PhantomData<T>,
+    },
+    Send {
+        any_task: AnyTask,
+        result_type: PhantomData<T>,
+    },
+}
+
+unsafe impl<T: Send> Send for Task<T> {}
 
 struct DeterministicState {
     rng: StdRng,
@@ -77,11 +98,7 @@ impl Deterministic {
         }
     }
 
-    pub fn spawn_from_foreground<F, T>(&self, future: F) -> Task<T>
-    where
-        T: 'static,
-        F: Future<Output = T> + 'static,
-    {
+    fn spawn_from_foreground(&self, future: AnyLocalFuture) -> AnyLocalTask {
         let backtrace = Backtrace::new_unresolved();
         let scheduled_once = AtomicBool::new(false);
         let state = self.state.clone();
@@ -100,11 +117,7 @@ impl Deterministic {
         task
     }
 
-    pub fn spawn<F, T>(&self, future: F) -> Task<T>
-    where
-        T: 'static + Send,
-        F: 'static + Send + Future<Output = T>,
-    {
+    fn spawn(&self, future: AnyFuture) -> AnyTask {
         let backtrace = Backtrace::new_unresolved();
         let state = self.state.clone();
         let unparker = self.parker.lock().unparker();
@@ -119,13 +132,8 @@ impl Deterministic {
         task
     }
 
-    pub fn run<F, T>(&self, future: F) -> T
-    where
-        T: 'static,
-        F: Future<Output = T> + 'static,
-    {
+    fn run(&self, mut future: AnyLocalFuture) -> Box<dyn Any> {
         let woken = Arc::new(AtomicBool::new(false));
-        let mut future = Box::pin(future);
         loop {
             if let Some(result) = self.run_internal(woken.clone(), &mut future) {
                 return result;
@@ -142,16 +150,15 @@ impl Deterministic {
 
     fn run_until_parked(&self) {
         let woken = Arc::new(AtomicBool::new(false));
-        let future = std::future::pending::<()>();
-        smol::pin!(future);
-        self.run_internal(woken, future);
+        let mut future = any_local_future(std::future::pending::<()>());
+        self.run_internal(woken, &mut future);
     }
 
-    pub fn run_internal<F, T>(&self, woken: Arc<AtomicBool>, mut future: F) -> Option<T>
-    where
-        T: 'static,
-        F: Future<Output = T> + Unpin,
-    {
+    fn run_internal(
+        &self,
+        woken: Arc<AtomicBool>,
+        future: &mut AnyLocalFuture,
+    ) -> Option<Box<dyn Any>> {
         let unparker = self.parker.lock().unparker();
         let waker = waker_fn(move || {
             woken.store(true, SeqCst);
@@ -205,13 +212,7 @@ impl Deterministic {
         }
     }
 
-    pub fn block_on<F, T>(&self, future: F) -> Option<T>
-    where
-        T: 'static,
-        F: Future<Output = T>,
-    {
-        smol::pin!(future);
-
+    fn block_on(&self, future: &mut AnyLocalFuture) -> Option<Box<dyn Any>> {
         let unparker = self.parker.lock().unparker();
         let waker = waker_fn(move || {
             unparker.unpark();
@@ -396,25 +397,36 @@ impl Foreground {
     }
 
     pub fn spawn<T: 'static>(&self, future: impl Future<Output = T> + 'static) -> Task<T> {
-        match self {
+        let future = any_local_future(future);
+        let any_task = match self {
+            Self::Deterministic(executor) => executor.spawn_from_foreground(future),
             Self::Platform { dispatcher, .. } => {
-                let dispatcher = dispatcher.clone();
-                let schedule = move |runnable: Runnable| dispatcher.run_on_main_thread(runnable);
-                let (runnable, task) = async_task::spawn_local(future, schedule);
-                runnable.schedule();
-                task
+                fn spawn_inner(
+                    future: AnyLocalFuture,
+                    dispatcher: &Arc<dyn Dispatcher>,
+                ) -> AnyLocalTask {
+                    let dispatcher = dispatcher.clone();
+                    let schedule =
+                        move |runnable: Runnable| dispatcher.run_on_main_thread(runnable);
+                    let (runnable, task) = async_task::spawn_local(future, schedule);
+                    runnable.schedule();
+                    task
+                }
+                spawn_inner(future, dispatcher)
             }
             Self::Test(executor) => executor.spawn(future),
-            Self::Deterministic(executor) => executor.spawn_from_foreground(future),
-        }
+        };
+        Task::local(any_task)
     }
 
     pub fn run<T: 'static>(&self, future: impl 'static + Future<Output = T>) -> T {
-        match self {
+        let future = any_local_future(future);
+        let any_value = match self {
+            Self::Deterministic(executor) => executor.run(future),
             Self::Platform { .. } => panic!("you can't call run on a platform foreground executor"),
             Self::Test(executor) => smol::block_on(executor.run(future)),
-            Self::Deterministic(executor) => executor.run(future),
-        }
+        };
+        *any_value.downcast().unwrap()
     }
 
     pub fn forbid_parking(&self) {
@@ -500,29 +512,34 @@ impl Background {
         T: 'static + Send,
         F: Send + Future<Output = T> + 'static,
     {
-        match self {
+        let future = any_future(future);
+        let any_task = match self {
             Self::Production { executor, .. } => executor.spawn(future),
             Self::Deterministic(executor) => executor.spawn(future),
-        }
+        };
+        Task::send(any_task)
     }
 
-    pub fn block_with_timeout<F, T>(&self, timeout: Duration, mut future: F) -> Result<T, F>
+    pub fn block_with_timeout<F, T>(
+        &self,
+        timeout: Duration,
+        future: F,
+    ) -> Result<T, impl Future<Output = T>>
     where
         T: 'static,
         F: 'static + Unpin + Future<Output = T>,
     {
+        let mut future = any_local_future(future);
         if !timeout.is_zero() {
             let output = match self {
-                Self::Production { .. } => {
-                    smol::block_on(util::timeout(timeout, Pin::new(&mut future))).ok()
-                }
-                Self::Deterministic(executor) => executor.block_on(Pin::new(&mut future)),
+                Self::Production { .. } => smol::block_on(util::timeout(timeout, &mut future)).ok(),
+                Self::Deterministic(executor) => executor.block_on(&mut future),
             };
             if let Some(output) = output {
-                return Ok(output);
+                return Ok(*output.downcast().unwrap());
             }
         }
-        Err(future)
+        Err(async { *future.await.downcast().unwrap() })
     }
 
     pub async fn scoped<'scope, F>(&self, scheduler: F)
@@ -571,4 +588,69 @@ pub fn deterministic(seed: u64) -> (Rc<Foreground>, Arc<Background>) {
         Rc::new(Foreground::Deterministic(executor.clone())),
         Arc::new(Background::Deterministic(executor)),
     )
+}
+
+impl<T> Task<T> {
+    fn local(any_task: AnyLocalTask) -> Self {
+        Self::Local {
+            any_task,
+            result_type: PhantomData,
+        }
+    }
+
+    pub fn detach(self) {
+        match self {
+            Task::Local { any_task, .. } => any_task.detach(),
+            Task::Send { any_task, .. } => any_task.detach(),
+        }
+    }
+}
+
+impl<T: Send> Task<T> {
+    fn send(any_task: AnyTask) -> Self {
+        Self::Send {
+            any_task,
+            result_type: PhantomData,
+        }
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for Task<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Task::Local { any_task, .. } => any_task.fmt(f),
+            Task::Send { any_task, .. } => any_task.fmt(f),
+        }
+    }
+}
+
+impl<T: 'static> Future for Task<T> {
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match unsafe { self.get_unchecked_mut() } {
+            Task::Local { any_task, .. } => {
+                any_task.poll(cx).map(|value| *value.downcast().unwrap())
+            }
+            Task::Send { any_task, .. } => {
+                any_task.poll(cx).map(|value| *value.downcast().unwrap())
+            }
+        }
+    }
+}
+
+fn any_future<T, F>(future: F) -> AnyFuture
+where
+    T: 'static + Send,
+    F: Future<Output = T> + Send + 'static,
+{
+    async { Box::new(future.await) as Box<dyn Any + Send> }.boxed()
+}
+
+fn any_local_future<T, F>(future: F) -> AnyLocalFuture
+where
+    T: 'static,
+    F: Future<Output = T> + 'static,
+{
+    async { Box::new(future.await) as Box<dyn Any> }.boxed_local()
 }

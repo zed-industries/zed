@@ -1,6 +1,6 @@
 use crate::{
     elements::ElementBox,
-    executor,
+    executor::{self, Task},
     keymap::{self, Keystroke},
     platform::{self, CursorStyle, Platform, PromptLevel, WindowOptions},
     presenter::Presenter,
@@ -8,7 +8,6 @@ use crate::{
     AssetCache, AssetSource, ClipboardItem, FontCache, PathPromptOptions, TextLayoutCache,
 };
 use anyhow::{anyhow, Result};
-use async_task::Task;
 use keymap::MatchResult;
 use parking_lot::Mutex;
 use platform::Event;
@@ -58,18 +57,19 @@ pub trait ReadModel {
 }
 
 pub trait ReadModelWith {
-    fn read_model_with<E: Entity, F: FnOnce(&E, &AppContext) -> T, T>(
+    fn read_model_with<E: Entity, T>(
         &self,
         handle: &ModelHandle<E>,
-        read: F,
+        read: &mut dyn FnMut(&E, &AppContext) -> T,
     ) -> T;
 }
 
 pub trait UpdateModel {
-    fn update_model<T, F, S>(&mut self, handle: &ModelHandle<T>, update: F) -> S
-    where
-        T: Entity,
-        F: FnOnce(&mut T, &mut ModelContext<T>) -> S;
+    fn update_model<T: Entity, O>(
+        &mut self,
+        handle: &ModelHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> O,
+    ) -> O;
 }
 
 pub trait UpgradeModelHandle {
@@ -82,17 +82,23 @@ pub trait ReadView {
 }
 
 pub trait ReadViewWith {
-    fn read_view_with<V, F, T>(&self, handle: &ViewHandle<V>, read: F) -> T
+    fn read_view_with<V, T>(
+        &self,
+        handle: &ViewHandle<V>,
+        read: &mut dyn FnMut(&V, &AppContext) -> T,
+    ) -> T
     where
-        V: View,
-        F: FnOnce(&V, &AppContext) -> T;
+        V: View;
 }
 
 pub trait UpdateView {
-    fn update_view<T, F, S>(&mut self, handle: &ViewHandle<T>, update: F) -> S
+    fn update_view<T, S>(
+        &mut self,
+        handle: &ViewHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
+    ) -> S
     where
-        T: View,
-        F: FnOnce(&mut T, &mut ViewContext<T>) -> S;
+        T: View;
 }
 
 pub trait Action: 'static + AnyAction {
@@ -532,11 +538,11 @@ impl AsyncAppContext {
 }
 
 impl UpdateModel for AsyncAppContext {
-    fn update_model<T, F, S>(&mut self, handle: &ModelHandle<T>, update: F) -> S
-    where
-        T: Entity,
-        F: FnOnce(&mut T, &mut ModelContext<T>) -> S,
-    {
+    fn update_model<E: Entity, O>(
+        &mut self,
+        handle: &ModelHandle<E>,
+        update: &mut dyn FnMut(&mut E, &mut ModelContext<E>) -> O,
+    ) -> O {
         let mut state = self.0.borrow_mut();
         state.pending_flushes += 1;
         let result = state.update_model(handle, update);
@@ -555,10 +561,10 @@ impl UpgradeModelHandle for AsyncAppContext {
 }
 
 impl ReadModelWith for AsyncAppContext {
-    fn read_model_with<E: Entity, F: FnOnce(&E, &AppContext) -> T, T>(
+    fn read_model_with<E: Entity, T>(
         &self,
         handle: &ModelHandle<E>,
-        read: F,
+        read: &mut dyn FnMut(&E, &AppContext) -> T,
     ) -> T {
         let cx = self.0.borrow();
         let cx = cx.as_ref();
@@ -567,10 +573,13 @@ impl ReadModelWith for AsyncAppContext {
 }
 
 impl UpdateView for AsyncAppContext {
-    fn update_view<T, F, S>(&mut self, handle: &ViewHandle<T>, update: F) -> S
+    fn update_view<T, S>(
+        &mut self,
+        handle: &ViewHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
+    ) -> S
     where
         T: View,
-        F: FnOnce(&mut T, &mut ViewContext<T>) -> S,
     {
         let mut state = self.0.borrow_mut();
         state.pending_flushes += 1;
@@ -581,10 +590,13 @@ impl UpdateView for AsyncAppContext {
 }
 
 impl ReadViewWith for AsyncAppContext {
-    fn read_view_with<V, F, T>(&self, handle: &ViewHandle<V>, read: F) -> T
+    fn read_view_with<V, T>(
+        &self,
+        handle: &ViewHandle<V>,
+        read: &mut dyn FnMut(&V, &AppContext) -> T,
+    ) -> T
     where
         V: View,
-        F: FnOnce(&V, &AppContext) -> T,
     {
         let cx = self.0.borrow();
         let cx = cx.as_ref();
@@ -593,11 +605,11 @@ impl ReadViewWith for AsyncAppContext {
 }
 
 impl UpdateModel for TestAppContext {
-    fn update_model<T, F, S>(&mut self, handle: &ModelHandle<T>, update: F) -> S
-    where
-        T: Entity,
-        F: FnOnce(&mut T, &mut ModelContext<T>) -> S,
-    {
+    fn update_model<T: Entity, O>(
+        &mut self,
+        handle: &ModelHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> O,
+    ) -> O {
         let mut state = self.cx.borrow_mut();
         state.pending_flushes += 1;
         let result = state.update_model(handle, update);
@@ -607,10 +619,10 @@ impl UpdateModel for TestAppContext {
 }
 
 impl ReadModelWith for TestAppContext {
-    fn read_model_with<E: Entity, F: FnOnce(&E, &AppContext) -> T, T>(
+    fn read_model_with<E: Entity, T>(
         &self,
         handle: &ModelHandle<E>,
-        read: F,
+        read: &mut dyn FnMut(&E, &AppContext) -> T,
     ) -> T {
         let cx = self.cx.borrow();
         let cx = cx.as_ref();
@@ -619,10 +631,13 @@ impl ReadModelWith for TestAppContext {
 }
 
 impl UpdateView for TestAppContext {
-    fn update_view<T, F, S>(&mut self, handle: &ViewHandle<T>, update: F) -> S
+    fn update_view<T, S>(
+        &mut self,
+        handle: &ViewHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
+    ) -> S
     where
         T: View,
-        F: FnOnce(&mut T, &mut ViewContext<T>) -> S,
     {
         let mut state = self.cx.borrow_mut();
         state.pending_flushes += 1;
@@ -633,10 +648,13 @@ impl UpdateView for TestAppContext {
 }
 
 impl ReadViewWith for TestAppContext {
-    fn read_view_with<V, F, T>(&self, handle: &ViewHandle<V>, read: F) -> T
+    fn read_view_with<V, T>(
+        &self,
+        handle: &ViewHandle<V>,
+        read: &mut dyn FnMut(&V, &AppContext) -> T,
+    ) -> T
     where
         V: View,
-        F: FnOnce(&V, &AppContext) -> T,
     {
         let cx = self.cx.borrow();
         let cx = cx.as_ref();
@@ -1630,11 +1648,11 @@ impl ReadModel for MutableAppContext {
 }
 
 impl UpdateModel for MutableAppContext {
-    fn update_model<T, F, S>(&mut self, handle: &ModelHandle<T>, update: F) -> S
-    where
-        T: Entity,
-        F: FnOnce(&mut T, &mut ModelContext<T>) -> S,
-    {
+    fn update_model<T: Entity, V>(
+        &mut self,
+        handle: &ModelHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> V,
+    ) -> V {
         if let Some(mut model) = self.cx.models.remove(&handle.model_id) {
             self.pending_flushes += 1;
             let mut cx = ModelContext::new(self, handle.model_id);
@@ -1674,10 +1692,13 @@ impl ReadView for MutableAppContext {
 }
 
 impl UpdateView for MutableAppContext {
-    fn update_view<T, F, S>(&mut self, handle: &ViewHandle<T>, update: F) -> S
+    fn update_view<T, S>(
+        &mut self,
+        handle: &ViewHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
+    ) -> S
     where
         T: View,
-        F: FnOnce(&mut T, &mut ViewContext<T>) -> S,
     {
         self.pending_flushes += 1;
         let mut view = self
@@ -2084,11 +2105,11 @@ impl<M> ReadModel for ModelContext<'_, M> {
 }
 
 impl<M> UpdateModel for ModelContext<'_, M> {
-    fn update_model<T, F, S>(&mut self, handle: &ModelHandle<T>, update: F) -> S
-    where
-        T: Entity,
-        F: FnOnce(&mut T, &mut ModelContext<T>) -> S,
-    {
+    fn update_model<T: Entity, V>(
+        &mut self,
+        handle: &ModelHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> V,
+    ) -> V {
         self.app.update_model(handle, update)
     }
 }
@@ -2345,11 +2366,11 @@ impl<V: View> ReadModel for RenderContext<'_, V> {
 }
 
 impl<V: View> UpdateModel for RenderContext<'_, V> {
-    fn update_model<T, F, S>(&mut self, handle: &ModelHandle<T>, update: F) -> S
-    where
-        T: Entity,
-        F: FnOnce(&mut T, &mut ModelContext<T>) -> S,
-    {
+    fn update_model<T: Entity, O>(
+        &mut self,
+        handle: &ModelHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> O,
+    ) -> O {
         self.app.update_model(handle, update)
     }
 }
@@ -2396,11 +2417,11 @@ impl<V> UpgradeModelHandle for ViewContext<'_, V> {
 }
 
 impl<V: View> UpdateModel for ViewContext<'_, V> {
-    fn update_model<T, F, S>(&mut self, handle: &ModelHandle<T>, update: F) -> S
-    where
-        T: Entity,
-        F: FnOnce(&mut T, &mut ModelContext<T>) -> S,
-    {
+    fn update_model<T: Entity, O>(
+        &mut self,
+        handle: &ModelHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ModelContext<T>) -> O,
+    ) -> O {
         self.app.update_model(handle, update)
     }
 }
@@ -2412,10 +2433,13 @@ impl<V: View> ReadView for ViewContext<'_, V> {
 }
 
 impl<V: View> UpdateView for ViewContext<'_, V> {
-    fn update_view<T, F, S>(&mut self, handle: &ViewHandle<T>, update: F) -> S
+    fn update_view<T, S>(
+        &mut self,
+        handle: &ViewHandle<T>,
+        update: &mut dyn FnMut(&mut T, &mut ViewContext<T>) -> S,
+    ) -> S
     where
         T: View,
-        F: FnOnce(&mut T, &mut ViewContext<T>) -> S,
     {
         self.app.update_view(handle, update)
     }
@@ -2470,7 +2494,11 @@ impl<T: Entity> ModelHandle<T> {
         C: ReadModelWith,
         F: FnOnce(&T, &AppContext) -> S,
     {
-        cx.read_model_with(self, read)
+        let mut read = Some(read);
+        cx.read_model_with(self, &mut |model, cx| {
+            let read = read.take().unwrap();
+            read(model, cx)
+        })
     }
 
     pub fn update<C, F, S>(&self, cx: &mut C, update: F) -> S
@@ -2478,7 +2506,11 @@ impl<T: Entity> ModelHandle<T> {
         C: UpdateModel,
         F: FnOnce(&mut T, &mut ModelContext<T>) -> S,
     {
-        cx.update_model(self, update)
+        let mut update = Some(update);
+        cx.update_model(self, &mut |model, cx| {
+            let update = update.take().unwrap();
+            update(model, cx)
+        })
     }
 
     pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
@@ -2744,7 +2776,11 @@ impl<T: View> ViewHandle<T> {
         C: ReadViewWith,
         F: FnOnce(&T, &AppContext) -> S,
     {
-        cx.read_view_with(self, read)
+        let mut read = Some(read);
+        cx.read_view_with(self, &mut |view, cx| {
+            let read = read.take().unwrap();
+            read(view, cx)
+        })
     }
 
     pub fn update<C, F, S>(&self, cx: &mut C, update: F) -> S
@@ -2752,7 +2788,11 @@ impl<T: View> ViewHandle<T> {
         C: UpdateView,
         F: FnOnce(&mut T, &mut ViewContext<T>) -> S,
     {
-        cx.update_view(self, update)
+        let mut update = Some(update);
+        cx.update_view(self, &mut |view, cx| {
+            let update = update.take().unwrap();
+            update(view, cx)
+        })
     }
 
     pub fn is_focused(&self, cx: &AppContext) -> bool {
