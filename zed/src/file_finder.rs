@@ -1,9 +1,10 @@
 use crate::{
     editor::{self, Editor},
+    project::Project,
     settings::Settings,
     util,
     workspace::Workspace,
-    worktree::{match_paths, PathMatch},
+    worktree::PathMatch,
 };
 use gpui::{
     action,
@@ -13,8 +14,8 @@ use gpui::{
         menu::{SelectNext, SelectPrev},
         Binding,
     },
-    AppContext, Axis, Entity, MutableAppContext, RenderContext, Task, View, ViewContext,
-    ViewHandle, WeakViewHandle,
+    AppContext, Axis, Entity, ModelHandle, MutableAppContext, RenderContext, Task, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
 use postage::watch;
 use std::{
@@ -29,7 +30,7 @@ use std::{
 pub struct FileFinder {
     handle: WeakViewHandle<Self>,
     settings: watch::Receiver<Settings>,
-    workspace: WeakViewHandle<Workspace>,
+    project: ModelHandle<Project>,
     query_editor: ViewHandle<Editor>,
     search_count: usize,
     latest_search_id: usize,
@@ -241,8 +242,8 @@ impl FileFinder {
 
     fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
         workspace.toggle_modal(cx, |cx, workspace| {
-            let handle = cx.handle();
-            let finder = cx.add_view(|cx| Self::new(workspace.settings.clone(), handle, cx));
+            let project = workspace.project().clone();
+            let finder = cx.add_view(|cx| Self::new(workspace.settings.clone(), project, cx));
             cx.subscribe(&finder, Self::on_event).detach();
             finder
         });
@@ -269,10 +270,10 @@ impl FileFinder {
 
     pub fn new(
         settings: watch::Receiver<Settings>,
-        workspace: ViewHandle<Workspace>,
+        project: ModelHandle<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        cx.observe(&workspace, Self::workspace_updated).detach();
+        cx.observe(&project, Self::project_updated).detach();
 
         let query_editor = cx.add_view(|cx| {
             Editor::single_line(
@@ -290,7 +291,7 @@ impl FileFinder {
         Self {
             handle: cx.handle().downgrade(),
             settings,
-            workspace: workspace.downgrade(),
+            project,
             query_editor,
             search_count: 0,
             latest_search_id: 0,
@@ -303,7 +304,7 @@ impl FileFinder {
         }
     }
 
-    fn workspace_updated(&mut self, _: ViewHandle<Workspace>, cx: &mut ViewContext<Self>) {
+    fn project_updated(&mut self, _: ModelHandle<Project>, cx: &mut ViewContext<Self>) {
         let query = self.query_editor.update(cx, |buffer, cx| buffer.text(cx));
         if let Some(task) = self.spawn_search(query, cx) {
             task.detach();
@@ -381,30 +382,17 @@ impl FileFinder {
 
     #[must_use]
     fn spawn_search(&mut self, query: String, cx: &mut ViewContext<Self>) -> Option<Task<()>> {
-        let snapshots = self
-            .workspace
-            .upgrade(&cx)?
-            .read(cx)
-            .worktrees(cx)
-            .iter()
-            .map(|tree| tree.read(cx).snapshot())
-            .collect::<Vec<_>>();
         let search_id = util::post_inc(&mut self.search_count);
-        let background = cx.as_ref().background().clone();
         self.cancel_flag.store(true, atomic::Ordering::Relaxed);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
+        let project = self.project.clone();
         Some(cx.spawn(|this, mut cx| async move {
-            let matches = match_paths(
-                &snapshots,
-                &query,
-                false,
-                false,
-                100,
-                cancel_flag.as_ref(),
-                background,
-            )
-            .await;
+            let matches = project
+                .read_with(&cx, |project, cx| {
+                    project.match_paths(&query, false, false, 100, cancel_flag.as_ref(), cx)
+                })
+                .await;
             let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);
             this.update(&mut cx, |this, cx| {
                 this.update_matches((search_id, did_cancel, query, matches), cx)
@@ -536,8 +524,13 @@ mod tests {
             .unwrap();
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
-        let (_, finder) =
-            cx.add_window(|cx| FileFinder::new(app_state.settings.clone(), workspace.clone(), cx));
+        let (_, finder) = cx.add_window(|cx| {
+            FileFinder::new(
+                app_state.settings.clone(),
+                workspace.read(cx).project().clone(),
+                cx,
+            )
+        });
 
         let query = "hi".to_string();
         finder
@@ -596,8 +589,13 @@ mod tests {
             .unwrap();
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
-        let (_, finder) =
-            cx.add_window(|cx| FileFinder::new(app_state.settings.clone(), workspace.clone(), cx));
+        let (_, finder) = cx.add_window(|cx| {
+            FileFinder::new(
+                app_state.settings.clone(),
+                workspace.read(cx).project().clone(),
+                cx,
+            )
+        });
 
         // Even though there is only one worktree, that worktree's filename
         // is included in the matching, because the worktree is a single file.
@@ -654,8 +652,13 @@ mod tests {
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
 
-        let (_, finder) =
-            cx.add_window(|cx| FileFinder::new(app_state.settings.clone(), workspace.clone(), cx));
+        let (_, finder) = cx.add_window(|cx| {
+            FileFinder::new(
+                app_state.settings.clone(),
+                workspace.read(cx).project().clone(),
+                cx,
+            )
+        });
 
         // Run a search that matches two files with the same relative path.
         finder

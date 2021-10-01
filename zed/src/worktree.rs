@@ -14,12 +14,10 @@ use crate::{
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Result};
 use futures::{Stream, StreamExt};
-pub use fuzzy::{match_paths, PathMatch};
-use sum_tree::{self, Edit, SeekTarget, SumTree};
+pub use fuzzy::PathMatch;
 use gpui::{
-    executor,
-    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
-    UpgradeModelHandle, WeakModelHandle,
+    executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
+    Task, UpgradeModelHandle, WeakModelHandle,
 };
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -44,6 +42,7 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
+use sum_tree::{self, Edit, SeekTarget, SumTree};
 use zrpc::{PeerId, TypedEnvelope};
 
 lazy_static! {
@@ -2839,128 +2838,6 @@ mod tests {
                 ]
             );
         })
-    }
-
-    #[gpui::test]
-    async fn test_populate_and_search(cx: gpui::TestAppContext) {
-        let dir = temp_tree(json!({
-            "root": {
-                "apple": "",
-                "banana": {
-                    "carrot": {
-                        "date": "",
-                        "endive": "",
-                    }
-                },
-                "fennel": {
-                    "grape": "",
-                }
-            }
-        }));
-
-        let root_link_path = dir.path().join("root_link");
-        unix::fs::symlink(&dir.path().join("root"), &root_link_path).unwrap();
-        unix::fs::symlink(
-            &dir.path().join("root/fennel"),
-            &dir.path().join("root/finnochio"),
-        )
-        .unwrap();
-
-        let tree = Worktree::open_local(
-            rpc::Client::new(),
-            root_link_path,
-            Arc::new(RealFs),
-            Default::default(),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-        let snapshots = [cx.read(|cx| {
-            let tree = tree.read(cx);
-            assert_eq!(tree.file_count(), 5);
-            assert_eq!(
-                tree.inode_for_path("fennel/grape"),
-                tree.inode_for_path("finnochio/grape")
-            );
-            tree.snapshot()
-        })];
-        let cancel_flag = Default::default();
-        let results = cx
-            .read(|cx| {
-                match_paths(
-                    &snapshots,
-                    "bna",
-                    false,
-                    false,
-                    10,
-                    &cancel_flag,
-                    cx.background().clone(),
-                )
-            })
-            .await;
-        assert_eq!(
-            results
-                .into_iter()
-                .map(|result| result.path)
-                .collect::<Vec<Arc<Path>>>(),
-            vec![
-                PathBuf::from("banana/carrot/date").into(),
-                PathBuf::from("banana/carrot/endive").into(),
-            ]
-        );
-    }
-
-    #[gpui::test]
-    async fn test_search_worktree_without_files(cx: gpui::TestAppContext) {
-        let dir = temp_tree(json!({
-            "root": {
-                "dir1": {},
-                "dir2": {
-                    "dir3": {}
-                }
-            }
-        }));
-        let tree = Worktree::open_local(
-            rpc::Client::new(),
-            dir.path(),
-            Arc::new(RealFs),
-            Default::default(),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-        let snapshots = [cx.read(|cx| {
-            let tree = tree.read(cx);
-            assert_eq!(tree.file_count(), 0);
-            tree.snapshot()
-        })];
-        let cancel_flag = Default::default();
-        let results = cx
-            .read(|cx| {
-                match_paths(
-                    &snapshots,
-                    "dir",
-                    false,
-                    false,
-                    10,
-                    &cancel_flag,
-                    cx.background().clone(),
-                )
-            })
-            .await;
-        assert_eq!(
-            results
-                .into_iter()
-                .map(|result| result.path)
-                .collect::<Vec<Arc<Path>>>(),
-            vec![]
-        );
     }
 
     #[gpui::test]

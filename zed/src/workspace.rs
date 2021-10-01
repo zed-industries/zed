@@ -454,6 +454,10 @@ impl Workspace {
         }
     }
 
+    pub fn project(&self) -> &ModelHandle<Project> {
+        &self.project
+    }
+
     pub fn worktrees<'a>(&self, cx: &'a AppContext) -> &'a [ModelHandle<Worktree>] {
         &self.project.read(cx).worktrees()
     }
