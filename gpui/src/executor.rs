@@ -77,10 +77,9 @@ impl Deterministic {
         }
     }
 
-    pub fn spawn_from_foreground<F, T>(&self, future: F) -> Task<T>
+    fn spawn_from_foreground<T>(&self, future: Pin<Box<dyn Future<Output = T>>>) -> Task<T>
     where
         T: 'static,
-        F: Future<Output = T> + 'static,
     {
         let backtrace = Backtrace::new_unresolved();
         let scheduled_once = AtomicBool::new(false);
@@ -100,10 +99,9 @@ impl Deterministic {
         task
     }
 
-    pub fn spawn<F, T>(&self, future: F) -> Task<T>
+    fn spawn<T>(&self, future: Pin<Box<dyn Send + Future<Output = T>>>) -> Task<T>
     where
         T: 'static + Send,
-        F: 'static + Send + Future<Output = T>,
     {
         let backtrace = Backtrace::new_unresolved();
         let state = self.state.clone();
@@ -119,13 +117,11 @@ impl Deterministic {
         task
     }
 
-    pub fn run<F, T>(&self, future: F) -> T
+    fn run<T>(&self, mut future: Pin<Box<dyn Future<Output = T>>>) -> T
     where
         T: 'static,
-        F: Future<Output = T> + 'static,
     {
         let woken = Arc::new(AtomicBool::new(false));
-        let mut future = Box::pin(future);
         loop {
             if let Some(result) = self.run_internal(woken.clone(), &mut future) {
                 return result;
@@ -142,15 +138,17 @@ impl Deterministic {
 
     fn run_until_parked(&self) {
         let woken = Arc::new(AtomicBool::new(false));
-        let future = std::future::pending::<()>();
-        smol::pin!(future);
-        self.run_internal(woken, future);
+        let mut future = std::future::pending::<()>().boxed_local();
+        self.run_internal(woken, &mut future);
     }
 
-    pub fn run_internal<F, T>(&self, woken: Arc<AtomicBool>, mut future: F) -> Option<T>
+    fn run_internal<T>(
+        &self,
+        woken: Arc<AtomicBool>,
+        future: &mut Pin<Box<dyn Future<Output = T>>>,
+    ) -> Option<T>
     where
         T: 'static,
-        F: Future<Output = T> + Unpin,
     {
         let unparker = self.parker.lock().unparker();
         let waker = waker_fn(move || {
@@ -396,6 +394,7 @@ impl Foreground {
     }
 
     pub fn spawn<T: 'static>(&self, future: impl Future<Output = T> + 'static) -> Task<T> {
+        let future = future.boxed_local();
         match self {
             Self::Platform { dispatcher, .. } => {
                 let dispatcher = dispatcher.clone();
@@ -410,6 +409,7 @@ impl Foreground {
     }
 
     pub fn run<T: 'static>(&self, future: impl 'static + Future<Output = T>) -> T {
+        let future = future.boxed_local();
         match self {
             Self::Platform { .. } => panic!("you can't call run on a platform foreground executor"),
             Self::Test(executor) => smol::block_on(executor.run(future)),
@@ -500,23 +500,27 @@ impl Background {
         T: 'static + Send,
         F: Send + Future<Output = T> + 'static,
     {
+        let future = future.boxed();
         match self {
             Self::Production { executor, .. } => executor.spawn(future),
             Self::Deterministic(executor) => executor.spawn(future),
         }
     }
 
-    pub fn block_with_timeout<F, T>(&self, timeout: Duration, mut future: F) -> Result<T, F>
+    pub fn block_with_timeout<F, T>(
+        &self,
+        timeout: Duration,
+        future: F,
+    ) -> Result<T, Pin<Box<dyn Future<Output = T>>>>
     where
         T: 'static,
         F: 'static + Unpin + Future<Output = T>,
     {
+        let mut future = future.boxed_local();
         if !timeout.is_zero() {
             let output = match self {
-                Self::Production { .. } => {
-                    smol::block_on(util::timeout(timeout, Pin::new(&mut future))).ok()
-                }
-                Self::Deterministic(executor) => executor.block_on(Pin::new(&mut future)),
+                Self::Production { .. } => smol::block_on(util::timeout(timeout, &mut future)).ok(),
+                Self::Deterministic(executor) => executor.block_on(&mut future),
             };
             if let Some(output) = output {
                 return Ok(output);
