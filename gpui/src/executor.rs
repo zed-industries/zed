@@ -23,7 +23,10 @@ use std::{
 };
 use waker_fn::waker_fn;
 
-use crate::{platform, util};
+use crate::{
+    platform::{self, Dispatcher},
+    util,
+};
 
 pub enum Foreground {
     Platform {
@@ -398,11 +401,18 @@ impl Foreground {
         let any_task = match self {
             Self::Deterministic(executor) => executor.spawn_from_foreground(future),
             Self::Platform { dispatcher, .. } => {
-                let dispatcher = dispatcher.clone();
-                let schedule = move |runnable: Runnable| dispatcher.run_on_main_thread(runnable);
-                let (runnable, task) = async_task::spawn_local(future, schedule);
-                runnable.schedule();
-                task
+                fn spawn_inner(
+                    future: AnyLocalFuture,
+                    dispatcher: &Arc<dyn Dispatcher>,
+                ) -> AnyLocalTask {
+                    let dispatcher = dispatcher.clone();
+                    let schedule =
+                        move |runnable: Runnable| dispatcher.run_on_main_thread(runnable);
+                    let (runnable, task) = async_task::spawn_local(future, schedule);
+                    runnable.schedule();
+                    task
+                }
+                spawn_inner(future, dispatcher)
             }
             Self::Test(executor) => executor.spawn(future),
         };
