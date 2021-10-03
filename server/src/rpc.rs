@@ -980,6 +980,7 @@ mod tests {
         fs::{FakeFs, Fs as _},
         language::LanguageRegistry,
         people_panel::JoinWorktree,
+        project::ProjectPath,
         rpc::{self, Client, Credentials, EstablishConnectionError},
         settings,
         test::FakeHttpClient,
@@ -1166,8 +1167,14 @@ mod tests {
             workspace.worktrees(cx).first().unwrap().id()
         });
         workspace_b
-            .update(&mut cx_b, |worktree, cx| {
-                worktree.open_entry((local_worktree_id_b, Path::new("a.txt").into()), cx)
+            .update(&mut cx_b, |workspace, cx| {
+                workspace.open_entry(
+                    ProjectPath {
+                        worktree_id: local_worktree_id_b,
+                        path: Path::new("a.txt").into(),
+                    },
+                    cx,
+                )
             })
             .unwrap()
             .await;

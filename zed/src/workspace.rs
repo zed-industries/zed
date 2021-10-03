@@ -7,7 +7,7 @@ use crate::{
     editor::Buffer,
     fs::Fs,
     people_panel::{JoinWorktree, LeaveWorktree, PeoplePanel, ShareWorktree, UnshareWorktree},
-    project::Project,
+    project::{Project, ProjectPath},
     project_panel::ProjectPanel,
     rpc,
     settings::Settings,
@@ -164,12 +164,12 @@ pub trait Item: Entity + Sized {
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View;
 
-    fn worktree_id_and_path(&self) -> Option<(usize, Arc<Path>)>;
+    fn project_path(&self) -> Option<ProjectPath>;
 }
 
 pub trait ItemView: View {
     fn title(&self, cx: &AppContext) -> String;
-    fn worktree_id_and_path(&self, cx: &AppContext) -> Option<(usize, Arc<Path>)>;
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
@@ -213,12 +213,12 @@ pub trait WeakItemHandle {
         cx: &mut MutableAppContext,
     ) -> Option<Box<dyn ItemViewHandle>>;
     fn alive(&self, cx: &AppContext) -> bool;
-    fn worktree_id_and_path(&self, cx: &AppContext) -> Option<(usize, Arc<Path>)>;
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
 }
 
 pub trait ItemViewHandle {
     fn title(&self, cx: &AppContext) -> String;
-    fn entry_id(&self, cx: &AppContext) -> Option<(usize, Arc<Path>)>;
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle>;
     fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemViewHandle>>;
     fn set_parent_pane(&self, pane: &ViewHandle<Pane>, cx: &mut MutableAppContext);
@@ -265,9 +265,8 @@ impl<T: Item> WeakItemHandle for WeakModelHandle<T> {
         self.upgrade(cx).is_some()
     }
 
-    fn worktree_id_and_path(&self, cx: &AppContext) -> Option<(usize, Arc<Path>)> {
-        self.upgrade(cx)
-            .and_then(|h| h.read(cx).worktree_id_and_path())
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
+        self.upgrade(cx).and_then(|h| h.read(cx).project_path())
     }
 }
 
@@ -276,8 +275,8 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         self.read(cx).title(cx)
     }
 
-    fn entry_id(&self, cx: &AppContext) -> Option<(usize, Arc<Path>)> {
-        self.read(cx).worktree_id_and_path(cx)
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
+        self.read(cx).project_path(cx)
     }
 
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle> {
@@ -368,7 +367,7 @@ pub struct Workspace {
     project: ModelHandle<Project>,
     items: Vec<Box<dyn WeakItemHandle>>,
     loading_items: HashMap<
-        (usize, Arc<Path>),
+        ProjectPath,
         postage::watch::Receiver<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>,
     >,
     _observe_current_user: Task<()>,
@@ -382,9 +381,9 @@ impl Workspace {
         let pane = cx.add_view(|_| Pane::new(app_state.settings.clone()));
         let pane_id = pane.id();
         cx.observe(&pane, move |me, _, cx| {
-            let active_entry = me.active_entry(cx);
+            let active_entry = me.active_project_path(cx);
             me.project
-                .update(cx, |project, cx| project.set_active_entry(active_entry, cx));
+                .update(cx, |project, cx| project.set_active_path(active_entry, cx));
         })
         .detach();
         cx.subscribe(&pane, move |me, _, event, cx| {
@@ -495,7 +494,7 @@ impl Workspace {
         let entries = abs_paths
             .iter()
             .cloned()
-            .map(|path| self.entry_id_for_path(&path, cx))
+            .map(|path| self.project_path_for_path(&path, cx))
             .collect::<Vec<_>>();
 
         let fs = self.fs.clone();
@@ -562,15 +561,18 @@ impl Workspace {
         })
     }
 
-    fn entry_id_for_path(
+    fn project_path_for_path(
         &self,
         abs_path: &Path,
         cx: &mut ViewContext<Self>,
-    ) -> Task<Result<(usize, Arc<Path>)>> {
+    ) -> Task<Result<ProjectPath>> {
         let entry = self.worktree_for_abs_path(abs_path, cx);
         cx.spawn(|_, _| async move {
             let (worktree, path) = entry.await?;
-            Ok((worktree.id(), path.into()))
+            Ok(ProjectPath {
+                worktree_id: worktree.id(),
+                path: path.into(),
+            })
         })
     }
 
@@ -623,33 +625,38 @@ impl Workspace {
     #[must_use]
     pub fn open_entry(
         &mut self,
-        entry: (usize, Arc<Path>),
+        project_path: ProjectPath,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<()>> {
         let pane = self.active_pane().clone();
-        if self.activate_or_open_existing_entry(entry.clone(), &pane, cx) {
+        if self.activate_or_open_existing_entry(project_path.clone(), &pane, cx) {
             return None;
         }
 
-        let (worktree_id, path) = entry.clone();
+        // let (worktree_id, path) = project_path.clone();
 
-        let worktree = match self.project.read(cx).worktree_for_id(worktree_id) {
+        let worktree = match self
+            .project
+            .read(cx)
+            .worktree_for_id(project_path.worktree_id)
+        {
             Some(worktree) => worktree,
             None => {
-                log::error!("worktree {} does not exist", worktree_id);
+                log::error!("worktree {} does not exist", project_path.worktree_id);
                 return None;
             }
         };
 
-        if let Entry::Vacant(entry) = self.loading_items.entry(entry.clone()) {
+        if let Entry::Vacant(entry) = self.loading_items.entry(project_path.clone()) {
             let (mut tx, rx) = postage::watch::channel();
             entry.insert(rx);
 
+            let project_path = project_path.clone();
             cx.as_mut()
                 .spawn(|mut cx| async move {
                     let buffer = worktree
                         .update(&mut cx, |worktree, cx| {
-                            worktree.open_buffer(path.as_ref(), cx)
+                            worktree.open_buffer(project_path.path.as_ref(), cx)
                         })
                         .await;
                     *tx.borrow_mut() = Some(
@@ -663,7 +670,7 @@ impl Workspace {
 
         let pane = pane.downgrade();
         let settings = self.settings.clone();
-        let mut watch = self.loading_items.get(&entry).unwrap().clone();
+        let mut watch = self.loading_items.get(&project_path).unwrap().clone();
 
         Some(cx.spawn(|this, mut cx| async move {
             let load_result = loop {
@@ -674,14 +681,14 @@ impl Workspace {
             };
 
             this.update(&mut cx, |this, cx| {
-                this.loading_items.remove(&entry);
+                this.loading_items.remove(&project_path);
                 if let Some(pane) = pane.upgrade(&cx) {
                     match load_result {
                         Ok(item) => {
                             // By the time loading finishes, the entry could have been already added
                             // to the pane. If it was, we activate it, otherwise we'll store the
                             // item and add a new view for it.
-                            if !this.activate_or_open_existing_entry(entry, &pane, cx) {
+                            if !this.activate_or_open_existing_entry(project_path, &pane, cx) {
                                 let weak_item = item.downgrade();
                                 let view = weak_item
                                     .add_view(cx.window_id(), settings, cx.as_mut())
@@ -701,13 +708,13 @@ impl Workspace {
 
     fn activate_or_open_existing_entry(
         &mut self,
-        entry: (usize, Arc<Path>),
+        project_path: ProjectPath,
         pane: &ViewHandle<Pane>,
         cx: &mut ViewContext<Self>,
     ) -> bool {
         // If the pane contains a view for this file, then activate
         // that item view.
-        if pane.update(cx, |pane, cx| pane.activate_entry(entry.clone(), cx)) {
+        if pane.update(cx, |pane, cx| pane.activate_entry(project_path.clone(), cx)) {
             return true;
         }
 
@@ -718,7 +725,9 @@ impl Workspace {
         self.items.retain(|item| {
             if item.alive(cx.as_ref()) {
                 if view_for_existing_item.is_none()
-                    && item.worktree_id_and_path(cx).map_or(false, |e| e == entry)
+                    && item
+                        .project_path(cx)
+                        .map_or(false, |item_project_path| item_project_path == project_path)
                 {
                     view_for_existing_item = Some(
                         item.add_view(cx.window_id(), settings.clone(), cx.as_mut())
@@ -742,14 +751,14 @@ impl Workspace {
         self.active_pane().read(cx).active_item()
     }
 
-    fn active_entry(&self, cx: &ViewContext<Self>) -> Option<(usize, Arc<Path>)> {
-        self.active_item(cx).and_then(|item| item.entry_id(cx))
+    fn active_project_path(&self, cx: &ViewContext<Self>) -> Option<ProjectPath> {
+        self.active_item(cx).and_then(|item| item.project_path(cx))
     }
 
     pub fn save_active_item(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
         if let Some(item) = self.active_item(cx) {
             let handle = cx.handle();
-            if item.entry_id(cx.as_ref()).is_none() {
+            if item.project_path(cx.as_ref()).is_none() {
                 let worktree = self.worktrees(cx).first();
                 let start_abs_path = worktree
                     .and_then(|w| w.read(cx).as_local())
@@ -885,9 +894,9 @@ impl Workspace {
         let pane = cx.add_view(|_| Pane::new(self.settings.clone()));
         let pane_id = pane.id();
         cx.observe(&pane, move |me, _, cx| {
-            let active_entry = me.active_entry(cx);
+            let active_entry = me.active_project_path(cx);
             me.project
-                .update(cx, |project, cx| project.set_active_entry(active_entry, cx));
+                .update(cx, |project, cx| project.set_active_path(active_entry, cx));
         })
         .detach();
         cx.subscribe(&pane, move |me, _, event, cx| {
@@ -1124,20 +1133,21 @@ impl View for Workspace {
 
 #[cfg(test)]
 pub trait WorkspaceHandle {
-    fn file_entries(&self, cx: &AppContext) -> Vec<(usize, Arc<Path>)>;
+    fn file_project_paths(&self, cx: &AppContext) -> Vec<ProjectPath>;
 }
 
 #[cfg(test)]
 impl WorkspaceHandle for ViewHandle<Workspace> {
-    fn file_entries(&self, cx: &AppContext) -> Vec<(usize, Arc<Path>)> {
+    fn file_project_paths(&self, cx: &AppContext) -> Vec<ProjectPath> {
         self.read(cx)
             .worktrees(cx)
             .iter()
-            .flat_map(|tree| {
-                let tree_id = tree.id();
-                tree.read(cx)
-                    .files(true, 0)
-                    .map(move |f| (tree_id, f.path.clone()))
+            .flat_map(|worktree| {
+                let worktree_id = worktree.id();
+                worktree.read(cx).files(true, 0).map(move |f| ProjectPath {
+                    worktree_id,
+                    path: f.path.clone(),
+                })
             })
             .collect::<Vec<_>>()
     }
@@ -1247,7 +1257,7 @@ mod tests {
 
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
-        let entries = cx.read(|cx| workspace.file_entries(cx));
+        let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
         let file2 = entries[1].clone();
         let file3 = entries[2].clone();
@@ -1260,7 +1270,7 @@ mod tests {
         cx.read(|cx| {
             let pane = workspace.read(cx).active_pane().read(cx);
             assert_eq!(
-                pane.active_item().unwrap().entry_id(cx),
+                pane.active_item().unwrap().project_path(cx),
                 Some(file1.clone())
             );
             assert_eq!(pane.items().len(), 1);
@@ -1274,7 +1284,7 @@ mod tests {
         cx.read(|cx| {
             let pane = workspace.read(cx).active_pane().read(cx);
             assert_eq!(
-                pane.active_item().unwrap().entry_id(cx),
+                pane.active_item().unwrap().project_path(cx),
                 Some(file2.clone())
             );
             assert_eq!(pane.items().len(), 2);
@@ -1287,7 +1297,7 @@ mod tests {
         cx.read(|cx| {
             let pane = workspace.read(cx).active_pane().read(cx);
             assert_eq!(
-                pane.active_item().unwrap().entry_id(cx),
+                pane.active_item().unwrap().project_path(cx),
                 Some(file1.clone())
             );
             assert_eq!(pane.items().len(), 2);
@@ -1302,7 +1312,7 @@ mod tests {
                     .read(cx)
                     .active_item()
                     .unwrap()
-                    .entry_id(cx.as_ref()),
+                    .project_path(cx.as_ref()),
                 Some(file2.clone())
             );
         });
@@ -1319,13 +1329,13 @@ mod tests {
         cx.read(|cx| {
             let pane = workspace.read(cx).active_pane().read(cx);
             assert_eq!(
-                pane.active_item().unwrap().entry_id(cx),
+                pane.active_item().unwrap().project_path(cx),
                 Some(file3.clone())
             );
             let pane_entries = pane
                 .items()
                 .iter()
-                .map(|i| i.entry_id(cx).unwrap())
+                .map(|i| i.project_path(cx).unwrap())
                 .collect::<Vec<_>>();
             assert_eq!(pane_entries, &[file1, file2, file3]);
         });
@@ -1468,7 +1478,7 @@ mod tests {
             })
             .await
             .unwrap();
-        let tree = cx.read(|cx| {
+        let worktree = cx.read(|cx| {
             workspace
                 .read(cx)
                 .worktrees(cx)
@@ -1543,7 +1553,13 @@ mod tests {
             workspace.open_new_file(&OpenNew(app_state.clone()), cx);
             workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
             assert!(workspace
-                .open_entry((tree.id(), Path::new("the-new-name.rs").into()), cx)
+                .open_entry(
+                    ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: Path::new("the-new-name.rs").into()
+                    },
+                    cx
+                )
                 .is_none());
         });
         let editor2 = workspace.update(&mut cx, |workspace, cx| {
@@ -1664,7 +1680,7 @@ mod tests {
             .unwrap();
         cx.read(|cx| workspace.read(cx).worktree_scans_complete(cx))
             .await;
-        let entries = cx.read(|cx| workspace.file_entries(cx));
+        let entries = cx.read(|cx| workspace.file_project_paths(cx));
         let file1 = entries[0].clone();
 
         let pane_1 = cx.read(|cx| workspace.read(cx).active_pane().clone());
@@ -1675,7 +1691,7 @@ mod tests {
             .await;
         cx.read(|cx| {
             assert_eq!(
-                pane_1.read(cx).active_item().unwrap().entry_id(cx),
+                pane_1.read(cx).active_item().unwrap().project_path(cx),
                 Some(file1.clone())
             );
         });
@@ -1690,7 +1706,7 @@ mod tests {
             assert_ne!(pane_1, pane_2);
 
             let pane2_item = pane_2.read(cx).active_item().unwrap();
-            assert_eq!(pane2_item.entry_id(cx.as_ref()), Some(file1.clone()));
+            assert_eq!(pane2_item.project_path(cx.as_ref()), Some(file1.clone()));
 
             cx.dispatch_action(window_id, vec![pane_2.id()], &CloseActiveItem);
             let workspace = workspace.read(cx);

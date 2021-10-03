@@ -17,15 +17,27 @@ use std::{
 
 pub struct Project {
     worktrees: Vec<ModelHandle<Worktree>>,
-    active_entry: Option<(usize, usize)>,
+    active_entry: Option<ProjectEntry>,
     languages: Arc<LanguageRegistry>,
     rpc: Arc<Client>,
     fs: Arc<dyn Fs>,
 }
 
 pub enum Event {
-    ActiveEntryChanged(Option<(usize, usize)>),
+    ActiveEntryChanged(Option<ProjectEntry>),
     WorktreeRemoved(usize),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct ProjectPath {
+    pub worktree_id: usize,
+    pub path: Arc<Path>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ProjectEntry {
+    pub worktree_id: usize,
+    pub entry_id: usize,
 }
 
 impl Project {
@@ -99,15 +111,14 @@ impl Project {
         cx.notify();
     }
 
-    pub fn set_active_entry(
-        &mut self,
-        entry: Option<(usize, Arc<Path>)>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let new_active_entry = entry.and_then(|(worktree_id, path)| {
-            let worktree = self.worktree_for_id(worktree_id)?;
-            let entry = worktree.read(cx).entry_for_path(path)?;
-            Some((worktree_id, entry.id))
+    pub fn set_active_path(&mut self, entry: Option<ProjectPath>, cx: &mut ModelContext<Self>) {
+        let new_active_entry = entry.and_then(|project_path| {
+            let worktree = self.worktree_for_id(project_path.worktree_id)?;
+            let entry = worktree.read(cx).entry_for_path(project_path.path)?;
+            Some(ProjectEntry {
+                worktree_id: project_path.worktree_id,
+                entry_id: entry.id,
+            })
         });
         if new_active_entry != self.active_entry {
             self.active_entry = new_active_entry;
@@ -115,7 +126,7 @@ impl Project {
         }
     }
 
-    pub fn active_entry(&self) -> Option<(usize, usize)> {
+    pub fn active_entry(&self) -> Option<ProjectEntry> {
         self.active_entry
     }
 

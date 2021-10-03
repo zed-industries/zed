@@ -1,5 +1,5 @@
 use crate::{
-    project::{self, Project},
+    project::{self, Project, ProjectEntry, ProjectPath},
     theme,
     workspace::Workspace,
     worktree::{self, Worktree},
@@ -53,12 +53,6 @@ struct EntryDetails {
     is_selected: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ProjectEntry {
-    pub worktree_id: usize,
-    pub entry_id: usize,
-}
-
 action!(ExpandSelectedEntry);
 action!(CollapseSelectedEntry);
 action!(ToggleExpanded, ProjectEntry);
@@ -94,7 +88,10 @@ impl ProjectPanel {
             })
             .detach();
             cx.subscribe(&project, |this, _, event, cx| match event {
-                project::Event::ActiveEntryChanged(Some((worktree_id, entry_id))) => {
+                project::Event::ActiveEntryChanged(Some(ProjectEntry {
+                    worktree_id,
+                    entry_id,
+                })) => {
                     this.expand_entry(*worktree_id, *entry_id, cx);
                     this.update_visible_entries(Some((*worktree_id, *entry_id)), cx);
                     this.autoscroll();
@@ -129,7 +126,13 @@ impl ProjectPanel {
                 if let Some(worktree) = project.read(cx).worktree_for_id(*worktree_id) {
                     if let Some(entry) = worktree.read(cx).entry_for_id(*entry_id) {
                         workspace
-                            .open_entry((worktree.id(), entry.path.clone()), cx)
+                            .open_entry(
+                                ProjectPath {
+                                    worktree_id: worktree.id(),
+                                    path: entry.path.clone(),
+                                },
+                                cx,
+                            )
                             .map(|t| t.detach());
                     }
                 }

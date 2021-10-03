@@ -47,7 +47,7 @@ pub struct PathMatchCandidate<'a> {
 pub struct PathMatch {
     pub score: f64,
     pub positions: Vec<usize>,
-    pub tree_id: usize,
+    pub worktree_id: usize,
     pub path: Arc<Path>,
     pub path_prefix: Arc<str>,
 }
@@ -147,7 +147,7 @@ impl Ord for PathMatch {
         self.score
             .partial_cmp(&other.score)
             .unwrap_or(Ordering::Equal)
-            .then_with(|| self.tree_id.cmp(&other.tree_id))
+            .then_with(|| self.worktree_id.cmp(&other.worktree_id))
             .then_with(|| Arc::as_ptr(&self.path).cmp(&Arc::as_ptr(&other.path)))
     }
 }
@@ -215,7 +215,7 @@ impl<'a> Matcher<'a> {
             cancel_flag,
             |candidate, score| PathMatch {
                 score,
-                tree_id,
+                worktree_id: tree_id,
                 positions: Vec::new(),
                 path: candidate.path.clone(),
                 path_prefix: path_prefix.clone(),

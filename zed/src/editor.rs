@@ -5,6 +5,7 @@ pub mod movement;
 
 use crate::{
     language::Language,
+    project::ProjectPath,
     settings::Settings,
     theme::Theme,
     time::ReplicaId,
@@ -2589,8 +2590,11 @@ impl workspace::Item for Buffer {
         )
     }
 
-    fn worktree_id_and_path(&self) -> Option<(usize, Arc<Path>)> {
-        self.file().map(|f| (f.worktree_id(), f.path().clone()))
+    fn project_path(&self) -> Option<ProjectPath> {
+        self.file().map(|f| ProjectPath {
+            worktree_id: f.worktree_id(),
+            path: f.path().clone(),
+        })
     }
 }
 
@@ -2623,11 +2627,11 @@ impl workspace::ItemView for Editor {
         }
     }
 
-    fn worktree_id_and_path(&self, cx: &AppContext) -> Option<(usize, Arc<Path>)> {
-        self.buffer
-            .read(cx)
-            .file()
-            .map(|file| (file.worktree_id(), file.path().clone()))
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
+        self.buffer.read(cx).file().map(|file| ProjectPath {
+            worktree_id: file.worktree_id(),
+            path: file.path().clone(),
+        })
     }
 
     fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>

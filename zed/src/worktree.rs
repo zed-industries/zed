@@ -25,10 +25,22 @@ use postage::{
 };
 use serde::Deserialize;
 use smol::channel::{self, Sender};
-use std::{any::Any, cmp::{self, Ordering}, collections::HashMap, convert::{TryFrom, TryInto}, ffi::{OsStr, OsString}, fmt, future::Future, ops::Deref, path::{Path, PathBuf}, sync::{
+use std::{
+    any::Any,
+    cmp::{self, Ordering},
+    collections::HashMap,
+    convert::{TryFrom, TryInto},
+    ffi::{OsStr, OsString},
+    fmt,
+    future::Future,
+    ops::Deref,
+    path::{Path, PathBuf},
+    sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
-    }, time::{Duration, SystemTime}};
+    },
+    time::{Duration, SystemTime},
+};
 use sum_tree::{self, Edit, SeekTarget, SumTree};
 use zrpc::{PeerId, TypedEnvelope};
 
@@ -1778,14 +1790,6 @@ impl File {
             path,
             mtime,
         }
-    }
-
-    // pub fn exists(&self) -> bool {
-    //     !self.is_deleted()
-    // }
-
-    pub fn worktree_id_and_path(&self) -> (usize, Arc<Path>) {
-        (self.worktree.id(), self.path.clone())
     }
 }
 

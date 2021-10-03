@@ -1,5 +1,5 @@
 use super::{ItemViewHandle, SplitDirection};
-use crate::settings::Settings;
+use crate::{project::ProjectPath, settings::Settings};
 use gpui::{
     action,
     elements::*,
@@ -9,7 +9,7 @@ use gpui::{
     Entity, MutableAppContext, Quad, RenderContext, View, ViewContext, ViewHandle,
 };
 use postage::watch;
-use std::{cmp, path::Path, sync::Arc};
+use std::cmp;
 
 action!(Split, SplitDirection);
 action!(ActivateItem, usize);
@@ -105,12 +105,12 @@ impl Pane {
 
     pub fn activate_entry(
         &mut self,
-        entry_id: (usize, Arc<Path>),
+        project_path: ProjectPath,
         cx: &mut ViewContext<Self>,
     ) -> bool {
         if let Some(index) = self.items.iter().position(|item| {
-            item.entry_id(cx.as_ref())
-                .map_or(false, |id| id == entry_id)
+            item.project_path(cx.as_ref())
+                .map_or(false, |item_path| item_path == project_path)
         }) {
             self.activate_item(index, cx);
             true

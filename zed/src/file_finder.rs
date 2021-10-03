@@ -1,7 +1,7 @@
 use crate::{
     editor::{self, Editor},
     fuzzy::PathMatch,
-    project::Project,
+    project::{Project, ProjectPath},
     settings::Settings,
     util,
     workspace::Workspace,
@@ -44,13 +44,7 @@ pub struct FileFinder {
 
 action!(Toggle);
 action!(Confirm);
-action!(Select, Entry);
-
-#[derive(Clone)]
-pub struct Entry {
-    worktree_id: usize,
-    path: Arc<Path>,
-}
+action!(Select, ProjectPath);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(FileFinder::toggle);
@@ -67,7 +61,7 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 pub enum Event {
-    Selected(usize, Arc<Path>),
+    Selected(ProjectPath),
     Dismissed,
 }
 
@@ -203,8 +197,8 @@ impl FileFinder {
         )
         .with_style(style.container);
 
-        let action = Select(Entry {
-            worktree_id: path_match.tree_id,
+        let action = Select(ProjectPath {
+            worktree_id: path_match.worktree_id,
             path: path_match.path.clone(),
         });
         EventHandler::new(container.boxed())
@@ -256,9 +250,9 @@ impl FileFinder {
         cx: &mut ViewContext<Workspace>,
     ) {
         match event {
-            Event::Selected(tree_id, path) => {
+            Event::Selected(project_path) => {
                 workspace
-                    .open_entry((*tree_id, path.clone()), cx)
+                    .open_entry(project_path.clone(), cx)
                     .map(|d| d.detach());
                 workspace.dismiss_modal(cx);
             }
@@ -338,7 +332,7 @@ impl FileFinder {
     fn selected_index(&self) -> usize {
         if let Some(selected) = self.selected.as_ref() {
             for (ix, path_match) in self.matches.iter().enumerate() {
-                if (path_match.tree_id, path_match.path.as_ref())
+                if (path_match.worktree_id, path_match.path.as_ref())
                     == (selected.0, selected.1.as_ref())
                 {
                     return ix;
@@ -353,7 +347,7 @@ impl FileFinder {
         if selected_index > 0 {
             selected_index -= 1;
             let mat = &self.matches[selected_index];
-            self.selected = Some((mat.tree_id, mat.path.clone()));
+            self.selected = Some((mat.worktree_id, mat.path.clone()));
         }
         self.list_state.scroll_to(selected_index);
         cx.notify();
@@ -364,7 +358,7 @@ impl FileFinder {
         if selected_index + 1 < self.matches.len() {
             selected_index += 1;
             let mat = &self.matches[selected_index];
-            self.selected = Some((mat.tree_id, mat.path.clone()));
+            self.selected = Some((mat.worktree_id, mat.path.clone()));
         }
         self.list_state.scroll_to(selected_index);
         cx.notify();
@@ -372,12 +366,15 @@ impl FileFinder {
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some(m) = self.matches.get(self.selected_index()) {
-            cx.emit(Event::Selected(m.tree_id, m.path.clone()));
+            cx.emit(Event::Selected(ProjectPath {
+                worktree_id: m.worktree_id,
+                path: m.path.clone(),
+            }));
         }
     }
 
-    fn select(&mut self, Select(entry): &Select, cx: &mut ViewContext<Self>) {
-        cx.emit(Event::Selected(entry.worktree_id, entry.path.clone()));
+    fn select(&mut self, Select(project_path): &Select, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::Selected(project_path.clone()));
     }
 
     #[must_use]
