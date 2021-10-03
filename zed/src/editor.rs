@@ -10,7 +10,7 @@ use crate::{
     time::ReplicaId,
     util::{post_inc, Bias},
     workspace,
-    worktree::{File, Worktree},
+    worktree::Worktree,
 };
 use anyhow::Result;
 pub use buffer::*;
@@ -2554,10 +2554,6 @@ impl View for Editor {
 impl workspace::Item for Buffer {
     type View = Editor;
 
-    fn file(&self) -> Option<&File> {
-        self.file()
-    }
-
     fn build_view(
         handle: ModelHandle<Self>,
         settings: watch::Receiver<Settings>,
@@ -2592,6 +2588,10 @@ impl workspace::Item for Buffer {
             cx,
         )
     }
+
+    fn worktree_id_and_path(&self) -> Option<(usize, Arc<Path>)> {
+        self.file().map(|f| (f.worktree_id(), f.path().clone()))
+    }
 }
 
 impl workspace::ItemView for Editor {
@@ -2623,8 +2623,11 @@ impl workspace::ItemView for Editor {
         }
     }
 
-    fn entry_id(&self, cx: &AppContext) -> Option<(usize, Arc<Path>)> {
-        self.buffer.read(cx).file().map(|file| file.entry_id())
+    fn worktree_id_and_path(&self, cx: &AppContext) -> Option<(usize, Arc<Path>)> {
+        self.buffer
+            .read(cx)
+            .file()
+            .map(|file| (file.worktree_id(), file.path().clone()))
     }
 
     fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
@@ -2678,7 +2681,7 @@ impl workspace::ItemView for Editor {
                     });
 
                     buffer.update(&mut cx, |buffer, cx| {
-                        buffer.did_save(version, new_file.mtime, Some(new_file), cx);
+                        buffer.did_save(version, new_file.mtime, Some(Box::new(new_file)), cx);
                         buffer.set_language(language, cx);
                     });
                 })

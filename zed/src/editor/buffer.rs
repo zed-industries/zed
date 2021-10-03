@@ -9,11 +9,10 @@ use crate::{
     settings::{HighlightId, HighlightMap},
     time::{self, ReplicaId},
     util::Bias,
-    worktree::File,
 };
 pub use anchor::*;
 use anyhow::{anyhow, Result};
-use gpui::{AppContext, Entity, ModelContext, Task};
+use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
 use operation_queue::OperationQueue;
 use parking_lot::Mutex;
@@ -23,13 +22,15 @@ use seahash::SeaHasher;
 pub use selection::*;
 use similar::{ChangeTag, TextDiff};
 use std::{
+    any::Any,
     cell::RefCell,
     cmp,
     convert::{TryFrom, TryInto},
+    ffi::OsString,
     hash::BuildHasher,
     iter::Iterator,
     ops::{Deref, DerefMut, Range},
-    path::Path,
+    path::{Path, PathBuf},
     str,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -37,6 +38,46 @@ use std::{
 use sum_tree::{self, FilterCursor, SumTree};
 use tree_sitter::{InputEdit, Parser, QueryCursor};
 use zrpc::proto;
+
+pub trait File {
+    fn worktree_id(&self) -> usize;
+
+    fn entry_id(&self) -> Option<usize>;
+
+    fn set_entry_id(&mut self, entry_id: Option<usize>);
+
+    fn mtime(&self) -> SystemTime;
+
+    fn set_mtime(&mut self, mtime: SystemTime);
+
+    fn path(&self) -> &Arc<Path>;
+
+    fn set_path(&mut self, path: Arc<Path>);
+
+    fn full_path(&self, cx: &AppContext) -> PathBuf;
+
+    /// Returns the last component of this handle's absolute path. If this handle refers to the root
+    /// of its worktree, then this method will return the name of the worktree itself.
+    fn file_name<'a>(&'a self, cx: &'a AppContext) -> Option<OsString>;
+
+    fn is_deleted(&self) -> bool;
+
+    fn save(
+        &self,
+        buffer_id: u64,
+        text: Rope,
+        version: time::Global,
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<(time::Global, SystemTime)>>;
+
+    fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext);
+
+    fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext);
+
+    fn boxed_clone(&self) -> Box<dyn File>;
+
+    fn as_any(&self) -> &dyn Any;
+}
 
 #[derive(Clone, Default)]
 struct DeterministicState;
@@ -115,7 +156,7 @@ pub struct Buffer {
     last_edit: time::Local,
     undo_map: UndoMap,
     history: History,
-    file: Option<File>,
+    file: Option<Box<dyn File>>,
     language: Option<Arc<Language>>,
     sync_parse_timeout: Duration,
     syntax_tree: Mutex<Option<SyntaxTree>>,
@@ -524,7 +565,7 @@ impl Buffer {
     pub fn from_history(
         replica_id: ReplicaId,
         history: History,
-        file: Option<File>,
+        file: Option<Box<dyn File>>,
         language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -541,14 +582,14 @@ impl Buffer {
     fn build(
         replica_id: ReplicaId,
         history: History,
-        file: Option<File>,
+        file: Option<Box<dyn File>>,
         remote_id: u64,
         language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let saved_mtime;
         if let Some(file) = file.as_ref() {
-            saved_mtime = file.mtime;
+            saved_mtime = file.mtime();
         } else {
             saved_mtime = UNIX_EPOCH;
         }
@@ -619,7 +660,7 @@ impl Buffer {
     pub fn from_proto(
         replica_id: ReplicaId,
         message: proto::Buffer,
-        file: Option<File>,
+        file: Option<Box<dyn File>>,
         language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<Self> {
@@ -678,12 +719,12 @@ impl Buffer {
         }
     }
 
-    pub fn file(&self) -> Option<&File> {
-        self.file.as_ref()
+    pub fn file(&self) -> Option<&dyn File> {
+        self.file.as_deref()
     }
 
-    pub fn file_mut(&mut self) -> Option<&mut File> {
-        self.file.as_mut()
+    pub fn file_mut(&mut self) -> Option<&mut dyn File> {
+        self.file.as_mut().map(|f| f.deref_mut() as &mut dyn File)
     }
 
     pub fn save(
@@ -719,7 +760,7 @@ impl Buffer {
         &mut self,
         version: time::Global,
         mtime: SystemTime,
-        new_file: Option<File>,
+        new_file: Option<Box<dyn File>>,
         cx: &mut ModelContext<Self>,
     ) {
         self.saved_mtime = mtime;
@@ -739,13 +780,13 @@ impl Buffer {
     ) {
         let file = self.file.as_mut().unwrap();
         let mut changed = false;
-        if path != file.path {
-            file.path = path;
+        if path != *file.path() {
+            file.set_path(path);
             changed = true;
         }
 
-        if mtime != file.mtime {
-            file.mtime = mtime;
+        if mtime != file.mtime() {
+            file.set_mtime(mtime);
             changed = true;
             if let Some(new_text) = new_text {
                 if self.version == self.saved_version {
@@ -1015,7 +1056,7 @@ impl Buffer {
             && self
                 .file
                 .as_ref()
-                .map_or(false, |file| file.mtime > self.saved_mtime)
+                .map_or(false, |file| file.mtime() > self.saved_mtime)
     }
 
     pub fn remote_id(&self) -> u64 {
@@ -1930,7 +1971,7 @@ impl Clone for Buffer {
             history: self.history.clone(),
             selections: self.selections.clone(),
             deferred_ops: self.deferred_ops.clone(),
-            file: self.file.clone(),
+            file: self.file.as_ref().map(|f| f.boxed_clone()),
             language: self.language.clone(),
             syntax_tree: Mutex::new(self.syntax_tree.lock().clone()),
             parsing_in_background: false,
@@ -3415,7 +3456,7 @@ mod tests {
             assert!(buffer.is_dirty());
             assert_eq!(*events.borrow(), &[Event::Edited, Event::Dirtied]);
             events.borrow_mut().clear();
-            buffer.did_save(buffer.version(), buffer.file().unwrap().mtime, None, cx);
+            buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), None, cx);
         });
 
         // after saving, the buffer is not dirty, and emits a saved event.

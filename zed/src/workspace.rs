@@ -13,7 +13,7 @@ use crate::{
     settings::Settings,
     user,
     workspace::sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus},
-    worktree::{File, Worktree},
+    worktree::Worktree,
     AppState, Authenticate,
 };
 use anyhow::Result;
@@ -164,12 +164,12 @@ pub trait Item: Entity + Sized {
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View;
 
-    fn file(&self) -> Option<&File>;
+    fn worktree_id_and_path(&self) -> Option<(usize, Arc<Path>)>;
 }
 
 pub trait ItemView: View {
     fn title(&self, cx: &AppContext) -> String;
-    fn entry_id(&self, cx: &AppContext) -> Option<(usize, Arc<Path>)>;
+    fn worktree_id_and_path(&self, cx: &AppContext) -> Option<(usize, Arc<Path>)>;
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
@@ -206,7 +206,6 @@ pub trait ItemHandle: Send + Sync {
 }
 
 pub trait WeakItemHandle {
-    fn file<'a>(&'a self, cx: &'a AppContext) -> Option<&'a File>;
     fn add_view(
         &self,
         window_id: usize,
@@ -214,6 +213,7 @@ pub trait WeakItemHandle {
         cx: &mut MutableAppContext,
     ) -> Option<Box<dyn ItemViewHandle>>;
     fn alive(&self, cx: &AppContext) -> bool;
+    fn worktree_id_and_path(&self, cx: &AppContext) -> Option<(usize, Arc<Path>)>;
 }
 
 pub trait ItemViewHandle {
@@ -246,10 +246,6 @@ impl<T: Item> ItemHandle for ModelHandle<T> {
 }
 
 impl<T: Item> WeakItemHandle for WeakModelHandle<T> {
-    fn file<'a>(&'a self, cx: &'a AppContext) -> Option<&'a File> {
-        self.upgrade(cx).and_then(|h| h.read(cx).file())
-    }
-
     fn add_view(
         &self,
         window_id: usize,
@@ -268,6 +264,11 @@ impl<T: Item> WeakItemHandle for WeakModelHandle<T> {
     fn alive(&self, cx: &AppContext) -> bool {
         self.upgrade(cx).is_some()
     }
+
+    fn worktree_id_and_path(&self, cx: &AppContext) -> Option<(usize, Arc<Path>)> {
+        self.upgrade(cx)
+            .and_then(|h| h.read(cx).worktree_id_and_path())
+    }
 }
 
 impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
@@ -276,7 +277,7 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
     }
 
     fn entry_id(&self, cx: &AppContext) -> Option<(usize, Arc<Path>)> {
-        self.read(cx).entry_id(cx)
+        self.read(cx).worktree_id_and_path(cx)
     }
 
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle> {
@@ -717,9 +718,7 @@ impl Workspace {
         self.items.retain(|item| {
             if item.alive(cx.as_ref()) {
                 if view_for_existing_item.is_none()
-                    && item
-                        .file(cx.as_ref())
-                        .map_or(false, |file| file.entry_id() == entry)
+                    && item.worktree_id_and_path(cx).map_or(false, |e| e == entry)
                 {
                     view_for_existing_item = Some(
                         item.add_view(cx.window_id(), settings.clone(), cx.as_mut())

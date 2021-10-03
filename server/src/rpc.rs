@@ -1383,7 +1383,7 @@ mod tests {
             .update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.txt", cx))
             .await
             .unwrap();
-        let mtime = buffer_b.read_with(&cx_b, |buf, _| buf.file().unwrap().mtime);
+        let mtime = buffer_b.read_with(&cx_b, |buf, _| buf.file().unwrap().mtime());
 
         buffer_b.update(&mut cx_b, |buf, cx| buf.edit([0..0], "world ", cx));
         buffer_b.read_with(&cx_b, |buf, _| {
@@ -1398,7 +1398,7 @@ mod tests {
             .unwrap();
         worktree_b
             .condition(&cx_b, |_, cx| {
-                buffer_b.read(cx).file().unwrap().mtime != mtime
+                buffer_b.read(cx).file().unwrap().mtime() != mtime
             })
             .await;
         buffer_b.read_with(&cx_b, |buf, _| {

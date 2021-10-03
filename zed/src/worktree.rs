@@ -2,7 +2,7 @@ mod ignore;
 
 use self::ignore::IgnoreStack;
 use crate::{
-    editor::{self, Buffer, History, Operation, Rope},
+    editor::{self, buffer, Buffer, History, Operation, Rope},
     fs::{self, Fs},
     fuzzy::CharBag,
     language::LanguageRegistry,
@@ -25,21 +25,10 @@ use postage::{
 };
 use serde::Deserialize;
 use smol::channel::{self, Sender};
-use std::{
-    cmp::{self, Ordering},
-    collections::HashMap,
-    convert::{TryFrom, TryInto},
-    ffi::{OsStr, OsString},
-    fmt,
-    future::Future,
-    ops::Deref,
-    path::{Path, PathBuf},
-    sync::{
+use std::{any::Any, cmp::{self, Ordering}, collections::HashMap, convert::{TryFrom, TryInto}, ffi::{OsStr, OsString}, fmt, future::Future, ops::Deref, path::{Path, PathBuf}, sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
-    },
-    time::{Duration, SystemTime},
-};
+    }, time::{Duration, SystemTime}};
 use sum_tree::{self, Edit, SeekTarget, SumTree};
 use zrpc::{PeerId, TypedEnvelope};
 
@@ -404,7 +393,7 @@ impl Worktree {
         open_buffers
             .find(|buffer| {
                 if let Some(file) = buffer.upgrade(cx).and_then(|buffer| buffer.read(cx).file()) {
-                    file.path.as_ref() == path
+                    file.path().as_ref() == path
                 } else {
                     false
                 }
@@ -599,30 +588,30 @@ impl Worktree {
                         let mut file_changed = false;
 
                         if let Some(entry) = file
-                            .entry_id
+                            .entry_id()
                             .and_then(|entry_id| self.entry_for_id(entry_id))
                         {
-                            if entry.path != file.path {
-                                file.path = entry.path.clone();
+                            if entry.path != *file.path() {
+                                file.set_path(entry.path.clone());
                                 file_changed = true;
                             }
 
-                            if entry.mtime != file.mtime {
-                                file.mtime = entry.mtime;
+                            if entry.mtime != file.mtime() {
+                                file.set_mtime(entry.mtime);
                                 file_changed = true;
                                 if let Some(worktree) = self.as_local() {
                                     if buffer_is_clean {
-                                        let abs_path = worktree.absolutize(&file.path);
+                                        let abs_path = worktree.absolutize(file.path().as_ref());
                                         refresh_buffer(abs_path, &worktree.fs, cx);
                                     }
                                 }
                             }
-                        } else if let Some(entry) = self.entry_for_path(&file.path) {
-                            file.entry_id = Some(entry.id);
-                            file.mtime = entry.mtime;
+                        } else if let Some(entry) = self.entry_for_path(file.path().as_ref()) {
+                            file.set_entry_id(Some(entry.id));
+                            file.set_mtime(entry.mtime);
                             if let Some(worktree) = self.as_local() {
                                 if buffer_is_clean {
-                                    let abs_path = worktree.absolutize(&file.path);
+                                    let abs_path = worktree.absolutize(file.path().as_ref());
                                     refresh_buffer(abs_path, &worktree.fs, cx);
                                 }
                             }
@@ -631,7 +620,7 @@ impl Worktree {
                             if buffer_is_clean {
                                 cx.emit(editor::buffer::Event::Dirtied);
                             }
-                            file.entry_id = None;
+                            file.set_entry_id(None);
                             file_changed = true;
                         }
 
@@ -845,7 +834,7 @@ impl LocalWorktree {
         self.open_buffers.retain(|_buffer_id, buffer| {
             if let Some(buffer) = buffer.upgrade(cx.as_ref()) {
                 if let Some(file) = buffer.read(cx.as_ref()).file() {
-                    if file.worktree_id() == handle.id() && file.path.as_ref() == path {
+                    if file.worktree_id() == handle.id() && file.path().as_ref() == path {
                         existing_buffer = Some(buffer);
                     }
                 }
@@ -864,12 +853,20 @@ impl LocalWorktree {
                     .update(&mut cx, |this, cx| this.as_local().unwrap().load(&path, cx))
                     .await?;
                 let language = this.read_with(&cx, |this, cx| {
+                    use buffer::File;
+
                     this.languages()
                         .select_language(file.full_path(cx))
                         .cloned()
                 });
                 let buffer = cx.add_model(|cx| {
-                    Buffer::from_history(0, History::new(contents.into()), Some(file), language, cx)
+                    Buffer::from_history(
+                        0,
+                        History::new(contents.into()),
+                        Some(Box::new(file)),
+                        language,
+                        cx,
+                    )
                 });
                 this.update(&mut cx, |this, _| {
                     let this = this
@@ -1238,7 +1235,7 @@ impl RemoteWorktree {
         self.open_buffers.retain(|_buffer_id, buffer| {
             if let Some(buffer) = buffer.upgrade(cx.as_ref()) {
                 if let Some(file) = buffer.read(cx.as_ref()).file() {
-                    if file.worktree_id() == cx.model_id() && file.path.as_ref() == path {
+                    if file.worktree_id() == cx.model_id() && file.path().as_ref() == path {
                         existing_buffer = Some(buffer);
                     }
                 }
@@ -1273,6 +1270,8 @@ impl RemoteWorktree {
                     .ok_or_else(|| anyhow!("worktree was closed"))?;
                 let file = File::new(entry.id, this.clone(), entry.path, entry.mtime);
                 let language = this.read_with(&cx, |this, cx| {
+                    use buffer::File;
+
                     this.languages()
                         .select_language(file.full_path(cx))
                         .cloned()
@@ -1280,7 +1279,14 @@ impl RemoteWorktree {
                 let remote_buffer = response.buffer.ok_or_else(|| anyhow!("empty buffer"))?;
                 let buffer_id = remote_buffer.id as usize;
                 let buffer = cx.add_model(|cx| {
-                    Buffer::from_proto(replica_id, remote_buffer, Some(file), language, cx).unwrap()
+                    Buffer::from_proto(
+                        replica_id,
+                        remote_buffer,
+                        Some(Box::new(file)),
+                        language,
+                        cx,
+                    )
+                    .unwrap()
                 });
                 this.update(&mut cx, |this, cx| {
                     let this = this.as_remote_mut().unwrap();
@@ -1774,67 +1780,45 @@ impl File {
         }
     }
 
-    pub fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext) {
-        self.worktree.update(cx, |worktree, cx| {
-            if let Some((rpc, remote_id)) = match worktree {
-                Worktree::Local(worktree) => worktree
-                    .remote_id
-                    .borrow()
-                    .map(|id| (worktree.rpc.clone(), id)),
-                Worktree::Remote(worktree) => Some((worktree.rpc.clone(), worktree.remote_id)),
-            } {
-                cx.spawn(|worktree, mut cx| async move {
-                    if let Err(error) = rpc
-                        .request(proto::UpdateBuffer {
-                            worktree_id: remote_id,
-                            buffer_id,
-                            operations: vec![(&operation).into()],
-                        })
-                        .await
-                    {
-                        worktree.update(&mut cx, |worktree, _| {
-                            log::error!("error sending buffer operation: {}", error);
-                            match worktree {
-                                Worktree::Local(t) => &mut t.queued_operations,
-                                Worktree::Remote(t) => &mut t.queued_operations,
-                            }
-                            .push((buffer_id, operation));
-                        });
-                    }
-                })
-                .detach();
-            }
-        });
+    // pub fn exists(&self) -> bool {
+    //     !self.is_deleted()
+    // }
+
+    pub fn worktree_id_and_path(&self) -> (usize, Arc<Path>) {
+        (self.worktree.id(), self.path.clone())
+    }
+}
+
+impl buffer::File for File {
+    fn worktree_id(&self) -> usize {
+        self.worktree.id()
     }
 
-    pub fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext) {
-        self.worktree.update(cx, |worktree, cx| {
-            if let Worktree::Remote(worktree) = worktree {
-                let worktree_id = worktree.remote_id;
-                let rpc = worktree.rpc.clone();
-                cx.background()
-                    .spawn(async move {
-                        if let Err(error) = rpc
-                            .send(proto::CloseBuffer {
-                                worktree_id,
-                                buffer_id,
-                            })
-                            .await
-                        {
-                            log::error!("error closing remote buffer: {}", error);
-                        }
-                    })
-                    .detach();
-            }
-        });
+    fn entry_id(&self) -> Option<usize> {
+        self.entry_id
     }
 
-    /// Returns this file's path relative to the root of its worktree.
-    pub fn path(&self) -> Arc<Path> {
-        self.path.clone()
+    fn set_entry_id(&mut self, entry_id: Option<usize>) {
+        self.entry_id = entry_id;
     }
 
-    pub fn full_path(&self, cx: &AppContext) -> PathBuf {
+    fn mtime(&self) -> SystemTime {
+        self.mtime
+    }
+
+    fn set_mtime(&mut self, mtime: SystemTime) {
+        self.mtime = mtime;
+    }
+
+    fn path(&self) -> &Arc<Path> {
+        &self.path
+    }
+
+    fn set_path(&mut self, path: Arc<Path>) {
+        self.path = path;
+    }
+
+    fn full_path(&self, cx: &AppContext) -> PathBuf {
         let worktree = self.worktree.read(cx);
         let mut full_path = PathBuf::new();
         full_path.push(worktree.root_name());
@@ -1844,22 +1828,18 @@ impl File {
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
-    pub fn file_name<'a>(&'a self, cx: &'a AppContext) -> Option<OsString> {
+    fn file_name<'a>(&'a self, cx: &'a AppContext) -> Option<OsString> {
         self.path
             .file_name()
             .or_else(|| Some(OsStr::new(self.worktree.read(cx).root_name())))
             .map(Into::into)
     }
 
-    pub fn is_deleted(&self) -> bool {
+    fn is_deleted(&self) -> bool {
         self.entry_id.is_none()
     }
 
-    pub fn exists(&self) -> bool {
-        !self.is_deleted()
-    }
-
-    pub fn save(
+    fn save(
         &self,
         buffer_id: u64,
         text: Rope,
@@ -1906,12 +1886,67 @@ impl File {
         })
     }
 
-    pub fn worktree_id(&self) -> usize {
-        self.worktree.id()
+    fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext) {
+        self.worktree.update(cx, |worktree, cx| {
+            if let Some((rpc, remote_id)) = match worktree {
+                Worktree::Local(worktree) => worktree
+                    .remote_id
+                    .borrow()
+                    .map(|id| (worktree.rpc.clone(), id)),
+                Worktree::Remote(worktree) => Some((worktree.rpc.clone(), worktree.remote_id)),
+            } {
+                cx.spawn(|worktree, mut cx| async move {
+                    if let Err(error) = rpc
+                        .request(proto::UpdateBuffer {
+                            worktree_id: remote_id,
+                            buffer_id,
+                            operations: vec![(&operation).into()],
+                        })
+                        .await
+                    {
+                        worktree.update(&mut cx, |worktree, _| {
+                            log::error!("error sending buffer operation: {}", error);
+                            match worktree {
+                                Worktree::Local(t) => &mut t.queued_operations,
+                                Worktree::Remote(t) => &mut t.queued_operations,
+                            }
+                            .push((buffer_id, operation));
+                        });
+                    }
+                })
+                .detach();
+            }
+        });
     }
 
-    pub fn entry_id(&self) -> (usize, Arc<Path>) {
-        (self.worktree.id(), self.path.clone())
+    fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext) {
+        self.worktree.update(cx, |worktree, cx| {
+            if let Worktree::Remote(worktree) = worktree {
+                let worktree_id = worktree.remote_id;
+                let rpc = worktree.rpc.clone();
+                cx.background()
+                    .spawn(async move {
+                        if let Err(error) = rpc
+                            .send(proto::CloseBuffer {
+                                worktree_id,
+                                buffer_id,
+                            })
+                            .await
+                        {
+                            log::error!("error closing remote buffer: {}", error);
+                        }
+                    })
+                    .detach();
+            }
+        });
+    }
+
+    fn boxed_clone(&self) -> Box<dyn buffer::File> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
