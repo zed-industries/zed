@@ -502,14 +502,14 @@ impl Workspace {
             .iter()
             .cloned()
             .zip(entries.into_iter())
-            .map(|(abs_path, entry_id)| {
+            .map(|(abs_path, project_path)| {
                 cx.spawn(|this, mut cx| {
                     let fs = fs.clone();
                     async move {
-                        let entry_id = entry_id.await?;
+                        let project_path = project_path.await?;
                         if fs.is_file(&abs_path).await {
                             if let Some(entry) =
-                                this.update(&mut cx, |this, cx| this.open_entry(entry_id, cx))
+                                this.update(&mut cx, |this, cx| this.open_entry(project_path, cx))
                             {
                                 entry.await;
                             }
