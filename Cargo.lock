@@ -743,6 +743,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "buffer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrayvec 0.7.1",
+ "clock",
+ "gpui",
+ "lazy_static",
+ "log",
+ "parking_lot",
+ "rand 0.8.3",
+ "seahash",
+ "serde 1.0.125",
+ "similar",
+ "smallvec",
+ "sum_tree",
+ "tree-sitter",
+ "tree-sitter-rust",
+ "unindent",
+ "zrpc",
+]
+
+[[package]]
 name = "build_const"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5912,10 +5935,10 @@ name = "zed"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "arrayvec 0.7.1",
  "async-recursion",
  "async-trait",
  "async-tungstenite",
+ "buffer",
  "cargo-bundle",
  "clock",
  "crossbeam-channel",
@@ -5941,11 +5964,9 @@ dependencies = [
  "rand 0.8.3",
  "rsa",
  "rust-embed",
- "seahash",
  "serde 1.0.125",
  "serde_json 1.0.64",
  "serde_path_to_error",
- "similar",
  "simplelog",
  "smallvec",
  "smol",

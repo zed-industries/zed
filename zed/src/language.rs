@@ -1,51 +1,16 @@
-use crate::{settings::HighlightMap, theme::SyntaxTheme};
+use buffer::{HighlightMap, Language, SyntaxTheme};
 use parking_lot::Mutex;
 use rust_embed::RustEmbed;
-use serde::Deserialize;
 use std::{path::Path, str, sync::Arc};
-use tree_sitter::{Language as Grammar, Query};
+use tree_sitter::Query;
 pub use tree_sitter::{Parser, Tree};
 
 #[derive(RustEmbed)]
 #[folder = "languages"]
 pub struct LanguageDir;
 
-#[derive(Default, Deserialize)]
-pub struct LanguageConfig {
-    pub name: String,
-    pub path_suffixes: Vec<String>,
-}
-
-#[derive(Deserialize)]
-pub struct BracketPair {
-    pub start: String,
-    pub end: String,
-}
-
-pub struct Language {
-    pub config: LanguageConfig,
-    pub grammar: Grammar,
-    pub highlight_query: Query,
-    pub brackets_query: Query,
-    pub highlight_map: Mutex<HighlightMap>,
-}
-
 pub struct LanguageRegistry {
     languages: Vec<Arc<Language>>,
-}
-
-impl Language {
-    pub fn name(&self) -> &str {
-        self.config.name.as_str()
-    }
-
-    pub fn highlight_map(&self) -> HighlightMap {
-        self.highlight_map.lock().clone()
-    }
-
-    pub fn set_theme(&self, theme: &SyntaxTheme) {
-        *self.highlight_map.lock() = HighlightMap::new(self.highlight_query.capture_names(), theme);
-    }
 }
 
 impl LanguageRegistry {
@@ -104,6 +69,7 @@ impl Default for LanguageRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use buffer::LanguageConfig;
 
     #[test]
     fn test_select_language() {

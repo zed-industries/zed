@@ -1,7 +1,7 @@
 use super::{Buffer, Content};
-use crate::util::Bias;
 use anyhow::Result;
 use std::{cmp::Ordering, ops::Range};
+use sum_tree::Bias;
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
 pub struct Anchor {

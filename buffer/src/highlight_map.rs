@@ -1,4 +1,4 @@
-use super::SyntaxTheme;
+use crate::syntax_theme::SyntaxTheme;
 use std::sync::Arc;
 
 #[derive(Clone, Debug)]

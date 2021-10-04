@@ -14,14 +14,19 @@ name = "Zed"
 path = "src/main.rs"
 
 [features]
-test-support = ["tempdir", "zrpc/test-support", "gpui/test-support"]
+test-support = [
+    "buffer/test-support",
+    "gpui/test-support",
+    "tempdir",
+    "zrpc/test-support",
+]
 
 [dependencies]
 anyhow = "1.0.38"
 async-recursion = "0.3"
 async-trait = "0.1"
-arrayvec = "0.7.1"
 async-tungstenite = { version = "0.14", features = ["async-tls"] }
+buffer = { path = "../buffer" }
 clock = { path = "../clock" }
 crossbeam-channel = "0.5.0"
 ctor = "0.1.20"
@@ -45,11 +50,9 @@ postage = { version = "0.4.1", features = ["futures-traits"] }
 rand = "0.8.3"
 rsa = "0.4"
 rust-embed = { version = "6.2", features = ["include-exclude"] }
-seahash = "4.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1.0.64", features = ["preserve_order"] }
 serde_path_to_error = "0.1.4"
-similar = "1.3"
 simplelog = "0.9"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2.5"
@@ -71,6 +74,7 @@ env_logger = "0.8"
 serde_json = { version = "1.0.64", features = ["preserve_order"] }
 tempdir = { version = "0.3.7" }
 unindent = "0.1.7"
+buffer = { path = "../buffer", features = ["test-support"] }
 zrpc = { path = "../zrpc", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 

@@ -3,8 +3,7 @@ use anyhow::Result;
 use gpui::font_cache::{FamilyId, FontCache};
 use postage::watch;
 use std::sync::Arc;
-
-pub use theme::{HighlightId, HighlightMap, Theme, ThemeRegistry};
+pub use theme::{Theme, ThemeRegistry};
 
 #[derive(Clone)]
 pub struct Settings {

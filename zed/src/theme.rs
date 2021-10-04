@@ -1,19 +1,16 @@
-mod highlight_map;
 mod resolution;
 mod theme_registry;
 
 use crate::editor::{EditorStyle, SelectionStyle};
-use anyhow::Result;
+use buffer::SyntaxTheme;
 use gpui::{
     color::Color,
     elements::{ContainerStyle, ImageStyle, LabelStyle},
-    fonts::{HighlightStyle, TextStyle},
+    fonts::TextStyle,
     Border,
 };
 use serde::Deserialize;
-use std::collections::HashMap;
 
-pub use highlight_map::*;
 pub use theme_registry::*;
 
 pub const DEFAULT_THEME_NAME: &'static str = "black";
@@ -29,10 +26,6 @@ pub struct Theme {
     pub selector: Selector,
     pub editor: EditorStyle,
     pub syntax: SyntaxTheme,
-}
-
-pub struct SyntaxTheme {
-    highlights: Vec<(String, HighlightStyle)>,
 }
 
 #[derive(Deserialize)]
@@ -220,23 +213,6 @@ pub struct InputEditorStyle {
     pub selection: SelectionStyle,
 }
 
-impl SyntaxTheme {
-    pub fn new(highlights: Vec<(String, HighlightStyle)>) -> Self {
-        Self { highlights }
-    }
-
-    pub fn highlight_style(&self, id: HighlightId) -> Option<HighlightStyle> {
-        self.highlights
-            .get(id.0 as usize)
-            .map(|entry| entry.1.clone())
-    }
-
-    #[cfg(test)]
-    pub fn highlight_name(&self, id: HighlightId) -> Option<&str> {
-        self.highlights.get(id.0 as usize).map(|e| e.0.as_str())
-    }
-}
-
 impl InputEditorStyle {
     pub fn as_editor(&self) -> EditorStyle {
         EditorStyle {
@@ -253,28 +229,5 @@ impl InputEditorStyle {
             line_number_active: Default::default(),
             guest_selections: Default::default(),
         }
-    }
-}
-
-impl<'de> Deserialize<'de> for SyntaxTheme {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let syntax_data: HashMap<String, HighlightStyle> = Deserialize::deserialize(deserializer)?;
-
-        let mut result = Self::new(Vec::new());
-        for (key, style) in syntax_data {
-            match result
-                .highlights
-                .binary_search_by(|(needle, _)| needle.cmp(&key))
-            {
-                Ok(i) | Err(i) => {
-                    result.highlights.insert(i, (key, style));
-                }
-            }
-        }
-
-        Ok(result)
     }
 }

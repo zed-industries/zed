@@ -2,7 +2,7 @@ use super::{
     buffer::{AnchorRangeExt, TextSummary},
     Anchor, Buffer, Point, ToOffset,
 };
-use crate::{editor::buffer, settings::HighlightId, util::Bias};
+use buffer::HighlightId;
 use gpui::{AppContext, ModelHandle};
 use parking_lot::Mutex;
 use std::{
@@ -11,7 +11,11 @@ use std::{
     ops::Range,
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
-use sum_tree::{self, Cursor, FilterCursor, SumTree};
+use sum_tree::{self, Bias, Cursor, FilterCursor, SumTree};
+
+pub trait ToFoldPoint {
+    fn to_fold_point(&self, snapshot: &Snapshot, bias: Bias) -> FoldPoint;
+}
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct FoldPoint(pub super::Point);
@@ -73,8 +77,8 @@ impl FoldPoint {
     }
 }
 
-impl Point {
-    pub fn to_fold_point(&self, snapshot: &Snapshot, bias: Bias) -> FoldPoint {
+impl ToFoldPoint for Point {
+    fn to_fold_point(&self, snapshot: &Snapshot, bias: Bias) -> FoldPoint {
         let mut cursor = snapshot.transforms.cursor::<(Point, FoldPoint)>();
         cursor.seek(self, Bias::Right, &());
         if cursor.item().map_or(false, |t| t.is_fold()) {
@@ -544,6 +548,7 @@ impl Snapshot {
         summary
     }
 
+    #[cfg(test)]
     pub fn len(&self) -> FoldOffset {
         FoldOffset(self.transforms.summary().output.bytes)
     }

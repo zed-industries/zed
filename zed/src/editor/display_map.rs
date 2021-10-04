@@ -2,13 +2,18 @@ mod fold_map;
 mod tab_map;
 mod wrap_map;
 
-use super::{buffer, Anchor, Bias, Buffer, Point, ToOffset, ToPoint};
-use fold_map::FoldMap;
+use buffer::{self, Anchor, Buffer, Point, ToOffset, ToPoint};
+use fold_map::{FoldMap, ToFoldPoint as _};
 use gpui::{fonts::FontId, Entity, ModelContext, ModelHandle};
 use std::ops::Range;
+use sum_tree::Bias;
 use tab_map::TabMap;
 use wrap_map::WrapMap;
 pub use wrap_map::{BufferRows, HighlightedChunks};
+
+pub trait ToDisplayPoint {
+    fn to_display_point(&self, map: &DisplayMapSnapshot, bias: Bias) -> DisplayPoint;
+}
 
 pub struct DisplayMap {
     buffer: ModelHandle<Buffer>,
@@ -333,8 +338,8 @@ impl DisplayPoint {
     }
 }
 
-impl Point {
-    pub fn to_display_point(self, map: &DisplayMapSnapshot, bias: Bias) -> DisplayPoint {
+impl ToDisplayPoint for Point {
+    fn to_display_point(&self, map: &DisplayMapSnapshot, bias: Bias) -> DisplayPoint {
         let fold_point = self.to_fold_point(&map.folds_snapshot, bias);
         let tab_point = map.tabs_snapshot.to_tab_point(fold_point);
         let wrap_point = map.wraps_snapshot.to_wrap_point(tab_point);
@@ -342,8 +347,8 @@ impl Point {
     }
 }
 
-impl Anchor {
-    pub fn to_display_point(&self, map: &DisplayMapSnapshot, bias: Bias) -> DisplayPoint {
+impl ToDisplayPoint for Anchor {
+    fn to_display_point(&self, map: &DisplayMapSnapshot, bias: Bias) -> DisplayPoint {
         self.to_point(&map.buffer_snapshot)
             .to_display_point(map, bias)
     }
@@ -352,14 +357,8 @@ impl Anchor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        editor::movement,
-        language::{Language, LanguageConfig},
-        test::*,
-        theme::SyntaxTheme,
-        util::RandomCharIter,
-    };
-    use buffer::{History, SelectionGoal};
+    use crate::{editor::movement, test::*, util::RandomCharIter};
+    use buffer::{History, Language, LanguageConfig, SelectionGoal, SyntaxTheme};
     use gpui::{color::Color, MutableAppContext};
     use rand::{prelude::StdRng, Rng};
     use std::{env, sync::Arc};

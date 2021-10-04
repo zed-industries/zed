@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "buffer",
     "clock",
     "fsevent",
     "fuzzy",

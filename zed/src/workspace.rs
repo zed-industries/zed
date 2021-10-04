@@ -4,7 +4,6 @@ pub mod sidebar;
 
 use crate::{
     chat_panel::ChatPanel,
-    editor::Buffer,
     fs::Fs,
     people_panel::{JoinWorktree, LeaveWorktree, PeoplePanel, ShareWorktree, UnshareWorktree},
     project::{Project, ProjectPath},
@@ -17,6 +16,7 @@ use crate::{
     AppState, Authenticate,
 };
 use anyhow::Result;
+use buffer::Buffer;
 use gpui::{
     action,
     elements::*,

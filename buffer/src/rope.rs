@@ -1,9 +1,8 @@
 use super::Point;
-use crate::util::Bias;
 use arrayvec::ArrayString;
 use smallvec::SmallVec;
 use std::{cmp, ops::Range, str};
-use sum_tree::{self, SumTree};
+use sum_tree::{self, Bias, SumTree};
 
 #[cfg(test)]
 const CHUNK_BASE: usize = 6;
@@ -520,7 +519,7 @@ fn find_split_ix(text: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::RandomCharIter;
+    use crate::random_char_iter::RandomCharIter;
     use rand::prelude::*;
     use std::env;
     use Bias::{Left, Right};

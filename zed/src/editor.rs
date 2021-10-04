@@ -1,10 +1,8 @@
-pub mod buffer;
 pub mod display_map;
 mod element;
 pub mod movement;
 
 use crate::{
-    language::Language,
     project::ProjectPath,
     settings::Settings,
     theme::Theme,
@@ -13,7 +11,7 @@ use crate::{
     worktree::Worktree,
 };
 use anyhow::Result;
-pub use buffer::*;
+use buffer::*;
 use clock::ReplicaId;
 pub use display_map::DisplayPoint;
 use display_map::*;
@@ -249,6 +247,20 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::fold);
     cx.add_action(Editor::unfold);
     cx.add_action(Editor::fold_selected_ranges);
+}
+
+trait SelectionExt {
+    fn display_range(&self, map: &DisplayMapSnapshot) -> Range<DisplayPoint>;
+    fn spanned_rows(
+        &self,
+        include_end_if_at_line_start: bool,
+        map: &DisplayMapSnapshot,
+    ) -> SpannedRows;
+}
+
+struct SpannedRows {
+    buffer_rows: Range<u32>,
+    display_rows: Range<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -2699,6 +2711,42 @@ impl workspace::ItemView for Editor {
 
     fn has_conflict(&self, cx: &AppContext) -> bool {
         self.buffer.read(cx).has_conflict()
+    }
+}
+
+impl SelectionExt for Selection {
+    fn display_range(&self, map: &DisplayMapSnapshot) -> Range<DisplayPoint> {
+        let start = self.start.to_display_point(map, Bias::Left);
+        let end = self.end.to_display_point(map, Bias::Left);
+        if self.reversed {
+            end..start
+        } else {
+            start..end
+        }
+    }
+
+    fn spanned_rows(
+        &self,
+        include_end_if_at_line_start: bool,
+        map: &DisplayMapSnapshot,
+    ) -> SpannedRows {
+        let display_start = self.start.to_display_point(map, Bias::Left);
+        let mut display_end = self.end.to_display_point(map, Bias::Right);
+        if !include_end_if_at_line_start
+            && display_end.row() != map.max_point().row()
+            && display_start.row() != display_end.row()
+            && display_end.column() == 0
+        {
+            *display_end.row_mut() -= 1;
+        }
+
+        let (display_start, buffer_start) = map.prev_row_boundary(display_start);
+        let (display_end, buffer_end) = map.next_row_boundary(display_end);
+
+        SpannedRows {
+            buffer_rows: buffer_start.row..buffer_end.row + 1,
+            display_rows: display_start.row()..display_end.row() + 1,
+        }
     }
 }
 

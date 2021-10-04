@@ -1,18 +1,21 @@
 mod anchor;
+mod highlight_map;
+mod language;
 mod operation_queue;
 mod point;
+#[cfg(any(test, feature = "test-support"))]
+pub mod random_char_iter;
 pub mod rope;
 mod selection;
+mod syntax_theme;
 
-use crate::{
-    language::{Language, Tree},
-    settings::{HighlightId, HighlightMap},
-    util::Bias,
-};
 pub use anchor::*;
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
+pub use highlight_map::{HighlightId, HighlightMap};
+use language::Tree;
+pub use language::{Language, LanguageConfig};
 use lazy_static::lazy_static;
 use operation_queue::OperationQueue;
 use parking_lot::Mutex;
@@ -35,7 +38,8 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use sum_tree::{self, FilterCursor, SumTree};
+use sum_tree::{self, Bias, FilterCursor, SumTree};
+pub use syntax_theme::SyntaxTheme;
 use tree_sitter::{InputEdit, Parser, QueryCursor};
 use zrpc::proto;
 
@@ -90,16 +94,16 @@ impl BuildHasher for DeterministicState {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 type HashMap<K, V> = std::collections::HashMap<K, V, DeterministicState>;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 type HashSet<T> = std::collections::HashSet<T, DeterministicState>;
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 type HashMap<K, V> = std::collections::HashMap<K, V>;
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 type HashSet<T> = std::collections::HashSet<T>;
 
 thread_local! {
@@ -858,7 +862,7 @@ impl Buffer {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub fn is_parsing(&self) -> bool {
         self.parsing_in_background
     }
@@ -1957,6 +1961,170 @@ impl Buffer {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+impl Buffer {
+    fn random_byte_range(&mut self, start_offset: usize, rng: &mut impl rand::Rng) -> Range<usize> {
+        let end = self.clip_offset(rng.gen_range(start_offset..=self.len()), Bias::Right);
+        let start = self.clip_offset(rng.gen_range(start_offset..=end), Bias::Right);
+        start..end
+    }
+
+    pub fn randomly_edit<T>(
+        &mut self,
+        rng: &mut T,
+        old_range_count: usize,
+        cx: &mut ModelContext<Self>,
+    ) -> (Vec<Range<usize>>, String)
+    where
+        T: rand::Rng,
+    {
+        let mut old_ranges: Vec<Range<usize>> = Vec::new();
+        for _ in 0..old_range_count {
+            let last_end = old_ranges.last().map_or(0, |last_range| last_range.end + 1);
+            if last_end > self.len() {
+                break;
+            }
+            old_ranges.push(self.random_byte_range(last_end, rng));
+        }
+        let new_text_len = rng.gen_range(0..10);
+        let new_text: String = crate::random_char_iter::RandomCharIter::new(&mut *rng)
+            .take(new_text_len)
+            .collect();
+        log::info!(
+            "mutating buffer {} at {:?}: {:?}",
+            self.replica_id,
+            old_ranges,
+            new_text
+        );
+        self.edit(old_ranges.iter().cloned(), new_text.as_str(), cx);
+        (old_ranges, new_text)
+    }
+
+    pub fn randomly_mutate<T>(
+        &mut self,
+        rng: &mut T,
+        cx: &mut ModelContext<Self>,
+    ) -> (Vec<Range<usize>>, String)
+    where
+        T: rand::Rng,
+    {
+        use rand::prelude::*;
+
+        let (old_ranges, new_text) = self.randomly_edit(rng, 5, cx);
+
+        // Randomly add, remove or mutate selection sets.
+        let replica_selection_sets = &self
+            .selection_sets()
+            .map(|(set_id, _)| *set_id)
+            .filter(|set_id| self.replica_id == set_id.replica_id)
+            .collect::<Vec<_>>();
+        let set_id = replica_selection_sets.choose(rng);
+        if set_id.is_some() && rng.gen_bool(1.0 / 6.0) {
+            self.remove_selection_set(*set_id.unwrap(), cx).unwrap();
+        } else {
+            let mut ranges = Vec::new();
+            for _ in 0..5 {
+                ranges.push(self.random_byte_range(0, rng));
+            }
+            let new_selections = self.selections_from_ranges(ranges).unwrap();
+
+            if set_id.is_none() || rng.gen_bool(1.0 / 5.0) {
+                self.add_selection_set(new_selections, cx);
+            } else {
+                self.update_selection_set(*set_id.unwrap(), new_selections, cx)
+                    .unwrap();
+            }
+        }
+
+        (old_ranges, new_text)
+    }
+
+    pub fn randomly_undo_redo(&mut self, rng: &mut impl rand::Rng, cx: &mut ModelContext<Self>) {
+        use rand::prelude::*;
+
+        for _ in 0..rng.gen_range(1..=5) {
+            if let Some(transaction) = self.history.undo_stack.choose(rng).cloned() {
+                log::info!(
+                    "undoing buffer {} transaction {:?}",
+                    self.replica_id,
+                    transaction
+                );
+                self.undo_or_redo(transaction, cx).unwrap();
+            }
+        }
+    }
+
+    fn selections_from_ranges<I>(&self, ranges: I) -> Result<Vec<Selection>>
+    where
+        I: IntoIterator<Item = Range<usize>>,
+    {
+        use std::sync::atomic::{self, AtomicUsize};
+
+        static NEXT_SELECTION_ID: AtomicUsize = AtomicUsize::new(0);
+
+        let mut ranges = ranges.into_iter().collect::<Vec<_>>();
+        ranges.sort_unstable_by_key(|range| range.start);
+
+        let mut selections = Vec::with_capacity(ranges.len());
+        for range in ranges {
+            if range.start > range.end {
+                selections.push(Selection {
+                    id: NEXT_SELECTION_ID.fetch_add(1, atomic::Ordering::SeqCst),
+                    start: self.anchor_before(range.end),
+                    end: self.anchor_before(range.start),
+                    reversed: true,
+                    goal: SelectionGoal::None,
+                });
+            } else {
+                selections.push(Selection {
+                    id: NEXT_SELECTION_ID.fetch_add(1, atomic::Ordering::SeqCst),
+                    start: self.anchor_after(range.start),
+                    end: self.anchor_before(range.end),
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                });
+            }
+        }
+        Ok(selections)
+    }
+
+    pub fn selection_ranges<'a>(&'a self, set_id: SelectionSetId) -> Result<Vec<Range<usize>>> {
+        Ok(self
+            .selection_set(set_id)?
+            .selections
+            .iter()
+            .map(move |selection| {
+                let start = selection.start.to_offset(self);
+                let end = selection.end.to_offset(self);
+                if selection.reversed {
+                    end..start
+                } else {
+                    start..end
+                }
+            })
+            .collect())
+    }
+
+    pub fn all_selection_ranges<'a>(
+        &'a self,
+    ) -> impl 'a + Iterator<Item = (SelectionSetId, Vec<Range<usize>>)> {
+        self.selections
+            .keys()
+            .map(move |set_id| (*set_id, self.selection_ranges(*set_id).unwrap()))
+    }
+
+    pub fn enclosing_bracket_point_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Option<(Range<Point>, Range<Point>)> {
+        self.enclosing_bracket_ranges(range).map(|(start, end)| {
+            let point_start = start.start.to_point(self)..start.end.to_point(self);
+            let point_end = end.start.to_point(self)..end.end.to_point(self);
+            (point_start, point_end)
+        })
+    }
+}
+
 impl Clone for Buffer {
     fn clone(&self) -> Self {
         Self {
@@ -2947,26 +3115,12 @@ impl ToPoint for usize {
 
 #[cfg(test)]
 mod tests {
+    use crate::random_char_iter::RandomCharIter;
+
     use super::*;
-    use crate::{
-        fs::RealFs,
-        language::LanguageRegistry,
-        rpc,
-        test::temp_tree,
-        util::RandomCharIter,
-        worktree::{Worktree, WorktreeHandle as _},
-    };
     use gpui::ModelHandle;
     use rand::prelude::*;
-    use serde_json::json;
-    use std::{
-        cell::RefCell,
-        cmp::Ordering,
-        env, fs, mem,
-        path::Path,
-        rc::Rc,
-        sync::atomic::{self, AtomicUsize},
-    };
+    use std::{cell::RefCell, cmp::Ordering, env, mem, rc::Rc};
 
     #[gpui::test]
     fn test_edit(cx: &mut gpui::MutableAppContext) {
@@ -3411,228 +3565,6 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_is_dirty(mut cx: gpui::TestAppContext) {
-        let dir = temp_tree(json!({
-            "file1": "abc",
-            "file2": "def",
-            "file3": "ghi",
-        }));
-        let tree = Worktree::open_local(
-            rpc::Client::new(),
-            dir.path(),
-            Arc::new(RealFs),
-            Default::default(),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-        tree.flush_fs_events(&cx).await;
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-
-        let buffer1 = tree
-            .update(&mut cx, |tree, cx| tree.open_buffer("file1", cx))
-            .await
-            .unwrap();
-        let events = Rc::new(RefCell::new(Vec::new()));
-
-        // initially, the buffer isn't dirty.
-        buffer1.update(&mut cx, |buffer, cx| {
-            cx.subscribe(&buffer1, {
-                let events = events.clone();
-                move |_, _, event, _| events.borrow_mut().push(event.clone())
-            })
-            .detach();
-
-            assert!(!buffer.is_dirty());
-            assert!(events.borrow().is_empty());
-
-            buffer.edit(vec![1..2], "", cx);
-        });
-
-        // after the first edit, the buffer is dirty, and emits a dirtied event.
-        buffer1.update(&mut cx, |buffer, cx| {
-            assert!(buffer.text() == "ac");
-            assert!(buffer.is_dirty());
-            assert_eq!(*events.borrow(), &[Event::Edited, Event::Dirtied]);
-            events.borrow_mut().clear();
-            buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), None, cx);
-        });
-
-        // after saving, the buffer is not dirty, and emits a saved event.
-        buffer1.update(&mut cx, |buffer, cx| {
-            assert!(!buffer.is_dirty());
-            assert_eq!(*events.borrow(), &[Event::Saved]);
-            events.borrow_mut().clear();
-
-            buffer.edit(vec![1..1], "B", cx);
-            buffer.edit(vec![2..2], "D", cx);
-        });
-
-        // after editing again, the buffer is dirty, and emits another dirty event.
-        buffer1.update(&mut cx, |buffer, cx| {
-            assert!(buffer.text() == "aBDc");
-            assert!(buffer.is_dirty());
-            assert_eq!(
-                *events.borrow(),
-                &[Event::Edited, Event::Dirtied, Event::Edited],
-            );
-            events.borrow_mut().clear();
-
-            // TODO - currently, after restoring the buffer to its
-            // previously-saved state, the is still considered dirty.
-            buffer.edit(vec![1..3], "", cx);
-            assert!(buffer.text() == "ac");
-            assert!(buffer.is_dirty());
-        });
-
-        assert_eq!(*events.borrow(), &[Event::Edited]);
-
-        // When a file is deleted, the buffer is considered dirty.
-        let events = Rc::new(RefCell::new(Vec::new()));
-        let buffer2 = tree
-            .update(&mut cx, |tree, cx| tree.open_buffer("file2", cx))
-            .await
-            .unwrap();
-        buffer2.update(&mut cx, |_, cx| {
-            cx.subscribe(&buffer2, {
-                let events = events.clone();
-                move |_, _, event, _| events.borrow_mut().push(event.clone())
-            })
-            .detach();
-        });
-
-        fs::remove_file(dir.path().join("file2")).unwrap();
-        buffer2.condition(&cx, |b, _| b.is_dirty()).await;
-        assert_eq!(
-            *events.borrow(),
-            &[Event::Dirtied, Event::FileHandleChanged]
-        );
-
-        // When a file is already dirty when deleted, we don't emit a Dirtied event.
-        let events = Rc::new(RefCell::new(Vec::new()));
-        let buffer3 = tree
-            .update(&mut cx, |tree, cx| tree.open_buffer("file3", cx))
-            .await
-            .unwrap();
-        buffer3.update(&mut cx, |_, cx| {
-            cx.subscribe(&buffer3, {
-                let events = events.clone();
-                move |_, _, event, _| events.borrow_mut().push(event.clone())
-            })
-            .detach();
-        });
-
-        tree.flush_fs_events(&cx).await;
-        buffer3.update(&mut cx, |buffer, cx| {
-            buffer.edit(Some(0..0), "x", cx);
-        });
-        events.borrow_mut().clear();
-        fs::remove_file(dir.path().join("file3")).unwrap();
-        buffer3
-            .condition(&cx, |_, _| !events.borrow().is_empty())
-            .await;
-        assert_eq!(*events.borrow(), &[Event::FileHandleChanged]);
-        cx.read(|cx| assert!(buffer3.read(cx).is_dirty()));
-    }
-
-    #[gpui::test]
-    async fn test_file_changes_on_disk(mut cx: gpui::TestAppContext) {
-        let initial_contents = "aaa\nbbbbb\nc\n";
-        let dir = temp_tree(json!({ "the-file": initial_contents }));
-        let tree = Worktree::open_local(
-            rpc::Client::new(),
-            dir.path(),
-            Arc::new(RealFs),
-            Default::default(),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-
-        let abs_path = dir.path().join("the-file");
-        let buffer = tree
-            .update(&mut cx, |tree, cx| {
-                tree.open_buffer(Path::new("the-file"), cx)
-            })
-            .await
-            .unwrap();
-
-        // Add a cursor at the start of each row.
-        let selection_set_id = buffer.update(&mut cx, |buffer, cx| {
-            assert!(!buffer.is_dirty());
-            buffer.add_selection_set(
-                (0..3)
-                    .map(|row| {
-                        let anchor = buffer.anchor_at(Point::new(row, 0), Bias::Right);
-                        Selection {
-                            id: row as usize,
-                            start: anchor.clone(),
-                            end: anchor,
-                            reversed: false,
-                            goal: SelectionGoal::None,
-                        }
-                    })
-                    .collect::<Vec<_>>(),
-                cx,
-            )
-        });
-
-        // Change the file on disk, adding two new lines of text, and removing
-        // one line.
-        buffer.read_with(&cx, |buffer, _| {
-            assert!(!buffer.is_dirty());
-            assert!(!buffer.has_conflict());
-        });
-        let new_contents = "AAAA\naaa\nBB\nbbbbb\n";
-        fs::write(&abs_path, new_contents).unwrap();
-
-        // Because the buffer was not modified, it is reloaded from disk. Its
-        // contents are edited according to the diff between the old and new
-        // file contents.
-        buffer
-            .condition(&cx, |buffer, _| buffer.text() != initial_contents)
-            .await;
-
-        buffer.update(&mut cx, |buffer, _| {
-            assert_eq!(buffer.text(), new_contents);
-            assert!(!buffer.is_dirty());
-            assert!(!buffer.has_conflict());
-
-            let set = buffer.selection_set(selection_set_id).unwrap();
-            let cursor_positions = set
-                .selections
-                .iter()
-                .map(|selection| {
-                    assert_eq!(selection.start, selection.end);
-                    selection.start.to_point(&*buffer)
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(
-                cursor_positions,
-                &[Point::new(1, 0), Point::new(3, 0), Point::new(4, 0),]
-            );
-        });
-
-        // Modify the buffer
-        buffer.update(&mut cx, |buffer, cx| {
-            buffer.edit(vec![0..0], " ", cx);
-            assert!(buffer.is_dirty());
-        });
-
-        // Change the file on disk again, adding blank lines to the beginning.
-        fs::write(&abs_path, "\n\n\nAAAA\naaa\nBB\nbbbbb\n").unwrap();
-
-        // Becaues the buffer is modified, it doesn't reload from disk, but is
-        // marked as having a conflict.
-        buffer
-            .condition(&cx, |buffer, _| buffer.has_conflict())
-            .await;
-    }
-
-    #[gpui::test]
     async fn test_apply_diff(mut cx: gpui::TestAppContext) {
         let text = "a\nbb\nccc\ndddd\neeeee\nffffff\n";
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
@@ -3800,8 +3732,6 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     fn test_random_concurrent_edits(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
-        use crate::test::Network;
-
         let peers = env::var("PEERS")
             .map(|i| i.parse().expect("invalid `PEERS` variable"))
             .unwrap_or(5);
@@ -3889,13 +3819,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_reparse(mut cx: gpui::TestAppContext) {
-        let languages = LanguageRegistry::new();
-        let rust_lang = languages.select_language("test.rs");
-        assert!(rust_lang.is_some());
-
+        let rust_lang = rust_lang();
         let buffer = cx.add_model(|cx| {
             let text = "fn a() {}".into();
-            Buffer::from_history(0, History::new(text), None, rust_lang.cloned(), cx)
+            Buffer::from_history(0, History::new(text), None, Some(rust_lang.clone()), cx)
         });
 
         // Wait for the initial text to parse
@@ -4031,10 +3958,7 @@ mod tests {
     async fn test_enclosing_bracket_ranges(mut cx: gpui::TestAppContext) {
         use unindent::Unindent as _;
 
-        let languages = LanguageRegistry::new();
-        let rust_lang = languages.select_language("test.rs");
-        assert!(rust_lang.is_some());
-
+        let rust_lang = rust_lang();
         let buffer = cx.add_model(|cx| {
             let text = "
                 mod x {
@@ -4045,7 +3969,7 @@ mod tests {
             "
             .unindent()
             .into();
-            Buffer::from_history(0, History::new(text), None, rust_lang.cloned(), cx)
+            Buffer::from_history(0, History::new(text), None, Some(rust_lang.clone()), cx)
         });
         buffer
             .condition(&cx, |buffer, _| !buffer.is_parsing())
@@ -4075,158 +3999,98 @@ mod tests {
         });
     }
 
-    impl Buffer {
-        fn random_byte_range(&mut self, start_offset: usize, rng: &mut impl Rng) -> Range<usize> {
-            let end = self.clip_offset(rng.gen_range(start_offset..=self.len()), Bias::Right);
-            let start = self.clip_offset(rng.gen_range(start_offset..=end), Bias::Right);
-            start..end
-        }
+    #[derive(Clone)]
+    struct Envelope<T: Clone> {
+        message: T,
+        sender: ReplicaId,
+    }
 
-        pub fn randomly_edit<T>(
-            &mut self,
-            rng: &mut T,
-            old_range_count: usize,
-            cx: &mut ModelContext<Self>,
-        ) -> (Vec<Range<usize>>, String)
-        where
-            T: Rng,
-        {
-            let mut old_ranges: Vec<Range<usize>> = Vec::new();
-            for _ in 0..old_range_count {
-                let last_end = old_ranges.last().map_or(0, |last_range| last_range.end + 1);
-                if last_end > self.len() {
-                    break;
-                }
-                old_ranges.push(self.random_byte_range(last_end, rng));
-            }
-            let new_text_len = rng.gen_range(0..10);
-            let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
-            log::info!(
-                "mutating buffer {} at {:?}: {:?}",
-                self.replica_id,
-                old_ranges,
-                new_text
-            );
-            self.edit(old_ranges.iter().cloned(), new_text.as_str(), cx);
-            (old_ranges, new_text)
-        }
+    struct Network<T: Clone, R: rand::Rng> {
+        inboxes: std::collections::BTreeMap<ReplicaId, Vec<Envelope<T>>>,
+        all_messages: Vec<T>,
+        rng: R,
+    }
 
-        pub fn randomly_mutate<T>(
-            &mut self,
-            rng: &mut T,
-            cx: &mut ModelContext<Self>,
-        ) -> (Vec<Range<usize>>, String)
-        where
-            T: Rng,
-        {
-            let (old_ranges, new_text) = self.randomly_edit(rng, 5, cx);
-
-            // Randomly add, remove or mutate selection sets.
-            let replica_selection_sets = &self
-                .selection_sets()
-                .map(|(set_id, _)| *set_id)
-                .filter(|set_id| self.replica_id == set_id.replica_id)
-                .collect::<Vec<_>>();
-            let set_id = replica_selection_sets.choose(rng);
-            if set_id.is_some() && rng.gen_bool(1.0 / 6.0) {
-                self.remove_selection_set(*set_id.unwrap(), cx).unwrap();
-            } else {
-                let mut ranges = Vec::new();
-                for _ in 0..5 {
-                    ranges.push(self.random_byte_range(0, rng));
-                }
-                let new_selections = self.selections_from_ranges(ranges).unwrap();
-
-                if set_id.is_none() || rng.gen_bool(1.0 / 5.0) {
-                    self.add_selection_set(new_selections, cx);
-                } else {
-                    self.update_selection_set(*set_id.unwrap(), new_selections, cx)
-                        .unwrap();
-                }
-            }
-
-            (old_ranges, new_text)
-        }
-
-        pub fn randomly_undo_redo(&mut self, rng: &mut impl Rng, cx: &mut ModelContext<Self>) {
-            for _ in 0..rng.gen_range(1..=5) {
-                if let Some(transaction) = self.history.undo_stack.choose(rng).cloned() {
-                    log::info!(
-                        "undoing buffer {} transaction {:?}",
-                        self.replica_id,
-                        transaction
-                    );
-                    self.undo_or_redo(transaction, cx).unwrap();
-                }
+    impl<T: Clone, R: rand::Rng> Network<T, R> {
+        fn new(rng: R) -> Self {
+            Network {
+                inboxes: Default::default(),
+                all_messages: Vec::new(),
+                rng,
             }
         }
 
-        fn selections_from_ranges<I>(&self, ranges: I) -> Result<Vec<Selection>>
-        where
-            I: IntoIterator<Item = Range<usize>>,
-        {
-            static NEXT_SELECTION_ID: AtomicUsize = AtomicUsize::new(0);
-
-            let mut ranges = ranges.into_iter().collect::<Vec<_>>();
-            ranges.sort_unstable_by_key(|range| range.start);
-
-            let mut selections = Vec::with_capacity(ranges.len());
-            for range in ranges {
-                if range.start > range.end {
-                    selections.push(Selection {
-                        id: NEXT_SELECTION_ID.fetch_add(1, atomic::Ordering::SeqCst),
-                        start: self.anchor_before(range.end),
-                        end: self.anchor_before(range.start),
-                        reversed: true,
-                        goal: SelectionGoal::None,
-                    });
-                } else {
-                    selections.push(Selection {
-                        id: NEXT_SELECTION_ID.fetch_add(1, atomic::Ordering::SeqCst),
-                        start: self.anchor_after(range.start),
-                        end: self.anchor_before(range.end),
-                        reversed: false,
-                        goal: SelectionGoal::None,
-                    });
-                }
-            }
-            Ok(selections)
+        fn add_peer(&mut self, id: ReplicaId) {
+            self.inboxes.insert(id, Vec::new());
         }
 
-        pub fn selection_ranges<'a>(&'a self, set_id: SelectionSetId) -> Result<Vec<Range<usize>>> {
-            Ok(self
-                .selection_set(set_id)?
-                .selections
-                .iter()
-                .map(move |selection| {
-                    let start = selection.start.to_offset(self);
-                    let end = selection.end.to_offset(self);
-                    if selection.reversed {
-                        end..start
-                    } else {
-                        start..end
+        fn is_idle(&self) -> bool {
+            self.inboxes.values().all(|i| i.is_empty())
+        }
+
+        fn broadcast(&mut self, sender: ReplicaId, messages: Vec<T>) {
+            for (replica, inbox) in self.inboxes.iter_mut() {
+                if *replica != sender {
+                    for message in &messages {
+                        let min_index = inbox
+                            .iter()
+                            .enumerate()
+                            .rev()
+                            .find_map(|(index, envelope)| {
+                                if sender == envelope.sender {
+                                    Some(index + 1)
+                                } else {
+                                    None
+                                }
+                            })
+                            .unwrap_or(0);
+
+                        // Insert one or more duplicates of this message *after* the previous
+                        // message delivered by this replica.
+                        for _ in 0..self.rng.gen_range(1..4) {
+                            let insertion_index = self.rng.gen_range(min_index..inbox.len() + 1);
+                            inbox.insert(
+                                insertion_index,
+                                Envelope {
+                                    message: message.clone(),
+                                    sender,
+                                },
+                            );
+                        }
                     }
-                })
-                .collect())
+                }
+            }
+            self.all_messages.extend(messages);
         }
 
-        pub fn all_selection_ranges<'a>(
-            &'a self,
-        ) -> impl 'a + Iterator<Item = (SelectionSetId, Vec<Range<usize>>)> {
-            self.selections
-                .keys()
-                .map(move |set_id| (*set_id, self.selection_ranges(*set_id).unwrap()))
+        fn has_unreceived(&self, receiver: ReplicaId) -> bool {
+            !self.inboxes[&receiver].is_empty()
         }
 
-        pub fn enclosing_bracket_point_ranges<T: ToOffset>(
-            &self,
-            range: Range<T>,
-        ) -> Option<(Range<Point>, Range<Point>)> {
-            self.enclosing_bracket_ranges(range).map(|(start, end)| {
-                let point_start = start.start.to_point(self)..start.end.to_point(self);
-                let point_end = end.start.to_point(self)..end.end.to_point(self);
-                (point_start, point_end)
-            })
+        fn receive(&mut self, receiver: ReplicaId) -> Vec<T> {
+            let inbox = self.inboxes.get_mut(&receiver).unwrap();
+            let count = self.rng.gen_range(0..inbox.len() + 1);
+            inbox
+                .drain(0..count)
+                .map(|envelope| envelope.message)
+                .collect()
         }
+    }
+
+    fn rust_lang() -> Arc<Language> {
+        let lang = tree_sitter_rust::language();
+        let brackets_query = r#"
+        ("{" @open "}" @close)
+        "#;
+        Arc::new(Language {
+            config: LanguageConfig {
+                name: "Rust".to_string(),
+                path_suffixes: vec!["rs".to_string()],
+            },
+            grammar: tree_sitter_rust::language(),
+            highlight_query: tree_sitter::Query::new(lang.clone(), "").unwrap(),
+            brackets_query: tree_sitter::Query::new(lang.clone(), brackets_query).unwrap(),
+            highlight_map: Default::default(),
+        })
     }
 }

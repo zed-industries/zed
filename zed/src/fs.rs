@@ -1,5 +1,5 @@
-use super::editor::Rope;
 use anyhow::{anyhow, Result};
+use buffer::Rope;
 use fsevent::EventStream;
 use futures::{Stream, StreamExt};
 use postage::prelude::Sink as _;

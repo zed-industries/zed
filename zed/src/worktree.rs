@@ -2,7 +2,6 @@ mod ignore;
 
 use self::ignore::IgnoreStack;
 use crate::{
-    editor::{self, buffer, Buffer, History, Operation, Rope},
     fs::{self, Fs},
     fuzzy::CharBag,
     language::LanguageRegistry,
@@ -11,6 +10,7 @@ use crate::{
 };
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Result};
+use buffer::{self, Buffer, History, Operation, Rope};
 use clock::ReplicaId;
 use futures::{Stream, StreamExt};
 use gpui::{
@@ -630,14 +630,14 @@ impl Worktree {
                             file_changed = true;
                         } else if !file.is_deleted() {
                             if buffer_is_clean {
-                                cx.emit(editor::buffer::Event::Dirtied);
+                                cx.emit(buffer::Event::Dirtied);
                             }
                             file.set_entry_id(None);
                             file_changed = true;
                         }
 
                         if file_changed {
-                            cx.emit(editor::buffer::Event::FileHandleChanged);
+                            cx.emit(buffer::Event::FileHandleChanged);
                         }
                     }
                 });
@@ -2839,6 +2839,8 @@ mod tests {
     use fs::RealFs;
     use rand::prelude::*;
     use serde_json::json;
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use std::time::UNIX_EPOCH;
     use std::{env, fmt::Write, time::SystemTime};
 
@@ -3216,6 +3218,240 @@ mod tests {
 
         cx.update(move |_| drop(worktree));
         server.receive::<proto::CloseWorktree>().await.unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_buffer_is_dirty(mut cx: gpui::TestAppContext) {
+        use std::fs;
+
+        let dir = temp_tree(json!({
+            "file1": "abc",
+            "file2": "def",
+            "file3": "ghi",
+        }));
+        let tree = Worktree::open_local(
+            rpc::Client::new(),
+            dir.path(),
+            Arc::new(RealFs),
+            Default::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        tree.flush_fs_events(&cx).await;
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+
+        let buffer1 = tree
+            .update(&mut cx, |tree, cx| tree.open_buffer("file1", cx))
+            .await
+            .unwrap();
+        let events = Rc::new(RefCell::new(Vec::new()));
+
+        // initially, the buffer isn't dirty.
+        buffer1.update(&mut cx, |buffer, cx| {
+            cx.subscribe(&buffer1, {
+                let events = events.clone();
+                move |_, _, event, _| events.borrow_mut().push(event.clone())
+            })
+            .detach();
+
+            assert!(!buffer.is_dirty());
+            assert!(events.borrow().is_empty());
+
+            buffer.edit(vec![1..2], "", cx);
+        });
+
+        // after the first edit, the buffer is dirty, and emits a dirtied event.
+        buffer1.update(&mut cx, |buffer, cx| {
+            assert!(buffer.text() == "ac");
+            assert!(buffer.is_dirty());
+            assert_eq!(
+                *events.borrow(),
+                &[buffer::Event::Edited, buffer::Event::Dirtied]
+            );
+            events.borrow_mut().clear();
+            buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), None, cx);
+        });
+
+        // after saving, the buffer is not dirty, and emits a saved event.
+        buffer1.update(&mut cx, |buffer, cx| {
+            assert!(!buffer.is_dirty());
+            assert_eq!(*events.borrow(), &[buffer::Event::Saved]);
+            events.borrow_mut().clear();
+
+            buffer.edit(vec![1..1], "B", cx);
+            buffer.edit(vec![2..2], "D", cx);
+        });
+
+        // after editing again, the buffer is dirty, and emits another dirty event.
+        buffer1.update(&mut cx, |buffer, cx| {
+            assert!(buffer.text() == "aBDc");
+            assert!(buffer.is_dirty());
+            assert_eq!(
+                *events.borrow(),
+                &[
+                    buffer::Event::Edited,
+                    buffer::Event::Dirtied,
+                    buffer::Event::Edited
+                ],
+            );
+            events.borrow_mut().clear();
+
+            // TODO - currently, after restoring the buffer to its
+            // previously-saved state, the is still considered dirty.
+            buffer.edit(vec![1..3], "", cx);
+            assert!(buffer.text() == "ac");
+            assert!(buffer.is_dirty());
+        });
+
+        assert_eq!(*events.borrow(), &[buffer::Event::Edited]);
+
+        // When a file is deleted, the buffer is considered dirty.
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let buffer2 = tree
+            .update(&mut cx, |tree, cx| tree.open_buffer("file2", cx))
+            .await
+            .unwrap();
+        buffer2.update(&mut cx, |_, cx| {
+            cx.subscribe(&buffer2, {
+                let events = events.clone();
+                move |_, _, event, _| events.borrow_mut().push(event.clone())
+            })
+            .detach();
+        });
+
+        fs::remove_file(dir.path().join("file2")).unwrap();
+        buffer2.condition(&cx, |b, _| b.is_dirty()).await;
+        assert_eq!(
+            *events.borrow(),
+            &[buffer::Event::Dirtied, buffer::Event::FileHandleChanged]
+        );
+
+        // When a file is already dirty when deleted, we don't emit a Dirtied event.
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let buffer3 = tree
+            .update(&mut cx, |tree, cx| tree.open_buffer("file3", cx))
+            .await
+            .unwrap();
+        buffer3.update(&mut cx, |_, cx| {
+            cx.subscribe(&buffer3, {
+                let events = events.clone();
+                move |_, _, event, _| events.borrow_mut().push(event.clone())
+            })
+            .detach();
+        });
+
+        tree.flush_fs_events(&cx).await;
+        buffer3.update(&mut cx, |buffer, cx| {
+            buffer.edit(Some(0..0), "x", cx);
+        });
+        events.borrow_mut().clear();
+        fs::remove_file(dir.path().join("file3")).unwrap();
+        buffer3
+            .condition(&cx, |_, _| !events.borrow().is_empty())
+            .await;
+        assert_eq!(*events.borrow(), &[buffer::Event::FileHandleChanged]);
+        cx.read(|cx| assert!(buffer3.read(cx).is_dirty()));
+    }
+
+    #[gpui::test]
+    async fn test_buffer_file_changes_on_disk(mut cx: gpui::TestAppContext) {
+        use buffer::{Point, Selection, SelectionGoal, ToPoint};
+        use std::fs;
+
+        let initial_contents = "aaa\nbbbbb\nc\n";
+        let dir = temp_tree(json!({ "the-file": initial_contents }));
+        let tree = Worktree::open_local(
+            rpc::Client::new(),
+            dir.path(),
+            Arc::new(RealFs),
+            Default::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+
+        let abs_path = dir.path().join("the-file");
+        let buffer = tree
+            .update(&mut cx, |tree, cx| {
+                tree.open_buffer(Path::new("the-file"), cx)
+            })
+            .await
+            .unwrap();
+
+        // Add a cursor at the start of each row.
+        let selection_set_id = buffer.update(&mut cx, |buffer, cx| {
+            assert!(!buffer.is_dirty());
+            buffer.add_selection_set(
+                (0..3)
+                    .map(|row| {
+                        let anchor = buffer.anchor_at(Point::new(row, 0), Bias::Right);
+                        Selection {
+                            id: row as usize,
+                            start: anchor.clone(),
+                            end: anchor,
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        }
+                    })
+                    .collect::<Vec<_>>(),
+                cx,
+            )
+        });
+
+        // Change the file on disk, adding two new lines of text, and removing
+        // one line.
+        buffer.read_with(&cx, |buffer, _| {
+            assert!(!buffer.is_dirty());
+            assert!(!buffer.has_conflict());
+        });
+        let new_contents = "AAAA\naaa\nBB\nbbbbb\n";
+        fs::write(&abs_path, new_contents).unwrap();
+
+        // Because the buffer was not modified, it is reloaded from disk. Its
+        // contents are edited according to the diff between the old and new
+        // file contents.
+        buffer
+            .condition(&cx, |buffer, _| buffer.text() != initial_contents)
+            .await;
+
+        buffer.update(&mut cx, |buffer, _| {
+            assert_eq!(buffer.text(), new_contents);
+            assert!(!buffer.is_dirty());
+            assert!(!buffer.has_conflict());
+
+            let set = buffer.selection_set(selection_set_id).unwrap();
+            let cursor_positions = set
+                .selections
+                .iter()
+                .map(|selection| {
+                    assert_eq!(selection.start, selection.end);
+                    selection.start.to_point(&*buffer)
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                cursor_positions,
+                &[Point::new(1, 0), Point::new(3, 0), Point::new(4, 0),]
+            );
+        });
+
+        // Modify the buffer
+        buffer.update(&mut cx, |buffer, cx| {
+            buffer.edit(vec![0..0], " ", cx);
+            assert!(buffer.is_dirty());
+        });
+
+        // Change the file on disk again, adding blank lines to the beginning.
+        fs::write(&abs_path, "\n\n\nAAAA\naaa\nBB\nbbbbb\n").unwrap();
+
+        // Becaues the buffer is modified, it doesn't reload from disk, but is
+        // marked as having a conflict.
+        buffer
+            .condition(&cx, |buffer, _| buffer.has_conflict())
+            .await;
     }
 
     #[gpui::test(iterations = 100)]

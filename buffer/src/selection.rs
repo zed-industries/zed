@@ -1,7 +1,4 @@
-use crate::editor::{
-    buffer::{Anchor, Buffer, Point, ToOffset as _, ToPoint as _},
-    Bias, DisplayMapSnapshot, DisplayPoint,
-};
+use crate::{Anchor, Buffer, Point, ToOffset as _, ToPoint as _};
 use std::{cmp::Ordering, mem, ops::Range};
 
 pub type SelectionSetId = clock::Lamport;
@@ -12,11 +9,6 @@ pub enum SelectionGoal {
     None,
     Column(u32),
     ColumnRange { start: u32, end: u32 },
-}
-
-pub struct SpannedRows {
-    pub buffer_rows: Range<u32>,
-    pub display_rows: Range<u32>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -78,40 +70,6 @@ impl Selection {
             end..start
         } else {
             start..end
-        }
-    }
-
-    pub fn display_range(&self, map: &DisplayMapSnapshot) -> Range<DisplayPoint> {
-        let start = self.start.to_display_point(map, Bias::Left);
-        let end = self.end.to_display_point(map, Bias::Left);
-        if self.reversed {
-            end..start
-        } else {
-            start..end
-        }
-    }
-
-    pub fn spanned_rows(
-        &self,
-        include_end_if_at_line_start: bool,
-        map: &DisplayMapSnapshot,
-    ) -> SpannedRows {
-        let display_start = self.start.to_display_point(map, Bias::Left);
-        let mut display_end = self.end.to_display_point(map, Bias::Right);
-        if !include_end_if_at_line_start
-            && display_end.row() != map.max_point().row()
-            && display_start.row() != display_end.row()
-            && display_end.column() == 0
-        {
-            *display_end.row_mut() -= 1;
-        }
-
-        let (display_start, buffer_start) = map.prev_row_boundary(display_start);
-        let (display_end, buffer_end) = map.next_row_boundary(display_end);
-
-        SpannedRows {
-            buffer_rows: buffer_start.row..buffer_end.row + 1,
-            display_rows: display_start.row()..display_end.row() + 1,
         }
     }
 }

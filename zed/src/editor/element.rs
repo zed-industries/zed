@@ -2,7 +2,7 @@ use super::{
     DisplayPoint, Editor, EditorMode, EditorStyle, Insert, Scroll, Select, SelectPhase, Snapshot,
     MAX_LINE_LEN,
 };
-use crate::theme::HighlightId;
+use buffer::HighlightId;
 use clock::ReplicaId;
 use gpui::{
     color::Color,

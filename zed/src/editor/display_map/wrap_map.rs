@@ -2,7 +2,8 @@ use super::{
     fold_map,
     tab_map::{self, Edit as TabEdit, Snapshot as TabSnapshot, TabPoint, TextSummary},
 };
-use crate::{editor::Point, settings::HighlightId, util::Bias};
+use crate::{editor::Point, util::Bias};
+use buffer::HighlightId;
 use gpui::{fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
