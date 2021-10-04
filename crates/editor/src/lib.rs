@@ -5,8 +5,6 @@ pub mod movement;
 #[cfg(test)]
 mod test;
 
-// use crate::{project::ProjectPath, settings::Settings, theme::Theme, workspace};
-
 use buffer::*;
 use clock::ReplicaId;
 pub use display_map::DisplayPoint;
@@ -2451,36 +2449,6 @@ impl Snapshot {
 }
 
 impl EditorStyle {
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn test(font_cache: &gpui::FontCache) -> Self {
-        let font_family_name = Arc::from("Monaco");
-        let font_properties = Default::default();
-        let font_family_id = font_cache.load_family(&[&font_family_name]).unwrap();
-        let font_id = font_cache
-            .select_font(font_family_id, &font_properties)
-            .unwrap();
-        Self {
-            text: TextStyle {
-                font_family_name,
-                font_family_id,
-                font_id,
-                font_size: 14.,
-                color: Color::from_u32(0xff0000ff),
-                font_properties,
-                underline: false,
-            },
-            placeholder_text: None,
-            background: Default::default(),
-            gutter_background: Default::default(),
-            active_line_background: Default::default(),
-            line_number: Default::default(),
-            line_number_active: Default::default(),
-            selection: Default::default(),
-            guest_selections: Default::default(),
-            syntax: Default::default(),
-        }
-    }
-
     fn placeholder_text(&self) -> &TextStyle {
         self.placeholder_text.as_ref().unwrap_or(&self.text)
     }
@@ -2491,7 +2459,35 @@ impl EditorSettings {
     pub fn test(cx: &AppContext) -> Self {
         Self {
             tab_size: 4,
-            style: EditorStyle::test(cx.font_cache()),
+            style: {
+                let font_cache: &gpui::FontCache = cx.font_cache();
+                let font_family_name = Arc::from("Monaco");
+                let font_properties = Default::default();
+                let font_family_id = font_cache.load_family(&[&font_family_name]).unwrap();
+                let font_id = font_cache
+                    .select_font(font_family_id, &font_properties)
+                    .unwrap();
+                EditorStyle {
+                    text: TextStyle {
+                        font_family_name,
+                        font_family_id,
+                        font_id,
+                        font_size: 14.,
+                        color: Color::from_u32(0xff0000ff),
+                        font_properties,
+                        underline: false,
+                    },
+                    placeholder_text: None,
+                    background: Default::default(),
+                    gutter_background: Default::default(),
+                    active_line_background: Default::default(),
+                    line_number: Default::default(),
+                    line_number_active: Default::default(),
+                    selection: Default::default(),
+                    guest_selections: Default::default(),
+                    syntax: Default::default(),
+                }
+            },
         }
     }
 }

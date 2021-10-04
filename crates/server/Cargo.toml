@@ -13,6 +13,8 @@ name = "seed"
 required-features = ["seed-support"]
 
 [dependencies]
+rpc = { path = "../rpc" }
+
 anyhow = "1.0.40"
 async-std = { version = "1.8.0", features = ["attributes"] }
 async-trait = "0.1.50"
@@ -41,7 +43,6 @@ tide = "0.16.0"
 tide-compress = "0.9.0"
 time = "0.2"
 toml = "0.5.8"
-rpc = { path = "../rpc" }
 
 [dependencies.async-sqlx-session]
 version = "0.3.0"
@@ -54,9 +55,10 @@ features = ["runtime-async-std-rustls", "postgres", "time", "uuid"]
 
 [dev-dependencies]
 gpui = { path = "../gpui" }
+zed = { path = "../zed", features = ["test-support"] }
+
 lazy_static = "1.4"
 serde_json = { version = "1.0.64", features = ["preserve_order"] }
-zed = { path = "../zed", features = ["test-support"] }
 
 [features]
 seed-support = ["lipsum"]

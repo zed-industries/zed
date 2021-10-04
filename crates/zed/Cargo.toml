@@ -24,21 +24,27 @@ test-support = [
 ]
 
 [dependencies]
+buffer = { path = "../buffer" }
+clock = { path = "../clock" }
+fsevent = { path = "../fsevent" }
+fuzzy = { path = "../fuzzy" }
+editor = { path = "../editor" }
+gpui = { path = "../gpui" }
+rpc = { path = "../rpc" }
+rpc_client = { path = "../rpc_client" }
+sum_tree = { path = "../sum_tree" }
+util = { path = "../util" }
+worktree = { path = "../worktree" }
+
 anyhow = "1.0.38"
 async-recursion = "0.3"
 async-trait = "0.1"
 async-tungstenite = { version = "0.14", features = ["async-tls"] }
-buffer = { path = "../buffer" }
-clock = { path = "../clock" }
 crossbeam-channel = "0.5.0"
 ctor = "0.1.20"
 dirs = "3.0"
-editor = { path = "../editor" }
 easy-parallel = "3.1.0"
-fsevent = { path = "../fsevent" }
 futures = "0.3"
-fuzzy = { path = "../fuzzy" }
-gpui = { path = "../gpui" }
 http-auth-basic = "0.1.3"
 ignore = "0.4"
 image = "0.23"
@@ -51,7 +57,6 @@ num_cpus = "1.13.0"
 parking_lot = "0.11.1"
 postage = { version = "0.4.1", features = ["futures-traits"] }
 rand = "0.8.3"
-rpc_client = { path = "../rpc_client" }
 rsa = "0.4"
 rust-embed = { version = "6.2", features = ["include-exclude"] }
 serde = { version = "1", features = ["derive"] }
@@ -60,7 +65,6 @@ serde_path_to_error = "0.1.4"
 simplelog = "0.9"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2.5"
-sum_tree = { path = "../sum_tree" }
 surf = "2.2"
 tempdir = { version = "0.3.7", optional = true }
 thiserror = "1.0.29"
@@ -70,23 +74,21 @@ toml = "0.5"
 tree-sitter = "0.19.5"
 tree-sitter-rust = "0.19.0"
 url = "2.2"
-util = { path = "../util" }
-worktree = { path = "../worktree" }
-rpc = { path = "../rpc" }
 
 [dev-dependencies]
+buffer = { path = "../buffer", features = ["test-support"] }
+editor = { path = "../editor", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
+rpc = { path = "../rpc", features = ["test-support"] }
+rpc_client = { path = "../rpc_client", features = ["test-support"] }
+util = { path = "../util", features = ["test-support"] }
+worktree = { path = "../worktree", features = ["test-support"] }
+
 cargo-bundle = "0.5.0"
 env_logger = "0.8"
 serde_json = { version = "1.0.64", features = ["preserve_order"] }
 tempdir = { version = "0.3.7" }
 unindent = "0.1.7"
-buffer = { path = "../buffer", features = ["test-support"] }
-editor = { path = "../editor", features = ["test-support"] }
-gpui = { path = "../gpui", features = ["test-support"] }
-rpc_client = { path = "../rpc_client", features = ["test-support"] }
-util = { path = "../util", features = ["test-support"] }
-worktree = { path = "../worktree", features = ["test-support"] }
-rpc = { path = "../rpc", features = ["test-support"] }
 
 [package.metadata.bundle]
 icon = ["app-icon@2x.png", "app-icon.png"]

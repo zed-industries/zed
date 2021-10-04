@@ -7,10 +7,13 @@ edition = "2018"
 test-support = []
 
 [dependencies]
+gpui = { path = "../gpui" }
+util = { path = "../util" }
+rpc = { path = "../rpc" }
+
 anyhow = "1.0.38"
 async-recursion = "0.3"
 async-tungstenite = { version = "0.14", features = ["async-tls"] }
-gpui = { path = "../gpui" }
 lazy_static = "1.4.0"
 log = "0.4"
 parking_lot = "0.11.1"
@@ -20,5 +23,3 @@ smol = "1.2.5"
 surf = "2.2"
 thiserror = "1.0.29"
 tiny_http = "0.8"
-util = { path = "../util" }
-rpc = { path = "../rpc" }
