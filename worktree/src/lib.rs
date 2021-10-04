@@ -2832,11 +2832,11 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rpc_client::test::FakeServer;
     use crate::fs::FakeFs;
     use anyhow::Result;
     use fs::RealFs;
     use rand::prelude::*;
+    use rpc_client::test::FakeServer;
     use serde_json::json;
     use std::{cell::RefCell, rc::Rc};
     use std::{
