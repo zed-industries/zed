@@ -27,7 +27,7 @@ use tide::{
     Request, Response,
 };
 use time::OffsetDateTime;
-use zrpc::{
+use rpc::{
     proto::{self, AnyTypedEnvelope, EnvelopedMessage},
     Connection, ConnectionId, Peer, TypedEnvelope,
 };
@@ -897,7 +897,7 @@ pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
                 .header("X-Zed-Protocol-Version")
                 .and_then(|v| v.as_str().parse().ok());
 
-            if !upgrade_requested || client_protocol_version != Some(zrpc::PROTOCOL_VERSION) {
+            if !upgrade_requested || client_protocol_version != Some(rpc::PROTOCOL_VERSION) {
                 return Ok(Response::new(StatusCode::UpgradeRequired));
             }
 
@@ -988,7 +988,7 @@ mod tests {
         workspace::Workspace,
         worktree::Worktree,
     };
-    use zrpc::Peer;
+    use rpc::Peer;
 
     #[gpui::test]
     async fn test_share_worktree(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {

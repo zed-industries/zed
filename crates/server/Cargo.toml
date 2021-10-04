@@ -41,7 +41,7 @@ tide = "0.16.0"
 tide-compress = "0.9.0"
 time = "0.2"
 toml = "0.5.8"
-zrpc = { path = "../zrpc" }
+rpc = { path = "../rpc" }
 
 [dependencies.async-sqlx-session]
 version = "0.3.0"

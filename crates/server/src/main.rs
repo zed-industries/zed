@@ -26,7 +26,7 @@ use std::sync::Arc;
 use surf::http::cookies::SameSite;
 use tide::{log, sessions::SessionMiddleware};
 use tide_compress::CompressMiddleware;
-use zrpc::Peer;
+use rpc::Peer;
 
 type Request = tide::Request<Arc<AppState>>;
 

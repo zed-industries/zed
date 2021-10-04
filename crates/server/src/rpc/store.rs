@@ -1,7 +1,7 @@
 use crate::db::{ChannelId, UserId};
 use anyhow::anyhow;
 use std::collections::{hash_map, HashMap, HashSet};
-use zrpc::{proto, ConnectionId};
+use rpc::{proto, ConnectionId};
 
 #[derive(Default)]
 pub struct Store {

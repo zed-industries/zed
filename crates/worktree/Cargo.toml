@@ -28,11 +28,11 @@ smol = "1.2.5"
 sum_tree = { path = "../sum_tree" }
 util = { path = "../util" }
 toml = "0.5"
-zrpc = { path = "../zrpc" }
+rpc = { path = "../rpc" }
 
 [dev-dependencies]
 rand = "0.8.3"
 rpc_client = { path = "../rpc_client", features = ["test-support"] }
 tempdir = { version = "0.3.7" }
 util = { path = "../util", features = ["test-support"] }
-zrpc = { path = "../zrpc", features = ["test-support"] }
+rpc = { path = "../rpc", features = ["test-support"] }

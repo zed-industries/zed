@@ -21,7 +21,7 @@ similar = "1.3"
 smallvec = { version = "1.6", features = ["union"] }
 sum_tree = { path = "../sum_tree" }
 tree-sitter = "0.19.5"
-zrpc = { path = "../zrpc" }
+rpc = { path = "../rpc" }
 
 [dev-dependencies]
 rand = "0.8.3"

@@ -3,13 +3,12 @@ use anyhow::{anyhow, Context, Result};
 use futures::future;
 use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{prelude::Stream, sink::Sink, watch};
-use rpc_client as rpc;
+use rpc_client::{self as rpc, proto, TypedEnvelope};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
 use util::TryFutureExt as _;
-use zrpc::{proto, TypedEnvelope};
 
 #[derive(Debug)]
 pub struct User {

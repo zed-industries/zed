@@ -1,7 +1,7 @@
 [package]
 description = "Shared logic for communication between the Zed app and the zed.dev server"
 edition = "2018"
-name = "zrpc"
+name = "rpc"
 version = "0.1.0"
 
 [features]

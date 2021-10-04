@@ -5,4 +5,4 @@ edition = "2018"
 
 [dependencies]
 smallvec = { version = "1.6", features = ["union"] }
-zrpc = { path = "../zrpc" }
+rpc = { path = "../rpc" }

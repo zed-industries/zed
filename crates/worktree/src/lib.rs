@@ -19,7 +19,7 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
-use rpc_client as rpc;
+use rpc_client::{self as rpc, proto, PeerId, TypedEnvelope};
 use serde::Deserialize;
 use smol::channel::{self, Sender};
 use std::{
@@ -41,7 +41,6 @@ use std::{
 use sum_tree::Bias;
 use sum_tree::{self, Edit, SeekTarget, SumTree};
 use util::TryFutureExt;
-use zrpc::{proto, PeerId, TypedEnvelope};
 
 lazy_static! {
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");

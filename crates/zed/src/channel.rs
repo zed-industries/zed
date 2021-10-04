@@ -5,7 +5,11 @@ use gpui::{
 };
 use postage::prelude::Stream;
 use rand::prelude::*;
-use rpc_client as rpc;
+use rpc_client::{
+    self as rpc,
+    proto::{self, ChannelMessageSent},
+    TypedEnvelope,
+};
 use std::{
     collections::{HashMap, HashSet},
     mem,
@@ -15,10 +19,6 @@ use std::{
 use sum_tree::{self, Bias, SumTree};
 use time::OffsetDateTime;
 use util::{post_inc, TryFutureExt};
-use zrpc::{
-    proto::{self, ChannelMessageSent},
-    TypedEnvelope,
-};
 
 pub struct ChannelList {
     available_channels: Option<Vec<ChannelDetails>>,

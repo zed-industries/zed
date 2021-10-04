@@ -12,6 +12,7 @@ use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::{prelude::Stream, watch};
 use rand::prelude::*;
+use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage};
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -24,11 +25,8 @@ use std::{
 use surf::Url;
 use thiserror::Error;
 use util::ResultExt;
-pub use zrpc::{proto, ConnectionId, PeerId, TypedEnvelope};
-use zrpc::{
-    proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage},
-    Connection, Peer, Receipt,
-};
+
+pub use rpc::*;
 
 lazy_static! {
     static ref ZED_SERVER_URL: String =
@@ -506,7 +504,7 @@ impl Client {
                 "Authorization",
                 format!("{} {}", credentials.user_id, credentials.access_token),
             )
-            .header("X-Zed-Protocol-Version", zrpc::PROTOCOL_VERSION);
+            .header("X-Zed-Protocol-Version", rpc::PROTOCOL_VERSION);
         cx.background().spawn(async move {
             if let Some(host) = ZED_SERVER_URL.strip_prefix("https://") {
                 let stream = smol::net::TcpStream::connect(host).await?;
@@ -536,7 +534,7 @@ impl Client {
             // zed server to encrypt the user's access token, so that it can'be intercepted by
             // any other app running on the user's device.
             let (public_key, private_key) =
-                zrpc::auth::keypair().expect("failed to generate keypair for auth");
+                rpc::auth::keypair().expect("failed to generate keypair for auth");
             let public_key_string =
                 String::try_from(public_key).expect("failed to serialize public key for auth");
 

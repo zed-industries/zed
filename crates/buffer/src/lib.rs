@@ -43,7 +43,7 @@ use std::{
 use sum_tree::{self, Bias, FilterCursor, SumTree};
 pub use syntax_theme::SyntaxTheme;
 use tree_sitter::{InputEdit, Parser, QueryCursor};
-use zrpc::proto;
+use rpc::proto;
 
 pub trait File {
     fn worktree_id(&self) -> usize;

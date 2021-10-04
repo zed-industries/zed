@@ -754,6 +754,7 @@ dependencies = [
  "log",
  "parking_lot",
  "rand 0.8.3",
+ "rpc",
  "seahash",
  "serde 1.0.125",
  "similar",
@@ -762,7 +763,6 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-rust",
  "unindent",
- "zrpc",
 ]
 
 [[package]]
@@ -1025,8 +1025,8 @@ dependencies = [
 name = "clock"
 version = "0.1.0"
 dependencies = [
+ "rpc",
  "smallvec",
- "zrpc",
 ]
 
 [[package]]
@@ -4088,6 +4088,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-lock",
+ "async-tungstenite",
+ "base64 0.13.0",
+ "futures",
+ "log",
+ "parking_lot",
+ "postage",
+ "prost",
+ "prost-build",
+ "rand 0.8.3",
+ "rsa",
+ "serde 1.0.125",
+ "smol",
+ "tempdir",
+ "zstd",
+]
+
+[[package]]
 name = "rpc_client"
 version = "0.1.0"
 dependencies = [
@@ -4100,12 +4122,12 @@ dependencies = [
  "parking_lot",
  "postage",
  "rand 0.8.3",
+ "rpc",
  "smol",
  "surf",
  "thiserror",
  "tiny_http",
  "util",
- "zrpc",
 ]
 
 [[package]]
@@ -5949,6 +5971,7 @@ dependencies = [
  "parking_lot",
  "postage",
  "rand 0.8.3",
+ "rpc",
  "rpc_client",
  "serde 1.0.125",
  "serde_json 1.0.64",
@@ -5957,7 +5980,6 @@ dependencies = [
  "tempdir",
  "toml 0.5.8",
  "util",
- "zrpc",
 ]
 
 [[package]]
@@ -6025,6 +6047,7 @@ dependencies = [
  "parking_lot",
  "postage",
  "rand 0.8.3",
+ "rpc",
  "rpc_client",
  "rsa",
  "rust-embed",
@@ -6047,7 +6070,6 @@ dependencies = [
  "url",
  "util",
  "worktree",
- "zrpc",
 ]
 
 [[package]]
@@ -6076,6 +6098,7 @@ dependencies = [
  "parking_lot",
  "postage",
  "rand 0.8.3",
+ "rpc",
  "rust-embed",
  "scrypt",
  "serde 1.0.125",
@@ -6088,7 +6111,6 @@ dependencies = [
  "time 0.2.25",
  "toml 0.5.8",
  "zed",
- "zrpc",
 ]
 
 [[package]]
@@ -6110,28 +6132,6 @@ dependencies = [
  "quote",
  "syn",
  "synstructure",
-]
-
-[[package]]
-name = "zrpc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-lock",
- "async-tungstenite",
- "base64 0.13.0",
- "futures",
- "log",
- "parking_lot",
- "postage",
- "prost",
- "prost-build",
- "rand 0.8.3",
- "rsa",
- "serde 1.0.125",
- "smol",
- "tempdir",
- "zstd",
 ]
 
 [[package]]

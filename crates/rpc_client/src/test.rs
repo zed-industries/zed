@@ -5,11 +5,11 @@ use super::Client;
 use gpui::TestAppContext;
 use parking_lot::Mutex;
 use postage::{mpsc, prelude::Stream};
+use rpc::{proto, ConnectionId, Peer, Receipt, TypedEnvelope};
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize},
     Arc,
 };
-use zrpc::{proto, ConnectionId, Peer, Receipt, TypedEnvelope};
 
 pub struct FakeServer {
     peer: Arc<Peer>,

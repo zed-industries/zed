@@ -20,7 +20,7 @@ test-support = [
     "rpc_client/test-support",
     "tempdir",
     "worktree/test-support",
-    "zrpc/test-support",
+    "rpc/test-support",
 ]
 
 [dependencies]
@@ -71,7 +71,7 @@ tree-sitter-rust = "0.19.0"
 url = "2.2"
 util = { path = "../util" }
 worktree =  { path = "../worktree" }
-zrpc = { path = "../zrpc" }
+rpc = { path = "../rpc" }
 
 [dev-dependencies]
 cargo-bundle = "0.5.0"
@@ -84,7 +84,7 @@ gpui = { path = "../gpui", features = ["test-support"] }
 rpc_client = { path = "../rpc_client", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 worktree = { path = "../worktree", features = ["test-support"] }
-zrpc = { path = "../zrpc", features = ["test-support"] }
+rpc = { path = "../rpc", features = ["test-support"] }
 
 [package.metadata.bundle]
 icon = ["app-icon@2x.png", "app-icon.png"]

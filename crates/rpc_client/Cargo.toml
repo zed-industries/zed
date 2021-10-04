@@ -21,4 +21,4 @@ surf = "2.2"
 thiserror = "1.0.29"
 tiny_http = "0.8"
 util = { path = "../util" }
-zrpc = { path = "../zrpc" }
+rpc = { path = "../rpc" }

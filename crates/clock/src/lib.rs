@@ -61,8 +61,8 @@ impl<'a> AddAssign<&'a Local> for Local {
 #[derive(Clone, Default, Hash, Eq, PartialEq)]
 pub struct Global(SmallVec<[Local; 3]>);
 
-impl From<Vec<zrpc::proto::VectorClockEntry>> for Global {
-    fn from(message: Vec<zrpc::proto::VectorClockEntry>) -> Self {
+impl From<Vec<rpc::proto::VectorClockEntry>> for Global {
+    fn from(message: Vec<rpc::proto::VectorClockEntry>) -> Self {
         let mut version = Self::new();
         for entry in message {
             version.observe(Local {
@@ -74,11 +74,11 @@ impl From<Vec<zrpc::proto::VectorClockEntry>> for Global {
     }
 }
 
-impl<'a> From<&'a Global> for Vec<zrpc::proto::VectorClockEntry> {
+impl<'a> From<&'a Global> for Vec<rpc::proto::VectorClockEntry> {
     fn from(version: &'a Global) -> Self {
         version
             .iter()
-            .map(|entry| zrpc::proto::VectorClockEntry {
+            .map(|entry| rpc::proto::VectorClockEntry {
                 replica_id: entry.replica_id as u32,
                 timestamp: entry.value,
             })
