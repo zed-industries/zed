@@ -1,13 +1,10 @@
-use crate::{
-    editor::{
-        buffer::{Anchor, Buffer, Point, ToOffset as _, ToPoint as _},
-        Bias, DisplayMapSnapshot, DisplayPoint,
-    },
-    time,
+use crate::editor::{
+    buffer::{Anchor, Buffer, Point, ToOffset as _, ToPoint as _},
+    Bias, DisplayMapSnapshot, DisplayPoint,
 };
 use std::{cmp::Ordering, mem, ops::Range};
 
-pub type SelectionSetId = time::Lamport;
+pub type SelectionSetId = clock::Lamport;
 pub type SelectionsVersion = usize;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

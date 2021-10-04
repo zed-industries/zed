@@ -1,5 +1,5 @@
 use super::{Buffer, Content};
-use crate::{time, util::Bias};
+use crate::util::Bias;
 use anyhow::Result;
 use std::{cmp::Ordering, ops::Range};
 
@@ -7,7 +7,7 @@ use std::{cmp::Ordering, ops::Range};
 pub struct Anchor {
     pub offset: usize,
     pub bias: Bias,
-    pub version: time::Global,
+    pub version: clock::Global,
 }
 
 impl Anchor {

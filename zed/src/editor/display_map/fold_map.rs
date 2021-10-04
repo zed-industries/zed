@@ -2,7 +2,7 @@ use super::{
     buffer::{AnchorRangeExt, TextSummary},
     Anchor, Buffer, Point, ToOffset,
 };
-use crate::{editor::buffer, settings::HighlightId, time, util::Bias};
+use crate::{editor::buffer, settings::HighlightId, util::Bias};
 use gpui::{AppContext, ModelHandle};
 use parking_lot::Mutex;
 use std::{
@@ -200,7 +200,7 @@ pub struct FoldMap {
 
 #[derive(Clone)]
 struct SyncState {
-    version: time::Global,
+    version: clock::Global,
     parse_count: usize,
 }
 

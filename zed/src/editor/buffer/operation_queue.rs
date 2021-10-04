@@ -1,5 +1,4 @@
 use super::Operation;
-use crate::time;
 use std::{fmt::Debug, ops::Add};
 use sum_tree::{Cursor, Dimension, Edit, Item, KeyedItem, SumTree, Summary};
 
@@ -7,7 +6,7 @@ use sum_tree::{Cursor, Dimension, Edit, Item, KeyedItem, SumTree, Summary};
 pub struct OperationQueue(SumTree<Operation>);
 
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
-pub struct OperationKey(time::Lamport);
+pub struct OperationKey(clock::Lamport);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct OperationSummary {
@@ -16,7 +15,7 @@ pub struct OperationSummary {
 }
 
 impl OperationKey {
-    pub fn new(timestamp: time::Lamport) -> Self {
+    pub fn new(timestamp: clock::Lamport) -> Self {
         Self(timestamp)
     }
 }
@@ -102,7 +101,7 @@ mod tests {
 
     #[test]
     fn test_len() {
-        let mut clock = time::Lamport::new(0);
+        let mut clock = clock::Lamport::new(0);
 
         let mut queue = OperationQueue::new();
         assert_eq!(queue.len(), 0);
@@ -124,5 +123,5 @@ mod tests {
     }
 
     #[derive(Clone, Debug, Eq, PartialEq)]
-    struct TestOperation(time::Lamport);
+    struct TestOperation(clock::Lamport);
 }

@@ -7,11 +7,11 @@ use crate::{
     fuzzy::CharBag,
     language::LanguageRegistry,
     rpc::{self, proto, Status},
-    time::{self, ReplicaId},
     util::{Bias, TryFutureExt},
 };
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Result};
+use clock::ReplicaId;
 use futures::{Stream, StreamExt};
 use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
@@ -1847,9 +1847,9 @@ impl buffer::File for File {
         &self,
         buffer_id: u64,
         text: Rope,
-        version: time::Global,
+        version: clock::Global,
         cx: &mut MutableAppContext,
-    ) -> Task<Result<(time::Global, SystemTime)>> {
+    ) -> Task<Result<(clock::Global, SystemTime)>> {
         self.worktree.update(cx, |worktree, cx| match worktree {
             Worktree::Local(worktree) => {
                 let rpc = worktree.rpc.clone();

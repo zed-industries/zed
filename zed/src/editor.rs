@@ -8,13 +8,13 @@ use crate::{
     project::ProjectPath,
     settings::Settings,
     theme::Theme,
-    time::ReplicaId,
     util::{post_inc, Bias},
     workspace,
     worktree::Worktree,
 };
 use anyhow::Result;
 pub use buffer::*;
+use clock::ReplicaId;
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;

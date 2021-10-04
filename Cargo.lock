@@ -999,6 +999,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "clock"
+version = "0.1.0"
+dependencies = [
+ "smallvec",
+ "zrpc",
+]
+
+[[package]]
 name = "cloudabi"
 version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5909,6 +5917,7 @@ dependencies = [
  "async-trait",
  "async-tungstenite",
  "cargo-bundle",
+ "clock",
  "crossbeam-channel",
  "ctor",
  "dirs 3.0.1",

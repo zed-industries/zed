@@ -7,11 +7,11 @@ mod selection;
 use crate::{
     language::{Language, Tree},
     settings::{HighlightId, HighlightMap},
-    time::{self, ReplicaId},
     util::Bias,
 };
 pub use anchor::*;
 use anyhow::{anyhow, Result};
+use clock::ReplicaId;
 use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
 use operation_queue::OperationQueue;
@@ -66,9 +66,9 @@ pub trait File {
         &self,
         buffer_id: u64,
         text: Rope,
-        version: time::Global,
+        version: clock::Global,
         cx: &mut MutableAppContext,
-    ) -> Task<Result<(time::Global, SystemTime)>>;
+    ) -> Task<Result<(clock::Global, SystemTime)>>;
 
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext);
 
@@ -150,10 +150,10 @@ pub struct Buffer {
     fragments: SumTree<Fragment>,
     visible_text: Rope,
     deleted_text: Rope,
-    pub version: time::Global,
-    saved_version: time::Global,
+    pub version: clock::Global,
+    saved_version: clock::Global,
     saved_mtime: SystemTime,
-    last_edit: time::Local,
+    last_edit: clock::Local,
     undo_map: UndoMap,
     history: History,
     file: Option<Box<dyn File>>,
@@ -167,8 +167,8 @@ pub struct Buffer {
     deferred_replicas: HashSet<ReplicaId>,
     replica_id: ReplicaId,
     remote_id: u64,
-    local_clock: time::Local,
-    lamport_clock: time::Lamport,
+    local_clock: clock::Local,
+    lamport_clock: clock::Lamport,
     #[cfg(test)]
     operations: Vec<Operation>,
 }
@@ -183,15 +183,15 @@ pub struct SelectionSet {
 struct SyntaxTree {
     tree: Tree,
     dirty: bool,
-    version: time::Global,
+    version: clock::Global,
 }
 
 #[derive(Clone, Debug)]
 struct Transaction {
-    start: time::Global,
-    end: time::Global,
+    start: clock::Global,
+    end: clock::Global,
     buffer_was_dirty: bool,
-    edits: Vec<time::Local>,
+    edits: Vec<clock::Local>,
     ranges: Vec<Range<usize>>,
     selections_before: Option<(SelectionSetId, Arc<[Selection]>)>,
     selections_after: Option<(SelectionSetId, Arc<[Selection]>)>,
@@ -251,7 +251,7 @@ impl Transaction {
 pub struct History {
     // TODO: Turn this into a String or Rope, maybe.
     pub base_text: Arc<str>,
-    ops: HashMap<time::Local, EditOperation>,
+    ops: HashMap<clock::Local, EditOperation>,
     undo_stack: Vec<Transaction>,
     redo_stack: Vec<Transaction>,
     transaction_depth: usize,
@@ -276,7 +276,7 @@ impl History {
 
     fn start_transaction(
         &mut self,
-        start: time::Global,
+        start: clock::Global,
         buffer_was_dirty: bool,
         selections: Option<(SelectionSetId, Arc<[Selection]>)>,
         now: Instant,
@@ -349,7 +349,7 @@ impl History {
         self.undo_stack.truncate(new_len);
     }
 
-    fn push_undo(&mut self, edit_id: time::Local) {
+    fn push_undo(&mut self, edit_id: clock::Local) {
         assert_ne!(self.transaction_depth, 0);
         let last_transaction = self.undo_stack.last_mut().unwrap();
         last_transaction.push_edit(&self.ops[&edit_id]);
@@ -377,7 +377,7 @@ impl History {
 }
 
 #[derive(Clone, Default, Debug)]
-struct UndoMap(HashMap<time::Local, Vec<(time::Local, u32)>>);
+struct UndoMap(HashMap<clock::Local, Vec<(clock::Local, u32)>>);
 
 impl UndoMap {
     fn insert(&mut self, undo: &UndoOperation) {
@@ -386,11 +386,11 @@ impl UndoMap {
         }
     }
 
-    fn is_undone(&self, edit_id: time::Local) -> bool {
+    fn is_undone(&self, edit_id: clock::Local) -> bool {
         self.undo_count(edit_id) % 2 == 1
     }
 
-    fn was_undone(&self, edit_id: time::Local, version: &time::Global) -> bool {
+    fn was_undone(&self, edit_id: clock::Local, version: &clock::Global) -> bool {
         let undo_count = self
             .0
             .get(&edit_id)
@@ -403,7 +403,7 @@ impl UndoMap {
         undo_count % 2 == 1
     }
 
-    fn undo_count(&self, edit_id: time::Local) -> u32 {
+    fn undo_count(&self, edit_id: clock::Local) -> u32 {
         self.0
             .get(&edit_id)
             .unwrap_or(&Vec::new())
@@ -419,7 +419,7 @@ struct Edits<'a, F: Fn(&FragmentSummary) -> bool> {
     deleted_text: &'a Rope,
     cursor: Option<FilterCursor<'a, F, Fragment, FragmentTextSummary>>,
     undos: &'a UndoMap,
-    since: time::Global,
+    since: clock::Global,
     old_offset: usize,
     new_offset: usize,
     old_point: Point,
@@ -452,7 +452,7 @@ impl Edit {
 }
 
 struct Diff {
-    base_version: time::Global,
+    base_version: clock::Global,
     new_text: Arc<str>,
     changes: Vec<(ChangeTag, usize)>,
 }
@@ -460,20 +460,20 @@ struct Diff {
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 struct InsertionTimestamp {
     replica_id: ReplicaId,
-    local: time::Seq,
-    lamport: time::Seq,
+    local: clock::Seq,
+    lamport: clock::Seq,
 }
 
 impl InsertionTimestamp {
-    fn local(&self) -> time::Local {
-        time::Local {
+    fn local(&self) -> clock::Local {
+        clock::Local {
             replica_id: self.replica_id,
             value: self.local,
         }
     }
 
-    fn lamport(&self) -> time::Lamport {
-        time::Lamport {
+    fn lamport(&self) -> clock::Lamport {
+        clock::Lamport {
             replica_id: self.replica_id,
             value: self.lamport,
         }
@@ -485,16 +485,16 @@ struct Fragment {
     timestamp: InsertionTimestamp,
     len: usize,
     visible: bool,
-    deletions: HashSet<time::Local>,
-    max_undos: time::Global,
+    deletions: HashSet<clock::Local>,
+    max_undos: clock::Global,
 }
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub struct FragmentSummary {
     text: FragmentTextSummary,
-    max_version: time::Global,
-    min_insertion_version: time::Global,
-    max_insertion_version: time::Global,
+    max_version: clock::Global,
+    min_insertion_version: clock::Global,
+    max_insertion_version: clock::Global,
 }
 
 #[derive(Copy, Default, Clone, Debug, PartialEq, Eq)]
@@ -504,7 +504,7 @@ struct FragmentTextSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FragmentTextSummary {
-    fn add_summary(&mut self, summary: &'a FragmentSummary, _: &Option<time::Global>) {
+    fn add_summary(&mut self, summary: &'a FragmentSummary, _: &Option<clock::Global>) {
         self.visible += summary.text.visible;
         self.deleted += summary.text.deleted;
     }
@@ -515,35 +515,35 @@ pub enum Operation {
     Edit(EditOperation),
     Undo {
         undo: UndoOperation,
-        lamport_timestamp: time::Lamport,
+        lamport_timestamp: clock::Lamport,
     },
     UpdateSelections {
         set_id: SelectionSetId,
         selections: Option<Arc<[Selection]>>,
-        lamport_timestamp: time::Lamport,
+        lamport_timestamp: clock::Lamport,
     },
     SetActiveSelections {
         set_id: Option<SelectionSetId>,
-        lamport_timestamp: time::Lamport,
+        lamport_timestamp: clock::Lamport,
     },
     #[cfg(test)]
-    Test(time::Lamport),
+    Test(clock::Lamport),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EditOperation {
     timestamp: InsertionTimestamp,
-    version: time::Global,
+    version: clock::Global,
     ranges: Vec<Range<usize>>,
     new_text: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UndoOperation {
-    id: time::Local,
-    counts: HashMap<time::Local, u32>,
+    id: clock::Local,
+    counts: HashMap<clock::Local, u32>,
     ranges: Vec<Range<usize>>,
-    version: time::Global,
+    version: clock::Global,
 }
 
 impl Buffer {
@@ -614,9 +614,9 @@ impl Buffer {
             visible_text,
             deleted_text: Rope::new(),
             fragments,
-            version: time::Global::new(),
-            saved_version: time::Global::new(),
-            last_edit: time::Local::default(),
+            version: clock::Global::new(),
+            saved_version: clock::Global::new(),
+            last_edit: clock::Local::default(),
             undo_map: Default::default(),
             history,
             file,
@@ -631,8 +631,8 @@ impl Buffer {
             deferred_replicas: HashSet::default(),
             replica_id,
             remote_id,
-            local_clock: time::Local::new(replica_id),
-            lamport_clock: time::Lamport::new(replica_id),
+            local_clock: clock::Local::new(replica_id),
+            lamport_clock: clock::Lamport::new(replica_id),
 
             #[cfg(test)]
             operations: Default::default(),
@@ -681,7 +681,7 @@ impl Buffer {
             .selections
             .into_iter()
             .map(|set| {
-                let set_id = time::Lamport {
+                let set_id = clock::Lamport {
                     replica_id: set.replica_id as ReplicaId,
                     value: set.local_timestamp,
                 };
@@ -730,7 +730,7 @@ impl Buffer {
     pub fn save(
         &mut self,
         cx: &mut ModelContext<Self>,
-    ) -> Result<Task<Result<(time::Global, SystemTime)>>> {
+    ) -> Result<Task<Result<(clock::Global, SystemTime)>>> {
         let file = self
             .file
             .as_ref()
@@ -758,7 +758,7 @@ impl Buffer {
 
     pub fn did_save(
         &mut self,
-        version: time::Global,
+        version: clock::Global,
         mtime: SystemTime,
         new_file: Option<Box<dyn File>>,
         cx: &mut ModelContext<Self>,
@@ -1063,7 +1063,7 @@ impl Buffer {
         self.remote_id
     }
 
-    pub fn version(&self) -> time::Global {
+    pub fn version(&self) -> clock::Global {
         self.version.clone()
     }
 
@@ -1106,7 +1106,7 @@ impl Buffer {
         self.visible_text.chars_at(offset)
     }
 
-    pub fn edits_since<'a>(&'a self, since: time::Global) -> impl 'a + Iterator<Item = Edit> {
+    pub fn edits_since<'a>(&'a self, since: clock::Global) -> impl 'a + Iterator<Item = Edit> {
         let since_2 = since.clone();
         let cursor = if since == self.version {
             None
@@ -1461,7 +1461,7 @@ impl Buffer {
 
     fn apply_remote_edit(
         &mut self,
-        version: &time::Global,
+        version: &clock::Global,
         ranges: &[Range<usize>],
         new_text: Option<&str>,
         timestamp: InsertionTimestamp,
@@ -1992,7 +1992,7 @@ impl Clone for Buffer {
 pub struct Snapshot {
     visible_text: Rope,
     fragments: SumTree<Fragment>,
-    version: time::Global,
+    version: clock::Global,
     tree: Option<Tree>,
     is_parsing: bool,
     language: Option<Arc<Language>>,
@@ -2110,7 +2110,7 @@ impl Snapshot {
 pub struct Content<'a> {
     visible_text: &'a Rope,
     fragments: &'a SumTree<Fragment>,
-    version: &'a time::Global,
+    version: &'a clock::Global,
 }
 
 impl<'a> From<&'a Snapshot> for Content<'a> {
@@ -2489,7 +2489,7 @@ impl Fragment {
             && self.deletions.iter().all(|d| undos.is_undone(*d))
     }
 
-    fn was_visible(&self, version: &time::Global, undos: &UndoMap) -> bool {
+    fn was_visible(&self, version: &clock::Global, undos: &UndoMap) -> bool {
         (version.observed(self.timestamp.local())
             && !undos.was_undone(self.timestamp.local(), version))
             && self
@@ -2503,14 +2503,14 @@ impl sum_tree::Item for Fragment {
     type Summary = FragmentSummary;
 
     fn summary(&self) -> Self::Summary {
-        let mut max_version = time::Global::new();
+        let mut max_version = clock::Global::new();
         max_version.observe(self.timestamp.local());
         for deletion in &self.deletions {
             max_version.observe(*deletion);
         }
         max_version.join(&self.max_undos);
 
-        let mut min_insertion_version = time::Global::new();
+        let mut min_insertion_version = clock::Global::new();
         min_insertion_version.observe(self.timestamp.local());
         let max_insertion_version = min_insertion_version.clone();
         if self.visible {
@@ -2538,7 +2538,7 @@ impl sum_tree::Item for Fragment {
 }
 
 impl sum_tree::Summary for FragmentSummary {
-    type Context = Option<time::Global>;
+    type Context = Option<clock::Global>;
 
     fn add_summary(&mut self, other: &Self, _: &Self::Context) {
         self.text.visible += &other.text.visible;
@@ -2555,15 +2555,15 @@ impl Default for FragmentSummary {
     fn default() -> Self {
         FragmentSummary {
             text: FragmentTextSummary::default(),
-            max_version: time::Global::new(),
-            min_insertion_version: time::Global::new(),
-            max_insertion_version: time::Global::new(),
+            max_version: clock::Global::new(),
+            min_insertion_version: clock::Global::new(),
+            max_insertion_version: clock::Global::new(),
         }
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for usize {
-    fn add_summary(&mut self, summary: &FragmentSummary, _: &Option<time::Global>) {
+    fn add_summary(&mut self, summary: &FragmentSummary, _: &Option<clock::Global>) {
         *self += summary.text.visible;
     }
 }
@@ -2591,7 +2591,7 @@ impl Default for VersionedOffset {
 }
 
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for VersionedOffset {
-    fn add_summary(&mut self, summary: &'a FragmentSummary, cx: &Option<time::Global>) {
+    fn add_summary(&mut self, summary: &'a FragmentSummary, cx: &Option<clock::Global>) {
         if let Self::Offset(offset) = self {
             let version = cx.as_ref().unwrap();
             if *version >= summary.max_insertion_version {
@@ -2608,7 +2608,7 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for VersionedOffset {
 }
 
 impl<'a> sum_tree::SeekTarget<'a, FragmentSummary, Self> for VersionedOffset {
-    fn cmp(&self, other: &Self, _: &Option<time::Global>) -> cmp::Ordering {
+    fn cmp(&self, other: &Self, _: &Option<clock::Global>) -> cmp::Ordering {
         match (self, other) {
             (Self::Offset(a), Self::Offset(b)) => Ord::cmp(a, b),
             (Self::Offset(_), Self::InvalidVersion) => cmp::Ordering::Less,
@@ -2622,7 +2622,7 @@ impl Operation {
         self.lamport_timestamp().replica_id
     }
 
-    fn lamport_timestamp(&self) -> time::Lamport {
+    fn lamport_timestamp(&self) -> clock::Lamport {
         match self {
             Operation::Edit(edit) => edit.timestamp.lamport(),
             Operation::Undo {
@@ -2765,12 +2765,12 @@ impl TryFrom<proto::Operation> for Operation {
             {
                 proto::operation::Variant::Edit(edit) => Operation::Edit(edit.into()),
                 proto::operation::Variant::Undo(undo) => Operation::Undo {
-                    lamport_timestamp: time::Lamport {
+                    lamport_timestamp: clock::Lamport {
                         replica_id: undo.replica_id as ReplicaId,
                         value: undo.lamport_timestamp,
                     },
                     undo: UndoOperation {
-                        id: time::Local {
+                        id: clock::Local {
                             replica_id: undo.replica_id as ReplicaId,
                             value: undo.local_timestamp,
                         },
@@ -2779,7 +2779,7 @@ impl TryFrom<proto::Operation> for Operation {
                             .into_iter()
                             .map(|c| {
                                 (
-                                    time::Local {
+                                    clock::Local {
                                         replica_id: c.replica_id as ReplicaId,
                                         value: c.local_timestamp,
                                     },
@@ -2807,11 +2807,11 @@ impl TryFrom<proto::Operation> for Operation {
                         None
                     };
                     Operation::UpdateSelections {
-                        set_id: time::Lamport {
+                        set_id: clock::Lamport {
                             replica_id: message.replica_id as ReplicaId,
                             value: message.local_timestamp,
                         },
-                        lamport_timestamp: time::Lamport {
+                        lamport_timestamp: clock::Lamport {
                             replica_id: message.replica_id as ReplicaId,
                             value: message.lamport_timestamp,
                         },
@@ -2820,11 +2820,11 @@ impl TryFrom<proto::Operation> for Operation {
                 }
                 proto::operation::Variant::SetActiveSelections(message) => {
                     Operation::SetActiveSelections {
-                        set_id: message.local_timestamp.map(|value| time::Lamport {
+                        set_id: message.local_timestamp.map(|value| clock::Lamport {
                             replica_id: message.replica_id as ReplicaId,
                             value,
                         }),
-                        lamport_timestamp: time::Lamport {
+                        lamport_timestamp: clock::Lamport {
                             replica_id: message.replica_id as ReplicaId,
                             value: message.lamport_timestamp,
                         },
@@ -2859,9 +2859,9 @@ impl TryFrom<proto::Anchor> for Anchor {
     type Error = anyhow::Error;
 
     fn try_from(message: proto::Anchor) -> Result<Self, Self::Error> {
-        let mut version = time::Global::new();
+        let mut version = clock::Global::new();
         for entry in message.version {
-            version.observe(time::Local {
+            version.observe(clock::Local {
                 replica_id: entry.replica_id as ReplicaId,
                 value: entry.timestamp,
             });

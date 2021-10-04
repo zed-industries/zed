@@ -6,11 +6,11 @@ use crate::{
     language::LanguageRegistry,
     rpc::{self, Client, Credentials, EstablishConnectionError},
     settings::{self, ThemeRegistry},
-    time::ReplicaId,
     user::UserStore,
     AppState,
 };
 use anyhow::{anyhow, Result};
+use clock::ReplicaId;
 use futures::{future::BoxFuture, Future};
 use gpui::{AsyncAppContext, Entity, ModelHandle, MutableAppContext, TestAppContext};
 use parking_lot::Mutex;
