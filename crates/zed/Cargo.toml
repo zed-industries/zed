@@ -17,10 +17,10 @@ path = "src/main.rs"
 test-support = [
     "buffer/test-support",
     "gpui/test-support",
+    "project/test-support",
+    "rpc/test-support",
     "rpc_client/test-support",
     "tempdir",
-    "worktree/test-support",
-    "rpc/test-support",
 ]
 
 [dependencies]
@@ -30,11 +30,11 @@ fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
+project = { path = "../project" }
 rpc = { path = "../rpc" }
 rpc_client = { path = "../rpc_client" }
 sum_tree = { path = "../sum_tree" }
 util = { path = "../util" }
-worktree = { path = "../worktree" }
 
 anyhow = "1.0.38"
 async-recursion = "0.3"
@@ -79,10 +79,10 @@ url = "2.2"
 buffer = { path = "../buffer", features = ["test-support"] }
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
+project = { path = "../project", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 rpc_client = { path = "../rpc_client", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
-worktree = { path = "../worktree", features = ["test-support"] }
 
 cargo-bundle = "0.5.0"
 env_logger = "0.8"

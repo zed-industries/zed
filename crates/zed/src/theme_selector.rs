@@ -1,12 +1,6 @@
-use std::{cmp, sync::Arc};
-
-use crate::{
-    fuzzy::{match_strings, StringMatch, StringMatchCandidate},
-    settings::ThemeRegistry,
-    workspace::Workspace,
-    AppState, Settings,
-};
+use crate::{settings::ThemeRegistry, workspace::Workspace, AppState, Settings};
 use editor::{self, Editor, EditorSettings};
+use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     action,
     elements::*,
@@ -16,6 +10,7 @@ use gpui::{
 };
 use parking_lot::Mutex;
 use postage::watch;
+use std::{cmp, sync::Arc};
 
 pub struct ThemeSelector {
     settings_tx: Arc<Mutex<watch::Sender<Settings>>>,

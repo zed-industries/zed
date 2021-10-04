@@ -981,12 +981,11 @@ mod tests {
         editor::{Editor, EditorSettings, Insert},
         fs::{FakeFs, Fs as _},
         people_panel::JoinWorktree,
-        project::ProjectPath,
+        project::{ProjectPath, Worktree},
         rpc::{self, Client, Credentials, EstablishConnectionError},
         test::FakeHttpClient,
         user::UserStore,
         workspace::Workspace,
-        worktree::Worktree,
     };
 
     #[gpui::test]

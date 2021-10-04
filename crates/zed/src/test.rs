@@ -12,9 +12,9 @@ use buffer::LanguageRegistry;
 use futures::{future::BoxFuture, Future};
 use gpui::MutableAppContext;
 use parking_lot::Mutex;
+use project::fs::FakeFs;
 use rpc_client as rpc;
 use std::{fmt, sync::Arc};
-use worktree::fs::FakeFs;
 
 #[cfg(test)]
 #[ctor::ctor]

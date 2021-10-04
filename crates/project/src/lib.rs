@@ -1,10 +1,11 @@
-use crate::{
-    fuzzy::{self, PathMatch},
-    AppState,
-};
+pub mod fs;
+mod ignore;
+mod worktree;
+
 use anyhow::Result;
 use buffer::LanguageRegistry;
 use futures::Future;
+use fuzzy::{self, PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 use rpc_client as rpc;
 use std::{
@@ -12,7 +13,9 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 use util::TryFutureExt as _;
-use worktree::{fs::Fs, Worktree};
+
+pub use fs::*;
+pub use worktree::*;
 
 pub struct Project {
     worktrees: Vec<ModelHandle<Worktree>>,
@@ -40,13 +43,13 @@ pub struct ProjectEntry {
 }
 
 impl Project {
-    pub fn new(app_state: &AppState) -> Self {
+    pub fn new(languages: Arc<LanguageRegistry>, rpc: Arc<rpc::Client>, fs: Arc<dyn Fs>) -> Self {
         Self {
             worktrees: Default::default(),
             active_entry: None,
-            languages: app_state.languages.clone(),
-            rpc: app_state.rpc.clone(),
-            fs: app_state.fs.clone(),
+            languages,
+            rpc,
+            fs,
         }
     }
 
@@ -207,18 +210,22 @@ impl Project {
         cancel_flag: &'a AtomicBool,
         cx: &AppContext,
     ) -> impl 'a + Future<Output = Vec<PathMatch>> {
-        let snapshots = self
+        let include_root_name = self.worktrees.len() > 1;
+        let candidate_sets = self
             .worktrees
             .iter()
-            .map(|worktree| worktree.read(cx).snapshot())
+            .map(|worktree| CandidateSet {
+                snapshot: worktree.read(cx).snapshot(),
+                include_ignored,
+                include_root_name,
+            })
             .collect::<Vec<_>>();
-        let background = cx.background().clone();
 
+        let background = cx.background().clone();
         async move {
             fuzzy::match_paths(
-                snapshots.as_slice(),
+                candidate_sets.as_slice(),
                 query,
-                include_ignored,
                 smart_case,
                 max_results,
                 cancel_flag,
@@ -229,6 +236,65 @@ impl Project {
     }
 }
 
+struct CandidateSet {
+    snapshot: Snapshot,
+    include_ignored: bool,
+    include_root_name: bool,
+}
+
+impl<'a> PathMatchCandidateSet<'a> for CandidateSet {
+    type Candidates = CandidateSetIter<'a>;
+
+    fn id(&self) -> usize {
+        self.snapshot.id()
+    }
+
+    fn len(&self) -> usize {
+        if self.include_ignored {
+            self.snapshot.file_count()
+        } else {
+            self.snapshot.visible_file_count()
+        }
+    }
+
+    fn prefix(&self) -> Arc<str> {
+        if self.snapshot.root_entry().map_or(false, |e| e.is_file()) {
+            self.snapshot.root_name().into()
+        } else if self.include_root_name {
+            format!("{}/", self.snapshot.root_name()).into()
+        } else {
+            "".into()
+        }
+    }
+
+    fn candidates(&'a self, start: usize) -> Self::Candidates {
+        CandidateSetIter {
+            traversal: self.snapshot.files(self.include_ignored, start),
+        }
+    }
+}
+
+struct CandidateSetIter<'a> {
+    traversal: Traversal<'a>,
+}
+
+impl<'a> Iterator for CandidateSetIter<'a> {
+    type Item = PathMatchCandidate<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.traversal.next().map(|entry| {
+            if let EntryKind::File(char_bag) = entry.kind {
+                PathMatchCandidate {
+                    path: &entry.path,
+                    char_bag,
+                }
+            } else {
+                unreachable!()
+            }
+        })
+    }
+}
+
 impl Entity for Project {
     type Event = Event;
 }
@@ -236,16 +302,15 @@ impl Entity for Project {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::test_app_state;
+    use buffer::LanguageRegistry;
+    use fs::RealFs;
+    use gpui::TestAppContext;
     use serde_json::json;
     use std::{os::unix, path::PathBuf};
     use util::test::temp_tree;
-    use worktree::fs::RealFs;
 
     #[gpui::test]
     async fn test_populate_and_search(mut cx: gpui::TestAppContext) {
-        let mut app_state = cx.update(test_app_state);
-        Arc::get_mut(&mut app_state).unwrap().fs = Arc::new(RealFs);
         let dir = temp_tree(json!({
             "root": {
                 "apple": "",
@@ -269,7 +334,8 @@ mod tests {
         )
         .unwrap();
 
-        let project = cx.add_model(|_| Project::new(app_state.as_ref()));
+        let project = build_project(&mut cx);
+
         let tree = project
             .update(&mut cx, |project, cx| {
                 project.add_local_worktree(&root_link_path, cx)
@@ -308,8 +374,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_search_worktree_without_files(mut cx: gpui::TestAppContext) {
-        let mut app_state = cx.update(test_app_state);
-        Arc::get_mut(&mut app_state).unwrap().fs = Arc::new(RealFs);
         let dir = temp_tree(json!({
             "root": {
                 "dir1": {},
@@ -319,7 +383,7 @@ mod tests {
             }
         }));
 
-        let project = cx.add_model(|_| Project::new(app_state.as_ref()));
+        let project = build_project(&mut cx);
         let tree = project
             .update(&mut cx, |project, cx| {
                 project.add_local_worktree(&dir.path(), cx)
@@ -338,5 +402,12 @@ mod tests {
             .await;
 
         assert!(results.is_empty());
+    }
+
+    fn build_project(cx: &mut TestAppContext) -> ModelHandle<Project> {
+        let languages = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(RealFs);
+        let rpc = rpc::Client::new();
+        cx.add_model(|_| Project::new(languages, rpc, fs))
     }
 }

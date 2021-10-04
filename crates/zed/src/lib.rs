@@ -2,12 +2,10 @@ pub mod assets;
 pub mod channel;
 pub mod chat_panel;
 pub mod file_finder;
-mod fuzzy;
 pub mod http;
 pub mod language;
 pub mod menus;
 pub mod people_panel;
-pub mod project;
 pub mod project_panel;
 pub mod settings;
 #[cfg(any(test, feature = "test-support"))]
@@ -24,11 +22,11 @@ pub use editor;
 use gpui::{action, keymap::Binding, ModelHandle};
 use parking_lot::Mutex;
 use postage::watch;
+pub use project::{self, fs};
 pub use rpc_client as rpc;
 pub use settings::Settings;
 use std::sync::Arc;
 use util::TryFutureExt;
-pub use worktree::{self, fs};
 
 action!(About);
 action!(Quit);

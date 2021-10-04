@@ -2097,6 +2097,10 @@ dependencies = [
 [[package]]
 name = "fuzzy"
 version = "0.1.0"
+dependencies = [
+ "gpui",
+ "util",
+]
 
 [[package]]
 name = "generator"
@@ -3672,6 +3676,36 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e0704ee1a7e00d7bb417d0770ea303c1bccbabf0ef1667dae92b5967f5f8a71"
 dependencies = [
  "unicode-xid",
+]
+
+[[package]]
+name = "project"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "buffer",
+ "clock",
+ "fsevent",
+ "futures",
+ "fuzzy",
+ "gpui",
+ "ignore",
+ "lazy_static",
+ "libc",
+ "log",
+ "parking_lot",
+ "postage",
+ "rand 0.8.3",
+ "rpc",
+ "rpc_client",
+ "serde 1.0.125",
+ "serde_json 1.0.64",
+ "smol",
+ "sum_tree",
+ "tempdir",
+ "toml 0.5.8",
+ "util",
 ]
 
 [[package]]
@@ -5976,36 +6010,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "worktree"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "buffer",
- "clock",
- "fsevent",
- "futures",
- "fuzzy",
- "gpui",
- "ignore",
- "lazy_static",
- "libc",
- "log",
- "parking_lot",
- "postage",
- "rand 0.8.3",
- "rpc",
- "rpc_client",
- "serde 1.0.125",
- "serde_json 1.0.64",
- "smol",
- "sum_tree",
- "tempdir",
- "toml 0.5.8",
- "util",
-]
-
-[[package]]
 name = "wyz"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6070,6 +6074,7 @@ dependencies = [
  "num_cpus",
  "parking_lot",
  "postage",
+ "project",
  "rand 0.8.3",
  "rpc",
  "rpc_client",
@@ -6093,7 +6098,6 @@ dependencies = [
  "unindent",
  "url",
  "util",
- "worktree",
 ]
 
 [[package]]

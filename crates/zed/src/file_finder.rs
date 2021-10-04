@@ -1,10 +1,6 @@
-use crate::{
-    fuzzy::PathMatch,
-    project::{Project, ProjectPath},
-    settings::Settings,
-    workspace::Workspace,
-};
+use crate::{settings::Settings, workspace::Workspace};
 use editor::{self, Editor, EditorSettings};
+use fuzzy::PathMatch;
 use gpui::{
     action,
     elements::*,
@@ -17,6 +13,7 @@ use gpui::{
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use postage::watch;
+use project::{Project, ProjectPath};
 use std::{
     cmp,
     path::Path,
@@ -427,9 +424,9 @@ mod tests {
     use super::*;
     use crate::{test::test_app_state, workspace::Workspace};
     use editor::{self, Insert};
+    use project::fs::FakeFs;
     use serde_json::json;
     use std::path::PathBuf;
-    use worktree::fs::FakeFs;
 
     #[gpui::test]
     async fn test_matching_paths(mut cx: gpui::TestAppContext) {

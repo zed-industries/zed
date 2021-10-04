@@ -20,12 +20,12 @@ use gpui::{
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use postage::watch;
+use project::Worktree;
 use std::{
     collections::{hash_map, HashMap},
     ffi::OsStr,
     ops::Range,
 };
-use worktree::Worktree;
 
 pub struct ProjectPanel {
     project: ModelHandle<Project>,
@@ -288,7 +288,7 @@ impl ProjectPanel {
         &self,
         target_ix: usize,
         cx: &'a AppContext,
-    ) -> Option<(&'a Worktree, &'a worktree::Entry)> {
+    ) -> Option<(&'a Worktree, &'a project::Entry)> {
         let project = self.project.read(cx);
         let mut offset = None;
         let mut ix = 0;
@@ -309,10 +309,7 @@ impl ProjectPanel {
         })
     }
 
-    fn selected_entry<'a>(
-        &self,
-        cx: &'a AppContext,
-    ) -> Option<(&'a Worktree, &'a worktree::Entry)> {
+    fn selected_entry<'a>(&self, cx: &'a AppContext) -> Option<(&'a Worktree, &'a project::Entry)> {
         let selection = self.selection?;
         let project = self.project.read(cx);
         let worktree = project.worktree_for_id(selection.worktree_id)?.read(cx);
@@ -626,7 +623,13 @@ mod tests {
         )
         .await;
 
-        let project = cx.add_model(|_| Project::new(&app_state));
+        let project = cx.add_model(|_| {
+            Project::new(
+                app_state.languages.clone(),
+                app_state.rpc.clone(),
+                app_state.fs.clone(),
+            )
+        });
         let root1 = project
             .update(&mut cx, |project, cx| {
                 project.add_local_worktree("/root1".as_ref(), cx)

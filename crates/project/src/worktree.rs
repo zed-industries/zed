@@ -1,12 +1,11 @@
-pub mod fs;
-mod ignore;
-
-use self::ignore::IgnoreStack;
+use super::{
+    fs::{self, Fs},
+    ignore::IgnoreStack,
+};
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Result};
 use buffer::{self, Buffer, History, LanguageRegistry, Operation, Rope};
 use clock::ReplicaId;
-pub use fs::*;
 use futures::{Stream, StreamExt};
 use fuzzy::CharBag;
 use gpui::{

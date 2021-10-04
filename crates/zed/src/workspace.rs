@@ -32,13 +32,13 @@ use log::error;
 pub use pane::*;
 pub use pane_group::*;
 use postage::{prelude::Stream, watch};
+use project::Worktree;
 use std::{
     collections::{hash_map::Entry, HashMap},
     future::Future,
     path::{Path, PathBuf},
     sync::Arc,
 };
-use worktree::Worktree;
 
 action!(Open, Arc<AppState>);
 action!(OpenPaths, OpenParams);
@@ -376,7 +376,13 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(app_state: &AppState, cx: &mut ViewContext<Self>) -> Self {
-        let project = cx.add_model(|_| Project::new(app_state));
+        let project = cx.add_model(|_| {
+            Project::new(
+                app_state.languages.clone(),
+                app_state.rpc.clone(),
+                app_state.fs.clone(),
+            )
+        });
         cx.observe(&project, |_, _, cx| cx.notify()).detach();
 
         let pane = cx.add_view(|_| Pane::new(app_state.settings.clone()));

@@ -1,8 +1,9 @@
 mod char_bag;
 
+use gpui::executor;
 use std::{
     borrow::Cow,
-    cmp::Ordering,
+    cmp::{self, Ordering},
     path::Path,
     sync::atomic::{self, AtomicBool},
     sync::Arc,
@@ -56,6 +57,14 @@ pub struct PathMatch {
 pub struct StringMatchCandidate {
     pub string: String,
     pub char_bag: CharBag,
+}
+
+pub trait PathMatchCandidateSet<'a>: Send + Sync {
+    type Candidates: Iterator<Item = PathMatchCandidate<'a>>;
+    fn id(&self) -> usize;
+    fn len(&self) -> usize;
+    fn prefix(&self) -> Arc<str>;
+    fn candidates(&'a self, start: usize) -> Self::Candidates;
 }
 
 impl Match for PathMatch {
@@ -152,6 +161,140 @@ impl Ord for PathMatch {
     }
 }
 
+pub async fn match_strings(
+    candidates: &[StringMatchCandidate],
+    query: &str,
+    smart_case: bool,
+    max_results: usize,
+    cancel_flag: &AtomicBool,
+    background: Arc<executor::Background>,
+) -> Vec<StringMatch> {
+    let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
+    let query = query.chars().collect::<Vec<_>>();
+
+    let lowercase_query = &lowercase_query;
+    let query = &query;
+    let query_char_bag = CharBag::from(&lowercase_query[..]);
+
+    let num_cpus = background.num_cpus().min(candidates.len());
+    let segment_size = (candidates.len() + num_cpus - 1) / num_cpus;
+    let mut segment_results = (0..num_cpus)
+        .map(|_| Vec::with_capacity(max_results))
+        .collect::<Vec<_>>();
+
+    background
+        .scoped(|scope| {
+            for (segment_idx, results) in segment_results.iter_mut().enumerate() {
+                let cancel_flag = &cancel_flag;
+                scope.spawn(async move {
+                    let segment_start = segment_idx * segment_size;
+                    let segment_end = segment_start + segment_size;
+                    let mut matcher = Matcher::new(
+                        query,
+                        lowercase_query,
+                        query_char_bag,
+                        smart_case,
+                        max_results,
+                    );
+                    matcher.match_strings(
+                        &candidates[segment_start..segment_end],
+                        results,
+                        cancel_flag,
+                    );
+                });
+            }
+        })
+        .await;
+
+    let mut results = Vec::new();
+    for segment_result in segment_results {
+        if results.is_empty() {
+            results = segment_result;
+        } else {
+            util::extend_sorted(&mut results, segment_result, max_results, |a, b| b.cmp(&a));
+        }
+    }
+    results
+}
+
+pub async fn match_paths<'a, Set: PathMatchCandidateSet<'a>>(
+    candidate_sets: &'a [Set],
+    query: &str,
+    smart_case: bool,
+    max_results: usize,
+    cancel_flag: &AtomicBool,
+    background: Arc<executor::Background>,
+) -> Vec<PathMatch> {
+    let path_count: usize = candidate_sets.iter().map(|s| s.len()).sum();
+    if path_count == 0 {
+        return Vec::new();
+    }
+
+    let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
+    let query = query.chars().collect::<Vec<_>>();
+
+    let lowercase_query = &lowercase_query;
+    let query = &query;
+    let query_char_bag = CharBag::from(&lowercase_query[..]);
+
+    let num_cpus = background.num_cpus().min(path_count);
+    let segment_size = (path_count + num_cpus - 1) / num_cpus;
+    let mut segment_results = (0..num_cpus)
+        .map(|_| Vec::with_capacity(max_results))
+        .collect::<Vec<_>>();
+
+    background
+        .scoped(|scope| {
+            for (segment_idx, results) in segment_results.iter_mut().enumerate() {
+                scope.spawn(async move {
+                    let segment_start = segment_idx * segment_size;
+                    let segment_end = segment_start + segment_size;
+                    let mut matcher = Matcher::new(
+                        query,
+                        lowercase_query,
+                        query_char_bag,
+                        smart_case,
+                        max_results,
+                    );
+
+                    let mut tree_start = 0;
+                    for candidate_set in candidate_sets {
+                        let tree_end = tree_start + candidate_set.len();
+
+                        if tree_start < segment_end && segment_start < tree_end {
+                            let start = cmp::max(tree_start, segment_start) - tree_start;
+                            let end = cmp::min(tree_end, segment_end) - tree_start;
+                            let candidates = candidate_set.candidates(start).take(end - start);
+
+                            matcher.match_paths(
+                                candidate_set.id(),
+                                candidate_set.prefix(),
+                                candidates,
+                                results,
+                                &cancel_flag,
+                            );
+                        }
+                        if tree_end >= segment_end {
+                            break;
+                        }
+                        tree_start = tree_end;
+                    }
+                })
+            }
+        })
+        .await;
+
+    let mut results = Vec::new();
+    for segment_result in segment_results {
+        if results.is_empty() {
+            results = segment_result;
+        } else {
+            util::extend_sorted(&mut results, segment_result, max_results, |a, b| b.cmp(&a));
+        }
+    }
+    results
+}
+
 impl<'a> Matcher<'a> {
     pub fn new(
         query: &'a [char],
@@ -194,11 +337,11 @@ impl<'a> Matcher<'a> {
         )
     }
 
-    pub fn match_paths(
+    pub fn match_paths<'c: 'a>(
         &mut self,
         tree_id: usize,
         path_prefix: Arc<str>,
-        path_entries: impl Iterator<Item = PathMatchCandidate<'a>>,
+        path_entries: impl Iterator<Item = PathMatchCandidate<'c>>,
         results: &mut Vec<PathMatch>,
         cancel_flag: &AtomicBool,
     ) {

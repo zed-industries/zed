@@ -5,8 +5,8 @@ use buffer::{Buffer, File as _};
 use editor::{Editor, EditorSettings, Event};
 use gpui::{fonts::TextStyle, AppContext, ModelHandle, Task, ViewContext};
 use postage::watch;
+use project::Worktree;
 use std::path::Path;
-use worktree::Worktree;
 
 impl Item for Buffer {
     type View = Editor;
