@@ -1,12 +1,10 @@
-use crate::{
-    util,
-    worktree::{EntryKind, Snapshot},
-};
 use gpui::executor;
 use std::{
     cmp,
     sync::{atomic::AtomicBool, Arc},
 };
+use util;
+use worktree::{EntryKind, Snapshot};
 
 pub use fuzzy::*;
 

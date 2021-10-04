@@ -20,6 +20,8 @@ use lazy_static::lazy_static;
 use operation_queue::OperationQueue;
 use parking_lot::Mutex;
 pub use point::*;
+#[cfg(any(test, feature = "test-support"))]
+pub use random_char_iter::*;
 pub use rope::{Chunks, Rope, TextSummary};
 use seahash::SeaHasher;
 pub use selection::*;

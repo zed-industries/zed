@@ -1,17 +1,14 @@
+pub mod fs;
 mod ignore;
 
 use self::ignore::IgnoreStack;
-use crate::{
-    fs::{self, Fs},
-    fuzzy::CharBag,
-    rpc::{self, proto, Status},
-    util::{Bias, TryFutureExt},
-};
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Result};
 use buffer::{self, Buffer, History, LanguageRegistry, Operation, Rope};
 use clock::ReplicaId;
+pub use fs::*;
 use futures::{Stream, StreamExt};
+use fuzzy::CharBag;
 use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task, UpgradeModelHandle, WeakModelHandle,
@@ -22,6 +19,7 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
+use rpc_client as rpc;
 use serde::Deserialize;
 use smol::channel::{self, Sender};
 use std::{
@@ -40,8 +38,10 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
+use sum_tree::Bias;
 use sum_tree::{self, Edit, SeekTarget, SumTree};
-use zrpc::{PeerId, TypedEnvelope};
+use util::TryFutureExt;
+use zrpc::{proto, PeerId, TypedEnvelope};
 
 lazy_static! {
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
@@ -755,7 +755,7 @@ impl LocalWorktree {
                         let mut status = rpc.status();
                         while let Some(status) = status.recv().await {
                             if let Some(this) = this.upgrade(&cx) {
-                                let remote_id = if let Status::Connected { .. } = status {
+                                let remote_id = if let rpc::Status::Connected { .. } = status {
                                     let collaborator_logins = this.read_with(&cx, |this, _| {
                                         this.as_local().unwrap().config.collaborators.clone()
                                     });
@@ -2832,16 +2832,19 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rpc_client::test::FakeServer;
     use crate::fs::FakeFs;
-    use crate::test::*;
     use anyhow::Result;
     use fs::RealFs;
     use rand::prelude::*;
     use serde_json::json;
-    use std::cell::RefCell;
-    use std::rc::Rc;
-    use std::time::UNIX_EPOCH;
-    use std::{env, fmt::Write, time::SystemTime};
+    use std::{cell::RefCell, rc::Rc};
+    use std::{
+        env,
+        fmt::Write,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+    use util::test::temp_tree;
 
     #[gpui::test]
     async fn test_traversal(cx: gpui::TestAppContext) {

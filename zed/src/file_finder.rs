@@ -3,7 +3,6 @@ use crate::{
     fuzzy::PathMatch,
     project::{Project, ProjectPath},
     settings::Settings,
-    util,
     workspace::Workspace,
 };
 use gpui::{
@@ -26,6 +25,7 @@ use std::{
         Arc,
     },
 };
+use util::post_inc;
 
 pub struct FileFinder {
     handle: WeakViewHandle<Self>,
@@ -315,7 +315,7 @@ impl FileFinder {
             editor::Event::Edited => {
                 let query = self.query_editor.update(cx, |buffer, cx| buffer.text(cx));
                 if query.is_empty() {
-                    self.latest_search_id = util::post_inc(&mut self.search_count);
+                    self.latest_search_id = post_inc(&mut self.search_count);
                     self.matches.clear();
                     cx.notify();
                 } else {
@@ -422,12 +422,12 @@ mod tests {
     use super::*;
     use crate::{
         editor::{self, Insert},
-        fs::FakeFs,
         test::test_app_state,
         workspace::Workspace,
     };
     use serde_json::json;
     use std::path::PathBuf;
+    use worktree::fs::FakeFs;
 
     #[gpui::test]
     async fn test_matching_paths(mut cx: gpui::TestAppContext) {

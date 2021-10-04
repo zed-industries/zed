@@ -2,13 +2,13 @@ use super::{
     fold_map,
     tab_map::{self, Edit as TabEdit, Snapshot as TabSnapshot, TabPoint, TextSummary},
 };
-use crate::{editor::Point, util::Bias};
+use crate::editor::Point;
 use buffer::HighlightId;
 use gpui::{fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
 use std::{collections::VecDeque, ops::Range, time::Duration};
-use sum_tree::{self, Cursor, SumTree};
+use sum_tree::{self, Bias, Cursor, SumTree};
 
 pub struct WrapMap {
     snapshot: Snapshot,
@@ -902,8 +902,8 @@ mod tests {
             Buffer,
         },
         test::Observer,
-        util::RandomCharIter,
     };
+    use buffer::RandomCharIter;
     use rand::prelude::*;
     use std::env;
 

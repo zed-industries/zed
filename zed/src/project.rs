@@ -1,25 +1,24 @@
 use crate::{
-    fs::Fs,
     fuzzy::{self, PathMatch},
-    rpc::Client,
-    util::TryFutureExt as _,
-    worktree::{self, Worktree},
     AppState,
 };
 use anyhow::Result;
 use buffer::LanguageRegistry;
 use futures::Future;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
+use rpc_client as rpc;
 use std::{
     path::Path,
     sync::{atomic::AtomicBool, Arc},
 };
+use util::TryFutureExt as _;
+use worktree::{fs::Fs, Worktree};
 
 pub struct Project {
     worktrees: Vec<ModelHandle<Worktree>>,
     active_entry: Option<ProjectEntry>,
     languages: Arc<LanguageRegistry>,
-    rpc: Arc<Client>,
+    rpc: Arc<rpc::Client>,
     fs: Arc<dyn Fs>,
 }
 
@@ -237,12 +236,11 @@ impl Entity for Project {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        fs::RealFs,
-        test::{temp_tree, test_app_state},
-    };
+    use crate::test::test_app_state;
     use serde_json::json;
     use std::{os::unix, path::PathBuf};
+    use util::test::temp_tree;
+    use worktree::fs::RealFs;
 
     #[gpui::test]
     async fn test_populate_and_search(mut cx: gpui::TestAppContext) {

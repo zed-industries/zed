@@ -6,8 +6,11 @@ members = [
     "fuzzy",
     "gpui",
     "gpui_macros",
+    "rpc_client",
     "server",
     "sum_tree",
+    "util",
+    "worktree",
     "zed",
     "zrpc"
 ]

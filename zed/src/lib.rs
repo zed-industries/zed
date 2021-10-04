@@ -3,7 +3,6 @@ pub mod channel;
 pub mod chat_panel;
 pub mod editor;
 pub mod file_finder;
-pub mod fs;
 mod fuzzy;
 pub mod http;
 pub mod language;
@@ -11,27 +10,25 @@ pub mod menus;
 pub mod people_panel;
 pub mod project;
 pub mod project_panel;
-pub mod rpc;
 pub mod settings;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 pub mod theme;
 pub mod theme_selector;
 pub mod user;
-mod util;
 pub mod workspace;
-pub mod worktree;
 
-use crate::util::TryFutureExt;
 pub use buffer;
 use buffer::LanguageRegistry;
 use channel::ChannelList;
 use gpui::{action, keymap::Binding, ModelHandle};
 use parking_lot::Mutex;
 use postage::watch;
-use std::sync::Arc;
-
+pub use rpc_client as rpc;
 pub use settings::Settings;
+use std::sync::Arc;
+use util::TryFutureExt;
+pub use worktree::{self, fs};
 
 action!(About);
 action!(Quit);

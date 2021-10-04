@@ -1,4 +1,6 @@
-use crate::util::ResultExt;
+#[cfg(any(test, feature = "test-support"))]
+pub mod test;
+
 use anyhow::{anyhow, Context, Result};
 use async_recursion::async_recursion;
 use async_tungstenite::tungstenite::{
@@ -21,6 +23,7 @@ use std::{
 };
 use surf::Url;
 use thiserror::Error;
+use util::ResultExt;
 pub use zrpc::{proto, ConnectionId, PeerId, TypedEnvelope};
 use zrpc::{
     proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage},

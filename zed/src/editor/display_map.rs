@@ -357,8 +357,8 @@ impl ToDisplayPoint for Anchor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{editor::movement, test::*, util::RandomCharIter};
-    use buffer::{History, Language, LanguageConfig, SelectionGoal, SyntaxTheme};
+    use crate::{editor::movement, test::*};
+    use buffer::{History, Language, LanguageConfig, RandomCharIter, SelectionGoal, SyntaxTheme};
     use gpui::{color::Color, MutableAppContext};
     use rand::{prelude::StdRng, Rng};
     use std::{env, sync::Arc};

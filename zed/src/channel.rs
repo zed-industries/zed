@@ -1,14 +1,11 @@
-use crate::{
-    rpc::{self, Client},
-    user::{User, UserStore},
-    util::{post_inc, TryFutureExt},
-};
+use crate::user::{User, UserStore};
 use anyhow::{anyhow, Context, Result};
 use gpui::{
     AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task, WeakModelHandle,
 };
 use postage::prelude::Stream;
 use rand::prelude::*;
+use rpc_client as rpc;
 use std::{
     collections::{HashMap, HashSet},
     mem,
@@ -17,6 +14,7 @@ use std::{
 };
 use sum_tree::{self, Bias, SumTree};
 use time::OffsetDateTime;
+use util::{post_inc, TryFutureExt};
 use zrpc::{
     proto::{self, ChannelMessageSent},
     TypedEnvelope,
@@ -25,7 +23,7 @@ use zrpc::{
 pub struct ChannelList {
     available_channels: Option<Vec<ChannelDetails>>,
     channels: HashMap<u64, WeakModelHandle<Channel>>,
-    rpc: Arc<Client>,
+    rpc: Arc<rpc::Client>,
     user_store: ModelHandle<UserStore>,
     _task: Task<Option<()>>,
 }
@@ -42,7 +40,7 @@ pub struct Channel {
     loaded_all_messages: bool,
     next_pending_message_id: usize,
     user_store: ModelHandle<UserStore>,
-    rpc: Arc<Client>,
+    rpc: Arc<rpc::Client>,
     rng: StdRng,
     _subscription: rpc::Subscription,
 }
@@ -187,7 +185,7 @@ impl Channel {
     pub fn new(
         details: ChannelDetails,
         user_store: ModelHandle<UserStore>,
-        rpc: Arc<Client>,
+        rpc: Arc<rpc::Client>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let _subscription = rpc.subscribe_to_entity(details.id, cx, Self::handle_message_sent);
@@ -594,14 +592,15 @@ impl<'a> sum_tree::Dimension<'a, ChannelMessageSummary> for Count {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::{FakeHttpClient, FakeServer};
+    use crate::test::FakeHttpClient;
     use gpui::TestAppContext;
+    use rpc_client::test::FakeServer;
     use surf::http::Response;
 
     #[gpui::test]
     async fn test_channel_messages(mut cx: TestAppContext) {
         let user_id = 5;
-        let mut client = Client::new();
+        let mut client = rpc::Client::new();
         let http_client = FakeHttpClient::new(|_| async move { Ok(Response::new(404)) });
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));

@@ -12,7 +12,6 @@ use crate::{
     settings::Settings,
     user,
     workspace::sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus},
-    worktree::Worktree,
     AppState, Authenticate,
 };
 use anyhow::Result;
@@ -38,6 +37,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use worktree::Worktree;
 
 action!(Open, Arc<AppState>);
 action!(OpenPaths, OpenParams);
@@ -1159,10 +1159,11 @@ mod tests {
     use crate::{
         editor::{Editor, Insert},
         fs::FakeFs,
-        test::{temp_tree, test_app_state},
+        test::test_app_state,
     };
     use serde_json::json;
     use std::collections::HashSet;
+    use util::test::temp_tree;
 
     #[gpui::test]
     async fn test_open_paths_action(mut cx: gpui::TestAppContext) {

@@ -1,16 +1,14 @@
-use crate::{
-    http::{HttpClient, Method, Request, Url},
-    rpc::{Client, Status},
-    util::TryFutureExt,
-};
+use crate::http::{HttpClient, Method, Request, Url};
 use anyhow::{anyhow, Context, Result};
 use futures::future;
 use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{prelude::Stream, sink::Sink, watch};
+use rpc_client as rpc;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
+use util::TryFutureExt as _;
 use zrpc::{proto, TypedEnvelope};
 
 #[derive(Debug)]
@@ -38,7 +36,7 @@ pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     collaborators: Arc<[Collaborator]>,
-    rpc: Arc<Client>,
+    rpc: Arc<rpc::Client>,
     http: Arc<dyn HttpClient>,
     _maintain_collaborators: Task<()>,
     _maintain_current_user: Task<()>,
@@ -51,7 +49,11 @@ impl Entity for UserStore {
 }
 
 impl UserStore {
-    pub fn new(rpc: Arc<Client>, http: Arc<dyn HttpClient>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(
+        rpc: Arc<rpc::Client>,
+        http: Arc<dyn HttpClient>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
         let (mut update_collaborators_tx, mut update_collaborators_rx) =
             watch::channel::<Option<proto::UpdateCollaborators>>();
@@ -82,7 +84,7 @@ impl UserStore {
                 let mut status = rpc.status();
                 while let Some(status) = status.recv().await {
                     match status {
-                        Status::Connected { .. } => {
+                        rpc::Status::Connected { .. } => {
                             if let Some((this, user_id)) = this.upgrade(&cx).zip(rpc.user_id()) {
                                 let user = this
                                     .update(&mut cx, |this, cx| this.fetch_user(user_id, cx))
@@ -91,7 +93,7 @@ impl UserStore {
                                 current_user_tx.send(user).await.ok();
                             }
                         }
-                        Status::SignedOut => {
+                        rpc::Status::SignedOut => {
                             current_user_tx.send(None).await.ok();
                         }
                         _ => {}

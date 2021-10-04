@@ -1,8 +1,8 @@
 use super::fold_map::{self, FoldEdit, FoldPoint, Snapshot as FoldSnapshot};
-use crate::util::Bias;
 use buffer::{rope, HighlightId};
 use parking_lot::Mutex;
 use std::{mem, ops::Range};
+use sum_tree::Bias;
 
 pub struct TabMap(Mutex<Snapshot>);
 

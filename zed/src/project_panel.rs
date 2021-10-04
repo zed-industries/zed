@@ -2,7 +2,6 @@ use crate::{
     project::{self, Project, ProjectEntry, ProjectPath},
     theme,
     workspace::Workspace,
-    worktree::{self, Worktree},
     Settings,
 };
 use gpui::{
@@ -26,6 +25,7 @@ use std::{
     ffi::OsStr,
     ops::Range,
 };
+use worktree::Worktree;
 
 pub struct ProjectPanel {
     project: ModelHandle<Project>,

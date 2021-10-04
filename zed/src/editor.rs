@@ -2,14 +2,7 @@ pub mod display_map;
 mod element;
 pub mod movement;
 
-use crate::{
-    project::ProjectPath,
-    settings::Settings,
-    theme::Theme,
-    util::{post_inc, Bias},
-    workspace,
-    worktree::Worktree,
-};
+use crate::{project::ProjectPath, settings::Settings, theme::Theme, workspace};
 use anyhow::Result;
 use buffer::*;
 use clock::ReplicaId;
@@ -35,6 +28,9 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use sum_tree::Bias;
+use util::post_inc;
+use worktree::Worktree;
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;

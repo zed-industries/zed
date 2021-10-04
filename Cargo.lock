@@ -4088,6 +4088,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "rpc_client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-recursion",
+ "async-tungstenite",
+ "gpui",
+ "lazy_static",
+ "log",
+ "parking_lot",
+ "postage",
+ "rand 0.8.3",
+ "smol",
+ "surf",
+ "thiserror",
+ "tiny_http",
+ "util",
+ "zrpc",
+]
+
+[[package]]
 name = "rsa"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5626,6 +5647,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
 
 [[package]]
+name = "util"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "log",
+ "serde_json 1.0.64",
+ "surf",
+ "tempdir",
+]
+
+[[package]]
 name = "uuid"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5898,6 +5931,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "worktree"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "buffer",
+ "clock",
+ "fsevent",
+ "futures",
+ "fuzzy",
+ "gpui",
+ "ignore",
+ "lazy_static",
+ "libc",
+ "log",
+ "parking_lot",
+ "postage",
+ "rand 0.8.3",
+ "rpc_client",
+ "serde 1.0.125",
+ "serde_json 1.0.64",
+ "smol",
+ "sum_tree",
+ "tempdir",
+ "toml 0.5.8",
+ "util",
+ "zrpc",
+]
+
+[[package]]
 name = "wyz"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5962,6 +6025,7 @@ dependencies = [
  "parking_lot",
  "postage",
  "rand 0.8.3",
+ "rpc_client",
  "rsa",
  "rust-embed",
  "serde 1.0.125",
@@ -5981,6 +6045,8 @@ dependencies = [
  "tree-sitter-rust",
  "unindent",
  "url",
+ "util",
+ "worktree",
  "zrpc",
 ]
 

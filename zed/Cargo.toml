@@ -17,7 +17,9 @@ path = "src/main.rs"
 test-support = [
     "buffer/test-support",
     "gpui/test-support",
+    "rpc_client/test-support",
     "tempdir",
+    "worktree/test-support",
     "zrpc/test-support",
 ]
 
@@ -48,6 +50,7 @@ num_cpus = "1.13.0"
 parking_lot = "0.11.1"
 postage = { version = "0.4.1", features = ["futures-traits"] }
 rand = "0.8.3"
+rpc_client = { path = "../rpc_client" }
 rsa = "0.4"
 rust-embed = { version = "6.2", features = ["include-exclude"] }
 serde = { version = "1", features = ["derive"] }
@@ -66,6 +69,8 @@ toml = "0.5"
 tree-sitter = "0.19.5"
 tree-sitter-rust = "0.19.0"
 url = "2.2"
+util = { path = "../util" }
+worktree =  { path = "../worktree" }
 zrpc = { path = "../zrpc" }
 
 [dev-dependencies]
@@ -75,8 +80,11 @@ serde_json = { version = "1.0.64", features = ["preserve_order"] }
 tempdir = { version = "0.3.7" }
 unindent = "0.1.7"
 buffer = { path = "../buffer", features = ["test-support"] }
-zrpc = { path = "../zrpc", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
+rpc_client = { path = "../rpc_client", features = ["test-support"] }
+util = { path = "../util", features = ["test-support"] }
+worktree = { path = "../worktree", features = ["test-support"] }
+zrpc = { path = "../zrpc", features = ["test-support"] }
 
 [package.metadata.bundle]
 icon = ["app-icon@2x.png", "app-icon.png"]
