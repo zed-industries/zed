@@ -209,7 +209,7 @@ impl User {
         User {
             id: message.id,
             github_login: message.github_login,
-            avatar: fetch_avatar(http, &message.avatar_url).log_err().await,
+            avatar: fetch_avatar(http, &message.avatar_url).warn_on_err().await,
         }
     }
 }
@@ -257,6 +257,9 @@ async fn fetch_avatar(http: &dyn HttpClient, url: &str) -> Result<Arc<ImageData>
         .send(request)
         .await
         .map_err(|e| anyhow!("failed to send user avatar request: {}", e))?;
+    if !response.status().is_success() {
+        return Err(anyhow!("avatar request failed {:?}", response.status()));
+    }
     let bytes = response
         .body_bytes()
         .await

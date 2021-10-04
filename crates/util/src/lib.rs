@@ -40,6 +40,7 @@ pub trait ResultExt {
     type Ok;
 
     fn log_err(self) -> Option<Self::Ok>;
+    fn warn_on_err(self) -> Option<Self::Ok>;
 }
 
 impl<T> ResultExt for anyhow::Result<T> {
@@ -54,10 +55,23 @@ impl<T> ResultExt for anyhow::Result<T> {
             }
         }
     }
+
+    fn warn_on_err(self) -> Option<T> {
+        match self {
+            Ok(value) => Some(value),
+            Err(error) => {
+                log::warn!("{:?}", error);
+                None
+            }
+        }
+    }
 }
 
 pub trait TryFutureExt {
     fn log_err(self) -> LogErrorFuture<Self>
+    where
+        Self: Sized;
+    fn warn_on_err(self) -> LogErrorFuture<Self>
     where
         Self: Sized;
 }
@@ -70,11 +84,18 @@ where
     where
         Self: Sized,
     {
-        LogErrorFuture(self)
+        LogErrorFuture(self, log::Level::Error)
+    }
+
+    fn warn_on_err(self) -> LogErrorFuture<Self>
+    where
+        Self: Sized,
+    {
+        LogErrorFuture(self, log::Level::Warn)
     }
 }
 
-pub struct LogErrorFuture<F>(F);
+pub struct LogErrorFuture<F>(F, log::Level);
 
 impl<F, T> Future for LogErrorFuture<F>
 where
@@ -83,9 +104,16 @@ where
     type Output = Option<T>;
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let level = self.1;
         let inner = unsafe { Pin::new_unchecked(&mut self.get_unchecked_mut().0) };
         match inner.poll(cx) {
-            Poll::Ready(output) => Poll::Ready(output.log_err()),
+            Poll::Ready(output) => Poll::Ready(match output {
+                Ok(output) => Some(output),
+                Err(error) => {
+                    log::log!(level, "{:?}", error);
+                    None
+                }
+            }),
             Poll::Pending => Poll::Pending,
         }
     }
