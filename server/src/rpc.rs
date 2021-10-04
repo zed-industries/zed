@@ -975,10 +975,10 @@ mod tests {
         time::Duration,
     };
     use zed::{
+        buffer::LanguageRegistry,
         channel::{Channel, ChannelDetails, ChannelList},
         editor::{Editor, EditorStyle, Insert},
         fs::{FakeFs, Fs as _},
-        language::LanguageRegistry,
         people_panel::JoinWorktree,
         project::ProjectPath,
         rpc::{self, Client, Credentials, EstablishConnectionError},

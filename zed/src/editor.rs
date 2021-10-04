@@ -2753,7 +2753,11 @@ impl SelectionExt for Selection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{editor::Point, language::LanguageRegistry, settings, test::sample_text};
+    use crate::{
+        editor::Point,
+        settings,
+        test::{self, sample_text},
+    };
     use buffer::History;
     use unindent::Unindent;
 
@@ -4232,9 +4236,9 @@ mod tests {
 
     #[gpui::test]
     async fn test_select_larger_smaller_syntax_node(mut cx: gpui::TestAppContext) {
-        let settings = cx.read(settings::test).1;
-        let languages = LanguageRegistry::new();
-        let lang = languages.select_language("z.rs");
+        let app_state = cx.update(test::test_app_state);
+
+        let lang = app_state.languages.select_language("z.rs");
         let text = r#"
             use mod1::mod2::{mod3, mod4};
 
@@ -4247,7 +4251,7 @@ mod tests {
             let history = History::new(text.into());
             Buffer::from_history(0, history, None, lang.cloned(), cx)
         });
-        let (_, view) = cx.add_window(|cx| build_editor(buffer, settings.clone(), cx));
+        let (_, view) = cx.add_window(|cx| build_editor(buffer, app_state.settings.clone(), cx));
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
             .await;
 

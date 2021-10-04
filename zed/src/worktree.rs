@@ -4,13 +4,12 @@ use self::ignore::IgnoreStack;
 use crate::{
     fs::{self, Fs},
     fuzzy::CharBag,
-    language::LanguageRegistry,
     rpc::{self, proto, Status},
     util::{Bias, TryFutureExt},
 };
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Result};
-use buffer::{self, Buffer, History, Operation, Rope};
+use buffer::{self, Buffer, History, LanguageRegistry, Operation, Rope};
 use clock::ReplicaId;
 use futures::{Stream, StreamExt};
 use gpui::{

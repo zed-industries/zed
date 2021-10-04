@@ -1,13 +1,13 @@
 use crate::{
     fs::Fs,
     fuzzy::{self, PathMatch},
-    language::LanguageRegistry,
     rpc::Client,
     util::TryFutureExt as _,
     worktree::{self, Worktree},
     AppState,
 };
 use anyhow::Result;
+use buffer::LanguageRegistry;
 use futures::Future;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 use std::{

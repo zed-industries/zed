@@ -23,6 +23,8 @@ pub mod workspace;
 pub mod worktree;
 
 use crate::util::TryFutureExt;
+pub use buffer;
+use buffer::LanguageRegistry;
 use channel::ChannelList;
 use gpui::{action, keymap::Binding, ModelHandle};
 use parking_lot::Mutex;
@@ -41,7 +43,7 @@ const MIN_FONT_SIZE: f32 = 6.0;
 pub struct AppState {
     pub settings_tx: Arc<Mutex<watch::Sender<Settings>>>,
     pub settings: watch::Receiver<Settings>,
-    pub languages: Arc<language::LanguageRegistry>,
+    pub languages: Arc<LanguageRegistry>,
     pub themes: Arc<settings::ThemeRegistry>,
     pub rpc: Arc<rpc::Client>,
     pub user_store: ModelHandle<user::UserStore>,

@@ -15,7 +15,7 @@ use clock::ReplicaId;
 use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
 pub use highlight_map::{HighlightId, HighlightMap};
 use language::Tree;
-pub use language::{Language, LanguageConfig};
+pub use language::{Language, LanguageConfig, LanguageRegistry};
 use lazy_static::lazy_static;
 use operation_queue::OperationQueue;
 use parking_lot::Mutex;

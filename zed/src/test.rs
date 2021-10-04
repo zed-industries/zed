@@ -3,13 +3,14 @@ use crate::{
     channel::ChannelList,
     fs::FakeFs,
     http::{HttpClient, Request, Response, ServerResponse},
-    language::LanguageRegistry,
+    language,
     rpc::{self, Client, Credentials, EstablishConnectionError},
     settings::{self, ThemeRegistry},
     user::UserStore,
     AppState,
 };
 use anyhow::{anyhow, Result};
+use buffer::LanguageRegistry;
 use futures::{future::BoxFuture, Future};
 use gpui::{AsyncAppContext, Entity, ModelHandle, MutableAppContext, TestAppContext};
 use parking_lot::Mutex;
@@ -83,7 +84,8 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
 
 pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
     let (settings_tx, settings) = settings::test(cx);
-    let languages = Arc::new(LanguageRegistry::new());
+    let mut languages = LanguageRegistry::new();
+    languages.add(Arc::new(language::rust()));
     let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
     let rpc = rpc::Client::new();
     let http = FakeHttpClient::new(|_| async move { Ok(ServerResponse::new(404)) });
@@ -92,7 +94,7 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
         settings_tx: Arc::new(Mutex::new(settings_tx)),
         settings,
         themes,
-        languages: languages.clone(),
+        languages: Arc::new(languages),
         channel_list: cx.add_model(|cx| ChannelList::new(user_store.clone(), rpc.clone(), cx)),
         rpc,
         user_store,
