@@ -1,12 +1,12 @@
 use std::{cmp, sync::Arc};
 
 use crate::{
-    editor::{self, Editor},
     fuzzy::{match_strings, StringMatch, StringMatchCandidate},
     settings::ThemeRegistry,
     workspace::Workspace,
     AppState, Settings,
 };
+use editor::{self, Editor, EditorSettings};
 use gpui::{
     action,
     elements::*,
@@ -59,10 +59,15 @@ impl ThemeSelector {
     ) -> Self {
         let query_editor = cx.add_view(|cx| {
             Editor::single_line(
-                settings.clone(),
                 {
                     let settings = settings.clone();
-                    move |_| settings.borrow().theme.selector.input_editor.as_editor()
+                    move |_| {
+                        let settings = settings.borrow();
+                        EditorSettings {
+                            tab_size: settings.tab_size,
+                            style: settings.theme.selector.input_editor.as_editor(),
+                        }
+                    }
                 },
                 cx,
             )

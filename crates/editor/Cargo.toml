@@ -1,0 +1,29 @@
+[package]
+name = "editor"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+test-support = ["buffer/test-support"]
+
+[dependencies]
+anyhow = "1.0"
+buffer = { path = "../buffer" }
+clock = { path = "../clock" }
+gpui = { path = "../gpui" }
+lazy_static = "1.4"
+log = "0.4"
+parking_lot = "0.11"
+postage = { version = "0.4", features = ["futures-traits"] }
+serde = { version = "1", features = ["derive", "rc"] }
+smallvec = { version = "1.6", features = ["union"] }
+smol = "1.2"
+sum_tree = { path = "../sum_tree" }
+util = { path = "../util" }
+
+[dev-dependencies]
+rand = "0.8"
+unindent = "0.1.7"
+tree-sitter = "0.19"
+tree-sitter-rust = "0.19"
+buffer = { path = "../buffer", features = ["test-support"] }

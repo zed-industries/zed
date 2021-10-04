@@ -26,7 +26,7 @@ guests = [
   { selection = "#3B874B33", cursor = "#3B874B" },
   { selection = "#BD7CB433", cursor = "#BD7CB4" },
   { selection = "#EE823133", cursor = "#EE8231" },
-  { selection = "#5A2B9233", cursor = "#5A2B92" }
+  { selection = "#5A2B9233", cursor = "#5A2B92" },
 ]
 
 [status]
@@ -39,7 +39,7 @@ bad = "#b7372e"
 active_line = "#00000022"
 hover = "#00000033"
 
-[syntax]
+[editor.syntax]
 keyword = { color = "#0086c0", weight = "bold" }
 function = "#dcdcaa"
 string = "#cb8f77"

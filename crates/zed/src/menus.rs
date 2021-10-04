@@ -4,8 +4,6 @@ use std::sync::Arc;
 
 #[cfg(target_os = "macos")]
 pub fn menus(state: &Arc<AppState>) -> Vec<Menu<'static>> {
-    use crate::editor;
-
     vec![
         Menu {
             name: "Zed",

@@ -10,6 +10,10 @@ use async_std::{sync::RwLock, task};
 use async_tungstenite::{tungstenite::protocol::Role, WebSocketStream};
 use futures::{future::BoxFuture, FutureExt};
 use postage::{mpsc, prelude::Sink as _, prelude::Stream as _};
+use rpc::{
+    proto::{self, AnyTypedEnvelope, EnvelopedMessage},
+    Connection, ConnectionId, Peer, TypedEnvelope,
+};
 use sha1::{Digest as _, Sha1};
 use std::{
     any::TypeId,
@@ -27,10 +31,6 @@ use tide::{
     Request, Response,
 };
 use time::OffsetDateTime;
-use rpc::{
-    proto::{self, AnyTypedEnvelope, EnvelopedMessage},
-    Connection, ConnectionId, Peer, TypedEnvelope,
-};
 
 type MessageHandler = Box<
     dyn Send
@@ -960,6 +960,7 @@ mod tests {
         db::{tests::TestDb, UserId},
         github, AppState, Config,
     };
+    use ::rpc::Peer;
     use async_std::{sync::RwLockReadGuard, task};
     use gpui::{ModelHandle, TestAppContext};
     use parking_lot::Mutex;
@@ -977,23 +978,20 @@ mod tests {
     use zed::{
         buffer::LanguageRegistry,
         channel::{Channel, ChannelDetails, ChannelList},
-        editor::{Editor, EditorStyle, Insert},
+        editor::{Editor, EditorSettings, Insert},
         fs::{FakeFs, Fs as _},
         people_panel::JoinWorktree,
         project::ProjectPath,
         rpc::{self, Client, Credentials, EstablishConnectionError},
-        settings,
         test::FakeHttpClient,
         user::UserStore,
         workspace::Workspace,
         worktree::Worktree,
     };
-    use rpc::Peer;
 
     #[gpui::test]
     async fn test_share_worktree(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         let (window_b, _) = cx_b.add_window(|_| EmptyView);
-        let settings = cx_b.read(settings::test).1;
         let lang_registry = Arc::new(LanguageRegistry::new());
 
         // Connect to a server as 2 clients.
@@ -1063,12 +1061,7 @@ mod tests {
 
         // Create a selection set as client B and see that selection set as client A.
         let editor_b = cx_b.add_view(window_b, |cx| {
-            Editor::for_buffer(
-                buffer_b,
-                settings,
-                |cx| EditorStyle::test(cx.font_cache()),
-                cx,
-            )
+            Editor::for_buffer(buffer_b, |cx| EditorSettings::test(cx), cx)
         });
         buffer_a
             .condition(&cx_a, |buffer, _| buffer.selection_sets().count() == 1)

@@ -1,10 +1,10 @@
 use crate::{
-    editor::{self, Editor},
     fuzzy::PathMatch,
     project::{Project, ProjectPath},
     settings::Settings,
     workspace::Workspace,
 };
+use editor::{self, Editor, EditorSettings};
 use gpui::{
     action,
     elements::*,
@@ -271,10 +271,15 @@ impl FileFinder {
 
         let query_editor = cx.add_view(|cx| {
             Editor::single_line(
-                settings.clone(),
                 {
                     let settings = settings.clone();
-                    move |_| settings.borrow().theme.selector.input_editor.as_editor()
+                    move |_| {
+                        let settings = settings.borrow();
+                        EditorSettings {
+                            style: settings.theme.selector.input_editor.as_editor(),
+                            tab_size: settings.tab_size,
+                        }
+                    }
                 },
                 cx,
             )
@@ -420,11 +425,8 @@ impl FileFinder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        editor::{self, Insert},
-        test::test_app_state,
-        workspace::Workspace,
-    };
+    use crate::{test::test_app_state, workspace::Workspace};
+    use editor::{self, Insert};
     use serde_json::json;
     use std::path::PathBuf;
     use worktree::fs::FakeFs;

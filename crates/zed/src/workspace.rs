@@ -1,3 +1,4 @@
+mod items;
 pub mod pane;
 pub mod pane_group;
 pub mod sidebar;
@@ -1156,11 +1157,8 @@ impl WorkspaceHandle for ViewHandle<Workspace> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        editor::{Editor, Insert},
-        fs::FakeFs,
-        test::test_app_state,
-    };
+    use crate::{fs::FakeFs, test::test_app_state};
+    use editor::{Editor, Insert};
     use serde_json::json;
     use std::collections::HashSet;
     use util::test::temp_tree;

@@ -1128,7 +1128,7 @@ impl FoldEdit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{editor::ToPoint, test::sample_text};
+    use crate::{test::sample_text, ToPoint};
     use buffer::RandomCharIter;
     use rand::prelude::*;
     use std::{env, mem};

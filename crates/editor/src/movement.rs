@@ -196,7 +196,7 @@ fn char_kind(c: char) -> CharKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::editor::{display_map::DisplayMap, Buffer};
+    use crate::{display_map::DisplayMap, Buffer};
 
     #[gpui::test]
     fn test_prev_next_word_boundary_multibyte(cx: &mut gpui::MutableAppContext) {

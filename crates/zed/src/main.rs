@@ -33,7 +33,7 @@ fn main() {
     let themes = settings::ThemeRegistry::new(Assets, app.font_cache());
     let (settings_tx, settings) = settings::channel(&app.font_cache(), &themes).unwrap();
     let languages = Arc::new(language::build_language_registry());
-    languages.set_theme(&settings.borrow().theme.syntax);
+    languages.set_theme(&settings.borrow().theme.editor.syntax);
 
     app.run(move |cx| {
         let rpc = rpc::Client::new();

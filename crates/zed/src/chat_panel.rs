@@ -1,10 +1,8 @@
-use std::sync::Arc;
-
 use crate::{
     channel::{Channel, ChannelEvent, ChannelList, ChannelMessage},
-    editor::Editor,
     theme, Settings,
 };
+use editor::{Editor, EditorSettings};
 use gpui::{
     action,
     elements::*,
@@ -16,6 +14,7 @@ use gpui::{
 };
 use postage::{prelude::Stream, watch};
 use rpc_client as rpc;
+use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
 use util::{ResultExt, TryFutureExt};
 
@@ -55,10 +54,15 @@ impl ChatPanel {
         let input_editor = cx.add_view(|cx| {
             Editor::auto_height(
                 4,
-                settings.clone(),
                 {
                     let settings = settings.clone();
-                    move |_| settings.borrow().theme.chat_panel.input_editor.as_editor()
+                    move |_| {
+                        let settings = settings.borrow();
+                        EditorSettings {
+                            tab_size: settings.tab_size,
+                            style: settings.theme.chat_panel.input_editor.as_editor(),
+                        }
+                    }
                 },
                 cx,
             )

@@ -33,6 +33,7 @@ clock = { path = "../clock" }
 crossbeam-channel = "0.5.0"
 ctor = "0.1.20"
 dirs = "3.0"
+editor = { path = "../editor" }
 easy-parallel = "3.1.0"
 fsevent = { path = "../fsevent" }
 futures = "0.3"
@@ -70,7 +71,7 @@ tree-sitter = "0.19.5"
 tree-sitter-rust = "0.19.0"
 url = "2.2"
 util = { path = "../util" }
-worktree =  { path = "../worktree" }
+worktree = { path = "../worktree" }
 rpc = { path = "../rpc" }
 
 [dev-dependencies]
@@ -80,6 +81,7 @@ serde_json = { version = "1.0.64", features = ["preserve_order"] }
 tempdir = { version = "0.3.7" }
 unindent = "0.1.7"
 buffer = { path = "../buffer", features = ["test-support"] }
+editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 rpc_client = { path = "../rpc_client", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }

@@ -208,7 +208,7 @@ padding = { left = 16, right = 16, top = 8, bottom = 4 }
 
 [selector.item]
 text = "$text.1"
-highlight_text = { extends = "$text.base", color = "$syntax.keyword.color", weight = "$syntax.keyword.weight" }
+highlight_text = { extends = "$text.base", color = "$editor.syntax.keyword.color", weight = "$editor.syntax.keyword.weight" }
 padding = { left = 16, right = 16, top = 4, bottom = 4 }
 corner_radius = 6
 

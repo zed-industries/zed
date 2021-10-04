@@ -1,7 +1,6 @@
 pub mod assets;
 pub mod channel;
 pub mod chat_panel;
-pub mod editor;
 pub mod file_finder;
 mod fuzzy;
 pub mod http;
@@ -21,6 +20,7 @@ pub mod workspace;
 pub use buffer;
 use buffer::LanguageRegistry;
 use channel::ChannelList;
+pub use editor;
 use gpui::{action, keymap::Binding, ModelHandle};
 use parking_lot::Mutex;
 use postage::watch;

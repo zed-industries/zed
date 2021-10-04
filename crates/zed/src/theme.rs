@@ -1,8 +1,7 @@
 mod resolution;
 mod theme_registry;
 
-use crate::editor::{EditorStyle, SelectionStyle};
-use buffer::SyntaxTheme;
+use editor::{EditorStyle, SelectionStyle};
 use gpui::{
     color::Color,
     elements::{ContainerStyle, ImageStyle, LabelStyle},
@@ -25,7 +24,6 @@ pub struct Theme {
     pub project_panel: ProjectPanel,
     pub selector: Selector,
     pub editor: EditorStyle,
-    pub syntax: SyntaxTheme,
 }
 
 #[derive(Deserialize)]
@@ -228,6 +226,7 @@ impl InputEditorStyle {
             line_number: Default::default(),
             line_number_active: Default::default(),
             guest_selections: Default::default(),
+            syntax: Default::default(),
         }
     }
 }

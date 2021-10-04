@@ -2,8 +2,7 @@ use super::{
     fold_map,
     tab_map::{self, Edit as TabEdit, Snapshot as TabSnapshot, TabPoint, TextSummary},
 };
-use crate::editor::Point;
-use buffer::HighlightId;
+use buffer::{HighlightId, Point};
 use gpui::{fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
@@ -897,13 +896,10 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for WrapPoint {
 mod tests {
     use super::*;
     use crate::{
-        editor::{
-            display_map::{fold_map::FoldMap, tab_map::TabMap},
-            Buffer,
-        },
+        display_map::{fold_map::FoldMap, tab_map::TabMap},
         test::Observer,
     };
-    use buffer::RandomCharIter;
+    use buffer::{Buffer, RandomCharIter};
     use rand::prelude::*;
     use std::env;
 

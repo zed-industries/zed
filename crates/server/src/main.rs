@@ -13,6 +13,7 @@ mod rpc;
 mod team;
 
 use self::errors::TideResultExt as _;
+use ::rpc::Peer;
 use anyhow::Result;
 use async_std::net::TcpListener;
 use async_trait::async_trait;
@@ -26,7 +27,6 @@ use std::sync::Arc;
 use surf::http::cookies::SameSite;
 use tide::{log, sessions::SessionMiddleware};
 use tide_compress::CompressMiddleware;
-use rpc::Peer;
 
 type Request = tide::Request<Arc<AppState>>;
 

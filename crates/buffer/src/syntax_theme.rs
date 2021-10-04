@@ -4,6 +4,7 @@ use crate::HighlightId;
 use gpui::fonts::HighlightStyle;
 use serde::Deserialize;
 
+#[derive(Default)]
 pub struct SyntaxTheme {
     pub(crate) highlights: Vec<(String, HighlightStyle)>,
 }

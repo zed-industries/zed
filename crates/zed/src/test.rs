@@ -10,30 +10,16 @@ use crate::{
 use anyhow::Result;
 use buffer::LanguageRegistry;
 use futures::{future::BoxFuture, Future};
-use gpui::{Entity, ModelHandle, MutableAppContext};
+use gpui::MutableAppContext;
 use parking_lot::Mutex;
 use rpc_client as rpc;
-use smol::channel;
-use std::{fmt, marker::PhantomData, sync::Arc};
+use std::{fmt, sync::Arc};
 use worktree::fs::FakeFs;
 
 #[cfg(test)]
 #[ctor::ctor]
 fn init_logger() {
     env_logger::init();
-}
-
-pub fn sample_text(rows: usize, cols: usize) -> String {
-    let mut text = String::new();
-    for row in 0..rows {
-        let c: char = ('a' as u32 + row as u32) as u8 as char;
-        let mut line = c.to_string().repeat(cols);
-        if row < rows - 1 {
-            line.push('\n');
-        }
-        text += &line;
-    }
-    text
 }
 
 pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
@@ -54,29 +40,6 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
         user_store,
         fs: Arc::new(FakeFs::new()),
     })
-}
-
-pub struct Observer<T>(PhantomData<T>);
-
-impl<T: 'static> Entity for Observer<T> {
-    type Event = ();
-}
-
-impl<T: Entity> Observer<T> {
-    pub fn new(
-        handle: &ModelHandle<T>,
-        cx: &mut gpui::TestAppContext,
-    ) -> (ModelHandle<Self>, channel::Receiver<()>) {
-        let (notify_tx, notify_rx) = channel::unbounded();
-        let observer = cx.add_model(|cx| {
-            cx.observe(handle, move |_, _, _| {
-                let _ = notify_tx.try_send(());
-            })
-            .detach();
-            Observer(PhantomData)
-        });
-        (observer, notify_rx)
-    }
 }
 
 pub struct FakeHttpClient {

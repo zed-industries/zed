@@ -1576,6 +1576,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "buffer",
+ "clock",
+ "gpui",
+ "lazy_static",
+ "log",
+ "parking_lot",
+ "postage",
+ "rand 0.8.3",
+ "serde 1.0.125",
+ "smallvec",
+ "smol",
+ "sum_tree",
+ "tree-sitter",
+ "tree-sitter-rust",
+ "unindent",
+ "util",
+]
+
+[[package]]
 name = "either"
 version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6030,6 +6053,7 @@ dependencies = [
  "ctor",
  "dirs 3.0.1",
  "easy-parallel",
+ "editor",
  "env_logger",
  "fsevent",
  "futures",
