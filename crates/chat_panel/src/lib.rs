@@ -1,4 +1,3 @@
-use crate::Settings;
 use client::{
     channel::{Channel, ChannelEvent, ChannelList, ChannelMessage},
     Client,
@@ -17,6 +16,7 @@ use postage::{prelude::Stream, watch};
 use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
 use util::{ResultExt, TryFutureExt};
+use workspace::Settings;
 
 const MESSAGE_LOADING_THRESHOLD: usize = 50;
 

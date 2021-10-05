@@ -12,8 +12,7 @@ use workspace::{self, settings, OpenNew};
 use zed::{
     self,
     assets::Assets,
-    chat_panel, client,
-    client::{http, ChannelList, UserStore},
+    client::{self, http, ChannelList, UserStore},
     editor, file_finder,
     fs::RealFs,
     language, menus, people_panel, theme_selector, AppState, OpenParams, OpenPaths,

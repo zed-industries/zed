@@ -25,6 +25,7 @@ test-support = [
 
 [dependencies]
 buffer = { path = "../buffer" }
+chat_panel = { path = "../chat_panel" }
 client = { path = "../client" }
 clock = { path = "../clock" }
 fsevent = { path = "../fsevent" }

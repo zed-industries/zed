@@ -1,5 +1,4 @@
 pub mod assets;
-pub mod chat_panel;
 pub mod file_finder;
 pub mod language;
 pub mod menus;
