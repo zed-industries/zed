@@ -16,7 +16,7 @@ use zed::{
     client::{http, ChannelList, UserStore},
     editor, file_finder,
     fs::RealFs,
-    language, menus, people_panel, project_panel, theme_selector, AppState, OpenParams, OpenPaths,
+    language, menus, people_panel, theme_selector, AppState, OpenParams, OpenPaths,
 };
 
 fn main() {

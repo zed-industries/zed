@@ -4,7 +4,6 @@ pub mod file_finder;
 pub mod language;
 pub mod menus;
 pub mod people_panel;
-pub mod project_panel;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 pub mod theme_selector;

@@ -1,8 +1,3 @@
-use crate::{
-    project::{self, Project, ProjectEntry, ProjectPath},
-    workspace::Workspace,
-    Settings,
-};
 use gpui::{
     action,
     elements::{
@@ -19,12 +14,13 @@ use gpui::{
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use postage::watch;
-use project::Worktree;
+use project::{Project, ProjectEntry, ProjectPath, Worktree};
 use std::{
     collections::{hash_map, HashMap},
     ffi::OsStr,
     ops::Range,
 };
+use workspace::{Settings, Workspace};
 
 pub struct ProjectPanel {
     project: ModelHandle<Project>,
@@ -575,17 +571,16 @@ impl Entity for ProjectPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::test_app_state;
     use gpui::{TestAppContext, ViewHandle};
     use serde_json::json;
     use std::{collections::HashSet, path::Path};
+    use workspace::WorkspaceParams;
 
     #[gpui::test]
     async fn test_visible_list(mut cx: gpui::TestAppContext) {
-        let app_state = cx.update(test_app_state);
-        let settings = app_state.settings.clone();
-        let fs = app_state.fs.as_fake();
-
+        let params = cx.update(WorkspaceParams::test);
+        let settings = params.settings.clone();
+        let fs = params.fs.as_fake();
         fs.insert_tree(
             "/root1",
             json!({
@@ -624,9 +619,9 @@ mod tests {
 
         let project = cx.add_model(|_| {
             Project::new(
-                app_state.languages.clone(),
-                app_state.client.clone(),
-                app_state.fs.clone(),
+                params.languages.clone(),
+                params.client.clone(),
+                params.fs.clone(),
             )
         });
         let root1 = project
@@ -648,7 +643,7 @@ mod tests {
             .read_with(&cx, |t, _| t.as_local().unwrap().scan_complete())
             .await;
 
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state.as_ref().into(), cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         let panel = workspace.update(&mut cx, |_, cx| ProjectPanel::new(project, settings, cx));
         assert_eq!(
             visible_entry_details(&panel, 0..50, &mut cx),

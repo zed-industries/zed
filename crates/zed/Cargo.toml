@@ -32,6 +32,7 @@ fuzzy = { path = "../fuzzy" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 project = { path = "../project" }
+project_panel = { path = "../project_panel" }
 rpc = { path = "../rpc" }
 sum_tree = { path = "../sum_tree" }
 theme = { path = "../theme" }
