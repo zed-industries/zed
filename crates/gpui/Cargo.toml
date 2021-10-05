@@ -5,15 +5,15 @@ name = "gpui"
 version = "0.1.0"
 
 [features]
-test-support = []
+test-support = ["env_logger"]
 
 [dependencies]
 gpui_macros = { path = "../gpui_macros" }
 sum_tree = { path = "../sum_tree" }
-
 async-task = "4.0.3"
 backtrace = "0.3"
 ctor = "0.1"
+env_logger = { version = "0.8", optional = true }
 etagere = "0.2"
 image = "0.23"
 lazy_static = "1.4.0"
