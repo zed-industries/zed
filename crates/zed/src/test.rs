@@ -1,4 +1,4 @@
-use crate::{assets::Assets, language, AppState};
+use crate::{assets::Assets, AppState};
 use buffer::LanguageRegistry;
 use client::{http::ServerResponse, test::FakeHttpClient, ChannelList, Client, UserStore};
 use gpui::{AssetSource, MutableAppContext};
@@ -17,8 +17,6 @@ fn init_logger() {
 
 pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
     let (settings_tx, settings) = watch::channel_with(build_settings(cx));
-    let mut languages = LanguageRegistry::new();
-    languages.add(Arc::new(language::rust()));
     let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
     let client = Client::new();
     let http = FakeHttpClient::new(|_| async move { Ok(ServerResponse::new(404)) });
@@ -27,7 +25,7 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
         settings_tx: Arc::new(Mutex::new(settings_tx)),
         settings,
         themes,
-        languages: Arc::new(languages),
+        languages: Arc::new(LanguageRegistry::new()),
         channel_list: cx.add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx)),
         client,
         user_store,

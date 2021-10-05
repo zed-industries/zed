@@ -14,7 +14,7 @@ pub fn build_language_registry() -> LanguageRegistry {
     languages
 }
 
-pub fn rust() -> Language {
+fn rust() -> Language {
     let grammar = tree_sitter_rust::language();
     let rust_config =
         toml::from_slice(&LanguageDir::get("rust/config.toml").unwrap().data).unwrap();
