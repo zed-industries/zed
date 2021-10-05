@@ -6,7 +6,7 @@ set -e
 cargo install cargo-bundle --version 0.5.0
 
 # Build the app bundle for x86_64
-pushd zed > /dev/null
+pushd crates/zed > /dev/null
 cargo bundle --release --target x86_64-apple-darwin
 popd > /dev/null
 
