@@ -11,7 +11,7 @@ clock = { path = "../clock" }
 gpui = { path = "../gpui" }
 rpc = { path = "../rpc" }
 sum_tree = { path = "../sum_tree" }
-
+theme = { path = "../theme" }
 anyhow = "1.0.38"
 arrayvec = "0.7.1"
 lazy_static = "1.4"

@@ -7,7 +7,6 @@ mod point;
 pub mod random_char_iter;
 pub mod rope;
 mod selection;
-mod syntax_theme;
 
 pub use anchor::*;
 use anyhow::{anyhow, Result};
@@ -42,7 +41,6 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use sum_tree::{Bias, FilterCursor, SumTree};
-pub use syntax_theme::SyntaxTheme;
 use tree_sitter::{InputEdit, Parser, QueryCursor};
 
 pub trait File {

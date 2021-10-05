@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2018"
 
 [dependencies]
-editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 anyhow = "1.0.38"
 indexmap = "1.6.2"

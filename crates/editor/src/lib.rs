@@ -28,6 +28,7 @@ use std::{
     time::Duration,
 };
 use sum_tree::Bias;
+use theme::EditorStyle;
 use util::post_inc;
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -281,27 +282,6 @@ pub enum EditorMode {
 pub struct EditorSettings {
     pub tab_size: usize,
     pub style: EditorStyle,
-}
-
-#[derive(Clone, Deserialize, Default)]
-pub struct EditorStyle {
-    pub text: TextStyle,
-    #[serde(default)]
-    pub placeholder_text: Option<TextStyle>,
-    pub background: Color,
-    pub selection: SelectionStyle,
-    pub gutter_background: Color,
-    pub active_line_background: Color,
-    pub line_number: Color,
-    pub line_number_active: Color,
-    pub guest_selections: Vec<SelectionStyle>,
-    pub syntax: Arc<SyntaxTheme>,
-}
-
-#[derive(Clone, Copy, Default, Deserialize)]
-pub struct SelectionStyle {
-    pub cursor: Color,
-    pub selection: Color,
 }
 
 pub struct Editor {
@@ -2445,12 +2425,6 @@ impl Snapshot {
 
     pub fn next_row_boundary(&self, point: DisplayPoint) -> (DisplayPoint, Point) {
         self.display_snapshot.next_row_boundary(point)
-    }
-}
-
-impl EditorStyle {
-    fn placeholder_text(&self) -> &TextStyle {
-        self.placeholder_text.as_ref().unwrap_or(&self.text)
     }
 }
 

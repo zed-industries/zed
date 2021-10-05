@@ -358,10 +358,11 @@ impl ToDisplayPoint for Anchor {
 mod tests {
     use super::*;
     use crate::{movement, test::*};
-    use buffer::{History, Language, LanguageConfig, RandomCharIter, SelectionGoal, SyntaxTheme};
+    use buffer::{History, Language, LanguageConfig, RandomCharIter, SelectionGoal};
     use gpui::{color::Color, MutableAppContext};
     use rand::{prelude::StdRng, Rng};
     use std::{env, sync::Arc};
+    use theme::SyntaxTheme;
     use Bias::*;
 
     #[gpui::test(iterations = 100)]
@@ -976,7 +977,7 @@ mod tests {
         let mut snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<&str>)> = Vec::new();
         for (chunk, style_id) in snapshot.highlighted_chunks_for_rows(rows) {
-            let style_name = theme.highlight_name(style_id);
+            let style_name = style_id.name(theme);
             if let Some((last_chunk, last_style_name)) = chunks.last_mut() {
                 if style_name == *last_style_name {
                     last_chunk.push_str(chunk);

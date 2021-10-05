@@ -1,5 +1,6 @@
-use crate::syntax_theme::SyntaxTheme;
+use gpui::fonts::HighlightStyle;
 use std::sync::Arc;
+use theme::SyntaxTheme;
 
 #[derive(Clone, Debug)]
 pub struct HighlightMap(Arc<[HighlightId]>);
@@ -49,6 +50,20 @@ impl HighlightMap {
     }
 }
 
+impl HighlightId {
+    pub fn style(&self, theme: &SyntaxTheme) -> Option<HighlightStyle> {
+        theme
+            .highlights
+            .get(self.0 as usize)
+            .map(|entry| entry.1.clone())
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn name<'a>(&self, theme: &'a SyntaxTheme) -> Option<&'a str> {
+        theme.highlights.get(self.0 as usize).map(|e| e.0.as_str())
+    }
+}
+
 impl Default for HighlightMap {
     fn default() -> Self {
         Self(Arc::new([]))
@@ -89,8 +104,8 @@ mod tests {
         ];
 
         let map = HighlightMap::new(capture_names, &theme);
-        assert_eq!(theme.highlight_name(map.get(0)), Some("function"));
-        assert_eq!(theme.highlight_name(map.get(1)), Some("function.async"));
-        assert_eq!(theme.highlight_name(map.get(2)), Some("variable.builtin"));
+        assert_eq!(map.get(0).name(&theme), Some("function"));
+        assert_eq!(map.get(1).name(&theme), Some("function.async"));
+        assert_eq!(map.get(2).name(&theme), Some("variable.builtin"));
     }
 }

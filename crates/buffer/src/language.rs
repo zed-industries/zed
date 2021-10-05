@@ -1,9 +1,10 @@
-use crate::{HighlightMap, SyntaxTheme};
+use crate::{HighlightMap};
 use parking_lot::Mutex;
 use serde::Deserialize;
 use std::{path::Path, str, sync::Arc};
 use tree_sitter::{Language as Grammar, Query};
 pub use tree_sitter::{Parser, Tree};
+use theme::SyntaxTheme;
 
 #[derive(Default, Deserialize)]
 pub struct LanguageConfig {

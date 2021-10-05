@@ -1,14 +1,14 @@
 mod resolution;
 mod theme_registry;
 
-use editor::{EditorStyle, SelectionStyle};
 use gpui::{
     color::Color,
     elements::{ContainerStyle, ImageStyle, LabelStyle},
-    fonts::TextStyle,
+    fonts::{HighlightStyle, TextStyle},
     Border,
 };
 use serde::Deserialize;
+use std::{collections::HashMap, sync::Arc};
 
 pub use theme_registry::*;
 
@@ -202,6 +202,27 @@ pub struct ContainedLabel {
 }
 
 #[derive(Clone, Deserialize, Default)]
+pub struct EditorStyle {
+    pub text: TextStyle,
+    #[serde(default)]
+    pub placeholder_text: Option<TextStyle>,
+    pub background: Color,
+    pub selection: SelectionStyle,
+    pub gutter_background: Color,
+    pub active_line_background: Color,
+    pub line_number: Color,
+    pub line_number_active: Color,
+    pub guest_selections: Vec<SelectionStyle>,
+    pub syntax: Arc<SyntaxTheme>,
+}
+
+#[derive(Clone, Copy, Default, Deserialize)]
+pub struct SelectionStyle {
+    pub cursor: Color,
+    pub selection: Color,
+}
+
+#[derive(Clone, Deserialize, Default)]
 pub struct InputEditorStyle {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -209,6 +230,12 @@ pub struct InputEditorStyle {
     #[serde(default)]
     pub placeholder_text: Option<TextStyle>,
     pub selection: SelectionStyle,
+}
+
+impl EditorStyle {
+    pub fn placeholder_text(&self) -> &TextStyle {
+        self.placeholder_text.as_ref().unwrap_or(&self.text)
+    }
 }
 
 impl InputEditorStyle {
@@ -228,5 +255,39 @@ impl InputEditorStyle {
             guest_selections: Default::default(),
             syntax: Default::default(),
         }
+    }
+}
+
+#[derive(Default)]
+pub struct SyntaxTheme {
+    pub highlights: Vec<(String, HighlightStyle)>,
+}
+
+impl SyntaxTheme {
+    pub fn new(highlights: Vec<(String, HighlightStyle)>) -> Self {
+        Self { highlights }
+    }
+}
+
+impl<'de> Deserialize<'de> for SyntaxTheme {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let syntax_data: HashMap<String, HighlightStyle> = Deserialize::deserialize(deserializer)?;
+
+        let mut result = Self::new(Vec::new());
+        for (key, style) in syntax_data {
+            match result
+                .highlights
+                .binary_search_by(|(needle, _)| needle.cmp(&key))
+            {
+                Ok(i) | Err(i) => {
+                    result.highlights.insert(i, (key, style));
+                }
+            }
+        }
+
+        Ok(result)
     }
 }

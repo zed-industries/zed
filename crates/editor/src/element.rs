@@ -513,9 +513,8 @@ impl EditorElement {
                 }
 
                 if !line_chunk.is_empty() && !line_exceeded_max_len {
-                    let highlight_style = style
-                        .syntax
-                        .highlight_style(style_ix)
+                    let highlight_style = style_ix
+                        .style(&style.syntax)
                         .unwrap_or(style.text.clone().into());
                     // Avoid a lookup if the font properties match the previous ones.
                     let font_id = if highlight_style.font_properties == prev_font_properties {

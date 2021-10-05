@@ -760,6 +760,7 @@ dependencies = [
  "similar",
  "smallvec",
  "sum_tree",
+ "theme",
  "tree-sitter",
  "tree-sitter-rust",
  "unindent",
@@ -1631,6 +1632,7 @@ dependencies = [
  "smallvec",
  "smol",
  "sum_tree",
+ "theme",
  "tree-sitter",
  "tree-sitter-rust",
  "unindent",
@@ -5316,7 +5318,6 @@ name = "theme"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "editor",
  "gpui",
  "indexmap",
  "parking_lot",
