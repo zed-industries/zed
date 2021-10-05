@@ -1,10 +1,4 @@
-use crate::{
-    assets::Assets,
-    language,
-    settings::Settings,
-    theme::{Theme, ThemeRegistry, DEFAULT_THEME_NAME},
-    AppState,
-};
+use crate::{assets::Assets, language, settings::Settings, AppState};
 use buffer::LanguageRegistry;
 use client::{http::ServerResponse, test::FakeHttpClient, ChannelList, Client, UserStore};
 use gpui::{AssetSource, MutableAppContext};
@@ -12,6 +6,7 @@ use parking_lot::Mutex;
 use postage::watch;
 use project::fs::FakeFs;
 use std::sync::Arc;
+use theme::{Theme, ThemeRegistry, DEFAULT_THEME_NAME};
 
 #[cfg(test)]
 #[ctor::ctor]

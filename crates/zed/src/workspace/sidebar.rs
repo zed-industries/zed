@@ -1,5 +1,5 @@
 use super::Workspace;
-use crate::{theme, Settings};
+use crate::Settings;
 use gpui::{
     action, elements::*, platform::CursorStyle, AnyViewHandle, MutableAppContext, RenderContext,
 };

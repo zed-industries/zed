@@ -1,6 +1,6 @@
-use crate::theme::Theme;
 use anyhow::{anyhow, Result};
 use gpui::{elements::*, Axis};
+use theme::Theme;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaneGroup {

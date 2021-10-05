@@ -1,4 +1,4 @@
-use crate::{theme, Settings};
+use crate::Settings;
 use client::{
     channel::{Channel, ChannelEvent, ChannelList, ChannelMessage},
     Client,

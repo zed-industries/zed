@@ -7,6 +7,7 @@ use log::LevelFilter;
 use parking_lot::Mutex;
 use simplelog::SimpleLogger;
 use std::{fs, path::PathBuf, sync::Arc};
+use theme::ThemeRegistry;
 use zed::{
     self,
     assets::Assets,
@@ -30,7 +31,7 @@ fn main() {
         .collect::<Vec<_>>();
     app.platform().fonts().add_fonts(&embedded_fonts).unwrap();
 
-    let themes = settings::ThemeRegistry::new(Assets, app.font_cache());
+    let themes = ThemeRegistry::new(Assets, app.font_cache());
     let (settings_tx, settings) =
         settings::channel("Inconsolata", &app.font_cache(), &themes).unwrap();
     let languages = Arc::new(language::build_language_registry());

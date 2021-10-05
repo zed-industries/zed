@@ -1,6 +1,5 @@
 use crate::{
     project::{self, Project, ProjectEntry, ProjectPath},
-    theme,
     workspace::Workspace,
     Settings,
 };

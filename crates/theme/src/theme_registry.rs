@@ -1,11 +1,9 @@
-use super::resolution::resolve_references;
+use crate::{resolution::resolve_references, Theme};
 use anyhow::{Context, Result};
 use gpui::{fonts, AssetSource, FontCache};
 use parking_lot::Mutex;
 use serde_json::{Map, Value};
 use std::{collections::HashMap, sync::Arc};
-
-use super::Theme;
 
 pub struct ThemeRegistry {
     assets: Box<dyn AssetSource>,
@@ -122,23 +120,8 @@ fn deep_merge_json(base: &mut Map<String, Value>, extension: Map<String, Value>)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test::test_app_state, theme::DEFAULT_THEME_NAME};
     use anyhow::anyhow;
     use gpui::MutableAppContext;
-
-    #[gpui::test]
-    fn test_bundled_themes(cx: &mut MutableAppContext) {
-        let app_state = test_app_state(cx);
-        let mut has_default_theme = false;
-        for theme_name in app_state.themes.list() {
-            let theme = app_state.themes.get(&theme_name).unwrap();
-            if theme.name == DEFAULT_THEME_NAME {
-                has_default_theme = true;
-            }
-            assert_eq!(theme.name, theme_name);
-        }
-        assert!(has_default_theme);
-    }
 
     #[gpui::test]
     fn test_theme_extension(cx: &mut MutableAppContext) {

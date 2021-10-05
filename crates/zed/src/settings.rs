@@ -1,9 +1,8 @@
-use crate::theme::{self, DEFAULT_THEME_NAME};
 use anyhow::Result;
 use gpui::font_cache::{FamilyId, FontCache};
 use postage::watch;
 use std::sync::Arc;
-pub use theme::{Theme, ThemeRegistry};
+use theme::{Theme, ThemeRegistry, DEFAULT_THEME_NAME};
 
 #[derive(Clone)]
 pub struct Settings {

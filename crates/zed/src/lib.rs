@@ -8,7 +8,6 @@ pub mod project_panel;
 pub mod settings;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
-pub mod theme;
 pub mod theme_selector;
 pub mod workspace;
 
@@ -31,6 +30,7 @@ pub use project::{self, fs};
 use project_panel::ProjectPanel;
 pub use settings::Settings;
 use std::{path::PathBuf, sync::Arc};
+use theme::ThemeRegistry;
 use util::TryFutureExt;
 
 use crate::workspace::Workspace;
@@ -48,7 +48,7 @@ pub struct AppState {
     pub settings_tx: Arc<Mutex<watch::Sender<Settings>>>,
     pub settings: watch::Receiver<Settings>,
     pub languages: Arc<LanguageRegistry>,
-    pub themes: Arc<settings::ThemeRegistry>,
+    pub themes: Arc<ThemeRegistry>,
     pub client: Arc<client::Client>,
     pub user_store: ModelHandle<client::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
@@ -198,6 +198,7 @@ mod tests {
     use super::*;
     use crate::{test::test_app_state, workspace::ItemView};
     use serde_json::json;
+    use theme::DEFAULT_THEME_NAME;
     use util::test::temp_tree;
 
     #[gpui::test]
@@ -298,5 +299,19 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
         });
+    }
+
+    #[gpui::test]
+    fn test_bundled_themes(cx: &mut MutableAppContext) {
+        let app_state = test_app_state(cx);
+        let mut has_default_theme = false;
+        for theme_name in app_state.themes.list() {
+            let theme = app_state.themes.get(&theme_name).unwrap();
+            if theme.name == DEFAULT_THEME_NAME {
+                has_default_theme = true;
+            }
+            assert_eq!(theme.name, theme_name);
+        }
+        assert!(has_default_theme);
     }
 }

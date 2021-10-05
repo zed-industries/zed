@@ -5260,6 +5260,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "theme"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "gpui",
+ "indexmap",
+ "parking_lot",
+ "serde 1.0.125",
+ "serde_json 1.0.64",
+ "serde_path_to_error",
+ "toml 0.5.8",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6097,6 +6112,7 @@ dependencies = [
  "sum_tree",
  "surf",
  "tempdir",
+ "theme",
  "thiserror",
  "time 0.3.2",
  "tiny_http",
