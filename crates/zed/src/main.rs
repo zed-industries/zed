@@ -10,11 +10,11 @@ use std::{fs, path::PathBuf, sync::Arc};
 use zed::{
     self,
     assets::Assets,
-    channel::ChannelList,
-    chat_panel, client, editor, file_finder,
+    chat_panel, client,
+    client::{http, ChannelList, UserStore},
+    editor, file_finder,
     fs::RealFs,
-    http, language, menus, project_panel, settings, theme_selector,
-    user::UserStore,
+    language, menus, project_panel, settings, theme_selector,
     workspace::{self, OpenNew, OpenParams, OpenPaths},
     AppState,
 };

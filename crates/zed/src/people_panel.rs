@@ -1,8 +1,5 @@
-use crate::{
-    theme::Theme,
-    user::{Collaborator, UserStore},
-    Settings,
-};
+use crate::{theme::Theme, Settings};
+use client::{Collaborator, UserStore};
 use gpui::{
     action,
     elements::*,

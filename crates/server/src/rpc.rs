@@ -977,14 +977,14 @@ mod tests {
     };
     use zed::{
         buffer::LanguageRegistry,
-        channel::{Channel, ChannelDetails, ChannelList},
-        client::{self, Client, Credentials, EstablishConnectionError},
+        client::{
+            self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Credentials,
+            EstablishConnectionError, UserStore,
+        },
         editor::{Editor, EditorSettings, Insert},
         fs::{FakeFs, Fs as _},
         people_panel::JoinWorktree,
         project::{ProjectPath, Worktree},
-        test::FakeHttpClient,
-        user::UserStore,
         workspace::Workspace,
     };
 

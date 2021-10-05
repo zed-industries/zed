@@ -1,6 +1,10 @@
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+pub mod channel;
+pub mod http;
+pub mod user;
+
 use anyhow::{anyhow, Context, Result};
 use async_recursion::async_recursion;
 use async_tungstenite::tungstenite::{
@@ -26,7 +30,9 @@ use surf::Url;
 use thiserror::Error;
 use util::ResultExt;
 
+pub use channel::*;
 pub use rpc::*;
+pub use user::*;
 
 lazy_static! {
     static ref ZED_SERVER_URL: String =

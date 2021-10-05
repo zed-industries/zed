@@ -1,8 +1,8 @@
-use crate::{
+use crate::{theme, Settings};
+use client::{
     channel::{Channel, ChannelEvent, ChannelList, ChannelMessage},
-    theme, Settings,
+    Client,
 };
-use client::Client;
 use editor::{Editor, EditorSettings};
 use gpui::{
     action,

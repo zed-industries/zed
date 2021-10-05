@@ -1,11 +1,13 @@
-use super::*;
-use std::sync::atomic::Ordering::SeqCst;
-
 use super::Client;
+use super::*;
+use crate::http::{HttpClient, Request, Response, ServerResponse};
+use futures::{future::BoxFuture, Future};
 use gpui::TestAppContext;
 use parking_lot::Mutex;
 use postage::{mpsc, prelude::Stream};
 use rpc::{proto, ConnectionId, Peer, Receipt, TypedEnvelope};
+use std::fmt;
+use std::sync::atomic::Ordering::SeqCst;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize},
     Arc,
@@ -152,5 +154,35 @@ impl FakeServer {
 
     fn connection_id(&self) -> ConnectionId {
         self.connection_id.lock().expect("not connected")
+    }
+}
+
+pub struct FakeHttpClient {
+    handler:
+        Box<dyn 'static + Send + Sync + Fn(Request) -> BoxFuture<'static, Result<ServerResponse>>>,
+}
+
+impl FakeHttpClient {
+    pub fn new<Fut, F>(handler: F) -> Arc<dyn HttpClient>
+    where
+        Fut: 'static + Send + Future<Output = Result<ServerResponse>>,
+        F: 'static + Send + Sync + Fn(Request) -> Fut,
+    {
+        Arc::new(Self {
+            handler: Box::new(move |req| Box::pin(handler(req))),
+        })
+    }
+}
+
+impl fmt::Debug for FakeHttpClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FakeHttpClient").finish()
+    }
+}
+
+impl HttpClient for FakeHttpClient {
+    fn send<'a>(&'a self, req: Request) -> BoxFuture<'a, Result<Response>> {
+        let future = (self.handler)(req);
+        Box::pin(async move { future.await.map(Into::into) })
     }
 }

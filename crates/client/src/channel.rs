@@ -1,6 +1,9 @@
-use crate::user::{User, UserStore};
+use super::{
+    proto,
+    user::{User, UserStore},
+    Client, Status, Subscription, TypedEnvelope,
+};
 use anyhow::{anyhow, Context, Result};
-use client::{proto, Client, TypedEnvelope};
 use gpui::{
     AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task, WeakModelHandle,
 };
@@ -38,7 +41,7 @@ pub struct Channel {
     user_store: ModelHandle<UserStore>,
     rpc: Arc<Client>,
     rng: StdRng,
-    _subscription: client::Subscription,
+    _subscription: Subscription,
 }
 
 #[derive(Clone, Debug)]
@@ -91,7 +94,7 @@ impl ChannelList {
                 let mut status = rpc.status();
                 while let Some((status, this)) = status.recv().await.zip(this.upgrade(&cx)) {
                     match status {
-                        client::Status::Connected { .. } => {
+                        Status::Connected { .. } => {
                             let response = rpc
                                 .request(proto::GetChannels {})
                                 .await
@@ -115,7 +118,7 @@ impl ChannelList {
                                 cx.notify();
                             });
                         }
-                        client::Status::SignedOut { .. } => {
+                        Status::SignedOut { .. } => {
                             this.update(&mut cx, |this, cx| {
                                 this.available_channels = None;
                                 this.channels.clear();
@@ -589,8 +592,7 @@ impl<'a> sum_tree::Dimension<'a, ChannelMessageSummary> for Count {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::FakeHttpClient;
-    use client::test::FakeServer;
+    use crate::test::{FakeHttpClient, FakeServer};
     use gpui::TestAppContext;
     use surf::http::Response;
 

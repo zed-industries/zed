@@ -10,7 +10,6 @@ use crate::{
     project::{Project, ProjectPath},
     project_panel::ProjectPanel,
     settings::Settings,
-    user,
     workspace::sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus},
     AppState, Authenticate,
 };
@@ -357,7 +356,7 @@ impl Clone for Box<dyn ItemHandle> {
 pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
     client: Arc<Client>,
-    user_store: ModelHandle<user::UserStore>,
+    user_store: ModelHandle<client::UserStore>,
     fs: Arc<dyn Fs>,
     modal: Option<AnyViewHandle>,
     center: PaneGroup,

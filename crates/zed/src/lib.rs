@@ -1,8 +1,6 @@
 pub mod assets;
-pub mod channel;
 pub mod chat_panel;
 pub mod file_finder;
-pub mod http;
 pub mod language;
 pub mod menus;
 pub mod people_panel;
@@ -12,12 +10,10 @@ pub mod settings;
 pub mod test;
 pub mod theme;
 pub mod theme_selector;
-pub mod user;
 pub mod workspace;
 
 pub use buffer;
 use buffer::LanguageRegistry;
-use channel::ChannelList;
 pub use client;
 pub use editor;
 use gpui::{action, keymap::Binding, ModelHandle};
@@ -41,9 +37,9 @@ pub struct AppState {
     pub languages: Arc<LanguageRegistry>,
     pub themes: Arc<settings::ThemeRegistry>,
     pub client: Arc<client::Client>,
-    pub user_store: ModelHandle<user::UserStore>,
+    pub user_store: ModelHandle<client::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
-    pub channel_list: ModelHandle<ChannelList>,
+    pub channel_list: ModelHandle<client::ChannelList>,
 }
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {

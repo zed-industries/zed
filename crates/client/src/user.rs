@@ -1,6 +1,8 @@
-use crate::http::{HttpClient, Method, Request, Url};
+use super::{
+    http::{HttpClient, Method, Request, Url},
+    proto, Client, Status, TypedEnvelope,
+};
 use anyhow::{anyhow, Context, Result};
-use client::{proto, Client, TypedEnvelope};
 use futures::future;
 use gpui::{AsyncAppContext, Entity, ImageData, ModelContext, ModelHandle, Task};
 use postage::{prelude::Stream, sink::Sink, watch};
@@ -79,7 +81,7 @@ impl UserStore {
                 let mut status = rpc.status();
                 while let Some(status) = status.recv().await {
                     match status {
-                        client::Status::Connected { .. } => {
+                        Status::Connected { .. } => {
                             if let Some((this, user_id)) = this.upgrade(&cx).zip(rpc.user_id()) {
                                 let user = this
                                     .update(&mut cx, |this, cx| this.fetch_user(user_id, cx))
@@ -88,7 +90,7 @@ impl UserStore {
                                 current_user_tx.send(user).await.ok();
                             }
                         }
-                        client::Status::SignedOut => {
+                        Status::SignedOut => {
                             current_user_tx.send(None).await.ok();
                         }
                         _ => {}
