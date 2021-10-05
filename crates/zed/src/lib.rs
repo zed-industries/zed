@@ -3,7 +3,6 @@ pub mod language;
 pub mod menus;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
-pub mod theme_selector;
 
 pub use buffer;
 use buffer::LanguageRegistry;
@@ -25,6 +24,7 @@ pub use project::{self, fs};
 use project_panel::ProjectPanel;
 use std::{path::PathBuf, sync::Arc};
 use theme::ThemeRegistry;
+use theme_selector::ThemeSelectorParams;
 pub use workspace;
 use workspace::{Settings, Workspace, WorkspaceParams};
 
@@ -184,6 +184,16 @@ impl<'a> From<&'a AppState> for WorkspaceParams {
             settings: state.settings.clone(),
             user_store: state.user_store.clone(),
             channel_list: state.channel_list.clone(),
+        }
+    }
+}
+
+impl<'a> From<&'a AppState> for ThemeSelectorParams {
+    fn from(state: &'a AppState) -> Self {
+        Self {
+            settings_tx: state.settings_tx.clone(),
+            settings: state.settings.clone(),
+            themes: state.themes.clone(),
         }
     }
 }

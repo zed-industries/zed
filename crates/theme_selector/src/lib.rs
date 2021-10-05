@@ -1,4 +1,3 @@
-use crate::{workspace::Workspace, AppState, Settings};
 use editor::{Editor, EditorSettings};
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
@@ -12,11 +11,19 @@ use parking_lot::Mutex;
 use postage::watch;
 use std::{cmp, sync::Arc};
 use theme::ThemeRegistry;
+use workspace::{Settings, Workspace};
+
+#[derive(Clone)]
+pub struct ThemeSelectorParams {
+    pub settings_tx: Arc<Mutex<watch::Sender<Settings>>>,
+    pub settings: watch::Receiver<Settings>,
+    pub themes: Arc<ThemeRegistry>,
+}
 
 pub struct ThemeSelector {
     settings_tx: Arc<Mutex<watch::Sender<Settings>>>,
     settings: watch::Receiver<Settings>,
-    registry: Arc<ThemeRegistry>,
+    themes: Arc<ThemeRegistry>,
     matches: Vec<StringMatch>,
     query_editor: ViewHandle<Editor>,
     list_state: UniformListState,
@@ -24,10 +31,10 @@ pub struct ThemeSelector {
 }
 
 action!(Confirm);
-action!(Toggle, Arc<AppState>);
-action!(Reload, Arc<AppState>);
+action!(Toggle, ThemeSelectorParams);
+action!(Reload, ThemeSelectorParams);
 
-pub fn init(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
+pub fn init(params: ThemeSelectorParams, cx: &mut MutableAppContext) {
     cx.add_action(ThemeSelector::confirm);
     cx.add_action(ThemeSelector::select_prev);
     cx.add_action(ThemeSelector::select_next);
@@ -35,9 +42,9 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
     cx.add_action(ThemeSelector::reload);
 
     cx.add_bindings(vec![
-        Binding::new("cmd-k cmd-t", Toggle(app_state.clone()), None),
-        Binding::new("cmd-k t", Reload(app_state.clone()), None),
-        Binding::new("escape", Toggle(app_state.clone()), Some("ThemeSelector")),
+        Binding::new("cmd-k cmd-t", Toggle(params.clone()), None),
+        Binding::new("cmd-k t", Reload(params.clone()), None),
+        Binding::new("escape", Toggle(params.clone()), Some("ThemeSelector")),
         Binding::new("enter", Confirm, Some("ThemeSelector")),
     ]);
 }
@@ -75,7 +82,7 @@ impl ThemeSelector {
         let mut this = Self {
             settings,
             settings_tx,
-            registry,
+            themes: registry,
             query_editor,
             matches: Vec::new(),
             list_state: Default::default(),
@@ -117,7 +124,7 @@ impl ThemeSelector {
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
-            match self.registry.get(&mat.string) {
+            match self.themes.get(&mat.string) {
                 Ok(theme) => {
                     self.settings_tx.lock().borrow_mut().theme = theme;
                     cx.refresh_windows();
@@ -144,15 +151,10 @@ impl ThemeSelector {
         cx.notify();
     }
 
-    // fn select(&mut self, selected_index: &usize, cx: &mut ViewContext<Self>) {
-    //     self.selected_index = *selected_index;
-    //     self.confirm(&(), cx);
-    // }
-
     fn update_matches(&mut self, cx: &mut ViewContext<Self>) {
         let background = cx.background().clone();
         let candidates = self
-            .registry
+            .themes
             .list()
             .map(|name| StringMatchCandidate {
                 char_bag: name.as_str().into(),

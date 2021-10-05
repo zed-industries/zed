@@ -39,6 +39,7 @@ project_panel = { path = "../project_panel" }
 rpc = { path = "../rpc" }
 sum_tree = { path = "../sum_tree" }
 theme = { path = "../theme" }
+theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
 anyhow = "1.0.38"

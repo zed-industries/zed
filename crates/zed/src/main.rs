@@ -10,10 +10,7 @@ use simplelog::SimpleLogger;
 use std::{fs, path::PathBuf, sync::Arc};
 use theme::ThemeRegistry;
 use workspace::{self, settings, OpenNew};
-use zed::{
-    self, assets::Assets, fs::RealFs, language, menus, theme_selector, AppState, OpenParams,
-    OpenPaths,
-};
+use zed::{self, assets::Assets, fs::RealFs, language, menus, AppState, OpenParams, OpenPaths};
 
 fn main() {
     init_logger();
@@ -56,7 +53,7 @@ fn main() {
         people_panel::init(cx);
         chat_panel::init(cx);
         project_panel::init(cx);
-        theme_selector::init(&app_state, cx);
+        theme_selector::init(app_state.as_ref().into(), cx);
 
         cx.set_menus(menus::menus(&app_state.clone()));
 

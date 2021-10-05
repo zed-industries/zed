@@ -1,0 +1,15 @@
+[package]
+name = "theme_selector"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+editor = { path = "../editor" }
+fuzzy = { path = "../fuzzy" }
+gpui = { path = "../gpui" }
+theme = { path = "../theme" }
+workspace = { path = "../workspace" }
+log = "0.4"
+parking_lot = "0.11.1"
+postage = { version = "0.4.1", features = ["futures-traits"] }
+smol = "1.2.5"
