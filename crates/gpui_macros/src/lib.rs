@@ -76,10 +76,10 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                             inner_fn_args.extend(quote!(
                                 #namespace::TestAppContext::new(
                                     foreground_platform.clone(),
-                                    platform.clone(),
-                                    foreground.clone(),
-                                    background.clone(),
-                                    font_cache.clone(),
+                                    cx.platform().clone(),
+                                    cx.foreground().clone(),
+                                    cx.background().clone(),
+                                    cx.font_cache().clone(),
                                     #first_entity_id,
                                 ),
                             ));
@@ -111,61 +111,12 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             fn #outer_fn_name() {
                 #inner_fn
 
-                let is_randomized = #num_iterations > 1;
-                let mut num_iterations = #num_iterations as u64;
-                let mut starting_seed = #starting_seed as u64;
-                if is_randomized {
-                    if let Ok(value) = std::env::var("SEED") {
-                        starting_seed = value.parse().expect("invalid SEED variable");
-                    }
-                    if let Ok(value) = std::env::var("ITERATIONS") {
-                        num_iterations = value.parse().expect("invalid ITERATIONS variable");
-                    }
-                }
-
-                let mut atomic_seed = std::sync::atomic::AtomicU64::new(starting_seed as u64);
-                let mut retries = 0;
-
-                loop {
-                    let result = std::panic::catch_unwind(|| {
-                        let foreground_platform = std::rc::Rc::new(#namespace::platform::test::foreground_platform());
-                        let platform = std::sync::Arc::new(#namespace::platform::test::platform());
-                        let font_system = #namespace::Platform::fonts(platform.as_ref());
-                        let font_cache = std::sync::Arc::new(#namespace::FontCache::new(font_system));
-
-                        loop {
-                            let seed = atomic_seed.load(std::sync::atomic::Ordering::SeqCst);
-                            if seed >= starting_seed + num_iterations {
-                                break;
-                            }
-
-                            if is_randomized {
-                                dbg!(seed);
-                            }
-
-                            let (foreground, background) = #namespace::executor::deterministic(seed);
-                            foreground.run(#inner_fn_name(#inner_fn_args));
-                            atomic_seed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        }
-                    });
-
-                    match result {
-                        Ok(result) => {
-                            break;
-                        }
-                        Err(error) => {
-                            if retries < #max_retries {
-                                retries += 1;
-                                println!("retrying: attempt {}", retries);
-                            } else {
-                                if is_randomized {
-                                    eprintln!("failing seed: {}", atomic_seed.load(std::sync::atomic::Ordering::SeqCst));
-                                }
-                                std::panic::resume_unwind(error);
-                            }
-                        }
-                    }
-                }
+                #namespace::test::run_test(
+                    #num_iterations as u64,
+                    #starting_seed as u64,
+                    #max_retries,
+                    &mut |cx, foreground_platform, seed| cx.foreground().run(#inner_fn_name(#inner_fn_args))
+                );
             }
         }
     } else {
@@ -192,11 +143,11 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             fn #outer_fn_name() {
                 #inner_fn
 
-                #namespace::test::run_sync_test(
+                #namespace::test::run_test(
                     #num_iterations as u64,
                     #starting_seed as u64,
                     #max_retries,
-                    &mut |cx, seed| #inner_fn_name(#inner_fn_args)
+                    &mut |cx, _, seed| #inner_fn_name(#inner_fn_args)
                 );
             }
         }

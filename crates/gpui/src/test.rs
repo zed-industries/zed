@@ -17,11 +17,12 @@ fn init_logger() {
         .init();
 }
 
-pub fn run_sync_test(
+pub fn run_test(
     mut num_iterations: u64,
     mut starting_seed: u64,
     max_retries: usize,
-    test_fn: &mut (dyn RefUnwindSafe + Fn(&mut MutableAppContext, u64)),
+    test_fn: &mut (dyn RefUnwindSafe
+              + Fn(&mut MutableAppContext, Rc<platform::test::ForegroundPlatform>, u64)),
 ) {
     let is_randomized = num_iterations > 1;
     if is_randomized {
@@ -62,7 +63,7 @@ pub fn run_sync_test(
                     font_cache.clone(),
                     0,
                 );
-                cx.update(|cx| test_fn(cx, seed));
+                cx.update(|cx| test_fn(cx, foreground_platform.clone(), seed));
 
                 atomic_seed.fetch_add(1, SeqCst);
             }
