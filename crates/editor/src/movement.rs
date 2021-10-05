@@ -1,0 +1,257 @@
+use super::{Bias, DisplayMapSnapshot, DisplayPoint, SelectionGoal};
+use anyhow::Result;
+
+pub fn left(map: &DisplayMapSnapshot, mut point: DisplayPoint) -> Result<DisplayPoint> {
+    if point.column() > 0 {
+        *point.column_mut() -= 1;
+    } else if point.row() > 0 {
+        *point.row_mut() -= 1;
+        *point.column_mut() = map.line_len(point.row());
+    }
+    Ok(map.clip_point(point, Bias::Left))
+}
+
+pub fn right(map: &DisplayMapSnapshot, mut point: DisplayPoint) -> Result<DisplayPoint> {
+    let max_column = map.line_len(point.row());
+    if point.column() < max_column {
+        *point.column_mut() += 1;
+    } else if point.row() < map.max_point().row() {
+        *point.row_mut() += 1;
+        *point.column_mut() = 0;
+    }
+    Ok(map.clip_point(point, Bias::Right))
+}
+
+pub fn up(
+    map: &DisplayMapSnapshot,
+    mut point: DisplayPoint,
+    goal: SelectionGoal,
+) -> Result<(DisplayPoint, SelectionGoal)> {
+    let goal_column = if let SelectionGoal::Column(column) = goal {
+        column
+    } else {
+        map.column_to_chars(point.row(), point.column())
+    };
+
+    if point.row() > 0 {
+        *point.row_mut() -= 1;
+        *point.column_mut() = map.column_from_chars(point.row(), goal_column);
+    } else {
+        point = DisplayPoint::new(0, 0);
+    }
+
+    let clip_bias = if point.column() == map.line_len(point.row()) {
+        Bias::Left
+    } else {
+        Bias::Right
+    };
+
+    Ok((
+        map.clip_point(point, clip_bias),
+        SelectionGoal::Column(goal_column),
+    ))
+}
+
+pub fn down(
+    map: &DisplayMapSnapshot,
+    mut point: DisplayPoint,
+    goal: SelectionGoal,
+) -> Result<(DisplayPoint, SelectionGoal)> {
+    let max_point = map.max_point();
+    let goal_column = if let SelectionGoal::Column(column) = goal {
+        column
+    } else {
+        map.column_to_chars(point.row(), point.column())
+    };
+
+    if point.row() < max_point.row() {
+        *point.row_mut() += 1;
+        *point.column_mut() = map.column_from_chars(point.row(), goal_column);
+    } else {
+        point = max_point;
+    }
+
+    let clip_bias = if point.column() == map.line_len(point.row()) {
+        Bias::Left
+    } else {
+        Bias::Right
+    };
+
+    Ok((
+        map.clip_point(point, clip_bias),
+        SelectionGoal::Column(goal_column),
+    ))
+}
+
+pub fn line_beginning(
+    map: &DisplayMapSnapshot,
+    point: DisplayPoint,
+    toggle_indent: bool,
+) -> Result<DisplayPoint> {
+    let (indent, is_blank) = map.line_indent(point.row());
+    if toggle_indent && !is_blank && point.column() != indent {
+        Ok(DisplayPoint::new(point.row(), indent))
+    } else {
+        Ok(DisplayPoint::new(point.row(), 0))
+    }
+}
+
+pub fn line_end(map: &DisplayMapSnapshot, point: DisplayPoint) -> Result<DisplayPoint> {
+    let line_end = DisplayPoint::new(point.row(), map.line_len(point.row()));
+    Ok(map.clip_point(line_end, Bias::Left))
+}
+
+pub fn prev_word_boundary(
+    map: &DisplayMapSnapshot,
+    mut point: DisplayPoint,
+) -> Result<DisplayPoint> {
+    let mut line_start = 0;
+    if point.row() > 0 {
+        if let Some(indent) = map.soft_wrap_indent(point.row() - 1) {
+            line_start = indent;
+        }
+    }
+
+    if point.column() == line_start {
+        if point.row() == 0 {
+            return Ok(DisplayPoint::new(0, 0));
+        } else {
+            let row = point.row() - 1;
+            point = map.clip_point(DisplayPoint::new(row, map.line_len(row)), Bias::Left);
+        }
+    }
+
+    let mut boundary = DisplayPoint::new(point.row(), 0);
+    let mut column = 0;
+    let mut prev_char_kind = CharKind::Newline;
+    for c in map.chars_at(DisplayPoint::new(point.row(), 0)) {
+        if column >= point.column() {
+            break;
+        }
+
+        let char_kind = char_kind(c);
+        if char_kind != prev_char_kind
+            && char_kind != CharKind::Whitespace
+            && char_kind != CharKind::Newline
+        {
+            *boundary.column_mut() = column;
+        }
+
+        prev_char_kind = char_kind;
+        column += c.len_utf8() as u32;
+    }
+    Ok(boundary)
+}
+
+pub fn next_word_boundary(
+    map: &DisplayMapSnapshot,
+    mut point: DisplayPoint,
+) -> Result<DisplayPoint> {
+    let mut prev_char_kind = None;
+    for c in map.chars_at(point) {
+        let char_kind = char_kind(c);
+        if let Some(prev_char_kind) = prev_char_kind {
+            if c == '\n' {
+                break;
+            }
+            if prev_char_kind != char_kind
+                && prev_char_kind != CharKind::Whitespace
+                && prev_char_kind != CharKind::Newline
+            {
+                break;
+            }
+        }
+
+        if c == '\n' {
+            *point.row_mut() += 1;
+            *point.column_mut() = 0;
+        } else {
+            *point.column_mut() += c.len_utf8() as u32;
+        }
+        prev_char_kind = Some(char_kind);
+    }
+    Ok(point)
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum CharKind {
+    Newline,
+    Whitespace,
+    Punctuation,
+    Word,
+}
+
+fn char_kind(c: char) -> CharKind {
+    if c == '\n' {
+        CharKind::Newline
+    } else if c.is_whitespace() {
+        CharKind::Whitespace
+    } else if c.is_alphanumeric() || c == '_' {
+        CharKind::Word
+    } else {
+        CharKind::Punctuation
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{display_map::DisplayMap, Buffer};
+
+    #[gpui::test]
+    fn test_prev_next_word_boundary_multibyte(cx: &mut gpui::MutableAppContext) {
+        let tab_size = 4;
+        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let font_id = cx
+            .font_cache()
+            .select_font(family_id, &Default::default())
+            .unwrap();
+        let font_size = 14.0;
+
+        let buffer = cx.add_model(|cx| Buffer::new(0, "a bcΔ defγ hi—jk", cx));
+        let display_map =
+            cx.add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, cx));
+        let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
+        assert_eq!(
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 12)).unwrap(),
+            DisplayPoint::new(0, 7)
+        );
+        assert_eq!(
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 7)).unwrap(),
+            DisplayPoint::new(0, 2)
+        );
+        assert_eq!(
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 6)).unwrap(),
+            DisplayPoint::new(0, 2)
+        );
+        assert_eq!(
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 2)).unwrap(),
+            DisplayPoint::new(0, 0)
+        );
+        assert_eq!(
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 1)).unwrap(),
+            DisplayPoint::new(0, 0)
+        );
+
+        assert_eq!(
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 0)).unwrap(),
+            DisplayPoint::new(0, 1)
+        );
+        assert_eq!(
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 1)).unwrap(),
+            DisplayPoint::new(0, 6)
+        );
+        assert_eq!(
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 2)).unwrap(),
+            DisplayPoint::new(0, 6)
+        );
+        assert_eq!(
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 6)).unwrap(),
+            DisplayPoint::new(0, 12)
+        );
+        assert_eq!(
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 7)).unwrap(),
+            DisplayPoint::new(0, 12)
+        );
+    }
+}

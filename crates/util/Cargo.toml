@@ -1,0 +1,15 @@
+[package]
+name = "util"
+version = "0.1.0"
+edition = "2018"
+
+[features]
+test-support = ["serde_json", "tempdir"]
+
+[dependencies]
+anyhow = "1.0.38"
+futures = "0.3"
+log = "0.4"
+surf = "2.2"
+tempdir = { version = "0.3.7", optional = true }
+serde_json = { version = "1.0.64", features = ["preserve_order"], optional = true }

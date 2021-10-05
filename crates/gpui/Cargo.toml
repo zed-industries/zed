@@ -1,0 +1,61 @@
+[package]
+authors = ["Nathan Sobo <nathansobo@gmail.com>"]
+edition = "2018"
+name = "gpui"
+version = "0.1.0"
+
+[features]
+test-support = ["env_logger"]
+
+[dependencies]
+gpui_macros = { path = "../gpui_macros" }
+sum_tree = { path = "../sum_tree" }
+async-task = "4.0.3"
+backtrace = "0.3"
+ctor = "0.1"
+env_logger = { version = "0.8", optional = true }
+etagere = "0.2"
+image = "0.23"
+lazy_static = "1.4.0"
+log = "0.4"
+num_cpus = "1.13"
+ordered-float = "2.1.1"
+parking = "2.0.0"
+parking_lot = "0.11.1"
+pathfinder_color = "0.5"
+pathfinder_geometry = "0.5"
+postage = { version = "0.4.1", features = ["futures-traits"] }
+rand = "0.8.3"
+resvg = "0.14"
+seahash = "4.1"
+serde = { version = "1.0.125", features = ["derive"] }
+serde_json = "1.0.64"
+smallvec = { version = "1.6", features = ["union"] }
+smol = "1.2"
+time = { version = "0.3" }
+tiny-skia = "0.5"
+tree-sitter = "0.19"
+usvg = "0.14"
+waker-fn = "1.1.0"
+
+[build-dependencies]
+bindgen = "0.58.1"
+cc = "1.0.67"
+
+[dev-dependencies]
+env_logger = "0.8"
+png = "0.16"
+simplelog = "0.9"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+anyhow = "1"
+block = "0.1"
+cocoa = "0.24"
+core-foundation = "0.9"
+core-graphics = "0.22.2"
+core-text = "19.2"
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "8eaf7a918eafa28b0a37dc759e2e0e7683fa24f1" }
+foreign-types = "0.3"
+log = "0.4"
+metal = "0.21.0"
+objc = "0.2"

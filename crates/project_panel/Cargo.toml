@@ -1,0 +1,14 @@
+[package]
+name = "project_panel"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+gpui = { path = "../gpui" }
+project = { path = "../project" }
+theme = { path = "../theme" }
+workspace = { path = "../workspace" }
+postage = { version = "0.4.1", features = ["futures-traits"] }
+
+[dev-dependencies]
+serde_json = { version = "1.0.64", features = ["preserve_order"] }

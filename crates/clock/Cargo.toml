@@ -1,0 +1,8 @@
+[package]
+name = "clock"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+smallvec = { version = "1.6", features = ["union"] }
+rpc = { path = "../rpc" }

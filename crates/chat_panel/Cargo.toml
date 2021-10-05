@@ -1,0 +1,14 @@
+[package]
+name = "chat_panel"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+client = { path = "../client" }
+editor = { path = "../editor" }
+gpui = { path = "../gpui" }
+theme = { path = "../theme" }
+util = { path = "../util" }
+workspace = { path = "../workspace" }
+postage = { version = "0.4.1", features = ["futures-traits"] }
+time = "0.3"

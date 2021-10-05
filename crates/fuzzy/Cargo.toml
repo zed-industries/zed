@@ -1,0 +1,8 @@
+[package]
+name = "fuzzy"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+gpui = { path = "../gpui" }
+util = { path = "../util" }

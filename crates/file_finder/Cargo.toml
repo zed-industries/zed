@@ -1,0 +1,18 @@
+[package]
+name = "file_finder"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+editor = { path = "../editor" }
+fuzzy = { path = "../fuzzy" }
+gpui = { path = "../gpui" }
+project = { path = "../project" }
+util = { path = "../util" }
+theme = { path = "../theme" }
+workspace = { path = "../workspace" }
+postage = { version = "0.4.1", features = ["futures-traits"] }
+
+[dev-dependencies]
+serde_json = { version = "1.0.64", features = ["preserve_order"] }
+workspace = { path = "../workspace", features = ["test-support"] }

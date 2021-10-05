@@ -743,6 +743,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "buffer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrayvec 0.7.1",
+ "clock",
+ "gpui",
+ "lazy_static",
+ "log",
+ "parking_lot",
+ "rand 0.8.3",
+ "rpc",
+ "seahash",
+ "serde 1.0.125",
+ "similar",
+ "smallvec",
+ "sum_tree",
+ "theme",
+ "tree-sitter",
+ "tree-sitter-rust",
+ "unindent",
+]
+
+[[package]]
 name = "build_const"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -903,6 +927,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
+name = "chat_panel"
+version = "0.1.0"
+dependencies = [
+ "client",
+ "editor",
+ "gpui",
+ "postage",
+ "theme",
+ "time 0.3.2",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -996,6 +1034,39 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-recursion",
+ "async-tungstenite",
+ "futures",
+ "gpui",
+ "image 0.23.14",
+ "lazy_static",
+ "log",
+ "parking_lot",
+ "postage",
+ "rand 0.8.3",
+ "rpc",
+ "smol",
+ "sum_tree",
+ "surf",
+ "thiserror",
+ "time 0.3.2",
+ "tiny_http",
+ "util",
+]
+
+[[package]]
+name = "clock"
+version = "0.1.0"
+dependencies = [
+ "rpc",
+ "smallvec",
 ]
 
 [[package]]
@@ -1545,6 +1616,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "buffer",
+ "clock",
+ "gpui",
+ "lazy_static",
+ "log",
+ "parking_lot",
+ "postage",
+ "rand 0.8.3",
+ "serde 1.0.125",
+ "smallvec",
+ "smol",
+ "sum_tree",
+ "theme",
+ "tree-sitter",
+ "tree-sitter-rust",
+ "unindent",
+ "util",
+]
+
+[[package]]
 name = "either"
 version = "1.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1760,6 +1855,21 @@ checksum = "63eec06c61e487eecf0f7e6e6372e596a81922c28d33e645d6983ca6493a1af0"
 dependencies = [
  "rand_core 0.6.2",
  "subtle",
+]
+
+[[package]]
+name = "file_finder"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "fuzzy",
+ "gpui",
+ "postage",
+ "project",
+ "serde_json 1.0.64",
+ "theme",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -2041,6 +2151,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fuzzy"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "util",
+]
+
+[[package]]
 name = "generator"
 version = "0.6.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2175,7 +2293,6 @@ name = "gpui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "arrayvec 0.7.1",
  "async-task",
  "backtrace",
  "bindgen",
@@ -2212,6 +2329,7 @@ dependencies = [
  "simplelog",
  "smallvec",
  "smol",
+ "sum_tree",
  "time 0.3.2",
  "tiny-skia",
  "tree-sitter",
@@ -3325,6 +3443,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "people_panel"
+version = "0.1.0"
+dependencies = [
+ "client",
+ "gpui",
+ "postage",
+ "theme",
+ "workspace",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3614,6 +3743,48 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e0704ee1a7e00d7bb417d0770ea303c1bccbabf0ef1667dae92b5967f5f8a71"
 dependencies = [
  "unicode-xid",
+]
+
+[[package]]
+name = "project"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "buffer",
+ "client",
+ "clock",
+ "fsevent",
+ "futures",
+ "fuzzy",
+ "gpui",
+ "ignore",
+ "lazy_static",
+ "libc",
+ "log",
+ "parking_lot",
+ "postage",
+ "rand 0.8.3",
+ "rpc",
+ "serde 1.0.125",
+ "serde_json 1.0.64",
+ "smol",
+ "sum_tree",
+ "tempdir",
+ "toml 0.5.8",
+ "util",
+]
+
+[[package]]
+name = "project_panel"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "postage",
+ "project",
+ "serde_json 1.0.64",
+ "theme",
+ "workspace",
 ]
 
 [[package]]
@@ -4050,6 +4221,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "921904a62e410e37e215c40381b7117f830d9d89ba60ab5236170541dd25646b"
 dependencies = [
  "xmlparser",
+]
+
+[[package]]
+name = "rpc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-lock",
+ "async-tungstenite",
+ "base64 0.13.0",
+ "futures",
+ "log",
+ "parking_lot",
+ "postage",
+ "prost",
+ "prost-build",
+ "rand 0.8.3",
+ "rsa",
+ "serde 1.0.125",
+ "smol",
+ "tempdir",
+ "zstd",
 ]
 
 [[package]]
@@ -4941,6 +5134,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1e81da0851ada1f3e9d4312c704aa4f8806f0f9d69faaf8df2f3464b4a9437c2"
 
 [[package]]
+name = "sum_tree"
+version = "0.1.0"
+dependencies = [
+ "arrayvec 0.7.1",
+ "rand 0.8.3",
+]
+
+[[package]]
 name = "surf"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5110,6 +5311,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "203008d98caf094106cfaba70acfed15e18ed3ddb7d94e49baec153a2b462789"
 dependencies = [
  "unicode-width",
+]
+
+[[package]]
+name = "theme"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gpui",
+ "indexmap",
+ "parking_lot",
+ "serde 1.0.125",
+ "serde_json 1.0.64",
+ "serde_path_to_error",
+ "toml 0.5.8",
+]
+
+[[package]]
+name = "theme_selector"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "fuzzy",
+ "gpui",
+ "log",
+ "parking_lot",
+ "postage",
+ "smol",
+ "theme",
+ "workspace",
 ]
 
 [[package]]
@@ -5583,6 +5813,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
 
 [[package]]
+name = "util"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "log",
+ "serde_json 1.0.64",
+ "surf",
+ "tempdir",
+]
+
+[[package]]
 name = "uuid"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5855,6 +6097,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "workspace"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "buffer",
+ "client",
+ "editor",
+ "gpui",
+ "log",
+ "postage",
+ "project",
+ "serde_json 1.0.64",
+ "theme",
+ "tree-sitter",
+ "tree-sitter-rust",
+]
+
+[[package]]
 name = "wyz"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5892,18 +6152,24 @@ name = "zed"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "arrayvec 0.7.1",
  "async-recursion",
  "async-trait",
  "async-tungstenite",
+ "buffer",
  "cargo-bundle",
+ "chat_panel",
+ "client",
+ "clock",
  "crossbeam-channel",
  "ctor",
  "dirs 3.0.1",
  "easy-parallel",
+ "editor",
  "env_logger",
+ "file_finder",
  "fsevent",
  "futures",
+ "fuzzy",
  "gpui",
  "http-auth-basic",
  "ignore",
@@ -5915,20 +6181,25 @@ dependencies = [
  "log-panics",
  "num_cpus",
  "parking_lot",
+ "people_panel",
  "postage",
+ "project",
+ "project_panel",
  "rand 0.8.3",
+ "rpc",
  "rsa",
  "rust-embed",
- "seahash",
  "serde 1.0.125",
  "serde_json 1.0.64",
  "serde_path_to_error",
- "similar",
  "simplelog",
  "smallvec",
  "smol",
+ "sum_tree",
  "surf",
  "tempdir",
+ "theme",
+ "theme_selector",
  "thiserror",
  "time 0.3.2",
  "tiny_http",
@@ -5937,7 +6208,8 @@ dependencies = [
  "tree-sitter-rust",
  "unindent",
  "url",
- "zrpc",
+ "util",
+ "workspace",
 ]
 
 [[package]]
@@ -5966,6 +6238,7 @@ dependencies = [
  "parking_lot",
  "postage",
  "rand 0.8.3",
+ "rpc",
  "rust-embed",
  "scrypt",
  "serde 1.0.125",
@@ -5978,7 +6251,6 @@ dependencies = [
  "time 0.2.25",
  "toml 0.5.8",
  "zed",
- "zrpc",
 ]
 
 [[package]]
@@ -6000,28 +6272,6 @@ dependencies = [
  "quote",
  "syn",
  "synstructure",
-]
-
-[[package]]
-name = "zrpc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-lock",
- "async-tungstenite",
- "base64 0.13.0",
- "futures",
- "log",
- "parking_lot",
- "postage",
- "prost",
- "prost-build",
- "rand 0.8.3",
- "rsa",
- "serde 1.0.125",
- "smol",
- "tempdir",
- "zstd",
 ]
 
 [[package]]

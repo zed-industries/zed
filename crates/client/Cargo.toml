@@ -1,0 +1,28 @@
+[package]
+name = "client"
+version = "0.1.0"
+edition = "2018"
+
+[features]
+test-support = ["rpc/test-support"]
+
+[dependencies]
+gpui = { path = "../gpui" }
+util = { path = "../util" }
+rpc = { path = "../rpc" }
+sum_tree = { path = "../sum_tree" }
+anyhow = "1.0.38"
+async-recursion = "0.3"
+async-tungstenite = { version = "0.14", features = ["async-tls"] }
+futures = "0.3"
+image = "0.23"
+lazy_static = "1.4.0"
+log = "0.4"
+parking_lot = "0.11.1"
+postage = { version = "0.4.1", features = ["futures-traits"] }
+rand = "0.8.3"
+smol = "1.2.5"
+surf = "2.2"
+thiserror = "1.0.29"
+time = "0.3"
+tiny_http = "0.8"

@@ -1,0 +1,14 @@
+[package]
+name = "theme"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+gpui = { path = "../gpui" }
+anyhow = "1.0.38"
+indexmap = "1.6.2"
+parking_lot = "0.11.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1.0.64", features = ["preserve_order"] }
+serde_path_to_error = "0.1.4"
+toml = "0.5"
