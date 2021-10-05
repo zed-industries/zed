@@ -4068,15 +4068,10 @@ mod tests {
     #[gpui::test]
     async fn test_select_larger_smaller_syntax_node(mut cx: gpui::TestAppContext) {
         let settings = cx.read(EditorSettings::test);
-
-        let grammar = tree_sitter_rust::language();
-        let language = Arc::new(Language {
-            config: LanguageConfig::default(),
-            brackets_query: tree_sitter::Query::new(grammar, "").unwrap(),
-            highlight_query: tree_sitter::Query::new(grammar, "").unwrap(),
-            highlight_map: Default::default(),
-            grammar,
-        });
+        let language = Arc::new(Language::new(
+            LanguageConfig::default(),
+            tree_sitter_rust::language(),
+        ));
 
         let text = r#"
             use mod1::mod2::{mod3, mod4};
@@ -4086,6 +4081,7 @@ mod tests {
             }
         "#
         .unindent();
+
         let buffer = cx.add_model(|cx| {
             let history = History::new(text.into());
             Buffer::from_history(0, history, None, Some(language), cx)

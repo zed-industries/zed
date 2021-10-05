@@ -1,10 +1,11 @@
-use crate::{HighlightMap};
+use crate::HighlightMap;
+use anyhow::Result;
 use parking_lot::Mutex;
 use serde::Deserialize;
 use std::{path::Path, str, sync::Arc};
+use theme::SyntaxTheme;
 use tree_sitter::{Language as Grammar, Query};
 pub use tree_sitter::{Parser, Tree};
-use theme::SyntaxTheme;
 
 #[derive(Default, Deserialize)]
 pub struct LanguageConfig {
@@ -12,18 +13,12 @@ pub struct LanguageConfig {
     pub path_suffixes: Vec<String>,
 }
 
-#[derive(Deserialize)]
-pub struct BracketPair {
-    pub start: String,
-    pub end: String,
-}
-
 pub struct Language {
-    pub config: LanguageConfig,
-    pub grammar: Grammar,
-    pub highlight_query: Query,
-    pub brackets_query: Query,
-    pub highlight_map: Mutex<HighlightMap>,
+    pub(crate) config: LanguageConfig,
+    pub(crate) grammar: Grammar,
+    pub(crate) highlight_query: Query,
+    pub(crate) brackets_query: Query,
+    pub(crate) highlight_map: Mutex<HighlightMap>,
 }
 
 #[derive(Default)]
@@ -62,6 +57,26 @@ impl LanguageRegistry {
 }
 
 impl Language {
+    pub fn new(config: LanguageConfig, grammar: Grammar) -> Self {
+        Self {
+            config,
+            brackets_query: Query::new(grammar, "").unwrap(),
+            highlight_query: Query::new(grammar, "").unwrap(),
+            grammar,
+            highlight_map: Default::default(),
+        }
+    }
+
+    pub fn with_highlights_query(mut self, highlights_query_source: &str) -> Result<Self> {
+        self.highlight_query = Query::new(self.grammar, highlights_query_source)?;
+        Ok(self)
+    }
+
+    pub fn with_brackets_query(mut self, brackets_query_source: &str) -> Result<Self> {
+        self.brackets_query = Query::new(self.grammar, brackets_query_source)?;
+        Ok(self)
+    }
+
     pub fn name(&self) -> &str {
         self.config.name.as_str()
     }

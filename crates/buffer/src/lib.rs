@@ -4078,19 +4078,16 @@ mod tests {
     }
 
     fn rust_lang() -> Arc<Language> {
-        let lang = tree_sitter_rust::language();
-        let brackets_query = r#"
-        ("{" @open "}" @close)
-        "#;
-        Arc::new(Language {
-            config: LanguageConfig {
-                name: "Rust".to_string(),
-                path_suffixes: vec!["rs".to_string()],
-            },
-            grammar: tree_sitter_rust::language(),
-            highlight_query: tree_sitter::Query::new(lang.clone(), "").unwrap(),
-            brackets_query: tree_sitter::Query::new(lang.clone(), brackets_query).unwrap(),
-            highlight_map: Default::default(),
-        })
+        Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "Rust".to_string(),
+                    path_suffixes: vec!["rs".to_string()],
+                },
+                tree_sitter_rust::language(),
+            )
+            .with_brackets_query(r#" ("{" @open "}" @close) "#)
+            .unwrap(),
+        )
     }
 }

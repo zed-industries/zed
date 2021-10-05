@@ -270,19 +270,14 @@ pub struct WorkspaceParams {
 impl WorkspaceParams {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut MutableAppContext) -> Self {
-        let grammar = tree_sitter_rust::language();
-        let language = Arc::new(buffer::Language {
-            config: buffer::LanguageConfig {
+        let mut languages = LanguageRegistry::new();
+        languages.add(Arc::new(buffer::Language::new(
+            buffer::LanguageConfig {
                 name: "Rust".to_string(),
                 path_suffixes: vec!["rs".to_string()],
             },
-            brackets_query: tree_sitter::Query::new(grammar, "").unwrap(),
-            highlight_query: tree_sitter::Query::new(grammar, "").unwrap(),
-            highlight_map: Default::default(),
-            grammar,
-        });
-        let mut languages = LanguageRegistry::new();
-        languages.add(language);
+            tree_sitter_rust::language(),
+        )));
 
         let client = Client::new();
         let http_client = client::test::FakeHttpClient::new(|_| async move {
