@@ -1,7 +1,7 @@
 [package]
 name = "editor"
 version = "0.1.0"
-edition = "2021"
+edition = "2018"
 
 [features]
 test-support = ["buffer/test-support"]
@@ -12,7 +12,6 @@ clock = { path = "../clock" }
 gpui = { path = "../gpui" }
 sum_tree = { path = "../sum_tree" }
 util = { path = "../util" }
-
 anyhow = "1.0"
 lazy_static = "1.4"
 log = "0.4"
@@ -24,7 +23,6 @@ smol = "1.2"
 
 [dev-dependencies]
 buffer = { path = "../buffer", features = ["test-support"] }
-
 rand = "0.8"
 unindent = "0.1.7"
 tree-sitter = "0.19"
