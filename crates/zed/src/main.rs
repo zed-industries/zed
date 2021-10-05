@@ -31,7 +31,8 @@ fn main() {
     app.platform().fonts().add_fonts(&embedded_fonts).unwrap();
 
     let themes = settings::ThemeRegistry::new(Assets, app.font_cache());
-    let (settings_tx, settings) = settings::channel(&app.font_cache(), &themes).unwrap();
+    let (settings_tx, settings) =
+        settings::channel("Inconsolata", &app.font_cache(), &themes).unwrap();
     let languages = Arc::new(language::build_language_registry());
     languages.set_theme(&settings.borrow().theme.editor.syntax);
 

@@ -1,13 +1,15 @@
 use crate::{
     assets::Assets,
     language,
-    settings::{self, ThemeRegistry},
+    settings::Settings,
+    theme::{Theme, ThemeRegistry, DEFAULT_THEME_NAME},
     AppState,
 };
 use buffer::LanguageRegistry;
 use client::{http::ServerResponse, test::FakeHttpClient, ChannelList, Client, UserStore};
-use gpui::MutableAppContext;
+use gpui::{AssetSource, MutableAppContext};
 use parking_lot::Mutex;
+use postage::watch;
 use project::fs::FakeFs;
 use std::sync::Arc;
 
@@ -18,7 +20,7 @@ fn init_logger() {
 }
 
 pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
-    let (settings_tx, settings) = settings::test(cx);
+    let (settings_tx, settings) = watch::channel_with(build_settings(cx));
     let mut languages = LanguageRegistry::new();
     languages.add(Arc::new(language::rust()));
     let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
@@ -35,4 +37,30 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
         user_store,
         fs: Arc::new(FakeFs::new()),
     })
+}
+
+fn build_settings(cx: &gpui::AppContext) -> Settings {
+    lazy_static::lazy_static! {
+        static ref DEFAULT_THEME: parking_lot::Mutex<Option<Arc<Theme>>> = Default::default();
+        static ref FONTS: Vec<Arc<Vec<u8>>> = Assets
+            .list("fonts")
+            .into_iter()
+            .map(|f| Arc::new(Assets.load(&f).unwrap().to_vec()))
+            .collect();
+    }
+
+    cx.platform().fonts().add_fonts(&FONTS).unwrap();
+
+    let mut theme_guard = DEFAULT_THEME.lock();
+    let theme = if let Some(theme) = theme_guard.as_ref() {
+        theme.clone()
+    } else {
+        let theme = ThemeRegistry::new(Assets, cx.font_cache().clone())
+            .get(DEFAULT_THEME_NAME)
+            .expect("failed to load default theme in tests");
+        *theme_guard = Some(theme.clone());
+        theme
+    };
+
+    Settings::new("Inconsolata", cx.font_cache(), theme).unwrap()
 }
