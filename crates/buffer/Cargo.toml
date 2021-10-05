@@ -25,6 +25,8 @@ smallvec = { version = "1.6", features = ["union"] }
 tree-sitter = "0.19.5"
 
 [dev-dependencies]
+gpui = { path = "../gpui", features = ["test-support"] }
+
 rand = "0.8.3"
 tree-sitter-rust = "0.19.0"
 unindent = "0.1.7"
