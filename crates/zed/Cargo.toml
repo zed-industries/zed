@@ -31,6 +31,7 @@ clock = { path = "../clock" }
 fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
 editor = { path = "../editor" }
+file_finder = { path = "../file_finder" }
 gpui = { path = "../gpui" }
 project = { path = "../project" }
 project_panel = { path = "../project_panel" }

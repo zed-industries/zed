@@ -13,7 +13,7 @@ use zed::{
     self,
     assets::Assets,
     client::{self, http, ChannelList, UserStore},
-    editor, file_finder,
+    editor,
     fs::RealFs,
     language, menus, people_panel, theme_selector, AppState, OpenParams, OpenPaths,
 };

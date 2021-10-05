@@ -1856,6 +1856,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "file_finder"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "fuzzy",
+ "gpui",
+ "postage",
+ "project",
+ "serde_json 1.0.64",
+ "theme",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "filetime"
 version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6124,6 +6139,7 @@ dependencies = [
  "easy-parallel",
  "editor",
  "env_logger",
+ "file_finder",
  "fsevent",
  "futures",
  "fuzzy",
