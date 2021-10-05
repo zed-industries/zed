@@ -1,5 +1,5 @@
 use super::{ItemViewHandle, SplitDirection};
-use crate::{project::ProjectPath, settings::Settings};
+use crate::Settings;
 use gpui::{
     action,
     elements::*,
@@ -9,6 +9,7 @@ use gpui::{
     Entity, MutableAppContext, Quad, RenderContext, View, ViewContext, ViewHandle,
 };
 use postage::watch;
+use project::ProjectPath;
 use std::cmp;
 
 action!(Split, SplitDirection);

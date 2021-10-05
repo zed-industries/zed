@@ -11,7 +11,7 @@ use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
     http::{Request, StatusCode},
 };
-use gpui::{AsyncAppContext, Entity, ModelContext, Task};
+use gpui::{action, AsyncAppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::{prelude::Stream, watch};
@@ -28,7 +28,7 @@ use std::{
 };
 use surf::Url;
 use thiserror::Error;
-use util::ResultExt;
+use util::{ResultExt, TryFutureExt};
 
 pub use channel::*;
 pub use rpc::*;
@@ -40,6 +40,16 @@ lazy_static! {
     static ref IMPERSONATE_LOGIN: Option<String> = std::env::var("ZED_IMPERSONATE")
         .ok()
         .and_then(|s| if s.is_empty() { None } else { Some(s) });
+}
+
+action!(Authenticate);
+
+pub fn init(rpc: Arc<Client>, cx: &mut MutableAppContext) {
+    cx.add_global_action(move |_: &Authenticate, cx| {
+        let rpc = rpc.clone();
+        cx.spawn(|cx| async move { rpc.authenticate_and_connect(&cx).log_err().await })
+            .detach();
+    });
 }
 
 pub struct Client {

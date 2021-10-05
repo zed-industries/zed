@@ -14,7 +14,7 @@ pub use theme_registry::*;
 
 pub const DEFAULT_THEME_NAME: &'static str = "black";
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct Theme {
     #[serde(default)]
     pub name: String,
@@ -26,7 +26,7 @@ pub struct Theme {
     pub editor: EditorStyle,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct Workspace {
     pub background: Color,
     pub titlebar: Titlebar,
@@ -37,7 +37,7 @@ pub struct Workspace {
     pub right_sidebar: Sidebar,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Default)]
 pub struct Titlebar {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -49,14 +49,14 @@ pub struct Titlebar {
     pub outdated_warning: ContainedText,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Default)]
 pub struct OfflineIcon {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub width: f32,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Default)]
 pub struct Tab {
     pub height: f32,
     #[serde(flatten)]
@@ -71,7 +71,7 @@ pub struct Tab {
     pub icon_conflict: Color,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct Sidebar {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -81,14 +81,14 @@ pub struct Sidebar {
     pub resize_handle: ContainerStyle,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct SidebarItem {
     pub icon_color: Color,
     pub icon_size: f32,
     pub height: f32,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct ChatPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -100,7 +100,7 @@ pub struct ChatPanel {
     pub hovered_sign_in_prompt: TextStyle,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct ProjectPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -110,7 +110,7 @@ pub struct ProjectPanel {
     pub hovered_selected_entry: ProjectPanelEntry,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct ProjectPanelEntry {
     pub height: f32,
     #[serde(flatten)]
@@ -121,7 +121,7 @@ pub struct ProjectPanelEntry {
     pub icon_spacing: f32,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct PeoplePanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -136,7 +136,7 @@ pub struct PeoplePanel {
     pub hovered_unshared_worktree: WorktreeRow,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct WorktreeRow {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -146,7 +146,7 @@ pub struct WorktreeRow {
     pub guest_avatar_spacing: f32,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct ChatMessage {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -155,7 +155,7 @@ pub struct ChatMessage {
     pub timestamp: ContainedText,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct ChannelSelect {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -167,7 +167,7 @@ pub struct ChannelSelect {
     pub menu: ContainerStyle,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct ChannelName {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -175,7 +175,7 @@ pub struct ChannelName {
     pub name: TextStyle,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct Selector {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -185,7 +185,7 @@ pub struct Selector {
     pub active_item: ContainedLabel,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Default)]
 pub struct ContainedText {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -193,7 +193,7 @@ pub struct ContainedText {
     pub text: TextStyle,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct ContainedLabel {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -201,7 +201,7 @@ pub struct ContainedLabel {
     pub label: LabelStyle,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Default)]
 pub struct InputEditorStyle {
     #[serde(flatten)]
     pub container: ContainerStyle,

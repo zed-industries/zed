@@ -5,11 +5,9 @@ pub mod language;
 pub mod menus;
 pub mod people_panel;
 pub mod project_panel;
-pub mod settings;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 pub mod theme_selector;
-pub mod workspace;
 
 pub use buffer;
 use buffer::LanguageRegistry;
@@ -28,18 +26,15 @@ use people_panel::PeoplePanel;
 use postage::watch;
 pub use project::{self, fs};
 use project_panel::ProjectPanel;
-pub use settings::Settings;
 use std::{path::PathBuf, sync::Arc};
 use theme::ThemeRegistry;
-use util::TryFutureExt;
-
-use crate::workspace::Workspace;
+pub use workspace;
+use workspace::{Settings, Workspace, WorkspaceParams};
 
 action!(About);
 action!(Open, Arc<AppState>);
 action!(OpenPaths, OpenParams);
 action!(Quit);
-action!(Authenticate);
 action!(AdjustBufferFontSize, f32);
 
 const MIN_FONT_SIZE: f32 = 6.0;
@@ -68,15 +63,6 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     });
     cx.add_global_action(open_new);
     cx.add_global_action(quit);
-
-    cx.add_global_action({
-        let rpc = app_state.client.clone();
-        move |_: &Authenticate, cx| {
-            let rpc = rpc.clone();
-            cx.spawn(|cx| async move { rpc.authenticate_and_connect(&cx).log_err().await })
-                .detach();
-        }
-    });
 
     cx.add_global_action({
         let settings_tx = app_state.settings_tx.clone();
@@ -135,8 +121,9 @@ fn open_paths(action: &OpenPaths, cx: &mut MutableAppContext) -> Task<()> {
     log::info!("open new workspace");
 
     // Add a new workspace if necessary
+    let app_state = &action.0.app_state;
     let (_, workspace) = cx.add_window(window_options(), |cx| {
-        build_workspace(&action.0.app_state, cx)
+        build_workspace(&WorkspaceParams::from(app_state.as_ref()), cx)
     });
     workspace.update(cx, |workspace, cx| {
         workspace.open_paths(&action.0.paths, cx)
@@ -145,33 +132,31 @@ fn open_paths(action: &OpenPaths, cx: &mut MutableAppContext) -> Task<()> {
 
 fn open_new(action: &workspace::OpenNew, cx: &mut MutableAppContext) {
     cx.add_window(window_options(), |cx| {
-        let mut workspace = build_workspace(action.0.as_ref(), cx);
+        let mut workspace = build_workspace(&action.0, cx);
         workspace.open_new_file(&action, cx);
         workspace
     });
 }
 
-fn build_workspace(app_state: &AppState, cx: &mut ViewContext<Workspace>) -> Workspace {
-    let mut workspace = Workspace::new(app_state, cx);
+fn build_workspace(params: &WorkspaceParams, cx: &mut ViewContext<Workspace>) -> Workspace {
+    let mut workspace = Workspace::new(params, cx);
     let project = workspace.project().clone();
     workspace.left_sidebar_mut().add_item(
         "icons/folder-tree-16.svg",
-        ProjectPanel::new(project, app_state.settings.clone(), cx).into(),
+        ProjectPanel::new(project, params.settings.clone(), cx).into(),
     );
     workspace.right_sidebar_mut().add_item(
         "icons/user-16.svg",
-        cx.add_view(|cx| {
-            PeoplePanel::new(app_state.user_store.clone(), app_state.settings.clone(), cx)
-        })
-        .into(),
+        cx.add_view(|cx| PeoplePanel::new(params.user_store.clone(), params.settings.clone(), cx))
+            .into(),
     );
     workspace.right_sidebar_mut().add_item(
         "icons/comment-16.svg",
         cx.add_view(|cx| {
             ChatPanel::new(
-                app_state.client.clone(),
-                app_state.channel_list.clone(),
-                app_state.settings.clone(),
+                params.client.clone(),
+                params.channel_list.clone(),
+                params.settings.clone(),
                 cx,
             )
         })
@@ -193,13 +178,27 @@ fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
     cx.platform().quit();
 }
 
+impl<'a> From<&'a AppState> for WorkspaceParams {
+    fn from(state: &'a AppState) -> Self {
+        Self {
+            client: state.client.clone(),
+            fs: state.fs.clone(),
+            languages: state.languages.clone(),
+            settings: state.settings.clone(),
+            user_store: state.user_store.clone(),
+            channel_list: state.channel_list.clone(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test::test_app_state, workspace::ItemView};
     use serde_json::json;
+    use test::test_app_state;
     use theme::DEFAULT_THEME_NAME;
     use util::test::temp_tree;
+    use workspace::ItemView;
 
     #[gpui::test]
     async fn test_open_paths_action(mut cx: gpui::TestAppContext) {
@@ -270,7 +269,7 @@ mod tests {
     async fn test_new_empty_workspace(mut cx: gpui::TestAppContext) {
         let app_state = cx.update(test_app_state);
         cx.update(|cx| init(&app_state, cx));
-        cx.dispatch_global_action(workspace::OpenNew(app_state.clone()));
+        cx.dispatch_global_action(workspace::OpenNew(app_state.as_ref().into()));
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx.root_view::<Workspace>(window_id).unwrap();
         let editor = workspace.update(&mut cx, |workspace, cx| {

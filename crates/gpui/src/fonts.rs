@@ -167,6 +167,32 @@ impl From<TextStyle> for HighlightStyle {
     }
 }
 
+impl Default for TextStyle {
+    fn default() -> Self {
+        FONT_CACHE.with(|font_cache| {
+            let font_cache = font_cache.borrow();
+            let font_cache = font_cache
+                .as_ref()
+                .expect("TextStyle::default can only be called within a call to with_font_cache");
+
+            let font_family_name = Arc::from("Courier");
+            let font_family_id = font_cache.load_family(&[&font_family_name]).unwrap();
+            let font_id = font_cache
+                .select_font(font_family_id, &Default::default())
+                .unwrap();
+            Self {
+                color: Default::default(),
+                font_family_name,
+                font_family_id,
+                font_id,
+                font_size: 14.,
+                font_properties: Default::default(),
+                underline: Default::default(),
+            }
+        })
+    }
+}
+
 impl HighlightStyle {
     fn from_json(json: HighlightStyleJson) -> Self {
         let font_properties = properties_from_json(json.weight, json.italic);

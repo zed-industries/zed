@@ -18,7 +18,7 @@ pub struct Label {
     highlight_indices: Vec<usize>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Default)]
 pub struct LabelStyle {
     pub text: TextStyle,
     pub highlight_text: Option<TextStyle>,

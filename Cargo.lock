@@ -6031,6 +6031,20 @@ dependencies = [
 [[package]]
 name = "workspace"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "buffer",
+ "client",
+ "editor",
+ "gpui",
+ "log",
+ "postage",
+ "project",
+ "serde_json 1.0.64",
+ "theme",
+ "tree-sitter",
+ "tree-sitter-rust",
+]
 
 [[package]]
 name = "wyz"
@@ -6122,6 +6136,7 @@ dependencies = [
  "unindent",
  "url",
  "util",
+ "workspace",
 ]
 
 [[package]]

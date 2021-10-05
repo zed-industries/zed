@@ -8,6 +8,7 @@ use parking_lot::Mutex;
 use simplelog::SimpleLogger;
 use std::{fs, path::PathBuf, sync::Arc};
 use theme::ThemeRegistry;
+use workspace::{self, settings, OpenNew};
 use zed::{
     self,
     assets::Assets,
@@ -15,9 +16,7 @@ use zed::{
     client::{http, ChannelList, UserStore},
     editor, file_finder,
     fs::RealFs,
-    language, menus, people_panel, project_panel, settings, theme_selector,
-    workspace::{self, OpenNew},
-    AppState, OpenParams, OpenPaths,
+    language, menus, people_panel, project_panel, theme_selector, AppState, OpenParams, OpenPaths,
 };
 
 fn main() {
@@ -54,6 +53,7 @@ fn main() {
         });
 
         zed::init(&app_state, cx);
+        client::init(app_state.client.clone(), cx);
         workspace::init(cx);
         editor::init(cx);
         file_finder::init(cx);
@@ -70,7 +70,7 @@ fn main() {
 
         let paths = collect_path_args();
         if paths.is_empty() {
-            cx.dispatch_global_action(OpenNew(app_state));
+            cx.dispatch_global_action(OpenNew(app_state.as_ref().into()));
         } else {
             cx.dispatch_global_action(OpenPaths(OpenParams { paths, app_state }));
         }

@@ -985,7 +985,7 @@ mod tests {
         fs::{FakeFs, Fs as _},
         people_panel::JoinWorktree,
         project::{ProjectPath, Worktree},
-        workspace::Workspace,
+        workspace::{Workspace, WorkspaceParams},
     };
 
     #[gpui::test]
@@ -1102,13 +1102,9 @@ mod tests {
         let mut server = TestServer::start().await;
         let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
         let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
-        let app_state_b = zed::AppState {
-            client: client_b,
-            user_store: user_store_b,
-            ..Arc::try_unwrap(cx_b.update(zed::test::test_app_state))
-                .ok()
-                .unwrap()
-        };
+        let mut workspace_b_params = cx_b.update(WorkspaceParams::test);
+        workspace_b_params.client = client_b;
+        workspace_b_params.user_store = user_store_b;
 
         cx_a.foreground().forbid_parking();
 
@@ -1141,7 +1137,7 @@ mod tests {
             .await
             .unwrap();
 
-        let (window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&app_state_b, cx));
+        let (window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&workspace_b_params, cx));
         cx_b.update(|cx| {
             cx.dispatch_action(
                 window_b,

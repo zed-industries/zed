@@ -1,4 +1,3 @@
-use crate::{settings::Settings, workspace::Workspace};
 use editor::{Editor, EditorSettings};
 use fuzzy::PathMatch;
 use gpui::{
@@ -23,6 +22,7 @@ use std::{
     },
 };
 use util::post_inc;
+use workspace::{Settings, Workspace};
 
 pub struct FileFinder {
     handle: WeakViewHandle<Self>,
@@ -422,16 +422,15 @@ impl FileFinder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test::test_app_state, workspace::Workspace};
     use editor::Insert;
-    use project::fs::FakeFs;
     use serde_json::json;
     use std::path::PathBuf;
+    use workspace::{Workspace, WorkspaceParams};
 
     #[gpui::test]
     async fn test_matching_paths(mut cx: gpui::TestAppContext) {
-        let app_state = cx.update(test_app_state);
-        app_state
+        let params = cx.update(WorkspaceParams::test);
+        params
             .fs
             .as_fake()
             .insert_tree(
@@ -449,7 +448,7 @@ mod tests {
             editor::init(cx);
         });
 
-        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
                 workspace.add_worktree(Path::new("/root"), cx)
@@ -493,7 +492,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_matching_cancellation(mut cx: gpui::TestAppContext) {
-        let fs = Arc::new(FakeFs::new());
+        let params = cx.update(WorkspaceParams::test);
+        let fs = params.fs.as_fake();
         fs.insert_tree(
             "/dir",
             json!({
@@ -508,10 +508,7 @@ mod tests {
         )
         .await;
 
-        let mut app_state = cx.update(test_app_state);
-        Arc::get_mut(&mut app_state).unwrap().fs = fs;
-
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
                 workspace.add_worktree("/dir".as_ref(), cx)
@@ -522,7 +519,7 @@ mod tests {
             .await;
         let (_, finder) = cx.add_window(|cx| {
             FileFinder::new(
-                app_state.settings.clone(),
+                params.settings.clone(),
                 workspace.read(cx).project().clone(),
                 cx,
             )
@@ -569,14 +566,14 @@ mod tests {
 
     #[gpui::test]
     async fn test_single_file_worktrees(mut cx: gpui::TestAppContext) {
-        let app_state = cx.update(test_app_state);
-        app_state
+        let params = cx.update(WorkspaceParams::test);
+        params
             .fs
             .as_fake()
             .insert_tree("/root", json!({ "the-parent-dir": { "the-file": "" } }))
             .await;
 
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
                 workspace.add_worktree(Path::new("/root/the-parent-dir/the-file"), cx)
@@ -587,7 +584,7 @@ mod tests {
             .await;
         let (_, finder) = cx.add_window(|cx| {
             FileFinder::new(
-                app_state.settings.clone(),
+                params.settings.clone(),
                 workspace.read(cx).project().clone(),
                 cx,
             )
@@ -622,8 +619,8 @@ mod tests {
 
     #[gpui::test(retries = 5)]
     async fn test_multiple_matches_with_same_relative_path(mut cx: gpui::TestAppContext) {
-        let app_state = cx.update(test_app_state);
-        app_state
+        let params = cx.update(WorkspaceParams::test);
+        params
             .fs
             .as_fake()
             .insert_tree(
@@ -635,7 +632,7 @@ mod tests {
             )
             .await;
 
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
 
         workspace
             .update(&mut cx, |workspace, cx| {
@@ -650,7 +647,7 @@ mod tests {
 
         let (_, finder) = cx.add_window(|cx| {
             FileFinder::new(
-                app_state.settings.clone(),
+                params.settings.clone(),
                 workspace.read(cx).project().clone(),
                 cx,
             )

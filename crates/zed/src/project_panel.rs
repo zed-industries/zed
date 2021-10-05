@@ -648,7 +648,7 @@ mod tests {
             .read_with(&cx, |t, _| t.as_local().unwrap().scan_complete())
             .await;
 
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state, cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state.as_ref().into(), cx));
         let panel = workspace.update(&mut cx, |_, cx| ProjectPanel::new(project, settings, cx));
         assert_eq!(
             visible_entry_details(&panel, 0..50, &mut cx),

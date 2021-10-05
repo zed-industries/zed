@@ -1,4 +1,3 @@
-use crate::{workspace::Workspace, Settings};
 use client::{Collaborator, UserStore};
 use gpui::{
     action,
@@ -10,6 +9,7 @@ use gpui::{
 };
 use postage::watch;
 use theme::Theme;
+use workspace::{Settings, Workspace};
 
 action!(JoinWorktree, u64);
 action!(LeaveWorktree, u64);

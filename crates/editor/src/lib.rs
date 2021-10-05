@@ -283,7 +283,7 @@ pub struct EditorSettings {
     pub style: EditorStyle,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, Default)]
 pub struct EditorStyle {
     pub text: TextStyle,
     #[serde(default)]

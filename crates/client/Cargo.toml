@@ -4,14 +4,13 @@ version = "0.1.0"
 edition = "2018"
 
 [features]
-test-support = []
+test-support = ["rpc/test-support"]
 
 [dependencies]
 gpui = { path = "../gpui" }
 util = { path = "../util" }
 rpc = { path = "../rpc" }
 sum_tree = { path = "../sum_tree" }
-
 anyhow = "1.0.38"
 async-recursion = "0.3"
 async-tungstenite = { version = "0.14", features = ["async-tls"] }

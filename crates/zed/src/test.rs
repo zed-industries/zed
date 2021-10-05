@@ -1,4 +1,4 @@
-use crate::{assets::Assets, language, settings::Settings, AppState};
+use crate::{assets::Assets, language, AppState};
 use buffer::LanguageRegistry;
 use client::{http::ServerResponse, test::FakeHttpClient, ChannelList, Client, UserStore};
 use gpui::{AssetSource, MutableAppContext};
@@ -7,6 +7,7 @@ use postage::watch;
 use project::fs::FakeFs;
 use std::sync::Arc;
 use theme::{Theme, ThemeRegistry, DEFAULT_THEME_NAME};
+use workspace::Settings;
 
 #[cfg(test)]
 #[ctor::ctor]
