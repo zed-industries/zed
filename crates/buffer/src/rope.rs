@@ -2,7 +2,7 @@ use super::Point;
 use arrayvec::ArrayString;
 use smallvec::SmallVec;
 use std::{cmp, ops::Range, str};
-use sum_tree::{self, Bias, SumTree};
+use sum_tree::{Bias, SumTree};
 
 #[cfg(test)]
 const CHUNK_BASE: usize = 6;

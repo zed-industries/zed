@@ -1,5 +1,5 @@
 use crate::{settings::ThemeRegistry, workspace::Workspace, AppState, Settings};
-use editor::{self, Editor, EditorSettings};
+use editor::{Editor, EditorSettings};
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     action,

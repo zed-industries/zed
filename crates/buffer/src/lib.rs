@@ -23,6 +23,7 @@ pub use point::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use random_char_iter::*;
 pub use rope::{Chunks, Rope, TextSummary};
+use rpc::proto;
 use seahash::SeaHasher;
 pub use selection::*;
 use similar::{ChangeTag, TextDiff};
@@ -40,10 +41,9 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use sum_tree::{self, Bias, FilterCursor, SumTree};
+use sum_tree::{Bias, FilterCursor, SumTree};
 pub use syntax_theme::SyntaxTheme;
 use tree_sitter::{InputEdit, Parser, QueryCursor};
-use rpc::proto;
 
 pub trait File {
     fn worktree_id(&self) -> usize;

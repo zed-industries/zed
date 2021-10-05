@@ -11,9 +11,9 @@ use zed::{
     self,
     assets::Assets,
     channel::ChannelList,
-    chat_panel, editor, file_finder,
+    chat_panel, client, editor, file_finder,
     fs::RealFs,
-    http, language, menus, project_panel, rpc, settings, theme_selector,
+    http, language, menus, project_panel, settings, theme_selector,
     user::UserStore,
     workspace::{self, OpenNew, OpenParams, OpenPaths},
     AppState,
@@ -36,16 +36,17 @@ fn main() {
     languages.set_theme(&settings.borrow().theme.editor.syntax);
 
     app.run(move |cx| {
-        let rpc = rpc::Client::new();
+        let client = client::Client::new();
         let http = http::client();
-        let user_store = cx.add_model(|cx| UserStore::new(rpc.clone(), http.clone(), cx));
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
             settings_tx: Arc::new(Mutex::new(settings_tx)),
             settings,
             themes,
-            channel_list: cx.add_model(|cx| ChannelList::new(user_store.clone(), rpc.clone(), cx)),
-            rpc,
+            channel_list: cx
+                .add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx)),
+            client,
             user_store,
             fs: Arc::new(RealFs),
         });

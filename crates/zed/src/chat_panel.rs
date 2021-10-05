@@ -2,6 +2,7 @@ use crate::{
     channel::{Channel, ChannelEvent, ChannelList, ChannelMessage},
     theme, Settings,
 };
+use client::Client;
 use editor::{Editor, EditorSettings};
 use gpui::{
     action,
@@ -13,7 +14,6 @@ use gpui::{
     ViewContext, ViewHandle,
 };
 use postage::{prelude::Stream, watch};
-use rpc_client as rpc;
 use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
 use util::{ResultExt, TryFutureExt};
@@ -21,7 +21,7 @@ use util::{ResultExt, TryFutureExt};
 const MESSAGE_LOADING_THRESHOLD: usize = 50;
 
 pub struct ChatPanel {
-    rpc: Arc<rpc::Client>,
+    rpc: Arc<Client>,
     channel_list: ModelHandle<ChannelList>,
     active_channel: Option<(ModelHandle<Channel>, Subscription)>,
     message_list: ListState,
@@ -46,7 +46,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
 impl ChatPanel {
     pub fn new(
-        rpc: Arc<rpc::Client>,
+        rpc: Arc<Client>,
         channel_list: ModelHandle<ChannelList>,
         settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self>,
@@ -409,7 +409,10 @@ impl View for ChatPanel {
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        if matches!(*self.rpc.status().borrow(), rpc::Status::Connected { .. }) {
+        if matches!(
+            *self.rpc.status().borrow(),
+            client::Status::Connected { .. }
+        ) {
             cx.focus(&self.input_editor);
         }
     }

@@ -7,7 +7,7 @@ use gpui::{fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, Task};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
 use std::{collections::VecDeque, ops::Range, time::Duration};
-use sum_tree::{self, Bias, Cursor, SumTree};
+use sum_tree::{Bias, Cursor, SumTree};
 
 pub struct WrapMap {
     snapshot: Snapshot,

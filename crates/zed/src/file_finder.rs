@@ -1,5 +1,5 @@
 use crate::{settings::Settings, workspace::Workspace};
-use editor::{self, Editor, EditorSettings};
+use editor::{Editor, EditorSettings};
 use fuzzy::PathMatch;
 use gpui::{
     action,
@@ -423,7 +423,7 @@ impl FileFinder {
 mod tests {
     use super::*;
     use crate::{test::test_app_state, workspace::Workspace};
-    use editor::{self, Insert};
+    use editor::Insert;
     use project::fs::FakeFs;
     use serde_json::json;
     use std::path::PathBuf;

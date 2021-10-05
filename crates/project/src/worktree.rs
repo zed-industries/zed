@@ -4,7 +4,8 @@ use super::{
 };
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Result};
-use buffer::{self, Buffer, History, LanguageRegistry, Operation, Rope};
+use buffer::{Buffer, History, LanguageRegistry, Operation, Rope};
+use client::{proto, Client, PeerId, TypedEnvelope};
 use clock::ReplicaId;
 use futures::{Stream, StreamExt};
 use fuzzy::CharBag;
@@ -18,7 +19,6 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
-use rpc_client::{self as rpc, proto, PeerId, TypedEnvelope};
 use serde::Deserialize;
 use smol::channel::{self, Sender};
 use std::{
@@ -38,7 +38,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use sum_tree::Bias;
-use sum_tree::{self, Edit, SeekTarget, SumTree};
+use sum_tree::{Edit, SeekTarget, SumTree};
 use util::TryFutureExt;
 
 lazy_static! {
@@ -78,7 +78,7 @@ impl Entity for Worktree {
                 }
             }
             Self::Remote(tree) => {
-                let rpc = tree.rpc.clone();
+                let rpc = tree.client.clone();
                 let worktree_id = tree.remote_id;
                 cx.spawn(|_| async move {
                     if let Err(err) = rpc.send(proto::LeaveWorktree { worktree_id }).await {
@@ -93,7 +93,7 @@ impl Entity for Worktree {
 
 impl Worktree {
     pub async fn open_local(
-        rpc: Arc<rpc::Client>,
+        rpc: Arc<Client>,
         path: impl Into<Arc<Path>>,
         fs: Arc<dyn Fs>,
         languages: Arc<LanguageRegistry>,
@@ -117,7 +117,7 @@ impl Worktree {
     }
 
     pub async fn open_remote(
-        rpc: Arc<rpc::Client>,
+        rpc: Arc<Client>,
         id: u64,
         languages: Arc<LanguageRegistry>,
         cx: &mut AsyncAppContext,
@@ -128,7 +128,7 @@ impl Worktree {
 
     async fn remote(
         join_response: proto::JoinWorktreeResponse,
-        rpc: Arc<rpc::Client>,
+        rpc: Arc<Client>,
         languages: Arc<LanguageRegistry>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
@@ -232,7 +232,7 @@ impl Worktree {
                     snapshot,
                     snapshot_rx,
                     updates_tx,
-                    rpc: rpc.clone(),
+                    client: rpc.clone(),
                     open_buffers: Default::default(),
                     peers: peers
                         .into_iter()
@@ -296,7 +296,7 @@ impl Worktree {
     pub fn handle_add_peer(
         &mut self,
         envelope: TypedEnvelope<proto::AddPeer>,
-        _: Arc<rpc::Client>,
+        _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         match self {
@@ -308,7 +308,7 @@ impl Worktree {
     pub fn handle_remove_peer(
         &mut self,
         envelope: TypedEnvelope<proto::RemovePeer>,
-        _: Arc<rpc::Client>,
+        _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         match self {
@@ -320,7 +320,7 @@ impl Worktree {
     pub fn handle_update(
         &mut self,
         envelope: TypedEnvelope<proto::UpdateWorktree>,
-        _: Arc<rpc::Client>,
+        _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
         self.as_remote_mut()
@@ -331,7 +331,7 @@ impl Worktree {
     pub fn handle_open_buffer(
         &mut self,
         envelope: TypedEnvelope<proto::OpenBuffer>,
-        rpc: Arc<rpc::Client>,
+        rpc: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
         let receipt = envelope.receipt();
@@ -357,7 +357,7 @@ impl Worktree {
     pub fn handle_close_buffer(
         &mut self,
         envelope: TypedEnvelope<proto::CloseBuffer>,
-        _: Arc<rpc::Client>,
+        _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
         self.as_local_mut()
@@ -413,7 +413,7 @@ impl Worktree {
     pub fn handle_update_buffer(
         &mut self,
         envelope: TypedEnvelope<proto::UpdateBuffer>,
-        _: Arc<rpc::Client>,
+        _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let payload = envelope.payload.clone();
@@ -460,7 +460,7 @@ impl Worktree {
     pub fn handle_save_buffer(
         &mut self,
         envelope: TypedEnvelope<proto::SaveBuffer>,
-        rpc: Arc<rpc::Client>,
+        rpc: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let sender_id = envelope.original_sender_id()?;
@@ -507,7 +507,7 @@ impl Worktree {
     pub fn handle_buffer_saved(
         &mut self,
         envelope: TypedEnvelope<proto::BufferSaved>,
-        _: Arc<rpc::Client>,
+        _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let payload = envelope.payload.clone();
@@ -533,7 +533,7 @@ impl Worktree {
     pub fn handle_unshare(
         &mut self,
         _: TypedEnvelope<proto::UnshareWorktree>,
-        _: Arc<rpc::Client>,
+        _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         cx.emit(Event::Closed);
@@ -682,7 +682,7 @@ pub struct LocalWorktree {
     peers: HashMap<PeerId, ReplicaId>,
     languages: Arc<LanguageRegistry>,
     queued_operations: Vec<(u64, Operation)>,
-    rpc: Arc<rpc::Client>,
+    rpc: Arc<Client>,
     fs: Arc<dyn Fs>,
 }
 
@@ -693,7 +693,7 @@ struct WorktreeConfig {
 
 impl LocalWorktree {
     async fn new(
-        rpc: Arc<rpc::Client>,
+        rpc: Arc<Client>,
         path: impl Into<Arc<Path>>,
         fs: Arc<dyn Fs>,
         languages: Arc<LanguageRegistry>,
@@ -753,7 +753,7 @@ impl LocalWorktree {
                         let mut status = rpc.status();
                         while let Some(status) = status.recv().await {
                             if let Some(this) = this.upgrade(&cx) {
-                                let remote_id = if let rpc::Status::Connected { .. } = status {
+                                let remote_id = if let client::Status::Connected { .. } = status {
                                     let collaborator_logins = this.read_with(&cx, |this, _| {
                                         this.as_local().unwrap().config.collaborators.clone()
                                     });
@@ -1217,21 +1217,21 @@ impl fmt::Debug for LocalWorktree {
 
 struct ShareState {
     snapshots_tx: Sender<Snapshot>,
-    _subscriptions: Vec<rpc::Subscription>,
+    _subscriptions: Vec<client::Subscription>,
 }
 
 pub struct RemoteWorktree {
     remote_id: u64,
     snapshot: Snapshot,
     snapshot_rx: watch::Receiver<Snapshot>,
-    rpc: Arc<rpc::Client>,
+    client: Arc<Client>,
     updates_tx: postage::mpsc::Sender<proto::UpdateWorktree>,
     replica_id: ReplicaId,
     open_buffers: HashMap<usize, RemoteBuffer>,
     peers: HashMap<PeerId, ReplicaId>,
     languages: Arc<LanguageRegistry>,
     queued_operations: Vec<(u64, Operation)>,
-    _subscriptions: Vec<rpc::Subscription>,
+    _subscriptions: Vec<client::Subscription>,
 }
 
 impl RemoteWorktree {
@@ -1254,7 +1254,7 @@ impl RemoteWorktree {
             }
         });
 
-        let rpc = self.rpc.clone();
+        let rpc = self.client.clone();
         let replica_id = self.replica_id;
         let remote_worktree_id = self.remote_id;
         let path = path.to_string_lossy().to_string();
@@ -1867,7 +1867,7 @@ impl buffer::File for File {
                 })
             }
             Worktree::Remote(worktree) => {
-                let rpc = worktree.rpc.clone();
+                let rpc = worktree.client.clone();
                 let worktree_id = worktree.remote_id;
                 cx.foreground().spawn(async move {
                     let response = rpc
@@ -1894,7 +1894,7 @@ impl buffer::File for File {
                     .remote_id
                     .borrow()
                     .map(|id| (worktree.rpc.clone(), id)),
-                Worktree::Remote(worktree) => Some((worktree.rpc.clone(), worktree.remote_id)),
+                Worktree::Remote(worktree) => Some((worktree.client.clone(), worktree.remote_id)),
             } {
                 cx.spawn(|worktree, mut cx| async move {
                     if let Err(error) = rpc
@@ -1924,7 +1924,7 @@ impl buffer::File for File {
         self.worktree.update(cx, |worktree, cx| {
             if let Worktree::Remote(worktree) = worktree {
                 let worktree_id = worktree.remote_id;
-                let rpc = worktree.rpc.clone();
+                let rpc = worktree.client.clone();
                 cx.background()
                     .spawn(async move {
                         if let Err(error) = rpc
@@ -2832,9 +2832,9 @@ mod tests {
     use super::*;
     use crate::fs::FakeFs;
     use anyhow::Result;
+    use client::test::FakeServer;
     use fs::RealFs;
     use rand::prelude::*;
-    use rpc_client::test::FakeServer;
     use serde_json::json;
     use std::{cell::RefCell, rc::Rc};
     use std::{
@@ -2860,7 +2860,7 @@ mod tests {
         .await;
 
         let tree = Worktree::open_local(
-            rpc::Client::new(),
+            Client::new(),
             Arc::from(Path::new("/root")),
             Arc::new(fs),
             Default::default(),
@@ -2892,7 +2892,7 @@ mod tests {
             "file1": "the old contents",
         }));
         let tree = Worktree::open_local(
-            rpc::Client::new(),
+            Client::new(),
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
@@ -2922,7 +2922,7 @@ mod tests {
         let file_path = dir.path().join("file1");
 
         let tree = Worktree::open_local(
-            rpc::Client::new(),
+            Client::new(),
             file_path.clone(),
             Arc::new(RealFs),
             Default::default(),
@@ -2965,7 +2965,7 @@ mod tests {
         }));
 
         let user_id = 5;
-        let mut client = rpc::Client::new();
+        let mut client = Client::new();
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
         let tree = Worktree::open_local(
             client,
@@ -3022,7 +3022,7 @@ mod tests {
                 replica_id: 1,
                 peers: Vec::new(),
             },
-            rpc::Client::new(),
+            Client::new(),
             Default::default(),
             &mut cx.to_async(),
         )
@@ -3128,7 +3128,7 @@ mod tests {
         }));
 
         let tree = Worktree::open_local(
-            rpc::Client::new(),
+            Client::new(),
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
@@ -3164,7 +3164,7 @@ mod tests {
     #[gpui::test]
     async fn test_open_and_share_worktree(mut cx: gpui::TestAppContext) {
         let user_id = 100;
-        let mut client = rpc::Client::new();
+        let mut client = Client::new();
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
 
         let fs = Arc::new(FakeFs::new());
@@ -3230,7 +3230,7 @@ mod tests {
             "file3": "ghi",
         }));
         let tree = Worktree::open_local(
-            rpc::Client::new(),
+            Client::new(),
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
@@ -3363,7 +3363,7 @@ mod tests {
         let initial_contents = "aaa\nbbbbb\nc\n";
         let dir = temp_tree(json!({ "the-file": initial_contents }));
         let tree = Worktree::open_local(
-            rpc::Client::new(),
+            Client::new(),
             dir.path(),
             Arc::new(RealFs),
             Default::default(),

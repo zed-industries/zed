@@ -1022,6 +1022,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-recursion",
+ "async-tungstenite",
+ "gpui",
+ "lazy_static",
+ "log",
+ "parking_lot",
+ "postage",
+ "rand 0.8.3",
+ "rpc",
+ "smol",
+ "surf",
+ "thiserror",
+ "tiny_http",
+ "util",
+]
+
+[[package]]
 name = "clock"
 version = "0.1.0"
 dependencies = [
@@ -3685,6 +3706,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "buffer",
+ "client",
  "clock",
  "fsevent",
  "futures",
@@ -3698,7 +3720,6 @@ dependencies = [
  "postage",
  "rand 0.8.3",
  "rpc",
- "rpc_client",
  "serde 1.0.125",
  "serde_json 1.0.64",
  "smol",
@@ -4164,27 +4185,6 @@ dependencies = [
  "smol",
  "tempdir",
  "zstd",
-]
-
-[[package]]
-name = "rpc_client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-recursion",
- "async-tungstenite",
- "gpui",
- "lazy_static",
- "log",
- "parking_lot",
- "postage",
- "rand 0.8.3",
- "rpc",
- "smol",
- "surf",
- "thiserror",
- "tiny_http",
- "util",
 ]
 
 [[package]]
@@ -6052,6 +6052,7 @@ dependencies = [
  "async-tungstenite",
  "buffer",
  "cargo-bundle",
+ "client",
  "clock",
  "crossbeam-channel",
  "ctor",
@@ -6077,7 +6078,6 @@ dependencies = [
  "project",
  "rand 0.8.3",
  "rpc",
- "rpc_client",
  "rsa",
  "rust-embed",
  "serde 1.0.125",

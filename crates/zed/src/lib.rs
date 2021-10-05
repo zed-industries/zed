@@ -18,12 +18,12 @@ pub mod workspace;
 pub use buffer;
 use buffer::LanguageRegistry;
 use channel::ChannelList;
+pub use client;
 pub use editor;
 use gpui::{action, keymap::Binding, ModelHandle};
 use parking_lot::Mutex;
 use postage::watch;
 pub use project::{self, fs};
-pub use rpc_client as rpc;
 pub use settings::Settings;
 use std::sync::Arc;
 use util::TryFutureExt;
@@ -40,7 +40,7 @@ pub struct AppState {
     pub settings: watch::Receiver<Settings>,
     pub languages: Arc<LanguageRegistry>,
     pub themes: Arc<settings::ThemeRegistry>,
-    pub rpc: Arc<rpc::Client>,
+    pub client: Arc<client::Client>,
     pub user_store: ModelHandle<user::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub channel_list: ModelHandle<ChannelList>,
@@ -50,7 +50,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_global_action(quit);
 
     cx.add_global_action({
-        let rpc = app_state.rpc.clone();
+        let rpc = app_state.client.clone();
         move |_: &Authenticate, cx| {
             let rpc = rpc.clone();
             cx.spawn(|cx| async move { rpc.authenticate_and_connect(&cx).log_err().await })

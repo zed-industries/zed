@@ -8,7 +8,7 @@ use crate::{
     SizeConstraint,
 };
 use std::{cell::RefCell, collections::VecDeque, ops::Range, rc::Rc};
-use sum_tree::{self, Bias, SumTree};
+use sum_tree::{Bias, SumTree};
 
 pub struct List {
     state: ListState,

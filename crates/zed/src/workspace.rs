@@ -9,7 +9,6 @@ use crate::{
     people_panel::{JoinWorktree, LeaveWorktree, PeoplePanel, ShareWorktree, UnshareWorktree},
     project::{Project, ProjectPath},
     project_panel::ProjectPanel,
-    rpc,
     settings::Settings,
     user,
     workspace::sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus},
@@ -17,6 +16,7 @@ use crate::{
 };
 use anyhow::Result;
 use buffer::Buffer;
+use client::Client;
 use gpui::{
     action,
     elements::*,
@@ -356,7 +356,7 @@ impl Clone for Box<dyn ItemHandle> {
 
 pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
-    rpc: Arc<rpc::Client>,
+    client: Arc<Client>,
     user_store: ModelHandle<user::UserStore>,
     fs: Arc<dyn Fs>,
     modal: Option<AnyViewHandle>,
@@ -379,7 +379,7 @@ impl Workspace {
         let project = cx.add_model(|_| {
             Project::new(
                 app_state.languages.clone(),
-                app_state.rpc.clone(),
+                app_state.client.clone(),
                 app_state.fs.clone(),
             )
         });
@@ -417,7 +417,7 @@ impl Workspace {
             "icons/comment-16.svg",
             cx.add_view(|cx| {
                 ChatPanel::new(
-                    app_state.rpc.clone(),
+                    app_state.client.clone(),
                     app_state.channel_list.clone(),
                     app_state.settings.clone(),
                     cx,
@@ -427,7 +427,7 @@ impl Workspace {
         );
 
         let mut current_user = app_state.user_store.read(cx).watch_current_user().clone();
-        let mut connection_status = app_state.rpc.status().clone();
+        let mut connection_status = app_state.client.status().clone();
         let _observe_current_user = cx.spawn_weak(|this, mut cx| async move {
             current_user.recv().await;
             connection_status.recv().await;
@@ -449,7 +449,7 @@ impl Workspace {
             panes: vec![pane.clone()],
             active_pane: pane.clone(),
             settings: app_state.settings.clone(),
-            rpc: app_state.rpc.clone(),
+            client: app_state.client.clone(),
             user_store: app_state.user_store.clone(),
             fs: app_state.fs.clone(),
             left_sidebar,
@@ -981,12 +981,12 @@ impl Workspace {
 
     fn render_connection_status(&self) -> Option<ElementBox> {
         let theme = &self.settings.borrow().theme;
-        match &*self.rpc.status().borrow() {
-            rpc::Status::ConnectionError
-            | rpc::Status::ConnectionLost
-            | rpc::Status::Reauthenticating
-            | rpc::Status::Reconnecting { .. }
-            | rpc::Status::ReconnectionError { .. } => Some(
+        match &*self.client.status().borrow() {
+            client::Status::ConnectionError
+            | client::Status::ConnectionLost
+            | client::Status::Reauthenticating
+            | client::Status::Reconnecting { .. }
+            | client::Status::ReconnectionError { .. } => Some(
                 Container::new(
                     Align::new(
                         ConstrainedBox::new(
@@ -1002,7 +1002,7 @@ impl Workspace {
                 .with_style(theme.workspace.titlebar.offline_icon.container)
                 .boxed(),
             ),
-            rpc::Status::UpgradeRequired => Some(
+            client::Status::UpgradeRequired => Some(
                 Label::new(
                     "Please update Zed to collaborate".to_string(),
                     theme.workspace.titlebar.outdated_warning.text.clone(),

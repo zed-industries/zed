@@ -1,29 +1,25 @@
 use crate::user::{User, UserStore};
 use anyhow::{anyhow, Context, Result};
+use client::{proto, Client, TypedEnvelope};
 use gpui::{
     AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task, WeakModelHandle,
 };
 use postage::prelude::Stream;
 use rand::prelude::*;
-use rpc_client::{
-    self as rpc,
-    proto::{self, ChannelMessageSent},
-    TypedEnvelope,
-};
 use std::{
     collections::{HashMap, HashSet},
     mem,
     ops::Range,
     sync::Arc,
 };
-use sum_tree::{self, Bias, SumTree};
+use sum_tree::{Bias, SumTree};
 use time::OffsetDateTime;
 use util::{post_inc, TryFutureExt};
 
 pub struct ChannelList {
     available_channels: Option<Vec<ChannelDetails>>,
     channels: HashMap<u64, WeakModelHandle<Channel>>,
-    rpc: Arc<rpc::Client>,
+    client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     _task: Task<Option<()>>,
 }
@@ -40,9 +36,9 @@ pub struct Channel {
     loaded_all_messages: bool,
     next_pending_message_id: usize,
     user_store: ModelHandle<UserStore>,
-    rpc: Arc<rpc::Client>,
+    rpc: Arc<Client>,
     rng: StdRng,
-    _subscription: rpc::Subscription,
+    _subscription: client::Subscription,
 }
 
 #[derive(Clone, Debug)]
@@ -86,7 +82,7 @@ impl Entity for ChannelList {
 impl ChannelList {
     pub fn new(
         user_store: ModelHandle<UserStore>,
-        rpc: Arc<rpc::Client>,
+        rpc: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let _task = cx.spawn_weak(|this, mut cx| {
@@ -95,7 +91,7 @@ impl ChannelList {
                 let mut status = rpc.status();
                 while let Some((status, this)) = status.recv().await.zip(this.upgrade(&cx)) {
                     match status {
-                        rpc::Status::Connected { .. } => {
+                        client::Status::Connected { .. } => {
                             let response = rpc
                                 .request(proto::GetChannels {})
                                 .await
@@ -119,7 +115,7 @@ impl ChannelList {
                                 cx.notify();
                             });
                         }
-                        rpc::Status::SignedOut { .. } => {
+                        client::Status::SignedOut { .. } => {
                             this.update(&mut cx, |this, cx| {
                                 this.available_channels = None;
                                 this.channels.clear();
@@ -138,7 +134,7 @@ impl ChannelList {
             available_channels: None,
             channels: Default::default(),
             user_store,
-            rpc,
+            client: rpc,
             _task,
         }
     }
@@ -158,8 +154,9 @@ impl ChannelList {
 
         let channels = self.available_channels.as_ref()?;
         let details = channels.iter().find(|details| details.id == id)?.clone();
-        let channel =
-            cx.add_model(|cx| Channel::new(details, self.user_store.clone(), self.rpc.clone(), cx));
+        let channel = cx.add_model(|cx| {
+            Channel::new(details, self.user_store.clone(), self.client.clone(), cx)
+        });
         self.channels.insert(id, channel.downgrade());
         Some(channel)
     }
@@ -185,7 +182,7 @@ impl Channel {
     pub fn new(
         details: ChannelDetails,
         user_store: ModelHandle<UserStore>,
-        rpc: Arc<rpc::Client>,
+        rpc: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let _subscription = rpc.subscribe_to_entity(details.id, cx, Self::handle_message_sent);
@@ -404,8 +401,8 @@ impl Channel {
 
     fn handle_message_sent(
         &mut self,
-        message: TypedEnvelope<ChannelMessageSent>,
-        _: Arc<rpc::Client>,
+        message: TypedEnvelope<proto::ChannelMessageSent>,
+        _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let user_store = self.user_store.clone();
@@ -593,14 +590,14 @@ impl<'a> sum_tree::Dimension<'a, ChannelMessageSummary> for Count {
 mod tests {
     use super::*;
     use crate::test::FakeHttpClient;
+    use client::test::FakeServer;
     use gpui::TestAppContext;
-    use rpc_client::test::FakeServer;
     use surf::http::Response;
 
     #[gpui::test]
     async fn test_channel_messages(mut cx: TestAppContext) {
         let user_id = 5;
-        let mut client = rpc::Client::new();
+        let mut client = Client::new();
         let http_client = FakeHttpClient::new(|_| async move { Ok(Response::new(404)) });
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));

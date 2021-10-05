@@ -4,10 +4,10 @@ mod worktree;
 
 use anyhow::Result;
 use buffer::LanguageRegistry;
+use client::Client;
 use futures::Future;
-use fuzzy::{self, PathMatch, PathMatchCandidate, PathMatchCandidateSet};
+use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
-use rpc_client as rpc;
 use std::{
     path::Path,
     sync::{atomic::AtomicBool, Arc},
@@ -21,7 +21,7 @@ pub struct Project {
     worktrees: Vec<ModelHandle<Worktree>>,
     active_entry: Option<ProjectEntry>,
     languages: Arc<LanguageRegistry>,
-    rpc: Arc<rpc::Client>,
+    client: Arc<client::Client>,
     fs: Arc<dyn Fs>,
 }
 
@@ -43,12 +43,12 @@ pub struct ProjectEntry {
 }
 
 impl Project {
-    pub fn new(languages: Arc<LanguageRegistry>, rpc: Arc<rpc::Client>, fs: Arc<dyn Fs>) -> Self {
+    pub fn new(languages: Arc<LanguageRegistry>, rpc: Arc<Client>, fs: Arc<dyn Fs>) -> Self {
         Self {
             worktrees: Default::default(),
             active_entry: None,
             languages,
-            rpc,
+            client: rpc,
             fs,
         }
     }
@@ -70,7 +70,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Worktree>>> {
         let fs = self.fs.clone();
-        let rpc = self.rpc.clone();
+        let rpc = self.client.clone();
         let languages = self.languages.clone();
         let path = Arc::from(abs_path);
         cx.spawn(|this, mut cx| async move {
@@ -87,7 +87,7 @@ impl Project {
         remote_id: u64,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Worktree>>> {
-        let rpc = self.rpc.clone();
+        let rpc = self.client.clone();
         let languages = self.languages.clone();
         cx.spawn(|this, mut cx| async move {
             rpc.authenticate_and_connect(&cx).await?;
@@ -133,7 +133,7 @@ impl Project {
     }
 
     pub fn share_worktree(&self, remote_id: u64, cx: &mut ModelContext<Self>) {
-        let rpc = self.rpc.clone();
+        let rpc = self.client.clone();
         cx.spawn(|this, mut cx| {
             async move {
                 rpc.authenticate_and_connect(&cx).await?;
@@ -407,7 +407,7 @@ mod tests {
     fn build_project(cx: &mut TestAppContext) -> ModelHandle<Project> {
         let languages = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(RealFs);
-        let rpc = rpc::Client::new();
+        let rpc = client::Client::new();
         cx.add_model(|_| Project::new(languages, rpc, fs))
     }
 }

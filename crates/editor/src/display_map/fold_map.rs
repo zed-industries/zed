@@ -1,8 +1,4 @@
-use super::{
-    buffer::{AnchorRangeExt, TextSummary},
-    Anchor, Buffer, Point, ToOffset,
-};
-use buffer::HighlightId;
+use buffer::{Anchor, Buffer, Point, ToOffset, AnchorRangeExt, HighlightId, TextSummary};
 use gpui::{AppContext, ModelHandle};
 use parking_lot::Mutex;
 use std::{
@@ -11,7 +7,7 @@ use std::{
     ops::Range,
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
-use sum_tree::{self, Bias, Cursor, FilterCursor, SumTree};
+use sum_tree::{Bias, Cursor, FilterCursor, SumTree};
 
 pub trait ToFoldPoint {
     fn to_fold_point(&self, snapshot: &Snapshot, bias: Bias) -> FoldPoint;

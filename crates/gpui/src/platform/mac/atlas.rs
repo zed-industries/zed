@@ -4,7 +4,7 @@ use crate::geometry::{
 };
 use etagere::BucketedAtlasAllocator;
 use foreign_types::ForeignType;
-use metal::{self, Device, TextureDescriptor};
+use metal::{Device, TextureDescriptor};
 use objc::{msg_send, sel, sel_impl};
 
 pub struct AtlasAllocator {

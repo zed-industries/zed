@@ -978,11 +978,11 @@ mod tests {
     use zed::{
         buffer::LanguageRegistry,
         channel::{Channel, ChannelDetails, ChannelList},
+        client::{self, Client, Credentials, EstablishConnectionError},
         editor::{Editor, EditorSettings, Insert},
         fs::{FakeFs, Fs as _},
         people_panel::JoinWorktree,
         project::{ProjectPath, Worktree},
-        rpc::{self, Client, Credentials, EstablishConnectionError},
         test::FakeHttpClient,
         user::UserStore,
         workspace::Workspace,
@@ -1103,7 +1103,7 @@ mod tests {
         let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
         let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
         let app_state_b = zed::AppState {
-            rpc: client_b,
+            client: client_b,
             user_store: user_store_b,
             ..Arc::try_unwrap(cx_b.update(zed::test::test_app_state))
                 .ok()
@@ -1889,7 +1889,7 @@ mod tests {
         server.disconnect_client(current_user_id(&user_store_b, &cx_b));
         while !matches!(
             status_b.recv().await,
-            Some(rpc::Status::ReconnectionError { .. })
+            Some(client::Status::ReconnectionError { .. })
         ) {}
 
         channels_b.read_with(&cx_b, |channels, _| {

@@ -626,7 +626,7 @@ mod tests {
         let project = cx.add_model(|_| {
             Project::new(
                 app_state.languages.clone(),
-                app_state.rpc.clone(),
+                app_state.client.clone(),
                 app_state.fs.clone(),
             )
         });

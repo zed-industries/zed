@@ -2,7 +2,7 @@ mod fold_map;
 mod tab_map;
 mod wrap_map;
 
-use buffer::{self, Anchor, Buffer, Point, ToOffset, ToPoint};
+use buffer::{Anchor, Buffer, Point, ToOffset, ToPoint};
 use fold_map::{FoldMap, ToFoldPoint as _};
 use gpui::{fonts::FontId, Entity, ModelContext, ModelHandle};
 use std::ops::Range;

@@ -9,11 +9,11 @@ use crate::{
 };
 use anyhow::Result;
 use buffer::LanguageRegistry;
+use client::Client;
 use futures::{future::BoxFuture, Future};
 use gpui::MutableAppContext;
 use parking_lot::Mutex;
 use project::fs::FakeFs;
-use rpc_client as rpc;
 use std::{fmt, sync::Arc};
 
 #[cfg(test)]
@@ -27,16 +27,16 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
     let mut languages = LanguageRegistry::new();
     languages.add(Arc::new(language::rust()));
     let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
-    let rpc = rpc::Client::new();
+    let client = Client::new();
     let http = FakeHttpClient::new(|_| async move { Ok(ServerResponse::new(404)) });
-    let user_store = cx.add_model(|cx| UserStore::new(rpc.clone(), http, cx));
+    let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
     Arc::new(AppState {
         settings_tx: Arc::new(Mutex::new(settings_tx)),
         settings,
         themes,
         languages: Arc::new(languages),
-        channel_list: cx.add_model(|cx| ChannelList::new(user_store.clone(), rpc.clone(), cx)),
-        rpc,
+        channel_list: cx.add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx)),
+        client,
         user_store,
         fs: Arc::new(FakeFs::new()),
     })
