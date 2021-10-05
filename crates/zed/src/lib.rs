@@ -1,7 +1,6 @@
 pub mod assets;
 pub mod language;
 pub mod menus;
-pub mod people_panel;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 pub mod theme_selector;
@@ -19,6 +18,7 @@ use gpui::{
     ModelHandle, MutableAppContext, PathPromptOptions, Task, ViewContext,
 };
 use parking_lot::Mutex;
+pub use people_panel;
 use people_panel::PeoplePanel;
 use postage::watch;
 pub use project::{self, fs};

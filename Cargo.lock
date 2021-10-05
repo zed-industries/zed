@@ -3441,6 +3441,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "people_panel"
+version = "0.1.0"
+dependencies = [
+ "client",
+ "gpui",
+ "postage",
+ "theme",
+ "workspace",
+]
+
+[[package]]
 name = "percent-encoding"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6154,6 +6165,7 @@ dependencies = [
  "log-panics",
  "num_cpus",
  "parking_lot",
+ "people_panel",
  "postage",
  "project",
  "project_panel",

@@ -1,6 +1,7 @@
 // Allow binary to be called Zed for a nice application menu when running executable direcly
 #![allow(non_snake_case)]
 
+use client::{self, http, ChannelList, UserStore};
 use fs::OpenOptions;
 use gpui::AssetSource;
 use log::LevelFilter;
@@ -10,12 +11,8 @@ use std::{fs, path::PathBuf, sync::Arc};
 use theme::ThemeRegistry;
 use workspace::{self, settings, OpenNew};
 use zed::{
-    self,
-    assets::Assets,
-    client::{self, http, ChannelList, UserStore},
-    editor,
-    fs::RealFs,
-    language, menus, people_panel, theme_selector, AppState, OpenParams, OpenPaths,
+    self, assets::Assets, fs::RealFs, language, menus, theme_selector, AppState, OpenParams,
+    OpenPaths,
 };
 
 fn main() {

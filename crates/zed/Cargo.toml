@@ -33,6 +33,7 @@ fuzzy = { path = "../fuzzy" }
 editor = { path = "../editor" }
 file_finder = { path = "../file_finder" }
 gpui = { path = "../gpui" }
+people_panel = { path = "../people_panel" }
 project = { path = "../project" }
 project_panel = { path = "../project_panel" }
 rpc = { path = "../rpc" }
