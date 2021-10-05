@@ -14,9 +14,9 @@ use zed::{
     client::{http, ChannelList, UserStore},
     editor, file_finder,
     fs::RealFs,
-    language, menus, project_panel, settings, theme_selector,
-    workspace::{self, OpenNew, OpenParams, OpenPaths},
-    AppState,
+    language, menus, people_panel, project_panel, settings, theme_selector,
+    workspace::{self, OpenNew},
+    AppState, OpenParams, OpenPaths,
 };
 
 fn main() {
@@ -55,6 +55,7 @@ fn main() {
         workspace::init(cx);
         editor::init(cx);
         file_finder::init(cx);
+        people_panel::init(cx);
         chat_panel::init(cx);
         project_panel::init(cx);
         theme_selector::init(&app_state, cx);

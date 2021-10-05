@@ -1,12 +1,12 @@
-use crate::{theme::Theme, Settings};
+use crate::{theme::Theme, workspace::Workspace, Settings};
 use client::{Collaborator, UserStore};
 use gpui::{
     action,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     platform::CursorStyle,
-    Element, ElementBox, Entity, LayoutContext, ModelHandle, RenderContext, Subscription, View,
-    ViewContext,
+    Element, ElementBox, Entity, LayoutContext, ModelHandle, MutableAppContext, RenderContext,
+    Subscription, View, ViewContext,
 };
 use postage::watch;
 
@@ -14,6 +14,13 @@ action!(JoinWorktree, u64);
 action!(LeaveWorktree, u64);
 action!(ShareWorktree, u64);
 action!(UnshareWorktree, u64);
+
+pub fn init(cx: &mut MutableAppContext) {
+    cx.add_action(PeoplePanel::share_worktree);
+    cx.add_action(PeoplePanel::unshare_worktree);
+    cx.add_action(PeoplePanel::join_worktree);
+    cx.add_action(PeoplePanel::leave_worktree);
+}
 
 pub struct PeoplePanel {
     collaborators: ListState,
@@ -53,6 +60,46 @@ impl PeoplePanel {
             user_store,
             settings,
         }
+    }
+
+    fn share_worktree(
+        workspace: &mut Workspace,
+        action: &ShareWorktree,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        workspace
+            .project()
+            .update(cx, |p, cx| p.share_worktree(action.0, cx));
+    }
+
+    fn unshare_worktree(
+        workspace: &mut Workspace,
+        action: &UnshareWorktree,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        workspace
+            .project()
+            .update(cx, |p, cx| p.unshare_worktree(action.0, cx));
+    }
+
+    fn join_worktree(
+        workspace: &mut Workspace,
+        action: &JoinWorktree,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        workspace
+            .project()
+            .update(cx, |p, cx| p.add_remote_worktree(action.0, cx).detach());
+    }
+
+    fn leave_worktree(
+        workspace: &mut Workspace,
+        action: &LeaveWorktree,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        workspace
+            .project()
+            .update(cx, |p, cx| p.close_remote_worktree(action.0, cx));
     }
 
     fn update_collaborators(&mut self, _: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) {

@@ -14,17 +14,30 @@ pub mod workspace;
 
 pub use buffer;
 use buffer::LanguageRegistry;
+use chat_panel::ChatPanel;
 pub use client;
 pub use editor;
-use gpui::{action, keymap::Binding, ModelHandle};
+use gpui::{
+    action,
+    geometry::{rect::RectF, vector::vec2f},
+    keymap::Binding,
+    platform::WindowOptions,
+    ModelHandle, MutableAppContext, PathPromptOptions, Task, ViewContext,
+};
 use parking_lot::Mutex;
+use people_panel::PeoplePanel;
 use postage::watch;
 pub use project::{self, fs};
+use project_panel::ProjectPanel;
 pub use settings::Settings;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 use util::TryFutureExt;
 
+use crate::workspace::Workspace;
+
 action!(About);
+action!(Open, Arc<AppState>);
+action!(OpenPaths, OpenParams);
 action!(Quit);
 action!(Authenticate);
 action!(AdjustBufferFontSize, f32);
@@ -42,7 +55,18 @@ pub struct AppState {
     pub channel_list: ModelHandle<client::ChannelList>,
 }
 
+#[derive(Clone)]
+pub struct OpenParams {
+    pub paths: Vec<PathBuf>,
+    pub app_state: Arc<AppState>,
+}
+
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
+    cx.add_global_action(open);
+    cx.add_global_action(|action: &OpenPaths, cx: &mut MutableAppContext| {
+        open_paths(action, cx).detach()
+    });
+    cx.add_global_action(open_new);
     cx.add_global_action(quit);
 
     cx.add_global_action({
@@ -71,6 +95,208 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     ])
 }
 
+fn open(action: &Open, cx: &mut MutableAppContext) {
+    let app_state = action.0.clone();
+    cx.prompt_for_paths(
+        PathPromptOptions {
+            files: true,
+            directories: true,
+            multiple: true,
+        },
+        move |paths, cx| {
+            if let Some(paths) = paths {
+                cx.dispatch_global_action(OpenPaths(OpenParams { paths, app_state }));
+            }
+        },
+    );
+}
+
+fn open_paths(action: &OpenPaths, cx: &mut MutableAppContext) -> Task<()> {
+    log::info!("open paths {:?}", action.0.paths);
+
+    // Open paths in existing workspace if possible
+    for window_id in cx.window_ids().collect::<Vec<_>>() {
+        if let Some(handle) = cx.root_view::<Workspace>(window_id) {
+            let task = handle.update(cx, |view, cx| {
+                if view.contains_paths(&action.0.paths, cx.as_ref()) {
+                    log::info!("open paths on existing workspace");
+                    Some(view.open_paths(&action.0.paths, cx))
+                } else {
+                    None
+                }
+            });
+
+            if let Some(task) = task {
+                return task;
+            }
+        }
+    }
+
+    log::info!("open new workspace");
+
+    // Add a new workspace if necessary
+    let (_, workspace) = cx.add_window(window_options(), |cx| {
+        build_workspace(&action.0.app_state, cx)
+    });
+    workspace.update(cx, |workspace, cx| {
+        workspace.open_paths(&action.0.paths, cx)
+    })
+}
+
+fn open_new(action: &workspace::OpenNew, cx: &mut MutableAppContext) {
+    cx.add_window(window_options(), |cx| {
+        let mut workspace = build_workspace(action.0.as_ref(), cx);
+        workspace.open_new_file(&action, cx);
+        workspace
+    });
+}
+
+fn build_workspace(app_state: &AppState, cx: &mut ViewContext<Workspace>) -> Workspace {
+    let mut workspace = Workspace::new(app_state, cx);
+    let project = workspace.project().clone();
+    workspace.left_sidebar_mut().add_item(
+        "icons/folder-tree-16.svg",
+        ProjectPanel::new(project, app_state.settings.clone(), cx).into(),
+    );
+    workspace.right_sidebar_mut().add_item(
+        "icons/user-16.svg",
+        cx.add_view(|cx| {
+            PeoplePanel::new(app_state.user_store.clone(), app_state.settings.clone(), cx)
+        })
+        .into(),
+    );
+    workspace.right_sidebar_mut().add_item(
+        "icons/comment-16.svg",
+        cx.add_view(|cx| {
+            ChatPanel::new(
+                app_state.client.clone(),
+                app_state.channel_list.clone(),
+                app_state.settings.clone(),
+                cx,
+            )
+        })
+        .into(),
+    );
+    workspace
+}
+
+fn window_options() -> WindowOptions<'static> {
+    WindowOptions {
+        bounds: RectF::new(vec2f(0., 0.), vec2f(1024., 768.)),
+        title: None,
+        titlebar_appears_transparent: true,
+        traffic_light_position: Some(vec2f(8., 8.)),
+    }
+}
+
 fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
     cx.platform().quit();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{test::test_app_state, workspace::ItemView};
+    use serde_json::json;
+    use util::test::temp_tree;
+
+    #[gpui::test]
+    async fn test_open_paths_action(mut cx: gpui::TestAppContext) {
+        let app_state = cx.update(test_app_state);
+        let dir = temp_tree(json!({
+            "a": {
+                "aa": null,
+                "ab": null,
+            },
+            "b": {
+                "ba": null,
+                "bb": null,
+            },
+            "c": {
+                "ca": null,
+                "cb": null,
+            },
+        }));
+
+        cx.update(|cx| {
+            open_paths(
+                &OpenPaths(OpenParams {
+                    paths: vec![
+                        dir.path().join("a").to_path_buf(),
+                        dir.path().join("b").to_path_buf(),
+                    ],
+                    app_state: app_state.clone(),
+                }),
+                cx,
+            )
+        })
+        .await;
+        assert_eq!(cx.window_ids().len(), 1);
+
+        cx.update(|cx| {
+            open_paths(
+                &OpenPaths(OpenParams {
+                    paths: vec![dir.path().join("a").to_path_buf()],
+                    app_state: app_state.clone(),
+                }),
+                cx,
+            )
+        })
+        .await;
+        assert_eq!(cx.window_ids().len(), 1);
+        let workspace_1 = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
+        workspace_1.read_with(&cx, |workspace, cx| {
+            assert_eq!(workspace.worktrees(cx).len(), 2)
+        });
+
+        cx.update(|cx| {
+            open_paths(
+                &OpenPaths(OpenParams {
+                    paths: vec![
+                        dir.path().join("b").to_path_buf(),
+                        dir.path().join("c").to_path_buf(),
+                    ],
+                    app_state: app_state.clone(),
+                }),
+                cx,
+            )
+        })
+        .await;
+        assert_eq!(cx.window_ids().len(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_new_empty_workspace(mut cx: gpui::TestAppContext) {
+        let app_state = cx.update(test_app_state);
+        cx.update(|cx| init(&app_state, cx));
+        cx.dispatch_global_action(workspace::OpenNew(app_state.clone()));
+        let window_id = *cx.window_ids().first().unwrap();
+        let workspace = cx.root_view::<Workspace>(window_id).unwrap();
+        let editor = workspace.update(&mut cx, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .unwrap()
+                .to_any()
+                .downcast::<editor::Editor>()
+                .unwrap()
+        });
+
+        editor.update(&mut cx, |editor, cx| {
+            assert!(editor.text(cx).is_empty());
+        });
+
+        workspace.update(&mut cx, |workspace, cx| {
+            workspace.save_active_item(&workspace::Save, cx)
+        });
+
+        app_state.fs.as_fake().insert_dir("/root").await.unwrap();
+        cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name")));
+
+        editor
+            .condition(&cx, |editor, cx| editor.title(cx) == "the-new-name")
+            .await;
+        editor.update(&mut cx, |editor, cx| {
+            assert!(!editor.is_dirty(cx));
+        });
+    }
 }

@@ -33,7 +33,7 @@ pub fn menus(state: &Arc<AppState>) -> Vec<Menu<'static>> {
                 MenuItem::Action {
                     name: "Open…",
                     keystroke: Some("cmd-o"),
-                    action: Box::new(workspace::Open(state.clone())),
+                    action: Box::new(crate::Open(state.clone())),
                 },
             ],
         },

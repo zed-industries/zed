@@ -6014,6 +6014,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "workspace"
+version = "0.1.0"
+
+[[package]]
 name = "wyz"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

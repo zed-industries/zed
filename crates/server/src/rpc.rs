@@ -1095,7 +1095,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_unshare_worktree(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
-        cx_b.update(zed::workspace::init);
+        cx_b.update(zed::people_panel::init);
         let lang_registry = Arc::new(LanguageRegistry::new());
 
         // Connect to a server as 2 clients.
