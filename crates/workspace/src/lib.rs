@@ -275,6 +275,7 @@ impl WorkspaceParams {
             buffer::LanguageConfig {
                 name: "Rust".to_string(),
                 path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
             },
             tree_sitter_rust::language(),
         )));

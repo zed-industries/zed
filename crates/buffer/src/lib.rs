@@ -14,7 +14,7 @@ use clock::ReplicaId;
 use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
 pub use highlight_map::{HighlightId, HighlightMap};
 use language::Tree;
-pub use language::{Language, LanguageConfig, LanguageRegistry};
+pub use language::{AutoclosePair, Language, LanguageConfig, LanguageRegistry};
 use lazy_static::lazy_static;
 use operation_queue::OperationQueue;
 use parking_lot::Mutex;
@@ -1108,6 +1108,23 @@ impl Buffer {
     pub fn chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + '_ {
         let offset = position.to_offset(self);
         self.visible_text.chars_at(offset)
+    }
+
+    pub fn bytes_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = u8> + '_ {
+        let offset = position.to_offset(self);
+        self.visible_text.bytes_at(offset)
+    }
+
+    pub fn contains_str_at<T>(&self, position: T, needle: &str) -> bool
+    where
+        T: ToOffset,
+    {
+        let position = position.to_offset(self);
+        position == self.clip_offset(position, Bias::Left)
+            && self
+                .bytes_at(position)
+                .take(needle.len())
+                .eq(needle.bytes())
     }
 
     pub fn edits_since<'a>(&'a self, since: clock::Global) -> impl 'a + Iterator<Item = Edit> {
@@ -4083,6 +4100,7 @@ mod tests {
                 LanguageConfig {
                     name: "Rust".to_string(),
                     path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
                 },
                 tree_sitter_rust::language(),
             )

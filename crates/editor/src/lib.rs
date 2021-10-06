@@ -772,7 +772,49 @@ impl Editor {
         });
 
         self.update_selections(new_selections, true, cx);
+        self.autoclose_pairs(cx);
         self.end_transaction(cx);
+    }
+
+    fn autoclose_pairs(&mut self, cx: &mut ViewContext<Self>) {
+        let selections = self.selections(cx);
+        self.buffer.update(cx, |buffer, cx| {
+            let autoclose_pair = buffer.language().and_then(|language| {
+                let first_selection_start = selections.first().unwrap().start.to_offset(&*buffer);
+                let pair = language.autoclose_pairs().iter().find(|pair| {
+                    buffer.contains_str_at(
+                        first_selection_start.saturating_sub(pair.start.len()),
+                        &pair.start,
+                    )
+                });
+                pair.and_then(|pair| {
+                    let should_autoclose = selections[1..].iter().all(|selection| {
+                        let selection_start = selection.start.to_offset(&*buffer);
+                        buffer.contains_str_at(
+                            selection_start.saturating_sub(pair.start.len()),
+                            &pair.start,
+                        )
+                    });
+
+                    if should_autoclose {
+                        Some(pair.clone())
+                    } else {
+                        None
+                    }
+                })
+            });
+
+            if let Some(pair) = autoclose_pair {
+                let mut selection_ranges = SmallVec::<[_; 32]>::new();
+                for selection in selections.as_ref() {
+                    let start = selection.start.to_offset(&*buffer);
+                    let end = selection.end.to_offset(&*buffer);
+                    selection_ranges.push(start..end);
+                }
+
+                buffer.edit(selection_ranges, &pair.end, cx);
+            }
+        });
     }
 
     pub fn clear(&mut self, cx: &mut ViewContext<Self>) {
@@ -4207,6 +4249,100 @@ mod tests {
                 DisplayPoint::new(3, 4)..DisplayPoint::new(3, 23),
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_autoclose_pairs(mut cx: gpui::TestAppContext) {
+        let settings = cx.read(EditorSettings::test);
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                autoclose_pairs: vec![
+                    AutoclosePair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                    },
+                    AutoclosePair {
+                        start: "/*".to_string(),
+                        end: " */".to_string(),
+                    },
+                ],
+                ..Default::default()
+            },
+            tree_sitter_rust::language(),
+        ));
+
+        let text = r#"
+            a
+
+            /
+
+        "#
+        .unindent();
+
+        let buffer = cx.add_model(|cx| {
+            let history = History::new(text.into());
+            Buffer::from_history(0, history, None, Some(language), cx)
+        });
+        let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
+        view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
+            .await;
+
+        view.update(&mut cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.insert(&Insert("{".to_string()), cx);
+            assert_eq!(
+                view.text(cx),
+                "
+                {}
+                {}
+                /
+
+                "
+                .unindent()
+            );
+
+            view.undo(&Undo, cx);
+            view.insert(&Insert("/".to_string()), cx);
+            view.insert(&Insert("*".to_string()), cx);
+            assert_eq!(
+                view.text(cx),
+                "
+                /* */
+                /* */
+                /
+
+                "
+                .unindent()
+            );
+
+            view.undo(&Undo, cx);
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                    DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.insert(&Insert("*".to_string()), cx);
+            assert_eq!(
+                view.text(cx),
+                "
+                a
+
+                /*
+                *
+                "
+                .unindent()
+            );
+        });
     }
 
     impl Editor {

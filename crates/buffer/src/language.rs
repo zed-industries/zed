@@ -11,6 +11,13 @@ pub use tree_sitter::{Parser, Tree};
 pub struct LanguageConfig {
     pub name: String,
     pub path_suffixes: Vec<String>,
+    pub autoclose_pairs: Vec<AutoclosePair>,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct AutoclosePair {
+    pub start: String,
+    pub end: String,
 }
 
 pub struct Language {
@@ -79,6 +86,10 @@ impl Language {
 
     pub fn name(&self) -> &str {
         self.config.name.as_str()
+    }
+
+    pub fn autoclose_pairs(&self) -> &[AutoclosePair] {
+        &self.config.autoclose_pairs
     }
 
     pub fn highlight_map(&self) -> HighlightMap {

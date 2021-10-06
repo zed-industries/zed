@@ -115,6 +115,10 @@ impl Rope {
         self.chunks_in_range(start..self.len()).flat_map(str::chars)
     }
 
+    pub fn bytes_at(&self, start: usize) -> impl Iterator<Item = u8> + '_ {
+        self.chunks_in_range(start..self.len()).flat_map(str::bytes)
+    }
+
     pub fn chunks<'a>(&'a self) -> Chunks<'a> {
         self.chunks_in_range(0..self.len())
     }
