@@ -422,7 +422,7 @@ impl FileFinder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::Insert;
+    use editor::Input;
     use serde_json::json;
     use std::path::PathBuf;
     use workspace::{Workspace, WorkspaceParams};
@@ -471,9 +471,9 @@ mod tests {
         let query_buffer = cx.read(|cx| finder.read(cx).query_editor.clone());
 
         let chain = vec![finder.id(), query_buffer.id()];
-        cx.dispatch_action(window_id, chain.clone(), Insert("b".into()));
-        cx.dispatch_action(window_id, chain.clone(), Insert("n".into()));
-        cx.dispatch_action(window_id, chain.clone(), Insert("a".into()));
+        cx.dispatch_action(window_id, chain.clone(), Input("b".into()));
+        cx.dispatch_action(window_id, chain.clone(), Input("n".into()));
+        cx.dispatch_action(window_id, chain.clone(), Input("a".into()));
         finder
             .condition(&cx, |finder, _| finder.matches.len() == 2)
             .await;

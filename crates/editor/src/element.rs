@@ -1,5 +1,5 @@
 use super::{
-    DisplayPoint, Editor, EditorMode, EditorSettings, EditorStyle, Insert, Scroll, Select,
+    DisplayPoint, Editor, EditorMode, EditorSettings, EditorStyle, Input, Scroll, Select,
     SelectPhase, Snapshot, MAX_LINE_LEN,
 };
 use buffer::HighlightId;
@@ -143,7 +143,7 @@ impl EditorElement {
                 if chars.chars().any(|c| c.is_control()) || keystroke.cmd || keystroke.ctrl {
                     false
                 } else {
-                    cx.dispatch_action(Insert(chars.to_string()));
+                    cx.dispatch_action(Input(chars.to_string()));
                     true
                 }
             }

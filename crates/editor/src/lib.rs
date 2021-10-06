@@ -37,7 +37,7 @@ const MAX_LINE_LEN: usize = 1024;
 action!(Cancel);
 action!(Backspace);
 action!(Delete);
-action!(Insert, String);
+action!(Input, String);
 action!(DeleteLine);
 action!(DeleteToPreviousWordBoundary);
 action!(DeleteToNextWordBoundary);
@@ -95,13 +95,13 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("ctrl-h", Backspace, Some("Editor")),
         Binding::new("delete", Delete, Some("Editor")),
         Binding::new("ctrl-d", Delete, Some("Editor")),
-        Binding::new("enter", Insert("\n".into()), Some("Editor && mode == full")),
+        Binding::new("enter", Input("\n".into()), Some("Editor && mode == full")),
         Binding::new(
             "alt-enter",
-            Insert("\n".into()),
+            Input("\n".into()),
             Some("Editor && mode == auto_height"),
         ),
-        Binding::new("tab", Insert("\t".into()), Some("Editor")),
+        Binding::new("tab", Input("\t".into()), Some("Editor")),
         Binding::new("ctrl-shift-K", DeleteLine, Some("Editor")),
         Binding::new(
             "alt-backspace",
@@ -192,7 +192,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|this: &mut Editor, action: &Scroll, cx| this.set_scroll_position(action.0, cx));
     cx.add_action(Editor::select);
     cx.add_action(Editor::cancel);
-    cx.add_action(Editor::insert);
+    cx.add_action(Editor::handle_input);
     cx.add_action(Editor::backspace);
     cx.add_action(Editor::delete);
     cx.add_action(Editor::delete_line);
@@ -292,6 +292,7 @@ pub struct Editor {
     pending_selection: Option<Selection>,
     next_selection_id: usize,
     add_selections_state: Option<AddSelectionsState>,
+    autoclose_stack: Vec<AutoclosePairState>,
     select_larger_syntax_node_stack: Vec<Arc<[Selection]>>,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
@@ -317,6 +318,11 @@ pub struct Snapshot {
 struct AddSelectionsState {
     above: bool,
     stack: Vec<usize>,
+}
+
+struct AutoclosePairState {
+    ranges: SmallVec<[Range<Anchor>; 32]>,
+    pair: AutoclosePair,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -404,6 +410,7 @@ impl Editor {
             pending_selection: None,
             next_selection_id,
             add_selections_state: None,
+            autoclose_stack: Default::default(),
             select_larger_syntax_node_stack: Vec::new(),
             build_settings,
             scroll_position: Vector2F::zero(),
@@ -733,7 +740,18 @@ impl Editor {
         Ok(())
     }
 
-    pub fn insert(&mut self, action: &Insert, cx: &mut ViewContext<Self>) {
+    pub fn handle_input(&mut self, action: &Input, cx: &mut ViewContext<Self>) {
+        let text = action.0.as_ref();
+        if !self.skip_autoclose_end(text, cx) {
+            self.start_transaction(cx);
+            self.insert(text, cx);
+            self.autoclose_pairs(cx);
+            self.end_transaction(cx);
+        }
+    }
+
+    fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
+        self.start_transaction(cx);
         let mut old_selections = SmallVec::<[_; 32]>::new();
         {
             let selections = self.selections(cx);
@@ -745,12 +763,11 @@ impl Editor {
             }
         }
 
-        self.start_transaction(cx);
         let mut new_selections = Vec::new();
         self.buffer.update(cx, |buffer, cx| {
             let edit_ranges = old_selections.iter().map(|(_, range)| range.clone());
-            buffer.edit(edit_ranges, action.0.as_str(), cx);
-            let text_len = action.0.len() as isize;
+            buffer.edit(edit_ranges, text, cx);
+            let text_len = text.len() as isize;
             let mut delta = 0_isize;
             new_selections = old_selections
                 .into_iter()
@@ -772,13 +789,12 @@ impl Editor {
         });
 
         self.update_selections(new_selections, true, cx);
-        self.autoclose_pairs(cx);
         self.end_transaction(cx);
     }
 
     fn autoclose_pairs(&mut self, cx: &mut ViewContext<Self>) {
         let selections = self.selections(cx);
-        self.buffer.update(cx, |buffer, cx| {
+        let new_autoclose_pair_state = self.buffer.update(cx, |buffer, cx| {
             let autoclose_pair = buffer.language().and_then(|language| {
                 let first_selection_start = selections.first().unwrap().start.to_offset(&*buffer);
                 let pair = language.autoclose_pairs().iter().find(|pair| {
@@ -804,23 +820,87 @@ impl Editor {
                 })
             });
 
-            if let Some(pair) = autoclose_pair {
-                let mut selection_ranges = SmallVec::<[_; 32]>::new();
-                for selection in selections.as_ref() {
-                    let start = selection.start.to_offset(&*buffer);
-                    let end = selection.end.to_offset(&*buffer);
-                    selection_ranges.push(start..end);
-                }
+            autoclose_pair.and_then(|pair| {
+                let selection_ranges = selections
+                    .iter()
+                    .map(|selection| {
+                        let start = selection.start.to_offset(&*buffer);
+                        start..start
+                    })
+                    .collect::<SmallVec<[_; 32]>>();
 
                 buffer.edit(selection_ranges, &pair.end, cx);
-            }
+
+                if pair.end.len() == 1 {
+                    Some(AutoclosePairState {
+                        ranges: selections
+                            .iter()
+                            .map(|selection| {
+                                selection.start.bias_left(buffer)
+                                    ..selection.start.bias_right(buffer)
+                            })
+                            .collect(),
+                        pair,
+                    })
+                } else {
+                    None
+                }
+            })
         });
+        self.autoclose_stack.extend(new_autoclose_pair_state);
+    }
+
+    fn skip_autoclose_end(&mut self, text: &str, cx: &mut ViewContext<Self>) -> bool {
+        let old_selections = self.selections(cx);
+        let autoclose_pair_state = if let Some(autoclose_pair_state) = self.autoclose_stack.last() {
+            autoclose_pair_state
+        } else {
+            return false;
+        };
+        if text != autoclose_pair_state.pair.end {
+            return false;
+        }
+
+        debug_assert_eq!(old_selections.len(), autoclose_pair_state.ranges.len());
+
+        let buffer = self.buffer.read(cx);
+        let old_selection_ranges: SmallVec<[_; 32]> = old_selections
+            .iter()
+            .map(|selection| (selection.id, selection.offset_range(buffer)))
+            .collect();
+        if old_selection_ranges
+            .iter()
+            .zip(&autoclose_pair_state.ranges)
+            .all(|((_, selection_range), autoclose_range)| {
+                let autoclose_range_end = autoclose_range.end.to_offset(buffer);
+                selection_range.is_empty() && selection_range.start == autoclose_range_end
+            })
+        {
+            let new_selections = old_selection_ranges
+                .into_iter()
+                .map(|(id, range)| {
+                    let new_head = buffer.anchor_before(range.start + 1);
+                    Selection {
+                        id,
+                        start: new_head.clone(),
+                        end: new_head,
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    }
+                })
+                .collect();
+            self.autoclose_stack.pop();
+            self.update_selections(new_selections, true, cx);
+            true
+        } else {
+            false
+        }
     }
 
     pub fn clear(&mut self, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         self.select_all(&SelectAll, cx);
-        self.insert(&Insert(String::new()), cx);
+        self.insert("", cx);
         self.end_transaction(cx);
     }
 
@@ -843,7 +923,7 @@ impl Editor {
         }
 
         self.update_selections(selections, true, cx);
-        self.insert(&Insert(String::new()), cx);
+        self.insert("", cx);
         self.end_transaction(cx);
     }
 
@@ -866,7 +946,7 @@ impl Editor {
         }
 
         self.update_selections(selections, true, cx);
-        self.insert(&Insert(String::new()), cx);
+        self.insert(&"", cx);
         self.end_transaction(cx);
     }
 
@@ -1214,7 +1294,7 @@ impl Editor {
             }
         }
         self.update_selections(selections, true, cx);
-        self.insert(&Insert(String::new()), cx);
+        self.insert("", cx);
         self.end_transaction(cx);
 
         cx.as_mut()
@@ -1261,7 +1341,6 @@ impl Editor {
                     clipboard_selections.clear();
                 }
 
-                self.start_transaction(cx);
                 let mut start_offset = 0;
                 let mut new_selections = Vec::with_capacity(selections.len());
                 for (i, selection) in selections.iter().enumerate() {
@@ -1304,9 +1383,8 @@ impl Editor {
                     });
                 }
                 self.update_selections(new_selections, true, cx);
-                self.end_transaction(cx);
             } else {
-                self.insert(&Insert(clipboard_text.into()), cx);
+                self.insert(clipboard_text, cx);
             }
         }
     }
@@ -1548,7 +1626,7 @@ impl Editor {
         }
 
         self.update_selections(selections, true, cx);
-        self.insert(&Insert(String::new()), cx);
+        self.insert("", cx);
         self.end_transaction(cx);
     }
 
@@ -1618,7 +1696,7 @@ impl Editor {
         }
 
         self.update_selections(selections, true, cx);
-        self.insert(&Insert(String::new()), cx);
+        self.insert("", cx);
         self.end_transaction(cx);
     }
 
@@ -2146,20 +2224,41 @@ impl Editor {
             }
         }
 
-        self.buffer.update(cx, |buffer, cx| {
-            buffer
-                .update_selection_set(self.selection_set_id, selections, cx)
-                .unwrap();
-        });
-        self.pause_cursor_blinking(cx);
+        self.add_selections_state = None;
+        self.select_larger_syntax_node_stack.clear();
+        while let Some(autoclose_pair_state) = self.autoclose_stack.last() {
+            let all_selections_inside_autoclose_ranges =
+                if selections.len() == autoclose_pair_state.ranges.len() {
+                    selections.iter().zip(&autoclose_pair_state.ranges).all(
+                        |(selection, autoclose_range)| {
+                            let head = selection.head();
+                            autoclose_range.start.cmp(head, buffer).unwrap() <= Ordering::Equal
+                                && autoclose_range.end.cmp(head, buffer).unwrap() >= Ordering::Equal
+                        },
+                    )
+                } else {
+                    false
+                };
+
+            if all_selections_inside_autoclose_ranges {
+                break;
+            } else {
+                self.autoclose_stack.pop();
+            }
+        }
 
         if autoscroll {
             self.autoscroll_requested = true;
             cx.notify();
         }
 
-        self.add_selections_state = None;
-        self.select_larger_syntax_node_stack.clear();
+        self.pause_cursor_blinking(cx);
+
+        self.buffer.update(cx, |buffer, cx| {
+            buffer
+                .update_selection_set(self.selection_set_id, selections, cx)
+                .unwrap();
+        });
     }
 
     fn start_transaction(&self, cx: &mut ViewContext<Self>) {
@@ -3708,9 +3807,9 @@ mod tests {
         // is pasted at each cursor.
         view.update(cx, |view, cx| {
             view.select_ranges(vec![0..0, 31..31], false, cx);
-            view.insert(&Insert("( ".into()), cx);
+            view.handle_input(&Input("( ".into()), cx);
             view.paste(&Paste, cx);
-            view.insert(&Insert(") ".into()), cx);
+            view.handle_input(&Input(") ".into()), cx);
             assert_eq!(
                 view.display_text(cx),
                 "( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
@@ -3719,7 +3818,7 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.select_ranges(vec![0..0], false, cx);
-            view.insert(&Insert("123\n4567\n89\n".into()), cx);
+            view.handle_input(&Input("123\n4567\n89\n".into()), cx);
             assert_eq!(
                 view.display_text(cx),
                 "123\n4567\n89\n( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
@@ -4296,12 +4395,29 @@ mod tests {
                 cx,
             )
             .unwrap();
-            view.insert(&Insert("{".to_string()), cx);
+            view.handle_input(&Input("{".to_string()), cx);
+            view.handle_input(&Input("{".to_string()), cx);
+            view.handle_input(&Input("{".to_string()), cx);
             assert_eq!(
                 view.text(cx),
                 "
-                {}
-                {}
+                {{{}}}
+                {{{}}}
+                /
+
+                "
+                .unindent()
+            );
+
+            view.move_right(&MoveRight, cx);
+            view.handle_input(&Input("}".to_string()), cx);
+            view.handle_input(&Input("}".to_string()), cx);
+            view.handle_input(&Input("}".to_string()), cx);
+            assert_eq!(
+                view.text(cx),
+                "
+                {{{}}}}
+                {{{}}}}
                 /
 
                 "
@@ -4309,8 +4425,8 @@ mod tests {
             );
 
             view.undo(&Undo, cx);
-            view.insert(&Insert("/".to_string()), cx);
-            view.insert(&Insert("*".to_string()), cx);
+            view.handle_input(&Input("/".to_string()), cx);
+            view.handle_input(&Input("*".to_string()), cx);
             assert_eq!(
                 view.text(cx),
                 "
@@ -4331,7 +4447,7 @@ mod tests {
                 cx,
             )
             .unwrap();
-            view.insert(&Insert("*".to_string()), cx);
+            view.handle_input(&Input("*".to_string()), cx);
             assert_eq!(
                 view.text(cx),
                 "
