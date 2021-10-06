@@ -1,8 +1,9 @@
 name = "Rust"
 path_suffixes = ["rs"]
-bracket_pairs = [
+autoclose_pairs = [
     { start = "{", end = "}" },
     { start = "[", end = "]" },
     { start = "(", end = ")" },
-    { start = "<", end = ">" },
+    { start = "\"", end = "\"" },
+    { start = "/*", end = " */" },
 ]

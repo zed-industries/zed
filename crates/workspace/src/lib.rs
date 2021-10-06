@@ -270,19 +270,15 @@ pub struct WorkspaceParams {
 impl WorkspaceParams {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut MutableAppContext) -> Self {
-        let grammar = tree_sitter_rust::language();
-        let language = Arc::new(buffer::Language {
-            config: buffer::LanguageConfig {
+        let mut languages = LanguageRegistry::new();
+        languages.add(Arc::new(buffer::Language::new(
+            buffer::LanguageConfig {
                 name: "Rust".to_string(),
                 path_suffixes: vec!["rs".to_string()],
+                ..Default::default()
             },
-            brackets_query: tree_sitter::Query::new(grammar, "").unwrap(),
-            highlight_query: tree_sitter::Query::new(grammar, "").unwrap(),
-            highlight_map: Default::default(),
-            grammar,
-        });
-        let mut languages = LanguageRegistry::new();
-        languages.add(language);
+            tree_sitter_rust::language(),
+        )));
 
         let client = Client::new();
         let http_client = client::test::FakeHttpClient::new(|_| async move {
@@ -1074,7 +1070,7 @@ impl WorkspaceHandle for ViewHandle<Workspace> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::{Editor, Insert};
+    use editor::{Editor, Input};
     use serde_json::json;
     use std::collections::HashSet;
 
@@ -1286,7 +1282,7 @@ mod tests {
             item.to_any().downcast::<Editor>().unwrap()
         });
 
-        cx.update(|cx| editor.update(cx, |editor, cx| editor.insert(&Insert("x".into()), cx)));
+        cx.update(|cx| editor.update(cx, |editor, cx| editor.handle_input(&Input("x".into()), cx)));
         fs.insert_file("/root/a.txt", "changed".to_string())
             .await
             .unwrap();
@@ -1339,7 +1335,7 @@ mod tests {
             assert!(!editor.is_dirty(cx.as_ref()));
             assert_eq!(editor.title(cx.as_ref()), "untitled");
             assert!(editor.language(cx).is_none());
-            editor.insert(&Insert("hi".into()), cx);
+            editor.handle_input(&Input("hi".into()), cx);
             assert!(editor.is_dirty(cx.as_ref()));
         });
 
@@ -1371,7 +1367,7 @@ mod tests {
 
         // Edit the file and save it again. This time, there is no filename prompt.
         editor.update(&mut cx, |editor, cx| {
-            editor.insert(&Insert(" there".into()), cx);
+            editor.handle_input(&Input(" there".into()), cx);
             assert_eq!(editor.is_dirty(cx.as_ref()), true);
         });
         workspace.update(&mut cx, |workspace, cx| {
@@ -1432,7 +1428,7 @@ mod tests {
 
         editor.update(&mut cx, |editor, cx| {
             assert!(editor.language(cx).is_none());
-            editor.insert(&Insert("hi".into()), cx);
+            editor.handle_input(&Input("hi".into()), cx);
             assert!(editor.is_dirty(cx.as_ref()));
         });
 

@@ -981,7 +981,7 @@ mod tests {
             self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Credentials,
             EstablishConnectionError, UserStore,
         },
-        editor::{Editor, EditorSettings, Insert},
+        editor::{Editor, EditorSettings, Input},
         fs::{FakeFs, Fs as _},
         people_panel::JoinWorktree,
         project::{ProjectPath, Worktree},
@@ -1068,7 +1068,7 @@ mod tests {
 
         // Edit the buffer as client B and see that edit as client A.
         editor_b.update(&mut cx_b, |editor, cx| {
-            editor.insert(&Insert("ok, ".into()), cx)
+            editor.handle_input(&Input("ok, ".into()), cx)
         });
         buffer_a
             .condition(&cx_a, |buffer, _| buffer.text() == "ok, b-contents")

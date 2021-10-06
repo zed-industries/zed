@@ -670,7 +670,6 @@ mod tests {
     async fn test_highlighted_chunks_at(mut cx: gpui::TestAppContext) {
         use unindent::Unindent as _;
 
-        let grammar = tree_sitter_rust::language();
         let text = r#"
             fn outer() {}
 
@@ -678,28 +677,28 @@ mod tests {
                 fn inner() {}
             }"#
         .unindent();
-        let highlight_query = tree_sitter::Query::new(
-            grammar,
-            r#"
-            (mod_item name: (identifier) body: _ @mod.body)
-            (function_item name: (identifier) @fn.name)"#,
-        )
-        .unwrap();
+
         let theme = SyntaxTheme::new(vec![
             ("mod.body".to_string(), Color::from_u32(0xff0000ff).into()),
             ("fn.name".to_string(), Color::from_u32(0x00ff00ff).into()),
         ]);
-        let lang = Arc::new(Language {
-            config: LanguageConfig {
-                name: "Test".to_string(),
-                path_suffixes: vec![".test".to_string()],
-                ..Default::default()
-            },
-            grammar: grammar.clone(),
-            highlight_query,
-            brackets_query: tree_sitter::Query::new(grammar, "").unwrap(),
-            highlight_map: Default::default(),
-        });
+        let lang = Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "Test".to_string(),
+                    path_suffixes: vec![".test".to_string()],
+                    ..Default::default()
+                },
+                tree_sitter_rust::language(),
+            )
+            .with_highlights_query(
+                r#"
+                (mod_item name: (identifier) body: _ @mod.body)
+                (function_item name: (identifier) @fn.name)
+                "#,
+            )
+            .unwrap(),
+        );
         lang.set_theme(&theme);
 
         let buffer = cx.add_model(|cx| {
@@ -759,7 +758,6 @@ mod tests {
 
         cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
 
-        let grammar = tree_sitter_rust::language();
         let text = r#"
             fn outer() {}
 
@@ -767,28 +765,28 @@ mod tests {
                 fn inner() {}
             }"#
         .unindent();
-        let highlight_query = tree_sitter::Query::new(
-            grammar,
-            r#"
-            (mod_item name: (identifier) body: _ @mod.body)
-            (function_item name: (identifier) @fn.name)"#,
-        )
-        .unwrap();
+
         let theme = SyntaxTheme::new(vec![
             ("mod.body".to_string(), Color::from_u32(0xff0000ff).into()),
             ("fn.name".to_string(), Color::from_u32(0x00ff00ff).into()),
         ]);
-        let lang = Arc::new(Language {
-            config: LanguageConfig {
-                name: "Test".to_string(),
-                path_suffixes: vec![".test".to_string()],
-                ..Default::default()
-            },
-            grammar: grammar.clone(),
-            highlight_query,
-            brackets_query: tree_sitter::Query::new(grammar, "").unwrap(),
-            highlight_map: Default::default(),
-        });
+        let lang = Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "Test".to_string(),
+                    path_suffixes: vec![".test".to_string()],
+                    ..Default::default()
+                },
+                tree_sitter_rust::language(),
+            )
+            .with_highlights_query(
+                r#"
+                (mod_item name: (identifier) body: _ @mod.body)
+                (function_item name: (identifier) @fn.name)
+                "#,
+            )
+            .unwrap(),
+        );
         lang.set_theme(&theme);
 
         let buffer = cx.add_model(|cx| {
