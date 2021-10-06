@@ -745,6 +745,7 @@ impl Editor {
         if !self.skip_autoclose_end(text, cx) {
             self.start_transaction(cx);
             self.insert(text, cx);
+            self.request_autoindent(cx);
             self.autoclose_pairs(cx);
             self.end_transaction(cx);
         }
@@ -790,6 +791,17 @@ impl Editor {
 
         self.update_selections(new_selections, true, cx);
         self.end_transaction(cx);
+    }
+
+    fn request_autoindent(&mut self, cx: &mut ViewContext<Self>) {
+        let selections = self.selections(cx);
+        let tab_size = self.build_settings.borrow()(cx).tab_size as u8;
+        self.buffer.update(cx, |buffer, _| {
+            for selection in selections.iter() {
+                let row = selection.head().to_point(&*buffer).row;
+                buffer.request_autoindent_for_line(row, tab_size, true);
+            }
+        });
     }
 
     fn autoclose_pairs(&mut self, cx: &mut ViewContext<Self>) {

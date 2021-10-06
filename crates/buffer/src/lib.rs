@@ -30,10 +30,12 @@ use std::{
     any::Any,
     cell::RefCell,
     cmp,
+    collections::BTreeMap,
     convert::{TryFrom, TryInto},
     ffi::OsString,
     hash::BuildHasher,
     iter::Iterator,
+    mem,
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     str,
@@ -149,6 +151,7 @@ impl Drop for QueryCursorHandle {
         QUERY_CURSORS.lock().push(cursor)
     }
 }
+const SPACES: &'static str = "                ";
 
 pub struct Buffer {
     fragments: SumTree<Fragment>,
@@ -162,6 +165,7 @@ pub struct Buffer {
     history: History,
     file: Option<Box<dyn File>>,
     language: Option<Arc<Language>>,
+    autoindent_requests: Vec<AutoindentRequest>,
     sync_parse_timeout: Duration,
     syntax_tree: Mutex<Option<SyntaxTree>>,
     parsing_in_background: bool,
@@ -188,6 +192,13 @@ struct SyntaxTree {
     tree: Tree,
     dirty: bool,
     version: clock::Global,
+}
+
+#[derive(Clone, Debug)]
+struct AutoindentRequest {
+    position: Anchor,
+    indent_size: u8,
+    force: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -628,6 +639,7 @@ impl Buffer {
             parsing_in_background: false,
             parse_count: 0,
             sync_parse_timeout: Duration::from_millis(1),
+            autoindent_requests: Default::default(),
             language,
             saved_mtime,
             selections: HashMap::default(),
@@ -878,14 +890,13 @@ impl Buffer {
         }
 
         if let Some(language) = self.language.clone() {
-            // The parse tree is out of date, so grab the syntax tree to synchronously
-            // splice all the edits that have happened since the last parse.
-            let old_tree = self.syntax_tree();
-            let parsed_text = self.visible_text.clone();
+            let old_snapshot = self.snapshot();
             let parsed_version = self.version();
             let parse_task = cx.background().spawn({
                 let language = language.clone();
-                async move { Self::parse_text(&parsed_text, old_tree, &language) }
+                let text = old_snapshot.visible_text.clone();
+                let tree = old_snapshot.tree.clone();
+                async move { Self::parse_text(&text, tree, &language) }
             });
 
             match cx
@@ -894,13 +905,12 @@ impl Buffer {
             {
                 Ok(new_tree) => {
                     *self.syntax_tree.lock() = Some(SyntaxTree {
-                        tree: new_tree,
+                        tree: new_tree.clone(),
                         dirty: false,
                         version: parsed_version,
                     });
                     self.parse_count += 1;
-                    cx.emit(Event::Reparsed);
-                    cx.notify();
+                    self.did_finish_parsing(new_tree, old_snapshot, language, cx);
                     return true;
                 }
                 Err(parse_task) => {
@@ -914,7 +924,7 @@ impl Buffer {
                                 });
                             let parse_again = this.version > parsed_version || language_changed;
                             *this.syntax_tree.lock() = Some(SyntaxTree {
-                                tree: new_tree,
+                                tree: new_tree.clone(),
                                 dirty: false,
                                 version: parsed_version,
                             });
@@ -925,8 +935,7 @@ impl Buffer {
                                 return;
                             }
 
-                            cx.emit(Event::Reparsed);
-                            cx.notify();
+                            this.did_finish_parsing(new_tree, old_snapshot, language, cx);
                         });
                     })
                     .detach();
@@ -954,6 +963,243 @@ impl Buffer {
                 .unwrap();
             tree
         })
+    }
+
+    fn did_finish_parsing(
+        &mut self,
+        new_tree: Tree,
+        old_snapshot: Snapshot,
+        language: Arc<Language>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let mut autoindent_requests_by_row = BTreeMap::<u32, AutoindentRequest>::default();
+        let mut autoindent_requests = mem::take(&mut self.autoindent_requests);
+        for request in autoindent_requests.drain(..) {
+            let row = request.position.to_point(&*self).row;
+            autoindent_requests_by_row
+                .entry(row)
+                .and_modify(|req| {
+                    req.indent_size = req.indent_size.max(request.indent_size);
+                    req.force |= request.force;
+                })
+                .or_insert(request);
+        }
+        self.autoindent_requests = autoindent_requests;
+
+        let mut cursor = QueryCursorHandle::new();
+
+        self.start_transaction(None).unwrap();
+        let mut row_range = None;
+        for row in autoindent_requests_by_row.keys().copied() {
+            match &mut row_range {
+                None => row_range = Some(row..(row + 1)),
+                Some(range) => {
+                    if range.end == row {
+                        range.end += 1;
+                    } else {
+                        self.perform_autoindent(
+                            range.clone(),
+                            &new_tree,
+                            &old_snapshot,
+                            &autoindent_requests_by_row,
+                            language.as_ref(),
+                            &mut cursor,
+                            cx,
+                        );
+                        row_range.take();
+                    }
+                }
+            }
+        }
+        if let Some(range) = row_range {
+            self.perform_autoindent(
+                range,
+                &new_tree,
+                &old_snapshot,
+                &autoindent_requests_by_row,
+                language.as_ref(),
+                &mut cursor,
+                cx,
+            );
+        }
+        self.end_transaction(None, cx).unwrap();
+
+        cx.emit(Event::Reparsed);
+        cx.notify();
+    }
+
+    fn perform_autoindent(
+        &mut self,
+        row_range: Range<u32>,
+        new_tree: &Tree,
+        old_snapshot: &Snapshot,
+        autoindent_requests: &BTreeMap<u32, AutoindentRequest>,
+        language: &Language,
+        cursor: &mut QueryCursor,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let max_row = self.row_count() - 1;
+        let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
+
+        // Get the "indentation ranges" that intersect this row range.
+        let indent_capture_ix = language.indents_query.capture_index_for_name("indent");
+        let end_capture_ix = language.indents_query.capture_index_for_name("end");
+        cursor.set_point_range(
+            Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0).into()
+                ..Point::new(row_range.end, 0).into(),
+        );
+        let mut indentation_ranges = Vec::<Range<u32>>::new();
+        for mat in cursor.matches(
+            &language.indents_query,
+            new_tree.root_node(),
+            TextProvider(&self.visible_text),
+        ) {
+            let mut start_row = None;
+            let mut end_row = None;
+            for capture in mat.captures {
+                if Some(capture.index) == indent_capture_ix {
+                    start_row.get_or_insert(capture.node.start_position().row as u32);
+                    end_row.get_or_insert(max_row.min(capture.node.end_position().row as u32 + 1));
+                } else if Some(capture.index) == end_capture_ix {
+                    end_row = Some(capture.node.start_position().row as u32);
+                }
+            }
+            if let Some((start_row, end_row)) = start_row.zip(end_row) {
+                let range = start_row..end_row;
+                match indentation_ranges.binary_search_by_key(&range.start, |r| r.start) {
+                    Err(ix) => indentation_ranges.insert(ix, range),
+                    Ok(ix) => {
+                        let prev_range = &mut indentation_ranges[ix];
+                        prev_range.end = prev_range.end.max(range.end);
+                    }
+                }
+            }
+        }
+
+        #[derive(Debug)]
+        struct Adjustment {
+            row: u32,
+            indent: bool,
+            outdent: bool,
+        }
+
+        let mut adjustments = Vec::<Adjustment>::new();
+        'outer: for range in &indentation_ranges {
+            let mut indent_row = range.start;
+            loop {
+                indent_row += 1;
+                if indent_row > max_row {
+                    continue 'outer;
+                }
+                if row_range.contains(&indent_row) || !self.is_line_blank(indent_row) {
+                    break;
+                }
+            }
+
+            let mut outdent_row = range.end;
+            loop {
+                outdent_row += 1;
+                if outdent_row > max_row {
+                    break;
+                }
+                if row_range.contains(&outdent_row) || !self.is_line_blank(outdent_row) {
+                    break;
+                }
+            }
+
+            match adjustments.binary_search_by_key(&indent_row, |a| a.row) {
+                Ok(ix) => adjustments[ix].indent = true,
+                Err(ix) => adjustments.insert(
+                    ix,
+                    Adjustment {
+                        row: indent_row,
+                        indent: true,
+                        outdent: false,
+                    },
+                ),
+            }
+            match adjustments.binary_search_by_key(&outdent_row, |a| a.row) {
+                Ok(ix) => adjustments[ix].outdent = true,
+                Err(ix) => adjustments.insert(
+                    ix,
+                    Adjustment {
+                        row: outdent_row,
+                        indent: false,
+                        outdent: true,
+                    },
+                ),
+            }
+        }
+
+        let mut adjustments = adjustments.iter().peekable();
+        for row in row_range {
+            if let Some(request) = autoindent_requests.get(&row) {
+                while let Some(adjustment) = adjustments.peek() {
+                    if adjustment.row < row {
+                        adjustments.next();
+                    } else {
+                        if adjustment.row == row {
+                            match (adjustment.indent, adjustment.outdent) {
+                                (true, false) => self.indent_line(row, request.indent_size, cx),
+                                (false, true) => self.outdent_line(row, request.indent_size, cx),
+                                _ => {}
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    fn prev_non_blank_row(&self, mut row: u32) -> Option<u32> {
+        while row > 0 {
+            row -= 1;
+            if !self.is_line_blank(row) {
+                return Some(row);
+            }
+        }
+        None
+    }
+
+    fn next_non_blank_row(&self, mut row: u32) -> Option<u32> {
+        let row_count = self.row_count();
+        row += 1;
+        while row < row_count {
+            if !self.is_line_blank(row) {
+                return Some(row);
+            }
+            row += 1;
+        }
+        None
+    }
+
+    fn indent_line(&mut self, row: u32, size: u8, cx: &mut ModelContext<Self>) {
+        self.edit(
+            [Point::new(row, 0)..Point::new(row, 0)],
+            &SPACES[..(size as usize)],
+            cx,
+        )
+    }
+
+    fn outdent_line(&mut self, row: u32, size: u8, cx: &mut ModelContext<Self>) {
+        let mut end_column = 0;
+        for c in self.chars_at(Point::new(row, 0)) {
+            if c == ' ' {
+                end_column += 1;
+                if end_column == size as u32 {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        self.edit([Point::new(row, 0)..Point::new(row, end_column)], "", cx);
+    }
+
+    fn is_line_blank(&self, row: u32) -> bool {
+        self.text_for_range(Point::new(row, 0)..Point::new(row, self.line_len(row)))
+            .all(|chunk| chunk.matches(|c: char| !c.is_whitespace()).next().is_none())
     }
 
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
@@ -995,6 +1241,18 @@ impl Buffer {
                 Some((open.byte_range(), close.byte_range()))
             })
             .min_by_key(|(open_range, close_range)| close_range.end - open_range.start)
+    }
+
+    pub fn request_autoindent_for_line(&mut self, row: u32, indent_size: u8, force: bool) {
+        assert!(
+            self.history.transaction_depth > 0,
+            "autoindent can only be requested during a transaction"
+        );
+        self.autoindent_requests.push(AutoindentRequest {
+            position: self.anchor_before(Point::new(row, 0)),
+            indent_size,
+            force,
+        });
     }
 
     fn diff(&self, new_text: Arc<str>, cx: &AppContext) -> Task<Diff> {
@@ -2162,6 +2420,7 @@ impl Clone for Buffer {
             parsing_in_background: false,
             sync_parse_timeout: self.sync_parse_timeout,
             parse_count: self.parse_count,
+            autoindent_requests: self.autoindent_requests.clone(),
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
             remote_id: self.remote_id.clone(),
@@ -2227,7 +2486,7 @@ impl Snapshot {
         let chunks = self.visible_text.chunks_in_range(range.clone());
         if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
             let captures = self.query_cursor.set_byte_range(range.clone()).captures(
-                &language.highlight_query,
+                &language.highlights_query,
                 tree.root_node(),
                 TextProvider(&self.visible_text),
             );
@@ -4016,6 +4275,29 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_request_autoindent(mut cx: gpui::TestAppContext) {
+        let rust_lang = rust_lang();
+        let buffer = cx.add_model(|cx| {
+            let text = "fn a() {}".into();
+            Buffer::from_history(0, History::new(text), None, Some(rust_lang.clone()), cx)
+        });
+
+        buffer
+            .condition(&cx, |buffer, _| !buffer.is_parsing())
+            .await;
+
+        buffer.update(&mut cx, |buffer, cx| {
+            buffer.start_transaction(None).unwrap();
+            buffer.edit([8..8], "\n\n", cx);
+            buffer.request_autoindent_for_line(1, 4, true);
+            assert_eq!(buffer.text(), "fn a() {\n\n}");
+
+            buffer.end_transaction(None, cx).unwrap();
+            assert_eq!(buffer.text(), "fn a() {\n    \n}");
+        });
+    }
+
     #[derive(Clone)]
     struct Envelope<T: Clone> {
         message: T,
@@ -4104,6 +4386,8 @@ mod tests {
                 },
                 tree_sitter_rust::language(),
             )
+            .with_indents_query(r#" (_ "{" "}" @end) @indent "#)
+            .unwrap()
             .with_brackets_query(r#" ("{" @open "}" @close) "#)
             .unwrap(),
         )
