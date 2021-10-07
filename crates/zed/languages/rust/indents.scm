@@ -2,6 +2,8 @@
     (where_clause)
     (field_expression)
     (call_expression)
+    (assignment_expression)
+    (let_declaration)
 ] @indent
 
 (_ "[" "]" @end) @indent
