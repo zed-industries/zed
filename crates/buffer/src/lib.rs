@@ -151,6 +151,7 @@ impl Drop for QueryCursorHandle {
         QUERY_CURSORS.lock().push(cursor)
     }
 }
+
 pub struct Buffer {
     fragments: SumTree<Fragment>,
     visible_text: Rope,
@@ -190,6 +191,30 @@ struct SyntaxTree {
     tree: Tree,
     dirty: bool,
     version: clock::Global,
+}
+
+impl SyntaxTree {
+    fn interpolate(&mut self, buffer: &Buffer) {
+        let mut delta = 0_isize;
+        for edit in buffer.edits_since(self.version.clone()) {
+            let start_offset = (edit.old_bytes.start as isize + delta) as usize;
+            let start_point = buffer.visible_text.to_point(start_offset);
+            self.tree.edit(&InputEdit {
+                start_byte: start_offset,
+                old_end_byte: start_offset + edit.deleted_bytes(),
+                new_end_byte: start_offset + edit.inserted_bytes(),
+                start_position: start_point.into(),
+                old_end_position: (start_point + edit.deleted_lines()).into(),
+                new_end_position: buffer
+                    .visible_text
+                    .to_point(start_offset + edit.inserted_bytes())
+                    .into(),
+            });
+            delta += edit.inserted_bytes() as isize - edit.deleted_bytes() as isize;
+            self.dirty = true;
+        }
+        self.version = buffer.version();
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -850,27 +875,9 @@ impl Buffer {
         self.parse_count
     }
 
-    pub fn syntax_tree(&self) -> Option<Tree> {
+    fn syntax_tree(&self) -> Option<Tree> {
         if let Some(syntax_tree) = self.syntax_tree.lock().as_mut() {
-            let mut delta = 0_isize;
-            for edit in self.edits_since(syntax_tree.version.clone()) {
-                let start_offset = (edit.old_bytes.start as isize + delta) as usize;
-                let start_point = self.visible_text.to_point(start_offset);
-                syntax_tree.tree.edit(&InputEdit {
-                    start_byte: start_offset,
-                    old_end_byte: start_offset + edit.deleted_bytes(),
-                    new_end_byte: start_offset + edit.inserted_bytes(),
-                    start_position: start_point.into(),
-                    old_end_position: (start_point + edit.deleted_lines()).into(),
-                    new_end_position: self
-                        .visible_text
-                        .to_point(start_offset + edit.inserted_bytes())
-                        .into(),
-                });
-                delta += edit.inserted_bytes() as isize - edit.deleted_bytes() as isize;
-                syntax_tree.dirty = true;
-            }
-            syntax_tree.version = self.version();
+            syntax_tree.interpolate(self);
             Some(syntax_tree.tree.clone())
         } else {
             None
@@ -893,13 +900,16 @@ impl Buffer {
         }
 
         if let Some(language) = self.language.clone() {
-            let old_snapshot = self.snapshot();
+            let old_tree = self.syntax_tree.lock().as_mut().map(|tree| {
+                tree.interpolate(self);
+                tree.clone()
+            });
+            let text = self.visible_text.clone();
             let parsed_version = self.version();
             let parse_task = cx.background().spawn({
                 let language = language.clone();
-                let text = old_snapshot.visible_text.clone();
-                let tree = old_snapshot.tree.clone();
-                async move { Self::parse_text(&text, tree, &language) }
+                let old_tree = old_tree.as_ref().map(|t| t.tree.clone());
+                async move { Self::parse_text(&text, old_tree, &language) }
             });
 
             match cx
@@ -907,13 +917,13 @@ impl Buffer {
                 .block_with_timeout(self.sync_parse_timeout, parse_task)
             {
                 Ok(new_tree) => {
-                    *self.syntax_tree.lock() = Some(SyntaxTree {
-                        tree: new_tree.clone(),
-                        dirty: false,
-                        version: parsed_version,
-                    });
-                    self.parse_count += 1;
-                    self.did_finish_parsing(new_tree, old_snapshot, language, cx);
+                    self.did_finish_parsing(
+                        old_tree.map(|t| t.tree),
+                        new_tree,
+                        parsed_version,
+                        language,
+                        cx,
+                    );
                     return true;
                 }
                 Err(parse_task) => {
@@ -926,19 +936,22 @@ impl Buffer {
                                     !Arc::ptr_eq(curr_language, &language)
                                 });
                             let parse_again = this.version > parsed_version || language_changed;
-                            *this.syntax_tree.lock() = Some(SyntaxTree {
-                                tree: new_tree.clone(),
-                                dirty: false,
-                                version: parsed_version,
+                            let old_tree = old_tree.map(|mut old_tree| {
+                                old_tree.interpolate(this);
+                                old_tree.tree
                             });
-                            this.parse_count += 1;
                             this.parsing_in_background = false;
+                            this.did_finish_parsing(
+                                old_tree,
+                                new_tree,
+                                parsed_version,
+                                language,
+                                cx,
+                            );
 
                             if parse_again && this.reparse(cx) {
                                 return;
                             }
-
-                            this.did_finish_parsing(new_tree, old_snapshot, language, cx);
                         });
                     })
                     .detach();
@@ -970,8 +983,28 @@ impl Buffer {
 
     fn did_finish_parsing(
         &mut self,
+        old_tree: Option<Tree>,
         new_tree: Tree,
-        old_snapshot: Snapshot,
+        new_version: clock::Global,
+        language: Arc<Language>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.perform_autoindent(old_tree, &new_tree, language, cx);
+
+        self.parse_count += 1;
+        *self.syntax_tree.lock() = Some(SyntaxTree {
+            tree: new_tree,
+            dirty: false,
+            version: new_version,
+        });
+        cx.emit(Event::Reparsed);
+        cx.notify();
+    }
+
+    fn perform_autoindent(
+        &mut self,
+        old_tree: Option<Tree>,
+        new_tree: &Tree,
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
@@ -999,10 +1032,10 @@ impl Buffer {
                     if range.end == row {
                         range.end += 1;
                     } else {
-                        self.perform_autoindent(
+                        self.perform_autoindent_for_rows(
                             range.clone(),
+                            old_tree.as_ref(),
                             &new_tree,
-                            &old_snapshot,
                             &autoindent_requests_by_row,
                             language.as_ref(),
                             &mut cursor,
@@ -1014,10 +1047,10 @@ impl Buffer {
             }
         }
         if let Some(range) = row_range {
-            self.perform_autoindent(
+            self.perform_autoindent_for_rows(
                 range,
+                old_tree.as_ref(),
                 &new_tree,
-                &old_snapshot,
                 &autoindent_requests_by_row,
                 language.as_ref(),
                 &mut cursor,
@@ -1025,16 +1058,13 @@ impl Buffer {
             );
         }
         self.end_transaction(None, cx).unwrap();
-
-        cx.emit(Event::Reparsed);
-        cx.notify();
     }
 
-    fn perform_autoindent(
+    fn perform_autoindent_for_rows(
         &mut self,
         row_range: Range<u32>,
+        old_tree: Option<&Tree>,
         new_tree: &Tree,
-        old_snapshot: &Snapshot,
         autoindent_requests: &BTreeMap<u32, AutoindentRequest>,
         language: &Language,
         cursor: &mut QueryCursor,
