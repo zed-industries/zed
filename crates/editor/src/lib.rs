@@ -38,6 +38,7 @@ action!(Cancel);
 action!(Backspace);
 action!(Delete);
 action!(Input, String);
+action!(Tab);
 action!(DeleteLine);
 action!(DeleteToPreviousWordBoundary);
 action!(DeleteToNextWordBoundary);
@@ -101,7 +102,7 @@ pub fn init(cx: &mut MutableAppContext) {
             Input("\n".into()),
             Some("Editor && mode == auto_height"),
         ),
-        Binding::new("tab", Input("\t".into()), Some("Editor")),
+        Binding::new("tab", Tab, Some("Editor")),
         Binding::new("ctrl-shift-K", DeleteLine, Some("Editor")),
         Binding::new(
             "alt-backspace",
@@ -195,6 +196,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::handle_input);
     cx.add_action(Editor::backspace);
     cx.add_action(Editor::delete);
+    cx.add_action(Editor::tab);
     cx.add_action(Editor::delete_line);
     cx.add_action(Editor::delete_to_previous_word_boundary);
     cx.add_action(Editor::delete_to_next_word_boundary);
@@ -959,6 +961,51 @@ impl Editor {
 
         self.update_selections(selections, true, cx);
         self.insert(&"", cx);
+        self.end_transaction(cx);
+    }
+
+    pub fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
+        self.start_transaction(cx);
+        let tab_size = self.build_settings.borrow()(cx).tab_size;
+        let mut selections = self.selections(cx).to_vec();
+        self.buffer.update(cx, |buffer, cx| {
+            let mut last_indented_row = None;
+            for selection in &mut selections {
+                let mut range = selection.point_range(buffer);
+                if range.is_empty() {
+                    let char_column = buffer
+                        .chars_for_range(Point::new(range.start.row, 0)..range.start)
+                        .count();
+                    let chars_to_next_tab_stop = tab_size - (char_column % tab_size);
+                    buffer.edit(
+                        [range.start..range.start],
+                        " ".repeat(chars_to_next_tab_stop),
+                        cx,
+                    );
+                    range.start.column += chars_to_next_tab_stop as u32;
+
+                    let head = buffer.anchor_before(range.start);
+                    selection.start = head.clone();
+                    selection.end = head;
+                } else {
+                    for row in range.start.row..=range.end.row {
+                        if last_indented_row != Some(row) {
+                            let char_column = buffer.indent_column_for_line(row) as usize;
+                            let chars_to_next_tab_stop = tab_size - (char_column % tab_size);
+                            let row_start = Point::new(row, 0);
+                            buffer.edit(
+                                [row_start..row_start],
+                                " ".repeat(chars_to_next_tab_stop),
+                                cx,
+                            );
+                            last_indented_row = Some(row);
+                        }
+                    }
+                }
+            }
+        });
+
+        self.update_selections(selections, true, cx);
         self.end_transaction(cx);
     }
 

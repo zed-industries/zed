@@ -1086,12 +1086,15 @@ impl Buffer {
 
         let mut prev_row = prev_non_blank_row.unwrap_or(0);
         let mut prev_indent_column =
-            prev_non_blank_row.map_or(0, |prev_row| self.indent_column_for_line(prev_row, cx));
+            prev_non_blank_row.map_or(0, |prev_row| self.indent_column_for_line(prev_row));
         for row in row_range {
             let request = autoindent_requests.get(&row).unwrap();
-            let row_start = Point::new(row, self.indent_column_for_line(row, cx));
+            let row_start = Point::new(row, self.indent_column_for_line(row));
 
-            eprintln!("autoindent row: {:?}", row);
+            eprintln!(
+                "autoindent row: {:?}, prev_indent_column: {:?}",
+                row, prev_indent_column
+            );
 
             let mut increase_from_prev_row = false;
             let mut dedent_to_row = u32::MAX;
@@ -1114,7 +1117,7 @@ impl Buffer {
             if increase_from_prev_row {
                 indent_column += request.indent_size as u32;
             } else if dedent_to_row < row {
-                indent_column = self.indent_column_for_line(dedent_to_row, cx);
+                indent_column = self.indent_column_for_line(dedent_to_row);
             }
 
             self.set_indent_column_for_line(row, indent_column, cx);
@@ -1133,7 +1136,7 @@ impl Buffer {
         None
     }
 
-    fn indent_column_for_line(&mut self, row: u32, cx: &mut ModelContext<Self>) -> u32 {
+    pub fn indent_column_for_line(&self, row: u32) -> u32 {
         let mut result = 0;
         for c in self.chars_at(Point::new(row, 0)) {
             if c == ' ' {
@@ -1146,7 +1149,7 @@ impl Buffer {
     }
 
     fn set_indent_column_for_line(&mut self, row: u32, column: u32, cx: &mut ModelContext<Self>) {
-        let current_column = self.indent_column_for_line(row, cx);
+        let current_column = self.indent_column_for_line(row);
         if column > current_column {
             let offset = self.visible_text.to_offset(Point::new(row, 0));
 
@@ -1344,6 +1347,10 @@ impl Buffer {
     pub fn chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + '_ {
         let offset = position.to_offset(self);
         self.visible_text.chars_at(offset)
+    }
+
+    pub fn chars_for_range<T: ToOffset>(&self, range: Range<T>) -> impl Iterator<Item = char> + '_ {
+        self.text_for_range(range).flat_map(str::chars)
     }
 
     pub fn bytes_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = u8> + '_ {
