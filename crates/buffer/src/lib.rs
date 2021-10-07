@@ -1023,7 +1023,8 @@ impl Buffer {
         self.autoindent_requests = autoindent_requests;
 
         let mut row_range = None;
-        let mut cursor = QueryCursorHandle::new();
+        let mut cursor1 = QueryCursorHandle::new();
+        let mut cursor2 = QueryCursorHandle::new();
         self.start_transaction(None).unwrap();
         for row in autoindent_requests_by_row.keys().copied() {
             match &mut row_range {
@@ -1038,7 +1039,8 @@ impl Buffer {
                             &new_tree,
                             &autoindent_requests_by_row,
                             language.as_ref(),
-                            &mut cursor,
+                            &mut cursor1,
+                            &mut cursor2,
                             cx,
                         );
                         row_range.take();
@@ -1053,7 +1055,8 @@ impl Buffer {
                 &new_tree,
                 &autoindent_requests_by_row,
                 language.as_ref(),
-                &mut cursor,
+                &mut cursor1,
+                &mut cursor2,
                 cx,
             );
         }
@@ -1067,9 +1070,48 @@ impl Buffer {
         new_tree: &Tree,
         autoindent_requests: &BTreeMap<u32, AutoindentRequest>,
         language: &Language,
-        cursor: &mut QueryCursor,
+        cursor1: &mut QueryCursor,
+        cursor2: &mut QueryCursor,
         cx: &mut ModelContext<Self>,
     ) {
+        let new_suggestions = self.suggest_autoindents(
+            autoindent_requests,
+            row_range.clone(),
+            new_tree,
+            language,
+            cursor1,
+        );
+
+        if let Some(old_tree) = old_tree {
+            let old_suggestions = self.suggest_autoindents(
+                autoindent_requests,
+                row_range.clone(),
+                old_tree,
+                language,
+                cursor2,
+            );
+            let suggestions = old_suggestions.zip(new_suggestions).collect::<Vec<_>>();
+            let requests = autoindent_requests.range(row_range);
+            for ((row, request), (old_suggestion, new_suggestion)) in requests.zip(suggestions) {
+                if request.force || new_suggestion != old_suggestion {
+                    self.set_indent_column_for_line(*row, new_suggestion, cx);
+                }
+            }
+        } else {
+            for (row, new_suggestion) in row_range.zip(new_suggestions.collect::<Vec<_>>()) {
+                self.set_indent_column_for_line(row, new_suggestion, cx);
+            }
+        }
+    }
+
+    fn suggest_autoindents<'a>(
+        &'a self,
+        autoindent_requests: &'a BTreeMap<u32, AutoindentRequest>,
+        row_range: Range<u32>,
+        tree: &Tree,
+        language: &Language,
+        cursor: &mut QueryCursor,
+    ) -> impl Iterator<Item = u32> + 'a {
         let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
 
         // Get the "indentation ranges" that intersect this row range.
@@ -1082,7 +1124,7 @@ impl Buffer {
         let mut indentation_ranges = Vec::<(Range<Point>, &'static str)>::new();
         for mat in cursor.matches(
             &language.indents_query,
-            new_tree.root_node(),
+            tree.root_node(),
             TextProvider(&self.visible_text),
         ) {
             let mut node_kind = "";
@@ -1117,7 +1159,7 @@ impl Buffer {
         let mut prev_row = prev_non_blank_row.unwrap_or(0);
         let mut prev_indent_column =
             prev_non_blank_row.map_or(0, |prev_row| self.indent_column_for_line(prev_row));
-        for row in row_range {
+        row_range.map(move |row| {
             let request = autoindent_requests.get(&row).unwrap();
             let row_start = Point::new(row, self.indent_column_for_line(row));
 
@@ -1150,10 +1192,10 @@ impl Buffer {
                 indent_column = self.indent_column_for_line(dedent_to_row);
             }
 
-            self.set_indent_column_for_line(row, indent_column, cx);
             prev_indent_column = indent_column;
             prev_row = row;
-        }
+            indent_column
+        })
     }
 
     fn prev_non_blank_row(&self, mut row: u32) -> Option<u32> {
