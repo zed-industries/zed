@@ -151,8 +151,6 @@ impl Drop for QueryCursorHandle {
         QUERY_CURSORS.lock().push(cursor)
     }
 }
-const SPACES: &'static str = "                ";
-
 pub struct Buffer {
     fragments: SumTree<Fragment>,
     visible_text: Rope,
@@ -972,8 +970,8 @@ impl Buffer {
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
-        let mut autoindent_requests_by_row = BTreeMap::<u32, AutoindentRequest>::default();
         let mut autoindent_requests = mem::take(&mut self.autoindent_requests);
+        let mut autoindent_requests_by_row = BTreeMap::<u32, AutoindentRequest>::default();
         for request in autoindent_requests.drain(..) {
             let row = request.position.to_point(&*self).row;
             autoindent_requests_by_row
@@ -986,10 +984,9 @@ impl Buffer {
         }
         self.autoindent_requests = autoindent_requests;
 
-        let mut cursor = QueryCursorHandle::new();
-
-        self.start_transaction(None).unwrap();
         let mut row_range = None;
+        let mut cursor = QueryCursorHandle::new();
+        self.start_transaction(None).unwrap();
         for row in autoindent_requests_by_row.keys().copied() {
             match &mut row_range {
                 None => row_range = Some(row..(row + 1)),
@@ -1038,7 +1035,6 @@ impl Buffer {
         cursor: &mut QueryCursor,
         cx: &mut ModelContext<Self>,
     ) {
-        let max_row = self.row_count() - 1;
         let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
 
         // Get the "indentation ranges" that intersect this row range.
@@ -1048,107 +1044,77 @@ impl Buffer {
             Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0).into()
                 ..Point::new(row_range.end, 0).into(),
         );
-        let mut indentation_ranges = Vec::<Range<u32>>::new();
+        let mut indentation_ranges = Vec::<(Range<Point>, &'static str)>::new();
         for mat in cursor.matches(
             &language.indents_query,
             new_tree.root_node(),
             TextProvider(&self.visible_text),
         ) {
-            let mut start_row = None;
-            let mut end_row = None;
+            let mut node_kind = "";
+            let mut start: Option<Point> = None;
+            let mut end: Option<Point> = None;
             for capture in mat.captures {
                 if Some(capture.index) == indent_capture_ix {
-                    start_row.get_or_insert(capture.node.start_position().row as u32);
-                    end_row.get_or_insert(max_row.min(capture.node.end_position().row as u32 + 1));
+                    node_kind = capture.node.kind();
+                    start.get_or_insert(capture.node.start_position().into());
+                    end.get_or_insert(capture.node.end_position().into());
                 } else if Some(capture.index) == end_capture_ix {
-                    end_row = Some(capture.node.start_position().row as u32);
+                    end = Some(capture.node.start_position().into());
                 }
             }
-            if let Some((start_row, end_row)) = start_row.zip(end_row) {
-                let range = start_row..end_row;
-                match indentation_ranges.binary_search_by_key(&range.start, |r| r.start) {
-                    Err(ix) => indentation_ranges.insert(ix, range),
+
+            if let Some((start, end)) = start.zip(end) {
+                if start.row == end.row {
+                    continue;
+                }
+
+                let range = start..end;
+                match indentation_ranges.binary_search_by_key(&range.start, |r| r.0.start) {
+                    Err(ix) => indentation_ranges.insert(ix, (range, node_kind)),
                     Ok(ix) => {
                         let prev_range = &mut indentation_ranges[ix];
-                        prev_range.end = prev_range.end.max(range.end);
+                        prev_range.0.end = prev_range.0.end.max(range.end);
                     }
                 }
             }
         }
 
-        #[derive(Debug)]
-        struct Adjustment {
-            row: u32,
-            indent: bool,
-            outdent: bool,
-        }
-
-        let mut adjustments = Vec::<Adjustment>::new();
-        'outer: for range in &indentation_ranges {
-            let mut indent_row = range.start;
-            loop {
-                indent_row += 1;
-                if indent_row > max_row {
-                    continue 'outer;
-                }
-                if row_range.contains(&indent_row) || !self.is_line_blank(indent_row) {
-                    break;
-                }
-            }
-
-            let mut outdent_row = range.end;
-            loop {
-                outdent_row += 1;
-                if outdent_row > max_row {
-                    break;
-                }
-                if row_range.contains(&outdent_row) || !self.is_line_blank(outdent_row) {
-                    break;
-                }
-            }
-
-            match adjustments.binary_search_by_key(&indent_row, |a| a.row) {
-                Ok(ix) => adjustments[ix].indent = true,
-                Err(ix) => adjustments.insert(
-                    ix,
-                    Adjustment {
-                        row: indent_row,
-                        indent: true,
-                        outdent: false,
-                    },
-                ),
-            }
-            match adjustments.binary_search_by_key(&outdent_row, |a| a.row) {
-                Ok(ix) => adjustments[ix].outdent = true,
-                Err(ix) => adjustments.insert(
-                    ix,
-                    Adjustment {
-                        row: outdent_row,
-                        indent: false,
-                        outdent: true,
-                    },
-                ),
-            }
-        }
-
-        let mut adjustments = adjustments.iter().peekable();
+        let mut prev_row = prev_non_blank_row.unwrap_or(0);
+        let mut prev_indent_column =
+            prev_non_blank_row.map_or(0, |prev_row| self.indent_column_for_line(prev_row, cx));
         for row in row_range {
-            if let Some(request) = autoindent_requests.get(&row) {
-                while let Some(adjustment) = adjustments.peek() {
-                    if adjustment.row < row {
-                        adjustments.next();
-                    } else {
-                        if adjustment.row == row {
-                            match (adjustment.indent, adjustment.outdent) {
-                                (true, false) => self.indent_line(row, request.indent_size, cx),
-                                (false, true) => self.outdent_line(row, request.indent_size, cx),
-                                _ => {}
-                            }
-                        }
-                        break;
-                    }
+            let request = autoindent_requests.get(&row).unwrap();
+            let row_start = Point::new(row, self.indent_column_for_line(row, cx));
+
+            eprintln!("autoindent row: {:?}", row);
+
+            let mut increase_from_prev_row = false;
+            let mut dedent_to_row = u32::MAX;
+            for (range, node_kind) in &indentation_ranges {
+                if range.start.row == prev_row && prev_row < row && range.end > row_start {
+                    eprintln!("  indent because of {} {:?}", node_kind, range);
+                    increase_from_prev_row = true;
+                    break;
+                }
+
+                if range.start.row < prev_row
+                    && (Point::new(prev_row, 0)..=row_start).contains(&range.end)
+                {
+                    eprintln!("  outdent because of {} {:?}", node_kind, range);
+                    dedent_to_row = dedent_to_row.min(range.start.row);
                 }
             }
+
+            let mut indent_column = prev_indent_column;
+            if increase_from_prev_row {
+                indent_column += request.indent_size as u32;
+            } else if dedent_to_row < row {
+                indent_column = self.indent_column_for_line(dedent_to_row, cx);
+            }
+
+            self.set_indent_column_for_line(row, indent_column, cx);
+            prev_indent_column = indent_column;
+            prev_row = row;
         }
     }
 
@@ -1162,39 +1128,46 @@ impl Buffer {
         None
     }
 
-    fn next_non_blank_row(&self, mut row: u32) -> Option<u32> {
-        let row_count = self.row_count();
-        row += 1;
-        while row < row_count {
-            if !self.is_line_blank(row) {
-                return Some(row);
-            }
-            row += 1;
-        }
-        None
-    }
-
-    fn indent_line(&mut self, row: u32, size: u8, cx: &mut ModelContext<Self>) {
-        self.edit(
-            [Point::new(row, 0)..Point::new(row, 0)],
-            &SPACES[..(size as usize)],
-            cx,
-        )
-    }
-
-    fn outdent_line(&mut self, row: u32, size: u8, cx: &mut ModelContext<Self>) {
-        let mut end_column = 0;
+    fn indent_column_for_line(&mut self, row: u32, cx: &mut ModelContext<Self>) -> u32 {
+        let mut result = 0;
         for c in self.chars_at(Point::new(row, 0)) {
             if c == ' ' {
-                end_column += 1;
-                if end_column == size as u32 {
-                    break;
-                }
+                result += 1;
             } else {
                 break;
             }
         }
-        self.edit([Point::new(row, 0)..Point::new(row, end_column)], "", cx);
+        result
+    }
+
+    fn set_indent_column_for_line(&mut self, row: u32, column: u32, cx: &mut ModelContext<Self>) {
+        let current_column = self.indent_column_for_line(row, cx);
+        if column > current_column {
+            let offset = self.visible_text.to_offset(Point::new(row, 0));
+
+            // TODO: do this differently. By replacing the preceding newline,
+            // we force the new indentation to come before any left-biased anchors
+            // on the line.
+            let delta = (column - current_column) as usize;
+            if offset > 0 {
+                let mut prefix = String::with_capacity(1 + delta);
+                prefix.push('\n');
+                prefix.extend(std::iter::repeat(' ').take(delta));
+                self.edit([(offset - 1)..offset], prefix, cx);
+            } else {
+                self.edit(
+                    [offset..offset],
+                    std::iter::repeat(' ').take(delta).collect::<String>(),
+                    cx,
+                );
+            }
+        } else if column < current_column {
+            self.edit(
+                [Point::new(row, 0)..Point::new(row, current_column - column)],
+                "",
+                cx,
+            );
+        }
     }
 
     fn is_line_blank(&self, row: u32) -> bool {
