@@ -192,29 +192,6 @@ struct SyntaxTree {
     version: clock::Global,
 }
 
-impl SyntaxTree {
-    fn interpolate(&mut self, buffer: &Buffer) {
-        let mut delta = 0_isize;
-        for edit in buffer.edits_since(self.version.clone()) {
-            let start_offset = (edit.old_bytes.start as isize + delta) as usize;
-            let start_point = buffer.visible_text.to_point(start_offset);
-            self.tree.edit(&InputEdit {
-                start_byte: start_offset,
-                old_end_byte: start_offset + edit.deleted_bytes(),
-                new_end_byte: start_offset + edit.inserted_bytes(),
-                start_position: start_point.into(),
-                old_end_position: (start_point + edit.deleted_lines()).into(),
-                new_end_position: buffer
-                    .visible_text
-                    .to_point(start_offset + edit.inserted_bytes())
-                    .into(),
-            });
-            delta += edit.inserted_bytes() as isize - edit.deleted_bytes() as isize;
-        }
-        self.version = buffer.version();
-    }
-}
-
 #[derive(Clone, Debug)]
 struct AutoindentRequest {
     position: Anchor,
@@ -875,7 +852,7 @@ impl Buffer {
 
     fn syntax_tree(&self) -> Option<Tree> {
         if let Some(syntax_tree) = self.syntax_tree.lock().as_mut() {
-            syntax_tree.interpolate(self);
+            self.interpolate_tree(syntax_tree);
             Some(syntax_tree.tree.clone())
         } else {
             None
@@ -899,7 +876,7 @@ impl Buffer {
 
         if let Some(language) = self.language.clone() {
             let old_tree = self.syntax_tree.lock().as_mut().map(|tree| {
-                tree.interpolate(self);
+                self.interpolate_tree(tree);
                 tree.clone()
             });
             let text = self.visible_text.clone();
@@ -935,7 +912,7 @@ impl Buffer {
                                 });
                             let parse_again = this.version > parsed_version || language_changed;
                             let old_tree = old_tree.map(|mut old_tree| {
-                                old_tree.interpolate(this);
+                                this.interpolate_tree(&mut old_tree);
                                 old_tree.tree
                             });
                             this.parsing_in_background = false;
@@ -977,6 +954,27 @@ impl Buffer {
                 .unwrap();
             tree
         })
+    }
+
+    fn interpolate_tree(&self, tree: &mut SyntaxTree) {
+        let mut delta = 0_isize;
+        for edit in self.edits_since(tree.version.clone()) {
+            let start_offset = (edit.old_bytes.start as isize + delta) as usize;
+            let start_point = self.visible_text.to_point(start_offset);
+            tree.tree.edit(&InputEdit {
+                start_byte: start_offset,
+                old_end_byte: start_offset + edit.deleted_bytes(),
+                new_end_byte: start_offset + edit.inserted_bytes(),
+                start_position: start_point.into(),
+                old_end_position: (start_point + edit.deleted_lines()).into(),
+                new_end_position: self
+                    .visible_text
+                    .to_point(start_offset + edit.inserted_bytes())
+                    .into(),
+            });
+            delta += edit.inserted_bytes() as isize - edit.deleted_bytes() as isize;
+        }
+        tree.version = self.version();
     }
 
     fn did_finish_parsing(
@@ -1167,10 +1165,8 @@ impl Buffer {
                 if range.start.row == prev_row && prev_row < row && range.end > row_start {
                     eprintln!("  indent because of {} {:?}", node_kind, range);
                     increase_from_prev_row = true;
-                    break;
                 }
-
-                if range.start.row < prev_row
+                if range.start.row < row
                     && (Point::new(prev_row, 0)..=row_start).contains(&range.end)
                 {
                     eprintln!("  outdent because of {} {:?}", node_kind, range);
@@ -1179,10 +1175,12 @@ impl Buffer {
             }
 
             let mut indent_column = prev_indent_column;
-            if increase_from_prev_row {
+            if dedent_to_row < row {
+                if !increase_from_prev_row {
+                    indent_column = self.indent_column_for_line(dedent_to_row);
+                }
+            } else if increase_from_prev_row {
                 indent_column += request.indent_size as u32;
-            } else if dedent_to_row < row {
-                indent_column = self.indent_column_for_line(dedent_to_row);
             }
 
             prev_indent_column = indent_column;
