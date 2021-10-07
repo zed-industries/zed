@@ -189,7 +189,6 @@ pub struct SelectionSet {
 #[derive(Clone)]
 struct SyntaxTree {
     tree: Tree,
-    dirty: bool,
     version: clock::Global,
 }
 
@@ -211,7 +210,6 @@ impl SyntaxTree {
                     .into(),
             });
             delta += edit.inserted_bytes() as isize - edit.deleted_bytes() as isize;
-            self.dirty = true;
         }
         self.version = buffer.version();
     }
@@ -990,11 +988,9 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         self.perform_autoindent(old_tree, &new_tree, language, cx);
-
         self.parse_count += 1;
         *self.syntax_tree.lock() = Some(SyntaxTree {
             tree: new_tree,
-            dirty: false,
             version: new_version,
         });
         cx.emit(Event::Reparsed);
