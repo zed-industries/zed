@@ -1022,31 +1022,28 @@ impl Buffer {
         }
         self.autoindent_requests = autoindent_requests;
 
-        let mut row_range = None;
+        let mut row_range: Option<Range<u32>> = None;
         let mut cursor1 = QueryCursorHandle::new();
         let mut cursor2 = QueryCursorHandle::new();
         self.start_transaction(None).unwrap();
         for row in autoindent_requests_by_row.keys().copied() {
-            match &mut row_range {
-                None => row_range = Some(row..(row + 1)),
-                Some(range) => {
-                    if range.end == row {
-                        range.end += 1;
-                    } else {
-                        self.perform_autoindent_for_rows(
-                            range.clone(),
-                            old_tree.as_ref(),
-                            &new_tree,
-                            &autoindent_requests_by_row,
-                            language.as_ref(),
-                            &mut cursor1,
-                            &mut cursor2,
-                            cx,
-                        );
-                        row_range.take();
-                    }
+            if let Some(range) = &mut row_range {
+                if range.end == row {
+                    range.end += 1;
+                    continue;
                 }
+                self.perform_autoindent_for_rows(
+                    range.clone(),
+                    old_tree.as_ref(),
+                    &new_tree,
+                    &autoindent_requests_by_row,
+                    language.as_ref(),
+                    &mut cursor1,
+                    &mut cursor2,
+                    cx,
+                );
             }
+            row_range = Some(row..(row + 1));
         }
         if let Some(range) = row_range {
             self.perform_autoindent_for_rows(
