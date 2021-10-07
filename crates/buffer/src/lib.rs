@@ -318,10 +318,15 @@ impl History {
         assert_ne!(self.transaction_depth, 0);
         self.transaction_depth -= 1;
         if self.transaction_depth == 0 {
-            let transaction = self.undo_stack.last_mut().unwrap();
-            transaction.selections_after = selections;
-            transaction.last_edit_at = now;
-            Some(transaction)
+            if self.undo_stack.last().unwrap().ranges.is_empty() {
+                self.undo_stack.pop();
+                None
+            } else {
+                let transaction = self.undo_stack.last_mut().unwrap();
+                transaction.selections_after = selections;
+                transaction.last_edit_at = now;
+                Some(transaction)
+            }
         } else {
             None
         }
@@ -3932,6 +3937,11 @@ mod tests {
             buffer.redo(cx);
             assert_eq!(buffer.text(), "ab2cde6");
             assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![3..3]);
+
+            buffer.start_transaction_at(None, now).unwrap();
+            buffer.end_transaction_at(None, now, cx).unwrap();
+            buffer.undo(cx);
+            assert_eq!(buffer.text(), "12cde6");
 
             buffer
         });
