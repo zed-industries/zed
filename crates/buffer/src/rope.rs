@@ -268,6 +268,7 @@ impl<'a> Cursor<'a> {
             }
         }
 
+        self.offset = end_offset;
         summary
     }
 

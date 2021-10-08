@@ -30,12 +30,11 @@ use std::{
     any::Any,
     cell::RefCell,
     cmp,
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     convert::{TryFrom, TryInto},
     ffi::OsString,
     hash::BuildHasher,
     iter::Iterator,
-    mem,
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     str,
@@ -167,7 +166,7 @@ pub struct Buffer {
     history: History,
     file: Option<Box<dyn File>>,
     language: Option<Arc<Language>>,
-    autoindent_requests: Vec<AutoindentRequest>,
+    autoindent_requests: VecDeque<AutoindentRequest>,
     sync_parse_timeout: Duration,
     syntax_tree: Mutex<Option<SyntaxTree>>,
     parsing_in_background: bool,
@@ -195,11 +194,16 @@ struct SyntaxTree {
     version: clock::Global,
 }
 
-#[derive(Clone, Debug)]
 struct AutoindentRequest {
-    position: Anchor,
-    end_position: Option<Anchor>,
-    prev_suggestion: Option<u32>,
+    before_edit: Snapshot,
+    edited: AnchorSet,
+    inserted: AnchorRangeSet,
+}
+
+impl AutoindentRequest {
+    fn version_after_edit(&self) -> &clock::Global {
+        self.inserted.version()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -967,7 +971,7 @@ impl Buffer {
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
-        self.perform_autoindent(&tree, language, cx);
+        self.perform_autoindent(&tree, &version, language, cx);
         self.parse_count += 1;
         *self.syntax_tree.lock() = Some(SyntaxTree { tree, version });
         cx.emit(Event::Reparsed);
@@ -977,160 +981,91 @@ impl Buffer {
     fn perform_autoindent(
         &mut self,
         new_tree: &Tree,
+        new_version: &clock::Global,
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
-        let mut autoindent_requests = mem::take(&mut self.autoindent_requests);
-        let mut prev_suggestions_by_row = BTreeMap::<u32, Option<u32>>::default();
-        for request in autoindent_requests.drain(..) {
-            let start_row = request.position.to_point(&*self).row;
-            let end_row = if let Some(end_position) = request.end_position {
-                end_position.to_point(&*self).row
-            } else {
-                start_row
-            };
-            for row in start_row..=end_row {
-                let prev_suggestion = request.prev_suggestion;
-                prev_suggestions_by_row
-                    .entry(row)
-                    .and_modify(|suggestion| *suggestion = suggestion.or(prev_suggestion))
-                    .or_insert(request.prev_suggestion);
-            }
-        }
-        self.autoindent_requests = autoindent_requests;
-
         let mut cursor = QueryCursorHandle::new();
-        self.start_transaction(None).unwrap();
-        let mut prev_suggestions = prev_suggestions_by_row.iter();
-        for row_range in contiguous_ranges(prev_suggestions_by_row.keys().copied()) {
-            let new_suggestions = self
-                .suggest_autoindents(row_range.clone(), new_tree, &language, &mut cursor)
-                .collect::<Vec<_>>();
-            let old_suggestions = prev_suggestions.by_ref().take(row_range.len());
-            for ((row, old_suggestion), new_suggestion) in old_suggestions.zip(new_suggestions) {
-                if *old_suggestion != Some(new_suggestion) {
-                    self.set_indent_column_for_line(*row, new_suggestion, cx);
-                }
-            }
-        }
-        self.end_transaction(None, cx).unwrap();
-    }
-
-    fn suggest_autoindents<'a>(
-        &'a self,
-        row_range: Range<u32>,
-        tree: &Tree,
-        language: &Language,
-        cursor: &mut QueryCursor,
-    ) -> impl Iterator<Item = u32> + 'a {
-        let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
-
-        // Get the "indentation ranges" that intersect this row range.
-        let indent_capture_ix = language.indents_query.capture_index_for_name("indent");
-        let end_capture_ix = language.indents_query.capture_index_for_name("end");
-        cursor.set_point_range(
-            Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0).into()
-                ..Point::new(row_range.end, 0).into(),
-        );
-        let mut indentation_ranges = Vec::<(Range<Point>, &'static str)>::new();
-        for mat in cursor.matches(
-            &language.indents_query,
-            tree.root_node(),
-            TextProvider(&self.visible_text),
-        ) {
-            let mut node_kind = "";
-            let mut start: Option<Point> = None;
-            let mut end: Option<Point> = None;
-            for capture in mat.captures {
-                if Some(capture.index) == indent_capture_ix {
-                    node_kind = capture.node.kind();
-                    start.get_or_insert(capture.node.start_position().into());
-                    end.get_or_insert(capture.node.end_position().into());
-                } else if Some(capture.index) == end_capture_ix {
-                    end = Some(capture.node.start_position().into());
-                }
+        while let Some(request) = self.autoindent_requests.front() {
+            if new_version < request.version_after_edit() {
+                break;
             }
 
-            if let Some((start, end)) = start.zip(end) {
-                if start.row == end.row {
-                    continue;
-                }
+            let request = self.autoindent_requests.pop_front().unwrap();
 
-                let range = start..end;
-                match indentation_ranges.binary_search_by_key(&range.start, |r| r.0.start) {
-                    Err(ix) => indentation_ranges.insert(ix, (range, node_kind)),
-                    Ok(ix) => {
-                        let prev_range = &mut indentation_ranges[ix];
-                        prev_range.0.end = prev_range.0.end.max(range.end);
+            let old_to_new_rows = request
+                .edited
+                .to_points(request.before_edit.content())
+                .map(|point| point.row)
+                .zip(
+                    request
+                        .edited
+                        .to_points(self.content())
+                        .map(|point| point.row),
+                )
+                .collect::<BTreeMap<u32, u32>>();
+
+            let mut old_suggestions = HashMap::default();
+            if let Some(old_tree) = &request.before_edit.tree {
+                let old_edited_ranges = contiguous_ranges(old_to_new_rows.keys().copied());
+                for old_edited_range in old_edited_ranges {
+                    let old_content = request.before_edit.content();
+                    let suggestions = old_content.suggest_autoindents(
+                        old_edited_range.clone(),
+                        old_tree,
+                        &language,
+                        &mut cursor,
+                    );
+                    for (old_row, suggestion) in old_edited_range.zip(suggestions) {
+                        let indentation_basis = old_to_new_rows
+                            .get(&suggestion.basis_row)
+                            .and_then(|from_row| old_suggestions.get(from_row).copied())
+                            .unwrap_or_else(|| {
+                                request
+                                    .before_edit
+                                    .indent_column_for_line(suggestion.basis_row)
+                            });
+                        let delta = if suggestion.indent { INDENT_SIZE } else { 0 };
+                        old_suggestions.insert(
+                            *old_to_new_rows.get(&old_row).unwrap(),
+                            indentation_basis + delta,
+                        );
                     }
                 }
             }
-        }
 
-        let mut prev_row = prev_non_blank_row.unwrap_or(0);
-        let mut prev_indent_column =
-            prev_non_blank_row.map_or(0, |prev_row| self.indent_column_for_line(prev_row));
-        row_range.map(move |row| {
-            let row_start = Point::new(row, self.indent_column_for_line(row));
+            // At this point, old_suggestions contains the suggested indentation for all edited lines with respect to the state of the
+            // buffer before the edit, but keyed by the row for these lines after the edits were applied.
 
-            eprintln!(
-                "autoindent row: {:?}, prev_indent_column: {:?}",
-                row, prev_indent_column
-            );
-
-            let mut indent_from_prev_row = false;
-            let mut outdent_to_row = u32::MAX;
-            for (range, node_kind) in &indentation_ranges {
-                if range.start.row >= row {
-                    break;
-                }
-
-                if range.start.row == prev_row && range.end > row_start {
-                    eprintln!("  indent because of {} {:?}", node_kind, range);
-                    indent_from_prev_row = true;
-                }
-                if range.end.row >= prev_row && range.end <= row_start {
-                    eprintln!("  outdent because of {} {:?}", node_kind, range);
-                    outdent_to_row = outdent_to_row.min(range.start.row);
+            self.start_transaction(None).unwrap();
+            let new_edited_row_ranges = contiguous_ranges(old_to_new_rows.values().copied());
+            for new_edited_row_range in new_edited_row_ranges {
+                let new_content = self.content();
+                let suggestions = new_content
+                    .suggest_autoindents(
+                        new_edited_row_range.clone(),
+                        &new_tree,
+                        &language,
+                        &mut cursor,
+                    )
+                    .collect::<Vec<_>>();
+                for (new_row, suggestion) in new_edited_row_range.zip(suggestions) {
+                    let delta = if suggestion.indent { INDENT_SIZE } else { 0 };
+                    let new_indentation = self.indent_column_for_line(suggestion.basis_row) + delta;
+                    if old_suggestions
+                        .get(&new_row)
+                        .map_or(true, |old_indentation| new_indentation != *old_indentation)
+                    {
+                        self.set_indent_column_for_line(new_row, new_indentation, cx);
+                    }
                 }
             }
-
-            let indent_column = if outdent_to_row == prev_row {
-                prev_indent_column
-            } else if indent_from_prev_row {
-                prev_indent_column + INDENT_SIZE
-            } else if outdent_to_row < prev_row {
-                self.indent_column_for_line(outdent_to_row)
-            } else {
-                prev_indent_column
-            };
-
-            prev_indent_column = indent_column;
-            prev_row = row;
-            indent_column
-        })
-    }
-
-    fn prev_non_blank_row(&self, mut row: u32) -> Option<u32> {
-        while row > 0 {
-            row -= 1;
-            if !self.is_line_blank(row) {
-                return Some(row);
-            }
+            self.end_transaction(None, cx).unwrap();
         }
-        None
     }
 
     pub fn indent_column_for_line(&self, row: u32) -> u32 {
-        let mut result = 0;
-        for c in self.chars_at(Point::new(row, 0)) {
-            if c == ' ' {
-                result += 1;
-            } else {
-                break;
-            }
-        }
-        result
+        self.content().indent_column_for_line(row)
     }
 
     fn set_indent_column_for_line(&mut self, row: u32, column: u32, cx: &mut ModelContext<Self>) {
@@ -1161,11 +1096,6 @@ impl Buffer {
                 cx,
             );
         }
-    }
-
-    fn is_line_blank(&self, row: u32) -> bool {
-        self.text_for_range(Point::new(row, 0)..Point::new(row, self.line_len(row)))
-            .all(|chunk| chunk.matches(|c: char| !c.is_whitespace()).next().is_none())
     }
 
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
@@ -1308,18 +1238,18 @@ impl Buffer {
     }
 
     pub fn text_for_range<'a, T: ToOffset>(&'a self, range: Range<T>) -> Chunks<'a> {
-        let start = range.start.to_offset(self);
-        let end = range.end.to_offset(self);
-        self.visible_text.chunks_in_range(start..end)
+        self.content().text_for_range(range)
     }
 
     pub fn chars(&self) -> impl Iterator<Item = char> + '_ {
         self.chars_at(0)
     }
 
-    pub fn chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + '_ {
-        let offset = position.to_offset(self);
-        self.visible_text.chars_at(offset)
+    pub fn chars_at<'a, T: 'a + ToOffset>(
+        &'a self,
+        position: T,
+    ) -> impl Iterator<Item = char> + 'a {
+        self.content().chars_at(position)
     }
 
     pub fn chars_for_range<T: ToOffset>(&self, range: Range<T>) -> impl Iterator<Item = char> + '_ {
@@ -1484,36 +1414,20 @@ impl Buffer {
             return;
         }
 
-        // When autoindent is enabled, compute the previous indent suggestion for all edited lines.
-        if autoindent {
-            if let Some((language, tree)) = self.language.as_ref().zip(self.syntax_tree()) {
-                let mut cursor = QueryCursorHandle::new();
-                let starts_with_newline = new_text.starts_with('\n');
-
-                let mut autoindent_requests = mem::take(&mut self.autoindent_requests);
-                let edited_rows = ranges.iter().filter_map(|range| {
-                    let start = range.start.to_point(&*self);
-                    if !starts_with_newline || start.column < self.line_len(start.row) {
-                        Some(start.row)
-                    } else {
-                        None
-                    }
-                });
-                for row_range in contiguous_ranges(edited_rows) {
-                    let suggestions = self
-                        .suggest_autoindents(row_range.clone(), &tree, language, &mut cursor)
-                        .collect::<Vec<_>>();
-                    for (row, suggestion) in row_range.zip(suggestions) {
-                        autoindent_requests.push(AutoindentRequest {
-                            position: self.anchor_before(Point::new(row, 0)),
-                            end_position: None,
-                            prev_suggestion: Some(suggestion),
-                        })
-                    }
+        let autoindent_request = if autoindent && self.language.is_some() {
+            let before_edit = self.snapshot();
+            let edited = self.content().anchor_set(ranges.iter().filter_map(|range| {
+                let start = range.start.to_point(&*self);
+                if new_text.starts_with('\n') && start.column == self.line_len(start.row) {
+                    None
+                } else {
+                    Some((range.start, Bias::Left))
                 }
-                self.autoindent_requests = autoindent_requests;
-            }
-        }
+            }));
+            Some((before_edit, edited))
+        } else {
+            None
+        };
 
         let new_text = if new_text.len() > 0 {
             Some(new_text)
@@ -1534,25 +1448,18 @@ impl Buffer {
         self.last_edit = edit.timestamp.local();
         self.version.observe(edit.timestamp.local());
 
-        if autoindent && self.language.is_some() {
-            let ranges = edit.ranges.iter().map(|range| {
-                Anchor {
-                    offset: range.start,
-                    bias: Bias::Right,
-                    version: edit.version.clone(),
-                }..Anchor {
-                    offset: range.end,
-                    bias: Bias::Right,
-                    version: edit.version.clone(),
-                }
-            });
-            for range in ranges {
-                self.autoindent_requests.push(AutoindentRequest {
-                    position: range.start,
-                    end_position: Some(range.end),
-                    prev_suggestion: None,
-                })
-            }
+        if let Some((before_edit, edited)) = autoindent_request {
+            let inserted = self.content().anchor_range_set(
+                edit.ranges
+                    .iter()
+                    .map(|range| (range.start, Bias::Left)..(range.end, Bias::Right)),
+            );
+
+            self.autoindent_requests.push_back(AutoindentRequest {
+                before_edit,
+                edited,
+                inserted,
+            })
         }
 
         self.end_transaction_at(None, Instant::now(), cx).unwrap();
@@ -2134,20 +2041,20 @@ impl Buffer {
 
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
-        let mut old_fragments = self.fragments.cursor::<(usize, FragmentTextSummary)>();
+        let mut old_fragments = self.fragments.cursor::<FragmentTextSummary>();
         let mut new_fragments = old_fragments.slice(&ranges[0].start, Bias::Right, &None);
         new_ropes.push_tree(new_fragments.summary().text);
 
-        let mut fragment_start = old_fragments.start().1.visible;
+        let mut fragment_start = old_fragments.start().visible;
         for range in ranges {
-            let fragment_end = old_fragments.end(&None).1.visible;
+            let fragment_end = old_fragments.end(&None).visible;
 
             // If the current fragment ends before this range, then jump ahead to the first fragment
             // that extends past the start of this range, reusing any intervening fragments.
             if fragment_end < range.start {
                 // If the current fragment has been partially consumed, then consume the rest of it
                 // and advance to the next fragment before slicing.
-                if fragment_start > old_fragments.start().1.visible {
+                if fragment_start > old_fragments.start().visible {
                     if fragment_end > fragment_start {
                         let mut suffix = old_fragments.item().unwrap().clone();
                         suffix.len = fragment_end - fragment_start;
@@ -2160,10 +2067,10 @@ impl Buffer {
                 let slice = old_fragments.slice(&range.start, Bias::Right, &None);
                 new_ropes.push_tree(slice.summary().text);
                 new_fragments.push_tree(slice, &None);
-                fragment_start = old_fragments.start().1.visible;
+                fragment_start = old_fragments.start().visible;
             }
 
-            let full_range_start = range.start + old_fragments.start().1.deleted;
+            let full_range_start = range.start + old_fragments.start().deleted;
 
             // Preserve any portion of the current fragment that precedes this range.
             if fragment_start < range.start {
@@ -2193,7 +2100,7 @@ impl Buffer {
             // portions as deleted.
             while fragment_start < range.end {
                 let fragment = old_fragments.item().unwrap();
-                let fragment_end = old_fragments.end(&None).1.visible;
+                let fragment_end = old_fragments.end(&None).visible;
                 let mut intersection = fragment.clone();
                 let intersection_end = cmp::min(range.end, fragment_end);
                 if fragment.visible {
@@ -2211,14 +2118,14 @@ impl Buffer {
                 }
             }
 
-            let full_range_end = range.end + old_fragments.start().1.deleted;
+            let full_range_end = range.end + old_fragments.start().deleted;
             edit.ranges.push(full_range_start..full_range_end);
         }
 
         // If the current fragment has been partially consumed, then consume the rest of it
         // and advance to the next fragment before slicing.
-        if fragment_start > old_fragments.start().1.visible {
-            let fragment_end = old_fragments.end(&None).1.visible;
+        if fragment_start > old_fragments.start().visible {
+            let fragment_end = old_fragments.end(&None).visible;
             if fragment_end > fragment_start {
                 let mut suffix = old_fragments.item().unwrap().clone();
                 suffix.len = fragment_end - fragment_start;
@@ -2458,7 +2365,7 @@ impl Clone for Buffer {
             parsing_in_background: false,
             sync_parse_timeout: self.sync_parse_timeout,
             parse_count: self.parse_count,
-            autoindent_requests: self.autoindent_requests.clone(),
+            autoindent_requests: Default::default(),
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
             remote_id: self.remote_id.clone(),
@@ -2502,6 +2409,10 @@ impl Snapshot {
 
     pub fn line_len(&self, row: u32) -> u32 {
         self.content().line_len(row)
+    }
+
+    pub fn indent_column_for_line(&self, row: u32) -> u32 {
+        self.content().indent_column_for_line(row)
     }
 
     pub fn text(&self) -> Rope {
@@ -2644,6 +2555,17 @@ impl<'a> Content<'a> {
         self.fragments.extent::<usize>(&None)
     }
 
+    pub fn chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + 'a {
+        let offset = position.to_offset(self);
+        self.visible_text.chars_at(offset)
+    }
+
+    pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> Chunks<'a> {
+        let start = range.start.to_offset(self);
+        let end = range.end.to_offset(self);
+        self.visible_text.chunks_in_range(start..end)
+    }
+
     fn line_len(&self, row: u32) -> u32 {
         let row_start_offset = Point::new(row, 0).to_offset(self);
         let row_end_offset = if row >= self.max_point().row {
@@ -2652,6 +2574,33 @@ impl<'a> Content<'a> {
             Point::new(row + 1, 0).to_offset(self) - 1
         };
         (row_end_offset - row_start_offset) as u32
+    }
+
+    pub fn indent_column_for_line(&self, row: u32) -> u32 {
+        let mut result = 0;
+        for c in self.chars_at(Point::new(row, 0)) {
+            if c == ' ' {
+                result += 1;
+            } else {
+                break;
+            }
+        }
+        result
+    }
+
+    fn prev_non_blank_row(&self, mut row: u32) -> Option<u32> {
+        while row > 0 {
+            row -= 1;
+            if !self.is_line_blank(row) {
+                return Some(row);
+            }
+        }
+        None
+    }
+
+    fn is_line_blank(&self, row: u32) -> bool {
+        self.text_for_range(Point::new(row, 0)..Point::new(row, self.line_len(row)))
+            .all(|chunk| chunk.matches(|c: char| !c.is_whitespace()).next().is_none())
     }
 
     fn summary_for_anchor(&self, anchor: &Anchor) -> TextSummary {
@@ -2670,17 +2619,132 @@ impl<'a> Content<'a> {
         self.visible_text.cursor(range.start).summary(range.end)
     }
 
+    fn summaries_for_anchors<T>(
+        &self,
+        map: &'a AnchorMap<T>,
+    ) -> impl Iterator<Item = (TextSummary, &'a T)> {
+        let cx = Some(map.version.clone());
+        let mut summary = TextSummary::default();
+        let mut rope_cursor = self.visible_text.cursor(0);
+        let mut cursor = self.fragments.cursor::<(VersionedOffset, usize)>();
+        map.entries.iter().map(move |((offset, bias), value)| {
+            cursor.seek(&VersionedOffset::Offset(*offset), *bias, &cx);
+            let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
+                offset - cursor.start().0.offset()
+            } else {
+                0
+            };
+            summary += rope_cursor.summary(cursor.start().1 + overshoot);
+            (summary.clone(), value)
+        })
+    }
+
+    fn summaries_for_anchor_ranges<T>(
+        &self,
+        map: &'a AnchorRangeMap<T>,
+    ) -> impl Iterator<Item = (Range<TextSummary>, &'a T)> {
+        let cx = Some(map.version.clone());
+        let mut summary = TextSummary::default();
+        let mut rope_cursor = self.visible_text.cursor(0);
+        let mut cursor = self.fragments.cursor::<(VersionedOffset, usize)>();
+        map.entries.iter().map(move |(range, value)| {
+            let Range {
+                start: (start_offset, start_bias),
+                end: (end_offset, end_bias),
+            } = range;
+
+            cursor.seek(&VersionedOffset::Offset(*start_offset), *start_bias, &cx);
+            let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
+                start_offset - cursor.start().0.offset()
+            } else {
+                0
+            };
+            summary += rope_cursor.summary(cursor.start().1 + overshoot);
+            let start_summary = summary.clone();
+
+            cursor.seek(&VersionedOffset::Offset(*end_offset), *end_bias, &cx);
+            let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
+                end_offset - cursor.start().0.offset()
+            } else {
+                0
+            };
+            summary += rope_cursor.summary(cursor.start().1 + overshoot);
+            let end_summary = summary.clone();
+
+            (start_summary..end_summary, value)
+        })
+    }
+
     fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
         let offset = position.to_offset(self);
         let max_offset = self.len();
         assert!(offset <= max_offset, "offset is out of range");
-        let mut cursor = self.fragments.cursor::<(usize, FragmentTextSummary)>();
+        let mut cursor = self.fragments.cursor::<FragmentTextSummary>();
         cursor.seek(&offset, bias, &None);
         Anchor {
-            offset: offset + cursor.start().1.deleted,
+            offset: offset + cursor.start().deleted,
             bias,
             version: self.version.clone(),
         }
+    }
+
+    pub fn anchor_map<T, E>(&self, entries: E) -> AnchorMap<T>
+    where
+        E: IntoIterator<Item = ((usize, Bias), T)>,
+    {
+        let version = self.version.clone();
+        let mut cursor = self.fragments.cursor::<FragmentTextSummary>();
+        let entries = entries
+            .into_iter()
+            .map(|((offset, bias), value)| {
+                cursor.seek_forward(&offset, bias, &None);
+                let full_offset = cursor.start().deleted + offset;
+                ((full_offset, bias), value)
+            })
+            .collect();
+
+        AnchorMap { version, entries }
+    }
+
+    pub fn anchor_range_map<T, E>(&self, entries: E) -> AnchorRangeMap<T>
+    where
+        E: IntoIterator<Item = (Range<(usize, Bias)>, T)>,
+    {
+        let version = self.version.clone();
+        let mut cursor = self.fragments.cursor::<FragmentTextSummary>();
+        let entries = entries
+            .into_iter()
+            .map(|(range, value)| {
+                let Range {
+                    start: (start_offset, start_bias),
+                    end: (end_offset, end_bias),
+                } = range;
+                cursor.seek_forward(&start_offset, start_bias, &None);
+                let full_start_offset = cursor.start().deleted + start_offset;
+                cursor.seek_forward(&end_offset, end_bias, &None);
+                let full_end_offset = cursor.start().deleted + end_offset;
+                (
+                    (full_start_offset, start_bias)..(full_end_offset, end_bias),
+                    value,
+                )
+            })
+            .collect();
+
+        AnchorRangeMap { version, entries }
+    }
+
+    pub fn anchor_set<E>(&self, entries: E) -> AnchorSet
+    where
+        E: IntoIterator<Item = (usize, Bias)>,
+    {
+        AnchorSet(self.anchor_map(entries.into_iter().map(|range| (range, ()))))
+    }
+
+    pub fn anchor_range_set<E>(&self, entries: E) -> AnchorRangeSet
+    where
+        E: IntoIterator<Item = Range<(usize, Bias)>>,
+    {
+        AnchorRangeSet(self.anchor_range_map(entries.into_iter().map(|range| (range, ()))))
     }
 
     fn full_offset_for_anchor(&self, anchor: &Anchor) -> usize {
@@ -2705,6 +2769,117 @@ impl<'a> Content<'a> {
             Err(anyhow!("offset out of bounds"))
         }
     }
+
+    fn suggest_autoindents(
+        &'a self,
+        row_range: Range<u32>,
+        tree: &Tree,
+        language: &Language,
+        cursor: &mut QueryCursor,
+    ) -> impl Iterator<Item = IndentSuggestion> + 'a {
+        let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
+
+        // Get the "indentation ranges" that intersect this row range.
+        let indent_capture_ix = language.indents_query.capture_index_for_name("indent");
+        let end_capture_ix = language.indents_query.capture_index_for_name("end");
+        cursor.set_point_range(
+            Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0).into()
+                ..Point::new(row_range.end, 0).into(),
+        );
+        let mut indentation_ranges = Vec::<(Range<Point>, &'static str)>::new();
+        for mat in cursor.matches(
+            &language.indents_query,
+            tree.root_node(),
+            TextProvider(&self.visible_text),
+        ) {
+            let mut node_kind = "";
+            let mut start: Option<Point> = None;
+            let mut end: Option<Point> = None;
+            for capture in mat.captures {
+                if Some(capture.index) == indent_capture_ix {
+                    node_kind = capture.node.kind();
+                    start.get_or_insert(capture.node.start_position().into());
+                    end.get_or_insert(capture.node.end_position().into());
+                } else if Some(capture.index) == end_capture_ix {
+                    end = Some(capture.node.start_position().into());
+                }
+            }
+
+            if let Some((start, end)) = start.zip(end) {
+                if start.row == end.row {
+                    continue;
+                }
+
+                let range = start..end;
+                match indentation_ranges.binary_search_by_key(&range.start, |r| r.0.start) {
+                    Err(ix) => indentation_ranges.insert(ix, (range, node_kind)),
+                    Ok(ix) => {
+                        let prev_range = &mut indentation_ranges[ix];
+                        prev_range.0.end = prev_range.0.end.max(range.end);
+                    }
+                }
+            }
+        }
+
+        eprintln!(
+            "autoindent {:?}. ranges: {:?}",
+            row_range, indentation_ranges
+        );
+
+        let mut prev_row = prev_non_blank_row.unwrap_or(0);
+        row_range.map(move |row| {
+            let row_start = Point::new(row, self.indent_column_for_line(row));
+
+            eprintln!("  autoindent row: {:?}", row);
+
+            let mut indent_from_prev_row = false;
+            let mut outdent_to_row = u32::MAX;
+            for (range, node_kind) in &indentation_ranges {
+                if range.start.row >= row {
+                    break;
+                }
+
+                if range.start.row == prev_row && range.end > row_start {
+                    eprintln!("    indent because of {} {:?}", node_kind, range);
+                    indent_from_prev_row = true;
+                }
+                if range.end.row >= prev_row && range.end <= row_start {
+                    eprintln!("    outdent because of {} {:?}", node_kind, range);
+                    outdent_to_row = outdent_to_row.min(range.start.row);
+                }
+            }
+
+            let suggestion = if outdent_to_row == prev_row {
+                IndentSuggestion {
+                    basis_row: prev_row,
+                    indent: false,
+                }
+            } else if indent_from_prev_row {
+                IndentSuggestion {
+                    basis_row: prev_row,
+                    indent: true,
+                }
+            } else if outdent_to_row < prev_row {
+                IndentSuggestion {
+                    basis_row: outdent_to_row,
+                    indent: false,
+                }
+            } else {
+                IndentSuggestion {
+                    basis_row: prev_row,
+                    indent: false,
+                }
+            };
+
+            prev_row = row;
+            suggestion
+        })
+    }
+}
+
+struct IndentSuggestion {
+    basis_row: u32,
+    indent: bool,
 }
 
 struct RopeBuilder<'a> {
@@ -3047,6 +3222,16 @@ impl Default for FragmentSummary {
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for usize {
     fn add_summary(&mut self, summary: &FragmentSummary, _: &Option<clock::Global>) {
         *self += summary.text.visible;
+    }
+}
+
+impl<'a> sum_tree::SeekTarget<'a, FragmentSummary, FragmentTextSummary> for usize {
+    fn cmp(
+        &self,
+        cursor_location: &FragmentTextSummary,
+        _: &Option<clock::Global>,
+    ) -> cmp::Ordering {
+        Ord::cmp(self, &cursor_location.visible)
     }
 }
 
