@@ -1536,7 +1536,7 @@ impl Buffer {
             let ranges = edit.ranges.iter().map(|range| {
                 Anchor {
                     offset: range.start,
-                    bias: Bias::Left,
+                    bias: Bias::Right,
                     version: edit.version.clone(),
                 }..Anchor {
                     offset: range.end,
