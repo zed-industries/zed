@@ -1084,6 +1084,7 @@ impl Buffer {
                 if range.start.row >= row {
                     break;
                 }
+
                 if range.start.row == prev_row && range.end > row_start {
                     eprintln!("  indent because of {} {:?}", node_kind, range);
                     indent_from_prev_row = true;
@@ -1094,14 +1095,15 @@ impl Buffer {
                 }
             }
 
-            let mut indent_column = prev_indent_column;
-            if dedent_to_row < row {
-                if !indent_from_prev_row {
-                    indent_column = self.indent_column_for_line(dedent_to_row);
-                }
+            let indent_column = if dedent_to_row == prev_row {
+                prev_indent_column
             } else if indent_from_prev_row {
-                indent_column += INDENT_SIZE;
-            }
+                prev_indent_column + INDENT_SIZE
+            } else if dedent_to_row < prev_row {
+                self.indent_column_for_line(dedent_to_row)
+            } else {
+                prev_indent_column
+            };
 
             prev_indent_column = indent_column;
             prev_row = row;
