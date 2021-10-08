@@ -21,7 +21,7 @@ use smol::Timer;
 use std::{
     cell::RefCell,
     cmp::{self, Ordering},
-    mem,
+    iter, mem,
     ops::{Range, RangeInclusive},
     rc::Rc,
     sync::Arc,
@@ -38,6 +38,7 @@ action!(Cancel);
 action!(Backspace);
 action!(Delete);
 action!(Input, String);
+action!(Newline);
 action!(Tab);
 action!(DeleteLine);
 action!(DeleteToPreviousWordBoundary);
@@ -96,7 +97,7 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("ctrl-h", Backspace, Some("Editor")),
         Binding::new("delete", Delete, Some("Editor")),
         Binding::new("ctrl-d", Delete, Some("Editor")),
-        Binding::new("enter", Input("\n".into()), Some("Editor && mode == full")),
+        Binding::new("enter", Newline, Some("Editor && mode == full")),
         Binding::new(
             "alt-enter",
             Input("\n".into()),
@@ -194,6 +195,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::select);
     cx.add_action(Editor::cancel);
     cx.add_action(Editor::handle_input);
+    cx.add_action(Editor::newline);
     cx.add_action(Editor::backspace);
     cx.add_action(Editor::delete);
     cx.add_action(Editor::tab);
@@ -749,6 +751,84 @@ impl Editor {
             self.insert(text, cx);
             self.autoclose_pairs(cx);
             self.end_transaction(cx);
+        }
+    }
+
+    pub fn newline(&mut self, _: &Newline, cx: &mut ViewContext<Self>) {
+        self.start_transaction(cx);
+        let mut old_selections = SmallVec::<[_; 32]>::new();
+        {
+            let selections = self.selections(cx);
+            let buffer = self.buffer.read(cx);
+            for selection in selections.iter() {
+                let start_point = selection.start.to_point(buffer);
+                let indent = buffer
+                    .indent_column_for_line(start_point.row)
+                    .min(start_point.column);
+                let start = selection.start.to_offset(buffer);
+                let end = selection.end.to_offset(buffer);
+                old_selections.push((selection.id, start..end, indent));
+            }
+        }
+
+        let mut new_selections = Vec::with_capacity(old_selections.len());
+        self.buffer.update(cx, |buffer, cx| {
+            let mut delta = 0_isize;
+            let mut pending_edit: Option<PendingEdit> = None;
+            for (_, range, indent) in &old_selections {
+                if pending_edit
+                    .as_ref()
+                    .map_or(false, |pending| pending.indent != *indent)
+                {
+                    let pending = pending_edit.take().unwrap();
+                    let mut new_text = String::with_capacity(1 + pending.indent as usize);
+                    new_text.push('\n');
+                    new_text.extend(iter::repeat(' ').take(pending.indent as usize));
+                    buffer.edit_with_autoindent(pending.ranges, new_text, cx);
+                    delta += pending.delta;
+                }
+
+                let start = (range.start as isize + delta) as usize;
+                let end = (range.end as isize + delta) as usize;
+                let text_len = *indent as usize + 1;
+
+                let pending = pending_edit.get_or_insert_with(Default::default);
+                pending.delta += text_len as isize - (end - start) as isize;
+                pending.indent = *indent;
+                pending.ranges.push(start..end);
+            }
+
+            let pending = pending_edit.unwrap();
+            let mut new_text = String::with_capacity(1 + pending.indent as usize);
+            new_text.push('\n');
+            new_text.extend(iter::repeat(' ').take(pending.indent as usize));
+            buffer.edit_with_autoindent(pending.ranges, new_text, cx);
+
+            let mut delta = 0_isize;
+            new_selections.extend(old_selections.into_iter().map(|(id, range, indent)| {
+                let start = (range.start as isize + delta) as usize;
+                let end = (range.end as isize + delta) as usize;
+                let text_len = indent as usize + 1;
+                let anchor = buffer.anchor_before(start + text_len);
+                delta += text_len as isize - (end - start) as isize;
+                Selection {
+                    id,
+                    start: anchor.clone(),
+                    end: anchor,
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                }
+            }))
+        });
+
+        self.update_selections(new_selections, true, cx);
+        self.end_transaction(cx);
+
+        #[derive(Default)]
+        struct PendingEdit {
+            indent: u32,
+            delta: isize,
+            ranges: SmallVec<[Range<usize>; 32]>,
         }
     }
 
@@ -3552,6 +3632,30 @@ mod tests {
         });
 
         assert_eq!(buffer.read(cx).text(), "e t te our");
+    }
+
+    #[gpui::test]
+    fn test_newline(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "aaaa\n    bbbb\n", cx));
+        let settings = EditorSettings::test(&cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            build_editor(buffer.clone(), settings, cx)
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                    DisplayPoint::new(1, 6)..DisplayPoint::new(1, 6),
+                ],
+                cx,
+            )
+            .unwrap();
+
+            view.newline(&Newline, cx);
+            assert_eq!(view.text(cx), "aa\naa\n  \n    bb\n    bb\n");
+        });
     }
 
     #[gpui::test]
