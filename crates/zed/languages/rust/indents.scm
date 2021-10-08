@@ -1,5 +1,5 @@
 [
-    (where_clause)
+    ((where_clause) _ @end)
     (field_expression)
     (call_expression)
     (assignment_expression)
