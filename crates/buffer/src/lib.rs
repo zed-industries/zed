@@ -116,6 +116,9 @@ lazy_static! {
     static ref QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Default::default();
 }
 
+// TODO - Make this configurable
+const INDENT_SIZE: u32 = 4;
+
 struct QueryCursorHandle(Option<QueryCursor>);
 
 impl QueryCursorHandle {
@@ -195,8 +198,8 @@ struct SyntaxTree {
 #[derive(Clone, Debug)]
 struct AutoindentRequest {
     position: Anchor,
-    indent_size: u8,
-    force: bool,
+    end_position: Option<Anchor>,
+    prev_suggestion: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -875,15 +878,11 @@ impl Buffer {
         }
 
         if let Some(language) = self.language.clone() {
-            let old_tree = self.syntax_tree.lock().as_mut().map(|tree| {
-                self.interpolate_tree(tree);
-                tree.clone()
-            });
+            let old_tree = self.syntax_tree();
             let text = self.visible_text.clone();
             let parsed_version = self.version();
             let parse_task = cx.background().spawn({
                 let language = language.clone();
-                let old_tree = old_tree.as_ref().map(|t| t.tree.clone());
                 async move { Self::parse_text(&text, old_tree, &language) }
             });
 
@@ -892,13 +891,7 @@ impl Buffer {
                 .block_with_timeout(self.sync_parse_timeout, parse_task)
             {
                 Ok(new_tree) => {
-                    self.did_finish_parsing(
-                        old_tree.map(|t| t.tree),
-                        new_tree,
-                        parsed_version,
-                        language,
-                        cx,
-                    );
+                    self.did_finish_parsing(new_tree, parsed_version, language, cx);
                     return true;
                 }
                 Err(parse_task) => {
@@ -911,18 +904,8 @@ impl Buffer {
                                     !Arc::ptr_eq(curr_language, &language)
                                 });
                             let parse_again = this.version > parsed_version || language_changed;
-                            let old_tree = old_tree.map(|mut old_tree| {
-                                this.interpolate_tree(&mut old_tree);
-                                old_tree.tree
-                            });
                             this.parsing_in_background = false;
-                            this.did_finish_parsing(
-                                old_tree,
-                                new_tree,
-                                parsed_version,
-                                language,
-                                cx,
-                            );
+                            this.did_finish_parsing(new_tree, parsed_version, language, cx);
 
                             if parse_again && this.reparse(cx) {
                                 return;
@@ -979,125 +962,62 @@ impl Buffer {
 
     fn did_finish_parsing(
         &mut self,
-        old_tree: Option<Tree>,
-        new_tree: Tree,
-        new_version: clock::Global,
+        tree: Tree,
+        version: clock::Global,
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
-        self.perform_autoindent(old_tree, &new_tree, language, cx);
+        self.perform_autoindent(&tree, language, cx);
         self.parse_count += 1;
-        *self.syntax_tree.lock() = Some(SyntaxTree {
-            tree: new_tree,
-            version: new_version,
-        });
+        *self.syntax_tree.lock() = Some(SyntaxTree { tree, version });
         cx.emit(Event::Reparsed);
         cx.notify();
     }
 
     fn perform_autoindent(
         &mut self,
-        old_tree: Option<Tree>,
         new_tree: &Tree,
         language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
         let mut autoindent_requests = mem::take(&mut self.autoindent_requests);
-        let mut autoindent_requests_by_row = BTreeMap::<u32, AutoindentRequest>::default();
+        let mut prev_suggestions_by_row = BTreeMap::<u32, Option<u32>>::default();
         for request in autoindent_requests.drain(..) {
-            let row = request.position.to_point(&*self).row;
-            autoindent_requests_by_row
-                .entry(row)
-                .and_modify(|req| {
-                    req.indent_size = req.indent_size.max(request.indent_size);
-                    req.force |= request.force;
-                })
-                .or_insert(request);
+            let start_row = request.position.to_point(&*self).row;
+            let end_row = if let Some(end_position) = request.end_position {
+                end_position.to_point(&*self).row
+            } else {
+                start_row
+            };
+            for row in start_row..=end_row {
+                let prev_suggestion = request.prev_suggestion;
+                prev_suggestions_by_row
+                    .entry(row)
+                    .and_modify(|suggestion| *suggestion = suggestion.or(prev_suggestion))
+                    .or_insert(request.prev_suggestion);
+            }
         }
         self.autoindent_requests = autoindent_requests;
 
-        let mut row_range: Option<Range<u32>> = None;
-        let mut cursor1 = QueryCursorHandle::new();
-        let mut cursor2 = QueryCursorHandle::new();
+        let mut cursor = QueryCursorHandle::new();
         self.start_transaction(None).unwrap();
-        for row in autoindent_requests_by_row.keys().copied() {
-            if let Some(range) = &mut row_range {
-                if range.end == row {
-                    range.end += 1;
-                    continue;
+        let mut prev_suggestions = prev_suggestions_by_row.iter();
+        for row_range in contiguous_ranges(prev_suggestions_by_row.keys().copied()) {
+            let new_suggestions = self
+                .suggest_autoindents(row_range.clone(), new_tree, &language, &mut cursor)
+                .collect::<Vec<_>>();
+            let old_suggestions = prev_suggestions.by_ref().take(row_range.len());
+            for ((row, old_suggestion), new_suggestion) in old_suggestions.zip(new_suggestions) {
+                if *old_suggestion != Some(new_suggestion) {
+                    self.set_indent_column_for_line(*row, new_suggestion, cx);
                 }
-                self.perform_autoindent_for_rows(
-                    range.clone(),
-                    old_tree.as_ref(),
-                    &new_tree,
-                    &autoindent_requests_by_row,
-                    language.as_ref(),
-                    &mut cursor1,
-                    &mut cursor2,
-                    cx,
-                );
             }
-            row_range = Some(row..(row + 1));
-        }
-        if let Some(range) = row_range {
-            self.perform_autoindent_for_rows(
-                range,
-                old_tree.as_ref(),
-                &new_tree,
-                &autoindent_requests_by_row,
-                language.as_ref(),
-                &mut cursor1,
-                &mut cursor2,
-                cx,
-            );
         }
         self.end_transaction(None, cx).unwrap();
     }
 
-    fn perform_autoindent_for_rows(
-        &mut self,
-        row_range: Range<u32>,
-        old_tree: Option<&Tree>,
-        new_tree: &Tree,
-        autoindent_requests: &BTreeMap<u32, AutoindentRequest>,
-        language: &Language,
-        cursor1: &mut QueryCursor,
-        cursor2: &mut QueryCursor,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let new_suggestions = self.suggest_autoindents(
-            autoindent_requests,
-            row_range.clone(),
-            new_tree,
-            language,
-            cursor1,
-        );
-
-        if let Some(old_tree) = old_tree {
-            let old_suggestions = self.suggest_autoindents(
-                autoindent_requests,
-                row_range.clone(),
-                old_tree,
-                language,
-                cursor2,
-            );
-            let suggestions = old_suggestions.zip(new_suggestions).collect::<Vec<_>>();
-            let requests = autoindent_requests.range(row_range);
-            for ((row, request), (old_suggestion, new_suggestion)) in requests.zip(suggestions) {
-                if request.force || new_suggestion != old_suggestion {
-                    self.set_indent_column_for_line(*row, new_suggestion, cx);
-                }
-            }
-        } else {
-            for (row, new_suggestion) in row_range.zip(new_suggestions.collect::<Vec<_>>()) {
-                self.set_indent_column_for_line(row, new_suggestion, cx);
-            }
-        }
-    }
-
     fn suggest_autoindents<'a>(
         &'a self,
-        autoindent_requests: &'a BTreeMap<u32, AutoindentRequest>,
         row_range: Range<u32>,
         tree: &Tree,
         language: &Language,
@@ -1151,7 +1071,6 @@ impl Buffer {
         let mut prev_indent_column =
             prev_non_blank_row.map_or(0, |prev_row| self.indent_column_for_line(prev_row));
         row_range.map(move |row| {
-            let request = autoindent_requests.get(&row).unwrap();
             let row_start = Point::new(row, self.indent_column_for_line(row));
 
             eprintln!(
@@ -1159,16 +1078,17 @@ impl Buffer {
                 row, prev_indent_column
             );
 
-            let mut increase_from_prev_row = false;
+            let mut indent_from_prev_row = false;
             let mut dedent_to_row = u32::MAX;
             for (range, node_kind) in &indentation_ranges {
-                if range.start.row == prev_row && prev_row < row && range.end > row_start {
-                    eprintln!("  indent because of {} {:?}", node_kind, range);
-                    increase_from_prev_row = true;
+                if range.start.row >= row {
+                    break;
                 }
-                if range.start.row < row
-                    && (Point::new(prev_row, 0)..=row_start).contains(&range.end)
-                {
+                if range.start.row == prev_row && range.end > row_start {
+                    eprintln!("  indent because of {} {:?}", node_kind, range);
+                    indent_from_prev_row = true;
+                }
+                if range.end.row >= prev_row && range.end <= row_start {
                     eprintln!("  outdent because of {} {:?}", node_kind, range);
                     dedent_to_row = dedent_to_row.min(range.start.row);
                 }
@@ -1176,11 +1096,11 @@ impl Buffer {
 
             let mut indent_column = prev_indent_column;
             if dedent_to_row < row {
-                if !increase_from_prev_row {
+                if !indent_from_prev_row {
                     indent_column = self.indent_column_for_line(dedent_to_row);
                 }
-            } else if increase_from_prev_row {
-                indent_column += request.indent_size as u32;
+            } else if indent_from_prev_row {
+                indent_column += INDENT_SIZE;
             }
 
             prev_indent_column = indent_column;
@@ -1285,18 +1205,6 @@ impl Buffer {
                 Some((open.byte_range(), close.byte_range()))
             })
             .min_by_key(|(open_range, close_range)| close_range.end - open_range.start)
-    }
-
-    pub fn request_autoindent_for_line(&mut self, row: u32, indent_size: u8, force: bool) {
-        assert!(
-            self.history.transaction_depth > 0,
-            "autoindent can only be requested during a transaction"
-        );
-        self.autoindent_requests.push(AutoindentRequest {
-            position: self.anchor_before(Point::new(row, 0)),
-            indent_size,
-            force,
-        });
     }
 
     fn diff(&self, new_text: Arc<str>, cx: &AppContext) -> Task<Diff> {
@@ -1525,19 +1433,40 @@ impl Buffer {
         S: ToOffset,
         T: Into<String>,
     {
+        self.edit_internal(ranges_iter, new_text, false, cx)
+    }
+
+    pub fn edit_with_autoindent<I, S, T>(
+        &mut self,
+        ranges_iter: I,
+        new_text: T,
+        cx: &mut ModelContext<Self>,
+    ) where
+        I: IntoIterator<Item = Range<S>>,
+        S: ToOffset,
+        T: Into<String>,
+    {
+        self.edit_internal(ranges_iter, new_text, true, cx)
+    }
+
+    pub fn edit_internal<I, S, T>(
+        &mut self,
+        ranges_iter: I,
+        new_text: T,
+        autoindent: bool,
+        cx: &mut ModelContext<Self>,
+    ) where
+        I: IntoIterator<Item = Range<S>>,
+        S: ToOffset,
+        T: Into<String>,
+    {
         let new_text = new_text.into();
-        let new_text = if new_text.len() > 0 {
-            Some(new_text)
-        } else {
-            None
-        };
-        let has_new_text = new_text.is_some();
 
         // Skip invalid ranges and coalesce contiguous ones.
         let mut ranges: Vec<Range<usize>> = Vec::new();
         for range in ranges_iter {
             let range = range.start.to_offset(&*self)..range.end.to_offset(&*self);
-            if has_new_text || !range.is_empty() {
+            if !new_text.is_empty() || !range.is_empty() {
                 if let Some(prev_range) = ranges.last_mut() {
                     if prev_range.end >= range.start {
                         prev_range.end = cmp::max(prev_range.end, range.end);
@@ -1549,24 +1478,83 @@ impl Buffer {
                 }
             }
         }
+        if ranges.is_empty() {
+            return;
+        }
 
-        if !ranges.is_empty() {
-            self.start_transaction_at(None, Instant::now()).unwrap();
-            let timestamp = InsertionTimestamp {
-                replica_id: self.replica_id,
-                local: self.local_clock.tick().value,
-                lamport: self.lamport_clock.tick().value,
-            };
-            let edit = self.apply_local_edit(&ranges, new_text, timestamp);
+        // When autoindent is enabled, compute the previous indent suggestion for all edited lines.
+        if autoindent {
+            if let Some((language, tree)) = self.language.as_ref().zip(self.syntax_tree()) {
+                let mut cursor = QueryCursorHandle::new();
+                let starts_with_newline = new_text.starts_with('\n');
 
-            self.history.push(edit.clone());
-            self.history.push_undo(edit.timestamp.local());
-            self.last_edit = edit.timestamp.local();
-            self.version.observe(edit.timestamp.local());
+                let mut autoindent_requests = mem::take(&mut self.autoindent_requests);
+                let edited_rows = ranges.iter().filter_map(|range| {
+                    let start = range.start.to_point(&*self);
+                    if !starts_with_newline || start.column < self.line_len(start.row) {
+                        Some(start.row)
+                    } else {
+                        None
+                    }
+                });
+                for row_range in contiguous_ranges(edited_rows) {
+                    let suggestions = self
+                        .suggest_autoindents(row_range.clone(), &tree, language, &mut cursor)
+                        .collect::<Vec<_>>();
+                    for (row, suggestion) in row_range.zip(suggestions) {
+                        autoindent_requests.push(AutoindentRequest {
+                            position: self.anchor_before(Point::new(row, 0)),
+                            end_position: None,
+                            prev_suggestion: Some(suggestion),
+                        })
+                    }
+                }
+                self.autoindent_requests = autoindent_requests;
+            }
+        }
 
-            self.end_transaction_at(None, Instant::now(), cx).unwrap();
-            self.send_operation(Operation::Edit(edit), cx);
+        let new_text = if new_text.len() > 0 {
+            Some(new_text)
+        } else {
+            None
         };
+
+        self.start_transaction_at(None, Instant::now()).unwrap();
+        let timestamp = InsertionTimestamp {
+            replica_id: self.replica_id,
+            local: self.local_clock.tick().value,
+            lamport: self.lamport_clock.tick().value,
+        };
+        let edit = self.apply_local_edit(&ranges, new_text, timestamp);
+
+        self.history.push(edit.clone());
+        self.history.push_undo(edit.timestamp.local());
+        self.last_edit = edit.timestamp.local();
+        self.version.observe(edit.timestamp.local());
+
+        if autoindent {
+            let ranges = edit.ranges.iter().map(|range| {
+                Anchor {
+                    offset: range.start,
+                    bias: Bias::Left,
+                    version: edit.version.clone(),
+                }..Anchor {
+                    offset: range.end,
+                    bias: Bias::Right,
+                    version: edit.version.clone(),
+                }
+            });
+            for range in ranges {
+                self.autoindent_requests.push(AutoindentRequest {
+                    position: range.start,
+                    end_position: Some(range.end),
+                    prev_suggestion: None,
+                })
+            }
+        }
+
+        self.end_transaction_at(None, Instant::now(), cx).unwrap();
+        self.send_operation(Operation::Edit(edit), cx);
     }
 
     fn did_edit(&self, was_dirty: bool, cx: &mut ModelContext<Self>) {
@@ -3437,6 +3425,28 @@ impl ToPoint for usize {
     }
 }
 
+fn contiguous_ranges(mut values: impl Iterator<Item = u32>) -> impl Iterator<Item = Range<u32>> {
+    let mut current_range: Option<Range<u32>> = None;
+    std::iter::from_fn(move || loop {
+        if let Some(value) = values.next() {
+            if let Some(range) = &mut current_range {
+                if value == range.end {
+                    range.end += 1;
+                    continue;
+                }
+            }
+
+            let prev_range = current_range.clone();
+            current_range = Some(value..(value + 1));
+            if prev_range.is_some() {
+                return prev_range;
+            }
+        } else {
+            return current_range.take();
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use crate::random_char_iter::RandomCharIter;
@@ -4329,7 +4339,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_request_autoindent(mut cx: gpui::TestAppContext) {
+    async fn test_edit_with_autoindent(mut cx: gpui::TestAppContext) {
         let rust_lang = rust_lang();
         let buffer = cx.add_model(|cx| {
             let text = "fn a() {}".into();
@@ -4341,14 +4351,23 @@ mod tests {
             .await;
 
         buffer.update(&mut cx, |buffer, cx| {
-            buffer.start_transaction(None).unwrap();
-            buffer.edit([8..8], "\n\n", cx);
-            buffer.request_autoindent_for_line(1, 4, true);
-            assert_eq!(buffer.text(), "fn a() {\n\n}");
-
-            buffer.end_transaction(None, cx).unwrap();
+            buffer.edit_with_autoindent([8..8], "\n\n", cx);
             assert_eq!(buffer.text(), "fn a() {\n    \n}");
+
+            buffer.edit_with_autoindent([Point::new(1, 4)..Point::new(1, 4)], "b()\n", cx);
+            assert_eq!(buffer.text(), "fn a() {\n    b()\n    \n}");
+
+            buffer.edit_with_autoindent([Point::new(2, 4)..Point::new(2, 4)], ".c", cx);
+            assert_eq!(buffer.text(), "fn a() {\n    b()\n        .c\n}");
         });
+    }
+
+    #[test]
+    fn test_contiguous_ranges() {
+        assert_eq!(
+            contiguous_ranges([1, 2, 3, 5, 6, 9, 10, 11, 12].iter().copied()).collect::<Vec<_>>(),
+            &[1..4, 5..7, 9..13]
+        );
     }
 
     #[derive(Clone)]
@@ -4439,7 +4458,13 @@ mod tests {
                 },
                 tree_sitter_rust::language(),
             )
-            .with_indents_query(r#" (_ "{" "}" @end) @indent "#)
+            .with_indents_query(
+                r#"
+                    (call_expression) @indent
+                    (field_expression) @indent
+                    (_ "{" "}" @end) @indent
+                "#,
+            )
             .unwrap()
             .with_brackets_query(r#" ("{" @open "}" @close) "#)
             .unwrap(),
