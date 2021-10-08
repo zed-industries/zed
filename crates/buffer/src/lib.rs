@@ -1534,7 +1534,7 @@ impl Buffer {
         self.last_edit = edit.timestamp.local();
         self.version.observe(edit.timestamp.local());
 
-        if autoindent {
+        if autoindent && self.language.is_some() {
             let ranges = edit.ranges.iter().map(|range| {
                 Anchor {
                     offset: range.start,
