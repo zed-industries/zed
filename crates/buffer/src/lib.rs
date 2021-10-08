@@ -1079,7 +1079,7 @@ impl Buffer {
             );
 
             let mut indent_from_prev_row = false;
-            let mut dedent_to_row = u32::MAX;
+            let mut outdent_to_row = u32::MAX;
             for (range, node_kind) in &indentation_ranges {
                 if range.start.row >= row {
                     break;
@@ -1091,16 +1091,16 @@ impl Buffer {
                 }
                 if range.end.row >= prev_row && range.end <= row_start {
                     eprintln!("  outdent because of {} {:?}", node_kind, range);
-                    dedent_to_row = dedent_to_row.min(range.start.row);
+                    outdent_to_row = outdent_to_row.min(range.start.row);
                 }
             }
 
-            let indent_column = if dedent_to_row == prev_row {
+            let indent_column = if outdent_to_row == prev_row {
                 prev_indent_column
             } else if indent_from_prev_row {
                 prev_indent_column + INDENT_SIZE
-            } else if dedent_to_row < prev_row {
-                self.indent_column_for_line(dedent_to_row)
+            } else if outdent_to_row < prev_row {
+                self.indent_column_for_line(outdent_to_row)
             } else {
                 prev_indent_column
             };
