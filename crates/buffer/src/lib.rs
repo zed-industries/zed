@@ -196,13 +196,14 @@ struct SyntaxTree {
 
 struct AutoindentRequest {
     before_edit: Snapshot,
+    version_after_edit: clock::Global,
     edited: AnchorSet,
-    inserted: AnchorRangeSet,
+    inserted: Option<AnchorRangeSet>,
 }
 
 impl AutoindentRequest {
     fn version_after_edit(&self) -> &clock::Global {
-        self.inserted.version()
+        &self.version_after_edit
     }
 }
 
@@ -1040,8 +1041,8 @@ impl Buffer {
             self.start_transaction(None).unwrap();
             let new_edited_row_ranges = contiguous_ranges(old_to_new_rows.values().copied());
             for new_edited_row_range in new_edited_row_ranges {
-                let new_content = self.content();
-                let suggestions = new_content
+                let suggestions = self
+                    .content()
                     .suggest_autoindents(
                         new_edited_row_range.clone(),
                         &new_tree,
@@ -1050,6 +1051,7 @@ impl Buffer {
                     )
                     .collect::<Vec<_>>();
                 for (new_row, suggestion) in new_edited_row_range.zip(suggestions) {
+                    dbg!(&suggestion);
                     let delta = if suggestion.indent { INDENT_SIZE } else { 0 };
                     let new_indentation = self.indent_column_for_line(suggestion.basis_row) + delta;
                     if old_suggestions
@@ -1060,6 +1062,36 @@ impl Buffer {
                     }
                 }
             }
+
+            if let Some(inserted) = request.inserted {
+                let inserted_row_ranges = contiguous_ranges(
+                    inserted
+                        .to_point_ranges(self.content())
+                        .flat_map(|range| dbg!(range.start.row..range.end.row + 1)),
+                )
+                .collect::<Vec<_>>();
+                dbg!(&inserted_row_ranges);
+                for inserted_row_range in inserted_row_ranges {
+                    let suggestions = self
+                        .content()
+                        .suggest_autoindents(
+                            inserted_row_range.clone(),
+                            &new_tree,
+                            &language,
+                            &mut cursor,
+                        )
+                        .collect::<Vec<_>>();
+
+                    for (row, suggestion) in inserted_row_range.zip(suggestions) {
+                        dbg!(&suggestion);
+                        let delta = if suggestion.indent { INDENT_SIZE } else { 0 };
+                        let new_indentation =
+                            self.indent_column_for_line(suggestion.basis_row) + delta;
+                        self.set_indent_column_for_line(row, new_indentation, cx);
+                    }
+                }
+            }
+
             self.end_transaction(None, cx).unwrap();
         }
     }
@@ -1429,7 +1461,9 @@ impl Buffer {
             None
         };
 
-        let new_text = if new_text.len() > 0 {
+        let first_newline_ix = new_text.find('\n');
+        let new_text_len = new_text.len();
+        let new_text = if new_text_len > 0 {
             Some(new_text)
         } else {
             None
@@ -1449,17 +1483,25 @@ impl Buffer {
         self.version.observe(edit.timestamp.local());
 
         if let Some((before_edit, edited)) = autoindent_request {
-            let inserted = self.content().anchor_range_set(
-                edit.ranges
-                    .iter()
-                    .map(|range| (range.start, Bias::Left)..(range.end, Bias::Right)),
-            );
+            let mut inserted = None;
+            if let Some(first_newline_ix) = first_newline_ix {
+                inserted = Some(
+                    self.content()
+                        .anchor_range_set(edit.ranges.iter().map(|range| {
+                            dbg!(
+                                (range.start + first_newline_ix + 1, Bias::Left)
+                                    ..(range.start + new_text_len, Bias::Right)
+                            )
+                        })),
+                );
+            }
 
             self.autoindent_requests.push_back(AutoindentRequest {
                 before_edit,
+                version_after_edit: self.version.clone(),
                 edited,
                 inserted,
-            })
+            });
         }
 
         self.end_transaction_at(None, Instant::now(), cx).unwrap();
@@ -2877,6 +2919,7 @@ impl<'a> Content<'a> {
     }
 }
 
+#[derive(Debug)]
 struct IndentSuggestion {
     basis_row: u32,
     indent: bool,
