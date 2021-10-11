@@ -1051,7 +1051,6 @@ impl Buffer {
                     )
                     .collect::<Vec<_>>();
                 for (new_row, suggestion) in new_edited_row_range.zip(suggestions) {
-                    dbg!(&suggestion);
                     let delta = if suggestion.indent { INDENT_SIZE } else { 0 };
                     let new_indentation = self.indent_column_for_line(suggestion.basis_row) + delta;
                     if old_suggestions
@@ -1067,10 +1066,9 @@ impl Buffer {
                 let inserted_row_ranges = contiguous_ranges(
                     inserted
                         .to_point_ranges(self.content())
-                        .flat_map(|range| dbg!(range.start.row..range.end.row + 1)),
+                        .flat_map(|range| range.start.row..range.end.row + 1),
                 )
                 .collect::<Vec<_>>();
-                dbg!(&inserted_row_ranges);
                 for inserted_row_range in inserted_row_ranges {
                     let suggestions = self
                         .content()
@@ -1083,7 +1081,6 @@ impl Buffer {
                         .collect::<Vec<_>>();
 
                     for (row, suggestion) in inserted_row_range.zip(suggestions) {
-                        dbg!(&suggestion);
                         let delta = if suggestion.indent { INDENT_SIZE } else { 0 };
                         let new_indentation =
                             self.indent_column_for_line(suggestion.basis_row) + delta;
@@ -1485,15 +1482,10 @@ impl Buffer {
         if let Some((before_edit, edited)) = autoindent_request {
             let mut inserted = None;
             if let Some(first_newline_ix) = first_newline_ix {
-                inserted = Some(
-                    self.content()
-                        .anchor_range_set(edit.ranges.iter().map(|range| {
-                            dbg!(
-                                (range.start + first_newline_ix + 1, Bias::Left)
-                                    ..(range.start + new_text_len, Bias::Right)
-                            )
-                        })),
-                );
+                inserted = Some(self.content().anchor_range_set(ranges.iter().map(|range| {
+                    (range.start + first_newline_ix + 1, Bias::Left)
+                        ..(range.start + new_text_len, Bias::Right)
+                })));
             }
 
             self.autoindent_requests.push_back(AutoindentRequest {
