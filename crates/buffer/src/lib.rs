@@ -2670,7 +2670,7 @@ impl<'a> Content<'a> {
         let mut rope_cursor = self.visible_text.cursor(0);
         let mut cursor = self.fragments.cursor::<(VersionedOffset, usize)>();
         map.entries.iter().map(move |((offset, bias), value)| {
-            cursor.seek(&VersionedOffset::Offset(*offset), *bias, &cx);
+            cursor.seek_forward(&VersionedOffset::Offset(*offset), *bias, &cx);
             let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
                 offset - cursor.start().0.offset()
             } else {
@@ -2695,7 +2695,7 @@ impl<'a> Content<'a> {
                 end: (end_offset, end_bias),
             } = range;
 
-            cursor.seek(&VersionedOffset::Offset(*start_offset), *start_bias, &cx);
+            cursor.seek_forward(&VersionedOffset::Offset(*start_offset), *start_bias, &cx);
             let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
                 start_offset - cursor.start().0.offset()
             } else {
@@ -2704,7 +2704,7 @@ impl<'a> Content<'a> {
             summary += rope_cursor.summary(cursor.start().1 + overshoot);
             let start_summary = summary.clone();
 
-            cursor.seek(&VersionedOffset::Offset(*end_offset), *end_bias, &cx);
+            cursor.seek_forward(&VersionedOffset::Offset(*end_offset), *end_bias, &cx);
             let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
                 end_offset - cursor.start().0.offset()
             } else {
