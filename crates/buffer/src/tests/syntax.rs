@@ -1,5 +1,5 @@
 use crate::*;
-use gpui::ModelHandle;
+use gpui::{ModelHandle, MutableAppContext};
 use unindent::Unindent as _;
 
 #[gpui::test]
@@ -139,7 +139,7 @@ async fn test_reparse(mut cx: gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_enclosing_bracket_ranges(mut cx: gpui::TestAppContext) {
+fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
     let buffer = cx.add_model(|cx| {
         let text = "
             mod x {
@@ -152,42 +152,36 @@ async fn test_enclosing_bracket_ranges(mut cx: gpui::TestAppContext) {
         .into();
         Buffer::from_history(0, History::new(text), None, Some(rust_lang()), cx)
     });
-    buffer
-        .condition(&cx, |buffer, _| !buffer.is_parsing())
-        .await;
-    buffer.read_with(&cx, |buf, _| {
-        assert_eq!(
-            buf.enclosing_bracket_point_ranges(Point::new(1, 6)..Point::new(1, 6)),
-            Some((
-                Point::new(0, 6)..Point::new(0, 7),
-                Point::new(4, 0)..Point::new(4, 1)
-            ))
-        );
-        assert_eq!(
-            buf.enclosing_bracket_point_ranges(Point::new(1, 10)..Point::new(1, 10)),
-            Some((
-                Point::new(1, 10)..Point::new(1, 11),
-                Point::new(3, 4)..Point::new(3, 5)
-            ))
-        );
-        assert_eq!(
-            buf.enclosing_bracket_point_ranges(Point::new(3, 5)..Point::new(3, 5)),
-            Some((
-                Point::new(1, 10)..Point::new(1, 11),
-                Point::new(3, 4)..Point::new(3, 5)
-            ))
-        );
-    });
+    let buffer = buffer.read(cx);
+    assert_eq!(
+        buffer.enclosing_bracket_point_ranges(Point::new(1, 6)..Point::new(1, 6)),
+        Some((
+            Point::new(0, 6)..Point::new(0, 7),
+            Point::new(4, 0)..Point::new(4, 1)
+        ))
+    );
+    assert_eq!(
+        buffer.enclosing_bracket_point_ranges(Point::new(1, 10)..Point::new(1, 10)),
+        Some((
+            Point::new(1, 10)..Point::new(1, 11),
+            Point::new(3, 4)..Point::new(3, 5)
+        ))
+    );
+    assert_eq!(
+        buffer.enclosing_bracket_point_ranges(Point::new(3, 5)..Point::new(3, 5)),
+        Some((
+            Point::new(1, 10)..Point::new(1, 11),
+            Point::new(3, 4)..Point::new(3, 5)
+        ))
+    );
 }
 
 #[gpui::test]
-async fn test_edit_with_autoindent(mut cx: gpui::TestAppContext) {
-    let buffer = cx.add_model(|cx| {
+fn test_edit_with_autoindent(cx: &mut MutableAppContext) {
+    cx.add_model(|cx| {
         let text = "fn a() {}".into();
-        Buffer::from_history(0, History::new(text), None, Some(rust_lang()), cx)
-    });
+        let mut buffer = Buffer::from_history(0, History::new(text), None, Some(rust_lang()), cx);
 
-    buffer.update(&mut cx, |buffer, cx| {
         buffer.edit_with_autoindent([8..8], "\n\n", cx);
         assert_eq!(buffer.text(), "fn a() {\n    \n}");
 
@@ -196,7 +190,103 @@ async fn test_edit_with_autoindent(mut cx: gpui::TestAppContext) {
 
         buffer.edit_with_autoindent([Point::new(2, 4)..Point::new(2, 4)], ".c", cx);
         assert_eq!(buffer.text(), "fn a() {\n    b()\n        .c\n}");
+
+        buffer
     });
+}
+
+#[gpui::test]
+fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut MutableAppContext) {
+    cx.add_model(|cx| {
+        let text = "
+            fn a() {
+            c;
+            d;
+            }
+        "
+        .unindent()
+        .into();
+        let mut buffer = Buffer::from_history(0, History::new(text), None, Some(rust_lang()), cx);
+
+        // Lines 2 and 3 don't match the indentation suggestion. When editing these lines,
+        // their indentation is not adjusted.
+        buffer.edit_with_autoindent([empty(Point::new(1, 1)), empty(Point::new(2, 1))], "()", cx);
+        assert_eq!(
+            buffer.text(),
+            "
+            fn a() {
+            c();
+            d();
+            }
+            "
+            .unindent()
+        );
+
+        // When appending new content after these lines, the indentation is based on the
+        // preceding lines' actual indentation.
+        buffer.edit_with_autoindent(
+            [empty(Point::new(1, 1)), empty(Point::new(2, 1))],
+            "\n.f\n.g",
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            "
+            fn a() {
+            c
+                .f
+                .g();
+            d
+                .f
+                .g();
+            }
+            "
+            .unindent()
+        );
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppContext) {
+    cx.add_model(|cx| {
+        let text = History::new(
+            "
+                fn a() {}
+            "
+            .unindent()
+            .into(),
+        );
+        let mut buffer = Buffer::from_history(0, text, None, Some(rust_lang()), cx);
+
+        buffer.edit_with_autoindent([5..5], "\nb", cx);
+        assert_eq!(
+            buffer.text(),
+            "
+                fn a(
+                    b) {}
+            "
+            .unindent()
+        );
+
+        // The indentation suggestion changed because `@end` node (a close paren)
+        // is now at the beginning of the line.
+        buffer.edit_with_autoindent([Point::new(1, 4)..Point::new(1, 5)], "", cx);
+        assert_eq!(
+            buffer.text(),
+            "
+                fn a(
+                ) {}
+            "
+            .unindent()
+        );
+
+        buffer
+    });
+}
+
+fn empty(point: Point) -> Range<Point> {
+    point..point
 }
 
 #[test]
@@ -227,6 +317,7 @@ fn rust_lang() -> Arc<Language> {
             r#"
                 (call_expression) @indent
                 (field_expression) @indent
+                (_ "(" ")" @end) @indent
                 (_ "{" "}" @end) @indent
             "#,
         )
