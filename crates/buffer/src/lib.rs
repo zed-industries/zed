@@ -201,6 +201,7 @@ struct SyntaxTree {
 
 #[derive(Clone)]
 struct AutoindentRequest {
+    selection_set_id: Option<SelectionSetId>,
     before_edit: Snapshot,
     edited: AnchorSet,
     inserted: Option<AnchorRangeSet>,
@@ -985,26 +986,12 @@ impl Buffer {
                 .background()
                 .block_with_timeout(Duration::from_micros(500), indent_columns)
             {
-                Ok(indent_columns) => {
-                    log::info!("finished synchronously {:?}", indent_columns);
-                    self.autoindent_requests.clear();
-                    self.start_transaction(None).unwrap();
-                    for (row, indent_column) in indent_columns {
-                        self.set_indent_column_for_line(row, indent_column, cx);
-                    }
-                    self.end_transaction(None, cx).unwrap();
-                }
+                Ok(indent_columns) => self.apply_autoindents(indent_columns, cx),
                 Err(indent_columns) => {
                     self.pending_autoindent = Some(cx.spawn(|this, mut cx| async move {
                         let indent_columns = indent_columns.await;
-                        log::info!("finished ASYNC, {:?}", indent_columns);
                         this.update(&mut cx, |this, cx| {
-                            this.autoindent_requests.clear();
-                            this.start_transaction(None).unwrap();
-                            for (row, indent_column) in indent_columns {
-                                this.set_indent_column_for_line(row, indent_column, cx);
-                            }
-                            this.end_transaction(None, cx).unwrap();
+                            this.apply_autoindents(indent_columns, cx);
                         });
                     }));
                 }
@@ -1119,6 +1106,57 @@ impl Buffer {
         })
     }
 
+    fn apply_autoindents(
+        &mut self,
+        indent_columns: BTreeMap<u32, u32>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let selection_set_ids = self
+            .autoindent_requests
+            .drain(..)
+            .filter_map(|req| req.selection_set_id)
+            .collect::<HashSet<_>>();
+
+        self.start_transaction(None).unwrap();
+        for (row, indent_column) in &indent_columns {
+            self.set_indent_column_for_line(*row, *indent_column, cx);
+        }
+
+        for selection_set_id in selection_set_ids {
+            if let Some(set) = self.selections.get(&selection_set_id) {
+                let new_selections = set
+                    .selections
+                    .iter()
+                    .map(|selection| {
+                        let start_point = selection.start.to_point(&*self);
+                        if start_point.column == 0 {
+                            let end_point = selection.end.to_point(&*self);
+                            let delta = Point::new(
+                                0,
+                                indent_columns.get(&start_point.row).copied().unwrap_or(0),
+                            );
+                            if delta.column > 0 {
+                                return Selection {
+                                    id: selection.id,
+                                    goal: selection.goal,
+                                    reversed: selection.reversed,
+                                    start: self
+                                        .anchor_at(start_point + delta, selection.start.bias),
+                                    end: self.anchor_at(end_point + delta, selection.end.bias),
+                                };
+                            }
+                        }
+                        selection.clone()
+                    })
+                    .collect::<Arc<[_]>>();
+                self.update_selection_set(selection_set_id, new_selections, cx)
+                    .unwrap();
+            }
+        }
+
+        self.end_transaction(None, cx).unwrap();
+    }
+
     pub fn indent_column_for_line(&self, row: u32) -> u32 {
         self.content().indent_column_for_line(row)
     }
@@ -1127,23 +1165,11 @@ impl Buffer {
         let current_column = self.indent_column_for_line(row);
         if column > current_column {
             let offset = self.visible_text.to_offset(Point::new(row, 0));
-
-            // TODO: do this differently. By replacing the preceding newline,
-            // we force the new indentation to come before any left-biased anchors
-            // on the line.
-            let delta = (column - current_column) as usize;
-            if offset > 0 {
-                let mut prefix = String::with_capacity(1 + delta);
-                prefix.push('\n');
-                prefix.extend(std::iter::repeat(' ').take(delta));
-                self.edit([(offset - 1)..offset], prefix, cx);
-            } else {
-                self.edit(
-                    [offset..offset],
-                    std::iter::repeat(' ').take(delta).collect::<String>(),
-                    cx,
-                );
-            }
+            self.edit(
+                [offset..offset],
+                " ".repeat((column - current_column) as usize),
+                cx,
+            );
         } else if column < current_column {
             self.edit(
                 [Point::new(row, 0)..Point::new(row, current_column - column)],
@@ -1518,7 +1544,16 @@ impl Buffer {
                 })));
             }
 
+            let selection_set_id = self
+                .history
+                .undo_stack
+                .last()
+                .unwrap()
+                .selections_before
+                .as_ref()
+                .map(|(set_id, _)| *set_id);
             self.autoindent_requests.push(Arc::new(AutoindentRequest {
+                selection_set_id,
                 before_edit,
                 edited,
                 inserted,

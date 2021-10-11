@@ -196,6 +196,58 @@ fn test_edit_with_autoindent(cx: &mut MutableAppContext) {
 }
 
 #[gpui::test]
+fn test_autoindent_moves_selections(cx: &mut MutableAppContext) {
+    cx.add_model(|cx| {
+        let text = History::new("fn a() {}".into());
+        let mut buffer = Buffer::from_history(0, text, None, Some(rust_lang()), cx);
+
+        let selection_set_id = buffer.add_selection_set(Vec::new(), cx);
+        buffer.start_transaction(Some(selection_set_id)).unwrap();
+        buffer.edit_with_autoindent([5..5, 9..9], "\n\n", cx);
+        buffer
+            .update_selection_set(
+                selection_set_id,
+                vec![
+                    Selection {
+                        id: 0,
+                        start: buffer.anchor_before(Point::new(1, 0)),
+                        end: buffer.anchor_before(Point::new(1, 0)),
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    },
+                    Selection {
+                        id: 1,
+                        start: buffer.anchor_before(Point::new(4, 0)),
+                        end: buffer.anchor_before(Point::new(4, 0)),
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    },
+                ],
+                cx,
+            )
+            .unwrap();
+        assert_eq!(buffer.text(), "fn a(\n\n) {}\n\n");
+
+        // Ending the transaction runs the auto-indent. The selection
+        // at the start of the auto-indented row is pushed to the right.
+        buffer.end_transaction(Some(selection_set_id), cx).unwrap();
+        assert_eq!(buffer.text(), "fn a(\n    \n) {}\n\n");
+        let selection_ranges = buffer
+            .selection_set(selection_set_id)
+            .unwrap()
+            .selections
+            .iter()
+            .map(|selection| selection.point_range(&buffer))
+            .collect::<Vec<_>>();
+
+        assert_eq!(selection_ranges[0], empty(Point::new(1, 4)));
+        assert_eq!(selection_ranges[1], empty(Point::new(4, 0)));
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut MutableAppContext) {
     cx.add_model(|cx| {
         let text = "
@@ -285,10 +337,6 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
     });
 }
 
-fn empty(point: Point) -> Range<Point> {
-    point..point
-}
-
 #[test]
 fn test_contiguous_ranges() {
     assert_eq!(
@@ -325,4 +373,8 @@ fn rust_lang() -> Arc<Language> {
         .with_brackets_query(r#" ("{" @open "}" @close) "#)
         .unwrap(),
     )
+}
+
+fn empty(point: Point) -> Range<Point> {
+    point..point
 }
