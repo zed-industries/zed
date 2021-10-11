@@ -30,9 +30,10 @@ use std::{
     any::Any,
     cell::RefCell,
     cmp,
-    collections::{BTreeMap, VecDeque},
+    collections::BTreeMap,
     convert::{TryFrom, TryInto},
     ffi::OsString,
+    future::Future,
     hash::BuildHasher,
     iter::Iterator,
     ops::{Deref, DerefMut, Range},
@@ -166,7 +167,8 @@ pub struct Buffer {
     history: History,
     file: Option<Box<dyn File>>,
     language: Option<Arc<Language>>,
-    autoindent_requests: VecDeque<AutoindentRequest>,
+    autoindent_requests: Vec<Arc<AutoindentRequest>>,
+    pending_autoindent: Option<Task<()>>,
     sync_parse_timeout: Duration,
     syntax_tree: Mutex<Option<SyntaxTree>>,
     parsing_in_background: bool,
@@ -194,17 +196,11 @@ struct SyntaxTree {
     version: clock::Global,
 }
 
+#[derive(Clone)]
 struct AutoindentRequest {
     before_edit: Snapshot,
-    version_after_edit: clock::Global,
     edited: AnchorSet,
     inserted: Option<AnchorRangeSet>,
-}
-
-impl AutoindentRequest {
-    fn version_after_edit(&self) -> &clock::Global {
-        &self.version_after_edit
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -651,6 +647,7 @@ impl Buffer {
             parse_count: 0,
             sync_parse_timeout: Duration::from_millis(1),
             autoindent_requests: Default::default(),
+            pending_autoindent: Default::default(),
             language,
             saved_mtime,
             selections: HashMap::default(),
@@ -896,7 +893,7 @@ impl Buffer {
                 .block_with_timeout(self.sync_parse_timeout, parse_task)
             {
                 Ok(new_tree) => {
-                    self.did_finish_parsing(new_tree, parsed_version, language, cx);
+                    self.did_finish_parsing(new_tree, parsed_version, cx);
                     return true;
                 }
                 Err(parse_task) => {
@@ -910,7 +907,7 @@ impl Buffer {
                                 });
                             let parse_again = this.version > parsed_version || language_changed;
                             this.parsing_in_background = false;
-                            this.did_finish_parsing(new_tree, parsed_version, language, cx);
+                            this.did_finish_parsing(new_tree, parsed_version, cx);
 
                             if parse_again && this.reparse(cx) {
                                 return;
@@ -969,54 +966,77 @@ impl Buffer {
         &mut self,
         tree: Tree,
         version: clock::Global,
-        language: Arc<Language>,
         cx: &mut ModelContext<Self>,
     ) {
-        self.perform_autoindent(&tree, &version, language, cx);
         self.parse_count += 1;
         *self.syntax_tree.lock() = Some(SyntaxTree { tree, version });
+        self.request_autoindent(cx);
         cx.emit(Event::Reparsed);
         cx.notify();
     }
 
-    fn perform_autoindent(
-        &mut self,
-        new_tree: &Tree,
-        new_version: &clock::Global,
-        language: Arc<Language>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let mut cursor = QueryCursorHandle::new();
-        while let Some(request) = self.autoindent_requests.front() {
-            if new_version < request.version_after_edit() {
-                break;
+    fn request_autoindent(&mut self, cx: &mut ModelContext<Self>) {
+        if let Some(indent_columns) = self.compute_autoindents() {
+            let indent_columns = cx.background().spawn(indent_columns);
+            match cx
+                .background()
+                .block_with_timeout(Duration::from_micros(500), indent_columns)
+            {
+                Ok(indent_columns) => {
+                    log::info!("finished synchronously {:?}", indent_columns);
+                    self.autoindent_requests.clear();
+                    self.start_transaction(None).unwrap();
+                    for (row, indent_column) in indent_columns {
+                        self.set_indent_column_for_line(row, indent_column, cx);
+                    }
+                    self.end_transaction(None, cx).unwrap();
+                }
+                Err(indent_columns) => {
+                    self.pending_autoindent = Some(cx.spawn(|this, mut cx| async move {
+                        let indent_columns = indent_columns.await;
+                        log::info!("finished ASYNC, {:?}", indent_columns);
+                        this.update(&mut cx, |this, cx| {
+                            this.autoindent_requests.clear();
+                            this.start_transaction(None).unwrap();
+                            for (row, indent_column) in indent_columns {
+                                this.set_indent_column_for_line(row, indent_column, cx);
+                            }
+                            this.end_transaction(None, cx).unwrap();
+                        });
+                    }));
+                }
             }
+        }
+    }
 
-            let request = self.autoindent_requests.pop_front().unwrap();
+    fn compute_autoindents(&self) -> Option<impl Future<Output = BTreeMap<u32, u32>>> {
+        let snapshot = self.snapshot();
+        if snapshot.language.is_none()
+            || snapshot.tree.is_none()
+            || self.autoindent_requests.is_empty()
+        {
+            return None;
+        }
 
-            let old_to_new_rows = request
-                .edited
-                .to_points(request.before_edit.content())
-                .map(|point| point.row)
-                .zip(
-                    request
-                        .edited
-                        .to_points(self.content())
-                        .map(|point| point.row),
-                )
-                .collect::<BTreeMap<u32, u32>>();
+        let autoindent_requests = self.autoindent_requests.clone();
+        Some(async move {
+            let mut indent_columns = BTreeMap::new();
+            for request in autoindent_requests {
+                let old_to_new_rows = request
+                    .edited
+                    .to_points(&request.before_edit)
+                    .map(|point| point.row)
+                    .zip(request.edited.to_points(&snapshot).map(|point| point.row))
+                    .collect::<BTreeMap<u32, u32>>();
 
-            let mut old_suggestions = HashMap::default();
-            if let Some(old_tree) = &request.before_edit.tree {
+                let mut old_suggestions = HashMap::default();
                 let old_edited_ranges = contiguous_ranges(old_to_new_rows.keys().copied());
                 for old_edited_range in old_edited_ranges {
-                    let old_content = request.before_edit.content();
-                    let suggestions = old_content.suggest_autoindents(
-                        old_edited_range.clone(),
-                        old_tree,
-                        &language,
-                        &mut cursor,
-                    );
+                    let suggestions = request
+                        .before_edit
+                        .suggest_autoindents(old_edited_range.clone())
+                        .into_iter()
+                        .flatten();
                     for (old_row, suggestion) in old_edited_range.zip(suggestions) {
                         let indentation_basis = old_to_new_rows
                             .get(&suggestion.basis_row)
@@ -1033,64 +1053,60 @@ impl Buffer {
                         );
                     }
                 }
-            }
 
-            // At this point, old_suggestions contains the suggested indentation for all edited lines with respect to the state of the
-            // buffer before the edit, but keyed by the row for these lines after the edits were applied.
-
-            self.start_transaction(None).unwrap();
-            let new_edited_row_ranges = contiguous_ranges(old_to_new_rows.values().copied());
-            for new_edited_row_range in new_edited_row_ranges {
-                let suggestions = self
-                    .content()
-                    .suggest_autoindents(
-                        new_edited_row_range.clone(),
-                        &new_tree,
-                        &language,
-                        &mut cursor,
-                    )
-                    .collect::<Vec<_>>();
-                for (new_row, suggestion) in new_edited_row_range.zip(suggestions) {
-                    let delta = if suggestion.indent { INDENT_SIZE } else { 0 };
-                    let new_indentation = self.indent_column_for_line(suggestion.basis_row) + delta;
-                    if old_suggestions
-                        .get(&new_row)
-                        .map_or(true, |old_indentation| new_indentation != *old_indentation)
-                    {
-                        self.set_indent_column_for_line(new_row, new_indentation, cx);
-                    }
-                }
-            }
-
-            if let Some(inserted) = request.inserted {
-                let inserted_row_ranges = contiguous_ranges(
-                    inserted
-                        .to_point_ranges(self.content())
-                        .flat_map(|range| range.start.row..range.end.row + 1),
-                )
-                .collect::<Vec<_>>();
-                for inserted_row_range in inserted_row_ranges {
-                    let suggestions = self
-                        .content()
-                        .suggest_autoindents(
-                            inserted_row_range.clone(),
-                            &new_tree,
-                            &language,
-                            &mut cursor,
-                        )
-                        .collect::<Vec<_>>();
-
-                    for (row, suggestion) in inserted_row_range.zip(suggestions) {
+                // At this point, old_suggestions contains the suggested indentation for all edited lines with respect to the state of the
+                // buffer before the edit, but keyed by the row for these lines after the edits were applied.
+                let new_edited_row_ranges = contiguous_ranges(old_to_new_rows.values().copied());
+                for new_edited_row_range in new_edited_row_ranges {
+                    let suggestions = snapshot
+                        .suggest_autoindents(new_edited_row_range.clone())
+                        .into_iter()
+                        .flatten();
+                    for (new_row, suggestion) in new_edited_row_range.zip(suggestions) {
                         let delta = if suggestion.indent { INDENT_SIZE } else { 0 };
-                        let new_indentation =
-                            self.indent_column_for_line(suggestion.basis_row) + delta;
-                        self.set_indent_column_for_line(row, new_indentation, cx);
+                        let new_indentation = indent_columns
+                            .get(&suggestion.basis_row)
+                            .copied()
+                            .unwrap_or_else(|| {
+                                snapshot.indent_column_for_line(suggestion.basis_row)
+                            })
+                            + delta;
+                        if old_suggestions
+                            .get(&new_row)
+                            .map_or(true, |old_indentation| new_indentation != *old_indentation)
+                        {
+                            indent_columns.insert(new_row, new_indentation);
+                        }
+                    }
+                }
+
+                if let Some(inserted) = request.inserted.as_ref() {
+                    let inserted_row_ranges = contiguous_ranges(
+                        inserted
+                            .to_point_ranges(&snapshot)
+                            .flat_map(|range| range.start.row..range.end.row + 1),
+                    );
+                    for inserted_row_range in inserted_row_ranges {
+                        let suggestions = snapshot
+                            .suggest_autoindents(inserted_row_range.clone())
+                            .into_iter()
+                            .flatten();
+                        for (row, suggestion) in inserted_row_range.zip(suggestions) {
+                            let delta = if suggestion.indent { INDENT_SIZE } else { 0 };
+                            let new_indentation = indent_columns
+                                .get(&suggestion.basis_row)
+                                .copied()
+                                .unwrap_or_else(|| {
+                                    snapshot.indent_column_for_line(suggestion.basis_row)
+                                })
+                                + delta;
+                            indent_columns.insert(row, new_indentation);
+                        }
                     }
                 }
             }
-
-            self.end_transaction(None, cx).unwrap();
-        }
+            indent_columns
+        })
     }
 
     pub fn indent_column_for_line(&self, row: u32) -> u32 {
@@ -1443,6 +1459,7 @@ impl Buffer {
             return;
         }
 
+        self.pending_autoindent.take();
         let autoindent_request = if autoindent && self.language.is_some() {
             let before_edit = self.snapshot();
             let edited = self.content().anchor_set(ranges.iter().filter_map(|range| {
@@ -1466,7 +1483,7 @@ impl Buffer {
             None
         };
 
-        self.start_transaction_at(None, Instant::now()).unwrap();
+        self.start_transaction(None).unwrap();
         let timestamp = InsertionTimestamp {
             replica_id: self.replica_id,
             local: self.local_clock.tick().value,
@@ -1482,21 +1499,23 @@ impl Buffer {
         if let Some((before_edit, edited)) = autoindent_request {
             let mut inserted = None;
             if let Some(first_newline_ix) = first_newline_ix {
+                let mut delta = 0isize;
                 inserted = Some(self.content().anchor_range_set(ranges.iter().map(|range| {
-                    (range.start + first_newline_ix + 1, Bias::Left)
-                        ..(range.start + new_text_len, Bias::Right)
+                    let start = (delta + range.start as isize) as usize + first_newline_ix + 1;
+                    let end = (delta + range.start as isize) as usize + new_text_len;
+                    delta += (range.end as isize - range.start as isize) + new_text_len as isize;
+                    (start, Bias::Left)..(end, Bias::Right)
                 })));
             }
 
-            self.autoindent_requests.push_back(AutoindentRequest {
+            self.autoindent_requests.push(Arc::new(AutoindentRequest {
                 before_edit,
-                version_after_edit: self.version.clone(),
                 edited,
                 inserted,
-            });
+            }));
         }
 
-        self.end_transaction_at(None, Instant::now(), cx).unwrap();
+        self.end_transaction(None, cx).unwrap();
         self.send_operation(Operation::Edit(edit), cx);
     }
 
@@ -1626,6 +1645,8 @@ impl Buffer {
         ops: I,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        self.pending_autoindent.take();
+
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
@@ -2400,6 +2421,7 @@ impl Clone for Buffer {
             sync_parse_timeout: self.sync_parse_timeout,
             parse_count: self.parse_count,
             autoindent_requests: Default::default(),
+            pending_autoindent: Default::default(),
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
             remote_id: self.remote_id.clone(),
@@ -2449,6 +2471,120 @@ impl Snapshot {
         self.content().indent_column_for_line(row)
     }
 
+    fn suggest_autoindents<'a>(
+        &'a self,
+        row_range: Range<u32>,
+    ) -> Option<impl Iterator<Item = IndentSuggestion> + 'a> {
+        let mut query_cursor = QueryCursorHandle::new();
+        if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
+            let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
+
+            // Get the "indentation ranges" that intersect this row range.
+            let indent_capture_ix = language.indents_query.capture_index_for_name("indent");
+            let end_capture_ix = language.indents_query.capture_index_for_name("end");
+            query_cursor.set_point_range(
+                Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0).into()
+                    ..Point::new(row_range.end, 0).into(),
+            );
+            let mut indentation_ranges = Vec::<(Range<Point>, &'static str)>::new();
+            for mat in query_cursor.matches(
+                &language.indents_query,
+                tree.root_node(),
+                TextProvider(&self.visible_text),
+            ) {
+                let mut node_kind = "";
+                let mut start: Option<Point> = None;
+                let mut end: Option<Point> = None;
+                for capture in mat.captures {
+                    if Some(capture.index) == indent_capture_ix {
+                        node_kind = capture.node.kind();
+                        start.get_or_insert(capture.node.start_position().into());
+                        end.get_or_insert(capture.node.end_position().into());
+                    } else if Some(capture.index) == end_capture_ix {
+                        end = Some(capture.node.start_position().into());
+                    }
+                }
+
+                if let Some((start, end)) = start.zip(end) {
+                    if start.row == end.row {
+                        continue;
+                    }
+
+                    let range = start..end;
+                    match indentation_ranges.binary_search_by_key(&range.start, |r| r.0.start) {
+                        Err(ix) => indentation_ranges.insert(ix, (range, node_kind)),
+                        Ok(ix) => {
+                            let prev_range = &mut indentation_ranges[ix];
+                            prev_range.0.end = prev_range.0.end.max(range.end);
+                        }
+                    }
+                }
+            }
+
+            let mut prev_row = prev_non_blank_row.unwrap_or(0);
+            Some(row_range.map(move |row| {
+                let row_start = Point::new(row, self.indent_column_for_line(row));
+
+                let mut indent_from_prev_row = false;
+                let mut outdent_to_row = u32::MAX;
+                for (range, _node_kind) in &indentation_ranges {
+                    if range.start.row >= row {
+                        break;
+                    }
+
+                    if range.start.row == prev_row && range.end > row_start {
+                        indent_from_prev_row = true;
+                    }
+                    if range.end.row >= prev_row && range.end <= row_start {
+                        outdent_to_row = outdent_to_row.min(range.start.row);
+                    }
+                }
+
+                let suggestion = if outdent_to_row == prev_row {
+                    IndentSuggestion {
+                        basis_row: prev_row,
+                        indent: false,
+                    }
+                } else if indent_from_prev_row {
+                    IndentSuggestion {
+                        basis_row: prev_row,
+                        indent: true,
+                    }
+                } else if outdent_to_row < prev_row {
+                    IndentSuggestion {
+                        basis_row: outdent_to_row,
+                        indent: false,
+                    }
+                } else {
+                    IndentSuggestion {
+                        basis_row: prev_row,
+                        indent: false,
+                    }
+                };
+
+                prev_row = row;
+                suggestion
+            }))
+        } else {
+            None
+        }
+    }
+
+    fn prev_non_blank_row(&self, mut row: u32) -> Option<u32> {
+        while row > 0 {
+            row -= 1;
+            if !self.is_line_blank(row) {
+                return Some(row);
+            }
+        }
+        None
+    }
+
+    fn is_line_blank(&self, row: u32) -> bool {
+        self.text_for_range(Point::new(row, 0)..Point::new(row, self.line_len(row)))
+            .all(|chunk| chunk.matches(|c: char| !c.is_whitespace()).next().is_none())
+    }
+
     pub fn text(&self) -> Rope {
         self.visible_text.clone()
     }
@@ -2461,11 +2597,16 @@ impl Snapshot {
         self.visible_text.max_point()
     }
 
-    pub fn text_for_range(&self, range: Range<usize>) -> Chunks {
+    pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> Chunks {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
         self.visible_text.chunks_in_range(range)
     }
 
-    pub fn highlighted_text_for_range(&mut self, range: Range<usize>) -> HighlightedChunks {
+    pub fn highlighted_text_for_range<T: ToOffset>(
+        &mut self,
+        range: Range<T>,
+    ) -> HighlightedChunks {
+        let range = range.start.to_offset(&*self)..range.end.to_offset(&*self);
         let chunks = self.visible_text.chunks_in_range(range.clone());
         if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
             let captures = self.query_cursor.set_byte_range(range.clone()).captures(
@@ -2620,21 +2761,6 @@ impl<'a> Content<'a> {
             }
         }
         result
-    }
-
-    fn prev_non_blank_row(&self, mut row: u32) -> Option<u32> {
-        while row > 0 {
-            row -= 1;
-            if !self.is_line_blank(row) {
-                return Some(row);
-            }
-        }
-        None
-    }
-
-    fn is_line_blank(&self, row: u32) -> bool {
-        self.text_for_range(Point::new(row, 0)..Point::new(row, self.line_len(row)))
-            .all(|chunk| chunk.matches(|c: char| !c.is_whitespace()).next().is_none())
     }
 
     fn summary_for_anchor(&self, anchor: &Anchor) -> TextSummary {
@@ -2802,112 +2928,6 @@ impl<'a> Content<'a> {
         } else {
             Err(anyhow!("offset out of bounds"))
         }
-    }
-
-    fn suggest_autoindents(
-        &'a self,
-        row_range: Range<u32>,
-        tree: &Tree,
-        language: &Language,
-        cursor: &mut QueryCursor,
-    ) -> impl Iterator<Item = IndentSuggestion> + 'a {
-        let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
-
-        // Get the "indentation ranges" that intersect this row range.
-        let indent_capture_ix = language.indents_query.capture_index_for_name("indent");
-        let end_capture_ix = language.indents_query.capture_index_for_name("end");
-        cursor.set_point_range(
-            Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0).into()
-                ..Point::new(row_range.end, 0).into(),
-        );
-        let mut indentation_ranges = Vec::<(Range<Point>, &'static str)>::new();
-        for mat in cursor.matches(
-            &language.indents_query,
-            tree.root_node(),
-            TextProvider(&self.visible_text),
-        ) {
-            let mut node_kind = "";
-            let mut start: Option<Point> = None;
-            let mut end: Option<Point> = None;
-            for capture in mat.captures {
-                if Some(capture.index) == indent_capture_ix {
-                    node_kind = capture.node.kind();
-                    start.get_or_insert(capture.node.start_position().into());
-                    end.get_or_insert(capture.node.end_position().into());
-                } else if Some(capture.index) == end_capture_ix {
-                    end = Some(capture.node.start_position().into());
-                }
-            }
-
-            if let Some((start, end)) = start.zip(end) {
-                if start.row == end.row {
-                    continue;
-                }
-
-                let range = start..end;
-                match indentation_ranges.binary_search_by_key(&range.start, |r| r.0.start) {
-                    Err(ix) => indentation_ranges.insert(ix, (range, node_kind)),
-                    Ok(ix) => {
-                        let prev_range = &mut indentation_ranges[ix];
-                        prev_range.0.end = prev_range.0.end.max(range.end);
-                    }
-                }
-            }
-        }
-
-        eprintln!(
-            "autoindent {:?}. ranges: {:?}",
-            row_range, indentation_ranges
-        );
-
-        let mut prev_row = prev_non_blank_row.unwrap_or(0);
-        row_range.map(move |row| {
-            let row_start = Point::new(row, self.indent_column_for_line(row));
-
-            eprintln!("  autoindent row: {:?}", row);
-
-            let mut indent_from_prev_row = false;
-            let mut outdent_to_row = u32::MAX;
-            for (range, node_kind) in &indentation_ranges {
-                if range.start.row >= row {
-                    break;
-                }
-
-                if range.start.row == prev_row && range.end > row_start {
-                    eprintln!("    indent because of {} {:?}", node_kind, range);
-                    indent_from_prev_row = true;
-                }
-                if range.end.row >= prev_row && range.end <= row_start {
-                    eprintln!("    outdent because of {} {:?}", node_kind, range);
-                    outdent_to_row = outdent_to_row.min(range.start.row);
-                }
-            }
-
-            let suggestion = if outdent_to_row == prev_row {
-                IndentSuggestion {
-                    basis_row: prev_row,
-                    indent: false,
-                }
-            } else if indent_from_prev_row {
-                IndentSuggestion {
-                    basis_row: prev_row,
-                    indent: true,
-                }
-            } else if outdent_to_row < prev_row {
-                IndentSuggestion {
-                    basis_row: outdent_to_row,
-                    indent: false,
-                }
-            } else {
-                IndentSuggestion {
-                    basis_row: prev_row,
-                    indent: false,
-                }
-            };
-
-            prev_row = row;
-            suggestion
-        })
     }
 }
 

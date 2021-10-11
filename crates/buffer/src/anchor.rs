@@ -12,18 +12,22 @@ pub struct Anchor {
     pub version: clock::Global,
 }
 
+#[derive(Clone)]
 pub struct AnchorMap<T> {
     pub(crate) version: clock::Global,
     pub(crate) entries: Vec<((usize, Bias), T)>,
 }
 
+#[derive(Clone)]
 pub struct AnchorSet(pub(crate) AnchorMap<()>);
 
+#[derive(Clone)]
 pub struct AnchorRangeMap<T> {
     pub(crate) version: clock::Global,
     pub(crate) entries: Vec<(Range<(usize, Bias)>, T)>,
 }
 
+#[derive(Clone)]
 pub struct AnchorRangeSet(pub(crate) AnchorRangeMap<()>);
 
 impl Anchor {
