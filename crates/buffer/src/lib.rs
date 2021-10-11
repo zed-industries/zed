@@ -26,6 +26,7 @@ use rpc::proto;
 use seahash::SeaHasher;
 pub use selection::*;
 use similar::{ChangeTag, TextDiff};
+use smol::future::yield_now;
 use std::{
     any::Any,
     cell::RefCell,
@@ -1010,6 +1011,7 @@ impl Buffer {
     }
 
     fn compute_autoindents(&self) -> Option<impl Future<Output = BTreeMap<u32, u32>>> {
+        let max_rows_between_yields = 100;
         let snapshot = self.snapshot();
         if snapshot.language.is_none()
             || snapshot.tree.is_none()
@@ -1030,7 +1032,8 @@ impl Buffer {
                     .collect::<BTreeMap<u32, u32>>();
 
                 let mut old_suggestions = HashMap::default();
-                let old_edited_ranges = contiguous_ranges(old_to_new_rows.keys().copied());
+                let old_edited_ranges =
+                    contiguous_ranges(old_to_new_rows.keys().copied(), max_rows_between_yields);
                 for old_edited_range in old_edited_ranges {
                     let suggestions = request
                         .before_edit
@@ -1052,11 +1055,13 @@ impl Buffer {
                             indentation_basis + delta,
                         );
                     }
+                    yield_now().await;
                 }
 
                 // At this point, old_suggestions contains the suggested indentation for all edited lines with respect to the state of the
                 // buffer before the edit, but keyed by the row for these lines after the edits were applied.
-                let new_edited_row_ranges = contiguous_ranges(old_to_new_rows.values().copied());
+                let new_edited_row_ranges =
+                    contiguous_ranges(old_to_new_rows.values().copied(), max_rows_between_yields);
                 for new_edited_row_range in new_edited_row_ranges {
                     let suggestions = snapshot
                         .suggest_autoindents(new_edited_row_range.clone())
@@ -1078,6 +1083,7 @@ impl Buffer {
                             indent_columns.insert(new_row, new_indentation);
                         }
                     }
+                    yield_now().await;
                 }
 
                 if let Some(inserted) = request.inserted.as_ref() {
@@ -1085,6 +1091,7 @@ impl Buffer {
                         inserted
                             .to_point_ranges(&snapshot)
                             .flat_map(|range| range.start.row..range.end.row + 1),
+                        max_rows_between_yields,
                     );
                     for inserted_row_range in inserted_row_ranges {
                         let suggestions = snapshot
@@ -1102,6 +1109,7 @@ impl Buffer {
                                 + delta;
                             indent_columns.insert(row, new_indentation);
                         }
+                        yield_now().await;
                     }
                 }
             }
@@ -3667,12 +3675,16 @@ impl ToPoint for usize {
     }
 }
 
-fn contiguous_ranges(mut values: impl Iterator<Item = u32>) -> impl Iterator<Item = Range<u32>> {
+fn contiguous_ranges(
+    values: impl IntoIterator<Item = u32>,
+    max_len: usize,
+) -> impl Iterator<Item = Range<u32>> {
+    let mut values = values.into_iter();
     let mut current_range: Option<Range<u32>> = None;
     std::iter::from_fn(move || loop {
         if let Some(value) = values.next() {
             if let Some(range) = &mut current_range {
-                if value == range.end {
+                if value == range.end && range.len() < max_len {
                     range.end += 1;
                     continue;
                 }
@@ -4607,8 +4619,15 @@ mod tests {
     #[test]
     fn test_contiguous_ranges() {
         assert_eq!(
-            contiguous_ranges([1, 2, 3, 5, 6, 9, 10, 11, 12].iter().copied()).collect::<Vec<_>>(),
+            contiguous_ranges([1, 2, 3, 5, 6, 9, 10, 11, 12], 100).collect::<Vec<_>>(),
             &[1..4, 5..7, 9..13]
+        );
+
+        // Respects the `max_len` parameter
+        assert_eq!(
+            contiguous_ranges([2, 3, 4, 5, 6, 7, 8, 9, 23, 24, 25, 26, 30, 31], 3)
+                .collect::<Vec<_>>(),
+            &[2..5, 5..8, 8..10, 23..26, 26..27, 30..32],
         );
     }
 
