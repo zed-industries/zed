@@ -201,7 +201,7 @@ struct SyntaxTree {
 
 #[derive(Clone)]
 struct AutoindentRequest {
-    selection_set_id: Option<SelectionSetId>,
+    selection_set_ids: HashSet<SelectionSetId>,
     before_edit: Snapshot,
     edited: AnchorSet,
     inserted: Option<AnchorRangeSet>,
@@ -214,8 +214,8 @@ struct Transaction {
     buffer_was_dirty: bool,
     edits: Vec<clock::Local>,
     ranges: Vec<Range<usize>>,
-    selections_before: Option<(SelectionSetId, Arc<[Selection]>)>,
-    selections_after: Option<(SelectionSetId, Arc<[Selection]>)>,
+    selections_before: HashMap<SelectionSetId, Arc<[Selection]>>,
+    selections_after: HashMap<SelectionSetId, Arc<[Selection]>>,
     first_edit_at: Instant,
     last_edit_at: Instant,
 }
@@ -299,7 +299,7 @@ impl History {
         &mut self,
         start: clock::Global,
         buffer_was_dirty: bool,
-        selections: Option<(SelectionSetId, Arc<[Selection]>)>,
+        selections_before: HashMap<SelectionSetId, Arc<[Selection]>>,
         now: Instant,
     ) {
         self.transaction_depth += 1;
@@ -310,8 +310,8 @@ impl History {
                 buffer_was_dirty,
                 edits: Vec::new(),
                 ranges: Vec::new(),
-                selections_before: selections,
-                selections_after: None,
+                selections_before,
+                selections_after: Default::default(),
                 first_edit_at: now,
                 last_edit_at: now,
             });
@@ -320,7 +320,7 @@ impl History {
 
     fn end_transaction(
         &mut self,
-        selections: Option<(SelectionSetId, Arc<[Selection]>)>,
+        selections_after: HashMap<SelectionSetId, Arc<[Selection]>>,
         now: Instant,
     ) -> Option<&Transaction> {
         assert_ne!(self.transaction_depth, 0);
@@ -331,7 +331,7 @@ impl History {
                 None
             } else {
                 let transaction = self.undo_stack.last_mut().unwrap();
-                transaction.selections_after = selections;
+                transaction.selections_after = selections_after;
                 transaction.last_edit_at = now;
                 Some(transaction)
             }
@@ -367,7 +367,9 @@ impl History {
 
             if let Some(transaction) = transactions_to_merge.last_mut() {
                 last_transaction.last_edit_at = transaction.last_edit_at;
-                last_transaction.selections_after = transaction.selections_after.take();
+                last_transaction
+                    .selections_after
+                    .extend(transaction.selections_after.drain());
                 last_transaction.end = transaction.end.clone();
             }
         }
@@ -1114,16 +1116,17 @@ impl Buffer {
         let selection_set_ids = self
             .autoindent_requests
             .drain(..)
-            .filter_map(|req| req.selection_set_id)
+            .flat_map(|req| req.selection_set_ids.clone())
             .collect::<HashSet<_>>();
 
-        self.start_transaction(None).unwrap();
+        self.start_transaction(selection_set_ids.iter().copied())
+            .unwrap();
         for (row, indent_column) in &indent_columns {
             self.set_indent_column_for_line(*row, *indent_column, cx);
         }
 
-        for selection_set_id in selection_set_ids {
-            if let Some(set) = self.selections.get(&selection_set_id) {
+        for selection_set_id in &selection_set_ids {
+            if let Some(set) = self.selections.get(selection_set_id) {
                 let new_selections = set
                     .selections
                     .iter()
@@ -1149,12 +1152,13 @@ impl Buffer {
                         selection.clone()
                     })
                     .collect::<Arc<[_]>>();
-                self.update_selection_set(selection_set_id, new_selections, cx)
+                self.update_selection_set(*selection_set_id, new_selections, cx)
                     .unwrap();
             }
         }
 
-        self.end_transaction(None, cx).unwrap();
+        self.end_transaction(selection_set_ids.iter().copied(), cx)
+            .unwrap();
     }
 
     pub fn indent_column_for_line(&self, row: u32) -> u32 {
@@ -1382,20 +1386,28 @@ impl Buffer {
         self.deferred_ops.len()
     }
 
-    pub fn start_transaction(&mut self, set_id: Option<SelectionSetId>) -> Result<()> {
-        self.start_transaction_at(set_id, Instant::now())
+    pub fn start_transaction(
+        &mut self,
+        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
+    ) -> Result<()> {
+        self.start_transaction_at(selection_set_ids, Instant::now())
     }
 
-    fn start_transaction_at(&mut self, set_id: Option<SelectionSetId>, now: Instant) -> Result<()> {
-        let selections = if let Some(set_id) = set_id {
-            let set = self
-                .selections
-                .get(&set_id)
-                .ok_or_else(|| anyhow!("invalid selection set {:?}", set_id))?;
-            Some((set_id, set.selections.clone()))
-        } else {
-            None
-        };
+    fn start_transaction_at(
+        &mut self,
+        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
+        now: Instant,
+    ) -> Result<()> {
+        let selections = selection_set_ids
+            .into_iter()
+            .map(|set_id| {
+                let set = self
+                    .selections
+                    .get(&set_id)
+                    .expect("invalid selection set id");
+                (set_id, set.selections.clone())
+            })
+            .collect();
         self.history
             .start_transaction(self.version.clone(), self.is_dirty(), selections, now);
         Ok(())
@@ -1403,27 +1415,28 @@ impl Buffer {
 
     pub fn end_transaction(
         &mut self,
-        set_id: Option<SelectionSetId>,
+        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        self.end_transaction_at(set_id, Instant::now(), cx)
+        self.end_transaction_at(selection_set_ids, Instant::now(), cx)
     }
 
     fn end_transaction_at(
         &mut self,
-        set_id: Option<SelectionSetId>,
+        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
         now: Instant,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        let selections = if let Some(set_id) = set_id {
-            let set = self
-                .selections
-                .get(&set_id)
-                .ok_or_else(|| anyhow!("invalid selection set {:?}", set_id))?;
-            Some((set_id, set.selections.clone()))
-        } else {
-            None
-        };
+        let selections = selection_set_ids
+            .into_iter()
+            .map(|set_id| {
+                let set = self
+                    .selections
+                    .get(&set_id)
+                    .expect("invalid selection set id");
+                (set_id, set.selections.clone())
+            })
+            .collect();
 
         if let Some(transaction) = self.history.end_transaction(selections, now) {
             let since = transaction.start.clone();
@@ -1544,16 +1557,17 @@ impl Buffer {
                 })));
             }
 
-            let selection_set_id = self
+            let selection_set_ids = self
                 .history
                 .undo_stack
                 .last()
                 .unwrap()
                 .selections_before
-                .as_ref()
-                .map(|(set_id, _)| *set_id);
+                .keys()
+                .copied()
+                .collect();
             self.autoindent_requests.push(Arc::new(AutoindentRequest {
-                selection_set_id,
+                selection_set_ids,
                 before_edit,
                 edited,
                 inserted,
@@ -1953,7 +1967,7 @@ impl Buffer {
         if let Some(transaction) = self.history.pop_undo().cloned() {
             let selections = transaction.selections_before.clone();
             self.undo_or_redo(transaction, cx).unwrap();
-            if let Some((set_id, selections)) = selections {
+            for (set_id, selections) in selections {
                 let _ = self.update_selection_set(set_id, selections, cx);
             }
         }
@@ -1972,7 +1986,7 @@ impl Buffer {
         if let Some(transaction) = self.history.pop_redo().cloned() {
             let selections = transaction.selections_after.clone();
             self.undo_or_redo(transaction, cx).unwrap();
-            if let Some((set_id, selections)) = selections {
+            for (set_id, selections) in selections {
                 let _ = self.update_selection_set(set_id, selections, cx);
             }
         }
