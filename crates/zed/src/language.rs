@@ -22,6 +22,8 @@ fn rust() -> Language {
         .unwrap()
         .with_brackets_query(load_query("rust/brackets.scm").as_ref())
         .unwrap()
+        .with_indents_query(load_query("rust/indents.scm").as_ref())
+        .unwrap()
 }
 
 fn load_query(path: &str) -> Cow<'static, str> {

@@ -759,6 +759,7 @@ dependencies = [
  "serde 1.0.125",
  "similar",
  "smallvec",
+ "smol",
  "sum_tree",
  "theme",
  "tree-sitter",

@@ -11,20 +11,23 @@ pub use tree_sitter::{Parser, Tree};
 pub struct LanguageConfig {
     pub name: String,
     pub path_suffixes: Vec<String>,
-    pub autoclose_pairs: Vec<AutoclosePair>,
+    pub brackets: Vec<BracketPair>,
 }
 
-#[derive(Clone, Deserialize)]
-pub struct AutoclosePair {
+#[derive(Clone, Debug, Deserialize)]
+pub struct BracketPair {
     pub start: String,
     pub end: String,
+    pub close: bool,
+    pub newline: bool,
 }
 
 pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Grammar,
-    pub(crate) highlight_query: Query,
+    pub(crate) highlights_query: Query,
     pub(crate) brackets_query: Query,
+    pub(crate) indents_query: Query,
     pub(crate) highlight_map: Mutex<HighlightMap>,
 }
 
@@ -68,19 +71,25 @@ impl Language {
         Self {
             config,
             brackets_query: Query::new(grammar, "").unwrap(),
-            highlight_query: Query::new(grammar, "").unwrap(),
+            highlights_query: Query::new(grammar, "").unwrap(),
+            indents_query: Query::new(grammar, "").unwrap(),
             grammar,
             highlight_map: Default::default(),
         }
     }
 
-    pub fn with_highlights_query(mut self, highlights_query_source: &str) -> Result<Self> {
-        self.highlight_query = Query::new(self.grammar, highlights_query_source)?;
+    pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
+        self.highlights_query = Query::new(self.grammar, source)?;
         Ok(self)
     }
 
-    pub fn with_brackets_query(mut self, brackets_query_source: &str) -> Result<Self> {
-        self.brackets_query = Query::new(self.grammar, brackets_query_source)?;
+    pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
+        self.brackets_query = Query::new(self.grammar, source)?;
+        Ok(self)
+    }
+
+    pub fn with_indents_query(mut self, source: &str) -> Result<Self> {
+        self.indents_query = Query::new(self.grammar, source)?;
         Ok(self)
     }
 
@@ -88,8 +97,8 @@ impl Language {
         self.config.name.as_str()
     }
 
-    pub fn autoclose_pairs(&self) -> &[AutoclosePair] {
-        &self.config.autoclose_pairs
+    pub fn brackets(&self) -> &[BracketPair] {
+        &self.config.brackets
     }
 
     pub fn highlight_map(&self) -> HighlightMap {
@@ -97,7 +106,8 @@ impl Language {
     }
 
     pub fn set_theme(&self, theme: &SyntaxTheme) {
-        *self.highlight_map.lock() = HighlightMap::new(self.highlight_query.capture_names(), theme);
+        *self.highlight_map.lock() =
+            HighlightMap::new(self.highlights_query.capture_names(), theme);
     }
 }
 
@@ -110,28 +120,22 @@ mod tests {
         let grammar = tree_sitter_rust::language();
         let registry = LanguageRegistry {
             languages: vec![
-                Arc::new(Language {
-                    config: LanguageConfig {
+                Arc::new(Language::new(
+                    LanguageConfig {
                         name: "Rust".to_string(),
                         path_suffixes: vec!["rs".to_string()],
                         ..Default::default()
                     },
                     grammar,
-                    highlight_query: Query::new(grammar, "").unwrap(),
-                    brackets_query: Query::new(grammar, "").unwrap(),
-                    highlight_map: Default::default(),
-                }),
-                Arc::new(Language {
-                    config: LanguageConfig {
+                )),
+                Arc::new(Language::new(
+                    LanguageConfig {
                         name: "Make".to_string(),
                         path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
                         ..Default::default()
                     },
                     grammar,
-                    highlight_query: Query::new(grammar, "").unwrap(),
-                    brackets_query: Query::new(grammar, "").unwrap(),
-                    highlight_map: Default::default(),
-                }),
+                )),
             ],
         };
 

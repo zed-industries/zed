@@ -22,6 +22,7 @@ seahash = "4.1"
 serde = { version = "1", features = ["derive"] }
 similar = "1.3"
 smallvec = { version = "1.6", features = ["union"] }
+smol = "1.2"
 tree-sitter = "0.19.5"
 
 [dev-dependencies]

@@ -7,6 +7,8 @@ mod point;
 pub mod random_char_iter;
 pub mod rope;
 mod selection;
+#[cfg(test)]
+mod tests;
 
 pub use anchor::*;
 use anyhow::{anyhow, Result};
@@ -14,7 +16,7 @@ use clock::ReplicaId;
 use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
 pub use highlight_map::{HighlightId, HighlightMap};
 use language::Tree;
-pub use language::{AutoclosePair, Language, LanguageConfig, LanguageRegistry};
+pub use language::{BracketPair, Language, LanguageConfig, LanguageRegistry};
 use lazy_static::lazy_static;
 use operation_queue::OperationQueue;
 use parking_lot::Mutex;
@@ -26,12 +28,15 @@ use rpc::proto;
 use seahash::SeaHasher;
 pub use selection::*;
 use similar::{ChangeTag, TextDiff};
+use smol::future::yield_now;
 use std::{
     any::Any,
     cell::RefCell,
     cmp,
+    collections::BTreeMap,
     convert::{TryFrom, TryInto},
     ffi::OsString,
+    future::Future,
     hash::BuildHasher,
     iter::Iterator,
     ops::{Deref, DerefMut, Range},
@@ -114,6 +119,9 @@ lazy_static! {
     static ref QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Default::default();
 }
 
+// TODO - Make this configurable
+const INDENT_SIZE: u32 = 4;
+
 struct QueryCursorHandle(Option<QueryCursor>);
 
 impl QueryCursorHandle {
@@ -162,6 +170,8 @@ pub struct Buffer {
     history: History,
     file: Option<Box<dyn File>>,
     language: Option<Arc<Language>>,
+    autoindent_requests: Vec<Arc<AutoindentRequest>>,
+    pending_autoindent: Option<Task<()>>,
     sync_parse_timeout: Duration,
     syntax_tree: Mutex<Option<SyntaxTree>>,
     parsing_in_background: bool,
@@ -186,8 +196,15 @@ pub struct SelectionSet {
 #[derive(Clone)]
 struct SyntaxTree {
     tree: Tree,
-    dirty: bool,
     version: clock::Global,
+}
+
+#[derive(Clone)]
+struct AutoindentRequest {
+    selection_set_ids: HashSet<SelectionSetId>,
+    before_edit: Snapshot,
+    edited: AnchorSet,
+    inserted: Option<AnchorRangeSet>,
 }
 
 #[derive(Clone, Debug)]
@@ -197,8 +214,8 @@ struct Transaction {
     buffer_was_dirty: bool,
     edits: Vec<clock::Local>,
     ranges: Vec<Range<usize>>,
-    selections_before: Option<(SelectionSetId, Arc<[Selection]>)>,
-    selections_after: Option<(SelectionSetId, Arc<[Selection]>)>,
+    selections_before: HashMap<SelectionSetId, Arc<[Selection]>>,
+    selections_after: HashMap<SelectionSetId, Arc<[Selection]>>,
     first_edit_at: Instant,
     last_edit_at: Instant,
 }
@@ -282,7 +299,7 @@ impl History {
         &mut self,
         start: clock::Global,
         buffer_was_dirty: bool,
-        selections: Option<(SelectionSetId, Arc<[Selection]>)>,
+        selections_before: HashMap<SelectionSetId, Arc<[Selection]>>,
         now: Instant,
     ) {
         self.transaction_depth += 1;
@@ -293,8 +310,8 @@ impl History {
                 buffer_was_dirty,
                 edits: Vec::new(),
                 ranges: Vec::new(),
-                selections_before: selections,
-                selections_after: None,
+                selections_before,
+                selections_after: Default::default(),
                 first_edit_at: now,
                 last_edit_at: now,
             });
@@ -303,16 +320,21 @@ impl History {
 
     fn end_transaction(
         &mut self,
-        selections: Option<(SelectionSetId, Arc<[Selection]>)>,
+        selections_after: HashMap<SelectionSetId, Arc<[Selection]>>,
         now: Instant,
     ) -> Option<&Transaction> {
         assert_ne!(self.transaction_depth, 0);
         self.transaction_depth -= 1;
         if self.transaction_depth == 0 {
-            let transaction = self.undo_stack.last_mut().unwrap();
-            transaction.selections_after = selections;
-            transaction.last_edit_at = now;
-            Some(transaction)
+            if self.undo_stack.last().unwrap().ranges.is_empty() {
+                self.undo_stack.pop();
+                None
+            } else {
+                let transaction = self.undo_stack.last_mut().unwrap();
+                transaction.selections_after = selections_after;
+                transaction.last_edit_at = now;
+                Some(transaction)
+            }
         } else {
             None
         }
@@ -345,7 +367,9 @@ impl History {
 
             if let Some(transaction) = transactions_to_merge.last_mut() {
                 last_transaction.last_edit_at = transaction.last_edit_at;
-                last_transaction.selections_after = transaction.selections_after.take();
+                last_transaction
+                    .selections_after
+                    .extend(transaction.selections_after.drain());
                 last_transaction.end = transaction.end.clone();
             }
         }
@@ -628,6 +652,8 @@ impl Buffer {
             parsing_in_background: false,
             parse_count: 0,
             sync_parse_timeout: Duration::from_millis(1),
+            autoindent_requests: Default::default(),
+            pending_autoindent: Default::default(),
             language,
             saved_mtime,
             selections: HashMap::default(),
@@ -835,27 +861,9 @@ impl Buffer {
         self.parse_count
     }
 
-    pub fn syntax_tree(&self) -> Option<Tree> {
+    fn syntax_tree(&self) -> Option<Tree> {
         if let Some(syntax_tree) = self.syntax_tree.lock().as_mut() {
-            let mut delta = 0_isize;
-            for edit in self.edits_since(syntax_tree.version.clone()) {
-                let start_offset = (edit.old_bytes.start as isize + delta) as usize;
-                let start_point = self.visible_text.to_point(start_offset);
-                syntax_tree.tree.edit(&InputEdit {
-                    start_byte: start_offset,
-                    old_end_byte: start_offset + edit.deleted_bytes(),
-                    new_end_byte: start_offset + edit.inserted_bytes(),
-                    start_position: start_point.into(),
-                    old_end_position: (start_point + edit.deleted_lines()).into(),
-                    new_end_position: self
-                        .visible_text
-                        .to_point(start_offset + edit.inserted_bytes())
-                        .into(),
-                });
-                delta += edit.inserted_bytes() as isize - edit.deleted_bytes() as isize;
-                syntax_tree.dirty = true;
-            }
-            syntax_tree.version = self.version();
+            self.interpolate_tree(syntax_tree);
             Some(syntax_tree.tree.clone())
         } else {
             None
@@ -878,14 +886,12 @@ impl Buffer {
         }
 
         if let Some(language) = self.language.clone() {
-            // The parse tree is out of date, so grab the syntax tree to synchronously
-            // splice all the edits that have happened since the last parse.
             let old_tree = self.syntax_tree();
-            let parsed_text = self.visible_text.clone();
+            let text = self.visible_text.clone();
             let parsed_version = self.version();
             let parse_task = cx.background().spawn({
                 let language = language.clone();
-                async move { Self::parse_text(&parsed_text, old_tree, &language) }
+                async move { Self::parse_text(&text, old_tree, &language) }
             });
 
             match cx
@@ -893,14 +899,7 @@ impl Buffer {
                 .block_with_timeout(self.sync_parse_timeout, parse_task)
             {
                 Ok(new_tree) => {
-                    *self.syntax_tree.lock() = Some(SyntaxTree {
-                        tree: new_tree,
-                        dirty: false,
-                        version: parsed_version,
-                    });
-                    self.parse_count += 1;
-                    cx.emit(Event::Reparsed);
-                    cx.notify();
+                    self.did_finish_parsing(new_tree, parsed_version, cx);
                     return true;
                 }
                 Err(parse_task) => {
@@ -913,20 +912,12 @@ impl Buffer {
                                     !Arc::ptr_eq(curr_language, &language)
                                 });
                             let parse_again = this.version > parsed_version || language_changed;
-                            *this.syntax_tree.lock() = Some(SyntaxTree {
-                                tree: new_tree,
-                                dirty: false,
-                                version: parsed_version,
-                            });
-                            this.parse_count += 1;
                             this.parsing_in_background = false;
+                            this.did_finish_parsing(new_tree, parsed_version, cx);
 
                             if parse_again && this.reparse(cx) {
                                 return;
                             }
-
-                            cx.emit(Event::Reparsed);
-                            cx.notify();
                         });
                     })
                     .detach();
@@ -954,6 +945,242 @@ impl Buffer {
                 .unwrap();
             tree
         })
+    }
+
+    fn interpolate_tree(&self, tree: &mut SyntaxTree) {
+        let mut delta = 0_isize;
+        for edit in self.edits_since(tree.version.clone()) {
+            let start_offset = (edit.old_bytes.start as isize + delta) as usize;
+            let start_point = self.visible_text.to_point(start_offset);
+            tree.tree.edit(&InputEdit {
+                start_byte: start_offset,
+                old_end_byte: start_offset + edit.deleted_bytes(),
+                new_end_byte: start_offset + edit.inserted_bytes(),
+                start_position: start_point.into(),
+                old_end_position: (start_point + edit.deleted_lines()).into(),
+                new_end_position: self
+                    .visible_text
+                    .to_point(start_offset + edit.inserted_bytes())
+                    .into(),
+            });
+            delta += edit.inserted_bytes() as isize - edit.deleted_bytes() as isize;
+        }
+        tree.version = self.version();
+    }
+
+    fn did_finish_parsing(
+        &mut self,
+        tree: Tree,
+        version: clock::Global,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.parse_count += 1;
+        *self.syntax_tree.lock() = Some(SyntaxTree { tree, version });
+        self.request_autoindent(cx);
+        cx.emit(Event::Reparsed);
+        cx.notify();
+    }
+
+    fn request_autoindent(&mut self, cx: &mut ModelContext<Self>) {
+        if let Some(indent_columns) = self.compute_autoindents() {
+            let indent_columns = cx.background().spawn(indent_columns);
+            match cx
+                .background()
+                .block_with_timeout(Duration::from_micros(500), indent_columns)
+            {
+                Ok(indent_columns) => self.apply_autoindents(indent_columns, cx),
+                Err(indent_columns) => {
+                    self.pending_autoindent = Some(cx.spawn(|this, mut cx| async move {
+                        let indent_columns = indent_columns.await;
+                        this.update(&mut cx, |this, cx| {
+                            this.apply_autoindents(indent_columns, cx);
+                        });
+                    }));
+                }
+            }
+        }
+    }
+
+    fn compute_autoindents(&self) -> Option<impl Future<Output = BTreeMap<u32, u32>>> {
+        let max_rows_between_yields = 100;
+        let snapshot = self.snapshot();
+        if snapshot.language.is_none()
+            || snapshot.tree.is_none()
+            || self.autoindent_requests.is_empty()
+        {
+            return None;
+        }
+
+        let autoindent_requests = self.autoindent_requests.clone();
+        Some(async move {
+            let mut indent_columns = BTreeMap::new();
+            for request in autoindent_requests {
+                let old_to_new_rows = request
+                    .edited
+                    .to_points(&request.before_edit)
+                    .map(|point| point.row)
+                    .zip(request.edited.to_points(&snapshot).map(|point| point.row))
+                    .collect::<BTreeMap<u32, u32>>();
+
+                let mut old_suggestions = HashMap::default();
+                let old_edited_ranges =
+                    contiguous_ranges(old_to_new_rows.keys().copied(), max_rows_between_yields);
+                for old_edited_range in old_edited_ranges {
+                    let suggestions = request
+                        .before_edit
+                        .suggest_autoindents(old_edited_range.clone())
+                        .into_iter()
+                        .flatten();
+                    for (old_row, suggestion) in old_edited_range.zip(suggestions) {
+                        let indentation_basis = old_to_new_rows
+                            .get(&suggestion.basis_row)
+                            .and_then(|from_row| old_suggestions.get(from_row).copied())
+                            .unwrap_or_else(|| {
+                                request
+                                    .before_edit
+                                    .indent_column_for_line(suggestion.basis_row)
+                            });
+                        let delta = if suggestion.indent { INDENT_SIZE } else { 0 };
+                        old_suggestions.insert(
+                            *old_to_new_rows.get(&old_row).unwrap(),
+                            indentation_basis + delta,
+                        );
+                    }
+                    yield_now().await;
+                }
+
+                // At this point, old_suggestions contains the suggested indentation for all edited lines with respect to the state of the
+                // buffer before the edit, but keyed by the row for these lines after the edits were applied.
+                let new_edited_row_ranges =
+                    contiguous_ranges(old_to_new_rows.values().copied(), max_rows_between_yields);
+                for new_edited_row_range in new_edited_row_ranges {
+                    let suggestions = snapshot
+                        .suggest_autoindents(new_edited_row_range.clone())
+                        .into_iter()
+                        .flatten();
+                    for (new_row, suggestion) in new_edited_row_range.zip(suggestions) {
+                        let delta = if suggestion.indent { INDENT_SIZE } else { 0 };
+                        let new_indentation = indent_columns
+                            .get(&suggestion.basis_row)
+                            .copied()
+                            .unwrap_or_else(|| {
+                                snapshot.indent_column_for_line(suggestion.basis_row)
+                            })
+                            + delta;
+                        if old_suggestions
+                            .get(&new_row)
+                            .map_or(true, |old_indentation| new_indentation != *old_indentation)
+                        {
+                            indent_columns.insert(new_row, new_indentation);
+                        }
+                    }
+                    yield_now().await;
+                }
+
+                if let Some(inserted) = request.inserted.as_ref() {
+                    let inserted_row_ranges = contiguous_ranges(
+                        inserted
+                            .to_point_ranges(&snapshot)
+                            .flat_map(|range| range.start.row..range.end.row + 1),
+                        max_rows_between_yields,
+                    );
+                    for inserted_row_range in inserted_row_ranges {
+                        let suggestions = snapshot
+                            .suggest_autoindents(inserted_row_range.clone())
+                            .into_iter()
+                            .flatten();
+                        for (row, suggestion) in inserted_row_range.zip(suggestions) {
+                            let delta = if suggestion.indent { INDENT_SIZE } else { 0 };
+                            let new_indentation = indent_columns
+                                .get(&suggestion.basis_row)
+                                .copied()
+                                .unwrap_or_else(|| {
+                                    snapshot.indent_column_for_line(suggestion.basis_row)
+                                })
+                                + delta;
+                            indent_columns.insert(row, new_indentation);
+                        }
+                        yield_now().await;
+                    }
+                }
+            }
+            indent_columns
+        })
+    }
+
+    fn apply_autoindents(
+        &mut self,
+        indent_columns: BTreeMap<u32, u32>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let selection_set_ids = self
+            .autoindent_requests
+            .drain(..)
+            .flat_map(|req| req.selection_set_ids.clone())
+            .collect::<HashSet<_>>();
+
+        self.start_transaction(selection_set_ids.iter().copied())
+            .unwrap();
+        for (row, indent_column) in &indent_columns {
+            self.set_indent_column_for_line(*row, *indent_column, cx);
+        }
+
+        for selection_set_id in &selection_set_ids {
+            if let Some(set) = self.selections.get(selection_set_id) {
+                let new_selections = set
+                    .selections
+                    .iter()
+                    .map(|selection| {
+                        let start_point = selection.start.to_point(&*self);
+                        if start_point.column == 0 {
+                            let end_point = selection.end.to_point(&*self);
+                            let delta = Point::new(
+                                0,
+                                indent_columns.get(&start_point.row).copied().unwrap_or(0),
+                            );
+                            if delta.column > 0 {
+                                return Selection {
+                                    id: selection.id,
+                                    goal: selection.goal,
+                                    reversed: selection.reversed,
+                                    start: self
+                                        .anchor_at(start_point + delta, selection.start.bias),
+                                    end: self.anchor_at(end_point + delta, selection.end.bias),
+                                };
+                            }
+                        }
+                        selection.clone()
+                    })
+                    .collect::<Arc<[_]>>();
+                self.update_selection_set(*selection_set_id, new_selections, cx)
+                    .unwrap();
+            }
+        }
+
+        self.end_transaction(selection_set_ids.iter().copied(), cx)
+            .unwrap();
+    }
+
+    pub fn indent_column_for_line(&self, row: u32) -> u32 {
+        self.content().indent_column_for_line(row)
+    }
+
+    fn set_indent_column_for_line(&mut self, row: u32, column: u32, cx: &mut ModelContext<Self>) {
+        let current_column = self.indent_column_for_line(row);
+        if column > current_column {
+            let offset = self.visible_text.to_offset(Point::new(row, 0));
+            self.edit(
+                [offset..offset],
+                " ".repeat((column - current_column) as usize),
+                cx,
+            );
+        } else if column < current_column {
+            self.edit(
+                [Point::new(row, 0)..Point::new(row, current_column - column)],
+                "",
+                cx,
+            );
+        }
     }
 
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
@@ -1096,18 +1323,29 @@ impl Buffer {
     }
 
     pub fn text_for_range<'a, T: ToOffset>(&'a self, range: Range<T>) -> Chunks<'a> {
-        let start = range.start.to_offset(self);
-        let end = range.end.to_offset(self);
-        self.visible_text.chunks_in_range(start..end)
+        self.content().text_for_range(range)
     }
 
     pub fn chars(&self) -> impl Iterator<Item = char> + '_ {
         self.chars_at(0)
     }
 
-    pub fn chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + '_ {
-        let offset = position.to_offset(self);
-        self.visible_text.chars_at(offset)
+    pub fn chars_at<'a, T: 'a + ToOffset>(
+        &'a self,
+        position: T,
+    ) -> impl Iterator<Item = char> + 'a {
+        self.content().chars_at(position)
+    }
+
+    pub fn reversed_chars_at<'a, T: 'a + ToOffset>(
+        &'a self,
+        position: T,
+    ) -> impl Iterator<Item = char> + 'a {
+        self.content().reversed_chars_at(position)
+    }
+
+    pub fn chars_for_range<T: ToOffset>(&self, range: Range<T>) -> impl Iterator<Item = char> + '_ {
+        self.text_for_range(range).flat_map(str::chars)
     }
 
     pub fn bytes_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = u8> + '_ {
@@ -1155,20 +1393,28 @@ impl Buffer {
         self.deferred_ops.len()
     }
 
-    pub fn start_transaction(&mut self, set_id: Option<SelectionSetId>) -> Result<()> {
-        self.start_transaction_at(set_id, Instant::now())
+    pub fn start_transaction(
+        &mut self,
+        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
+    ) -> Result<()> {
+        self.start_transaction_at(selection_set_ids, Instant::now())
     }
 
-    fn start_transaction_at(&mut self, set_id: Option<SelectionSetId>, now: Instant) -> Result<()> {
-        let selections = if let Some(set_id) = set_id {
-            let set = self
-                .selections
-                .get(&set_id)
-                .ok_or_else(|| anyhow!("invalid selection set {:?}", set_id))?;
-            Some((set_id, set.selections.clone()))
-        } else {
-            None
-        };
+    fn start_transaction_at(
+        &mut self,
+        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
+        now: Instant,
+    ) -> Result<()> {
+        let selections = selection_set_ids
+            .into_iter()
+            .map(|set_id| {
+                let set = self
+                    .selections
+                    .get(&set_id)
+                    .expect("invalid selection set id");
+                (set_id, set.selections.clone())
+            })
+            .collect();
         self.history
             .start_transaction(self.version.clone(), self.is_dirty(), selections, now);
         Ok(())
@@ -1176,27 +1422,28 @@ impl Buffer {
 
     pub fn end_transaction(
         &mut self,
-        set_id: Option<SelectionSetId>,
+        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        self.end_transaction_at(set_id, Instant::now(), cx)
+        self.end_transaction_at(selection_set_ids, Instant::now(), cx)
     }
 
     fn end_transaction_at(
         &mut self,
-        set_id: Option<SelectionSetId>,
+        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
         now: Instant,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        let selections = if let Some(set_id) = set_id {
-            let set = self
-                .selections
-                .get(&set_id)
-                .ok_or_else(|| anyhow!("invalid selection set {:?}", set_id))?;
-            Some((set_id, set.selections.clone()))
-        } else {
-            None
-        };
+        let selections = selection_set_ids
+            .into_iter()
+            .map(|set_id| {
+                let set = self
+                    .selections
+                    .get(&set_id)
+                    .expect("invalid selection set id");
+                (set_id, set.selections.clone())
+            })
+            .collect();
 
         if let Some(transaction) = self.history.end_transaction(selections, now) {
             let since = transaction.start.clone();
@@ -1219,19 +1466,40 @@ impl Buffer {
         S: ToOffset,
         T: Into<String>,
     {
+        self.edit_internal(ranges_iter, new_text, false, cx)
+    }
+
+    pub fn edit_with_autoindent<I, S, T>(
+        &mut self,
+        ranges_iter: I,
+        new_text: T,
+        cx: &mut ModelContext<Self>,
+    ) where
+        I: IntoIterator<Item = Range<S>>,
+        S: ToOffset,
+        T: Into<String>,
+    {
+        self.edit_internal(ranges_iter, new_text, true, cx)
+    }
+
+    pub fn edit_internal<I, S, T>(
+        &mut self,
+        ranges_iter: I,
+        new_text: T,
+        autoindent: bool,
+        cx: &mut ModelContext<Self>,
+    ) where
+        I: IntoIterator<Item = Range<S>>,
+        S: ToOffset,
+        T: Into<String>,
+    {
         let new_text = new_text.into();
-        let new_text = if new_text.len() > 0 {
-            Some(new_text)
-        } else {
-            None
-        };
-        let has_new_text = new_text.is_some();
 
         // Skip invalid ranges and coalesce contiguous ones.
         let mut ranges: Vec<Range<usize>> = Vec::new();
         for range in ranges_iter {
             let range = range.start.to_offset(&*self)..range.end.to_offset(&*self);
-            if has_new_text || !range.is_empty() {
+            if !new_text.is_empty() || !range.is_empty() {
                 if let Some(prev_range) = ranges.last_mut() {
                     if prev_range.end >= range.start {
                         prev_range.end = cmp::max(prev_range.end, range.end);
@@ -1243,24 +1511,78 @@ impl Buffer {
                 }
             }
         }
+        if ranges.is_empty() {
+            return;
+        }
 
-        if !ranges.is_empty() {
-            self.start_transaction_at(None, Instant::now()).unwrap();
-            let timestamp = InsertionTimestamp {
-                replica_id: self.replica_id,
-                local: self.local_clock.tick().value,
-                lamport: self.lamport_clock.tick().value,
-            };
-            let edit = self.apply_local_edit(&ranges, new_text, timestamp);
-
-            self.history.push(edit.clone());
-            self.history.push_undo(edit.timestamp.local());
-            self.last_edit = edit.timestamp.local();
-            self.version.observe(edit.timestamp.local());
-
-            self.end_transaction_at(None, Instant::now(), cx).unwrap();
-            self.send_operation(Operation::Edit(edit), cx);
+        self.pending_autoindent.take();
+        let autoindent_request = if autoindent && self.language.is_some() {
+            let before_edit = self.snapshot();
+            let edited = self.content().anchor_set(ranges.iter().filter_map(|range| {
+                let start = range.start.to_point(&*self);
+                if new_text.starts_with('\n') && start.column == self.line_len(start.row) {
+                    None
+                } else {
+                    Some((range.start, Bias::Left))
+                }
+            }));
+            Some((before_edit, edited))
+        } else {
+            None
         };
+
+        let first_newline_ix = new_text.find('\n');
+        let new_text_len = new_text.len();
+        let new_text = if new_text_len > 0 {
+            Some(new_text)
+        } else {
+            None
+        };
+
+        self.start_transaction(None).unwrap();
+        let timestamp = InsertionTimestamp {
+            replica_id: self.replica_id,
+            local: self.local_clock.tick().value,
+            lamport: self.lamport_clock.tick().value,
+        };
+        let edit = self.apply_local_edit(&ranges, new_text, timestamp);
+
+        self.history.push(edit.clone());
+        self.history.push_undo(edit.timestamp.local());
+        self.last_edit = edit.timestamp.local();
+        self.version.observe(edit.timestamp.local());
+
+        if let Some((before_edit, edited)) = autoindent_request {
+            let mut inserted = None;
+            if let Some(first_newline_ix) = first_newline_ix {
+                let mut delta = 0isize;
+                inserted = Some(self.content().anchor_range_set(ranges.iter().map(|range| {
+                    let start = (delta + range.start as isize) as usize + first_newline_ix + 1;
+                    let end = (delta + range.start as isize) as usize + new_text_len;
+                    delta += (range.end as isize - range.start as isize) + new_text_len as isize;
+                    (start, Bias::Left)..(end, Bias::Right)
+                })));
+            }
+
+            let selection_set_ids = self
+                .history
+                .undo_stack
+                .last()
+                .unwrap()
+                .selections_before
+                .keys()
+                .copied()
+                .collect();
+            self.autoindent_requests.push(Arc::new(AutoindentRequest {
+                selection_set_ids,
+                before_edit,
+                edited,
+                inserted,
+            }));
+        }
+
+        self.end_transaction(None, cx).unwrap();
+        self.send_operation(Operation::Edit(edit), cx);
     }
 
     fn did_edit(&self, was_dirty: bool, cx: &mut ModelContext<Self>) {
@@ -1389,6 +1711,8 @@ impl Buffer {
         ops: I,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
+        self.pending_autoindent.take();
+
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
@@ -1650,7 +1974,7 @@ impl Buffer {
         if let Some(transaction) = self.history.pop_undo().cloned() {
             let selections = transaction.selections_before.clone();
             self.undo_or_redo(transaction, cx).unwrap();
-            if let Some((set_id, selections)) = selections {
+            for (set_id, selections) in selections {
                 let _ = self.update_selection_set(set_id, selections, cx);
             }
         }
@@ -1669,7 +1993,7 @@ impl Buffer {
         if let Some(transaction) = self.history.pop_redo().cloned() {
             let selections = transaction.selections_after.clone();
             self.undo_or_redo(transaction, cx).unwrap();
-            if let Some((set_id, selections)) = selections {
+            for (set_id, selections) in selections {
                 let _ = self.update_selection_set(set_id, selections, cx);
             }
         }
@@ -1838,20 +2162,20 @@ impl Buffer {
 
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
-        let mut old_fragments = self.fragments.cursor::<(usize, FragmentTextSummary)>();
+        let mut old_fragments = self.fragments.cursor::<FragmentTextSummary>();
         let mut new_fragments = old_fragments.slice(&ranges[0].start, Bias::Right, &None);
         new_ropes.push_tree(new_fragments.summary().text);
 
-        let mut fragment_start = old_fragments.start().1.visible;
+        let mut fragment_start = old_fragments.start().visible;
         for range in ranges {
-            let fragment_end = old_fragments.end(&None).1.visible;
+            let fragment_end = old_fragments.end(&None).visible;
 
             // If the current fragment ends before this range, then jump ahead to the first fragment
             // that extends past the start of this range, reusing any intervening fragments.
             if fragment_end < range.start {
                 // If the current fragment has been partially consumed, then consume the rest of it
                 // and advance to the next fragment before slicing.
-                if fragment_start > old_fragments.start().1.visible {
+                if fragment_start > old_fragments.start().visible {
                     if fragment_end > fragment_start {
                         let mut suffix = old_fragments.item().unwrap().clone();
                         suffix.len = fragment_end - fragment_start;
@@ -1864,10 +2188,10 @@ impl Buffer {
                 let slice = old_fragments.slice(&range.start, Bias::Right, &None);
                 new_ropes.push_tree(slice.summary().text);
                 new_fragments.push_tree(slice, &None);
-                fragment_start = old_fragments.start().1.visible;
+                fragment_start = old_fragments.start().visible;
             }
 
-            let full_range_start = range.start + old_fragments.start().1.deleted;
+            let full_range_start = range.start + old_fragments.start().deleted;
 
             // Preserve any portion of the current fragment that precedes this range.
             if fragment_start < range.start {
@@ -1897,7 +2221,7 @@ impl Buffer {
             // portions as deleted.
             while fragment_start < range.end {
                 let fragment = old_fragments.item().unwrap();
-                let fragment_end = old_fragments.end(&None).1.visible;
+                let fragment_end = old_fragments.end(&None).visible;
                 let mut intersection = fragment.clone();
                 let intersection_end = cmp::min(range.end, fragment_end);
                 if fragment.visible {
@@ -1915,14 +2239,14 @@ impl Buffer {
                 }
             }
 
-            let full_range_end = range.end + old_fragments.start().1.deleted;
+            let full_range_end = range.end + old_fragments.start().deleted;
             edit.ranges.push(full_range_start..full_range_end);
         }
 
         // If the current fragment has been partially consumed, then consume the rest of it
         // and advance to the next fragment before slicing.
-        if fragment_start > old_fragments.start().1.visible {
-            let fragment_end = old_fragments.end(&None).1.visible;
+        if fragment_start > old_fragments.start().visible {
+            let fragment_end = old_fragments.end(&None).visible;
             if fragment_end > fragment_start {
                 let mut suffix = old_fragments.item().unwrap().clone();
                 suffix.len = fragment_end - fragment_start;
@@ -2162,6 +2486,8 @@ impl Clone for Buffer {
             parsing_in_background: false,
             sync_parse_timeout: self.sync_parse_timeout,
             parse_count: self.parse_count,
+            autoindent_requests: Default::default(),
+            pending_autoindent: Default::default(),
             deferred_replicas: self.deferred_replicas.clone(),
             replica_id: self.replica_id,
             remote_id: self.remote_id.clone(),
@@ -2207,6 +2533,124 @@ impl Snapshot {
         self.content().line_len(row)
     }
 
+    pub fn indent_column_for_line(&self, row: u32) -> u32 {
+        self.content().indent_column_for_line(row)
+    }
+
+    fn suggest_autoindents<'a>(
+        &'a self,
+        row_range: Range<u32>,
+    ) -> Option<impl Iterator<Item = IndentSuggestion> + 'a> {
+        let mut query_cursor = QueryCursorHandle::new();
+        if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
+            let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
+
+            // Get the "indentation ranges" that intersect this row range.
+            let indent_capture_ix = language.indents_query.capture_index_for_name("indent");
+            let end_capture_ix = language.indents_query.capture_index_for_name("end");
+            query_cursor.set_point_range(
+                Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0).into()
+                    ..Point::new(row_range.end, 0).into(),
+            );
+            let mut indentation_ranges = Vec::<(Range<Point>, &'static str)>::new();
+            for mat in query_cursor.matches(
+                &language.indents_query,
+                tree.root_node(),
+                TextProvider(&self.visible_text),
+            ) {
+                let mut node_kind = "";
+                let mut start: Option<Point> = None;
+                let mut end: Option<Point> = None;
+                for capture in mat.captures {
+                    if Some(capture.index) == indent_capture_ix {
+                        node_kind = capture.node.kind();
+                        start.get_or_insert(capture.node.start_position().into());
+                        end.get_or_insert(capture.node.end_position().into());
+                    } else if Some(capture.index) == end_capture_ix {
+                        end = Some(capture.node.start_position().into());
+                    }
+                }
+
+                if let Some((start, end)) = start.zip(end) {
+                    if start.row == end.row {
+                        continue;
+                    }
+
+                    let range = start..end;
+                    match indentation_ranges.binary_search_by_key(&range.start, |r| r.0.start) {
+                        Err(ix) => indentation_ranges.insert(ix, (range, node_kind)),
+                        Ok(ix) => {
+                            let prev_range = &mut indentation_ranges[ix];
+                            prev_range.0.end = prev_range.0.end.max(range.end);
+                        }
+                    }
+                }
+            }
+
+            let mut prev_row = prev_non_blank_row.unwrap_or(0);
+            Some(row_range.map(move |row| {
+                let row_start = Point::new(row, self.indent_column_for_line(row));
+
+                let mut indent_from_prev_row = false;
+                let mut outdent_to_row = u32::MAX;
+                for (range, _node_kind) in &indentation_ranges {
+                    if range.start.row >= row {
+                        break;
+                    }
+
+                    if range.start.row == prev_row && range.end > row_start {
+                        indent_from_prev_row = true;
+                    }
+                    if range.end.row >= prev_row && range.end <= row_start {
+                        outdent_to_row = outdent_to_row.min(range.start.row);
+                    }
+                }
+
+                let suggestion = if outdent_to_row == prev_row {
+                    IndentSuggestion {
+                        basis_row: prev_row,
+                        indent: false,
+                    }
+                } else if indent_from_prev_row {
+                    IndentSuggestion {
+                        basis_row: prev_row,
+                        indent: true,
+                    }
+                } else if outdent_to_row < prev_row {
+                    IndentSuggestion {
+                        basis_row: outdent_to_row,
+                        indent: false,
+                    }
+                } else {
+                    IndentSuggestion {
+                        basis_row: prev_row,
+                        indent: false,
+                    }
+                };
+
+                prev_row = row;
+                suggestion
+            }))
+        } else {
+            None
+        }
+    }
+
+    fn prev_non_blank_row(&self, mut row: u32) -> Option<u32> {
+        while row > 0 {
+            row -= 1;
+            if !self.is_line_blank(row) {
+                return Some(row);
+            }
+        }
+        None
+    }
+
+    fn is_line_blank(&self, row: u32) -> bool {
+        self.text_for_range(Point::new(row, 0)..Point::new(row, self.line_len(row)))
+            .all(|chunk| chunk.matches(|c: char| !c.is_whitespace()).next().is_none())
+    }
+
     pub fn text(&self) -> Rope {
         self.visible_text.clone()
     }
@@ -2219,15 +2663,20 @@ impl Snapshot {
         self.visible_text.max_point()
     }
 
-    pub fn text_for_range(&self, range: Range<usize>) -> Chunks {
+    pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> Chunks {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
         self.visible_text.chunks_in_range(range)
     }
 
-    pub fn highlighted_text_for_range(&mut self, range: Range<usize>) -> HighlightedChunks {
+    pub fn highlighted_text_for_range<T: ToOffset>(
+        &mut self,
+        range: Range<T>,
+    ) -> HighlightedChunks {
+        let range = range.start.to_offset(&*self)..range.end.to_offset(&*self);
         let chunks = self.visible_text.chunks_in_range(range.clone());
         if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
             let captures = self.query_cursor.set_byte_range(range.clone()).captures(
-                &language.highlight_query,
+                &language.highlights_query,
                 tree.root_node(),
                 TextProvider(&self.visible_text),
             );
@@ -2347,6 +2796,22 @@ impl<'a> Content<'a> {
         self.fragments.extent::<usize>(&None)
     }
 
+    pub fn chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + 'a {
+        let offset = position.to_offset(self);
+        self.visible_text.chars_at(offset)
+    }
+
+    pub fn reversed_chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + 'a {
+        let offset = position.to_offset(self);
+        self.visible_text.reversed_chars_at(offset)
+    }
+
+    pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> Chunks<'a> {
+        let start = range.start.to_offset(self);
+        let end = range.end.to_offset(self);
+        self.visible_text.chunks_in_range(start..end)
+    }
+
     fn line_len(&self, row: u32) -> u32 {
         let row_start_offset = Point::new(row, 0).to_offset(self);
         let row_end_offset = if row >= self.max_point().row {
@@ -2355,6 +2820,18 @@ impl<'a> Content<'a> {
             Point::new(row + 1, 0).to_offset(self) - 1
         };
         (row_end_offset - row_start_offset) as u32
+    }
+
+    pub fn indent_column_for_line(&self, row: u32) -> u32 {
+        let mut result = 0;
+        for c in self.chars_at(Point::new(row, 0)) {
+            if c == ' ' {
+                result += 1;
+            } else {
+                break;
+            }
+        }
+        result
     }
 
     fn summary_for_anchor(&self, anchor: &Anchor) -> TextSummary {
@@ -2373,17 +2850,132 @@ impl<'a> Content<'a> {
         self.visible_text.cursor(range.start).summary(range.end)
     }
 
+    fn summaries_for_anchors<T>(
+        &self,
+        map: &'a AnchorMap<T>,
+    ) -> impl Iterator<Item = (TextSummary, &'a T)> {
+        let cx = Some(map.version.clone());
+        let mut summary = TextSummary::default();
+        let mut rope_cursor = self.visible_text.cursor(0);
+        let mut cursor = self.fragments.cursor::<(VersionedOffset, usize)>();
+        map.entries.iter().map(move |((offset, bias), value)| {
+            cursor.seek_forward(&VersionedOffset::Offset(*offset), *bias, &cx);
+            let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
+                offset - cursor.start().0.offset()
+            } else {
+                0
+            };
+            summary += rope_cursor.summary(cursor.start().1 + overshoot);
+            (summary.clone(), value)
+        })
+    }
+
+    fn summaries_for_anchor_ranges<T>(
+        &self,
+        map: &'a AnchorRangeMap<T>,
+    ) -> impl Iterator<Item = (Range<TextSummary>, &'a T)> {
+        let cx = Some(map.version.clone());
+        let mut summary = TextSummary::default();
+        let mut rope_cursor = self.visible_text.cursor(0);
+        let mut cursor = self.fragments.cursor::<(VersionedOffset, usize)>();
+        map.entries.iter().map(move |(range, value)| {
+            let Range {
+                start: (start_offset, start_bias),
+                end: (end_offset, end_bias),
+            } = range;
+
+            cursor.seek_forward(&VersionedOffset::Offset(*start_offset), *start_bias, &cx);
+            let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
+                start_offset - cursor.start().0.offset()
+            } else {
+                0
+            };
+            summary += rope_cursor.summary(cursor.start().1 + overshoot);
+            let start_summary = summary.clone();
+
+            cursor.seek_forward(&VersionedOffset::Offset(*end_offset), *end_bias, &cx);
+            let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
+                end_offset - cursor.start().0.offset()
+            } else {
+                0
+            };
+            summary += rope_cursor.summary(cursor.start().1 + overshoot);
+            let end_summary = summary.clone();
+
+            (start_summary..end_summary, value)
+        })
+    }
+
     fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
         let offset = position.to_offset(self);
         let max_offset = self.len();
         assert!(offset <= max_offset, "offset is out of range");
-        let mut cursor = self.fragments.cursor::<(usize, FragmentTextSummary)>();
+        let mut cursor = self.fragments.cursor::<FragmentTextSummary>();
         cursor.seek(&offset, bias, &None);
         Anchor {
-            offset: offset + cursor.start().1.deleted,
+            offset: offset + cursor.start().deleted,
             bias,
             version: self.version.clone(),
         }
+    }
+
+    pub fn anchor_map<T, E>(&self, entries: E) -> AnchorMap<T>
+    where
+        E: IntoIterator<Item = ((usize, Bias), T)>,
+    {
+        let version = self.version.clone();
+        let mut cursor = self.fragments.cursor::<FragmentTextSummary>();
+        let entries = entries
+            .into_iter()
+            .map(|((offset, bias), value)| {
+                cursor.seek_forward(&offset, bias, &None);
+                let full_offset = cursor.start().deleted + offset;
+                ((full_offset, bias), value)
+            })
+            .collect();
+
+        AnchorMap { version, entries }
+    }
+
+    pub fn anchor_range_map<T, E>(&self, entries: E) -> AnchorRangeMap<T>
+    where
+        E: IntoIterator<Item = (Range<(usize, Bias)>, T)>,
+    {
+        let version = self.version.clone();
+        let mut cursor = self.fragments.cursor::<FragmentTextSummary>();
+        let entries = entries
+            .into_iter()
+            .map(|(range, value)| {
+                let Range {
+                    start: (start_offset, start_bias),
+                    end: (end_offset, end_bias),
+                } = range;
+                cursor.seek_forward(&start_offset, start_bias, &None);
+                let full_start_offset = cursor.start().deleted + start_offset;
+                cursor.seek_forward(&end_offset, end_bias, &None);
+                let full_end_offset = cursor.start().deleted + end_offset;
+                (
+                    (full_start_offset, start_bias)..(full_end_offset, end_bias),
+                    value,
+                )
+            })
+            .collect();
+
+        AnchorRangeMap { version, entries }
+    }
+
+    pub fn anchor_set<E>(&self, entries: E) -> AnchorSet
+    where
+        E: IntoIterator<Item = (usize, Bias)>,
+    {
+        AnchorSet(self.anchor_map(entries.into_iter().map(|range| (range, ()))))
+    }
+
+    pub fn anchor_range_set<E>(&self, entries: E) -> AnchorRangeSet
+    where
+        E: IntoIterator<Item = Range<(usize, Bias)>>,
+    {
+        AnchorRangeSet(self.anchor_range_map(entries.into_iter().map(|range| (range, ()))))
     }
 
     fn full_offset_for_anchor(&self, anchor: &Anchor) -> usize {
@@ -2408,6 +3000,12 @@ impl<'a> Content<'a> {
             Err(anyhow!("offset out of bounds"))
         }
     }
+}
+
+#[derive(Debug)]
+struct IndentSuggestion {
+    basis_row: u32,
+    indent: bool,
 }
 
 struct RopeBuilder<'a> {
@@ -2750,6 +3348,16 @@ impl Default for FragmentSummary {
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for usize {
     fn add_summary(&mut self, summary: &FragmentSummary, _: &Option<clock::Global>) {
         *self += summary.text.visible;
+    }
+}
+
+impl<'a> sum_tree::SeekTarget<'a, FragmentSummary, FragmentTextSummary> for usize {
+    fn cmp(
+        &self,
+        cursor_location: &FragmentTextSummary,
+        _: &Option<clock::Global>,
+    ) -> cmp::Ordering {
+        Ord::cmp(self, &cursor_location.visible)
     }
 }
 
@@ -3130,982 +3738,28 @@ impl ToPoint for usize {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::random_char_iter::RandomCharIter;
-
-    use super::*;
-    use gpui::ModelHandle;
-    use rand::prelude::*;
-    use std::{cell::RefCell, cmp::Ordering, env, mem, rc::Rc};
-
-    #[gpui::test]
-    fn test_edit(cx: &mut gpui::MutableAppContext) {
-        cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, "abc", cx);
-            assert_eq!(buffer.text(), "abc");
-            buffer.edit(vec![3..3], "def", cx);
-            assert_eq!(buffer.text(), "abcdef");
-            buffer.edit(vec![0..0], "ghi", cx);
-            assert_eq!(buffer.text(), "ghiabcdef");
-            buffer.edit(vec![5..5], "jkl", cx);
-            assert_eq!(buffer.text(), "ghiabjklcdef");
-            buffer.edit(vec![6..7], "", cx);
-            assert_eq!(buffer.text(), "ghiabjlcdef");
-            buffer.edit(vec![4..9], "mno", cx);
-            assert_eq!(buffer.text(), "ghiamnoef");
-            buffer
-        });
-    }
-
-    #[gpui::test]
-    fn test_edit_events(cx: &mut gpui::MutableAppContext) {
-        let mut now = Instant::now();
-        let buffer_1_events = Rc::new(RefCell::new(Vec::new()));
-        let buffer_2_events = Rc::new(RefCell::new(Vec::new()));
-
-        let buffer1 = cx.add_model(|cx| Buffer::new(0, "abcdef", cx));
-        let buffer2 = cx.add_model(|cx| Buffer::new(1, "abcdef", cx));
-        let buffer_ops = buffer1.update(cx, |buffer, cx| {
-            let buffer_1_events = buffer_1_events.clone();
-            cx.subscribe(&buffer1, move |_, _, event, _| {
-                buffer_1_events.borrow_mut().push(event.clone())
-            })
-            .detach();
-            let buffer_2_events = buffer_2_events.clone();
-            cx.subscribe(&buffer2, move |_, _, event, _| {
-                buffer_2_events.borrow_mut().push(event.clone())
-            })
-            .detach();
-
-            // An edit emits an edited event, followed by a dirtied event,
-            // since the buffer was previously in a clean state.
-            buffer.edit(Some(2..4), "XYZ", cx);
-
-            // An empty transaction does not emit any events.
-            buffer.start_transaction(None).unwrap();
-            buffer.end_transaction(None, cx).unwrap();
-
-            // A transaction containing two edits emits one edited event.
-            now += Duration::from_secs(1);
-            buffer.start_transaction_at(None, now).unwrap();
-            buffer.edit(Some(5..5), "u", cx);
-            buffer.edit(Some(6..6), "w", cx);
-            buffer.end_transaction_at(None, now, cx).unwrap();
-
-            // Undoing a transaction emits one edited event.
-            buffer.undo(cx);
-
-            buffer.operations.clone()
-        });
-
-        // Incorporating a set of remote ops emits a single edited event,
-        // followed by a dirtied event.
-        buffer2.update(cx, |buffer, cx| {
-            buffer.apply_ops(buffer_ops, cx).unwrap();
-        });
-
-        let buffer_1_events = buffer_1_events.borrow();
-        assert_eq!(
-            *buffer_1_events,
-            vec![Event::Edited, Event::Dirtied, Event::Edited, Event::Edited]
-        );
-
-        let buffer_2_events = buffer_2_events.borrow();
-        assert_eq!(*buffer_2_events, vec![Event::Edited, Event::Dirtied]);
-    }
-
-    #[gpui::test(iterations = 100)]
-    fn test_random_edits(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
-        let operations = env::var("OPERATIONS")
-            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-            .unwrap_or(10);
-
-        let reference_string_len = rng.gen_range(0..3);
-        let mut reference_string = RandomCharIter::new(&mut rng)
-            .take(reference_string_len)
-            .collect::<String>();
-        cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, reference_string.as_str(), cx);
-            buffer.history.group_interval = Duration::from_millis(rng.gen_range(0..=200));
-            let mut buffer_versions = Vec::new();
-            log::info!(
-                "buffer text {:?}, version: {:?}",
-                buffer.text(),
-                buffer.version()
-            );
-
-            for _i in 0..operations {
-                let (old_ranges, new_text) = buffer.randomly_mutate(&mut rng, cx);
-                for old_range in old_ranges.iter().rev() {
-                    reference_string.replace_range(old_range.clone(), &new_text);
-                }
-                assert_eq!(buffer.text(), reference_string);
-                log::info!(
-                    "buffer text {:?}, version: {:?}",
-                    buffer.text(),
-                    buffer.version()
-                );
-
-                if rng.gen_bool(0.25) {
-                    buffer.randomly_undo_redo(&mut rng, cx);
-                    reference_string = buffer.text();
-                    log::info!(
-                        "buffer text {:?}, version: {:?}",
-                        buffer.text(),
-                        buffer.version()
-                    );
-                }
-
-                let range = buffer.random_byte_range(0, &mut rng);
-                assert_eq!(
-                    buffer.text_summary_for_range(range.clone()),
-                    TextSummary::from(&reference_string[range])
-                );
-
-                if rng.gen_bool(0.3) {
-                    buffer_versions.push(buffer.clone());
+fn contiguous_ranges(
+    values: impl IntoIterator<Item = u32>,
+    max_len: usize,
+) -> impl Iterator<Item = Range<u32>> {
+    let mut values = values.into_iter();
+    let mut current_range: Option<Range<u32>> = None;
+    std::iter::from_fn(move || loop {
+        if let Some(value) = values.next() {
+            if let Some(range) = &mut current_range {
+                if value == range.end && range.len() < max_len {
+                    range.end += 1;
+                    continue;
                 }
             }
 
-            for mut old_buffer in buffer_versions {
-                let edits = buffer
-                    .edits_since(old_buffer.version.clone())
-                    .collect::<Vec<_>>();
-
-                log::info!(
-                    "mutating old buffer version {:?}, text: {:?}, edits since: {:?}",
-                    old_buffer.version(),
-                    old_buffer.text(),
-                    edits,
-                );
-
-                let mut delta = 0_isize;
-                for edit in edits {
-                    let old_start = (edit.old_bytes.start as isize + delta) as usize;
-                    let new_text: String = buffer.text_for_range(edit.new_bytes.clone()).collect();
-                    old_buffer.edit(
-                        Some(old_start..old_start + edit.deleted_bytes()),
-                        new_text,
-                        cx,
-                    );
-                    delta += edit.delta();
-                }
-                assert_eq!(old_buffer.text(), buffer.text());
+            let prev_range = current_range.clone();
+            current_range = Some(value..(value + 1));
+            if prev_range.is_some() {
+                return prev_range;
             }
-
-            buffer
-        });
-    }
-
-    #[gpui::test]
-    fn test_line_len(cx: &mut gpui::MutableAppContext) {
-        cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, "", cx);
-            buffer.edit(vec![0..0], "abcd\nefg\nhij", cx);
-            buffer.edit(vec![12..12], "kl\nmno", cx);
-            buffer.edit(vec![18..18], "\npqrs\n", cx);
-            buffer.edit(vec![18..21], "\nPQ", cx);
-
-            assert_eq!(buffer.line_len(0), 4);
-            assert_eq!(buffer.line_len(1), 3);
-            assert_eq!(buffer.line_len(2), 5);
-            assert_eq!(buffer.line_len(3), 3);
-            assert_eq!(buffer.line_len(4), 4);
-            assert_eq!(buffer.line_len(5), 0);
-            buffer
-        });
-    }
-
-    #[gpui::test]
-    fn test_text_summary_for_range(cx: &mut gpui::MutableAppContext) {
-        cx.add_model(|cx| {
-            let buffer = Buffer::new(0, "ab\nefg\nhklm\nnopqrs\ntuvwxyz", cx);
-            assert_eq!(
-                buffer.text_summary_for_range(1..3),
-                TextSummary {
-                    bytes: 2,
-                    lines: Point::new(1, 0),
-                    first_line_chars: 1,
-                    last_line_chars: 0,
-                    longest_row: 0,
-                    longest_row_chars: 1,
-                }
-            );
-            assert_eq!(
-                buffer.text_summary_for_range(1..12),
-                TextSummary {
-                    bytes: 11,
-                    lines: Point::new(3, 0),
-                    first_line_chars: 1,
-                    last_line_chars: 0,
-                    longest_row: 2,
-                    longest_row_chars: 4,
-                }
-            );
-            assert_eq!(
-                buffer.text_summary_for_range(0..20),
-                TextSummary {
-                    bytes: 20,
-                    lines: Point::new(4, 1),
-                    first_line_chars: 2,
-                    last_line_chars: 1,
-                    longest_row: 3,
-                    longest_row_chars: 6,
-                }
-            );
-            assert_eq!(
-                buffer.text_summary_for_range(0..22),
-                TextSummary {
-                    bytes: 22,
-                    lines: Point::new(4, 3),
-                    first_line_chars: 2,
-                    last_line_chars: 3,
-                    longest_row: 3,
-                    longest_row_chars: 6,
-                }
-            );
-            assert_eq!(
-                buffer.text_summary_for_range(7..22),
-                TextSummary {
-                    bytes: 15,
-                    lines: Point::new(2, 3),
-                    first_line_chars: 4,
-                    last_line_chars: 3,
-                    longest_row: 1,
-                    longest_row_chars: 6,
-                }
-            );
-            buffer
-        });
-    }
-
-    #[gpui::test]
-    fn test_chars_at(cx: &mut gpui::MutableAppContext) {
-        cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, "", cx);
-            buffer.edit(vec![0..0], "abcd\nefgh\nij", cx);
-            buffer.edit(vec![12..12], "kl\nmno", cx);
-            buffer.edit(vec![18..18], "\npqrs", cx);
-            buffer.edit(vec![18..21], "\nPQ", cx);
-
-            let chars = buffer.chars_at(Point::new(0, 0));
-            assert_eq!(chars.collect::<String>(), "abcd\nefgh\nijkl\nmno\nPQrs");
-
-            let chars = buffer.chars_at(Point::new(1, 0));
-            assert_eq!(chars.collect::<String>(), "efgh\nijkl\nmno\nPQrs");
-
-            let chars = buffer.chars_at(Point::new(2, 0));
-            assert_eq!(chars.collect::<String>(), "ijkl\nmno\nPQrs");
-
-            let chars = buffer.chars_at(Point::new(3, 0));
-            assert_eq!(chars.collect::<String>(), "mno\nPQrs");
-
-            let chars = buffer.chars_at(Point::new(4, 0));
-            assert_eq!(chars.collect::<String>(), "PQrs");
-
-            // Regression test:
-            let mut buffer = Buffer::new(0, "", cx);
-            buffer.edit(vec![0..0], "[workspace]\nmembers = [\n    \"xray_core\",\n    \"xray_server\",\n    \"xray_cli\",\n    \"xray_wasm\",\n]\n", cx);
-            buffer.edit(vec![60..60], "\n", cx);
-
-            let chars = buffer.chars_at(Point::new(6, 0));
-            assert_eq!(chars.collect::<String>(), "    \"xray_wasm\",\n]\n");
-
-            buffer
-        });
-    }
-
-    #[gpui::test]
-    fn test_anchors(cx: &mut gpui::MutableAppContext) {
-        cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, "", cx);
-            buffer.edit(vec![0..0], "abc", cx);
-            let left_anchor = buffer.anchor_before(2);
-            let right_anchor = buffer.anchor_after(2);
-
-            buffer.edit(vec![1..1], "def\n", cx);
-            assert_eq!(buffer.text(), "adef\nbc");
-            assert_eq!(left_anchor.to_offset(&buffer), 6);
-            assert_eq!(right_anchor.to_offset(&buffer), 6);
-            assert_eq!(left_anchor.to_point(&buffer), Point { row: 1, column: 1 });
-            assert_eq!(right_anchor.to_point(&buffer), Point { row: 1, column: 1 });
-
-            buffer.edit(vec![2..3], "", cx);
-            assert_eq!(buffer.text(), "adf\nbc");
-            assert_eq!(left_anchor.to_offset(&buffer), 5);
-            assert_eq!(right_anchor.to_offset(&buffer), 5);
-            assert_eq!(left_anchor.to_point(&buffer), Point { row: 1, column: 1 });
-            assert_eq!(right_anchor.to_point(&buffer), Point { row: 1, column: 1 });
-
-            buffer.edit(vec![5..5], "ghi\n", cx);
-            assert_eq!(buffer.text(), "adf\nbghi\nc");
-            assert_eq!(left_anchor.to_offset(&buffer), 5);
-            assert_eq!(right_anchor.to_offset(&buffer), 9);
-            assert_eq!(left_anchor.to_point(&buffer), Point { row: 1, column: 1 });
-            assert_eq!(right_anchor.to_point(&buffer), Point { row: 2, column: 0 });
-
-            buffer.edit(vec![7..9], "", cx);
-            assert_eq!(buffer.text(), "adf\nbghc");
-            assert_eq!(left_anchor.to_offset(&buffer), 5);
-            assert_eq!(right_anchor.to_offset(&buffer), 7);
-            assert_eq!(left_anchor.to_point(&buffer), Point { row: 1, column: 1 },);
-            assert_eq!(right_anchor.to_point(&buffer), Point { row: 1, column: 3 });
-
-            // Ensure anchoring to a point is equivalent to anchoring to an offset.
-            assert_eq!(
-                buffer.anchor_before(Point { row: 0, column: 0 }),
-                buffer.anchor_before(0)
-            );
-            assert_eq!(
-                buffer.anchor_before(Point { row: 0, column: 1 }),
-                buffer.anchor_before(1)
-            );
-            assert_eq!(
-                buffer.anchor_before(Point { row: 0, column: 2 }),
-                buffer.anchor_before(2)
-            );
-            assert_eq!(
-                buffer.anchor_before(Point { row: 0, column: 3 }),
-                buffer.anchor_before(3)
-            );
-            assert_eq!(
-                buffer.anchor_before(Point { row: 1, column: 0 }),
-                buffer.anchor_before(4)
-            );
-            assert_eq!(
-                buffer.anchor_before(Point { row: 1, column: 1 }),
-                buffer.anchor_before(5)
-            );
-            assert_eq!(
-                buffer.anchor_before(Point { row: 1, column: 2 }),
-                buffer.anchor_before(6)
-            );
-            assert_eq!(
-                buffer.anchor_before(Point { row: 1, column: 3 }),
-                buffer.anchor_before(7)
-            );
-            assert_eq!(
-                buffer.anchor_before(Point { row: 1, column: 4 }),
-                buffer.anchor_before(8)
-            );
-
-            // Comparison between anchors.
-            let anchor_at_offset_0 = buffer.anchor_before(0);
-            let anchor_at_offset_1 = buffer.anchor_before(1);
-            let anchor_at_offset_2 = buffer.anchor_before(2);
-
-            assert_eq!(
-                anchor_at_offset_0
-                    .cmp(&anchor_at_offset_0, &buffer)
-                    .unwrap(),
-                Ordering::Equal
-            );
-            assert_eq!(
-                anchor_at_offset_1
-                    .cmp(&anchor_at_offset_1, &buffer)
-                    .unwrap(),
-                Ordering::Equal
-            );
-            assert_eq!(
-                anchor_at_offset_2
-                    .cmp(&anchor_at_offset_2, &buffer)
-                    .unwrap(),
-                Ordering::Equal
-            );
-
-            assert_eq!(
-                anchor_at_offset_0
-                    .cmp(&anchor_at_offset_1, &buffer)
-                    .unwrap(),
-                Ordering::Less
-            );
-            assert_eq!(
-                anchor_at_offset_1
-                    .cmp(&anchor_at_offset_2, &buffer)
-                    .unwrap(),
-                Ordering::Less
-            );
-            assert_eq!(
-                anchor_at_offset_0
-                    .cmp(&anchor_at_offset_2, &buffer)
-                    .unwrap(),
-                Ordering::Less
-            );
-
-            assert_eq!(
-                anchor_at_offset_1
-                    .cmp(&anchor_at_offset_0, &buffer)
-                    .unwrap(),
-                Ordering::Greater
-            );
-            assert_eq!(
-                anchor_at_offset_2
-                    .cmp(&anchor_at_offset_1, &buffer)
-                    .unwrap(),
-                Ordering::Greater
-            );
-            assert_eq!(
-                anchor_at_offset_2
-                    .cmp(&anchor_at_offset_0, &buffer)
-                    .unwrap(),
-                Ordering::Greater
-            );
-            buffer
-        });
-    }
-
-    #[gpui::test]
-    fn test_anchors_at_start_and_end(cx: &mut gpui::MutableAppContext) {
-        cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, "", cx);
-            let before_start_anchor = buffer.anchor_before(0);
-            let after_end_anchor = buffer.anchor_after(0);
-
-            buffer.edit(vec![0..0], "abc", cx);
-            assert_eq!(buffer.text(), "abc");
-            assert_eq!(before_start_anchor.to_offset(&buffer), 0);
-            assert_eq!(after_end_anchor.to_offset(&buffer), 3);
-
-            let after_start_anchor = buffer.anchor_after(0);
-            let before_end_anchor = buffer.anchor_before(3);
-
-            buffer.edit(vec![3..3], "def", cx);
-            buffer.edit(vec![0..0], "ghi", cx);
-            assert_eq!(buffer.text(), "ghiabcdef");
-            assert_eq!(before_start_anchor.to_offset(&buffer), 0);
-            assert_eq!(after_start_anchor.to_offset(&buffer), 3);
-            assert_eq!(before_end_anchor.to_offset(&buffer), 6);
-            assert_eq!(after_end_anchor.to_offset(&buffer), 9);
-            buffer
-        });
-    }
-
-    #[gpui::test]
-    async fn test_apply_diff(mut cx: gpui::TestAppContext) {
-        let text = "a\nbb\nccc\ndddd\neeeee\nffffff\n";
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-
-        let text = "a\nccc\ndddd\nffffff\n";
-        let diff = buffer.read_with(&cx, |b, cx| b.diff(text.into(), cx)).await;
-        buffer.update(&mut cx, |b, cx| b.apply_diff(diff, cx));
-        cx.read(|cx| assert_eq!(buffer.read(cx).text(), text));
-
-        let text = "a\n1\n\nccc\ndd2dd\nffffff\n";
-        let diff = buffer.read_with(&cx, |b, cx| b.diff(text.into(), cx)).await;
-        buffer.update(&mut cx, |b, cx| b.apply_diff(diff, cx));
-        cx.read(|cx| assert_eq!(buffer.read(cx).text(), text));
-    }
-
-    #[gpui::test]
-    fn test_undo_redo(cx: &mut gpui::MutableAppContext) {
-        cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, "1234", cx);
-            // Set group interval to zero so as to not group edits in the undo stack.
-            buffer.history.group_interval = Duration::from_secs(0);
-
-            buffer.edit(vec![1..1], "abx", cx);
-            buffer.edit(vec![3..4], "yzef", cx);
-            buffer.edit(vec![3..5], "cd", cx);
-            assert_eq!(buffer.text(), "1abcdef234");
-
-            let transactions = buffer.history.undo_stack.clone();
-            assert_eq!(transactions.len(), 3);
-
-            buffer.undo_or_redo(transactions[0].clone(), cx).unwrap();
-            assert_eq!(buffer.text(), "1cdef234");
-            buffer.undo_or_redo(transactions[0].clone(), cx).unwrap();
-            assert_eq!(buffer.text(), "1abcdef234");
-
-            buffer.undo_or_redo(transactions[1].clone(), cx).unwrap();
-            assert_eq!(buffer.text(), "1abcdx234");
-            buffer.undo_or_redo(transactions[2].clone(), cx).unwrap();
-            assert_eq!(buffer.text(), "1abx234");
-            buffer.undo_or_redo(transactions[1].clone(), cx).unwrap();
-            assert_eq!(buffer.text(), "1abyzef234");
-            buffer.undo_or_redo(transactions[2].clone(), cx).unwrap();
-            assert_eq!(buffer.text(), "1abcdef234");
-
-            buffer.undo_or_redo(transactions[2].clone(), cx).unwrap();
-            assert_eq!(buffer.text(), "1abyzef234");
-            buffer.undo_or_redo(transactions[0].clone(), cx).unwrap();
-            assert_eq!(buffer.text(), "1yzef234");
-            buffer.undo_or_redo(transactions[1].clone(), cx).unwrap();
-            assert_eq!(buffer.text(), "1234");
-
-            buffer
-        });
-    }
-
-    #[gpui::test]
-    fn test_history(cx: &mut gpui::MutableAppContext) {
-        cx.add_model(|cx| {
-            let mut now = Instant::now();
-            let mut buffer = Buffer::new(0, "123456", cx);
-
-            let set_id =
-                buffer.add_selection_set(buffer.selections_from_ranges(vec![4..4]).unwrap(), cx);
-            buffer.start_transaction_at(Some(set_id), now).unwrap();
-            buffer.edit(vec![2..4], "cd", cx);
-            buffer.end_transaction_at(Some(set_id), now, cx).unwrap();
-            assert_eq!(buffer.text(), "12cd56");
-            assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![4..4]);
-
-            buffer.start_transaction_at(Some(set_id), now).unwrap();
-            buffer
-                .update_selection_set(
-                    set_id,
-                    buffer.selections_from_ranges(vec![1..3]).unwrap(),
-                    cx,
-                )
-                .unwrap();
-            buffer.edit(vec![4..5], "e", cx);
-            buffer.end_transaction_at(Some(set_id), now, cx).unwrap();
-            assert_eq!(buffer.text(), "12cde6");
-            assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![1..3]);
-
-            now += buffer.history.group_interval + Duration::from_millis(1);
-            buffer.start_transaction_at(Some(set_id), now).unwrap();
-            buffer
-                .update_selection_set(
-                    set_id,
-                    buffer.selections_from_ranges(vec![2..2]).unwrap(),
-                    cx,
-                )
-                .unwrap();
-            buffer.edit(vec![0..1], "a", cx);
-            buffer.edit(vec![1..1], "b", cx);
-            buffer.end_transaction_at(Some(set_id), now, cx).unwrap();
-            assert_eq!(buffer.text(), "ab2cde6");
-            assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![3..3]);
-
-            // Last transaction happened past the group interval, undo it on its
-            // own.
-            buffer.undo(cx);
-            assert_eq!(buffer.text(), "12cde6");
-            assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![1..3]);
-
-            // First two transactions happened within the group interval, undo them
-            // together.
-            buffer.undo(cx);
-            assert_eq!(buffer.text(), "123456");
-            assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![4..4]);
-
-            // Redo the first two transactions together.
-            buffer.redo(cx);
-            assert_eq!(buffer.text(), "12cde6");
-            assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![1..3]);
-
-            // Redo the last transaction on its own.
-            buffer.redo(cx);
-            assert_eq!(buffer.text(), "ab2cde6");
-            assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![3..3]);
-
-            buffer
-        });
-    }
-
-    #[gpui::test]
-    fn test_concurrent_edits(cx: &mut gpui::MutableAppContext) {
-        let text = "abcdef";
-
-        let buffer1 = cx.add_model(|cx| Buffer::new(1, text, cx));
-        let buffer2 = cx.add_model(|cx| Buffer::new(2, text, cx));
-        let buffer3 = cx.add_model(|cx| Buffer::new(3, text, cx));
-
-        let buf1_op = buffer1.update(cx, |buffer, cx| {
-            buffer.edit(vec![1..2], "12", cx);
-            assert_eq!(buffer.text(), "a12cdef");
-            buffer.operations.last().unwrap().clone()
-        });
-        let buf2_op = buffer2.update(cx, |buffer, cx| {
-            buffer.edit(vec![3..4], "34", cx);
-            assert_eq!(buffer.text(), "abc34ef");
-            buffer.operations.last().unwrap().clone()
-        });
-        let buf3_op = buffer3.update(cx, |buffer, cx| {
-            buffer.edit(vec![5..6], "56", cx);
-            assert_eq!(buffer.text(), "abcde56");
-            buffer.operations.last().unwrap().clone()
-        });
-
-        buffer1.update(cx, |buffer, _| {
-            buffer.apply_op(buf2_op.clone()).unwrap();
-            buffer.apply_op(buf3_op.clone()).unwrap();
-        });
-        buffer2.update(cx, |buffer, _| {
-            buffer.apply_op(buf1_op.clone()).unwrap();
-            buffer.apply_op(buf3_op.clone()).unwrap();
-        });
-        buffer3.update(cx, |buffer, _| {
-            buffer.apply_op(buf1_op.clone()).unwrap();
-            buffer.apply_op(buf2_op.clone()).unwrap();
-        });
-
-        assert_eq!(buffer1.read(cx).text(), "a12c34e56");
-        assert_eq!(buffer2.read(cx).text(), "a12c34e56");
-        assert_eq!(buffer3.read(cx).text(), "a12c34e56");
-    }
-
-    #[gpui::test(iterations = 100)]
-    fn test_random_concurrent_edits(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
-        let peers = env::var("PEERS")
-            .map(|i| i.parse().expect("invalid `PEERS` variable"))
-            .unwrap_or(5);
-        let operations = env::var("OPERATIONS")
-            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-            .unwrap_or(10);
-
-        let base_text_len = rng.gen_range(0..10);
-        let base_text = RandomCharIter::new(&mut rng)
-            .take(base_text_len)
-            .collect::<String>();
-        let mut replica_ids = Vec::new();
-        let mut buffers = Vec::new();
-        let mut network = Network::new(rng.clone());
-
-        for i in 0..peers {
-            let buffer = cx.add_model(|cx| {
-                let mut buf = Buffer::new(i as ReplicaId, base_text.as_str(), cx);
-                buf.history.group_interval = Duration::from_millis(rng.gen_range(0..=200));
-                buf
-            });
-            buffers.push(buffer);
-            replica_ids.push(i as u16);
-            network.add_peer(i as u16);
+        } else {
+            return current_range.take();
         }
-
-        log::info!("initial text: {:?}", base_text);
-
-        let mut mutation_count = operations;
-        loop {
-            let replica_index = rng.gen_range(0..peers);
-            let replica_id = replica_ids[replica_index];
-            buffers[replica_index].update(cx, |buffer, cx| match rng.gen_range(0..=100) {
-                0..=50 if mutation_count != 0 => {
-                    buffer.randomly_mutate(&mut rng, cx);
-                    network.broadcast(buffer.replica_id, mem::take(&mut buffer.operations));
-                    log::info!("buffer {} text: {:?}", buffer.replica_id, buffer.text());
-                    mutation_count -= 1;
-                }
-                51..=70 if mutation_count != 0 => {
-                    buffer.randomly_undo_redo(&mut rng, cx);
-                    network.broadcast(buffer.replica_id, mem::take(&mut buffer.operations));
-                    mutation_count -= 1;
-                }
-                71..=100 if network.has_unreceived(replica_id) => {
-                    let ops = network.receive(replica_id);
-                    if !ops.is_empty() {
-                        log::info!(
-                            "peer {} applying {} ops from the network.",
-                            replica_id,
-                            ops.len()
-                        );
-                        buffer.apply_ops(ops, cx).unwrap();
-                    }
-                }
-                _ => {}
-            });
-
-            if mutation_count == 0 && network.is_idle() {
-                break;
-            }
-        }
-
-        let first_buffer = buffers[0].read(cx);
-        for buffer in &buffers[1..] {
-            let buffer = buffer.read(cx);
-            assert_eq!(
-                buffer.text(),
-                first_buffer.text(),
-                "Replica {} text != Replica 0 text",
-                buffer.replica_id
-            );
-            assert_eq!(
-                buffer.selection_sets().collect::<HashMap<_, _>>(),
-                first_buffer.selection_sets().collect::<HashMap<_, _>>()
-            );
-            assert_eq!(
-                buffer.all_selection_ranges().collect::<HashMap<_, _>>(),
-                first_buffer
-                    .all_selection_ranges()
-                    .collect::<HashMap<_, _>>()
-            );
-        }
-    }
-
-    #[gpui::test]
-    async fn test_reparse(mut cx: gpui::TestAppContext) {
-        let rust_lang = rust_lang();
-        let buffer = cx.add_model(|cx| {
-            let text = "fn a() {}".into();
-            Buffer::from_history(0, History::new(text), None, Some(rust_lang.clone()), cx)
-        });
-
-        // Wait for the initial text to parse
-        buffer
-            .condition(&cx, |buffer, _| !buffer.is_parsing())
-            .await;
-        assert_eq!(
-            get_tree_sexp(&buffer, &cx),
-            concat!(
-                "(source_file (function_item name: (identifier) ",
-                "parameters: (parameters) ",
-                "body: (block)))"
-            )
-        );
-
-        buffer.update(&mut cx, |buffer, _| {
-            buffer.set_sync_parse_timeout(Duration::ZERO)
-        });
-
-        // Perform some edits (add parameter and variable reference)
-        // Parsing doesn't begin until the transaction is complete
-        buffer.update(&mut cx, |buf, cx| {
-            buf.start_transaction(None).unwrap();
-
-            let offset = buf.text().find(")").unwrap();
-            buf.edit(vec![offset..offset], "b: C", cx);
-            assert!(!buf.is_parsing());
-
-            let offset = buf.text().find("}").unwrap();
-            buf.edit(vec![offset..offset], " d; ", cx);
-            assert!(!buf.is_parsing());
-
-            buf.end_transaction(None, cx).unwrap();
-            assert_eq!(buf.text(), "fn a(b: C) { d; }");
-            assert!(buf.is_parsing());
-        });
-        buffer
-            .condition(&cx, |buffer, _| !buffer.is_parsing())
-            .await;
-        assert_eq!(
-            get_tree_sexp(&buffer, &cx),
-            concat!(
-                "(source_file (function_item name: (identifier) ",
-                    "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
-                    "body: (block (identifier))))"
-            )
-        );
-
-        // Perform a series of edits without waiting for the current parse to complete:
-        // * turn identifier into a field expression
-        // * turn field expression into a method call
-        // * add a turbofish to the method call
-        buffer.update(&mut cx, |buf, cx| {
-            let offset = buf.text().find(";").unwrap();
-            buf.edit(vec![offset..offset], ".e", cx);
-            assert_eq!(buf.text(), "fn a(b: C) { d.e; }");
-            assert!(buf.is_parsing());
-        });
-        buffer.update(&mut cx, |buf, cx| {
-            let offset = buf.text().find(";").unwrap();
-            buf.edit(vec![offset..offset], "(f)", cx);
-            assert_eq!(buf.text(), "fn a(b: C) { d.e(f); }");
-            assert!(buf.is_parsing());
-        });
-        buffer.update(&mut cx, |buf, cx| {
-            let offset = buf.text().find("(f)").unwrap();
-            buf.edit(vec![offset..offset], "::<G>", cx);
-            assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
-            assert!(buf.is_parsing());
-        });
-        buffer
-            .condition(&cx, |buffer, _| !buffer.is_parsing())
-            .await;
-        assert_eq!(
-            get_tree_sexp(&buffer, &cx),
-            concat!(
-                "(source_file (function_item name: (identifier) ",
-                    "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
-                    "body: (block (call_expression ",
-                        "function: (generic_function ",
-                            "function: (field_expression value: (identifier) field: (field_identifier)) ",
-                            "type_arguments: (type_arguments (type_identifier))) ",
-                            "arguments: (arguments (identifier))))))",
-            )
-        );
-
-        buffer.update(&mut cx, |buf, cx| {
-            buf.undo(cx);
-            assert_eq!(buf.text(), "fn a() {}");
-            assert!(buf.is_parsing());
-        });
-        buffer
-            .condition(&cx, |buffer, _| !buffer.is_parsing())
-            .await;
-        assert_eq!(
-            get_tree_sexp(&buffer, &cx),
-            concat!(
-                "(source_file (function_item name: (identifier) ",
-                "parameters: (parameters) ",
-                "body: (block)))"
-            )
-        );
-
-        buffer.update(&mut cx, |buf, cx| {
-            buf.redo(cx);
-            assert_eq!(buf.text(), "fn a(b: C) { d.e::<G>(f); }");
-            assert!(buf.is_parsing());
-        });
-        buffer
-            .condition(&cx, |buffer, _| !buffer.is_parsing())
-            .await;
-        assert_eq!(
-            get_tree_sexp(&buffer, &cx),
-            concat!(
-                "(source_file (function_item name: (identifier) ",
-                    "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
-                    "body: (block (call_expression ",
-                        "function: (generic_function ",
-                            "function: (field_expression value: (identifier) field: (field_identifier)) ",
-                            "type_arguments: (type_arguments (type_identifier))) ",
-                            "arguments: (arguments (identifier))))))",
-            )
-        );
-
-        fn get_tree_sexp(buffer: &ModelHandle<Buffer>, cx: &gpui::TestAppContext) -> String {
-            buffer.read_with(cx, |buffer, _| {
-                buffer.syntax_tree().unwrap().root_node().to_sexp()
-            })
-        }
-    }
-
-    #[gpui::test]
-    async fn test_enclosing_bracket_ranges(mut cx: gpui::TestAppContext) {
-        use unindent::Unindent as _;
-
-        let rust_lang = rust_lang();
-        let buffer = cx.add_model(|cx| {
-            let text = "
-                mod x {
-                    mod y {
-
-                    }
-                }
-            "
-            .unindent()
-            .into();
-            Buffer::from_history(0, History::new(text), None, Some(rust_lang.clone()), cx)
-        });
-        buffer
-            .condition(&cx, |buffer, _| !buffer.is_parsing())
-            .await;
-        buffer.read_with(&cx, |buf, _| {
-            assert_eq!(
-                buf.enclosing_bracket_point_ranges(Point::new(1, 6)..Point::new(1, 6)),
-                Some((
-                    Point::new(0, 6)..Point::new(0, 7),
-                    Point::new(4, 0)..Point::new(4, 1)
-                ))
-            );
-            assert_eq!(
-                buf.enclosing_bracket_point_ranges(Point::new(1, 10)..Point::new(1, 10)),
-                Some((
-                    Point::new(1, 10)..Point::new(1, 11),
-                    Point::new(3, 4)..Point::new(3, 5)
-                ))
-            );
-            assert_eq!(
-                buf.enclosing_bracket_point_ranges(Point::new(3, 5)..Point::new(3, 5)),
-                Some((
-                    Point::new(1, 10)..Point::new(1, 11),
-                    Point::new(3, 4)..Point::new(3, 5)
-                ))
-            );
-        });
-    }
-
-    #[derive(Clone)]
-    struct Envelope<T: Clone> {
-        message: T,
-        sender: ReplicaId,
-    }
-
-    struct Network<T: Clone, R: rand::Rng> {
-        inboxes: std::collections::BTreeMap<ReplicaId, Vec<Envelope<T>>>,
-        all_messages: Vec<T>,
-        rng: R,
-    }
-
-    impl<T: Clone, R: rand::Rng> Network<T, R> {
-        fn new(rng: R) -> Self {
-            Network {
-                inboxes: Default::default(),
-                all_messages: Vec::new(),
-                rng,
-            }
-        }
-
-        fn add_peer(&mut self, id: ReplicaId) {
-            self.inboxes.insert(id, Vec::new());
-        }
-
-        fn is_idle(&self) -> bool {
-            self.inboxes.values().all(|i| i.is_empty())
-        }
-
-        fn broadcast(&mut self, sender: ReplicaId, messages: Vec<T>) {
-            for (replica, inbox) in self.inboxes.iter_mut() {
-                if *replica != sender {
-                    for message in &messages {
-                        let min_index = inbox
-                            .iter()
-                            .enumerate()
-                            .rev()
-                            .find_map(|(index, envelope)| {
-                                if sender == envelope.sender {
-                                    Some(index + 1)
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or(0);
-
-                        // Insert one or more duplicates of this message *after* the previous
-                        // message delivered by this replica.
-                        for _ in 0..self.rng.gen_range(1..4) {
-                            let insertion_index = self.rng.gen_range(min_index..inbox.len() + 1);
-                            inbox.insert(
-                                insertion_index,
-                                Envelope {
-                                    message: message.clone(),
-                                    sender,
-                                },
-                            );
-                        }
-                    }
-                }
-            }
-            self.all_messages.extend(messages);
-        }
-
-        fn has_unreceived(&self, receiver: ReplicaId) -> bool {
-            !self.inboxes[&receiver].is_empty()
-        }
-
-        fn receive(&mut self, receiver: ReplicaId) -> Vec<T> {
-            let inbox = self.inboxes.get_mut(&receiver).unwrap();
-            let count = self.rng.gen_range(0..inbox.len() + 1);
-            inbox
-                .drain(0..count)
-                .map(|envelope| envelope.message)
-                .collect()
-        }
-    }
-
-    fn rust_lang() -> Arc<Language> {
-        Arc::new(
-            Language::new(
-                LanguageConfig {
-                    name: "Rust".to_string(),
-                    path_suffixes: vec!["rs".to_string()],
-                    ..Default::default()
-                },
-                tree_sitter_rust::language(),
-            )
-            .with_brackets_query(r#" ("{" @open "}" @close) "#)
-            .unwrap(),
-        )
-    }
+    })
 }

@@ -21,7 +21,7 @@ use smol::Timer;
 use std::{
     cell::RefCell,
     cmp::{self, Ordering},
-    mem,
+    iter, mem,
     ops::{Range, RangeInclusive},
     rc::Rc,
     sync::Arc,
@@ -38,6 +38,8 @@ action!(Cancel);
 action!(Backspace);
 action!(Delete);
 action!(Input, String);
+action!(Newline);
+action!(Tab);
 action!(DeleteLine);
 action!(DeleteToPreviousWordBoundary);
 action!(DeleteToNextWordBoundary);
@@ -95,13 +97,13 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("ctrl-h", Backspace, Some("Editor")),
         Binding::new("delete", Delete, Some("Editor")),
         Binding::new("ctrl-d", Delete, Some("Editor")),
-        Binding::new("enter", Input("\n".into()), Some("Editor && mode == full")),
+        Binding::new("enter", Newline, Some("Editor && mode == full")),
         Binding::new(
             "alt-enter",
             Input("\n".into()),
             Some("Editor && mode == auto_height"),
         ),
-        Binding::new("tab", Input("\t".into()), Some("Editor")),
+        Binding::new("tab", Tab, Some("Editor")),
         Binding::new("ctrl-shift-K", DeleteLine, Some("Editor")),
         Binding::new(
             "alt-backspace",
@@ -193,8 +195,10 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::select);
     cx.add_action(Editor::cancel);
     cx.add_action(Editor::handle_input);
+    cx.add_action(Editor::newline);
     cx.add_action(Editor::backspace);
     cx.add_action(Editor::delete);
+    cx.add_action(Editor::tab);
     cx.add_action(Editor::delete_line);
     cx.add_action(Editor::delete_to_previous_word_boundary);
     cx.add_action(Editor::delete_to_next_word_boundary);
@@ -292,7 +296,7 @@ pub struct Editor {
     pending_selection: Option<Selection>,
     next_selection_id: usize,
     add_selections_state: Option<AddSelectionsState>,
-    autoclose_stack: Vec<AutoclosePairState>,
+    autoclose_stack: Vec<BracketPairState>,
     select_larger_syntax_node_stack: Vec<Arc<[Selection]>>,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
@@ -320,9 +324,9 @@ struct AddSelectionsState {
     stack: Vec<usize>,
 }
 
-struct AutoclosePairState {
+struct BracketPairState {
     ranges: SmallVec<[Range<Anchor>; 32]>,
-    pair: AutoclosePair,
+    pair: BracketPair,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -750,6 +754,130 @@ impl Editor {
         }
     }
 
+    pub fn newline(&mut self, _: &Newline, cx: &mut ViewContext<Self>) {
+        self.start_transaction(cx);
+        let mut old_selections = SmallVec::<[_; 32]>::new();
+        {
+            let selections = self.selections(cx);
+            let buffer = self.buffer.read(cx);
+            for selection in selections.iter() {
+                let start_point = selection.start.to_point(buffer);
+                let indent = buffer
+                    .indent_column_for_line(start_point.row)
+                    .min(start_point.column);
+                let start = selection.start.to_offset(buffer);
+                let end = selection.end.to_offset(buffer);
+
+                let mut insert_extra_newline = false;
+                if let Some(language) = buffer.language() {
+                    let leading_whitespace_len = buffer
+                        .reversed_chars_at(start)
+                        .take_while(|c| c.is_whitespace() && *c != '\n')
+                        .map(|c| c.len_utf8())
+                        .sum::<usize>();
+
+                    let trailing_whitespace_len = buffer
+                        .chars_at(end)
+                        .take_while(|c| c.is_whitespace() && *c != '\n')
+                        .map(|c| c.len_utf8())
+                        .sum::<usize>();
+
+                    insert_extra_newline = language.brackets().iter().any(|pair| {
+                        let pair_start = pair.start.trim_end();
+                        let pair_end = pair.end.trim_start();
+
+                        pair.newline
+                            && buffer.contains_str_at(end + trailing_whitespace_len, pair_end)
+                            && buffer.contains_str_at(
+                                (start - leading_whitespace_len).saturating_sub(pair_start.len()),
+                                pair_start,
+                            )
+                    });
+                }
+
+                old_selections.push((selection.id, start..end, indent, insert_extra_newline));
+            }
+        }
+
+        let mut new_selections = Vec::with_capacity(old_selections.len());
+        self.buffer.update(cx, |buffer, cx| {
+            let mut delta = 0_isize;
+            let mut pending_edit: Option<PendingEdit> = None;
+            for (_, range, indent, insert_extra_newline) in &old_selections {
+                if pending_edit.as_ref().map_or(false, |pending| {
+                    pending.indent != *indent
+                        || pending.insert_extra_newline != *insert_extra_newline
+                }) {
+                    let pending = pending_edit.take().unwrap();
+                    let mut new_text = String::with_capacity(1 + pending.indent as usize);
+                    new_text.push('\n');
+                    new_text.extend(iter::repeat(' ').take(pending.indent as usize));
+                    if pending.insert_extra_newline {
+                        new_text = new_text.repeat(2);
+                    }
+                    buffer.edit_with_autoindent(pending.ranges, new_text, cx);
+                    delta += pending.delta;
+                }
+
+                let start = (range.start as isize + delta) as usize;
+                let end = (range.end as isize + delta) as usize;
+                let mut text_len = *indent as usize + 1;
+                if *insert_extra_newline {
+                    text_len *= 2;
+                }
+
+                let pending = pending_edit.get_or_insert_with(Default::default);
+                pending.delta += text_len as isize - (end - start) as isize;
+                pending.indent = *indent;
+                pending.insert_extra_newline = *insert_extra_newline;
+                pending.ranges.push(start..end);
+            }
+
+            let pending = pending_edit.unwrap();
+            let mut new_text = String::with_capacity(1 + pending.indent as usize);
+            new_text.push('\n');
+            new_text.extend(iter::repeat(' ').take(pending.indent as usize));
+            if pending.insert_extra_newline {
+                new_text = new_text.repeat(2);
+            }
+            buffer.edit_with_autoindent(pending.ranges, new_text, cx);
+
+            let mut delta = 0_isize;
+            new_selections.extend(old_selections.into_iter().map(
+                |(id, range, indent, insert_extra_newline)| {
+                    let start = (range.start as isize + delta) as usize;
+                    let end = (range.end as isize + delta) as usize;
+                    let text_before_cursor_len = indent as usize + 1;
+                    let anchor = buffer.anchor_before(start + text_before_cursor_len);
+                    let text_len = if insert_extra_newline {
+                        text_before_cursor_len * 2
+                    } else {
+                        text_before_cursor_len
+                    };
+                    delta += text_len as isize - (end - start) as isize;
+                    Selection {
+                        id,
+                        start: anchor.clone(),
+                        end: anchor,
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    }
+                },
+            ))
+        });
+
+        self.update_selections(new_selections, true, cx);
+        self.end_transaction(cx);
+
+        #[derive(Default)]
+        struct PendingEdit {
+            indent: u32,
+            insert_extra_newline: bool,
+            delta: isize,
+            ranges: SmallVec<[Range<usize>; 32]>,
+        }
+    }
+
     fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         let mut old_selections = SmallVec::<[_; 32]>::new();
@@ -766,7 +894,7 @@ impl Editor {
         let mut new_selections = Vec::new();
         self.buffer.update(cx, |buffer, cx| {
             let edit_ranges = old_selections.iter().map(|(_, range)| range.clone());
-            buffer.edit(edit_ranges, text, cx);
+            buffer.edit_with_autoindent(edit_ranges, text, cx);
             let text_len = text.len() as isize;
             let mut delta = 0_isize;
             new_selections = old_selections
@@ -797,7 +925,7 @@ impl Editor {
         let new_autoclose_pair_state = self.buffer.update(cx, |buffer, cx| {
             let autoclose_pair = buffer.language().and_then(|language| {
                 let first_selection_start = selections.first().unwrap().start.to_offset(&*buffer);
-                let pair = language.autoclose_pairs().iter().find(|pair| {
+                let pair = language.brackets().iter().find(|pair| {
                     buffer.contains_str_at(
                         first_selection_start.saturating_sub(pair.start.len()),
                         &pair.start,
@@ -832,7 +960,7 @@ impl Editor {
                 buffer.edit(selection_ranges, &pair.end, cx);
 
                 if pair.end.len() == 1 {
-                    Some(AutoclosePairState {
+                    Some(BracketPairState {
                         ranges: selections
                             .iter()
                             .map(|selection| {
@@ -947,6 +1075,51 @@ impl Editor {
 
         self.update_selections(selections, true, cx);
         self.insert(&"", cx);
+        self.end_transaction(cx);
+    }
+
+    pub fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
+        self.start_transaction(cx);
+        let tab_size = self.build_settings.borrow()(cx).tab_size;
+        let mut selections = self.selections(cx).to_vec();
+        self.buffer.update(cx, |buffer, cx| {
+            let mut last_indented_row = None;
+            for selection in &mut selections {
+                let mut range = selection.point_range(buffer);
+                if range.is_empty() {
+                    let char_column = buffer
+                        .chars_for_range(Point::new(range.start.row, 0)..range.start)
+                        .count();
+                    let chars_to_next_tab_stop = tab_size - (char_column % tab_size);
+                    buffer.edit(
+                        [range.start..range.start],
+                        " ".repeat(chars_to_next_tab_stop),
+                        cx,
+                    );
+                    range.start.column += chars_to_next_tab_stop as u32;
+
+                    let head = buffer.anchor_before(range.start);
+                    selection.start = head.clone();
+                    selection.end = head;
+                } else {
+                    for row in range.start.row..=range.end.row {
+                        if last_indented_row != Some(row) {
+                            let char_column = buffer.indent_column_for_line(row) as usize;
+                            let chars_to_next_tab_stop = tab_size - (char_column % tab_size);
+                            let row_start = Point::new(row, 0);
+                            buffer.edit(
+                                [row_start..row_start],
+                                " ".repeat(chars_to_next_tab_stop),
+                                cx,
+                            );
+                            last_indented_row = Some(row);
+                        }
+                    }
+                }
+            }
+        });
+
+        self.update_selections(selections, true, cx);
         self.end_transaction(cx);
     }
 
@@ -3508,6 +3681,30 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_newline(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "aaaa\n    bbbb\n", cx));
+        let settings = EditorSettings::test(&cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            build_editor(buffer.clone(), settings, cx)
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                    DisplayPoint::new(1, 6)..DisplayPoint::new(1, 6),
+                ],
+                cx,
+            )
+            .unwrap();
+
+            view.newline(&Newline, cx);
+            assert_eq!(view.text(cx), "aa\naa\n  \n    bb\n    bb\n");
+        });
+    }
+
+    #[gpui::test]
     fn test_backspace(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| {
             Buffer::new(
@@ -4355,14 +4552,18 @@ mod tests {
         let settings = cx.read(EditorSettings::test);
         let language = Arc::new(Language::new(
             LanguageConfig {
-                autoclose_pairs: vec![
-                    AutoclosePair {
+                brackets: vec![
+                    BracketPair {
                         start: "{".to_string(),
                         end: "}".to_string(),
+                        close: true,
+                        newline: true,
                     },
-                    AutoclosePair {
+                    BracketPair {
                         start: "/*".to_string(),
                         end: " */".to_string(),
+                        close: true,
+                        newline: true,
                     },
                 ],
                 ..Default::default()
@@ -4457,6 +4658,76 @@ mod tests {
                 *
                 "
                 .unindent()
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_extra_newline_insertion(mut cx: gpui::TestAppContext) {
+        let settings = cx.read(EditorSettings::test);
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                brackets: vec![
+                    BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "/* ".to_string(),
+                        end: " */".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                ],
+                ..Default::default()
+            },
+            tree_sitter_rust::language(),
+        ));
+
+        let text = concat!(
+            "{   }\n",     // Suppress rustfmt
+            "  x\n",       //
+            "  /*   */\n", //
+            "x\n",         //
+            "{{} }\n",     //
+        );
+
+        let buffer = cx.add_model(|cx| {
+            let history = History::new(text.into());
+            Buffer::from_history(0, history, None, Some(language), cx)
+        });
+        let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
+        view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
+            .await;
+
+        view.update(&mut cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
+                    DisplayPoint::new(4, 4)..DisplayPoint::new(4, 4),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.newline(&Newline, cx);
+
+            assert_eq!(
+                view.buffer().read(cx).text(),
+                concat!(
+                    "{ \n",    // Suppress rustfmt
+                    "\n",      //
+                    "}\n",     //
+                    "  x\n",   //
+                    "  /* \n", //
+                    "  \n",    //
+                    "  */\n",  //
+                    "x\n",     //
+                    "{{} \n",  //
+                    "}\n",     //
+                )
             );
         });
     }
