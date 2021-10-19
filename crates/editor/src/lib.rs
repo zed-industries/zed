@@ -296,7 +296,7 @@ pub struct Editor {
     pending_selection: Option<Selection>,
     next_selection_id: usize,
     add_selections_state: Option<AddSelectionsState>,
-    autoclose_stack: Vec<AutoclosePairState>,
+    autoclose_stack: Vec<BracketPairState>,
     select_larger_syntax_node_stack: Vec<Arc<[Selection]>>,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
@@ -324,9 +324,9 @@ struct AddSelectionsState {
     stack: Vec<usize>,
 }
 
-struct AutoclosePairState {
+struct BracketPairState {
     ranges: SmallVec<[Range<Anchor>; 32]>,
-    pair: AutoclosePair,
+    pair: BracketPair,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -767,7 +767,35 @@ impl Editor {
                     .min(start_point.column);
                 let start = selection.start.to_offset(buffer);
                 let end = selection.end.to_offset(buffer);
-                old_selections.push((selection.id, start..end, indent));
+
+                let mut insert_extra_newline = false;
+                if let Some(language) = buffer.language() {
+                    let leading_whitespace_len = buffer
+                        .reversed_chars_at(start)
+                        .take_while(|c| c.is_whitespace() && *c != '\n')
+                        .map(|c| c.len_utf8())
+                        .sum::<usize>();
+
+                    let trailing_whitespace_len = buffer
+                        .chars_at(end)
+                        .take_while(|c| c.is_whitespace() && *c != '\n')
+                        .map(|c| c.len_utf8())
+                        .sum::<usize>();
+
+                    insert_extra_newline = language.brackets().iter().any(|pair| {
+                        let pair_start = pair.start.trim_end();
+                        let pair_end = pair.end.trim_start();
+
+                        pair.newline
+                            && buffer.contains_str_at(end + trailing_whitespace_len, pair_end)
+                            && buffer.contains_str_at(
+                                (start - leading_whitespace_len).saturating_sub(pair_start.len()),
+                                pair_start,
+                            )
+                    });
+                }
+
+                old_selections.push((selection.id, start..end, indent, insert_extra_newline));
             }
         }
 
@@ -775,26 +803,33 @@ impl Editor {
         self.buffer.update(cx, |buffer, cx| {
             let mut delta = 0_isize;
             let mut pending_edit: Option<PendingEdit> = None;
-            for (_, range, indent) in &old_selections {
-                if pending_edit
-                    .as_ref()
-                    .map_or(false, |pending| pending.indent != *indent)
-                {
+            for (_, range, indent, insert_extra_newline) in &old_selections {
+                if pending_edit.as_ref().map_or(false, |pending| {
+                    pending.indent != *indent
+                        || pending.insert_extra_newline != *insert_extra_newline
+                }) {
                     let pending = pending_edit.take().unwrap();
                     let mut new_text = String::with_capacity(1 + pending.indent as usize);
                     new_text.push('\n');
                     new_text.extend(iter::repeat(' ').take(pending.indent as usize));
+                    if pending.insert_extra_newline {
+                        new_text = new_text.repeat(2);
+                    }
                     buffer.edit_with_autoindent(pending.ranges, new_text, cx);
                     delta += pending.delta;
                 }
 
                 let start = (range.start as isize + delta) as usize;
                 let end = (range.end as isize + delta) as usize;
-                let text_len = *indent as usize + 1;
+                let mut text_len = *indent as usize + 1;
+                if *insert_extra_newline {
+                    text_len *= 2;
+                }
 
                 let pending = pending_edit.get_or_insert_with(Default::default);
                 pending.delta += text_len as isize - (end - start) as isize;
                 pending.indent = *indent;
+                pending.insert_extra_newline = *insert_extra_newline;
                 pending.ranges.push(start..end);
             }
 
@@ -802,23 +837,33 @@ impl Editor {
             let mut new_text = String::with_capacity(1 + pending.indent as usize);
             new_text.push('\n');
             new_text.extend(iter::repeat(' ').take(pending.indent as usize));
+            if pending.insert_extra_newline {
+                new_text = new_text.repeat(2);
+            }
             buffer.edit_with_autoindent(pending.ranges, new_text, cx);
 
             let mut delta = 0_isize;
-            new_selections.extend(old_selections.into_iter().map(|(id, range, indent)| {
-                let start = (range.start as isize + delta) as usize;
-                let end = (range.end as isize + delta) as usize;
-                let text_len = indent as usize + 1;
-                let anchor = buffer.anchor_before(start + text_len);
-                delta += text_len as isize - (end - start) as isize;
-                Selection {
-                    id,
-                    start: anchor.clone(),
-                    end: anchor,
-                    reversed: false,
-                    goal: SelectionGoal::None,
-                }
-            }))
+            new_selections.extend(old_selections.into_iter().map(
+                |(id, range, indent, insert_extra_newline)| {
+                    let start = (range.start as isize + delta) as usize;
+                    let end = (range.end as isize + delta) as usize;
+                    let text_before_cursor_len = indent as usize + 1;
+                    let anchor = buffer.anchor_before(start + text_before_cursor_len);
+                    let text_len = if insert_extra_newline {
+                        text_before_cursor_len * 2
+                    } else {
+                        text_before_cursor_len
+                    };
+                    delta += text_len as isize - (end - start) as isize;
+                    Selection {
+                        id,
+                        start: anchor.clone(),
+                        end: anchor,
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    }
+                },
+            ))
         });
 
         self.update_selections(new_selections, true, cx);
@@ -827,6 +872,7 @@ impl Editor {
         #[derive(Default)]
         struct PendingEdit {
             indent: u32,
+            insert_extra_newline: bool,
             delta: isize,
             ranges: SmallVec<[Range<usize>; 32]>,
         }
@@ -879,7 +925,7 @@ impl Editor {
         let new_autoclose_pair_state = self.buffer.update(cx, |buffer, cx| {
             let autoclose_pair = buffer.language().and_then(|language| {
                 let first_selection_start = selections.first().unwrap().start.to_offset(&*buffer);
-                let pair = language.autoclose_pairs().iter().find(|pair| {
+                let pair = language.brackets().iter().find(|pair| {
                     buffer.contains_str_at(
                         first_selection_start.saturating_sub(pair.start.len()),
                         &pair.start,
@@ -914,7 +960,7 @@ impl Editor {
                 buffer.edit(selection_ranges, &pair.end, cx);
 
                 if pair.end.len() == 1 {
-                    Some(AutoclosePairState {
+                    Some(BracketPairState {
                         ranges: selections
                             .iter()
                             .map(|selection| {
@@ -4506,14 +4552,18 @@ mod tests {
         let settings = cx.read(EditorSettings::test);
         let language = Arc::new(Language::new(
             LanguageConfig {
-                autoclose_pairs: vec![
-                    AutoclosePair {
+                brackets: vec![
+                    BracketPair {
                         start: "{".to_string(),
                         end: "}".to_string(),
+                        close: true,
+                        newline: true,
                     },
-                    AutoclosePair {
+                    BracketPair {
                         start: "/*".to_string(),
                         end: " */".to_string(),
+                        close: true,
+                        newline: true,
                     },
                 ],
                 ..Default::default()
@@ -4608,6 +4658,76 @@ mod tests {
                 *
                 "
                 .unindent()
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_extra_newline_insertion(mut cx: gpui::TestAppContext) {
+        let settings = cx.read(EditorSettings::test);
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                brackets: vec![
+                    BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "/* ".to_string(),
+                        end: " */".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                ],
+                ..Default::default()
+            },
+            tree_sitter_rust::language(),
+        ));
+
+        let text = concat!(
+            "{   }\n",     // Suppress rustfmt
+            "  x\n",       //
+            "  /*   */\n", //
+            "x\n",         //
+            "{{} }\n",     //
+        );
+
+        let buffer = cx.add_model(|cx| {
+            let history = History::new(text.into());
+            Buffer::from_history(0, history, None, Some(language), cx)
+        });
+        let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
+        view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
+            .await;
+
+        view.update(&mut cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
+                    DisplayPoint::new(4, 4)..DisplayPoint::new(4, 4),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.newline(&Newline, cx);
+
+            assert_eq!(
+                view.buffer().read(cx).text(),
+                concat!(
+                    "{ \n",    // Suppress rustfmt
+                    "\n",      //
+                    "}\n",     //
+                    "  x\n",   //
+                    "  /* \n", //
+                    "  \n",    //
+                    "  */\n",  //
+                    "x\n",     //
+                    "{{} \n",  //
+                    "}\n",     //
+                )
             );
         });
     }

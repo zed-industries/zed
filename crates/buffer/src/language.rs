@@ -11,13 +11,15 @@ pub use tree_sitter::{Parser, Tree};
 pub struct LanguageConfig {
     pub name: String,
     pub path_suffixes: Vec<String>,
-    pub autoclose_pairs: Vec<AutoclosePair>,
+    pub brackets: Vec<BracketPair>,
 }
 
-#[derive(Clone, Deserialize)]
-pub struct AutoclosePair {
+#[derive(Clone, Debug, Deserialize)]
+pub struct BracketPair {
     pub start: String,
     pub end: String,
+    pub close: bool,
+    pub newline: bool,
 }
 
 pub struct Language {
@@ -95,8 +97,8 @@ impl Language {
         self.config.name.as_str()
     }
 
-    pub fn autoclose_pairs(&self) -> &[AutoclosePair] {
-        &self.config.autoclose_pairs
+    pub fn brackets(&self) -> &[BracketPair] {
+        &self.config.brackets
     }
 
     pub fn highlight_map(&self) -> HighlightMap {

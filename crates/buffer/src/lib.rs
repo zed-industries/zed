@@ -16,7 +16,7 @@ use clock::ReplicaId;
 use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
 pub use highlight_map::{HighlightId, HighlightMap};
 use language::Tree;
-pub use language::{AutoclosePair, Language, LanguageConfig, LanguageRegistry};
+pub use language::{BracketPair, Language, LanguageConfig, LanguageRegistry};
 use lazy_static::lazy_static;
 use operation_queue::OperationQueue;
 use parking_lot::Mutex;
@@ -1335,6 +1335,13 @@ impl Buffer {
         position: T,
     ) -> impl Iterator<Item = char> + 'a {
         self.content().chars_at(position)
+    }
+
+    pub fn reversed_chars_at<'a, T: 'a + ToOffset>(
+        &'a self,
+        position: T,
+    ) -> impl Iterator<Item = char> + 'a {
+        self.content().reversed_chars_at(position)
     }
 
     pub fn chars_for_range<T: ToOffset>(&self, range: Range<T>) -> impl Iterator<Item = char> + '_ {
@@ -2792,6 +2799,11 @@ impl<'a> Content<'a> {
     pub fn chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + 'a {
         let offset = position.to_offset(self);
         self.visible_text.chars_at(offset)
+    }
+
+    pub fn reversed_chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + 'a {
+        let offset = position.to_offset(self);
+        self.visible_text.reversed_chars_at(offset)
     }
 
     pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> Chunks<'a> {
