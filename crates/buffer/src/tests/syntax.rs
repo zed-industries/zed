@@ -351,6 +351,19 @@ fn test_contiguous_ranges() {
     );
 }
 
+impl Buffer {
+    pub fn enclosing_bracket_point_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Option<(Range<Point>, Range<Point>)> {
+        self.enclosing_bracket_ranges(range).map(|(start, end)| {
+            let point_start = start.start.to_point(self)..start.end.to_point(self);
+            let point_end = end.start.to_point(self)..end.end.to_point(self);
+            (point_start, point_end)
+        })
+    }
+}
+
 fn rust_lang() -> Arc<Language> {
     Arc::new(
         Language::new(

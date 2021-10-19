@@ -158,24 +158,15 @@ impl Drop for QueryCursorHandle {
     }
 }
 
-pub struct Buffer {
+#[derive(Clone)]
+pub struct TextBuffer {
     fragments: SumTree<Fragment>,
     visible_text: Rope,
     deleted_text: Rope,
     pub version: clock::Global,
-    saved_version: clock::Global,
-    saved_mtime: SystemTime,
     last_edit: clock::Local,
     undo_map: UndoMap,
     history: History,
-    file: Option<Box<dyn File>>,
-    language: Option<Arc<Language>>,
-    autoindent_requests: Vec<Arc<AutoindentRequest>>,
-    pending_autoindent: Option<Task<()>>,
-    sync_parse_timeout: Duration,
-    syntax_tree: Mutex<Option<SyntaxTree>>,
-    parsing_in_background: bool,
-    parse_count: usize,
     selections: HashMap<SelectionSetId, SelectionSet>,
     deferred_ops: OperationQueue,
     deferred_replicas: HashSet<ReplicaId>,
@@ -183,6 +174,20 @@ pub struct Buffer {
     remote_id: u64,
     local_clock: clock::Local,
     lamport_clock: clock::Lamport,
+}
+
+pub struct Buffer {
+    buffer: TextBuffer,
+    file: Option<Box<dyn File>>,
+    saved_version: clock::Global,
+    saved_mtime: SystemTime,
+    language: Option<Arc<Language>>,
+    autoindent_requests: Vec<Arc<AutoindentRequest>>,
+    pending_autoindent: Option<Task<()>>,
+    sync_parse_timeout: Duration,
+    syntax_tree: Mutex<Option<SyntaxTree>>,
+    parsing_in_background: bool,
+    parse_count: usize,
     #[cfg(test)]
     operations: Vec<Operation>,
 }
@@ -208,10 +213,9 @@ struct AutoindentRequest {
 }
 
 #[derive(Clone, Debug)]
-struct Transaction {
+pub struct Transaction {
     start: clock::Global,
     end: clock::Global,
-    buffer_was_dirty: bool,
     edits: Vec<clock::Local>,
     ranges: Vec<Range<usize>>,
     selections_before: HashMap<SelectionSetId, Arc<[Selection]>>,
@@ -221,6 +225,10 @@ struct Transaction {
 }
 
 impl Transaction {
+    pub fn starting_selection_set_ids<'a>(&'a self) -> impl Iterator<Item = SelectionSetId> + 'a {
+        self.selections_before.keys().copied()
+    }
+
     fn push_edit(&mut self, edit: &EditOperation) {
         self.edits.push(edit.timestamp.local());
         self.end.observe(edit.timestamp.local());
@@ -298,7 +306,6 @@ impl History {
     fn start_transaction(
         &mut self,
         start: clock::Global,
-        buffer_was_dirty: bool,
         selections_before: HashMap<SelectionSetId, Arc<[Selection]>>,
         now: Instant,
     ) {
@@ -307,7 +314,6 @@ impl History {
             self.undo_stack.push(Transaction {
                 start: start.clone(),
                 end: start,
-                buffer_was_dirty,
                 edits: Vec::new(),
                 ranges: Vec::new(),
                 selections_before,
@@ -574,6 +580,884 @@ pub struct UndoOperation {
     version: clock::Global,
 }
 
+impl Deref for Buffer {
+    type Target = TextBuffer;
+
+    fn deref(&self) -> &Self::Target {
+        &self.buffer
+    }
+}
+
+impl TextBuffer {
+    pub fn new(replica_id: u16, remote_id: u64, history: History) -> TextBuffer {
+        let mut fragments = SumTree::new();
+
+        let visible_text = Rope::from(history.base_text.as_ref());
+        if visible_text.len() > 0 {
+            fragments.push(
+                Fragment {
+                    timestamp: Default::default(),
+                    len: visible_text.len(),
+                    visible: true,
+                    deletions: Default::default(),
+                    max_undos: Default::default(),
+                },
+                &None,
+            );
+        }
+
+        TextBuffer {
+            visible_text,
+            deleted_text: Rope::new(),
+            fragments,
+            version: clock::Global::new(),
+            last_edit: clock::Local::default(),
+            undo_map: Default::default(),
+            history,
+            selections: HashMap::default(),
+            deferred_ops: OperationQueue::new(),
+            deferred_replicas: HashSet::default(),
+            replica_id,
+            remote_id,
+            local_clock: clock::Local::new(replica_id),
+            lamport_clock: clock::Lamport::new(replica_id),
+        }
+    }
+
+    pub fn version(&self) -> clock::Global {
+        self.version.clone()
+    }
+
+    fn content<'a>(&'a self) -> Content<'a> {
+        self.into()
+    }
+
+    pub fn as_rope(&self) -> &Rope {
+        &self.visible_text
+    }
+
+    pub fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
+        self.content().text_summary_for_range(range)
+    }
+
+    pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
+        self.anchor_at(position, Bias::Left)
+    }
+
+    pub fn anchor_after<T: ToOffset>(&self, position: T) -> Anchor {
+        self.anchor_at(position, Bias::Right)
+    }
+
+    pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
+        self.content().anchor_at(position, bias)
+    }
+
+    pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
+        self.content().point_for_offset(offset)
+    }
+
+    pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
+        self.visible_text.clip_point(point, bias)
+    }
+
+    pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
+        self.visible_text.clip_offset(offset, bias)
+    }
+
+    pub fn replica_id(&self) -> ReplicaId {
+        self.local_clock.replica_id
+    }
+
+    pub fn remote_id(&self) -> u64 {
+        self.remote_id
+    }
+
+    pub fn text_summary(&self) -> TextSummary {
+        self.visible_text.summary()
+    }
+
+    pub fn len(&self) -> usize {
+        self.content().len()
+    }
+
+    pub fn line_len(&self, row: u32) -> u32 {
+        self.content().line_len(row)
+    }
+
+    pub fn max_point(&self) -> Point {
+        self.visible_text.max_point()
+    }
+
+    pub fn row_count(&self) -> u32 {
+        self.max_point().row + 1
+    }
+
+    pub fn text(&self) -> String {
+        self.text_for_range(0..self.len()).collect()
+    }
+
+    pub fn text_for_range<'a, T: ToOffset>(&'a self, range: Range<T>) -> Chunks<'a> {
+        self.content().text_for_range(range)
+    }
+
+    pub fn chars(&self) -> impl Iterator<Item = char> + '_ {
+        self.chars_at(0)
+    }
+
+    pub fn chars_at<'a, T: 'a + ToOffset>(
+        &'a self,
+        position: T,
+    ) -> impl Iterator<Item = char> + 'a {
+        self.content().chars_at(position)
+    }
+
+    pub fn reversed_chars_at<'a, T: 'a + ToOffset>(
+        &'a self,
+        position: T,
+    ) -> impl Iterator<Item = char> + 'a {
+        self.content().reversed_chars_at(position)
+    }
+
+    pub fn chars_for_range<T: ToOffset>(&self, range: Range<T>) -> impl Iterator<Item = char> + '_ {
+        self.text_for_range(range).flat_map(str::chars)
+    }
+
+    pub fn bytes_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = u8> + '_ {
+        let offset = position.to_offset(self);
+        self.visible_text.bytes_at(offset)
+    }
+
+    pub fn contains_str_at<T>(&self, position: T, needle: &str) -> bool
+    where
+        T: ToOffset,
+    {
+        let position = position.to_offset(self);
+        position == self.clip_offset(position, Bias::Left)
+            && self
+                .bytes_at(position)
+                .take(needle.len())
+                .eq(needle.bytes())
+    }
+
+    pub fn deferred_ops_len(&self) -> usize {
+        self.deferred_ops.len()
+    }
+
+    pub fn edit<R, I, S, T>(&mut self, ranges: R, new_text: T) -> EditOperation
+    where
+        R: IntoIterator<IntoIter = I>,
+        I: ExactSizeIterator<Item = Range<S>>,
+        S: ToOffset,
+        T: Into<String>,
+    {
+        let new_text = new_text.into();
+        let new_text_len = new_text.len();
+        let new_text = if new_text_len > 0 {
+            Some(new_text)
+        } else {
+            None
+        };
+
+        self.start_transaction(None).unwrap();
+        let timestamp = InsertionTimestamp {
+            replica_id: self.replica_id,
+            local: self.local_clock.tick().value,
+            lamport: self.lamport_clock.tick().value,
+        };
+        let edit = self.apply_local_edit(ranges.into_iter(), new_text, timestamp);
+
+        self.history.push(edit.clone());
+        self.history.push_undo(edit.timestamp.local());
+        self.last_edit = edit.timestamp.local();
+        self.version.observe(edit.timestamp.local());
+        self.end_transaction(None);
+        edit
+    }
+
+    fn apply_local_edit<S: ToOffset>(
+        &mut self,
+        ranges: impl ExactSizeIterator<Item = Range<S>>,
+        new_text: Option<String>,
+        timestamp: InsertionTimestamp,
+    ) -> EditOperation {
+        let mut edit = EditOperation {
+            timestamp,
+            version: self.version(),
+            ranges: Vec::with_capacity(ranges.len()),
+            new_text: None,
+        };
+
+        let mut ranges = ranges
+            .map(|range| range.start.to_offset(&*self)..range.end.to_offset(&*self))
+            .peekable();
+
+        let mut new_ropes =
+            RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
+        let mut old_fragments = self.fragments.cursor::<FragmentTextSummary>();
+        let mut new_fragments =
+            old_fragments.slice(&ranges.peek().unwrap().start, Bias::Right, &None);
+        new_ropes.push_tree(new_fragments.summary().text);
+
+        let mut fragment_start = old_fragments.start().visible;
+        for range in ranges {
+            let fragment_end = old_fragments.end(&None).visible;
+
+            // If the current fragment ends before this range, then jump ahead to the first fragment
+            // that extends past the start of this range, reusing any intervening fragments.
+            if fragment_end < range.start {
+                // If the current fragment has been partially consumed, then consume the rest of it
+                // and advance to the next fragment before slicing.
+                if fragment_start > old_fragments.start().visible {
+                    if fragment_end > fragment_start {
+                        let mut suffix = old_fragments.item().unwrap().clone();
+                        suffix.len = fragment_end - fragment_start;
+                        new_ropes.push_fragment(&suffix, suffix.visible);
+                        new_fragments.push(suffix, &None);
+                    }
+                    old_fragments.next(&None);
+                }
+
+                let slice = old_fragments.slice(&range.start, Bias::Right, &None);
+                new_ropes.push_tree(slice.summary().text);
+                new_fragments.push_tree(slice, &None);
+                fragment_start = old_fragments.start().visible;
+            }
+
+            let full_range_start = range.start + old_fragments.start().deleted;
+
+            // Preserve any portion of the current fragment that precedes this range.
+            if fragment_start < range.start {
+                let mut prefix = old_fragments.item().unwrap().clone();
+                prefix.len = range.start - fragment_start;
+                new_ropes.push_fragment(&prefix, prefix.visible);
+                new_fragments.push(prefix, &None);
+                fragment_start = range.start;
+            }
+
+            // Insert the new text before any existing fragments within the range.
+            if let Some(new_text) = new_text.as_deref() {
+                new_ropes.push_str(new_text);
+                new_fragments.push(
+                    Fragment {
+                        timestamp,
+                        len: new_text.len(),
+                        deletions: Default::default(),
+                        max_undos: Default::default(),
+                        visible: true,
+                    },
+                    &None,
+                );
+            }
+
+            // Advance through every fragment that intersects this range, marking the intersecting
+            // portions as deleted.
+            while fragment_start < range.end {
+                let fragment = old_fragments.item().unwrap();
+                let fragment_end = old_fragments.end(&None).visible;
+                let mut intersection = fragment.clone();
+                let intersection_end = cmp::min(range.end, fragment_end);
+                if fragment.visible {
+                    intersection.len = intersection_end - fragment_start;
+                    intersection.deletions.insert(timestamp.local());
+                    intersection.visible = false;
+                }
+                if intersection.len > 0 {
+                    new_ropes.push_fragment(&intersection, fragment.visible);
+                    new_fragments.push(intersection, &None);
+                    fragment_start = intersection_end;
+                }
+                if fragment_end <= range.end {
+                    old_fragments.next(&None);
+                }
+            }
+
+            let full_range_end = range.end + old_fragments.start().deleted;
+            edit.ranges.push(full_range_start..full_range_end);
+        }
+
+        // If the current fragment has been partially consumed, then consume the rest of it
+        // and advance to the next fragment before slicing.
+        if fragment_start > old_fragments.start().visible {
+            let fragment_end = old_fragments.end(&None).visible;
+            if fragment_end > fragment_start {
+                let mut suffix = old_fragments.item().unwrap().clone();
+                suffix.len = fragment_end - fragment_start;
+                new_ropes.push_fragment(&suffix, suffix.visible);
+                new_fragments.push(suffix, &None);
+            }
+            old_fragments.next(&None);
+        }
+
+        let suffix = old_fragments.suffix(&None);
+        new_ropes.push_tree(suffix.summary().text);
+        new_fragments.push_tree(suffix, &None);
+        let (visible_text, deleted_text) = new_ropes.finish();
+        drop(old_fragments);
+
+        self.fragments = new_fragments;
+        self.visible_text = visible_text;
+        self.deleted_text = deleted_text;
+        edit.new_text = new_text;
+        edit
+    }
+
+    pub fn apply_ops<I: IntoIterator<Item = Operation>>(&mut self, ops: I) -> Result<()> {
+        let mut deferred_ops = Vec::new();
+        for op in ops {
+            if self.can_apply_op(&op) {
+                self.apply_op(op)?;
+            } else {
+                self.deferred_replicas.insert(op.replica_id());
+                deferred_ops.push(op);
+            }
+        }
+        self.deferred_ops.insert(deferred_ops);
+        self.flush_deferred_ops()?;
+        Ok(())
+    }
+
+    fn apply_op(&mut self, op: Operation) -> Result<()> {
+        match op {
+            Operation::Edit(edit) => {
+                if !self.version.observed(edit.timestamp.local()) {
+                    self.apply_remote_edit(
+                        &edit.version,
+                        &edit.ranges,
+                        edit.new_text.as_deref(),
+                        edit.timestamp,
+                    );
+                    self.version.observe(edit.timestamp.local());
+                    self.history.push(edit);
+                }
+            }
+            Operation::Undo {
+                undo,
+                lamport_timestamp,
+            } => {
+                if !self.version.observed(undo.id) {
+                    self.apply_undo(&undo)?;
+                    self.version.observe(undo.id);
+                    self.lamport_clock.observe(lamport_timestamp);
+                }
+            }
+            Operation::UpdateSelections {
+                set_id,
+                selections,
+                lamport_timestamp,
+            } => {
+                if let Some(selections) = selections {
+                    if let Some(set) = self.selections.get_mut(&set_id) {
+                        set.selections = selections;
+                    } else {
+                        self.selections.insert(
+                            set_id,
+                            SelectionSet {
+                                selections,
+                                active: false,
+                            },
+                        );
+                    }
+                } else {
+                    self.selections.remove(&set_id);
+                }
+                self.lamport_clock.observe(lamport_timestamp);
+            }
+            Operation::SetActiveSelections {
+                set_id,
+                lamport_timestamp,
+            } => {
+                for (id, set) in &mut self.selections {
+                    if id.replica_id == lamport_timestamp.replica_id {
+                        if Some(*id) == set_id {
+                            set.active = true;
+                        } else {
+                            set.active = false;
+                        }
+                    }
+                }
+                self.lamport_clock.observe(lamport_timestamp);
+            }
+            #[cfg(test)]
+            Operation::Test(_) => {}
+        }
+        Ok(())
+    }
+
+    fn apply_remote_edit(
+        &mut self,
+        version: &clock::Global,
+        ranges: &[Range<usize>],
+        new_text: Option<&str>,
+        timestamp: InsertionTimestamp,
+    ) {
+        if ranges.is_empty() {
+            return;
+        }
+
+        let cx = Some(version.clone());
+        let mut new_ropes =
+            RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
+        let mut old_fragments = self.fragments.cursor::<VersionedOffset>();
+        let mut new_fragments =
+            old_fragments.slice(&VersionedOffset::Offset(ranges[0].start), Bias::Left, &cx);
+        new_ropes.push_tree(new_fragments.summary().text);
+
+        let mut fragment_start = old_fragments.start().offset();
+        for range in ranges {
+            let fragment_end = old_fragments.end(&cx).offset();
+
+            // If the current fragment ends before this range, then jump ahead to the first fragment
+            // that extends past the start of this range, reusing any intervening fragments.
+            if fragment_end < range.start {
+                // If the current fragment has been partially consumed, then consume the rest of it
+                // and advance to the next fragment before slicing.
+                if fragment_start > old_fragments.start().offset() {
+                    if fragment_end > fragment_start {
+                        let mut suffix = old_fragments.item().unwrap().clone();
+                        suffix.len = fragment_end - fragment_start;
+                        new_ropes.push_fragment(&suffix, suffix.visible);
+                        new_fragments.push(suffix, &None);
+                    }
+                    old_fragments.next(&cx);
+                }
+
+                let slice =
+                    old_fragments.slice(&VersionedOffset::Offset(range.start), Bias::Left, &cx);
+                new_ropes.push_tree(slice.summary().text);
+                new_fragments.push_tree(slice, &None);
+                fragment_start = old_fragments.start().offset();
+            }
+
+            // If we are at the end of a non-concurrent fragment, advance to the next one.
+            let fragment_end = old_fragments.end(&cx).offset();
+            if fragment_end == range.start && fragment_end > fragment_start {
+                let mut fragment = old_fragments.item().unwrap().clone();
+                fragment.len = fragment_end - fragment_start;
+                new_ropes.push_fragment(&fragment, fragment.visible);
+                new_fragments.push(fragment, &None);
+                old_fragments.next(&cx);
+                fragment_start = old_fragments.start().offset();
+            }
+
+            // Skip over insertions that are concurrent to this edit, but have a lower lamport
+            // timestamp.
+            while let Some(fragment) = old_fragments.item() {
+                if fragment_start == range.start
+                    && fragment.timestamp.lamport() > timestamp.lamport()
+                {
+                    new_ropes.push_fragment(fragment, fragment.visible);
+                    new_fragments.push(fragment.clone(), &None);
+                    old_fragments.next(&cx);
+                    debug_assert_eq!(fragment_start, range.start);
+                } else {
+                    break;
+                }
+            }
+            debug_assert!(fragment_start <= range.start);
+
+            // Preserve any portion of the current fragment that precedes this range.
+            if fragment_start < range.start {
+                let mut prefix = old_fragments.item().unwrap().clone();
+                prefix.len = range.start - fragment_start;
+                fragment_start = range.start;
+                new_ropes.push_fragment(&prefix, prefix.visible);
+                new_fragments.push(prefix, &None);
+            }
+
+            // Insert the new text before any existing fragments within the range.
+            if let Some(new_text) = new_text {
+                new_ropes.push_str(new_text);
+                new_fragments.push(
+                    Fragment {
+                        timestamp,
+                        len: new_text.len(),
+                        deletions: Default::default(),
+                        max_undos: Default::default(),
+                        visible: true,
+                    },
+                    &None,
+                );
+            }
+
+            // Advance through every fragment that intersects this range, marking the intersecting
+            // portions as deleted.
+            while fragment_start < range.end {
+                let fragment = old_fragments.item().unwrap();
+                let fragment_end = old_fragments.end(&cx).offset();
+                let mut intersection = fragment.clone();
+                let intersection_end = cmp::min(range.end, fragment_end);
+                if fragment.was_visible(version, &self.undo_map) {
+                    intersection.len = intersection_end - fragment_start;
+                    intersection.deletions.insert(timestamp.local());
+                    intersection.visible = false;
+                }
+                if intersection.len > 0 {
+                    new_ropes.push_fragment(&intersection, fragment.visible);
+                    new_fragments.push(intersection, &None);
+                    fragment_start = intersection_end;
+                }
+                if fragment_end <= range.end {
+                    old_fragments.next(&cx);
+                }
+            }
+        }
+
+        // If the current fragment has been partially consumed, then consume the rest of it
+        // and advance to the next fragment before slicing.
+        if fragment_start > old_fragments.start().offset() {
+            let fragment_end = old_fragments.end(&cx).offset();
+            if fragment_end > fragment_start {
+                let mut suffix = old_fragments.item().unwrap().clone();
+                suffix.len = fragment_end - fragment_start;
+                new_ropes.push_fragment(&suffix, suffix.visible);
+                new_fragments.push(suffix, &None);
+            }
+            old_fragments.next(&cx);
+        }
+
+        let suffix = old_fragments.suffix(&cx);
+        new_ropes.push_tree(suffix.summary().text);
+        new_fragments.push_tree(suffix, &None);
+        let (visible_text, deleted_text) = new_ropes.finish();
+        drop(old_fragments);
+
+        self.fragments = new_fragments;
+        self.visible_text = visible_text;
+        self.deleted_text = deleted_text;
+        self.local_clock.observe(timestamp.local());
+        self.lamport_clock.observe(timestamp.lamport());
+    }
+
+    fn apply_undo(&mut self, undo: &UndoOperation) -> Result<()> {
+        self.undo_map.insert(undo);
+
+        let mut cx = undo.version.clone();
+        for edit_id in undo.counts.keys().copied() {
+            cx.observe(edit_id);
+        }
+        let cx = Some(cx);
+
+        let mut old_fragments = self.fragments.cursor::<VersionedOffset>();
+        let mut new_fragments = old_fragments.slice(
+            &VersionedOffset::Offset(undo.ranges[0].start),
+            Bias::Right,
+            &cx,
+        );
+        let mut new_ropes =
+            RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
+        new_ropes.push_tree(new_fragments.summary().text);
+
+        for range in &undo.ranges {
+            let mut end_offset = old_fragments.end(&cx).offset();
+
+            if end_offset < range.start {
+                let preceding_fragments =
+                    old_fragments.slice(&VersionedOffset::Offset(range.start), Bias::Right, &cx);
+                new_ropes.push_tree(preceding_fragments.summary().text);
+                new_fragments.push_tree(preceding_fragments, &None);
+            }
+
+            while end_offset <= range.end {
+                if let Some(fragment) = old_fragments.item() {
+                    let mut fragment = fragment.clone();
+                    let fragment_was_visible = fragment.visible;
+
+                    if fragment.was_visible(&undo.version, &self.undo_map)
+                        || undo.counts.contains_key(&fragment.timestamp.local())
+                    {
+                        fragment.visible = fragment.is_visible(&self.undo_map);
+                        fragment.max_undos.observe(undo.id);
+                    }
+                    new_ropes.push_fragment(&fragment, fragment_was_visible);
+                    new_fragments.push(fragment, &None);
+
+                    old_fragments.next(&cx);
+                    if end_offset == old_fragments.end(&cx).offset() {
+                        let unseen_fragments = old_fragments.slice(
+                            &VersionedOffset::Offset(end_offset),
+                            Bias::Right,
+                            &cx,
+                        );
+                        new_ropes.push_tree(unseen_fragments.summary().text);
+                        new_fragments.push_tree(unseen_fragments, &None);
+                    }
+                    end_offset = old_fragments.end(&cx).offset();
+                } else {
+                    break;
+                }
+            }
+        }
+
+        let suffix = old_fragments.suffix(&cx);
+        new_ropes.push_tree(suffix.summary().text);
+        new_fragments.push_tree(suffix, &None);
+
+        drop(old_fragments);
+        let (visible_text, deleted_text) = new_ropes.finish();
+        self.fragments = new_fragments;
+        self.visible_text = visible_text;
+        self.deleted_text = deleted_text;
+        Ok(())
+    }
+
+    fn flush_deferred_ops(&mut self) -> Result<()> {
+        self.deferred_replicas.clear();
+        let mut deferred_ops = Vec::new();
+        for op in self.deferred_ops.drain().cursor().cloned() {
+            if self.can_apply_op(&op) {
+                self.apply_op(op)?;
+            } else {
+                self.deferred_replicas.insert(op.replica_id());
+                deferred_ops.push(op);
+            }
+        }
+        self.deferred_ops.insert(deferred_ops);
+        Ok(())
+    }
+
+    fn can_apply_op(&self, op: &Operation) -> bool {
+        if self.deferred_replicas.contains(&op.replica_id()) {
+            false
+        } else {
+            match op {
+                Operation::Edit(edit) => self.version >= edit.version,
+                Operation::Undo { undo, .. } => self.version >= undo.version,
+                Operation::UpdateSelections { selections, .. } => {
+                    if let Some(selections) = selections {
+                        selections.iter().all(|selection| {
+                            let contains_start = self.version >= selection.start.version;
+                            let contains_end = self.version >= selection.end.version;
+                            contains_start && contains_end
+                        })
+                    } else {
+                        true
+                    }
+                }
+                Operation::SetActiveSelections { set_id, .. } => {
+                    set_id.map_or(true, |set_id| self.selections.contains_key(&set_id))
+                }
+                #[cfg(test)]
+                Operation::Test(_) => true,
+            }
+        }
+    }
+
+    pub fn peek_undo_stack(&self) -> Option<&Transaction> {
+        self.history.undo_stack.last()
+    }
+
+    pub fn start_transaction(
+        &mut self,
+        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
+    ) -> Result<()> {
+        self.start_transaction_at(selection_set_ids, Instant::now())?;
+        Ok(())
+    }
+
+    fn start_transaction_at(
+        &mut self,
+        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
+        now: Instant,
+    ) -> Result<()> {
+        let selections = selection_set_ids
+            .into_iter()
+            .map(|set_id| {
+                let set = self
+                    .selections
+                    .get(&set_id)
+                    .expect("invalid selection set id");
+                (set_id, set.selections.clone())
+            })
+            .collect();
+        self.history
+            .start_transaction(self.version.clone(), selections, now);
+        Ok(())
+    }
+
+    fn end_transaction(&mut self, selection_set_ids: impl IntoIterator<Item = SelectionSetId>) {
+        self.end_transaction_at(selection_set_ids, Instant::now());
+    }
+
+    fn end_transaction_at(
+        &mut self,
+        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
+        now: Instant,
+    ) -> Option<clock::Global> {
+        let selections = selection_set_ids
+            .into_iter()
+            .map(|set_id| {
+                let set = self
+                    .selections
+                    .get(&set_id)
+                    .expect("invalid selection set id");
+                (set_id, set.selections.clone())
+            })
+            .collect();
+
+        if let Some(transaction) = self.history.end_transaction(selections, now) {
+            let since = transaction.start.clone();
+            self.history.group();
+            Some(since)
+        } else {
+            None
+        }
+    }
+
+    fn remove_peer(&mut self, replica_id: ReplicaId) {
+        self.selections
+            .retain(|set_id, _| set_id.replica_id != replica_id)
+    }
+
+    fn undo(&mut self) -> Vec<Operation> {
+        let mut ops = Vec::new();
+        if let Some(transaction) = self.history.pop_undo().cloned() {
+            let selections = transaction.selections_before.clone();
+            ops.push(self.undo_or_redo(transaction).unwrap());
+            for (set_id, selections) in selections {
+                ops.extend(self.update_selection_set(set_id, selections));
+            }
+        }
+        ops
+    }
+
+    fn redo(&mut self) -> Vec<Operation> {
+        let mut ops = Vec::new();
+        if let Some(transaction) = self.history.pop_redo().cloned() {
+            let selections = transaction.selections_after.clone();
+            ops.push(self.undo_or_redo(transaction).unwrap());
+            for (set_id, selections) in selections {
+                ops.extend(self.update_selection_set(set_id, selections));
+            }
+        }
+        ops
+    }
+
+    fn undo_or_redo(&mut self, transaction: Transaction) -> Result<Operation> {
+        let mut counts = HashMap::default();
+        for edit_id in transaction.edits {
+            counts.insert(edit_id, self.undo_map.undo_count(edit_id) + 1);
+        }
+
+        let undo = UndoOperation {
+            id: self.local_clock.tick(),
+            counts,
+            ranges: transaction.ranges,
+            version: transaction.start.clone(),
+        };
+        self.apply_undo(&undo)?;
+        self.version.observe(undo.id);
+
+        Ok(Operation::Undo {
+            undo,
+            lamport_timestamp: self.lamport_clock.tick(),
+        })
+    }
+
+    pub fn selection_set(&self, set_id: SelectionSetId) -> Result<&SelectionSet> {
+        self.selections
+            .get(&set_id)
+            .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))
+    }
+
+    pub fn selection_sets(&self) -> impl Iterator<Item = (&SelectionSetId, &SelectionSet)> {
+        self.selections.iter()
+    }
+
+    pub fn update_selection_set(
+        &mut self,
+        set_id: SelectionSetId,
+        selections: impl Into<Arc<[Selection]>>,
+    ) -> Result<Operation> {
+        let selections = selections.into();
+        let set = self
+            .selections
+            .get_mut(&set_id)
+            .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
+        set.selections = selections.clone();
+        Ok(Operation::UpdateSelections {
+            set_id,
+            selections: Some(selections),
+            lamport_timestamp: self.lamport_clock.tick(),
+        })
+    }
+
+    pub fn add_selection_set(&mut self, selections: impl Into<Arc<[Selection]>>) -> Operation {
+        let selections = selections.into();
+        let lamport_timestamp = self.lamport_clock.tick();
+        self.selections.insert(
+            lamport_timestamp,
+            SelectionSet {
+                selections: selections.clone(),
+                active: false,
+            },
+        );
+        Operation::UpdateSelections {
+            set_id: lamport_timestamp,
+            selections: Some(selections),
+            lamport_timestamp,
+        }
+    }
+
+    pub fn set_active_selection_set(
+        &mut self,
+        set_id: Option<SelectionSetId>,
+    ) -> Result<Operation> {
+        if let Some(set_id) = set_id {
+            assert_eq!(set_id.replica_id, self.replica_id());
+        }
+
+        for (id, set) in &mut self.selections {
+            if id.replica_id == self.local_clock.replica_id {
+                if Some(*id) == set_id {
+                    set.active = true;
+                } else {
+                    set.active = false;
+                }
+            }
+        }
+
+        Ok(Operation::SetActiveSelections {
+            set_id,
+            lamport_timestamp: self.lamport_clock.tick(),
+        })
+    }
+
+    pub fn remove_selection_set(&mut self, set_id: SelectionSetId) -> Result<Operation> {
+        self.selections
+            .remove(&set_id)
+            .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
+        Ok(Operation::UpdateSelections {
+            set_id,
+            selections: None,
+            lamport_timestamp: self.lamport_clock.tick(),
+        })
+    }
+
+    pub fn edits_since<'a>(&'a self, since: clock::Global) -> impl 'a + Iterator<Item = Edit> {
+        let since_2 = since.clone();
+        let cursor = if since == self.version {
+            None
+        } else {
+            Some(self.fragments.filter(
+                move |summary| summary.max_version.changed_since(&since_2),
+                &None,
+            ))
+        };
+
+        Edits {
+            visible_text: &self.visible_text,
+            deleted_text: &self.deleted_text,
+            cursor,
+            undos: &self.undo_map,
+            since,
+            old_offset: 0,
+            new_offset: 0,
+            old_point: Point::zero(),
+            new_point: Point::zero(),
+        }
+    }
+}
+
 impl Buffer {
     pub fn new<T: Into<Arc<str>>>(
         replica_id: ReplicaId,
@@ -622,31 +1506,10 @@ impl Buffer {
             saved_mtime = UNIX_EPOCH;
         }
 
-        let mut fragments = SumTree::new();
-
-        let visible_text = Rope::from(history.base_text.as_ref());
-        if visible_text.len() > 0 {
-            fragments.push(
-                Fragment {
-                    timestamp: Default::default(),
-                    len: visible_text.len(),
-                    visible: true,
-                    deletions: Default::default(),
-                    max_undos: Default::default(),
-                },
-                &None,
-            );
-        }
-
         let mut result = Self {
-            visible_text,
-            deleted_text: Rope::new(),
-            fragments,
-            version: clock::Global::new(),
+            buffer: TextBuffer::new(replica_id, remote_id, history),
+            saved_mtime,
             saved_version: clock::Global::new(),
-            last_edit: clock::Local::default(),
-            undo_map: Default::default(),
-            history,
             file,
             syntax_tree: Mutex::new(None),
             parsing_in_background: false,
@@ -655,24 +1518,12 @@ impl Buffer {
             autoindent_requests: Default::default(),
             pending_autoindent: Default::default(),
             language,
-            saved_mtime,
-            selections: HashMap::default(),
-            deferred_ops: OperationQueue::new(),
-            deferred_replicas: HashSet::default(),
-            replica_id,
-            remote_id,
-            local_clock: clock::Local::new(replica_id),
-            lamport_clock: clock::Lamport::new(replica_id),
 
             #[cfg(test)]
             operations: Default::default(),
         };
         result.reparse(cx);
         result
-    }
-
-    pub fn replica_id(&self) -> ReplicaId {
-        self.local_clock.replica_id
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -707,7 +1558,7 @@ impl Buffer {
             .into_iter()
             .map(|op| Operation::Edit(op.into()));
         buffer.apply_ops(ops, cx)?;
-        buffer.selections = message
+        buffer.buffer.selections = message
             .selections
             .into_iter()
             .map(|set| {
@@ -775,10 +1626,6 @@ impl Buffer {
             });
             Ok((version, mtime))
         }))
-    }
-
-    pub fn as_rope(&self) -> &Rope {
-        &self.visible_text
     }
 
     pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
@@ -1131,9 +1978,9 @@ impl Buffer {
                     .selections
                     .iter()
                     .map(|selection| {
-                        let start_point = selection.start.to_point(&*self);
+                        let start_point = selection.start.to_point(&self.buffer);
                         if start_point.column == 0 {
-                            let end_point = selection.end.to_point(&*self);
+                            let end_point = selection.end.to_point(&self.buffer);
                             let delta = Point::new(
                                 0,
                                 indent_columns.get(&start_point.row).copied().unwrap_or(0),
@@ -1290,114 +2137,12 @@ impl Buffer {
                 .map_or(false, |file| file.mtime() > self.saved_mtime)
     }
 
-    pub fn remote_id(&self) -> u64 {
-        self.remote_id
-    }
-
-    pub fn version(&self) -> clock::Global {
-        self.version.clone()
-    }
-
-    pub fn text_summary(&self) -> TextSummary {
-        self.visible_text.summary()
-    }
-
-    pub fn len(&self) -> usize {
-        self.content().len()
-    }
-
-    pub fn line_len(&self, row: u32) -> u32 {
-        self.content().line_len(row)
-    }
-
-    pub fn max_point(&self) -> Point {
-        self.visible_text.max_point()
-    }
-
-    pub fn row_count(&self) -> u32 {
-        self.max_point().row + 1
-    }
-
-    pub fn text(&self) -> String {
-        self.text_for_range(0..self.len()).collect()
-    }
-
-    pub fn text_for_range<'a, T: ToOffset>(&'a self, range: Range<T>) -> Chunks<'a> {
-        self.content().text_for_range(range)
-    }
-
-    pub fn chars(&self) -> impl Iterator<Item = char> + '_ {
-        self.chars_at(0)
-    }
-
-    pub fn chars_at<'a, T: 'a + ToOffset>(
-        &'a self,
-        position: T,
-    ) -> impl Iterator<Item = char> + 'a {
-        self.content().chars_at(position)
-    }
-
-    pub fn reversed_chars_at<'a, T: 'a + ToOffset>(
-        &'a self,
-        position: T,
-    ) -> impl Iterator<Item = char> + 'a {
-        self.content().reversed_chars_at(position)
-    }
-
-    pub fn chars_for_range<T: ToOffset>(&self, range: Range<T>) -> impl Iterator<Item = char> + '_ {
-        self.text_for_range(range).flat_map(str::chars)
-    }
-
-    pub fn bytes_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = u8> + '_ {
-        let offset = position.to_offset(self);
-        self.visible_text.bytes_at(offset)
-    }
-
-    pub fn contains_str_at<T>(&self, position: T, needle: &str) -> bool
-    where
-        T: ToOffset,
-    {
-        let position = position.to_offset(self);
-        position == self.clip_offset(position, Bias::Left)
-            && self
-                .bytes_at(position)
-                .take(needle.len())
-                .eq(needle.bytes())
-    }
-
-    pub fn edits_since<'a>(&'a self, since: clock::Global) -> impl 'a + Iterator<Item = Edit> {
-        let since_2 = since.clone();
-        let cursor = if since == self.version {
-            None
-        } else {
-            Some(self.fragments.filter(
-                move |summary| summary.max_version.changed_since(&since_2),
-                &None,
-            ))
-        };
-
-        Edits {
-            visible_text: &self.visible_text,
-            deleted_text: &self.deleted_text,
-            cursor,
-            undos: &self.undo_map,
-            since,
-            old_offset: 0,
-            new_offset: 0,
-            old_point: Point::zero(),
-            new_point: Point::zero(),
-        }
-    }
-
-    pub fn deferred_ops_len(&self) -> usize {
-        self.deferred_ops.len()
-    }
-
     pub fn start_transaction(
         &mut self,
         selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
     ) -> Result<()> {
-        self.start_transaction_at(selection_set_ids, Instant::now())
+        self.start_transaction_at(selection_set_ids, Instant::now())?;
+        Ok(())
     }
 
     fn start_transaction_at(
@@ -1405,18 +2150,7 @@ impl Buffer {
         selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
         now: Instant,
     ) -> Result<()> {
-        let selections = selection_set_ids
-            .into_iter()
-            .map(|set_id| {
-                let set = self
-                    .selections
-                    .get(&set_id)
-                    .expect("invalid selection set id");
-                (set_id, set.selections.clone())
-            })
-            .collect();
-        self.history
-            .start_transaction(self.version.clone(), self.is_dirty(), selections, now);
+        self.buffer.start_transaction_at(selection_set_ids, now)?;
         Ok(())
     }
 
@@ -1434,29 +2168,15 @@ impl Buffer {
         now: Instant,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        let selections = selection_set_ids
-            .into_iter()
-            .map(|set_id| {
-                let set = self
-                    .selections
-                    .get(&set_id)
-                    .expect("invalid selection set id");
-                (set_id, set.selections.clone())
-            })
-            .collect();
-
-        if let Some(transaction) = self.history.end_transaction(selections, now) {
-            let since = transaction.start.clone();
-            let was_dirty = transaction.buffer_was_dirty;
-            self.history.group();
-
+        if let Some(start_version) = self.buffer.end_transaction_at(selection_set_ids, now) {
             cx.notify();
-            if self.edits_since(since).next().is_some() {
+            let was_dirty = start_version != self.saved_version;
+            let edited = self.edits_since(start_version).next().is_some();
+            if edited {
                 self.did_edit(was_dirty, cx);
                 self.reparse(cx);
             }
         }
-
         Ok(())
     }
 
@@ -1515,6 +2235,7 @@ impl Buffer {
             return;
         }
 
+        self.start_transaction(None).unwrap();
         self.pending_autoindent.take();
         let autoindent_request = if autoindent && self.language.is_some() {
             let before_edit = self.snapshot();
@@ -1533,24 +2254,8 @@ impl Buffer {
 
         let first_newline_ix = new_text.find('\n');
         let new_text_len = new_text.len();
-        let new_text = if new_text_len > 0 {
-            Some(new_text)
-        } else {
-            None
-        };
 
-        self.start_transaction(None).unwrap();
-        let timestamp = InsertionTimestamp {
-            replica_id: self.replica_id,
-            local: self.local_clock.tick().value,
-            lamport: self.lamport_clock.tick().value,
-        };
-        let edit = self.apply_local_edit(&ranges, new_text, timestamp);
-
-        self.history.push(edit.clone());
-        self.history.push_undo(edit.timestamp.local());
-        self.last_edit = edit.timestamp.local();
-        self.version.observe(edit.timestamp.local());
+        let edit = self.buffer.edit(ranges.iter().cloned(), new_text);
 
         if let Some((before_edit, edited)) = autoindent_request {
             let mut inserted = None;
@@ -1565,13 +2270,10 @@ impl Buffer {
             }
 
             let selection_set_ids = self
-                .history
-                .undo_stack
-                .last()
+                .buffer
+                .peek_undo_stack()
                 .unwrap()
-                .selections_before
-                .keys()
-                .copied()
+                .starting_selection_set_ids()
                 .collect();
             self.autoindent_requests.push(Arc::new(AutoindentRequest {
                 selection_set_ids,
@@ -1597,27 +2299,15 @@ impl Buffer {
         selections: impl Into<Arc<[Selection]>>,
         cx: &mut ModelContext<Self>,
     ) -> SelectionSetId {
-        let selections = selections.into();
-        let lamport_timestamp = self.lamport_clock.tick();
-        self.selections.insert(
-            lamport_timestamp,
-            SelectionSet {
-                selections: selections.clone(),
-                active: false,
-            },
-        );
-        cx.notify();
-
-        self.send_operation(
-            Operation::UpdateSelections {
-                set_id: lamport_timestamp,
-                selections: Some(selections),
-                lamport_timestamp,
-            },
-            cx,
-        );
-
-        lamport_timestamp
+        let operation = self.buffer.add_selection_set(selections);
+        if let Operation::UpdateSelections { set_id, .. } = &operation {
+            let set_id = *set_id;
+            cx.notify();
+            self.send_operation(operation, cx);
+            set_id
+        } else {
+            unreachable!()
+        }
     }
 
     pub fn update_selection_set(
@@ -1626,22 +2316,9 @@ impl Buffer {
         selections: impl Into<Arc<[Selection]>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        let selections = selections.into();
-        let set = self
-            .selections
-            .get_mut(&set_id)
-            .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
-        set.selections = selections.clone();
-        let lamport_timestamp = self.lamport_clock.tick();
+        let operation = self.buffer.update_selection_set(set_id, selections)?;
         cx.notify();
-        self.send_operation(
-            Operation::UpdateSelections {
-                set_id,
-                selections: Some(selections),
-                lamport_timestamp,
-            },
-            cx,
-        );
+        self.send_operation(operation, cx);
         Ok(())
     }
 
@@ -1650,28 +2327,8 @@ impl Buffer {
         set_id: Option<SelectionSetId>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        if let Some(set_id) = set_id {
-            assert_eq!(set_id.replica_id, self.replica_id());
-        }
-
-        for (id, set) in &mut self.selections {
-            if id.replica_id == self.local_clock.replica_id {
-                if Some(*id) == set_id {
-                    set.active = true;
-                } else {
-                    set.active = false;
-                }
-            }
-        }
-
-        let lamport_timestamp = self.lamport_clock.tick();
-        self.send_operation(
-            Operation::SetActiveSelections {
-                set_id,
-                lamport_timestamp,
-            },
-            cx,
-        );
+        let operation = self.buffer.set_active_selection_set(set_id)?;
+        self.send_operation(operation, cx);
         Ok(())
     }
 
@@ -1680,30 +2337,10 @@ impl Buffer {
         set_id: SelectionSetId,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        self.selections
-            .remove(&set_id)
-            .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
-        let lamport_timestamp = self.lamport_clock.tick();
+        let operation = self.buffer.remove_selection_set(set_id)?;
         cx.notify();
-        self.send_operation(
-            Operation::UpdateSelections {
-                set_id,
-                selections: None,
-                lamport_timestamp,
-            },
-            cx,
-        );
+        self.send_operation(operation, cx);
         Ok(())
-    }
-
-    pub fn selection_set(&self, set_id: SelectionSetId) -> Result<&SelectionSet> {
-        self.selections
-            .get(&set_id)
-            .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))
-    }
-
-    pub fn selection_sets(&self) -> impl Iterator<Item = (&SelectionSetId, &SelectionSet)> {
-        self.selections.iter()
     }
 
     pub fn apply_ops<I: IntoIterator<Item = Operation>>(
@@ -1716,17 +2353,7 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
-        let mut deferred_ops = Vec::new();
-        for op in ops {
-            if self.can_apply_op(&op) {
-                self.apply_op(op)?;
-            } else {
-                self.deferred_replicas.insert(op.replica_id());
-                deferred_ops.push(op);
-            }
-        }
-        self.deferred_ops.insert(deferred_ops);
-        self.flush_deferred_ops()?;
+        self.buffer.apply_ops(ops)?;
 
         cx.notify();
         if self.edits_since(old_version).next().is_some() {
@@ -1735,218 +2362,6 @@ impl Buffer {
         }
 
         Ok(())
-    }
-
-    fn apply_op(&mut self, op: Operation) -> Result<()> {
-        match op {
-            Operation::Edit(edit) => {
-                if !self.version.observed(edit.timestamp.local()) {
-                    self.apply_remote_edit(
-                        &edit.version,
-                        &edit.ranges,
-                        edit.new_text.as_deref(),
-                        edit.timestamp,
-                    );
-                    self.version.observe(edit.timestamp.local());
-                    self.history.push(edit);
-                }
-            }
-            Operation::Undo {
-                undo,
-                lamport_timestamp,
-            } => {
-                if !self.version.observed(undo.id) {
-                    self.apply_undo(&undo)?;
-                    self.version.observe(undo.id);
-                    self.lamport_clock.observe(lamport_timestamp);
-                }
-            }
-            Operation::UpdateSelections {
-                set_id,
-                selections,
-                lamport_timestamp,
-            } => {
-                if let Some(selections) = selections {
-                    if let Some(set) = self.selections.get_mut(&set_id) {
-                        set.selections = selections;
-                    } else {
-                        self.selections.insert(
-                            set_id,
-                            SelectionSet {
-                                selections,
-                                active: false,
-                            },
-                        );
-                    }
-                } else {
-                    self.selections.remove(&set_id);
-                }
-                self.lamport_clock.observe(lamport_timestamp);
-            }
-            Operation::SetActiveSelections {
-                set_id,
-                lamport_timestamp,
-            } => {
-                for (id, set) in &mut self.selections {
-                    if id.replica_id == lamport_timestamp.replica_id {
-                        if Some(*id) == set_id {
-                            set.active = true;
-                        } else {
-                            set.active = false;
-                        }
-                    }
-                }
-                self.lamport_clock.observe(lamport_timestamp);
-            }
-            #[cfg(test)]
-            Operation::Test(_) => {}
-        }
-        Ok(())
-    }
-
-    fn apply_remote_edit(
-        &mut self,
-        version: &clock::Global,
-        ranges: &[Range<usize>],
-        new_text: Option<&str>,
-        timestamp: InsertionTimestamp,
-    ) {
-        if ranges.is_empty() {
-            return;
-        }
-
-        let cx = Some(version.clone());
-        let mut new_ropes =
-            RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
-        let mut old_fragments = self.fragments.cursor::<VersionedOffset>();
-        let mut new_fragments =
-            old_fragments.slice(&VersionedOffset::Offset(ranges[0].start), Bias::Left, &cx);
-        new_ropes.push_tree(new_fragments.summary().text);
-
-        let mut fragment_start = old_fragments.start().offset();
-        for range in ranges {
-            let fragment_end = old_fragments.end(&cx).offset();
-
-            // If the current fragment ends before this range, then jump ahead to the first fragment
-            // that extends past the start of this range, reusing any intervening fragments.
-            if fragment_end < range.start {
-                // If the current fragment has been partially consumed, then consume the rest of it
-                // and advance to the next fragment before slicing.
-                if fragment_start > old_fragments.start().offset() {
-                    if fragment_end > fragment_start {
-                        let mut suffix = old_fragments.item().unwrap().clone();
-                        suffix.len = fragment_end - fragment_start;
-                        new_ropes.push_fragment(&suffix, suffix.visible);
-                        new_fragments.push(suffix, &None);
-                    }
-                    old_fragments.next(&cx);
-                }
-
-                let slice =
-                    old_fragments.slice(&VersionedOffset::Offset(range.start), Bias::Left, &cx);
-                new_ropes.push_tree(slice.summary().text);
-                new_fragments.push_tree(slice, &None);
-                fragment_start = old_fragments.start().offset();
-            }
-
-            // If we are at the end of a non-concurrent fragment, advance to the next one.
-            let fragment_end = old_fragments.end(&cx).offset();
-            if fragment_end == range.start && fragment_end > fragment_start {
-                let mut fragment = old_fragments.item().unwrap().clone();
-                fragment.len = fragment_end - fragment_start;
-                new_ropes.push_fragment(&fragment, fragment.visible);
-                new_fragments.push(fragment, &None);
-                old_fragments.next(&cx);
-                fragment_start = old_fragments.start().offset();
-            }
-
-            // Skip over insertions that are concurrent to this edit, but have a lower lamport
-            // timestamp.
-            while let Some(fragment) = old_fragments.item() {
-                if fragment_start == range.start
-                    && fragment.timestamp.lamport() > timestamp.lamport()
-                {
-                    new_ropes.push_fragment(fragment, fragment.visible);
-                    new_fragments.push(fragment.clone(), &None);
-                    old_fragments.next(&cx);
-                    debug_assert_eq!(fragment_start, range.start);
-                } else {
-                    break;
-                }
-            }
-            debug_assert!(fragment_start <= range.start);
-
-            // Preserve any portion of the current fragment that precedes this range.
-            if fragment_start < range.start {
-                let mut prefix = old_fragments.item().unwrap().clone();
-                prefix.len = range.start - fragment_start;
-                fragment_start = range.start;
-                new_ropes.push_fragment(&prefix, prefix.visible);
-                new_fragments.push(prefix, &None);
-            }
-
-            // Insert the new text before any existing fragments within the range.
-            if let Some(new_text) = new_text {
-                new_ropes.push_str(new_text);
-                new_fragments.push(
-                    Fragment {
-                        timestamp,
-                        len: new_text.len(),
-                        deletions: Default::default(),
-                        max_undos: Default::default(),
-                        visible: true,
-                    },
-                    &None,
-                );
-            }
-
-            // Advance through every fragment that intersects this range, marking the intersecting
-            // portions as deleted.
-            while fragment_start < range.end {
-                let fragment = old_fragments.item().unwrap();
-                let fragment_end = old_fragments.end(&cx).offset();
-                let mut intersection = fragment.clone();
-                let intersection_end = cmp::min(range.end, fragment_end);
-                if fragment.was_visible(version, &self.undo_map) {
-                    intersection.len = intersection_end - fragment_start;
-                    intersection.deletions.insert(timestamp.local());
-                    intersection.visible = false;
-                }
-                if intersection.len > 0 {
-                    new_ropes.push_fragment(&intersection, fragment.visible);
-                    new_fragments.push(intersection, &None);
-                    fragment_start = intersection_end;
-                }
-                if fragment_end <= range.end {
-                    old_fragments.next(&cx);
-                }
-            }
-        }
-
-        // If the current fragment has been partially consumed, then consume the rest of it
-        // and advance to the next fragment before slicing.
-        if fragment_start > old_fragments.start().offset() {
-            let fragment_end = old_fragments.end(&cx).offset();
-            if fragment_end > fragment_start {
-                let mut suffix = old_fragments.item().unwrap().clone();
-                suffix.len = fragment_end - fragment_start;
-                new_ropes.push_fragment(&suffix, suffix.visible);
-                new_fragments.push(suffix, &None);
-            }
-            old_fragments.next(&cx);
-        }
-
-        let suffix = old_fragments.suffix(&cx);
-        new_ropes.push_tree(suffix.summary().text);
-        new_fragments.push_tree(suffix, &None);
-        let (visible_text, deleted_text) = new_ropes.finish();
-        drop(old_fragments);
-
-        self.fragments = new_fragments;
-        self.visible_text = visible_text;
-        self.deleted_text = deleted_text;
-        self.local_clock.observe(timestamp.local());
-        self.lamport_clock.observe(timestamp.lamport());
     }
 
     #[cfg(not(test))]
@@ -1962,8 +2377,7 @@ impl Buffer {
     }
 
     pub fn remove_peer(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Self>) {
-        self.selections
-            .retain(|set_id, _| set_id.replica_id != replica_id);
+        self.buffer.remove_peer(replica_id);
         cx.notify();
     }
 
@@ -1971,12 +2385,8 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
-        if let Some(transaction) = self.history.pop_undo().cloned() {
-            let selections = transaction.selections_before.clone();
-            self.undo_or_redo(transaction, cx).unwrap();
-            for (set_id, selections) in selections {
-                let _ = self.update_selection_set(set_id, selections, cx);
-            }
+        for operation in self.buffer.undo() {
+            self.send_operation(operation, cx);
         }
 
         cx.notify();
@@ -1990,12 +2400,8 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
-        if let Some(transaction) = self.history.pop_redo().cloned() {
-            let selections = transaction.selections_after.clone();
-            self.undo_or_redo(transaction, cx).unwrap();
-            for (set_id, selections) in selections {
-                let _ = self.update_selection_set(set_id, selections, cx);
-            }
+        for operation in self.buffer.redo() {
+            self.send_operation(operation, cx);
         }
 
         cx.notify();
@@ -2004,306 +2410,36 @@ impl Buffer {
             self.reparse(cx);
         }
     }
-
-    fn undo_or_redo(
-        &mut self,
-        transaction: Transaction,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
-        let mut counts = HashMap::default();
-        for edit_id in transaction.edits {
-            counts.insert(edit_id, self.undo_map.undo_count(edit_id) + 1);
-        }
-
-        let undo = UndoOperation {
-            id: self.local_clock.tick(),
-            counts,
-            ranges: transaction.ranges,
-            version: transaction.start.clone(),
-        };
-        self.apply_undo(&undo)?;
-        self.version.observe(undo.id);
-
-        let operation = Operation::Undo {
-            undo,
-            lamport_timestamp: self.lamport_clock.tick(),
-        };
-        self.send_operation(operation, cx);
-
-        Ok(())
-    }
-
-    fn apply_undo(&mut self, undo: &UndoOperation) -> Result<()> {
-        self.undo_map.insert(undo);
-
-        let mut cx = undo.version.clone();
-        for edit_id in undo.counts.keys().copied() {
-            cx.observe(edit_id);
-        }
-        let cx = Some(cx);
-
-        let mut old_fragments = self.fragments.cursor::<VersionedOffset>();
-        let mut new_fragments = old_fragments.slice(
-            &VersionedOffset::Offset(undo.ranges[0].start),
-            Bias::Right,
-            &cx,
-        );
-        let mut new_ropes =
-            RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
-        new_ropes.push_tree(new_fragments.summary().text);
-
-        for range in &undo.ranges {
-            let mut end_offset = old_fragments.end(&cx).offset();
-
-            if end_offset < range.start {
-                let preceding_fragments =
-                    old_fragments.slice(&VersionedOffset::Offset(range.start), Bias::Right, &cx);
-                new_ropes.push_tree(preceding_fragments.summary().text);
-                new_fragments.push_tree(preceding_fragments, &None);
-            }
-
-            while end_offset <= range.end {
-                if let Some(fragment) = old_fragments.item() {
-                    let mut fragment = fragment.clone();
-                    let fragment_was_visible = fragment.visible;
-
-                    if fragment.was_visible(&undo.version, &self.undo_map)
-                        || undo.counts.contains_key(&fragment.timestamp.local())
-                    {
-                        fragment.visible = fragment.is_visible(&self.undo_map);
-                        fragment.max_undos.observe(undo.id);
-                    }
-                    new_ropes.push_fragment(&fragment, fragment_was_visible);
-                    new_fragments.push(fragment, &None);
-
-                    old_fragments.next(&cx);
-                    if end_offset == old_fragments.end(&cx).offset() {
-                        let unseen_fragments = old_fragments.slice(
-                            &VersionedOffset::Offset(end_offset),
-                            Bias::Right,
-                            &cx,
-                        );
-                        new_ropes.push_tree(unseen_fragments.summary().text);
-                        new_fragments.push_tree(unseen_fragments, &None);
-                    }
-                    end_offset = old_fragments.end(&cx).offset();
-                } else {
-                    break;
-                }
-            }
-        }
-
-        let suffix = old_fragments.suffix(&cx);
-        new_ropes.push_tree(suffix.summary().text);
-        new_fragments.push_tree(suffix, &None);
-
-        drop(old_fragments);
-        let (visible_text, deleted_text) = new_ropes.finish();
-        self.fragments = new_fragments;
-        self.visible_text = visible_text;
-        self.deleted_text = deleted_text;
-        Ok(())
-    }
-
-    fn flush_deferred_ops(&mut self) -> Result<()> {
-        self.deferred_replicas.clear();
-        let mut deferred_ops = Vec::new();
-        for op in self.deferred_ops.drain().cursor().cloned() {
-            if self.can_apply_op(&op) {
-                self.apply_op(op)?;
-            } else {
-                self.deferred_replicas.insert(op.replica_id());
-                deferred_ops.push(op);
-            }
-        }
-        self.deferred_ops.insert(deferred_ops);
-        Ok(())
-    }
-
-    fn can_apply_op(&self, op: &Operation) -> bool {
-        if self.deferred_replicas.contains(&op.replica_id()) {
-            false
-        } else {
-            match op {
-                Operation::Edit(edit) => self.version >= edit.version,
-                Operation::Undo { undo, .. } => self.version >= undo.version,
-                Operation::UpdateSelections { selections, .. } => {
-                    if let Some(selections) = selections {
-                        selections.iter().all(|selection| {
-                            let contains_start = self.version >= selection.start.version;
-                            let contains_end = self.version >= selection.end.version;
-                            contains_start && contains_end
-                        })
-                    } else {
-                        true
-                    }
-                }
-                Operation::SetActiveSelections { set_id, .. } => {
-                    set_id.map_or(true, |set_id| self.selections.contains_key(&set_id))
-                }
-                #[cfg(test)]
-                Operation::Test(_) => true,
-            }
-        }
-    }
-
-    fn apply_local_edit(
-        &mut self,
-        ranges: &[Range<usize>],
-        new_text: Option<String>,
-        timestamp: InsertionTimestamp,
-    ) -> EditOperation {
-        let mut edit = EditOperation {
-            timestamp,
-            version: self.version(),
-            ranges: Vec::with_capacity(ranges.len()),
-            new_text: None,
-        };
-
-        let mut new_ropes =
-            RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
-        let mut old_fragments = self.fragments.cursor::<FragmentTextSummary>();
-        let mut new_fragments = old_fragments.slice(&ranges[0].start, Bias::Right, &None);
-        new_ropes.push_tree(new_fragments.summary().text);
-
-        let mut fragment_start = old_fragments.start().visible;
-        for range in ranges {
-            let fragment_end = old_fragments.end(&None).visible;
-
-            // If the current fragment ends before this range, then jump ahead to the first fragment
-            // that extends past the start of this range, reusing any intervening fragments.
-            if fragment_end < range.start {
-                // If the current fragment has been partially consumed, then consume the rest of it
-                // and advance to the next fragment before slicing.
-                if fragment_start > old_fragments.start().visible {
-                    if fragment_end > fragment_start {
-                        let mut suffix = old_fragments.item().unwrap().clone();
-                        suffix.len = fragment_end - fragment_start;
-                        new_ropes.push_fragment(&suffix, suffix.visible);
-                        new_fragments.push(suffix, &None);
-                    }
-                    old_fragments.next(&None);
-                }
-
-                let slice = old_fragments.slice(&range.start, Bias::Right, &None);
-                new_ropes.push_tree(slice.summary().text);
-                new_fragments.push_tree(slice, &None);
-                fragment_start = old_fragments.start().visible;
-            }
-
-            let full_range_start = range.start + old_fragments.start().deleted;
-
-            // Preserve any portion of the current fragment that precedes this range.
-            if fragment_start < range.start {
-                let mut prefix = old_fragments.item().unwrap().clone();
-                prefix.len = range.start - fragment_start;
-                new_ropes.push_fragment(&prefix, prefix.visible);
-                new_fragments.push(prefix, &None);
-                fragment_start = range.start;
-            }
-
-            // Insert the new text before any existing fragments within the range.
-            if let Some(new_text) = new_text.as_deref() {
-                new_ropes.push_str(new_text);
-                new_fragments.push(
-                    Fragment {
-                        timestamp,
-                        len: new_text.len(),
-                        deletions: Default::default(),
-                        max_undos: Default::default(),
-                        visible: true,
-                    },
-                    &None,
-                );
-            }
-
-            // Advance through every fragment that intersects this range, marking the intersecting
-            // portions as deleted.
-            while fragment_start < range.end {
-                let fragment = old_fragments.item().unwrap();
-                let fragment_end = old_fragments.end(&None).visible;
-                let mut intersection = fragment.clone();
-                let intersection_end = cmp::min(range.end, fragment_end);
-                if fragment.visible {
-                    intersection.len = intersection_end - fragment_start;
-                    intersection.deletions.insert(timestamp.local());
-                    intersection.visible = false;
-                }
-                if intersection.len > 0 {
-                    new_ropes.push_fragment(&intersection, fragment.visible);
-                    new_fragments.push(intersection, &None);
-                    fragment_start = intersection_end;
-                }
-                if fragment_end <= range.end {
-                    old_fragments.next(&None);
-                }
-            }
-
-            let full_range_end = range.end + old_fragments.start().deleted;
-            edit.ranges.push(full_range_start..full_range_end);
-        }
-
-        // If the current fragment has been partially consumed, then consume the rest of it
-        // and advance to the next fragment before slicing.
-        if fragment_start > old_fragments.start().visible {
-            let fragment_end = old_fragments.end(&None).visible;
-            if fragment_end > fragment_start {
-                let mut suffix = old_fragments.item().unwrap().clone();
-                suffix.len = fragment_end - fragment_start;
-                new_ropes.push_fragment(&suffix, suffix.visible);
-                new_fragments.push(suffix, &None);
-            }
-            old_fragments.next(&None);
-        }
-
-        let suffix = old_fragments.suffix(&None);
-        new_ropes.push_tree(suffix.summary().text);
-        new_fragments.push_tree(suffix, &None);
-        let (visible_text, deleted_text) = new_ropes.finish();
-        drop(old_fragments);
-
-        self.fragments = new_fragments;
-        self.visible_text = visible_text;
-        self.deleted_text = deleted_text;
-        edit.new_text = new_text;
-        edit
-    }
-
-    fn content<'a>(&'a self) -> Content<'a> {
-        self.into()
-    }
-
-    pub fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
-        self.content().text_summary_for_range(range)
-    }
-
-    pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
-        self.anchor_at(position, Bias::Left)
-    }
-
-    pub fn anchor_after<T: ToOffset>(&self, position: T) -> Anchor {
-        self.anchor_at(position, Bias::Right)
-    }
-
-    pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
-        self.content().anchor_at(position, bias)
-    }
-
-    pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
-        self.content().point_for_offset(offset)
-    }
-
-    pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
-        self.visible_text.clip_point(point, bias)
-    }
-
-    pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
-        self.visible_text.clip_offset(offset, bias)
-    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl Buffer {
+    pub fn randomly_edit<T>(
+        &mut self,
+        rng: &mut T,
+        old_range_count: usize,
+        _: &mut ModelContext<Self>,
+    ) -> (Vec<Range<usize>>, String)
+    where
+        T: rand::Rng,
+    {
+        self.buffer.randomly_edit(rng, old_range_count)
+    }
+
+    pub fn randomly_mutate<T>(
+        &mut self,
+        rng: &mut T,
+        _: &mut ModelContext<Self>,
+    ) -> (Vec<Range<usize>>, String)
+    where
+        T: rand::Rng,
+    {
+        self.buffer.randomly_mutate(rng)
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl TextBuffer {
     fn random_byte_range(&mut self, start_offset: usize, rng: &mut impl rand::Rng) -> Range<usize> {
         let end = self.clip_offset(rng.gen_range(start_offset..=self.len()), Bias::Right);
         let start = self.clip_offset(rng.gen_range(start_offset..=end), Bias::Right);
@@ -2314,7 +2450,6 @@ impl Buffer {
         &mut self,
         rng: &mut T,
         old_range_count: usize,
-        cx: &mut ModelContext<Self>,
     ) -> (Vec<Range<usize>>, String)
     where
         T: rand::Rng,
@@ -2337,21 +2472,17 @@ impl Buffer {
             old_ranges,
             new_text
         );
-        self.edit(old_ranges.iter().cloned(), new_text.as_str(), cx);
+        self.edit(old_ranges.iter().cloned(), new_text.as_str());
         (old_ranges, new_text)
     }
 
-    pub fn randomly_mutate<T>(
-        &mut self,
-        rng: &mut T,
-        cx: &mut ModelContext<Self>,
-    ) -> (Vec<Range<usize>>, String)
+    pub fn randomly_mutate<T>(&mut self, rng: &mut T) -> (Vec<Range<usize>>, String)
     where
         T: rand::Rng,
     {
         use rand::prelude::*;
 
-        let (old_ranges, new_text) = self.randomly_edit(rng, 5, cx);
+        let (old_ranges, new_text) = self.randomly_edit(rng, 5);
 
         // Randomly add, remove or mutate selection sets.
         let replica_selection_sets = &self
@@ -2361,7 +2492,7 @@ impl Buffer {
             .collect::<Vec<_>>();
         let set_id = replica_selection_sets.choose(rng);
         if set_id.is_some() && rng.gen_bool(1.0 / 6.0) {
-            self.remove_selection_set(*set_id.unwrap(), cx).unwrap();
+            self.remove_selection_set(*set_id.unwrap()).unwrap();
         } else {
             let mut ranges = Vec::new();
             for _ in 0..5 {
@@ -2370,9 +2501,9 @@ impl Buffer {
             let new_selections = self.selections_from_ranges(ranges).unwrap();
 
             if set_id.is_none() || rng.gen_bool(1.0 / 5.0) {
-                self.add_selection_set(new_selections, cx);
+                self.add_selection_set(new_selections);
             } else {
-                self.update_selection_set(*set_id.unwrap(), new_selections, cx)
+                self.update_selection_set(*set_id.unwrap(), new_selections)
                     .unwrap();
             }
         }
@@ -2380,7 +2511,7 @@ impl Buffer {
         (old_ranges, new_text)
     }
 
-    pub fn randomly_undo_redo(&mut self, rng: &mut impl rand::Rng, cx: &mut ModelContext<Self>) {
+    pub fn randomly_undo_redo(&mut self, rng: &mut impl rand::Rng) {
         use rand::prelude::*;
 
         for _ in 0..rng.gen_range(1..=5) {
@@ -2390,7 +2521,7 @@ impl Buffer {
                     self.replica_id,
                     transaction
                 );
-                self.undo_or_redo(transaction, cx).unwrap();
+                self.undo_or_redo(transaction).unwrap();
             }
         }
     }
@@ -2453,33 +2584,14 @@ impl Buffer {
             .keys()
             .map(move |set_id| (*set_id, self.selection_ranges(*set_id).unwrap()))
     }
-
-    pub fn enclosing_bracket_point_ranges<T: ToOffset>(
-        &self,
-        range: Range<T>,
-    ) -> Option<(Range<Point>, Range<Point>)> {
-        self.enclosing_bracket_ranges(range).map(|(start, end)| {
-            let point_start = start.start.to_point(self)..start.end.to_point(self);
-            let point_end = end.start.to_point(self)..end.end.to_point(self);
-            (point_start, point_end)
-        })
-    }
 }
 
 impl Clone for Buffer {
     fn clone(&self) -> Self {
         Self {
-            fragments: self.fragments.clone(),
-            visible_text: self.visible_text.clone(),
-            deleted_text: self.deleted_text.clone(),
-            version: self.version.clone(),
+            buffer: self.buffer.clone(),
             saved_version: self.saved_version.clone(),
             saved_mtime: self.saved_mtime,
-            last_edit: self.last_edit.clone(),
-            undo_map: self.undo_map.clone(),
-            history: self.history.clone(),
-            selections: self.selections.clone(),
-            deferred_ops: self.deferred_ops.clone(),
             file: self.file.as_ref().map(|f| f.boxed_clone()),
             language: self.language.clone(),
             syntax_tree: Mutex::new(self.syntax_tree.lock().clone()),
@@ -2488,11 +2600,6 @@ impl Clone for Buffer {
             parse_count: self.parse_count,
             autoindent_requests: Default::default(),
             pending_autoindent: Default::default(),
-            deferred_replicas: self.deferred_replicas.clone(),
-            replica_id: self.replica_id,
-            remote_id: self.remote_id.clone(),
-            local_clock: self.local_clock.clone(),
-            lamport_clock: self.lamport_clock.clone(),
 
             #[cfg(test)]
             operations: self.operations.clone(),
@@ -2769,6 +2876,26 @@ impl<'a> From<&'a Buffer> for Content<'a> {
 
 impl<'a> From<&'a mut Buffer> for Content<'a> {
     fn from(buffer: &'a mut Buffer) -> Self {
+        Self {
+            visible_text: &buffer.visible_text,
+            fragments: &buffer.fragments,
+            version: &buffer.version,
+        }
+    }
+}
+
+impl<'a> From<&'a TextBuffer> for Content<'a> {
+    fn from(buffer: &'a TextBuffer) -> Self {
+        Self {
+            visible_text: &buffer.visible_text,
+            fragments: &buffer.fragments,
+            version: &buffer.version,
+        }
+    }
+}
+
+impl<'a> From<&'a mut TextBuffer> for Content<'a> {
+    fn from(buffer: &'a mut TextBuffer) -> Self {
         Self {
             visible_text: &buffer.visible_text,
             fragments: &buffer.fragments,
