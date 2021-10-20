@@ -4,7 +4,6 @@ use super::{
 };
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Result};
-use buffer::{Buffer, History, LanguageRegistry, Operation, Rope};
 use client::{proto, Client, PeerId, TypedEnvelope};
 use clock::ReplicaId;
 use futures::{Stream, StreamExt};
@@ -13,6 +12,7 @@ use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task, UpgradeModelHandle, WeakModelHandle,
 };
+use language::{Buffer, History, LanguageRegistry, Operation, Rope};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
@@ -627,14 +627,14 @@ impl Worktree {
                             file_changed = true;
                         } else if !file.is_deleted() {
                             if buffer_is_clean {
-                                cx.emit(buffer::Event::Dirtied);
+                                cx.emit(language::Event::Dirtied);
                             }
                             file.set_entry_id(None);
                             file_changed = true;
                         }
 
                         if file_changed {
-                            cx.emit(buffer::Event::FileHandleChanged);
+                            cx.emit(language::Event::FileHandleChanged);
                         }
                     }
                 });
@@ -862,7 +862,7 @@ impl LocalWorktree {
                     .update(&mut cx, |this, cx| this.as_local().unwrap().load(&path, cx))
                     .await?;
                 let language = this.read_with(&cx, |this, cx| {
-                    use buffer::File;
+                    use language::File;
 
                     this.languages()
                         .select_language(file.full_path(cx))
@@ -909,7 +909,7 @@ impl LocalWorktree {
                     .insert(buffer.id() as u64, buffer.clone());
 
                 Ok(proto::OpenBufferResponse {
-                    buffer: Some(buffer.update(cx.as_mut(), |buffer, cx| buffer.to_proto(cx))),
+                    buffer: Some(buffer.update(cx.as_mut(), |buffer, _| buffer.to_proto())),
                 })
             })
         })
@@ -1279,7 +1279,7 @@ impl RemoteWorktree {
                     .ok_or_else(|| anyhow!("worktree was closed"))?;
                 let file = File::new(entry.id, this.clone(), entry.path, entry.mtime);
                 let language = this.read_with(&cx, |this, cx| {
-                    use buffer::File;
+                    use language::File;
 
                     this.languages()
                         .select_language(file.full_path(cx))
@@ -1790,7 +1790,7 @@ impl File {
     }
 }
 
-impl buffer::File for File {
+impl language::File for File {
     fn worktree_id(&self) -> usize {
         self.worktree.id()
     }
@@ -1942,7 +1942,7 @@ impl buffer::File for File {
         });
     }
 
-    fn boxed_clone(&self) -> Box<dyn buffer::File> {
+    fn boxed_clone(&self) -> Box<dyn language::File> {
         Box::new(self.clone())
     }
 
@@ -3268,7 +3268,7 @@ mod tests {
             assert!(buffer.is_dirty());
             assert_eq!(
                 *events.borrow(),
-                &[buffer::Event::Edited, buffer::Event::Dirtied]
+                &[language::Event::Edited, language::Event::Dirtied]
             );
             events.borrow_mut().clear();
             buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), None, cx);
@@ -3277,7 +3277,7 @@ mod tests {
         // after saving, the buffer is not dirty, and emits a saved event.
         buffer1.update(&mut cx, |buffer, cx| {
             assert!(!buffer.is_dirty());
-            assert_eq!(*events.borrow(), &[buffer::Event::Saved]);
+            assert_eq!(*events.borrow(), &[language::Event::Saved]);
             events.borrow_mut().clear();
 
             buffer.edit(vec![1..1], "B", cx);
@@ -3291,9 +3291,9 @@ mod tests {
             assert_eq!(
                 *events.borrow(),
                 &[
-                    buffer::Event::Edited,
-                    buffer::Event::Dirtied,
-                    buffer::Event::Edited
+                    language::Event::Edited,
+                    language::Event::Dirtied,
+                    language::Event::Edited
                 ],
             );
             events.borrow_mut().clear();
@@ -3305,7 +3305,7 @@ mod tests {
             assert!(buffer.is_dirty());
         });
 
-        assert_eq!(*events.borrow(), &[buffer::Event::Edited]);
+        assert_eq!(*events.borrow(), &[language::Event::Edited]);
 
         // When a file is deleted, the buffer is considered dirty.
         let events = Rc::new(RefCell::new(Vec::new()));
@@ -3325,7 +3325,7 @@ mod tests {
         buffer2.condition(&cx, |b, _| b.is_dirty()).await;
         assert_eq!(
             *events.borrow(),
-            &[buffer::Event::Dirtied, buffer::Event::FileHandleChanged]
+            &[language::Event::Dirtied, language::Event::FileHandleChanged]
         );
 
         // When a file is already dirty when deleted, we don't emit a Dirtied event.
@@ -3351,7 +3351,7 @@ mod tests {
         buffer3
             .condition(&cx, |_, _| !events.borrow().is_empty())
             .await;
-        assert_eq!(*events.borrow(), &[buffer::Event::FileHandleChanged]);
+        assert_eq!(*events.borrow(), &[language::Event::FileHandleChanged]);
         cx.read(|cx| assert!(buffer3.read(cx).is_dirty()));
     }
 

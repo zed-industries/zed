@@ -4,8 +4,7 @@ pub mod menus;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-pub use buffer;
-use buffer::LanguageRegistry;
+use self::language::LanguageRegistry;
 use chat_panel::ChatPanel;
 pub use client;
 pub use editor;

@@ -3,11 +3,11 @@ mod ignore;
 mod worktree;
 
 use anyhow::Result;
-use buffer::LanguageRegistry;
 use client::Client;
 use futures::Future;
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
+use language::LanguageRegistry;
 use std::{
     path::Path,
     sync::{atomic::AtomicBool, Arc},
@@ -302,9 +302,9 @@ impl Entity for Project {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use buffer::LanguageRegistry;
     use fs::RealFs;
     use gpui::TestAppContext;
+    use language::LanguageRegistry;
     use serde_json::json;
     use std::{os::unix, path::PathBuf};
     use util::test::temp_tree;

@@ -12,6 +12,7 @@ clock = { path = "../clock" }
 fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
+language = { path = "../language" }
 client = { path = "../client" }
 sum_tree = { path = "../sum_tree" }
 util = { path = "../util" }
@@ -33,6 +34,7 @@ toml = "0.5"
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }
+language = { path = "../language", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 

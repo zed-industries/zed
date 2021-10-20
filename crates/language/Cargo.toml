@@ -1,33 +1,35 @@
 [package]
-name = "editor"
+name = "language"
 version = "0.1.0"
 edition = "2018"
 
 [features]
-test-support = ["buffer/test-support", "gpui/test-support"]
+test-support = ["rand"]
 
 [dependencies]
 buffer = { path = "../buffer" }
 clock = { path = "../clock" }
 gpui = { path = "../gpui" }
-language = { path = "../language" }
+rpc = { path = "../rpc" }
 sum_tree = { path = "../sum_tree" }
 theme = { path = "../theme" }
-util = { path = "../util" }
-anyhow = "1.0"
+anyhow = "1.0.38"
+arrayvec = "0.7.1"
 lazy_static = "1.4"
 log = "0.4"
-parking_lot = "0.11"
-postage = { version = "0.4", features = ["futures-traits"] }
-serde = { version = "1", features = ["derive", "rc"] }
+parking_lot = "0.11.1"
+rand = { version = "0.8.3", optional = true }
+seahash = "4.1"
+serde = { version = "1", features = ["derive"] }
+similar = "1.3"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
+tree-sitter = "0.19.5"
 
 [dev-dependencies]
 buffer = { path = "../buffer", features = ["test-support"] }
-language = { path = "../language", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
-rand = "0.8"
+
+rand = "0.8.3"
+tree-sitter-rust = "0.19.0"
 unindent = "0.1.7"
-tree-sitter = "0.19"
-tree-sitter-rust = "0.19"

@@ -1,4 +1,4 @@
-use crate::{Anchor, Buffer, Point, ToOffset as _, ToPoint as _};
+use crate::{Anchor, Point, TextBuffer, ToOffset as _, ToPoint as _};
 use std::{cmp::Ordering, mem, ops::Range};
 
 pub type SelectionSetId = clock::Lamport;
@@ -29,7 +29,7 @@ impl Selection {
         }
     }
 
-    pub fn set_head(&mut self, buffer: &Buffer, cursor: Anchor) {
+    pub fn set_head(&mut self, buffer: &TextBuffer, cursor: Anchor) {
         if cursor.cmp(self.tail(), buffer).unwrap() < Ordering::Equal {
             if !self.reversed {
                 mem::swap(&mut self.start, &mut self.end);
@@ -53,7 +53,7 @@ impl Selection {
         }
     }
 
-    pub fn point_range(&self, buffer: &Buffer) -> Range<Point> {
+    pub fn point_range(&self, buffer: &TextBuffer) -> Range<Point> {
         let start = self.start.to_point(buffer);
         let end = self.end.to_point(buffer);
         if self.reversed {
@@ -63,7 +63,7 @@ impl Selection {
         }
     }
 
-    pub fn offset_range(&self, buffer: &Buffer) -> Range<usize> {
+    pub fn offset_range(&self, buffer: &TextBuffer) -> Range<usize> {
         let start = self.start.to_offset(buffer);
         let end = self.end.to_offset(buffer);
         if self.reversed {

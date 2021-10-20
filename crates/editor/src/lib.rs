@@ -5,7 +5,6 @@ pub mod movement;
 #[cfg(test)]
 mod test;
 
-use buffer::*;
 use clock::ReplicaId;
 pub use display_map::DisplayPoint;
 use display_map::*;
@@ -15,6 +14,7 @@ use gpui::{
     text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
     MutableAppContext, RenderContext, View, ViewContext, WeakViewHandle,
 };
+use language::*;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
@@ -2661,17 +2661,17 @@ impl Editor {
     fn on_buffer_event(
         &mut self,
         _: ModelHandle<Buffer>,
-        event: &buffer::Event,
+        event: &language::Event,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            buffer::Event::Edited => cx.emit(Event::Edited),
-            buffer::Event::Dirtied => cx.emit(Event::Dirtied),
-            buffer::Event::Saved => cx.emit(Event::Saved),
-            buffer::Event::FileHandleChanged => cx.emit(Event::FileHandleChanged),
-            buffer::Event::Reloaded => cx.emit(Event::FileHandleChanged),
-            buffer::Event::Closed => cx.emit(Event::Closed),
-            buffer::Event::Reparsed => {}
+            language::Event::Edited => cx.emit(Event::Edited),
+            language::Event::Dirtied => cx.emit(Event::Dirtied),
+            language::Event::Saved => cx.emit(Event::Saved),
+            language::Event::FileHandleChanged => cx.emit(Event::FileHandleChanged),
+            language::Event::Reloaded => cx.emit(Event::FileHandleChanged),
+            language::Event::Closed => cx.emit(Event::Closed),
+            language::Event::Reparsed => {}
         }
     }
 

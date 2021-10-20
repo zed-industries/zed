@@ -1624,6 +1624,7 @@ dependencies = [
  "buffer",
  "clock",
  "gpui",
+ "language",
  "lazy_static",
  "log",
  "parking_lot",
@@ -2817,6 +2818,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "language"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrayvec 0.7.1",
+ "buffer",
+ "clock",
+ "gpui",
+ "lazy_static",
+ "log",
+ "parking_lot",
+ "rand 0.8.3",
+ "rpc",
+ "seahash",
+ "serde 1.0.125",
+ "similar",
+ "smallvec",
+ "smol",
+ "sum_tree",
+ "theme",
+ "tree-sitter",
+ "tree-sitter-rust",
+ "unindent",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3760,6 +3787,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "ignore",
+ "language",
  "lazy_static",
  "libc",
  "log",
@@ -6106,6 +6134,7 @@ dependencies = [
  "client",
  "editor",
  "gpui",
+ "language",
  "log",
  "postage",
  "project",
@@ -6176,6 +6205,7 @@ dependencies = [
  "ignore",
  "image 0.23.14",
  "indexmap",
+ "language",
  "lazy_static",
  "libc",
  "log",

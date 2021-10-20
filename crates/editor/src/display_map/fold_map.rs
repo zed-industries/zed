@@ -1,5 +1,5 @@
-use buffer::{Anchor, AnchorRangeExt, Buffer, HighlightId, Point, TextSummary, ToOffset};
 use gpui::{AppContext, ModelHandle};
+use language::{Anchor, AnchorRangeExt, Buffer, HighlightId, Point, TextSummary, ToOffset};
 use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
@@ -485,7 +485,7 @@ impl FoldMap {
 pub struct Snapshot {
     transforms: SumTree<Transform>,
     folds: SumTree<Fold>,
-    buffer_snapshot: buffer::Snapshot,
+    buffer_snapshot: language::Snapshot,
     pub version: usize,
 }
 
@@ -994,7 +994,7 @@ impl<'a> Iterator for Chunks<'a> {
 
 pub struct HighlightedChunks<'a> {
     transform_cursor: Cursor<'a, Transform, (FoldOffset, usize)>,
-    buffer_chunks: buffer::HighlightedChunks<'a>,
+    buffer_chunks: language::HighlightedChunks<'a>,
     buffer_chunk: Option<(usize, &'a str, HighlightId)>,
     buffer_offset: usize,
 }
@@ -1331,7 +1331,7 @@ mod tests {
                     snapshot_edits.extend(map.randomly_mutate(&mut rng, cx.as_ref()));
                 }
                 _ => {
-                    let edits = buffer.update(cx, |buffer, cx| {
+                    let edits = buffer.update(cx, |buffer, _| {
                         let start_version = buffer.version.clone();
                         let edit_count = rng.gen_range(1..=5);
                         buffer.randomly_edit(&mut rng, edit_count);

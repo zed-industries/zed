@@ -2,8 +2,8 @@ use super::{
     fold_map,
     tab_map::{self, Edit as TabEdit, Snapshot as TabSnapshot, TabPoint, TextSummary},
 };
-use buffer::{HighlightId, Point};
 use gpui::{fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, Task};
+use language::{HighlightId, Point};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
 use std::{collections::VecDeque, ops::Range, time::Duration};
@@ -899,7 +899,7 @@ mod tests {
         display_map::{fold_map::FoldMap, tab_map::TabMap},
         test::Observer,
     };
-    use buffer::{Buffer, RandomCharIter};
+    use language::{Buffer, RandomCharIter};
     use rand::prelude::*;
     use std::env;
 
@@ -990,7 +990,7 @@ mod tests {
                     }
                 }
                 _ => {
-                    buffer.update(&mut cx, |buffer, cx| buffer.randomly_mutate(&mut rng));
+                    buffer.update(&mut cx, |buffer, _| buffer.randomly_mutate(&mut rng));
                 }
             }
 

@@ -1,6 +1,6 @@
 use crate::Point;
 
-use super::{Buffer, Content};
+use super::{Content, TextBuffer};
 use anyhow::Result;
 use std::{cmp::Ordering, ops::Range};
 use sum_tree::Bias;
@@ -65,7 +65,7 @@ impl Anchor {
         Ok(offset_comparison.then_with(|| self.bias.cmp(&other.bias)))
     }
 
-    pub fn bias_left(&self, buffer: &Buffer) -> Anchor {
+    pub fn bias_left(&self, buffer: &TextBuffer) -> Anchor {
         if self.bias == Bias::Left {
             self.clone()
         } else {
@@ -73,7 +73,7 @@ impl Anchor {
         }
     }
 
-    pub fn bias_right(&self, buffer: &Buffer) -> Anchor {
+    pub fn bias_right(&self, buffer: &TextBuffer) -> Anchor {
         if self.bias == Bias::Right {
             self.clone()
         } else {
