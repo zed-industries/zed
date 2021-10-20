@@ -436,7 +436,7 @@ mod tests {
                     }
                 }
                 _ => {
-                    buffer.update(&mut cx, |buffer, cx| buffer.randomly_edit(&mut rng, 5, cx));
+                    buffer.update(&mut cx, |buffer, cx| buffer.randomly_edit(&mut rng, 5));
                 }
             }
 

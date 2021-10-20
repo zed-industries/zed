@@ -990,7 +990,7 @@ mod tests {
                     }
                 }
                 _ => {
-                    buffer.update(&mut cx, |buffer, cx| buffer.randomly_mutate(&mut rng, cx));
+                    buffer.update(&mut cx, |buffer, cx| buffer.randomly_mutate(&mut rng));
                 }
             }
 

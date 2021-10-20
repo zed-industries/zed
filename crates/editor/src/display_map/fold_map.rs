@@ -1,4 +1,4 @@
-use buffer::{Anchor, Buffer, Point, ToOffset, AnchorRangeExt, HighlightId, TextSummary};
+use buffer::{Anchor, AnchorRangeExt, Buffer, HighlightId, Point, TextSummary, ToOffset};
 use gpui::{AppContext, ModelHandle};
 use parking_lot::Mutex;
 use std::{
@@ -1334,7 +1334,7 @@ mod tests {
                     let edits = buffer.update(cx, |buffer, cx| {
                         let start_version = buffer.version.clone();
                         let edit_count = rng.gen_range(1..=5);
-                        buffer.randomly_edit(&mut rng, edit_count, cx);
+                        buffer.randomly_edit(&mut rng, edit_count);
                         buffer.edits_since(start_version).collect::<Vec<_>>()
                     });
                     log::info!("editing {:?}", edits);

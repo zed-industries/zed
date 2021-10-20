@@ -6,7 +6,6 @@ use std::{
     cmp::Ordering,
     env,
     iter::Iterator,
-    mem,
     rc::Rc,
     time::{Duration, Instant},
 };
@@ -104,7 +103,7 @@ fn test_random_edits(mut rng: StdRng) {
     );
 
     for _i in 0..operations {
-        let (old_ranges, new_text) = buffer.randomly_mutate(&mut rng);
+        let (old_ranges, new_text, _) = buffer.randomly_edit(&mut rng, 5);
         for old_range in old_ranges.iter().rev() {
             reference_string.replace_range(old_range.clone(), &new_text);
         }
@@ -571,92 +570,89 @@ fn test_concurrent_edits() {
     assert_eq!(buffer3.text(), "a12c34e56");
 }
 
-// #[gpui::test(iterations = 100)]
-// fn test_random_concurrent_edits(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
-//     let peers = env::var("PEERS")
-//         .map(|i| i.parse().expect("invalid `PEERS` variable"))
-//         .unwrap_or(5);
-//     let operations = env::var("OPERATIONS")
-//         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-//         .unwrap_or(10);
+#[gpui::test(iterations = 100)]
+fn test_random_concurrent_edits(mut rng: StdRng) {
+    let peers = env::var("PEERS")
+        .map(|i| i.parse().expect("invalid `PEERS` variable"))
+        .unwrap_or(5);
+    let operations = env::var("OPERATIONS")
+        .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+        .unwrap_or(10);
 
-//     let base_text_len = rng.gen_range(0..10);
-//     let base_text = RandomCharIter::new(&mut rng)
-//         .take(base_text_len)
-//         .collect::<String>();
-//     let mut replica_ids = Vec::new();
-//     let mut buffers = Vec::new();
-//     let mut network = Network::new(rng.clone());
+    let base_text_len = rng.gen_range(0..10);
+    let base_text = RandomCharIter::new(&mut rng)
+        .take(base_text_len)
+        .collect::<String>();
+    let mut replica_ids = Vec::new();
+    let mut buffers = Vec::new();
+    let mut network = Network::new(rng.clone());
 
-//     for i in 0..peers {
-//         let buffer = cx.add_model(|cx| {
-//             let mut buf = Buffer::new(i as ReplicaId, base_text.as_str(), cx);
-//             buf.history.group_interval = Duration::from_millis(rng.gen_range(0..=200));
-//             buf
-//         });
-//         buffers.push(buffer);
-//         replica_ids.push(i as u16);
-//         network.add_peer(i as u16);
-//     }
+    for i in 0..peers {
+        let mut buffer = TextBuffer::new(i as ReplicaId, 0, History::new(base_text.clone().into()));
+        buffer.history.group_interval = Duration::from_millis(rng.gen_range(0..=200));
+        buffers.push(buffer);
+        replica_ids.push(i as u16);
+        network.add_peer(i as u16);
+    }
 
-//     log::info!("initial text: {:?}", base_text);
+    log::info!("initial text: {:?}", base_text);
 
-//     let mut mutation_count = operations;
-//     loop {
-//         let replica_index = rng.gen_range(0..peers);
-//         let replica_id = replica_ids[replica_index];
-//         buffers[replica_index].update(cx, |buffer, cx| match rng.gen_range(0..=100) {
-//             0..=50 if mutation_count != 0 => {
-//                 buffer.randomly_mutate(&mut rng, cx);
-//                 network.broadcast(buffer.replica_id, mem::take(&mut buffer.operations));
-//                 log::info!("buffer {} text: {:?}", buffer.replica_id, buffer.text());
-//                 mutation_count -= 1;
-//             }
-//             51..=70 if mutation_count != 0 => {
-//                 buffer.randomly_undo_redo(&mut rng, cx);
-//                 network.broadcast(buffer.replica_id, mem::take(&mut buffer.operations));
-//                 mutation_count -= 1;
-//             }
-//             71..=100 if network.has_unreceived(replica_id) => {
-//                 let ops = network.receive(replica_id);
-//                 if !ops.is_empty() {
-//                     log::info!(
-//                         "peer {} applying {} ops from the network.",
-//                         replica_id,
-//                         ops.len()
-//                     );
-//                     buffer.apply_ops(ops, cx).unwrap();
-//                 }
-//             }
-//             _ => {}
-//         });
+    let mut mutation_count = operations;
+    loop {
+        let replica_index = rng.gen_range(0..peers);
+        let replica_id = replica_ids[replica_index];
+        let buffer = &mut buffers[replica_index];
+        match rng.gen_range(0..=100) {
+            0..=50 if mutation_count != 0 => {
+                let ops = buffer.randomly_mutate(&mut rng);
+                network.broadcast(buffer.replica_id, ops);
+                log::info!("buffer {} text: {:?}", buffer.replica_id, buffer.text());
+                mutation_count -= 1;
+            }
+            51..=70 if mutation_count != 0 => {
+                let ops = buffer.randomly_undo_redo(&mut rng);
+                network.broadcast(buffer.replica_id, ops);
+                mutation_count -= 1;
+            }
+            71..=100 if network.has_unreceived(replica_id) => {
+                let ops = network.receive(replica_id);
+                if !ops.is_empty() {
+                    log::info!(
+                        "peer {} applying {} ops from the network.",
+                        replica_id,
+                        ops.len()
+                    );
+                    buffer.apply_ops(ops).unwrap();
+                }
+            }
+            _ => {}
+        }
 
-//         if mutation_count == 0 && network.is_idle() {
-//             break;
-//         }
-//     }
+        if mutation_count == 0 && network.is_idle() {
+            break;
+        }
+    }
 
-//     let first_buffer = buffers[0].read(cx);
-//     for buffer in &buffers[1..] {
-//         let buffer = buffer.read(cx);
-//         assert_eq!(
-//             buffer.text(),
-//             first_buffer.text(),
-//             "Replica {} text != Replica 0 text",
-//             buffer.replica_id
-//         );
-//         assert_eq!(
-//             buffer.selection_sets().collect::<HashMap<_, _>>(),
-//             first_buffer.selection_sets().collect::<HashMap<_, _>>()
-//         );
-//         assert_eq!(
-//             buffer.all_selection_ranges().collect::<HashMap<_, _>>(),
-//             first_buffer
-//                 .all_selection_ranges()
-//                 .collect::<HashMap<_, _>>()
-//         );
-//     }
-// }
+    let first_buffer = &buffers[0];
+    for buffer in &buffers[1..] {
+        assert_eq!(
+            buffer.text(),
+            first_buffer.text(),
+            "Replica {} text != Replica 0 text",
+            buffer.replica_id
+        );
+        assert_eq!(
+            buffer.selection_sets().collect::<HashMap<_, _>>(),
+            first_buffer.selection_sets().collect::<HashMap<_, _>>()
+        );
+        assert_eq!(
+            buffer.all_selection_ranges().collect::<HashMap<_, _>>(),
+            first_buffer
+                .all_selection_ranges()
+                .collect::<HashMap<_, _>>()
+        );
+    }
+}
 
 #[derive(Clone)]
 struct Envelope<T: Clone> {

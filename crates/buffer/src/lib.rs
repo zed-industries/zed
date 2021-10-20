@@ -2414,27 +2414,18 @@ impl Buffer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl Buffer {
-    pub fn randomly_edit<T>(
-        &mut self,
-        rng: &mut T,
-        old_range_count: usize,
-        _: &mut ModelContext<Self>,
-    ) -> (Vec<Range<usize>>, String)
+    pub fn randomly_edit<T>(&mut self, rng: &mut T, old_range_count: usize)
     where
         T: rand::Rng,
     {
-        self.buffer.randomly_edit(rng, old_range_count)
+        self.buffer.randomly_edit(rng, old_range_count);
     }
 
-    pub fn randomly_mutate<T>(
-        &mut self,
-        rng: &mut T,
-        _: &mut ModelContext<Self>,
-    ) -> (Vec<Range<usize>>, String)
+    pub fn randomly_mutate<T>(&mut self, rng: &mut T)
     where
         T: rand::Rng,
     {
-        self.buffer.randomly_mutate(rng)
+        self.buffer.randomly_mutate(rng);
     }
 }
 
@@ -2450,7 +2441,7 @@ impl TextBuffer {
         &mut self,
         rng: &mut T,
         old_range_count: usize,
-    ) -> (Vec<Range<usize>>, String)
+    ) -> (Vec<Range<usize>>, String, Operation)
     where
         T: rand::Rng,
     {
@@ -2472,17 +2463,17 @@ impl TextBuffer {
             old_ranges,
             new_text
         );
-        self.edit(old_ranges.iter().cloned(), new_text.as_str());
-        (old_ranges, new_text)
+        let op = self.edit(old_ranges.iter().cloned(), new_text.as_str());
+        (old_ranges, new_text, Operation::Edit(op))
     }
 
-    pub fn randomly_mutate<T>(&mut self, rng: &mut T) -> (Vec<Range<usize>>, String)
+    pub fn randomly_mutate<T>(&mut self, rng: &mut T) -> Vec<Operation>
     where
         T: rand::Rng,
     {
         use rand::prelude::*;
 
-        let (old_ranges, new_text) = self.randomly_edit(rng, 5);
+        let mut ops = vec![self.randomly_edit(rng, 5).2];
 
         // Randomly add, remove or mutate selection sets.
         let replica_selection_sets = &self
@@ -2492,7 +2483,7 @@ impl TextBuffer {
             .collect::<Vec<_>>();
         let set_id = replica_selection_sets.choose(rng);
         if set_id.is_some() && rng.gen_bool(1.0 / 6.0) {
-            self.remove_selection_set(*set_id.unwrap()).unwrap();
+            ops.push(self.remove_selection_set(*set_id.unwrap()).unwrap());
         } else {
             let mut ranges = Vec::new();
             for _ in 0..5 {
@@ -2500,20 +2491,22 @@ impl TextBuffer {
             }
             let new_selections = self.selections_from_ranges(ranges).unwrap();
 
-            if set_id.is_none() || rng.gen_bool(1.0 / 5.0) {
-                self.add_selection_set(new_selections);
+            let op = if set_id.is_none() || rng.gen_bool(1.0 / 5.0) {
+                self.add_selection_set(new_selections)
             } else {
                 self.update_selection_set(*set_id.unwrap(), new_selections)
-                    .unwrap();
-            }
+                    .unwrap()
+            };
+            ops.push(op);
         }
 
-        (old_ranges, new_text)
+        ops
     }
 
-    pub fn randomly_undo_redo(&mut self, rng: &mut impl rand::Rng) {
+    pub fn randomly_undo_redo(&mut self, rng: &mut impl rand::Rng) -> Vec<Operation> {
         use rand::prelude::*;
 
+        let mut ops = Vec::new();
         for _ in 0..rng.gen_range(1..=5) {
             if let Some(transaction) = self.history.undo_stack.choose(rng).cloned() {
                 log::info!(
@@ -2521,9 +2514,10 @@ impl TextBuffer {
                     self.replica_id,
                     transaction
                 );
-                self.undo_or_redo(transaction).unwrap();
+                ops.push(self.undo_or_redo(transaction).unwrap());
             }
         }
+        ops
     }
 
     fn selections_from_ranges<I>(&self, ranges: I) -> Result<Vec<Selection>>
