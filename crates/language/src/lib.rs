@@ -300,45 +300,34 @@ impl Buffer {
         cx.emit(Event::Saved);
     }
 
+    pub fn file_renamed(&self, cx: &mut ModelContext<Self>) {
+        cx.emit(Event::FileHandleChanged);
+    }
+
     pub fn file_updated(
         &mut self,
-        path: Arc<Path>,
-        mtime: SystemTime,
-        new_text: Option<String>,
+        new_text: String,
         cx: &mut ModelContext<Self>,
-    ) {
-        let file = self.file.as_mut().unwrap();
-        let mut changed = false;
-        if path != *file.path() {
-            file.set_path(path);
-            changed = true;
-        }
-
-        if mtime != file.mtime() {
-            file.set_mtime(mtime);
-            changed = true;
-            if let Some(new_text) = new_text {
-                if self.version == self.saved_version {
-                    cx.spawn(|this, mut cx| async move {
-                        let diff = this
-                            .read_with(&cx, |this, cx| this.diff(new_text.into(), cx))
-                            .await;
-                        this.update(&mut cx, |this, cx| {
-                            if this.apply_diff(diff, cx) {
-                                this.saved_version = this.version.clone();
-                                this.saved_mtime = mtime;
-                                cx.emit(Event::Reloaded);
-                            }
-                        });
-                    })
-                    .detach();
-                }
+    ) -> Option<Task<()>> {
+        if let Some(file) = self.file.as_ref() {
+            cx.emit(Event::FileHandleChanged);
+            let mtime = file.mtime();
+            if self.version == self.saved_version {
+                return Some(cx.spawn(|this, mut cx| async move {
+                    let diff = this
+                        .read_with(&cx, |this, cx| this.diff(new_text.into(), cx))
+                        .await;
+                    this.update(&mut cx, |this, cx| {
+                        if this.apply_diff(diff, cx) {
+                            this.saved_version = this.version.clone();
+                            this.saved_mtime = mtime;
+                            cx.emit(Event::Reloaded);
+                        }
+                    });
+                }));
             }
         }
-
-        if changed {
-            cx.emit(Event::FileHandleChanged);
-        }
+        None
     }
 
     pub fn file_deleted(&mut self, cx: &mut ModelContext<Self>) {
@@ -737,20 +726,6 @@ impl Buffer {
                 new_text,
                 changes,
             }
-        })
-    }
-
-    pub fn set_text_from_disk(&self, new_text: Arc<str>, cx: &mut ModelContext<Self>) -> Task<()> {
-        cx.spawn(|this, mut cx| async move {
-            let diff = this
-                .read_with(&cx, |this, cx| this.diff(new_text, cx))
-                .await;
-
-            this.update(&mut cx, |this, cx| {
-                if this.apply_diff(diff, cx) {
-                    this.saved_version = this.version.clone();
-                }
-            });
         })
     }
 

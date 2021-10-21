@@ -594,26 +594,23 @@ impl Worktree {
                     let buffer_is_clean = !buffer.is_dirty();
 
                     if let Some(file) = buffer.file_mut() {
-                        let mut file_changed = false;
-
                         if let Some(entry) = file
                             .entry_id()
                             .and_then(|entry_id| self.entry_for_id(entry_id))
                         {
-                            if entry.path != *file.path() {
-                                file.set_path(entry.path.clone());
-                                file_changed = true;
-                            }
-
                             if entry.mtime != file.mtime() {
                                 file.set_mtime(entry.mtime);
-                                file_changed = true;
                                 if let Some(worktree) = self.as_local() {
                                     if buffer_is_clean {
                                         let abs_path = worktree.absolutize(file.path().as_ref());
                                         refresh_buffer(abs_path, &worktree.fs, cx);
                                     }
                                 }
+                            }
+
+                            if entry.path != *file.path() {
+                                file.set_path(entry.path.clone());
+                                buffer.file_renamed(cx);
                             }
                         } else if let Some(entry) = self.entry_for_path(file.path().as_ref()) {
                             file.set_entry_id(Some(entry.id));
@@ -624,17 +621,9 @@ impl Worktree {
                                     refresh_buffer(abs_path, &worktree.fs, cx);
                                 }
                             }
-                            file_changed = true;
                         } else if !file.is_deleted() {
-                            if buffer_is_clean {
-                                cx.emit(language::Event::Dirtied);
-                            }
                             file.set_entry_id(None);
-                            file_changed = true;
-                        }
-
-                        if file_changed {
-                            cx.emit(language::Event::FileHandleChanged);
+                            buffer.file_deleted(cx);
                         }
                     }
                 });
@@ -1186,15 +1175,14 @@ fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
 pub fn refresh_buffer(abs_path: PathBuf, fs: &Arc<dyn Fs>, cx: &mut ModelContext<Buffer>) {
     let fs = fs.clone();
     cx.spawn(|buffer, mut cx| async move {
-        let new_text = fs.load(&abs_path).await;
-        match new_text {
+        match fs.load(&abs_path).await {
             Err(error) => log::error!("error refreshing buffer after file changed: {}", error),
             Ok(new_text) => {
-                buffer
-                    .update(&mut cx, |buffer, cx| {
-                        buffer.set_text_from_disk(new_text.into(), cx)
-                    })
-                    .await;
+                if let Some(task) =
+                    buffer.update(&mut cx, |buffer, cx| buffer.file_updated(new_text, cx))
+                {
+                    task.await;
+                }
             }
         }
     })
