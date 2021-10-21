@@ -42,24 +42,32 @@ struct Request<T> {
 }
 
 #[derive(Deserialize)]
-struct Error {
-    message: String,
-}
-
-#[derive(Deserialize)]
-struct Notification<'a> {
-    method: String,
-    #[serde(borrow)]
-    params: &'a RawValue,
-}
-
-#[derive(Deserialize)]
 struct Response<'a> {
     id: usize,
     #[serde(default)]
     error: Option<Error>,
     #[serde(default, borrow)]
     result: Option<&'a RawValue>,
+}
+
+#[derive(Serialize)]
+struct OutboundNotification<T> {
+    jsonrpc: &'static str,
+    method: &'static str,
+    params: T,
+}
+
+#[derive(Deserialize)]
+struct InboundNotification<'a> {
+    #[serde(borrow)]
+    method: &'a str,
+    #[serde(borrow)]
+    params: &'a RawValue,
+}
+
+#[derive(Deserialize)]
+struct Error {
+    message: String,
 }
 
 impl LanguageServer {
@@ -91,7 +99,7 @@ impl LanguageServer {
 
                         buffer.resize(message_len, 0);
                         stdout.read_exact(&mut buffer).await?;
-                        if let Ok(Notification { .. }) = serde_json::from_slice(&buffer) {
+                        if let Ok(InboundNotification { .. }) = serde_json::from_slice(&buffer) {
                         } else if let Ok(Response { id, error, result }) =
                             serde_json::from_slice(&buffer)
                         {
@@ -146,19 +154,19 @@ impl LanguageServer {
     }
 
     async fn init(self: Arc<Self>) -> Result<()> {
-        let init_response = self
-            .request::<lsp_types::request::Initialize>(lsp_types::InitializeParams {
-                process_id: Default::default(),
-                root_path: Default::default(),
-                root_uri: Default::default(),
-                initialization_options: Default::default(),
-                capabilities: Default::default(),
-                trace: Default::default(),
-                workspace_folders: Default::default(),
-                client_info: Default::default(),
-                locale: Default::default(),
-            })
-            .await?;
+        self.request::<lsp_types::request::Initialize>(lsp_types::InitializeParams {
+            process_id: Default::default(),
+            root_path: Default::default(),
+            root_uri: Default::default(),
+            initialization_options: Default::default(),
+            capabilities: Default::default(),
+            trace: Default::default(),
+            workspace_folders: Default::default(),
+            client_info: Default::default(),
+            locale: Default::default(),
+        })
+        .await?;
+        self.notify::<lsp_types::notification::Initialized>(lsp_types::InitializedParams {})?;
         Ok(())
     }
 
@@ -197,5 +205,30 @@ impl LanguageServer {
             outbound_tx.send(message).await?;
             rx.recv().await?
         }
+    }
+
+    pub fn notify<T: lsp_types::notification::Notification>(
+        &self,
+        params: T::Params,
+    ) -> Result<()> {
+        let message = serde_json::to_vec(&OutboundNotification {
+            jsonrpc: JSON_RPC_VERSION,
+            method: T::METHOD,
+            params,
+        })
+        .unwrap();
+        smol::block_on(self.outbound_tx.send(message))?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+
+    #[gpui::test]
+    async fn test_basic(cx: TestAppContext) {
+        let server = LanguageServer::new();
     }
 }
