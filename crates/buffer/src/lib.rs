@@ -29,7 +29,8 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use sum_tree::{Bias, FilterCursor, SumTree};
+pub use sum_tree::Bias;
+use sum_tree::{FilterCursor, SumTree};
 
 #[derive(Clone, Default)]
 struct DeterministicState;

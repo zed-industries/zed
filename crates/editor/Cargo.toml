@@ -4,7 +4,11 @@ version = "0.1.0"
 edition = "2018"
 
 [features]
-test-support = ["buffer/test-support", "gpui/test-support"]
+test-support = [
+    "buffer/test-support",
+    "language/test-support",
+    "gpui/test-support",
+]
 
 [dependencies]
 buffer = { path = "../buffer" }

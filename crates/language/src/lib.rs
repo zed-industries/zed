@@ -30,7 +30,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use sum_tree::Bias;
 use tree_sitter::{InputEdit, Parser, QueryCursor, Tree};
 
 thread_local! {
@@ -456,12 +455,12 @@ impl Buffer {
                 start_byte: start_offset,
                 old_end_byte: start_offset + edit.deleted_bytes(),
                 new_end_byte: start_offset + edit.inserted_bytes(),
-                start_position: start_point.into(),
-                old_end_position: (start_point + edit.deleted_lines()).into(),
+                start_position: start_point.to_ts_point(),
+                old_end_position: (start_point + edit.deleted_lines()).to_ts_point(),
                 new_end_position: self
                     .as_rope()
                     .to_point(start_offset + edit.inserted_bytes())
-                    .into(),
+                    .to_ts_point(),
             });
             delta += edit.inserted_bytes() as isize - edit.deleted_bytes() as isize;
         }
@@ -1150,8 +1149,8 @@ impl Snapshot {
             let indent_capture_ix = language.indents_query.capture_index_for_name("indent");
             let end_capture_ix = language.indents_query.capture_index_for_name("end");
             query_cursor.set_point_range(
-                Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0).into()
-                    ..Point::new(row_range.end, 0).into(),
+                Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0).to_ts_point()
+                    ..Point::new(row_range.end, 0).to_ts_point(),
             );
             let mut indentation_ranges = Vec::<(Range<Point>, &'static str)>::new();
             for mat in query_cursor.matches(
@@ -1165,10 +1164,10 @@ impl Snapshot {
                 for capture in mat.captures {
                     if Some(capture.index) == indent_capture_ix {
                         node_kind = capture.node.kind();
-                        start.get_or_insert(capture.node.start_position().into());
-                        end.get_or_insert(capture.node.end_position().into());
+                        start.get_or_insert(Point::from_ts_point(capture.node.start_position()));
+                        end.get_or_insert(Point::from_ts_point(capture.node.end_position()));
                     } else if Some(capture.index) == end_capture_ix {
-                        end = Some(capture.node.start_position().into());
+                        end = Some(Point::from_ts_point(capture.node.start_position().into()));
                     }
                 }
 
@@ -1439,8 +1438,23 @@ impl Drop for QueryCursorHandle {
     fn drop(&mut self) {
         let mut cursor = self.0.take().unwrap();
         cursor.set_byte_range(0..usize::MAX);
-        cursor.set_point_range(Point::zero().into()..Point::MAX.into());
+        cursor.set_point_range(Point::zero().to_ts_point()..Point::MAX.to_ts_point());
         QUERY_CURSORS.lock().push(cursor)
+    }
+}
+
+trait ToTreeSitterPoint {
+    fn to_ts_point(self) -> tree_sitter::Point;
+    fn from_ts_point(point: tree_sitter::Point) -> Self;
+}
+
+impl ToTreeSitterPoint for Point {
+    fn to_ts_point(self) -> tree_sitter::Point {
+        tree_sitter::Point::new(self.row as usize, self.column as usize)
+    }
+
+    fn from_ts_point(point: tree_sitter::Point) -> Self {
+        Point::new(point.row as u32, point.column as u32)
     }
 }
 

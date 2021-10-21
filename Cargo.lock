@@ -750,21 +750,12 @@ dependencies = [
  "arrayvec 0.7.1",
  "clock",
  "gpui",
- "lazy_static",
  "log",
- "parking_lot",
  "rand 0.8.3",
  "rpc",
  "seahash",
- "serde 1.0.125",
- "similar",
  "smallvec",
- "smol",
  "sum_tree",
- "theme",
- "tree-sitter",
- "tree-sitter-rust",
- "unindent",
 ]
 
 [[package]]
@@ -2822,7 +2813,6 @@ name = "language"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "arrayvec 0.7.1",
  "buffer",
  "clock",
  "gpui",
@@ -2831,12 +2821,9 @@ dependencies = [
  "parking_lot",
  "rand 0.8.3",
  "rpc",
- "seahash",
  "serde 1.0.125",
  "similar",
- "smallvec",
  "smol",
- "sum_tree",
  "theme",
  "tree-sitter",
  "tree-sitter-rust",
