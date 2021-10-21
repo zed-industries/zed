@@ -10,6 +10,7 @@ pub use self::{
 use anyhow::{anyhow, Result};
 pub use buffer::{Buffer as TextBuffer, *};
 use clock::ReplicaId;
+use futures::FutureExt as _;
 use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -31,6 +32,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tree_sitter::{InputEdit, Parser, QueryCursor, Tree};
+use util::TryFutureExt as _;
 
 thread_local! {
     static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
@@ -83,15 +85,9 @@ pub trait File {
 
     fn entry_id(&self) -> Option<usize>;
 
-    fn set_entry_id(&mut self, entry_id: Option<usize>);
-
     fn mtime(&self) -> SystemTime;
 
-    fn set_mtime(&mut self, mtime: SystemTime);
-
     fn path(&self) -> &Arc<Path>;
-
-    fn set_path(&mut self, path: Arc<Path>);
 
     fn full_path(&self, cx: &AppContext) -> PathBuf;
 
@@ -108,6 +104,8 @@ pub trait File {
         version: clock::Global,
         cx: &mut MutableAppContext,
     ) -> Task<Result<(clock::Global, SystemTime)>>;
+
+    fn load_local(&self, cx: &AppContext) -> Option<Task<Result<String>>>;
 
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext);
 
@@ -256,10 +254,6 @@ impl Buffer {
         self.file.as_deref()
     }
 
-    pub fn file_mut(&mut self) -> Option<&mut dyn File> {
-        self.file.as_mut().map(|f| f.deref_mut() as &mut dyn File)
-    }
-
     pub fn save(
         &mut self,
         cx: &mut ModelContext<Self>,
@@ -300,41 +294,64 @@ impl Buffer {
         cx.emit(Event::Saved);
     }
 
-    pub fn file_renamed(&self, cx: &mut ModelContext<Self>) {
-        cx.emit(Event::FileHandleChanged);
-    }
-
     pub fn file_updated(
         &mut self,
-        new_text: String,
+        new_file: Box<dyn File>,
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<()>> {
-        if let Some(file) = self.file.as_ref() {
-            cx.emit(Event::FileHandleChanged);
-            let mtime = file.mtime();
-            if self.version == self.saved_version {
-                return Some(cx.spawn(|this, mut cx| async move {
-                    let diff = this
-                        .read_with(&cx, |this, cx| this.diff(new_text.into(), cx))
-                        .await;
-                    this.update(&mut cx, |this, cx| {
-                        if this.apply_diff(diff, cx) {
-                            this.saved_version = this.version.clone();
-                            this.saved_mtime = mtime;
-                            cx.emit(Event::Reloaded);
+        let old_file = self.file.as_ref()?;
+        let mut file_changed = false;
+        let mut task = None;
+
+        if new_file.path() != old_file.path() {
+            file_changed = true;
+        }
+
+        if new_file.is_deleted() {
+            if !old_file.is_deleted() {
+                file_changed = true;
+                if !self.is_dirty() {
+                    cx.emit(Event::Dirtied);
+                }
+            }
+        } else {
+            let new_mtime = new_file.mtime();
+            if new_mtime != old_file.mtime() {
+                file_changed = true;
+
+                if !self.is_dirty() {
+                    task = Some(cx.spawn(|this, mut cx| {
+                        async move {
+                            let new_text = this.read_with(&cx, |this, cx| {
+                                this.file.as_ref().and_then(|file| file.load_local(cx))
+                            });
+                            if let Some(new_text) = new_text {
+                                let new_text = new_text.await?;
+                                let diff = this
+                                    .read_with(&cx, |this, cx| this.diff(new_text.into(), cx))
+                                    .await;
+                                this.update(&mut cx, |this, cx| {
+                                    if this.apply_diff(diff, cx) {
+                                        this.saved_version = this.version.clone();
+                                        this.saved_mtime = new_mtime;
+                                        cx.emit(Event::Reloaded);
+                                    }
+                                });
+                            }
+                            Ok(())
                         }
-                    });
-                }));
+                        .log_err()
+                        .map(drop)
+                    }));
+                }
             }
         }
-        None
-    }
 
-    pub fn file_deleted(&mut self, cx: &mut ModelContext<Self>) {
-        if self.version == self.saved_version {
-            cx.emit(Event::Dirtied);
+        if file_changed {
+            cx.emit(Event::FileHandleChanged);
         }
-        cx.emit(Event::FileHandleChanged);
+        self.file = Some(new_file);
+        task
     }
 
     pub fn close(&mut self, cx: &mut ModelContext<Self>) {

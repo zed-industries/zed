@@ -2815,6 +2815,7 @@ dependencies = [
  "anyhow",
  "buffer",
  "clock",
+ "futures",
  "gpui",
  "lazy_static",
  "log",
@@ -2828,6 +2829,7 @@ dependencies = [
  "tree-sitter",
  "tree-sitter-rust",
  "unindent",
+ "util",
 ]
 
 [[package]]

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2018"
 
 [features]
-test-support = []
+test-support = ["language/test-support", "buffer/test-support"]
 
 [dependencies]
 buffer = { path = "../buffer" }
@@ -34,6 +34,7 @@ toml = "0.5"
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }

@@ -587,43 +587,40 @@ impl Worktree {
             }
         };
 
+        let worktree_handle = cx.handle();
         let mut buffers_to_delete = Vec::new();
         for (buffer_id, buffer) in open_buffers {
             if let Some(buffer) = buffer.upgrade(cx) {
                 buffer.update(cx, |buffer, cx| {
-                    let buffer_is_clean = !buffer.is_dirty();
-
-                    if let Some(file) = buffer.file_mut() {
-                        if let Some(entry) = file
+                    if let Some(old_file) = buffer.file() {
+                        let new_file = if let Some(entry) = old_file
                             .entry_id()
                             .and_then(|entry_id| self.entry_for_id(entry_id))
                         {
-                            if entry.mtime != file.mtime() {
-                                file.set_mtime(entry.mtime);
-                                if let Some(worktree) = self.as_local() {
-                                    if buffer_is_clean {
-                                        let abs_path = worktree.absolutize(file.path().as_ref());
-                                        refresh_buffer(abs_path, &worktree.fs, cx);
-                                    }
-                                }
+                            File {
+                                entry_id: Some(entry.id),
+                                mtime: entry.mtime,
+                                path: entry.path.clone(),
+                                worktree: worktree_handle.clone(),
                             }
+                        } else if let Some(entry) = self.entry_for_path(old_file.path().as_ref()) {
+                            File {
+                                entry_id: Some(entry.id),
+                                mtime: entry.mtime,
+                                path: entry.path.clone(),
+                                worktree: worktree_handle.clone(),
+                            }
+                        } else {
+                            File {
+                                entry_id: None,
+                                path: old_file.path().clone(),
+                                mtime: old_file.mtime(),
+                                worktree: worktree_handle.clone(),
+                            }
+                        };
 
-                            if entry.path != *file.path() {
-                                file.set_path(entry.path.clone());
-                                buffer.file_renamed(cx);
-                            }
-                        } else if let Some(entry) = self.entry_for_path(file.path().as_ref()) {
-                            file.set_entry_id(Some(entry.id));
-                            file.set_mtime(entry.mtime);
-                            if let Some(worktree) = self.as_local() {
-                                if buffer_is_clean {
-                                    let abs_path = worktree.absolutize(file.path().as_ref());
-                                    refresh_buffer(abs_path, &worktree.fs, cx);
-                                }
-                            }
-                        } else if !file.is_deleted() {
-                            file.set_entry_id(None);
-                            buffer.file_deleted(cx);
+                        if let Some(task) = buffer.file_updated(Box::new(new_file), cx) {
+                            task.detach();
                         }
                     }
                 });
@@ -1170,23 +1167,6 @@ fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
         builder.add_line(Some(abs_path.into()), line)?;
     }
     Ok(builder.build()?)
-}
-
-pub fn refresh_buffer(abs_path: PathBuf, fs: &Arc<dyn Fs>, cx: &mut ModelContext<Buffer>) {
-    let fs = fs.clone();
-    cx.spawn(|buffer, mut cx| async move {
-        match fs.load(&abs_path).await {
-            Err(error) => log::error!("error refreshing buffer after file changed: {}", error),
-            Ok(new_text) => {
-                if let Some(task) =
-                    buffer.update(&mut cx, |buffer, cx| buffer.file_updated(new_text, cx))
-                {
-                    task.await;
-                }
-            }
-        }
-    })
-    .detach()
 }
 
 impl Deref for LocalWorktree {
@@ -1787,24 +1767,12 @@ impl language::File for File {
         self.entry_id
     }
 
-    fn set_entry_id(&mut self, entry_id: Option<usize>) {
-        self.entry_id = entry_id;
-    }
-
     fn mtime(&self) -> SystemTime {
         self.mtime
     }
 
-    fn set_mtime(&mut self, mtime: SystemTime) {
-        self.mtime = mtime;
-    }
-
     fn path(&self) -> &Arc<Path> {
         &self.path
-    }
-
-    fn set_path(&mut self, path: Arc<Path>) {
-        self.path = path;
     }
 
     fn full_path(&self, cx: &AppContext) -> PathBuf {
@@ -1873,6 +1841,16 @@ impl language::File for File {
                 })
             }
         })
+    }
+
+    fn load_local(&self, cx: &AppContext) -> Option<Task<Result<String>>> {
+        let worktree = self.worktree.read(cx).as_local()?;
+        let abs_path = worktree.absolutize(&self.path);
+        let fs = worktree.fs.clone();
+        Some(
+            cx.background()
+                .spawn(async move { fs.load(&abs_path).await }),
+        )
     }
 
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext) {
@@ -3430,12 +3408,13 @@ mod tests {
         buffer.update(&mut cx, |buffer, cx| {
             buffer.edit(vec![0..0], " ", cx);
             assert!(buffer.is_dirty());
+            assert!(!buffer.has_conflict());
         });
 
         // Change the file on disk again, adding blank lines to the beginning.
         fs::write(&abs_path, "\n\n\nAAAA\naaa\nBB\nbbbbb\n").unwrap();
 
-        // Becaues the buffer is modified, it doesn't reload from disk, but is
+        // Because the buffer is modified, it doesn't reload from disk, but is
         // marked as having a conflict.
         buffer
             .condition(&cx, |buffer, _| buffer.has_conflict())

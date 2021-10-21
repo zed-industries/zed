@@ -17,12 +17,10 @@ pub use point::*;
 pub use random_char_iter::*;
 pub use rope::{Chunks, Rope, TextSummary};
 use rpc::proto;
-use seahash::SeaHasher;
 pub use selection::*;
 use std::{
     cmp,
     convert::{TryFrom, TryInto},
-    hash::BuildHasher,
     iter::Iterator,
     ops::Range,
     str,
@@ -32,14 +30,16 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::{FilterCursor, SumTree};
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Default)]
 struct DeterministicState;
 
-impl BuildHasher for DeterministicState {
-    type Hasher = SeaHasher;
+#[cfg(any(test, feature = "test-support"))]
+impl std::hash::BuildHasher for DeterministicState {
+    type Hasher = seahash::SeaHasher;
 
     fn build_hasher(&self) -> Self::Hasher {
-        SeaHasher::new()
+        seahash::SeaHasher::new()
     }
 }
 

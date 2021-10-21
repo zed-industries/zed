@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2018"
 
 [features]
-test-support = ["rand"]
+test-support = ["rand", "buffer/test-support"]
 
 [dependencies]
 buffer = { path = "../buffer" }
@@ -12,7 +12,9 @@ clock = { path = "../clock" }
 gpui = { path = "../gpui" }
 rpc = { path = "../rpc" }
 theme = { path = "../theme" }
+util = { path = "../util" }
 anyhow = "1.0.38"
+futures = "0.3"
 lazy_static = "1.4"
 log = "0.4"
 parking_lot = "0.11.1"
