@@ -322,11 +322,12 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(params: &WorkspaceParams, cx: &mut ViewContext<Self>) -> Self {
-        let project = cx.add_model(|_| {
+        let project = cx.add_model(|cx| {
             Project::new(
                 params.languages.clone(),
                 params.client.clone(),
                 params.fs.clone(),
+                cx.background(),
             )
         });
         cx.observe(&project, |_, _, cx| cx.notify()).detach();

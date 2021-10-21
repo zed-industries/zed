@@ -7,7 +7,8 @@ use buffer::LanguageRegistry;
 use client::Client;
 use futures::Future;
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
-use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
+use gpui::{executor, AppContext, Entity, ModelContext, ModelHandle, Task};
+use lsp::LanguageServer;
 use std::{
     path::Path,
     sync::{atomic::AtomicBool, Arc},
@@ -23,6 +24,7 @@ pub struct Project {
     languages: Arc<LanguageRegistry>,
     client: Arc<client::Client>,
     fs: Arc<dyn Fs>,
+    language_server: Arc<LanguageServer>,
 }
 
 pub enum Event {
@@ -43,13 +45,23 @@ pub struct ProjectEntry {
 }
 
 impl Project {
-    pub fn new(languages: Arc<LanguageRegistry>, rpc: Arc<Client>, fs: Arc<dyn Fs>) -> Self {
+    pub fn new(
+        languages: Arc<LanguageRegistry>,
+        rpc: Arc<Client>,
+        fs: Arc<dyn Fs>,
+        background: &executor::Background,
+    ) -> Self {
         Self {
             worktrees: Default::default(),
             active_entry: None,
             languages,
             client: rpc,
             fs,
+            language_server: LanguageServer::new(
+                Path::new("/Users/as-cii/Downloads/rust-analyzer-x86_64-apple-darwin"),
+                background,
+            )
+            .unwrap(),
         }
     }
 
@@ -408,6 +420,6 @@ mod tests {
         let languages = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(RealFs);
         let rpc = client::Client::new();
-        cx.add_model(|_| Project::new(languages, rpc, fs))
+        cx.add_model(|cx| Project::new(languages, rpc, fs, cx.background()))
     }
 }

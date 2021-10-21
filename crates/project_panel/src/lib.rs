@@ -617,11 +617,12 @@ mod tests {
         )
         .await;
 
-        let project = cx.add_model(|_| {
+        let project = cx.add_model(|cx| {
             Project::new(
                 params.languages.clone(),
                 params.client.clone(),
                 params.fs.clone(),
+                cx.background(),
             )
         });
         let root1 = project

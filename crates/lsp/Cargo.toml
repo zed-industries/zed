@@ -1,0 +1,15 @@
+[package]
+name = "lsp"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+gpui = { path = "../gpui" }
+util = { path = "../util" }
+anyhow = "1.0"
+futures = "0.3"
+lsp-types = "0.91"
+parking_lot = "0.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["raw_value"] }
+smol = "1.2"

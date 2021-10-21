@@ -2950,6 +2950,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "lsp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "gpui",
+ "lsp-types",
+ "parking_lot",
+ "serde 1.0.125",
+ "serde_json 1.0.64",
+ "smol",
+ "util",
+]
+
+[[package]]
+name = "lsp-types"
+version = "0.91.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be7801b458592d0998af808d97f6a85a6057af3aaf2a2a5c3c677702bbeb4ed7"
+dependencies = [
+ "bitflags 1.2.1",
+ "serde 1.0.125",
+ "serde_json 1.0.64",
+ "serde_repr",
+ "url",
+]
+
+[[package]]
 name = "lzw"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3762,6 +3790,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "log",
+ "lsp",
  "parking_lot",
  "postage",
  "rand 0.8.3",
@@ -4569,6 +4598,17 @@ dependencies = [
  "percent-encoding",
  "serde 1.0.125",
  "thiserror",
+]
+
+[[package]]
+name = "serde_repr"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98d0516900518c29efa217c298fa1f4e6c6ffc85ae29fd7f4ee48f176e1a9ed5"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

@@ -50,6 +50,7 @@ type AnyFuture = Pin<Box<dyn 'static + Send + Future<Output = Box<dyn Any + Send
 type AnyTask = async_task::Task<Box<dyn Any + Send + 'static>>;
 type AnyLocalTask = async_task::Task<Box<dyn Any + 'static>>;
 
+#[must_use]
 pub enum Task<T> {
     Local {
         any_task: AnyLocalTask,
