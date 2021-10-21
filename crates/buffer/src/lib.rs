@@ -56,7 +56,7 @@ type HashMap<K, V> = std::collections::HashMap<K, V>;
 type HashSet<T> = std::collections::HashSet<T>;
 
 #[derive(Clone)]
-pub struct TextBuffer {
+pub struct Buffer {
     fragments: SumTree<Fragment>,
     visible_text: Rope,
     deleted_text: Rope,
@@ -441,8 +441,8 @@ pub struct UndoOperation {
     version: clock::Global,
 }
 
-impl TextBuffer {
-    pub fn new(replica_id: u16, remote_id: u64, history: History) -> TextBuffer {
+impl Buffer {
+    pub fn new(replica_id: u16, remote_id: u64, history: History) -> Buffer {
         let mut fragments = SumTree::new();
 
         let visible_text = Rope::from(history.base_text.as_ref());
@@ -459,7 +459,7 @@ impl TextBuffer {
             );
         }
 
-        TextBuffer {
+        Buffer {
             visible_text,
             deleted_text: Rope::new(),
             fragments,
@@ -478,8 +478,7 @@ impl TextBuffer {
     }
 
     pub fn from_proto(replica_id: u16, message: proto::Buffer) -> Result<Self> {
-        let mut buffer =
-            TextBuffer::new(replica_id, message.id, History::new(message.content.into()));
+        let mut buffer = Buffer::new(replica_id, message.id, History::new(message.content.into()));
         let ops = message
             .history
             .into_iter()
@@ -1369,7 +1368,7 @@ impl TextBuffer {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-impl TextBuffer {
+impl Buffer {
     fn random_byte_range(&mut self, start_offset: usize, rng: &mut impl rand::Rng) -> Range<usize> {
         let end = self.clip_offset(rng.gen_range(start_offset..=self.len()), Bias::Right);
         let start = self.clip_offset(rng.gen_range(start_offset..=end), Bias::Right);
@@ -1617,8 +1616,8 @@ impl<'a> From<&'a Snapshot> for Content<'a> {
     }
 }
 
-impl<'a> From<&'a TextBuffer> for Content<'a> {
-    fn from(buffer: &'a TextBuffer) -> Self {
+impl<'a> From<&'a Buffer> for Content<'a> {
+    fn from(buffer: &'a Buffer) -> Self {
         Self {
             visible_text: &buffer.visible_text,
             fragments: &buffer.fragments,
@@ -1627,8 +1626,8 @@ impl<'a> From<&'a TextBuffer> for Content<'a> {
     }
 }
 
-impl<'a> From<&'a mut TextBuffer> for Content<'a> {
-    fn from(buffer: &'a mut TextBuffer) -> Self {
+impl<'a> From<&'a mut Buffer> for Content<'a> {
+    fn from(buffer: &'a mut Buffer) -> Self {
         Self {
             visible_text: &buffer.visible_text,
             fragments: &buffer.fragments,

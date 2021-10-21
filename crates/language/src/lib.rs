@@ -8,7 +8,7 @@ pub use self::{
     language::{BracketPair, Language, LanguageConfig, LanguageRegistry},
 };
 use anyhow::{anyhow, Result};
-pub use buffer::*;
+pub use buffer::{Buffer as TextBuffer, *};
 use clock::ReplicaId;
 use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
@@ -44,7 +44,7 @@ lazy_static! {
 const INDENT_SIZE: u32 = 4;
 
 pub struct Buffer {
-    buffer: TextBuffer,
+    text: TextBuffer,
     file: Option<Box<dyn File>>,
     saved_version: clock::Global,
     saved_mtime: SystemTime,
@@ -223,7 +223,7 @@ impl Buffer {
         }
 
         let mut result = Self {
-            buffer,
+            text: buffer,
             saved_mtime,
             saved_version: clock::Global::new(),
             file,
@@ -244,7 +244,7 @@ impl Buffer {
 
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
-            text: self.buffer.snapshot(),
+            text: self.text.snapshot(),
             tree: self.syntax_tree(),
             is_parsing: self.parsing_in_background,
             language: self.language.clone(),
@@ -630,9 +630,9 @@ impl Buffer {
                     .selections
                     .iter()
                     .map(|selection| {
-                        let start_point = selection.start.to_point(&self.buffer);
+                        let start_point = selection.start.to_point(&self.text);
                         if start_point.column == 0 {
-                            let end_point = selection.end.to_point(&self.buffer);
+                            let end_point = selection.end.to_point(&self.text);
                             let delta = Point::new(
                                 0,
                                 indent_columns.get(&start_point.row).copied().unwrap_or(0),
@@ -801,7 +801,7 @@ impl Buffer {
         selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
         now: Instant,
     ) -> Result<()> {
-        self.buffer.start_transaction_at(selection_set_ids, now)
+        self.text.start_transaction_at(selection_set_ids, now)
     }
 
     pub fn end_transaction(
@@ -818,7 +818,7 @@ impl Buffer {
         now: Instant,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        if let Some(start_version) = self.buffer.end_transaction_at(selection_set_ids, now) {
+        if let Some(start_version) = self.text.end_transaction_at(selection_set_ids, now) {
             cx.notify();
             let was_dirty = start_version != self.saved_version;
             let edited = self.edits_since(start_version).next().is_some();
@@ -905,7 +905,7 @@ impl Buffer {
         let first_newline_ix = new_text.find('\n');
         let new_text_len = new_text.len();
 
-        let edit = self.buffer.edit(ranges.iter().cloned(), new_text);
+        let edit = self.text.edit(ranges.iter().cloned(), new_text);
 
         if let Some((before_edit, edited)) = autoindent_request {
             let mut inserted = None;
@@ -920,7 +920,7 @@ impl Buffer {
             }
 
             let selection_set_ids = self
-                .buffer
+                .text
                 .peek_undo_stack()
                 .unwrap()
                 .starting_selection_set_ids()
@@ -949,7 +949,7 @@ impl Buffer {
         selections: impl Into<Arc<[Selection]>>,
         cx: &mut ModelContext<Self>,
     ) -> SelectionSetId {
-        let operation = self.buffer.add_selection_set(selections);
+        let operation = self.text.add_selection_set(selections);
         if let Operation::UpdateSelections { set_id, .. } = &operation {
             let set_id = *set_id;
             cx.notify();
@@ -966,7 +966,7 @@ impl Buffer {
         selections: impl Into<Arc<[Selection]>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        let operation = self.buffer.update_selection_set(set_id, selections)?;
+        let operation = self.text.update_selection_set(set_id, selections)?;
         cx.notify();
         self.send_operation(operation, cx);
         Ok(())
@@ -977,7 +977,7 @@ impl Buffer {
         set_id: Option<SelectionSetId>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        let operation = self.buffer.set_active_selection_set(set_id)?;
+        let operation = self.text.set_active_selection_set(set_id)?;
         self.send_operation(operation, cx);
         Ok(())
     }
@@ -987,7 +987,7 @@ impl Buffer {
         set_id: SelectionSetId,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        let operation = self.buffer.remove_selection_set(set_id)?;
+        let operation = self.text.remove_selection_set(set_id)?;
         cx.notify();
         self.send_operation(operation, cx);
         Ok(())
@@ -1003,7 +1003,7 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
-        self.buffer.apply_ops(ops)?;
+        self.text.apply_ops(ops)?;
 
         cx.notify();
         if self.edits_since(old_version).next().is_some() {
@@ -1027,7 +1027,7 @@ impl Buffer {
     }
 
     pub fn remove_peer(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Self>) {
-        self.buffer.remove_peer(replica_id);
+        self.text.remove_peer(replica_id);
         cx.notify();
     }
 
@@ -1035,7 +1035,7 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
-        for operation in self.buffer.undo() {
+        for operation in self.text.undo() {
             self.send_operation(operation, cx);
         }
 
@@ -1050,7 +1050,7 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
-        for operation in self.buffer.redo() {
+        for operation in self.text.redo() {
             self.send_operation(operation, cx);
         }
 
@@ -1068,14 +1068,14 @@ impl Buffer {
     where
         T: rand::Rng,
     {
-        self.buffer.randomly_edit(rng, old_range_count);
+        self.text.randomly_edit(rng, old_range_count);
     }
 
     pub fn randomly_mutate<T>(&mut self, rng: &mut T)
     where
         T: rand::Rng,
     {
-        self.buffer.randomly_mutate(rng);
+        self.text.randomly_mutate(rng);
     }
 }
 
@@ -1092,7 +1092,7 @@ impl Entity for Buffer {
 impl Clone for Buffer {
     fn clone(&self) -> Self {
         Self {
-            buffer: self.buffer.clone(),
+            text: self.text.clone(),
             saved_version: self.saved_version.clone(),
             saved_mtime: self.saved_mtime,
             file: self.file.as_ref().map(|f| f.boxed_clone()),
@@ -1114,19 +1114,19 @@ impl Deref for Buffer {
     type Target = TextBuffer;
 
     fn deref(&self) -> &Self::Target {
-        &self.buffer
+        &self.text
     }
 }
 
 impl<'a> From<&'a Buffer> for Content<'a> {
     fn from(buffer: &'a Buffer) -> Self {
-        Self::from(&buffer.buffer)
+        Self::from(&buffer.text)
     }
 }
 
 impl<'a> From<&'a mut Buffer> for Content<'a> {
     fn from(buffer: &'a mut Buffer) -> Self {
-        Self::from(&buffer.buffer)
+        Self::from(&buffer.text)
     }
 }
 
