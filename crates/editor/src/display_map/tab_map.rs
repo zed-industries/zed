@@ -1,5 +1,5 @@
 use super::fold_map::{self, FoldEdit, FoldPoint, Snapshot as FoldSnapshot};
-use buffer::{rope, HighlightId};
+use language::{rope, HighlightId};
 use parking_lot::Mutex;
 use std::{mem, ops::Range};
 use sum_tree::Bias;

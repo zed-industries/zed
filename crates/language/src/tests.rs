@@ -1,6 +1,80 @@
-use crate::*;
+use super::*;
 use gpui::{ModelHandle, MutableAppContext};
+use std::rc::Rc;
 use unindent::Unindent as _;
+
+#[gpui::test]
+fn test_edit_events(cx: &mut gpui::MutableAppContext) {
+    let mut now = Instant::now();
+    let buffer_1_events = Rc::new(RefCell::new(Vec::new()));
+    let buffer_2_events = Rc::new(RefCell::new(Vec::new()));
+
+    let buffer1 = cx.add_model(|cx| Buffer::new(0, "abcdef", cx));
+    let buffer2 = cx.add_model(|cx| Buffer::new(1, "abcdef", cx));
+    let buffer_ops = buffer1.update(cx, |buffer, cx| {
+        let buffer_1_events = buffer_1_events.clone();
+        cx.subscribe(&buffer1, move |_, _, event, _| {
+            buffer_1_events.borrow_mut().push(event.clone())
+        })
+        .detach();
+        let buffer_2_events = buffer_2_events.clone();
+        cx.subscribe(&buffer2, move |_, _, event, _| {
+            buffer_2_events.borrow_mut().push(event.clone())
+        })
+        .detach();
+
+        // An edit emits an edited event, followed by a dirtied event,
+        // since the buffer was previously in a clean state.
+        buffer.edit(Some(2..4), "XYZ", cx);
+
+        // An empty transaction does not emit any events.
+        buffer.start_transaction(None).unwrap();
+        buffer.end_transaction(None, cx).unwrap();
+
+        // A transaction containing two edits emits one edited event.
+        now += Duration::from_secs(1);
+        buffer.start_transaction_at(None, now).unwrap();
+        buffer.edit(Some(5..5), "u", cx);
+        buffer.edit(Some(6..6), "w", cx);
+        buffer.end_transaction_at(None, now, cx).unwrap();
+
+        // Undoing a transaction emits one edited event.
+        buffer.undo(cx);
+
+        buffer.operations.clone()
+    });
+
+    // Incorporating a set of remote ops emits a single edited event,
+    // followed by a dirtied event.
+    buffer2.update(cx, |buffer, cx| {
+        buffer.apply_ops(buffer_ops, cx).unwrap();
+    });
+
+    let buffer_1_events = buffer_1_events.borrow();
+    assert_eq!(
+        *buffer_1_events,
+        vec![Event::Edited, Event::Dirtied, Event::Edited, Event::Edited]
+    );
+
+    let buffer_2_events = buffer_2_events.borrow();
+    assert_eq!(*buffer_2_events, vec![Event::Edited, Event::Dirtied]);
+}
+
+#[gpui::test]
+async fn test_apply_diff(mut cx: gpui::TestAppContext) {
+    let text = "a\nbb\nccc\ndddd\neeeee\nffffff\n";
+    let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+
+    let text = "a\nccc\ndddd\nffffff\n";
+    let diff = buffer.read_with(&cx, |b, cx| b.diff(text.into(), cx)).await;
+    buffer.update(&mut cx, |b, cx| b.apply_diff(diff, cx));
+    cx.read(|cx| assert_eq!(buffer.read(cx).text(), text));
+
+    let text = "a\n1\n\nccc\ndd2dd\nffffff\n";
+    let diff = buffer.read_with(&cx, |b, cx| b.diff(text.into(), cx)).await;
+    buffer.update(&mut cx, |b, cx| b.apply_diff(diff, cx));
+    cx.read(|cx| assert_eq!(buffer.read(cx).text(), text));
+}
 
 #[gpui::test]
 async fn test_reparse(mut cx: gpui::TestAppContext) {
@@ -349,6 +423,19 @@ fn test_contiguous_ranges() {
         contiguous_ranges([2, 3, 4, 5, 6, 7, 8, 9, 23, 24, 25, 26, 30, 31], 3).collect::<Vec<_>>(),
         &[2..5, 5..8, 8..10, 23..26, 26..27, 30..32],
     );
+}
+
+impl Buffer {
+    pub fn enclosing_bracket_point_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Option<(Range<Point>, Range<Point>)> {
+        self.enclosing_bracket_ranges(range).map(|(start, end)| {
+            let point_start = start.start.to_point(self)..start.end.to_point(self);
+            let point_end = end.start.to_point(self)..end.end.to_point(self);
+            (point_start, point_end)
+        })
+    }
 }
 
 fn rust_lang() -> Arc<Language> {

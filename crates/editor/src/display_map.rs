@@ -2,9 +2,9 @@ mod fold_map;
 mod tab_map;
 mod wrap_map;
 
-use buffer::{Anchor, Buffer, Point, ToOffset, ToPoint};
 use fold_map::{FoldMap, ToFoldPoint as _};
 use gpui::{fonts::FontId, Entity, ModelContext, ModelHandle};
+use language::{Anchor, Buffer, Point, ToOffset, ToPoint};
 use std::ops::Range;
 use sum_tree::Bias;
 use tab_map::TabMap;
@@ -109,7 +109,7 @@ impl DisplayMap {
 }
 
 pub struct DisplayMapSnapshot {
-    buffer_snapshot: buffer::Snapshot,
+    buffer_snapshot: language::Snapshot,
     folds_snapshot: fold_map::Snapshot,
     tabs_snapshot: tab_map::Snapshot,
     wraps_snapshot: wrap_map::Snapshot,
@@ -358,8 +358,8 @@ impl ToDisplayPoint for Anchor {
 mod tests {
     use super::*;
     use crate::{movement, test::*};
-    use buffer::{History, Language, LanguageConfig, RandomCharIter, SelectionGoal};
     use gpui::{color::Color, MutableAppContext};
+    use language::{History, Language, LanguageConfig, RandomCharIter, SelectionGoal};
     use rand::{prelude::StdRng, Rng};
     use std::{env, sync::Arc};
     use theme::SyntaxTheme;
@@ -436,7 +436,7 @@ mod tests {
                     }
                 }
                 _ => {
-                    buffer.update(&mut cx, |buffer, cx| buffer.randomly_mutate(&mut rng, cx));
+                    buffer.update(&mut cx, |buffer, _| buffer.randomly_edit(&mut rng, 5));
                 }
             }
 

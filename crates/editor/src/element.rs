@@ -2,7 +2,6 @@ use super::{
     DisplayPoint, Editor, EditorMode, EditorSettings, EditorStyle, Input, Scroll, Select,
     SelectPhase, Snapshot, MAX_LINE_LEN,
 };
-use buffer::HighlightId;
 use clock::ReplicaId;
 use gpui::{
     color::Color,
@@ -18,6 +17,7 @@ use gpui::{
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
+use language::HighlightId;
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
@@ -1043,7 +1043,7 @@ mod tests {
         test::sample_text,
         {Editor, EditorSettings},
     };
-    use buffer::Buffer;
+    use language::Buffer;
 
     #[gpui::test]
     fn test_layout_line_numbers(cx: &mut gpui::MutableAppContext) {

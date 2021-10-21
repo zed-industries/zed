@@ -976,13 +976,13 @@ mod tests {
         time::Duration,
     };
     use zed::{
-        buffer::LanguageRegistry,
         client::{
             self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Credentials,
             EstablishConnectionError, UserStore,
         },
         editor::{Editor, EditorSettings, Input},
         fs::{FakeFs, Fs as _},
+        language::LanguageRegistry,
         people_panel::JoinWorktree,
         project::{ProjectPath, Worktree},
         workspace::{Workspace, WorkspaceParams},
