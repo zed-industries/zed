@@ -2,7 +2,11 @@ use crate::Point;
 
 use super::{Buffer, Content};
 use anyhow::Result;
-use std::{cmp::Ordering, ops::Range};
+use std::{
+    cmp::Ordering,
+    fmt::{Debug, Formatter},
+    ops::Range,
+};
 use sum_tree::Bias;
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
@@ -108,6 +112,14 @@ impl AnchorSet {
 }
 
 impl<T> AnchorRangeMap<T> {
+    pub fn from_raw(version: clock::Global, entries: Vec<(Range<(usize, Bias)>, T)>) -> Self {
+        Self { version, entries }
+    }
+
+    pub fn raw_entries(&self) -> &[(Range<(usize, Bias)>, T)] {
+        &self.entries
+    }
+
     pub fn to_point_ranges<'a>(
         &'a self,
         content: impl Into<Content<'a>> + 'a,
@@ -120,6 +132,25 @@ impl<T> AnchorRangeMap<T> {
 
     pub fn version(&self) -> &clock::Global {
         &self.version
+    }
+}
+
+impl<T: PartialEq> PartialEq for AnchorRangeMap<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.version == other.version && self.entries == other.entries
+    }
+}
+
+impl<T: Eq> Eq for AnchorRangeMap<T> {}
+
+impl<T: Debug> Debug for AnchorRangeMap<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        let f = f.debug_map();
+        for (range, value) in &self.entries {
+            f.key(range);
+            f.value(value);
+        }
+        f.finish()
     }
 }
 

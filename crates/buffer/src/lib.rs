@@ -408,7 +408,7 @@ pub enum Operation {
     },
     UpdateSelections {
         set_id: SelectionSetId,
-        selections: Arc<[Selection]>,
+        selections: Arc<AnchorRangeMap<SelectionState>>,
         lamport_timestamp: clock::Lamport,
     },
     RemoveSelections {
@@ -502,12 +502,7 @@ impl Buffer {
             selections: self
                 .selections
                 .iter()
-                .map(|(set_id, set)| proto::SelectionSet {
-                    replica_id: set_id.replica_id as u32,
-                    lamport_timestamp: set_id.value,
-                    selections: set.selections.iter().map(Into::into).collect(),
-                    is_active: set.active,
-                })
+                .map(|(set_id, set)| set.into())
                 .collect(),
         }
     }
@@ -1123,11 +1118,7 @@ impl Buffer {
                 Operation::Edit(edit) => self.version >= edit.version,
                 Operation::Undo { undo, .. } => self.version >= undo.version,
                 Operation::UpdateSelections { selections, .. } => {
-                    selections.iter().all(|selection| {
-                        let contains_start = self.version >= selection.start.version;
-                        let contains_end = self.version >= selection.end.version;
-                        contains_start && contains_end
-                    })
+                    self.version >= *selections.version()
                 }
                 Operation::RemoveSelections { .. } => true,
                 Operation::SetActiveSelections { set_id, .. } => {
@@ -1262,14 +1253,14 @@ impl Buffer {
     pub fn update_selection_set(
         &mut self,
         set_id: SelectionSetId,
-        selections: impl Into<Arc<[Selection]>>,
+        selections: &[Selection],
     ) -> Result<Operation> {
         let selections = selections.into();
         let set = self
             .selections
             .get_mut(&set_id)
             .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
-        set.selections = selections.clone();
+        set.selections = todo!();
         Ok(Operation::UpdateSelections {
             set_id,
             selections,

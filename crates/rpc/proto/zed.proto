@@ -233,14 +233,15 @@ message Buffer {
 message SelectionSet {
     uint32 replica_id = 1;
     uint32 lamport_timestamp = 2;
-    repeated Selection selections = 3;
-    bool is_active = 4;
+    bool is_active = 3;
+    repeated VectorClockEntry version = 4;
+    repeated Selection selections = 5;
 }
 
 message Selection {
     uint64 id = 1;
-    Anchor start = 2;
-    Anchor end = 3;
+    uint64 start = 2;
+    uint64 end = 3;
     bool reversed = 4;
 }
 
@@ -291,7 +292,8 @@ message Operation {
         uint32 replica_id = 1;
         uint32 local_timestamp = 2;
         uint32 lamport_timestamp = 3;
-        repeated Selection selections = 4;
+        repeated VectorClockEntry version = 4;
+        repeated Selection selections = 5;
     }
 
     message RemoveSelections {

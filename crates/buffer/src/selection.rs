@@ -1,13 +1,7 @@
-use crate::{Anchor, Buffer, Point, ToOffset as _, ToPoint as _};
-use anyhow::anyhow;
+use crate::{Anchor, AnchorRangeMap, Buffer, Point, ToOffset as _, ToPoint as _};
 use rpc::proto;
-use std::{
-    cmp::Ordering,
-    convert::{TryFrom, TryInto},
-    mem,
-    ops::Range,
-    sync::Arc,
-};
+use std::{cmp::Ordering, mem, ops::Range, sync::Arc};
+use sum_tree::Bias;
 
 pub type SelectionSetId = clock::Lamport;
 pub type SelectionsVersion = usize;
@@ -32,7 +26,14 @@ pub struct Selection {
 pub struct SelectionSet {
     pub id: SelectionSetId,
     pub active: bool,
-    pub selections: Arc<[Selection]>,
+    pub selections: Arc<AnchorRangeMap<SelectionState>>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub struct SelectionState {
+    pub id: usize,
+    pub reversed: bool,
+    pub goal: SelectionGoal,
 }
 
 impl Selection {
@@ -89,53 +90,52 @@ impl Selection {
     }
 }
 
-impl<'a> Into<proto::Selection> for &'a Selection {
-    fn into(self) -> proto::Selection {
-        proto::Selection {
-            id: self.id as u64,
-            start: Some((&self.start).into()),
-            end: Some((&self.end).into()),
-            reversed: self.reversed,
+impl<'a> Into<proto::SelectionSet> for &'a SelectionSet {
+    fn into(self) -> proto::SelectionSet {
+        let version = self.selections.version();
+        let entries = self.selections.raw_entries();
+        proto::SelectionSet {
+            replica_id: self.id.replica_id as u32,
+            lamport_timestamp: self.id.value as u32,
+            is_active: self.active,
+            version: version.into(),
+            selections: entries
+                .iter()
+                .map(|(range, state)| proto::Selection {
+                    id: state.id as u64,
+                    start: range.start.0 as u64,
+                    end: range.end.0 as u64,
+                    reversed: state.reversed,
+                })
+                .collect(),
         }
     }
 }
 
-impl TryFrom<proto::Selection> for Selection {
-    type Error = anyhow::Error;
-
-    fn try_from(selection: proto::Selection) -> Result<Self, Self::Error> {
-        Ok(Selection {
-            id: selection.id as usize,
-            start: selection
-                .start
-                .ok_or_else(|| anyhow!("missing selection start"))?
-                .try_into()?,
-            end: selection
-                .end
-                .ok_or_else(|| anyhow!("missing selection end"))?
-                .try_into()?,
-            reversed: selection.reversed,
-            goal: SelectionGoal::None,
-        })
-    }
-}
-
-impl TryFrom<proto::SelectionSet> for SelectionSet {
-    type Error = anyhow::Error;
-
-    fn try_from(set: proto::SelectionSet) -> Result<Self, Self::Error> {
-        Ok(Self {
+impl From<proto::SelectionSet> for SelectionSet {
+    fn from(set: proto::SelectionSet) -> Self {
+        Self {
             id: clock::Lamport {
                 replica_id: set.replica_id as u16,
                 value: set.lamport_timestamp,
             },
             active: set.is_active,
-            selections: Arc::from(
+            selections: Arc::new(AnchorRangeMap::from_raw(
+                set.version.into(),
                 set.selections
                     .into_iter()
-                    .map(TryInto::try_into)
-                    .collect::<Result<Vec<Selection>, _>>()?,
-            ),
-        })
+                    .map(|selection| {
+                        let range = (selection.start as usize, Bias::Left)
+                            ..(selection.end as usize, Bias::Right);
+                        let state = SelectionState {
+                            id: selection.id as usize,
+                            reversed: selection.reversed,
+                            goal: SelectionGoal::None,
+                        };
+                        (range, state)
+                    })
+                    .collect(),
+            )),
+        }
     }
 }
