@@ -227,18 +227,14 @@ message Buffer {
     uint64 id = 1;
     string content = 2;
     repeated Operation.Edit history = 3;
-    repeated SelectionSetSnapshot selections = 4;
-}
-
-message SelectionSetSnapshot {
-    uint32 replica_id = 1;
-    uint32 local_timestamp = 2;
-    repeated Selection selections = 3;
-    bool is_active = 4;
+    repeated SelectionSet selections = 4;
 }
 
 message SelectionSet {
-    repeated Selection selections = 1;
+    uint32 replica_id = 1;
+    uint32 lamport_timestamp = 2;
+    repeated Selection selections = 3;
+    bool is_active = 4;
 }
 
 message Selection {
@@ -263,7 +259,8 @@ message Operation {
         Edit edit = 1;
         Undo undo = 2;
         UpdateSelections update_selections = 3;
-        SetActiveSelections set_active_selections = 4;
+        RemoveSelections remove_selections = 4;
+        SetActiveSelections set_active_selections = 5;
     }
 
     message Edit {
@@ -294,7 +291,13 @@ message Operation {
         uint32 replica_id = 1;
         uint32 local_timestamp = 2;
         uint32 lamport_timestamp = 3;
-        SelectionSet set = 4;
+        repeated Selection selections = 4;
+    }
+
+    message RemoveSelections {
+        uint32 replica_id = 1;
+        uint32 local_timestamp = 2;
+        uint32 lamport_timestamp = 3;
     }
 
     message SetActiveSelections {

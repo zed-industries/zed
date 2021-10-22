@@ -408,7 +408,11 @@ pub enum Operation {
     },
     UpdateSelections {
         set_id: SelectionSetId,
-        selections: Option<Arc<[Selection]>>,
+        selections: Arc<[Selection]>,
+        lamport_timestamp: clock::Lamport,
+    },
+    RemoveSelections {
+        set_id: SelectionSetId,
         lamport_timestamp: clock::Lamport,
     },
     SetActiveSelections {
@@ -484,7 +488,7 @@ impl Buffer {
             .map(|set| {
                 let set_id = clock::Lamport {
                     replica_id: set.replica_id as ReplicaId,
-                    value: set.local_timestamp,
+                    value: set.lamport_timestamp,
                 };
                 let selections: Vec<Selection> = set
                     .selections
@@ -510,9 +514,9 @@ impl Buffer {
             selections: self
                 .selections
                 .iter()
-                .map(|(set_id, set)| proto::SelectionSetSnapshot {
+                .map(|(set_id, set)| proto::SelectionSet {
                     replica_id: set_id.replica_id as u32,
-                    local_timestamp: set_id.value,
+                    lamport_timestamp: set_id.value,
                     selections: set.selections.iter().map(Into::into).collect(),
                     is_active: set.active,
                 })
@@ -849,21 +853,24 @@ impl Buffer {
                 selections,
                 lamport_timestamp,
             } => {
-                if let Some(selections) = selections {
-                    if let Some(set) = self.selections.get_mut(&set_id) {
-                        set.selections = selections;
-                    } else {
-                        self.selections.insert(
-                            set_id,
-                            SelectionSet {
-                                selections,
-                                active: false,
-                            },
-                        );
-                    }
+                if let Some(set) = self.selections.get_mut(&set_id) {
+                    set.selections = selections;
                 } else {
-                    self.selections.remove(&set_id);
+                    self.selections.insert(
+                        set_id,
+                        SelectionSet {
+                            selections,
+                            active: false,
+                        },
+                    );
                 }
+                self.lamport_clock.observe(lamport_timestamp);
+            }
+            Operation::RemoveSelections {
+                set_id,
+                lamport_timestamp,
+            } => {
+                self.selections.remove(&set_id);
                 self.lamport_clock.observe(lamport_timestamp);
             }
             Operation::SetActiveSelections {
@@ -1127,16 +1134,13 @@ impl Buffer {
                 Operation::Edit(edit) => self.version >= edit.version,
                 Operation::Undo { undo, .. } => self.version >= undo.version,
                 Operation::UpdateSelections { selections, .. } => {
-                    if let Some(selections) = selections {
-                        selections.iter().all(|selection| {
-                            let contains_start = self.version >= selection.start.version;
-                            let contains_end = self.version >= selection.end.version;
-                            contains_start && contains_end
-                        })
-                    } else {
-                        true
-                    }
+                    selections.iter().all(|selection| {
+                        let contains_start = self.version >= selection.start.version;
+                        let contains_end = self.version >= selection.end.version;
+                        contains_start && contains_end
+                    })
                 }
+                Operation::RemoveSelections { .. } => true,
                 Operation::SetActiveSelections { set_id, .. } => {
                     set_id.map_or(true, |set_id| self.selections.contains_key(&set_id))
                 }
@@ -1279,7 +1283,7 @@ impl Buffer {
         set.selections = selections.clone();
         Ok(Operation::UpdateSelections {
             set_id,
-            selections: Some(selections),
+            selections,
             lamport_timestamp: self.lamport_clock.tick(),
         })
     }
@@ -1296,7 +1300,7 @@ impl Buffer {
         );
         Operation::UpdateSelections {
             set_id: lamport_timestamp,
-            selections: Some(selections),
+            selections,
             lamport_timestamp,
         }
     }
@@ -1329,9 +1333,8 @@ impl Buffer {
         self.selections
             .remove(&set_id)
             .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
-        Ok(Operation::UpdateSelections {
+        Ok(Operation::RemoveSelections {
             set_id,
-            selections: None,
             lamport_timestamp: self.lamport_clock.tick(),
         })
     }
@@ -2130,6 +2133,9 @@ impl Operation {
             Operation::UpdateSelections {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
+            Operation::RemoveSelections {
+                lamport_timestamp, ..
+            } => *lamport_timestamp,
             Operation::SetActiveSelections {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
@@ -2186,9 +2192,17 @@ impl<'a> Into<proto::Operation> for &'a Operation {
                         replica_id: set_id.replica_id as u32,
                         local_timestamp: set_id.value,
                         lamport_timestamp: lamport_timestamp.value,
-                        set: selections.as_ref().map(|selections| proto::SelectionSet {
-                            selections: selections.iter().map(Into::into).collect(),
-                        }),
+                        selections: selections.iter().map(Into::into).collect(),
+                    },
+                ),
+                Operation::RemoveSelections {
+                    set_id,
+                    lamport_timestamp,
+                } => proto::operation::Variant::RemoveSelections(
+                    proto::operation::RemoveSelections {
+                        replica_id: set_id.replica_id as u32,
+                        local_timestamp: set_id.value,
+                        lamport_timestamp: lamport_timestamp.value,
                     },
                 ),
                 Operation::SetActiveSelections {
@@ -2284,16 +2298,11 @@ impl TryFrom<proto::Operation> for Operation {
                     },
                 },
                 proto::operation::Variant::UpdateSelections(message) => {
-                    let selections: Option<Vec<Selection>> = if let Some(set) = message.set {
-                        Some(
-                            set.selections
-                                .into_iter()
-                                .map(TryFrom::try_from)
-                                .collect::<Result<_, _>>()?,
-                        )
-                    } else {
-                        None
-                    };
+                    let selections: Vec<Selection> = message
+                        .selections
+                        .into_iter()
+                        .map(TryFrom::try_from)
+                        .collect::<Result<_, _>>()?;
                     Operation::UpdateSelections {
                         set_id: clock::Lamport {
                             replica_id: message.replica_id as ReplicaId,
@@ -2303,7 +2312,19 @@ impl TryFrom<proto::Operation> for Operation {
                             replica_id: message.replica_id as ReplicaId,
                             value: message.lamport_timestamp,
                         },
-                        selections: selections.map(Arc::from),
+                        selections: Arc::from(selections),
+                    }
+                }
+                proto::operation::Variant::RemoveSelections(message) => {
+                    Operation::RemoveSelections {
+                        set_id: clock::Lamport {
+                            replica_id: message.replica_id as ReplicaId,
+                            value: message.local_timestamp,
+                        },
+                        lamport_timestamp: clock::Lamport {
+                            replica_id: message.replica_id as ReplicaId,
+                            value: message.lamport_timestamp,
+                        },
                     }
                 }
                 proto::operation::Variant::SetActiveSelections(message) => {
