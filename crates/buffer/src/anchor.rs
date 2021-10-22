@@ -87,7 +87,7 @@ impl Anchor {
 }
 
 impl<T> AnchorMap<T> {
-    pub fn to_points<'a>(
+    pub fn points<'a>(
         &'a self,
         content: impl Into<Content<'a>> + 'a,
     ) -> impl Iterator<Item = (Point, &'a T)> + 'a {
@@ -103,11 +103,11 @@ impl<T> AnchorMap<T> {
 }
 
 impl AnchorSet {
-    pub fn to_points<'a>(
+    pub fn points<'a>(
         &'a self,
         content: impl Into<Content<'a>> + 'a,
     ) -> impl Iterator<Item = Point> + 'a {
-        self.0.to_points(content).map(move |(point, _)| point)
+        self.0.points(content).map(move |(point, _)| point)
     }
 }
 
@@ -120,7 +120,7 @@ impl<T> AnchorRangeMap<T> {
         &self.entries
     }
 
-    pub fn to_point_ranges<'a>(
+    pub fn point_ranges<'a>(
         &'a self,
         content: impl Into<Content<'a>> + 'a,
     ) -> impl Iterator<Item = (Range<Point>, &'a T)> + 'a {
@@ -128,6 +128,16 @@ impl<T> AnchorRangeMap<T> {
         content
             .summaries_for_anchor_ranges(self)
             .map(move |(range, value)| ((range.start.lines..range.end.lines), value))
+    }
+
+    pub fn offset_ranges<'a>(
+        &'a self,
+        content: impl Into<Content<'a>> + 'a,
+    ) -> impl Iterator<Item = (Range<usize>, &'a T)> + 'a {
+        let content = content.into();
+        content
+            .summaries_for_anchor_ranges(self)
+            .map(move |(range, value)| ((range.start.bytes..range.end.bytes), value))
     }
 
     pub fn version(&self) -> &clock::Global {
@@ -145,7 +155,7 @@ impl<T: Eq> Eq for AnchorRangeMap<T> {}
 
 impl<T: Debug> Debug for AnchorRangeMap<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        let f = f.debug_map();
+        let mut f = f.debug_map();
         for (range, value) in &self.entries {
             f.key(range);
             f.value(value);
@@ -159,7 +169,7 @@ impl AnchorRangeSet {
         &'a self,
         content: impl Into<Content<'a>> + 'a,
     ) -> impl Iterator<Item = Range<Point>> + 'a {
-        self.0.to_point_ranges(content).map(|(range, _)| range)
+        self.0.point_ranges(content).map(|(range, _)| range)
     }
 
     pub fn version(&self) -> &clock::Global {

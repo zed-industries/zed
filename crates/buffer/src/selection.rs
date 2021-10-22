@@ -1,6 +1,6 @@
-use crate::{Anchor, AnchorRangeMap, Buffer, Point, ToOffset as _, ToPoint as _};
+use crate::{AnchorRangeMap, Buffer, Content, Point, ToOffset, ToPoint};
 use rpc::proto;
-use std::{cmp::Ordering, mem, ops::Range, sync::Arc};
+use std::{cmp::Ordering, ops::Range, sync::Arc};
 use sum_tree::Bias;
 
 pub type SelectionSetId = clock::Lamport;
@@ -14,10 +14,10 @@ pub enum SelectionGoal {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Selection {
+pub struct Selection<T> {
     pub id: usize,
-    pub start: Anchor,
-    pub end: Anchor,
+    pub start: T,
+    pub end: T,
     pub reversed: bool,
     pub goal: SelectionGoal,
 }
@@ -36,36 +36,36 @@ pub struct SelectionState {
     pub goal: SelectionGoal,
 }
 
-impl Selection {
-    pub fn head(&self) -> &Anchor {
+impl<T: ToOffset + ToPoint + Copy + Ord> Selection<T> {
+    pub fn head(&self) -> T {
         if self.reversed {
-            &self.start
+            self.start
         } else {
-            &self.end
+            self.end
         }
     }
 
-    pub fn set_head(&mut self, buffer: &Buffer, cursor: Anchor) {
-        if cursor.cmp(self.tail(), buffer).unwrap() < Ordering::Equal {
+    pub fn set_head(&mut self, head: T) {
+        if head.cmp(&self.tail()) < Ordering::Equal {
             if !self.reversed {
-                mem::swap(&mut self.start, &mut self.end);
+                self.end = self.start;
                 self.reversed = true;
             }
-            self.start = cursor;
+            self.start = head;
         } else {
             if self.reversed {
-                mem::swap(&mut self.start, &mut self.end);
+                self.start = self.end;
                 self.reversed = false;
             }
-            self.end = cursor;
+            self.end = head;
         }
     }
 
-    pub fn tail(&self) -> &Anchor {
+    pub fn tail(&self) -> T {
         if self.reversed {
-            &self.end
+            self.end
         } else {
-            &self.start
+            self.start
         }
     }
 
@@ -87,6 +87,38 @@ impl Selection {
         } else {
             start..end
         }
+    }
+}
+
+impl SelectionSet {
+    pub fn offset_selections<'a>(
+        &'a self,
+        content: impl Into<Content<'a>> + 'a,
+    ) -> impl 'a + Iterator<Item = Selection<usize>> {
+        self.selections
+            .offset_ranges(content)
+            .map(|(range, state)| Selection {
+                id: state.id,
+                start: range.start,
+                end: range.end,
+                reversed: state.reversed,
+                goal: state.goal,
+            })
+    }
+
+    pub fn point_selections<'a>(
+        &'a self,
+        content: impl Into<Content<'a>> + 'a,
+    ) -> impl 'a + Iterator<Item = Selection<Point>> {
+        self.selections
+            .point_ranges(content)
+            .map(|(range, state)| Selection {
+                id: state.id,
+                start: range.start,
+                end: range.end,
+                reversed: state.reversed,
+                goal: state.goal,
+            })
     }
 }
 

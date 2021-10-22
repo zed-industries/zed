@@ -408,7 +408,7 @@ fn test_history() {
     let mut buffer = Buffer::new(0, 0, History::new("123456".into()));
 
     let set_id = if let Operation::UpdateSelections { set_id, .. } =
-        buffer.add_selection_set(buffer.selections_from_ranges(vec![4..4]).unwrap())
+        buffer.add_selection_set(&buffer.selections_from_ranges(vec![4..4]).unwrap())
     {
         set_id
     } else {
@@ -422,7 +422,7 @@ fn test_history() {
 
     buffer.start_transaction_at(Some(set_id), now).unwrap();
     buffer
-        .update_selection_set(set_id, buffer.selections_from_ranges(vec![1..3]).unwrap())
+        .update_selection_set(set_id, &buffer.selections_from_ranges(vec![1..3]).unwrap())
         .unwrap();
     buffer.edit(vec![4..5], "e");
     buffer.end_transaction_at(Some(set_id), now).unwrap();
@@ -432,7 +432,7 @@ fn test_history() {
     now += buffer.history.group_interval + Duration::from_millis(1);
     buffer.start_transaction_at(Some(set_id), now).unwrap();
     buffer
-        .update_selection_set(set_id, buffer.selections_from_ranges(vec![2..2]).unwrap())
+        .update_selection_set(set_id, &buffer.selections_from_ranges(vec![2..2]).unwrap())
         .unwrap();
     buffer.edit(vec![0..1], "a");
     buffer.edit(vec![1..1], "b");

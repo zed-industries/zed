@@ -79,8 +79,8 @@ pub struct Transaction {
     end: clock::Global,
     edits: Vec<clock::Local>,
     ranges: Vec<Range<usize>>,
-    selections_before: HashMap<SelectionSetId, Arc<[Selection]>>,
-    selections_after: HashMap<SelectionSetId, Arc<[Selection]>>,
+    selections_before: HashMap<SelectionSetId, Arc<AnchorRangeMap<SelectionState>>>,
+    selections_after: HashMap<SelectionSetId, Arc<AnchorRangeMap<SelectionState>>>,
     first_edit_at: Instant,
     last_edit_at: Instant,
 }
@@ -167,7 +167,7 @@ impl History {
     fn start_transaction(
         &mut self,
         start: clock::Global,
-        selections_before: HashMap<SelectionSetId, Arc<[Selection]>>,
+        selections_before: HashMap<SelectionSetId, Arc<AnchorRangeMap<SelectionState>>>,
         now: Instant,
     ) {
         self.transaction_depth += 1;
@@ -187,7 +187,7 @@ impl History {
 
     fn end_transaction(
         &mut self,
-        selections_after: HashMap<SelectionSetId, Arc<[Selection]>>,
+        selections_after: HashMap<SelectionSetId, Arc<AnchorRangeMap<SelectionState>>>,
         now: Instant,
     ) -> Option<&Transaction> {
         assert_ne!(self.transaction_depth, 0);
@@ -499,11 +499,7 @@ impl Buffer {
             id: self.remote_id,
             content: self.history.base_text.to_string(),
             history: ops,
-            selections: self
-                .selections
-                .iter()
-                .map(|(set_id, set)| set.into())
-                .collect(),
+            selections: self.selections.iter().map(|(_, set)| set.into()).collect(),
         }
     }
 
@@ -1201,7 +1197,7 @@ impl Buffer {
             let selections = transaction.selections_before.clone();
             ops.push(self.undo_or_redo(transaction).unwrap());
             for (set_id, selections) in selections {
-                ops.extend(self.update_selection_set(set_id, selections));
+                ops.extend(self.restore_selection_set(set_id, selections));
             }
         }
         ops
@@ -1213,7 +1209,7 @@ impl Buffer {
             let selections = transaction.selections_after.clone();
             ops.push(self.undo_or_redo(transaction).unwrap());
             for (set_id, selections) in selections {
-                ops.extend(self.update_selection_set(set_id, selections));
+                ops.extend(self.restore_selection_set(set_id, selections));
             }
         }
         ops
@@ -1250,17 +1246,37 @@ impl Buffer {
         self.selections.iter()
     }
 
-    pub fn update_selection_set(
+    fn build_selection_anchor_range_map<T: ToOffset>(
+        &self,
+        selections: &[Selection<T>],
+    ) -> Arc<AnchorRangeMap<SelectionState>> {
+        Arc::new(
+            self.content()
+                .anchor_range_map(selections.iter().map(|selection| {
+                    let start = selection.start.to_offset(self);
+                    let end = selection.end.to_offset(self);
+                    let range = (start, Bias::Left)..(end, Bias::Left);
+                    let state = SelectionState {
+                        id: selection.id,
+                        reversed: selection.reversed,
+                        goal: selection.goal,
+                    };
+                    (range, state)
+                })),
+        )
+    }
+
+    pub fn update_selection_set<T: ToOffset>(
         &mut self,
         set_id: SelectionSetId,
-        selections: &[Selection],
+        selections: &[Selection<T>],
     ) -> Result<Operation> {
-        let selections = selections.into();
+        let selections = self.build_selection_anchor_range_map(selections);
         let set = self
             .selections
             .get_mut(&set_id)
             .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
-        set.selections = todo!();
+        set.selections = selections.clone();
         Ok(Operation::UpdateSelections {
             set_id,
             selections,
@@ -1268,8 +1284,25 @@ impl Buffer {
         })
     }
 
-    pub fn add_selection_set(&mut self, selections: impl Into<Arc<[Selection]>>) -> Operation {
-        let selections = selections.into();
+    pub fn restore_selection_set(
+        &mut self,
+        set_id: SelectionSetId,
+        selections: Arc<AnchorRangeMap<SelectionState>>,
+    ) -> Result<Operation> {
+        let set = self
+            .selections
+            .get_mut(&set_id)
+            .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
+        set.selections = selections.clone();
+        Ok(Operation::UpdateSelections {
+            set_id,
+            selections,
+            lamport_timestamp: self.lamport_clock.tick(),
+        })
+    }
+
+    pub fn add_selection_set<T: ToOffset>(&mut self, selections: &[Selection<T>]) -> Operation {
+        let selections = self.build_selection_anchor_range_map(selections);
         let set_id = self.lamport_clock.tick();
         self.selections.insert(
             set_id,
@@ -1408,9 +1441,9 @@ impl Buffer {
             let new_selections = self.selections_from_ranges(ranges).unwrap();
 
             let op = if set_id.is_none() || rng.gen_bool(1.0 / 5.0) {
-                self.add_selection_set(new_selections)
+                self.add_selection_set(&new_selections)
             } else {
-                self.update_selection_set(*set_id.unwrap(), new_selections)
+                self.update_selection_set(*set_id.unwrap(), &new_selections)
                     .unwrap()
             };
             ops.push(op);
@@ -1436,7 +1469,7 @@ impl Buffer {
         ops
     }
 
-    fn selections_from_ranges<I>(&self, ranges: I) -> Result<Vec<Selection>>
+    fn selections_from_ranges<I>(&self, ranges: I) -> Result<Vec<Selection<usize>>>
     where
         I: IntoIterator<Item = Range<usize>>,
     {
@@ -1452,16 +1485,16 @@ impl Buffer {
             if range.start > range.end {
                 selections.push(Selection {
                     id: NEXT_SELECTION_ID.fetch_add(1, atomic::Ordering::SeqCst),
-                    start: self.anchor_before(range.end),
-                    end: self.anchor_before(range.start),
+                    start: range.end,
+                    end: range.start,
                     reversed: true,
                     goal: SelectionGoal::None,
                 });
             } else {
                 selections.push(Selection {
                     id: NEXT_SELECTION_ID.fetch_add(1, atomic::Ordering::SeqCst),
-                    start: self.anchor_after(range.start),
-                    end: self.anchor_before(range.end),
+                    start: range.start,
+                    end: range.end,
                     reversed: false,
                     goal: SelectionGoal::None,
                 });
@@ -1473,15 +1506,12 @@ impl Buffer {
     pub fn selection_ranges<'a>(&'a self, set_id: SelectionSetId) -> Result<Vec<Range<usize>>> {
         Ok(self
             .selection_set(set_id)?
-            .selections
-            .iter()
+            .offset_selections(self)
             .map(move |selection| {
-                let start = selection.start.to_offset(self);
-                let end = selection.end.to_offset(self);
                 if selection.reversed {
-                    end..start
+                    selection.end..selection.start
                 } else {
-                    start..end
+                    selection.start..selection.end
                 }
             })
             .collect())
@@ -2173,7 +2203,17 @@ impl<'a> Into<proto::Operation> for &'a Operation {
                         replica_id: set_id.replica_id as u32,
                         local_timestamp: set_id.value,
                         lamport_timestamp: lamport_timestamp.value,
-                        selections: selections.iter().map(Into::into).collect(),
+                        version: selections.version().into(),
+                        selections: selections
+                            .raw_entries()
+                            .iter()
+                            .map(|(range, state)| proto::Selection {
+                                id: state.id as u64,
+                                start: range.start.0 as u64,
+                                end: range.end.0 as u64,
+                                reversed: state.reversed,
+                            })
+                            .collect(),
                     },
                 ),
                 Operation::RemoveSelections {
@@ -2279,11 +2319,23 @@ impl TryFrom<proto::Operation> for Operation {
                     },
                 },
                 proto::operation::Variant::UpdateSelections(message) => {
-                    let selections: Vec<Selection> = message
+                    let version = message.version.into();
+                    let entries = message
                         .selections
-                        .into_iter()
-                        .map(TryFrom::try_from)
-                        .collect::<Result<_, _>>()?;
+                        .iter()
+                        .map(|selection| {
+                            let range = (selection.start as usize, Bias::Left)
+                                ..(selection.end as usize, Bias::Right);
+                            let state = SelectionState {
+                                id: selection.id as usize,
+                                reversed: selection.reversed,
+                                goal: SelectionGoal::None,
+                            };
+                            (range, state)
+                        })
+                        .collect();
+                    let selections = AnchorRangeMap::from_raw(version, entries);
+
                     Operation::UpdateSelections {
                         set_id: clock::Lamport {
                             replica_id: message.replica_id as ReplicaId,
