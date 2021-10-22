@@ -20,7 +20,7 @@ use rpc::proto;
 pub use selection::*;
 use std::{
     cmp,
-    convert::{TryFrom, TryInto},
+    convert::TryFrom,
     iter::Iterator,
     ops::Range,
     str,
@@ -486,20 +486,8 @@ impl Buffer {
             .selections
             .into_iter()
             .map(|set| {
-                let set_id = clock::Lamport {
-                    replica_id: set.replica_id as ReplicaId,
-                    value: set.lamport_timestamp,
-                };
-                let selections: Vec<Selection> = set
-                    .selections
-                    .into_iter()
-                    .map(TryFrom::try_from)
-                    .collect::<Result<_, _>>()?;
-                let set = SelectionSet {
-                    selections: Arc::from(selections),
-                    active: set.is_active,
-                };
-                Result::<_, anyhow::Error>::Ok((set_id, set))
+                let set = SelectionSet::try_from(set)?;
+                Result::<_, anyhow::Error>::Ok((set.id, set))
             })
             .collect::<Result<_, _>>()?;
         Ok(buffer)
@@ -859,6 +847,7 @@ impl Buffer {
                     self.selections.insert(
                         set_id,
                         SelectionSet {
+                            id: set_id,
                             selections,
                             active: false,
                         },
@@ -1290,18 +1279,19 @@ impl Buffer {
 
     pub fn add_selection_set(&mut self, selections: impl Into<Arc<[Selection]>>) -> Operation {
         let selections = selections.into();
-        let lamport_timestamp = self.lamport_clock.tick();
+        let set_id = self.lamport_clock.tick();
         self.selections.insert(
-            lamport_timestamp,
+            set_id,
             SelectionSet {
+                id: set_id,
                 selections: selections.clone(),
                 active: false,
             },
         );
         Operation::UpdateSelections {
-            set_id: lamport_timestamp,
+            set_id,
             selections,
-            lamport_timestamp,
+            lamport_timestamp: set_id,
         }
     }
 
@@ -2386,26 +2376,6 @@ impl TryFrom<proto::Anchor> for Anchor {
                 Err(anyhow!("invalid anchor bias {}", message.bias))?
             },
             version,
-        })
-    }
-}
-
-impl TryFrom<proto::Selection> for Selection {
-    type Error = anyhow::Error;
-
-    fn try_from(selection: proto::Selection) -> Result<Self, Self::Error> {
-        Ok(Selection {
-            id: selection.id as usize,
-            start: selection
-                .start
-                .ok_or_else(|| anyhow!("missing selection start"))?
-                .try_into()?,
-            end: selection
-                .end
-                .ok_or_else(|| anyhow!("missing selection end"))?
-                .try_into()?,
-            reversed: selection.reversed,
-            goal: SelectionGoal::None,
         })
     }
 }

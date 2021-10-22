@@ -1,7 +1,13 @@
-use rpc::proto;
-
 use crate::{Anchor, Buffer, Point, ToOffset as _, ToPoint as _};
-use std::{cmp::Ordering, mem, ops::Range, sync::Arc};
+use anyhow::anyhow;
+use rpc::proto;
+use std::{
+    cmp::Ordering,
+    convert::{TryFrom, TryInto},
+    mem,
+    ops::Range,
+    sync::Arc,
+};
 
 pub type SelectionSetId = clock::Lamport;
 pub type SelectionsVersion = usize;
@@ -24,8 +30,9 @@ pub struct Selection {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SelectionSet {
-    pub selections: Arc<[Selection]>,
+    pub id: SelectionSetId,
     pub active: bool,
+    pub selections: Arc<[Selection]>,
 }
 
 impl Selection {
@@ -90,5 +97,45 @@ impl<'a> Into<proto::Selection> for &'a Selection {
             end: Some((&self.end).into()),
             reversed: self.reversed,
         }
+    }
+}
+
+impl TryFrom<proto::Selection> for Selection {
+    type Error = anyhow::Error;
+
+    fn try_from(selection: proto::Selection) -> Result<Self, Self::Error> {
+        Ok(Selection {
+            id: selection.id as usize,
+            start: selection
+                .start
+                .ok_or_else(|| anyhow!("missing selection start"))?
+                .try_into()?,
+            end: selection
+                .end
+                .ok_or_else(|| anyhow!("missing selection end"))?
+                .try_into()?,
+            reversed: selection.reversed,
+            goal: SelectionGoal::None,
+        })
+    }
+}
+
+impl TryFrom<proto::SelectionSet> for SelectionSet {
+    type Error = anyhow::Error;
+
+    fn try_from(set: proto::SelectionSet) -> Result<Self, Self::Error> {
+        Ok(Self {
+            id: clock::Lamport {
+                replica_id: set.replica_id as u16,
+                value: set.lamport_timestamp,
+            },
+            active: set.is_active,
+            selections: Arc::from(
+                set.selections
+                    .into_iter()
+                    .map(TryInto::try_into)
+                    .collect::<Result<Vec<Selection>, _>>()?,
+            ),
+        })
     }
 }
