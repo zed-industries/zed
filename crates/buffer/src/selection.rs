@@ -1,5 +1,7 @@
+use rpc::proto;
+
 use crate::{Anchor, Buffer, Point, ToOffset as _, ToPoint as _};
-use std::{cmp::Ordering, mem, ops::Range};
+use std::{cmp::Ordering, mem, ops::Range, sync::Arc};
 
 pub type SelectionSetId = clock::Lamport;
 pub type SelectionsVersion = usize;
@@ -18,6 +20,12 @@ pub struct Selection {
     pub end: Anchor,
     pub reversed: bool,
     pub goal: SelectionGoal,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectionSet {
+    pub selections: Arc<[Selection]>,
+    pub active: bool,
 }
 
 impl Selection {
@@ -70,6 +78,17 @@ impl Selection {
             end..start
         } else {
             start..end
+        }
+    }
+}
+
+impl<'a> Into<proto::Selection> for &'a Selection {
+    fn into(self) -> proto::Selection {
+        proto::Selection {
+            id: self.id as u64,
+            start: Some((&self.start).into()),
+            end: Some((&self.end).into()),
+            reversed: self.reversed,
         }
     }
 }

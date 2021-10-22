@@ -73,12 +73,6 @@ pub struct Buffer {
     lamport_clock: clock::Lamport,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SelectionSet {
-    pub selections: Arc<[Selection]>,
-    pub active: bool,
-}
-
 #[derive(Clone, Debug)]
 pub struct Transaction {
     start: clock::Global,
@@ -2244,17 +2238,6 @@ impl<'a> Into<proto::Anchor> for &'a Anchor {
                 Bias::Left => proto::anchor::Bias::Left as i32,
                 Bias::Right => proto::anchor::Bias::Right as i32,
             },
-        }
-    }
-}
-
-impl<'a> Into<proto::Selection> for &'a Selection {
-    fn into(self) -> proto::Selection {
-        proto::Selection {
-            id: self.id as u64,
-            start: Some((&self.start).into()),
-            end: Some((&self.end).into()),
-            reversed: self.reversed,
         }
     }
 }
