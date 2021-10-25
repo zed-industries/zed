@@ -3352,16 +3352,13 @@ mod tests {
         let selection_set_id = buffer.update(&mut cx, |buffer, cx| {
             assert!(!buffer.is_dirty());
             buffer.add_selection_set(
-                (0..3)
-                    .map(|row| {
-                        let anchor = buffer.anchor_at(Point::new(row, 0), Bias::Right);
-                        Selection {
-                            id: row as usize,
-                            start: anchor.clone(),
-                            end: anchor,
-                            reversed: false,
-                            goal: SelectionGoal::None,
-                        }
+                &(0..3)
+                    .map(|row| Selection {
+                        id: row as usize,
+                        start: Point::new(row, 0),
+                        end: Point::new(row, 0),
+                        reversed: false,
+                        goal: SelectionGoal::None,
                     })
                     .collect::<Vec<_>>(),
                 cx,
@@ -3391,11 +3388,10 @@ mod tests {
 
             let set = buffer.selection_set(selection_set_id).unwrap();
             let cursor_positions = set
-                .selections
-                .iter()
+                .point_selections(&*buffer)
                 .map(|selection| {
                     assert_eq!(selection.start, selection.end);
-                    selection.start.to_point(&*buffer)
+                    selection.start
                 })
                 .collect::<Vec<_>>();
             assert_eq!(

@@ -275,24 +275,24 @@ fn test_autoindent_moves_selections(cx: &mut MutableAppContext) {
         let text = History::new("fn a() {}".into());
         let mut buffer = Buffer::from_history(0, text, None, Some(rust_lang()), cx);
 
-        let selection_set_id = buffer.add_selection_set(Vec::new(), cx);
+        let selection_set_id = buffer.add_selection_set::<usize>(&[], cx);
         buffer.start_transaction(Some(selection_set_id)).unwrap();
         buffer.edit_with_autoindent([5..5, 9..9], "\n\n", cx);
         buffer
             .update_selection_set(
                 selection_set_id,
-                vec![
+                &[
                     Selection {
                         id: 0,
-                        start: buffer.anchor_before(Point::new(1, 0)),
-                        end: buffer.anchor_before(Point::new(1, 0)),
+                        start: Point::new(1, 0),
+                        end: Point::new(1, 0),
                         reversed: false,
                         goal: SelectionGoal::None,
                     },
                     Selection {
                         id: 1,
-                        start: buffer.anchor_before(Point::new(4, 0)),
-                        end: buffer.anchor_before(Point::new(4, 0)),
+                        start: Point::new(4, 0),
+                        end: Point::new(4, 0),
                         reversed: false,
                         goal: SelectionGoal::None,
                     },
@@ -309,8 +309,7 @@ fn test_autoindent_moves_selections(cx: &mut MutableAppContext) {
         let selection_ranges = buffer
             .selection_set(selection_set_id)
             .unwrap()
-            .selections
-            .iter()
+            .point_selections(&buffer)
             .map(|selection| selection.point_range(&buffer))
             .collect::<Vec<_>>();
 

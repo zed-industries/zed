@@ -2466,3 +2466,9 @@ impl ToPoint for usize {
         content.into().visible_text.to_point(*self)
     }
 }
+
+impl ToPoint for Point {
+    fn to_point<'a>(&self, _: impl Into<Content<'a>>) -> Point {
+        *self
+    }
+}
