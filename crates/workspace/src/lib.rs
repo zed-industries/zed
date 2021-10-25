@@ -5,7 +5,7 @@ pub mod settings;
 pub mod sidebar;
 
 use anyhow::Result;
-use buffer::{Buffer, LanguageRegistry};
+use language::{Buffer, LanguageRegistry};
 use client::{Authenticate, ChannelList, Client, UserStore};
 use gpui::{
     action, elements::*, json::to_string_pretty, keymap::Binding, platform::CursorStyle,
@@ -271,8 +271,8 @@ impl WorkspaceParams {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut MutableAppContext) -> Self {
         let mut languages = LanguageRegistry::new();
-        languages.add(Arc::new(buffer::Language::new(
-            buffer::LanguageConfig {
+        languages.add(Arc::new(language::Language::new(
+            language::LanguageConfig {
                 name: "Rust".to_string(),
                 path_suffixes: vec!["rs".to_string()],
                 ..Default::default()

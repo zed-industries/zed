@@ -1,4 +1,4 @@
-use buffer::{Language, LanguageRegistry};
+pub use language::{Language, LanguageRegistry};
 use rust_embed::RustEmbed;
 use std::borrow::Cow;
 use std::{str, sync::Arc};
@@ -21,6 +21,8 @@ fn rust() -> Language {
         .with_highlights_query(load_query("rust/highlights.scm").as_ref())
         .unwrap()
         .with_brackets_query(load_query("rust/brackets.scm").as_ref())
+        .unwrap()
+        .with_indents_query(load_query("rust/indents.scm").as_ref())
         .unwrap()
 }
 

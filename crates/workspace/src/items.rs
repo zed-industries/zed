@@ -1,9 +1,9 @@
 use super::{Item, ItemView};
 use crate::Settings;
 use anyhow::Result;
-use buffer::{Buffer, File as _};
 use editor::{Editor, EditorSettings, Event};
 use gpui::{fonts::TextStyle, AppContext, ModelHandle, Task, ViewContext};
+use language::{Buffer, File as _};
 use postage::watch;
 use project::{ProjectPath, Worktree};
 use std::path::Path;

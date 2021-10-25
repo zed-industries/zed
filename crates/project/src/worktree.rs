@@ -4,7 +4,6 @@ use super::{
 };
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Result};
-use buffer::{Buffer, History, LanguageRegistry, Operation, Rope};
 use client::{proto, Client, PeerId, TypedEnvelope};
 use clock::ReplicaId;
 use futures::{Stream, StreamExt};
@@ -13,6 +12,7 @@ use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task, UpgradeModelHandle, WeakModelHandle,
 };
+use language::{Buffer, History, LanguageRegistry, Operation, Rope};
 use lazy_static::lazy_static;
 use lsp::LanguageServer;
 use parking_lot::Mutex;
@@ -588,54 +588,40 @@ impl Worktree {
             }
         };
 
+        let worktree_handle = cx.handle();
         let mut buffers_to_delete = Vec::new();
         for (buffer_id, buffer) in open_buffers {
             if let Some(buffer) = buffer.upgrade(cx) {
                 buffer.update(cx, |buffer, cx| {
-                    let buffer_is_clean = !buffer.is_dirty();
-
-                    if let Some(file) = buffer.file_mut() {
-                        let mut file_changed = false;
-
-                        if let Some(entry) = file
+                    if let Some(old_file) = buffer.file() {
+                        let new_file = if let Some(entry) = old_file
                             .entry_id()
                             .and_then(|entry_id| self.entry_for_id(entry_id))
                         {
-                            if entry.path != *file.path() {
-                                file.set_path(entry.path.clone());
-                                file_changed = true;
+                            File {
+                                entry_id: Some(entry.id),
+                                mtime: entry.mtime,
+                                path: entry.path.clone(),
+                                worktree: worktree_handle.clone(),
                             }
+                        } else if let Some(entry) = self.entry_for_path(old_file.path().as_ref()) {
+                            File {
+                                entry_id: Some(entry.id),
+                                mtime: entry.mtime,
+                                path: entry.path.clone(),
+                                worktree: worktree_handle.clone(),
+                            }
+                        } else {
+                            File {
+                                entry_id: None,
+                                path: old_file.path().clone(),
+                                mtime: old_file.mtime(),
+                                worktree: worktree_handle.clone(),
+                            }
+                        };
 
-                            if entry.mtime != file.mtime() {
-                                file.set_mtime(entry.mtime);
-                                file_changed = true;
-                                if let Some(worktree) = self.as_local() {
-                                    if buffer_is_clean {
-                                        let abs_path = worktree.absolutize(file.path().as_ref());
-                                        refresh_buffer(abs_path, &worktree.fs, cx);
-                                    }
-                                }
-                            }
-                        } else if let Some(entry) = self.entry_for_path(file.path().as_ref()) {
-                            file.set_entry_id(Some(entry.id));
-                            file.set_mtime(entry.mtime);
-                            if let Some(worktree) = self.as_local() {
-                                if buffer_is_clean {
-                                    let abs_path = worktree.absolutize(file.path().as_ref());
-                                    refresh_buffer(abs_path, &worktree.fs, cx);
-                                }
-                            }
-                            file_changed = true;
-                        } else if !file.is_deleted() {
-                            if buffer_is_clean {
-                                cx.emit(buffer::Event::Dirtied);
-                            }
-                            file.set_entry_id(None);
-                            file_changed = true;
-                        }
-
-                        if file_changed {
-                            cx.emit(buffer::Event::FileHandleChanged);
+                        if let Some(task) = buffer.file_updated(Box::new(new_file), cx) {
+                            task.detach();
                         }
                     }
                 });
@@ -866,7 +852,7 @@ impl LocalWorktree {
                     .update(&mut cx, |this, cx| this.as_local().unwrap().load(&path, cx))
                     .await?;
                 let language = this.read_with(&cx, |this, cx| {
-                    use buffer::File;
+                    use language::File;
 
                     this.languages()
                         .select_language(file.full_path(cx))
@@ -913,7 +899,7 @@ impl LocalWorktree {
                     .insert(buffer.id() as u64, buffer.clone());
 
                 Ok(proto::OpenBufferResponse {
-                    buffer: Some(buffer.update(cx.as_mut(), |buffer, cx| buffer.to_proto(cx))),
+                    buffer: Some(buffer.update(cx.as_mut(), |buffer, _| buffer.to_proto())),
                 })
             })
         })
@@ -1187,24 +1173,6 @@ fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
     Ok(builder.build()?)
 }
 
-pub fn refresh_buffer(abs_path: PathBuf, fs: &Arc<dyn Fs>, cx: &mut ModelContext<Buffer>) {
-    let fs = fs.clone();
-    cx.spawn(|buffer, mut cx| async move {
-        let new_text = fs.load(&abs_path).await;
-        match new_text {
-            Err(error) => log::error!("error refreshing buffer after file changed: {}", error),
-            Ok(new_text) => {
-                buffer
-                    .update(&mut cx, |buffer, cx| {
-                        buffer.set_text_from_disk(new_text.into(), cx)
-                    })
-                    .await;
-            }
-        }
-    })
-    .detach()
-}
-
 impl Deref for LocalWorktree {
     type Target = Snapshot;
 
@@ -1283,7 +1251,7 @@ impl RemoteWorktree {
                     .ok_or_else(|| anyhow!("worktree was closed"))?;
                 let file = File::new(entry.id, this.clone(), entry.path, entry.mtime);
                 let language = this.read_with(&cx, |this, cx| {
-                    use buffer::File;
+                    use language::File;
 
                     this.languages()
                         .select_language(file.full_path(cx))
@@ -1794,7 +1762,7 @@ impl File {
     }
 }
 
-impl buffer::File for File {
+impl language::File for File {
     fn worktree_id(&self) -> usize {
         self.worktree.id()
     }
@@ -1803,24 +1771,12 @@ impl buffer::File for File {
         self.entry_id
     }
 
-    fn set_entry_id(&mut self, entry_id: Option<usize>) {
-        self.entry_id = entry_id;
-    }
-
     fn mtime(&self) -> SystemTime {
         self.mtime
     }
 
-    fn set_mtime(&mut self, mtime: SystemTime) {
-        self.mtime = mtime;
-    }
-
     fn path(&self) -> &Arc<Path> {
         &self.path
-    }
-
-    fn set_path(&mut self, path: Arc<Path>) {
-        self.path = path;
     }
 
     fn full_path(&self, cx: &AppContext) -> PathBuf {
@@ -1891,6 +1847,16 @@ impl buffer::File for File {
         })
     }
 
+    fn load_local(&self, cx: &AppContext) -> Option<Task<Result<String>>> {
+        let worktree = self.worktree.read(cx).as_local()?;
+        let abs_path = worktree.absolutize(&self.path);
+        let fs = worktree.fs.clone();
+        Some(
+            cx.background()
+                .spawn(async move { fs.load(&abs_path).await }),
+        )
+    }
+
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext) {
         self.worktree.update(cx, |worktree, cx| {
             if let Some((rpc, remote_id)) = match worktree {
@@ -1946,7 +1912,7 @@ impl buffer::File for File {
         });
     }
 
-    fn boxed_clone(&self) -> Box<dyn buffer::File> {
+    fn boxed_clone(&self) -> Box<dyn language::File> {
         Box::new(self.clone())
     }
 
@@ -3272,7 +3238,7 @@ mod tests {
             assert!(buffer.is_dirty());
             assert_eq!(
                 *events.borrow(),
-                &[buffer::Event::Edited, buffer::Event::Dirtied]
+                &[language::Event::Edited, language::Event::Dirtied]
             );
             events.borrow_mut().clear();
             buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), None, cx);
@@ -3281,7 +3247,7 @@ mod tests {
         // after saving, the buffer is not dirty, and emits a saved event.
         buffer1.update(&mut cx, |buffer, cx| {
             assert!(!buffer.is_dirty());
-            assert_eq!(*events.borrow(), &[buffer::Event::Saved]);
+            assert_eq!(*events.borrow(), &[language::Event::Saved]);
             events.borrow_mut().clear();
 
             buffer.edit(vec![1..1], "B", cx);
@@ -3295,9 +3261,9 @@ mod tests {
             assert_eq!(
                 *events.borrow(),
                 &[
-                    buffer::Event::Edited,
-                    buffer::Event::Dirtied,
-                    buffer::Event::Edited
+                    language::Event::Edited,
+                    language::Event::Dirtied,
+                    language::Event::Edited
                 ],
             );
             events.borrow_mut().clear();
@@ -3309,7 +3275,7 @@ mod tests {
             assert!(buffer.is_dirty());
         });
 
-        assert_eq!(*events.borrow(), &[buffer::Event::Edited]);
+        assert_eq!(*events.borrow(), &[language::Event::Edited]);
 
         // When a file is deleted, the buffer is considered dirty.
         let events = Rc::new(RefCell::new(Vec::new()));
@@ -3329,7 +3295,7 @@ mod tests {
         buffer2.condition(&cx, |b, _| b.is_dirty()).await;
         assert_eq!(
             *events.borrow(),
-            &[buffer::Event::Dirtied, buffer::Event::FileHandleChanged]
+            &[language::Event::Dirtied, language::Event::FileHandleChanged]
         );
 
         // When a file is already dirty when deleted, we don't emit a Dirtied event.
@@ -3355,7 +3321,7 @@ mod tests {
         buffer3
             .condition(&cx, |_, _| !events.borrow().is_empty())
             .await;
-        assert_eq!(*events.borrow(), &[buffer::Event::FileHandleChanged]);
+        assert_eq!(*events.borrow(), &[language::Event::FileHandleChanged]);
         cx.read(|cx| assert!(buffer3.read(cx).is_dirty()));
     }
 
@@ -3446,12 +3412,13 @@ mod tests {
         buffer.update(&mut cx, |buffer, cx| {
             buffer.edit(vec![0..0], " ", cx);
             assert!(buffer.is_dirty());
+            assert!(!buffer.has_conflict());
         });
 
         // Change the file on disk again, adding blank lines to the beginning.
         fs::write(&abs_path, "\n\n\nAAAA\naaa\nBB\nbbbbb\n").unwrap();
 
-        // Becaues the buffer is modified, it doesn't reload from disk, but is
+        // Because the buffer is modified, it doesn't reload from disk, but is
         // marked as having a conflict.
         buffer
             .condition(&cx, |buffer, _| buffer.has_conflict())

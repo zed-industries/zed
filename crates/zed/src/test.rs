@@ -1,7 +1,7 @@
 use crate::{assets::Assets, AppState};
-use buffer::LanguageRegistry;
 use client::{http::ServerResponse, test::FakeHttpClient, ChannelList, Client, UserStore};
 use gpui::{AssetSource, MutableAppContext};
+use language::LanguageRegistry;
 use parking_lot::Mutex;
 use postage::watch;
 use project::fs::FakeFs;

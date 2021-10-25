@@ -1,3 +1,5 @@
+use crate::Point;
+
 use super::{Buffer, Content};
 use anyhow::Result;
 use std::{cmp::Ordering, ops::Range};
@@ -9,6 +11,24 @@ pub struct Anchor {
     pub bias: Bias,
     pub version: clock::Global,
 }
+
+#[derive(Clone)]
+pub struct AnchorMap<T> {
+    pub(crate) version: clock::Global,
+    pub(crate) entries: Vec<((usize, Bias), T)>,
+}
+
+#[derive(Clone)]
+pub struct AnchorSet(pub(crate) AnchorMap<()>);
+
+#[derive(Clone)]
+pub struct AnchorRangeMap<T> {
+    pub(crate) version: clock::Global,
+    pub(crate) entries: Vec<(Range<(usize, Bias)>, T)>,
+}
+
+#[derive(Clone)]
+pub struct AnchorRangeSet(pub(crate) AnchorRangeMap<()>);
 
 impl Anchor {
     pub fn min() -> Self {
@@ -59,6 +79,60 @@ impl Anchor {
         } else {
             buffer.anchor_after(self)
         }
+    }
+}
+
+impl<T> AnchorMap<T> {
+    pub fn to_points<'a>(
+        &'a self,
+        content: impl Into<Content<'a>> + 'a,
+    ) -> impl Iterator<Item = (Point, &'a T)> + 'a {
+        let content = content.into();
+        content
+            .summaries_for_anchors(self)
+            .map(move |(sum, value)| (sum.lines, value))
+    }
+
+    pub fn version(&self) -> &clock::Global {
+        &self.version
+    }
+}
+
+impl AnchorSet {
+    pub fn to_points<'a>(
+        &'a self,
+        content: impl Into<Content<'a>> + 'a,
+    ) -> impl Iterator<Item = Point> + 'a {
+        self.0.to_points(content).map(move |(point, _)| point)
+    }
+}
+
+impl<T> AnchorRangeMap<T> {
+    pub fn to_point_ranges<'a>(
+        &'a self,
+        content: impl Into<Content<'a>> + 'a,
+    ) -> impl Iterator<Item = (Range<Point>, &'a T)> + 'a {
+        let content = content.into();
+        content
+            .summaries_for_anchor_ranges(self)
+            .map(move |(range, value)| ((range.start.lines..range.end.lines), value))
+    }
+
+    pub fn version(&self) -> &clock::Global {
+        &self.version
+    }
+}
+
+impl AnchorRangeSet {
+    pub fn to_point_ranges<'a>(
+        &'a self,
+        content: impl Into<Content<'a>> + 'a,
+    ) -> impl Iterator<Item = Range<Point>> + 'a {
+        self.0.to_point_ranges(content).map(|(range, _)| range)
+    }
+
+    pub fn version(&self) -> &clock::Global {
+        self.0.version()
     }
 }
 

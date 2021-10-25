@@ -115,6 +115,11 @@ impl Rope {
         self.chunks_in_range(start..self.len()).flat_map(str::chars)
     }
 
+    pub fn reversed_chars_at(&self, start: usize) -> impl Iterator<Item = char> + '_ {
+        self.reversed_chunks_in_range(0..start)
+            .flat_map(|chunk| chunk.chars().rev())
+    }
+
     pub fn bytes_at(&self, start: usize) -> impl Iterator<Item = u8> + '_ {
         self.chunks_in_range(start..self.len()).flat_map(str::bytes)
     }
@@ -123,8 +128,12 @@ impl Rope {
         self.chunks_in_range(0..self.len())
     }
 
-    pub fn chunks_in_range<'a>(&'a self, range: Range<usize>) -> Chunks<'a> {
-        Chunks::new(self, range)
+    pub fn chunks_in_range(&self, range: Range<usize>) -> Chunks {
+        Chunks::new(self, range, false)
+    }
+
+    pub fn reversed_chunks_in_range(&self, range: Range<usize>) -> Chunks {
+        Chunks::new(self, range, true)
     }
 
     pub fn to_point(&self, offset: usize) -> Point {
@@ -268,6 +277,7 @@ impl<'a> Cursor<'a> {
             }
         }
 
+        self.offset = end_offset;
         summary
     }
 
@@ -283,38 +293,65 @@ impl<'a> Cursor<'a> {
 pub struct Chunks<'a> {
     chunks: sum_tree::Cursor<'a, Chunk, usize>,
     range: Range<usize>,
+    reversed: bool,
 }
 
 impl<'a> Chunks<'a> {
-    pub fn new(rope: &'a Rope, range: Range<usize>) -> Self {
+    pub fn new(rope: &'a Rope, range: Range<usize>, reversed: bool) -> Self {
         let mut chunks = rope.chunks.cursor();
-        chunks.seek(&range.start, Bias::Right, &());
-        Self { chunks, range }
+        if reversed {
+            chunks.seek(&range.end, Bias::Left, &());
+        } else {
+            chunks.seek(&range.start, Bias::Right, &());
+        }
+        Self {
+            chunks,
+            range,
+            reversed,
+        }
     }
 
     pub fn offset(&self) -> usize {
-        self.range.start.max(*self.chunks.start())
+        if self.reversed {
+            self.range.end.min(self.chunks.end(&()))
+        } else {
+            self.range.start.max(*self.chunks.start())
+        }
     }
 
     pub fn seek(&mut self, offset: usize) {
-        if offset >= self.chunks.end(&()) {
-            self.chunks.seek_forward(&offset, Bias::Right, &());
+        let bias = if self.reversed {
+            Bias::Left
         } else {
-            self.chunks.seek(&offset, Bias::Right, &());
+            Bias::Right
+        };
+
+        if offset >= self.chunks.end(&()) {
+            self.chunks.seek_forward(&offset, bias, &());
+        } else {
+            self.chunks.seek(&offset, bias, &());
         }
-        self.range.start = offset;
+
+        if self.reversed {
+            self.range.end = offset;
+        } else {
+            self.range.start = offset;
+        }
     }
 
     pub fn peek(&self) -> Option<&'a str> {
-        if let Some(chunk) = self.chunks.item() {
-            let offset = *self.chunks.start();
-            if self.range.end > offset {
-                let start = self.range.start.saturating_sub(*self.chunks.start());
-                let end = self.range.end - self.chunks.start();
-                return Some(&chunk.0[start..chunk.0.len().min(end)]);
-            }
+        let chunk = self.chunks.item()?;
+        if self.reversed && self.range.start >= self.chunks.end(&()) {
+            return None;
         }
-        None
+        let chunk_start = *self.chunks.start();
+        if self.range.end <= chunk_start {
+            return None;
+        }
+
+        let start = self.range.start.saturating_sub(chunk_start);
+        let end = self.range.end - chunk_start;
+        Some(&chunk.0[start..chunk.0.len().min(end)])
     }
 }
 
@@ -324,7 +361,11 @@ impl<'a> Iterator for Chunks<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         let result = self.peek();
         if result.is_some() {
-            self.chunks.next(&());
+            if self.reversed {
+                self.chunks.prev(&());
+            } else {
+                self.chunks.next(&());
+            }
         }
         result
     }
@@ -568,6 +609,16 @@ mod tests {
                 let start_ix = clip_offset(&expected, rng.gen_range(0..=end_ix), Left);
                 assert_eq!(
                     actual.chunks_in_range(start_ix..end_ix).collect::<String>(),
+                    &expected[start_ix..end_ix]
+                );
+
+                assert_eq!(
+                    actual
+                        .reversed_chunks_in_range(start_ix..end_ix)
+                        .collect::<Vec<&str>>()
+                        .into_iter()
+                        .rev()
+                        .collect::<String>(),
                     &expected[start_ix..end_ix]
                 );
             }

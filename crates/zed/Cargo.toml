@@ -18,6 +18,7 @@ test-support = [
     "buffer/test-support",
     "client/test-support",
     "gpui/test-support",
+    "language/test-support",
     "project/test-support",
     "rpc/test-support",
     "tempdir",
@@ -33,6 +34,7 @@ fuzzy = { path = "../fuzzy" }
 editor = { path = "../editor" }
 file_finder = { path = "../file_finder" }
 gpui = { path = "../gpui" }
+language = { path = "../language" }
 people_panel = { path = "../people_panel" }
 project = { path = "../project" }
 project_panel = { path = "../project_panel" }
@@ -85,6 +87,7 @@ url = "2.2"
 buffer = { path = "../buffer", features = ["test-support"] }
 editor = { path = "../editor", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
+language = { path = "../language", features = ["test-support"] }
 project = { path = "../project", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 client = { path = "../client", features = ["test-support"] }
