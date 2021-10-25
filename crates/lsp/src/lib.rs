@@ -3,7 +3,7 @@ use gpui::{executor, AppContext, Task};
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, oneshot, prelude::Stream, sink::Sink};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, value::RawValue};
+use serde_json::{json, value::RawValue, Value};
 use smol::{
     channel,
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
@@ -13,6 +13,7 @@ use std::{
     collections::HashMap,
     future::Future,
     io::Write,
+    str::FromStr,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -135,6 +136,15 @@ impl LanguageServer {
                         {
                             if let Some(handler) = notification_handlers.read().get(method) {
                                 handler(params.get());
+                            } else {
+                                log::info!(
+                                    "unhandled notification {}:\n{}",
+                                    method,
+                                    serde_json::to_string_pretty(
+                                        &Value::from_str(params.get()).unwrap()
+                                    )
+                                    .unwrap()
+                                );
                             }
                         } else if let Ok(Response { id, error, result }) =
                             serde_json::from_slice(&buffer)
@@ -347,6 +357,12 @@ mod tests {
 
     #[gpui::test]
     async fn test_basic(cx: TestAppContext) {
+        let lib_source = r#"
+            fn fun() {
+                let hello = "world";
+            }
+        "#
+        .unindent();
         let root_dir = temp_tree(json!({
             "Cargo.toml": r#"
                 [package]
@@ -355,23 +371,33 @@ mod tests {
                 edition = "2018"
             "#.unindent(),
             "src": {
-                "lib.rs": r#"
-                    fn fun() {
-                        let hello = "world";
-                    }
-                "#.unindent()
+                "lib.rs": &lib_source
             }
         }));
+        let lib_file_uri =
+            lsp_types::Url::from_file_path(root_dir.path().join("src/lib.rs")).unwrap();
 
         let server = cx.read(|cx| LanguageServer::rust(root_dir.path(), cx).unwrap());
         server.next_idle_notification().await;
 
+        server
+            .notify::<lsp_types::notification::DidOpenTextDocument>(
+                lsp_types::DidOpenTextDocumentParams {
+                    text_document: lsp_types::TextDocumentItem::new(
+                        lib_file_uri.clone(),
+                        "rust".to_string(),
+                        0,
+                        lib_source,
+                    ),
+                },
+            )
+            .await
+            .unwrap();
+
         let hover = server
             .request::<lsp_types::request::HoverRequest>(lsp_types::HoverParams {
                 text_document_position_params: lsp_types::TextDocumentPositionParams {
-                    text_document: lsp_types::TextDocumentIdentifier::new(
-                        lsp_types::Url::from_file_path(root_dir.path().join("src/lib.rs")).unwrap(),
-                    ),
+                    text_document: lsp_types::TextDocumentIdentifier::new(lib_file_uri),
                     position: lsp_types::Position::new(1, 21),
                 },
                 work_done_progress_params: Default::default(),
