@@ -2958,6 +2958,7 @@ dependencies = [
  "gpui",
  "lsp-types",
  "parking_lot",
+ "postage",
  "serde 1.0.125",
  "serde_json 1.0.64",
  "smol",
