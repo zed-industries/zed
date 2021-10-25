@@ -53,6 +53,8 @@ pub trait Platform: Send + Sync {
     fn set_cursor_style(&self, style: CursorStyle);
 
     fn local_timezone(&self) -> UtcOffset;
+
+    fn path_for_resource(&self, name: Option<&str>, extension: Option<&str>) -> Result<PathBuf>;
 }
 
 pub(crate) trait ForegroundPlatform {

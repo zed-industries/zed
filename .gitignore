@@ -4,3 +4,4 @@
 /script/node_modules
 /server/.env.toml
 /server/static/styles.css
+/vendor/bin

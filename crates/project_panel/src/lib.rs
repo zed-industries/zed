@@ -622,7 +622,7 @@ mod tests {
                 params.languages.clone(),
                 params.client.clone(),
                 params.fs.clone(),
-                cx.background(),
+                cx,
             )
         });
         let root1 = project

@@ -14,7 +14,9 @@ use cocoa::{
         NSPasteboardTypeString, NSSavePanel, NSWindow,
     },
     base::{id, nil, selector, YES},
-    foundation::{NSArray, NSAutoreleasePool, NSData, NSInteger, NSString, NSURL},
+    foundation::{
+        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSString, NSUInteger, NSURL,
+    },
 };
 use core_foundation::{
     base::{CFType, CFTypeRef, OSStatus, TCFType as _},
@@ -44,6 +46,9 @@ use std::{
     sync::Arc,
 };
 use time::UtcOffset;
+
+#[allow(non_upper_case_globals)]
+const NSUTF8StringEncoding: NSUInteger = 4;
 
 const MAC_PLATFORM_IVAR: &'static str = "platform";
 static mut APP_CLASS: *const Class = ptr::null();
@@ -586,6 +591,27 @@ impl platform::Platform for MacPlatform {
             let local_timezone: id = msg_send![class!(NSTimeZone), localTimeZone];
             let seconds_from_gmt: NSInteger = msg_send![local_timezone, secondsFromGMT];
             UtcOffset::from_whole_seconds(seconds_from_gmt.try_into().unwrap()).unwrap()
+        }
+    }
+
+    fn path_for_resource(&self, name: Option<&str>, extension: Option<&str>) -> Result<PathBuf> {
+        unsafe {
+            let bundle: id = NSBundle::mainBundle();
+            if bundle.is_null() {
+                Err(anyhow!("app is not running inside a bundle"))
+            } else {
+                let name = name.map_or(nil, |name| ns_string(name));
+                let extension = extension.map_or(nil, |extension| ns_string(extension));
+                let path: id = msg_send![bundle, pathForResource: name ofType: extension];
+                if path.is_null() {
+                    Err(anyhow!("resource could not be found"))
+                } else {
+                    let len = msg_send![path, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
+                    let bytes = path.UTF8String() as *const u8;
+                    let path = str::from_utf8(slice::from_raw_parts(bytes, len)).unwrap();
+                    Ok(PathBuf::from(path))
+                }
+            }
         }
     }
 }

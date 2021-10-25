@@ -327,7 +327,7 @@ impl Workspace {
                 params.languages.clone(),
                 params.client.clone(),
                 params.fs.clone(),
-                cx.background(),
+                cx,
             )
         });
         cx.observe(&project, |_, _, cx| cx.notify()).detach();

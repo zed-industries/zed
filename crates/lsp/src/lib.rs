@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use gpui::{executor, Task};
+use gpui::{executor, AppContext, Task};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
@@ -71,6 +71,21 @@ struct Error {
 }
 
 impl LanguageServer {
+    pub fn rust(cx: &AppContext) -> Result<Arc<Self>> {
+        const BUNDLE: Option<&'static str> = option_env!("BUNDLE");
+        const TARGET: &'static str = env!("TARGET");
+
+        let rust_analyzer_name = format!("rust-analyzer-{}", TARGET);
+        if BUNDLE.map_or(Ok(false), |b| b.parse())? {
+            let rust_analyzer_path = cx
+                .platform()
+                .path_for_resource(Some(&rust_analyzer_name), None)?;
+            Self::new(&rust_analyzer_path, cx.background())
+        } else {
+            Self::new(Path::new(&rust_analyzer_name), cx.background())
+        }
+    }
+
     pub fn new(path: &Path, background: &executor::Background) -> Result<Arc<Self>> {
         let mut server = Command::new(path)
             .stdin(Stdio::piped())
@@ -143,12 +158,7 @@ impl LanguageServer {
             _input_task,
             _output_task,
         });
-        let init = this.clone().init();
-        background
-            .spawn(async move {
-                init.log_err().await;
-            })
-            .detach();
+        background.spawn(this.clone().init().log_err()).detach();
 
         Ok(this)
     }
@@ -229,6 +239,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_basic(cx: TestAppContext) {
-        let server = LanguageServer::new();
+        let server = cx.read(|cx| LanguageServer::rust(cx).unwrap());
     }
 }

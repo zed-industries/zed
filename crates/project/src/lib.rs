@@ -49,7 +49,7 @@ impl Project {
         languages: Arc<LanguageRegistry>,
         rpc: Arc<Client>,
         fs: Arc<dyn Fs>,
-        background: &executor::Background,
+        cx: &AppContext,
     ) -> Self {
         Self {
             worktrees: Default::default(),
@@ -57,11 +57,7 @@ impl Project {
             languages,
             client: rpc,
             fs,
-            language_server: LanguageServer::new(
-                Path::new("/Users/as-cii/Downloads/rust-analyzer-x86_64-apple-darwin"),
-                background,
-            )
-            .unwrap(),
+            language_server: LanguageServer::rust(cx).unwrap(),
         }
     }
 
@@ -420,6 +416,6 @@ mod tests {
         let languages = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(RealFs);
         let rpc = client::Client::new();
-        cx.add_model(|cx| Project::new(languages, rpc, fs, cx.background()))
+        cx.add_model(|cx| Project::new(languages, rpc, fs, cx))
     }
 }
