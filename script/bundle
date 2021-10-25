@@ -13,10 +13,10 @@ cargo bundle --release --target x86_64-apple-darwin
 popd > /dev/null
 
 # Build the binary for aarch64 (Apple M1)
-# cargo build --release --target aarch64-apple-darwin
+cargo build --release --target aarch64-apple-darwin
 
 # Replace the bundle's binary with a "fat binary" that combines the two architecture-specific binaries
-# lipo -create target/x86_64-apple-darwin/release/Zed target/aarch64-apple-darwin/release/Zed -output target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/MacOS/zed
+lipo -create target/x86_64-apple-darwin/release/Zed target/aarch64-apple-darwin/release/Zed -output target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/MacOS/zed
 
 # Bundle rust-analyzer
 cp vendor/bin/rust-analyzer-x86_64-apple-darwin target/x86_64-apple-darwin/release/bundle/osx/Zed.app/Contents/Resources/
