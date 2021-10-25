@@ -2,7 +2,7 @@
 
 set -e
 
-export BUNDLE=true
+export ZED_BUNDLE=true
 
 # Install cargo-bundle 0.5.0 if it's not already installed
 cargo install cargo-bundle --version 0.5.0

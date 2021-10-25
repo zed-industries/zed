@@ -14,6 +14,7 @@ use gpui::{
     Task, UpgradeModelHandle, WeakModelHandle,
 };
 use lazy_static::lazy_static;
+use lsp::LanguageServer;
 use parking_lot::Mutex;
 use postage::{
     prelude::{Sink as _, Stream as _},
@@ -684,6 +685,7 @@ pub struct LocalWorktree {
     queued_operations: Vec<(u64, Operation)>,
     rpc: Arc<Client>,
     fs: Arc<dyn Fs>,
+    language_server: Arc<LanguageServer>,
 }
 
 #[derive(Default, Deserialize)]
@@ -721,6 +723,7 @@ impl LocalWorktree {
         let (scan_states_tx, scan_states_rx) = smol::channel::unbounded();
         let (mut last_scan_state_tx, last_scan_state_rx) = watch::channel_with(ScanState::Scanning);
         let tree = cx.add_model(move |cx: &mut ModelContext<Worktree>| {
+            let language_server = LanguageServer::rust(&abs_path, cx).unwrap();
             let mut snapshot = Snapshot {
                 id: cx.model_id(),
                 scan_id: 0,
@@ -796,6 +799,7 @@ impl LocalWorktree {
                 languages,
                 rpc,
                 fs,
+                language_server,
             };
 
             cx.spawn_weak(|this, mut cx| async move {
