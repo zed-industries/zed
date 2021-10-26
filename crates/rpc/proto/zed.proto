@@ -245,16 +245,6 @@ message Selection {
     bool reversed = 4;
 }
 
-message Anchor {
-    repeated VectorClockEntry version = 1;
-    uint64 offset = 2;
-    Bias bias = 3;
-    enum Bias {
-        LEFT = 0;
-        Right = 1;
-    }
-}
-
 message Operation {
     oneof variant {
         Edit edit = 1;
