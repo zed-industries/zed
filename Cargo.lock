@@ -3833,6 +3833,7 @@ dependencies = [
  "sum_tree",
  "tempdir",
  "toml 0.5.8",
+ "unindent",
  "util",
 ]
 

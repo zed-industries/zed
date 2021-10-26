@@ -98,10 +98,11 @@ impl Worktree {
         path: impl Into<Arc<Path>>,
         fs: Arc<dyn Fs>,
         languages: Arc<LanguageRegistry>,
+        language_server: Option<Arc<LanguageServer>>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
         let (tree, scan_states_tx) =
-            LocalWorktree::new(rpc, path, fs.clone(), languages, cx).await?;
+            LocalWorktree::new(rpc, path, fs.clone(), languages, language_server, cx).await?;
         tree.update(cx, |tree, cx| {
             let tree = tree.as_local_mut().unwrap();
             let abs_path = tree.snapshot.abs_path.clone();
@@ -671,7 +672,7 @@ pub struct LocalWorktree {
     queued_operations: Vec<(u64, Operation)>,
     rpc: Arc<Client>,
     fs: Arc<dyn Fs>,
-    language_server: Arc<LanguageServer>,
+    language_server: Option<Arc<LanguageServer>>,
 }
 
 #[derive(Default, Deserialize)]
@@ -685,6 +686,7 @@ impl LocalWorktree {
         path: impl Into<Arc<Path>>,
         fs: Arc<dyn Fs>,
         languages: Arc<LanguageRegistry>,
+        language_server: Option<Arc<LanguageServer>>,
         cx: &mut AsyncAppContext,
     ) -> Result<(ModelHandle<Worktree>, Sender<ScanState>)> {
         let abs_path = path.into();
@@ -709,7 +711,6 @@ impl LocalWorktree {
         let (scan_states_tx, scan_states_rx) = smol::channel::unbounded();
         let (mut last_scan_state_tx, last_scan_state_rx) = watch::channel_with(ScanState::Scanning);
         let tree = cx.add_model(move |cx: &mut ModelContext<Worktree>| {
-            let language_server = LanguageServer::rust(&abs_path, cx).unwrap();
             let mut snapshot = Snapshot {
                 id: cx.model_id(),
                 scan_id: 0,
@@ -814,6 +815,28 @@ impl LocalWorktree {
                 }
             })
             .detach();
+
+            if let Some(language_server) = &tree.language_server {
+                let (diagnostics_tx, diagnostics_rx) = smol::channel::unbounded();
+                language_server
+                    .on_notification::<lsp::notification::PublishDiagnostics, _>(move |params| {
+                        smol::block_on(diagnostics_tx.send(params)).ok();
+                    })
+                    .detach();
+                cx.spawn_weak(|this, mut cx| async move {
+                    while let Ok(diagnostics) = diagnostics_rx.recv().await {
+                        if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
+                            handle.update(&mut cx, |this, cx| {
+                                let this = this.as_local_mut().unwrap();
+                                this.update_diagnostics(diagnostics, cx);
+                            });
+                        } else {
+                            break;
+                        }
+                    }
+                })
+                .detach();
+            }
 
             Worktree::Local(tree)
         });
@@ -1160,6 +1183,14 @@ impl LocalWorktree {
                 }
             })
         })
+    }
+
+    fn update_diagnostics(
+        &mut self,
+        diagnostics: lsp::PublishDiagnosticsParams,
+        cx: &mut ModelContext<Worktree>,
+    ) {
+        //
     }
 }
 
@@ -2804,6 +2835,8 @@ mod tests {
     use anyhow::Result;
     use client::test::FakeServer;
     use fs::RealFs;
+    use language::Point;
+    use lsp::Url;
     use rand::prelude::*;
     use serde_json::json;
     use std::{cell::RefCell, rc::Rc};
@@ -2812,6 +2845,7 @@ mod tests {
         fmt::Write,
         time::{SystemTime, UNIX_EPOCH},
     };
+    use unindent::Unindent as _;
     use util::test::temp_tree;
 
     #[gpui::test]
@@ -2834,6 +2868,7 @@ mod tests {
             Arc::from(Path::new("/root")),
             Arc::new(fs),
             Default::default(),
+            None,
             &mut cx.to_async(),
         )
         .await
@@ -2866,6 +2901,7 @@ mod tests {
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
+            None,
             &mut cx.to_async(),
         )
         .await
@@ -2896,6 +2932,7 @@ mod tests {
             file_path.clone(),
             Arc::new(RealFs),
             Default::default(),
+            None,
             &mut cx.to_async(),
         )
         .await
@@ -2942,6 +2979,7 @@ mod tests {
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
+            None,
             &mut cx.to_async(),
         )
         .await
@@ -3102,6 +3140,7 @@ mod tests {
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
+            None,
             &mut cx.to_async(),
         )
         .await
@@ -3156,6 +3195,7 @@ mod tests {
             "/path/to/the-dir".as_ref(),
             fs,
             Default::default(),
+            None,
             &mut cx.to_async(),
         )
         .await
@@ -3204,6 +3244,7 @@ mod tests {
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
+            None,
             &mut cx.to_async(),
         )
         .await
@@ -3337,6 +3378,7 @@ mod tests {
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
+            None,
             &mut cx.to_async(),
         )
         .await
@@ -3423,6 +3465,61 @@ mod tests {
         buffer
             .condition(&cx, |buffer, _| buffer.has_conflict())
             .await;
+    }
+
+    #[gpui::test]
+    async fn test_language_server_diagnostics(mut cx: gpui::TestAppContext) {
+        let (language_server, mut fake_lsp) = LanguageServer::fake(&cx.background()).await;
+        let dir = temp_tree(json!({
+            "a.rs": "
+                fn a() { A }
+                fn b() { BB }
+            ".unindent(),
+            "b.rs": "
+                const y: i32 = 1
+            ".unindent(),
+        }));
+
+        let tree = Worktree::open_local(
+            Client::new(),
+            dir.path(),
+            Arc::new(RealFs),
+            Default::default(),
+            Some(language_server),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+
+        fake_lsp
+            .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+                uri: Url::from_file_path(dir.path().join("a.rs")).unwrap(),
+                version: None,
+                diagnostics: vec![
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "undefined variable 'A'".to_string(),
+                        ..Default::default()
+                    },
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(2, 11)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "undefined variable 'BB'".to_string(),
+                        ..Default::default()
+                    },
+                ],
+            })
+            .await;
+
+        let buffer = tree
+            .update(&mut cx, |tree, cx| tree.open_buffer("a.rs", cx))
+            .await
+            .unwrap();
+
+        // Check buffer's diagnostics
     }
 
     #[gpui::test(iterations = 100)]
