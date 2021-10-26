@@ -359,7 +359,7 @@ mod tests {
     use super::*;
     use crate::{movement, test::*};
     use gpui::{color::Color, MutableAppContext};
-    use language::{History, Language, LanguageConfig, RandomCharIter, SelectionGoal};
+    use language::{Language, LanguageConfig, RandomCharIter, SelectionGoal};
     use rand::{prelude::StdRng, Rng};
     use std::{env, sync::Arc};
     use theme::SyntaxTheme;
@@ -701,9 +701,8 @@ mod tests {
         );
         lang.set_theme(&theme);
 
-        let buffer = cx.add_model(|cx| {
-            Buffer::from_history(0, History::new(text.into()), None, Some(lang), None, cx)
-        });
+        let buffer =
+            cx.add_model(|cx| Buffer::new(0, text, cx).with_language(Some(lang), None, cx));
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
 
         let tab_size = 2;
@@ -789,9 +788,8 @@ mod tests {
         );
         lang.set_theme(&theme);
 
-        let buffer = cx.add_model(|cx| {
-            Buffer::from_history(0, History::new(text.into()), None, Some(lang), None, cx)
-        });
+        let buffer =
+            cx.add_model(|cx| Buffer::new(0, text, cx).with_language(Some(lang), None, cx));
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
 
         let font_cache = cx.font_cache();

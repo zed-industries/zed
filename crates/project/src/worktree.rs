@@ -12,7 +12,7 @@ use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task, UpgradeModelHandle, WeakModelHandle,
 };
-use language::{Buffer, History, LanguageRegistry, Operation, Rope};
+use language::{Buffer, LanguageRegistry, Operation, Rope};
 use lazy_static::lazy_static;
 use lsp::LanguageServer;
 use parking_lot::Mutex;
@@ -892,10 +892,7 @@ impl LocalWorktree {
                         .cloned()
                 });
                 let buffer = cx.add_model(|cx| {
-                    Buffer::from_history(
-                        0,
-                        History::new(contents.into()),
-                        Some(Box::new(file)),
+                    Buffer::from_file(0, contents, Box::new(file), cx).with_language(
                         language,
                         language_server,
                         cx,
@@ -1321,14 +1318,9 @@ impl RemoteWorktree {
                 let remote_buffer = response.buffer.ok_or_else(|| anyhow!("empty buffer"))?;
                 let buffer_id = remote_buffer.id as usize;
                 let buffer = cx.add_model(|cx| {
-                    Buffer::from_proto(
-                        replica_id,
-                        remote_buffer,
-                        Some(Box::new(file)),
-                        language,
-                        cx,
-                    )
-                    .unwrap()
+                    Buffer::from_proto(replica_id, remote_buffer, Some(Box::new(file)))
+                        .unwrap()
+                        .with_language(language, None, cx)
                 });
                 this.update(&mut cx, |this, cx| {
                     let this = this.as_remote_mut().unwrap();

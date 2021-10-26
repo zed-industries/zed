@@ -197,26 +197,22 @@ impl Buffer {
                 History::new(base_text.into()),
             ),
             None,
-            None,
-            None,
-            cx,
         )
     }
 
-    pub fn from_history(
+    pub fn from_file<T: Into<Arc<str>>>(
         replica_id: ReplicaId,
-        history: History,
-        file: Option<Box<dyn File>>,
-        language: Option<Arc<Language>>,
-        language_server: Option<Arc<lsp::LanguageServer>>,
+        base_text: T,
+        file: Box<dyn File>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self::build(
-            TextBuffer::new(replica_id, cx.model_id() as u64, history),
-            file,
-            language,
-            language_server,
-            cx,
+            TextBuffer::new(
+                replica_id,
+                cx.model_id() as u64,
+                History::new(base_text.into()),
+            ),
+            Some(file),
         )
     }
 
@@ -224,25 +220,24 @@ impl Buffer {
         replica_id: ReplicaId,
         message: proto::Buffer,
         file: Option<Box<dyn File>>,
-        language: Option<Arc<Language>>,
-        cx: &mut ModelContext<Self>,
     ) -> Result<Self> {
         Ok(Self::build(
             TextBuffer::from_proto(replica_id, message)?,
             file,
-            language,
-            None,
-            cx,
         ))
     }
 
-    fn build(
-        buffer: TextBuffer,
-        file: Option<Box<dyn File>>,
+    pub fn with_language(
+        mut self,
         language: Option<Arc<Language>>,
-        language_server: Option<Arc<lsp::LanguageServer>>,
+        language_server: Option<Arc<LanguageServer>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
+        self.set_language(language, language_server, cx);
+        self
+    }
+
+    fn build(buffer: TextBuffer, file: Option<Box<dyn File>>) -> Self {
         let saved_mtime;
         if let Some(file) = file.as_ref() {
             saved_mtime = file.mtime();
@@ -250,7 +245,7 @@ impl Buffer {
             saved_mtime = UNIX_EPOCH;
         }
 
-        let mut result = Self {
+        Self {
             text: buffer,
             saved_mtime,
             saved_version: clock::Global::new(),
@@ -266,9 +261,7 @@ impl Buffer {
             language_server: None,
             #[cfg(test)]
             operations: Default::default(),
-        };
-        result.set_language(language, language_server, cx);
-        result
+        }
     }
 
     pub fn snapshot(&self) -> Snapshot {
