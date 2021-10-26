@@ -1696,9 +1696,13 @@ impl<'a> Content<'a> {
     fn summary_for_anchor(&self, anchor: &Anchor) -> TextSummary {
         let cx = Some(anchor.version.clone());
         let mut cursor = self.fragments.cursor::<(VersionedOffset, usize)>();
-        cursor.seek(&VersionedOffset::Offset(anchor.offset), anchor.bias, &cx);
+        cursor.seek(
+            &VersionedOffset::Offset(anchor.full_offset),
+            anchor.bias,
+            &cx,
+        );
         let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
-            anchor.offset - cursor.start().0.offset()
+            anchor.full_offset - cursor.start().0.offset()
         } else {
             0
         };
@@ -1766,13 +1770,8 @@ impl<'a> Content<'a> {
     }
 
     fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
-        let offset = position.to_offset(self);
-        let max_offset = self.len();
-        assert!(offset <= max_offset, "offset is out of range");
-        let mut cursor = self.fragments.cursor::<FragmentTextSummary>();
-        cursor.seek(&offset, bias, &None);
         Anchor {
-            offset: offset + cursor.start().deleted,
+            full_offset: position.to_full_offset(self, bias),
             bias,
             version: self.version.clone(),
         }
@@ -1842,9 +1841,13 @@ impl<'a> Content<'a> {
         let mut cursor = self
             .fragments
             .cursor::<(VersionedOffset, FragmentTextSummary)>();
-        cursor.seek(&VersionedOffset::Offset(anchor.offset), anchor.bias, &cx);
+        cursor.seek(
+            &VersionedOffset::Offset(anchor.full_offset),
+            anchor.bias,
+            &cx,
+        );
         let overshoot = if cursor.item().is_some() {
-            anchor.offset - cursor.start().0.offset()
+            anchor.full_offset - cursor.start().0.offset()
         } else {
             0
         };
@@ -2239,7 +2242,7 @@ impl<'a> Into<proto::Anchor> for &'a Anchor {
     fn into(self) -> proto::Anchor {
         proto::Anchor {
             version: (&self.version).into(),
-            offset: self.offset as u64,
+            offset: self.full_offset as u64,
             bias: match self.bias {
                 Bias::Left => proto::anchor::Bias::Left as i32,
                 Bias::Right => proto::anchor::Bias::Right as i32,
@@ -2373,7 +2376,7 @@ impl TryFrom<proto::Anchor> for Anchor {
         }
 
         Ok(Self {
-            offset: message.offset as usize,
+            full_offset: message.offset as usize,
             bias: if message.bias == proto::anchor::Bias::Left as i32 {
                 Bias::Left
             } else if message.bias == proto::anchor::Bias::Right as i32 {
@@ -2408,6 +2411,14 @@ impl TryFrom<proto::Selection> for Selection {
 
 pub trait ToOffset {
     fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize;
+
+    fn to_full_offset<'a>(&self, content: impl Into<Content<'a>>, bias: Bias) -> usize {
+        let content = content.into();
+        let offset = self.to_offset(&content);
+        let mut cursor = content.fragments.cursor::<FragmentTextSummary>();
+        cursor.seek(&offset, bias, &None);
+        offset + cursor.start().deleted
+    }
 }
 
 impl ToOffset for Point {
@@ -2417,7 +2428,8 @@ impl ToOffset for Point {
 }
 
 impl ToOffset for usize {
-    fn to_offset<'a>(&self, _: impl Into<Content<'a>>) -> usize {
+    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize {
+        assert!(*self <= content.into().len(), "offset is out of range");
         *self
     }
 }
@@ -2425,6 +2437,10 @@ impl ToOffset for usize {
 impl ToOffset for Anchor {
     fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize {
         content.into().summary_for_anchor(self).bytes
+    }
+
+    fn to_full_offset<'a>(&self, _: impl Into<Content<'a>>, _: Bias) -> usize {
+        self.full_offset
     }
 }
 
