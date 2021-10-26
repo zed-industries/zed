@@ -31,26 +31,26 @@ pub struct AnchorRangeMap<T> {
 pub struct AnchorRangeSet(pub(crate) AnchorRangeMap<()>);
 
 pub struct AnchorRangeMultimap<T: Clone> {
-    entries: SumTree<AnchorRangeMultimapEntry<T>>,
+    pub(crate) entries: SumTree<AnchorRangeMultimapEntry<T>>,
     pub(crate) version: clock::Global,
     pub(crate) start_bias: Bias,
     pub(crate) end_bias: Bias,
 }
 
 #[derive(Clone)]
-struct AnchorRangeMultimapEntry<T> {
-    range: FullOffsetRange,
-    value: T,
+pub(crate) struct AnchorRangeMultimapEntry<T> {
+    pub(crate) range: FullOffsetRange,
+    pub(crate) value: T,
 }
 
 #[derive(Clone, Debug)]
-struct FullOffsetRange {
-    start: usize,
-    end: usize,
+pub(crate) struct FullOffsetRange {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
 }
 
 #[derive(Clone, Debug)]
-struct AnchorRangeMultimapSummary {
+pub(crate) struct AnchorRangeMultimapSummary {
     start: usize,
     end: usize,
     min_start: usize,
@@ -165,46 +165,61 @@ impl AnchorRangeSet {
 }
 
 impl<T: Clone> AnchorRangeMultimap<T> {
-    fn intersecting_point_ranges<'a, O: ToOffset>(
+    fn intersecting_point_ranges<'a>(
         &'a self,
-        range: Range<O>,
-        content: impl Into<Content<'a>>,
+        range: Range<Anchor>,
+        content: &'a Content<'a>,
         inclusive: bool,
     ) -> impl Iterator<Item = (usize, Range<Point>, &T)> + 'a {
         use super::ToPoint as _;
 
-        let content = content.into();
-        let start = range.start.to_full_offset(&content, self.start_bias);
-        let end = range.end.to_full_offset(&content, self.end_bias);
         let mut cursor = self.entries.filter::<_, usize>(
-            move |summary: &AnchorRangeMultimapSummary| {
-                if inclusive {
-                    start <= summary.max_end && end >= summary.min_start
-                } else {
-                    start < summary.max_end && end > summary.min_start
+            {
+                let mut endpoint = Anchor {
+                    full_offset: 0,
+                    bias: Bias::Right,
+                    version: self.version.clone(),
+                };
+                move |summary: &AnchorRangeMultimapSummary| {
+                    endpoint.full_offset = summary.max_end;
+                    endpoint.bias = self.end_bias;
+                    let start_cmp = range.start.cmp(&endpoint, content).unwrap();
+
+                    endpoint.full_offset = summary.min_start;
+                    endpoint.bias = self.start_bias;
+                    let end_cmp = range.end.cmp(&endpoint, content).unwrap();
+
+                    if inclusive {
+                        start_cmp <= Ordering::Equal && end_cmp >= Ordering::Equal
+                    } else {
+                        start_cmp == Ordering::Less && end_cmp == Ordering::Greater
+                    }
                 }
             },
             &(),
         );
-        let mut anchor = Anchor {
-            full_offset: 0,
-            bias: Bias::Left,
-            version: self.version.clone(),
-        };
-        std::iter::from_fn(move || {
-            if let Some(item) = cursor.item() {
-                let ix = *cursor.start();
-                anchor.full_offset = item.range.start;
-                anchor.bias = self.start_bias;
-                let start = anchor.to_point(&content);
-                anchor.full_offset = item.range.end;
-                anchor.bias = self.end_bias;
-                let end = anchor.to_point(&content);
-                let value = &item.value;
-                cursor.next(&());
-                Some((ix, start..end, value))
-            } else {
-                None
+
+        std::iter::from_fn({
+            let mut endpoint = Anchor {
+                full_offset: 0,
+                bias: Bias::Left,
+                version: self.version.clone(),
+            };
+            move || {
+                if let Some(item) = cursor.item() {
+                    let ix = *cursor.start();
+                    endpoint.full_offset = item.range.start;
+                    endpoint.bias = self.start_bias;
+                    let start = endpoint.to_point(content);
+                    endpoint.full_offset = item.range.end;
+                    endpoint.bias = self.end_bias;
+                    let end = endpoint.to_point(content);
+                    let value = &item.value;
+                    cursor.next(&());
+                    Some((ix, start..end, value))
+                } else {
+                    None
+                }
             }
         })
     }

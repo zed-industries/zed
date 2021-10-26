@@ -163,7 +163,7 @@ impl<T: Item> SumTree<T> {
         cx: &<T::Summary as Summary>::Context,
     ) -> FilterCursor<F, T, U>
     where
-        F: Fn(&T::Summary) -> bool,
+        F: FnMut(&T::Summary) -> bool,
         U: Dimension<'a, T::Summary>,
     {
         FilterCursor::new(self, filter_node, cx)

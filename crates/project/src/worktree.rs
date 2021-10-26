@@ -1190,7 +1190,6 @@ impl LocalWorktree {
         diagnostics: lsp::PublishDiagnosticsParams,
         cx: &mut ModelContext<Worktree>,
     ) {
-        //
     }
 }
 

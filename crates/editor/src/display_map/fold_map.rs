@@ -720,7 +720,7 @@ fn intersecting_folds<'a, T>(
     folds: &'a SumTree<Fold>,
     range: Range<T>,
     inclusive: bool,
-) -> FilterCursor<'a, impl 'a + Fn(&FoldSummary) -> bool, Fold, usize>
+) -> FilterCursor<'a, impl 'a + FnMut(&FoldSummary) -> bool, Fold, usize>
 where
     T: ToOffset,
 {

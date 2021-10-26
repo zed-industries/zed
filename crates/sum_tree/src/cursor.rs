@@ -184,9 +184,9 @@ where
         self.next_internal(|_| true, cx)
     }
 
-    fn next_internal<F>(&mut self, filter_node: F, cx: &<T::Summary as Summary>::Context)
+    fn next_internal<F>(&mut self, mut filter_node: F, cx: &<T::Summary as Summary>::Context)
     where
-        F: Fn(&T::Summary) -> bool,
+        F: FnMut(&T::Summary) -> bool,
     {
         let mut descend = false;
 
@@ -509,24 +509,24 @@ where
     }
 }
 
-pub struct FilterCursor<'a, F: Fn(&T::Summary) -> bool, T: Item, D> {
+pub struct FilterCursor<'a, F: FnMut(&T::Summary) -> bool, T: Item, D> {
     cursor: Cursor<'a, T, D>,
     filter_node: F,
 }
 
 impl<'a, F, T, D> FilterCursor<'a, F, T, D>
 where
-    F: Fn(&T::Summary) -> bool,
+    F: FnMut(&T::Summary) -> bool,
     T: Item,
     D: Dimension<'a, T::Summary>,
 {
     pub fn new(
         tree: &'a SumTree<T>,
-        filter_node: F,
+        mut filter_node: F,
         cx: &<T::Summary as Summary>::Context,
     ) -> Self {
         let mut cursor = tree.cursor::<D>();
-        cursor.next_internal(&filter_node, cx);
+        cursor.next_internal(&mut filter_node, cx);
         Self {
             cursor,
             filter_node,
@@ -542,7 +542,7 @@ where
     }
 
     pub fn next(&mut self, cx: &<T::Summary as Summary>::Context) {
-        self.cursor.next_internal(&self.filter_node, cx);
+        self.cursor.next_internal(&mut self.filter_node, cx);
     }
 }
 

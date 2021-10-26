@@ -20,6 +20,7 @@ use rpc::proto;
 pub use selection::*;
 use std::{
     cmp,
+    collections::{BTreeMap, BTreeSet},
     convert::{TryFrom, TryInto},
     iter::Iterator,
     ops::Range,
@@ -315,7 +316,7 @@ impl UndoMap {
     }
 }
 
-struct Edits<'a, F: Fn(&FragmentSummary) -> bool> {
+struct Edits<'a, F: FnMut(&FragmentSummary) -> bool> {
     visible_text: &'a Rope,
     deleted_text: &'a Rope,
     cursor: Option<FilterCursor<'a, F, Fragment, FragmentTextSummary>>,
@@ -1836,6 +1837,56 @@ impl<'a> Content<'a> {
         AnchorRangeSet(self.anchor_range_map(entries.into_iter().map(|range| (range, ()))))
     }
 
+    pub fn anchor_range_multimap<T, E, O>(
+        &self,
+        start_bias: Bias,
+        end_bias: Bias,
+        entries: E,
+    ) -> AnchorRangeMultimap<T>
+    where
+        T: Clone,
+        E: IntoIterator<Item = (Range<O>, T)>,
+        O: ToOffset,
+    {
+        let mut items = Vec::new();
+        let mut endpoints = BTreeMap::new();
+        for (ix, (range, value)) in entries.into_iter().enumerate() {
+            items.push(AnchorRangeMultimapEntry {
+                range: FullOffsetRange { start: 0, end: 0 },
+                value,
+            });
+            endpoints
+                .entry((range.start.to_offset(self), start_bias))
+                .or_insert(Vec::new())
+                .push((ix, true));
+            endpoints
+                .entry((range.end.to_offset(self), end_bias))
+                .or_insert(Vec::new())
+                .push((ix, false));
+        }
+
+        let mut cursor = self.fragments.cursor::<FragmentTextSummary>();
+        for ((endpoint, bias), item_ixs) in endpoints {
+            cursor.seek_forward(&endpoint, bias, &None);
+            let full_offset = cursor.start().deleted + endpoint;
+            for (item_ix, is_start) in item_ixs {
+                if is_start {
+                    items[item_ix].range.start = full_offset;
+                } else {
+                    items[item_ix].range.end = full_offset;
+                }
+            }
+        }
+        items.sort_unstable_by_key(|i| (i.range.start, i.range.end));
+
+        AnchorRangeMultimap {
+            entries: SumTree::from_iter(items, &()),
+            version: self.version.clone(),
+            start_bias,
+            end_bias,
+        }
+    }
+
     fn full_offset_for_anchor(&self, anchor: &Anchor) -> usize {
         let cx = Some(anchor.version.clone());
         let mut cursor = self
@@ -1917,7 +1968,7 @@ impl<'a> RopeBuilder<'a> {
     }
 }
 
-impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
+impl<'a, F: FnMut(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
     type Item = Edit;
 
     fn next(&mut self) -> Option<Self::Item> {
