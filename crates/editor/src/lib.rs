@@ -2763,7 +2763,7 @@ impl EditorSettings {
                         font_size: 14.,
                         color: Color::from_u32(0xff0000ff),
                         font_properties,
-                        underline: false,
+                        underline: None,
                     },
                     placeholder_text: None,
                     background: Default::default(),

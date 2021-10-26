@@ -417,21 +417,21 @@ mod tests {
         let menlo_regular = RunStyle {
             font_id: fonts.select_font(&menlo, &Properties::new()).unwrap(),
             color: Default::default(),
-            underline: false,
+            underline: None,
         };
         let menlo_italic = RunStyle {
             font_id: fonts
                 .select_font(&menlo, &Properties::new().style(Style::Italic))
                 .unwrap(),
             color: Default::default(),
-            underline: false,
+            underline: None,
         };
         let menlo_bold = RunStyle {
             font_id: fonts
                 .select_font(&menlo, &Properties::new().weight(Weight::BOLD))
                 .unwrap(),
             color: Default::default(),
-            underline: false,
+            underline: None,
         };
         assert_ne!(menlo_regular, menlo_italic);
         assert_ne!(menlo_regular, menlo_bold);
@@ -458,13 +458,13 @@ mod tests {
         let zapfino_regular = RunStyle {
             font_id: fonts.select_font(&zapfino, &Properties::new())?,
             color: Default::default(),
-            underline: false,
+            underline: None,
         };
         let menlo = fonts.load_family("Menlo")?;
         let menlo_regular = RunStyle {
             font_id: fonts.select_font(&menlo, &Properties::new())?,
             color: Default::default(),
-            underline: false,
+            underline: None,
         };
 
         let text = "This is, m𐍈re 𐍈r less, Zapfino!𐍈";
@@ -543,7 +543,7 @@ mod tests {
         let style = RunStyle {
             font_id: fonts.select_font(&font_ids, &Default::default()).unwrap(),
             color: Default::default(),
-            underline: false,
+            underline: None,
         };
 
         let line = "\u{feff}";

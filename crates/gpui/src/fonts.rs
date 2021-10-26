@@ -27,14 +27,14 @@ pub struct TextStyle {
     pub font_id: FontId,
     pub font_size: f32,
     pub font_properties: Properties,
-    pub underline: bool,
+    pub underline: Option<Color>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct HighlightStyle {
     pub color: Color,
     pub font_properties: Properties,
-    pub underline: bool,
+    pub underline: Option<Color>,
 }
 
 #[allow(non_camel_case_types)]
@@ -64,7 +64,7 @@ struct TextStyleJson {
     #[serde(default)]
     italic: bool,
     #[serde(default)]
-    underline: bool,
+    underline: UnderlineStyleJson,
 }
 
 #[derive(Deserialize)]
@@ -74,7 +74,14 @@ struct HighlightStyleJson {
     #[serde(default)]
     italic: bool,
     #[serde(default)]
-    underline: bool,
+    underline: UnderlineStyleJson,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum UnderlineStyleJson {
+    Underlined(bool),
+    UnderlinedWithColor(Color),
 }
 
 impl TextStyle {
@@ -82,7 +89,7 @@ impl TextStyle {
         font_family_name: impl Into<Arc<str>>,
         font_size: f32,
         font_properties: Properties,
-        underline: bool,
+        underline: Option<Color>,
         color: Color,
         font_cache: &FontCache,
     ) -> anyhow::Result<Self> {
@@ -116,7 +123,7 @@ impl TextStyle {
                     json.family,
                     json.size,
                     font_properties,
-                    json.underline,
+                    underline_from_json(json.underline, json.color),
                     json.color,
                     font_cache,
                 )
@@ -167,6 +174,12 @@ impl From<TextStyle> for HighlightStyle {
     }
 }
 
+impl Default for UnderlineStyleJson {
+    fn default() -> Self {
+        Self::Underlined(false)
+    }
+}
+
 impl Default for TextStyle {
     fn default() -> Self {
         FONT_CACHE.with(|font_cache| {
@@ -199,7 +212,7 @@ impl HighlightStyle {
         Self {
             color: json.color,
             font_properties,
-            underline: json.underline,
+            underline: underline_from_json(json.underline, json.color),
         }
     }
 }
@@ -209,7 +222,7 @@ impl From<Color> for HighlightStyle {
         Self {
             color,
             font_properties: Default::default(),
-            underline: false,
+            underline: None,
         }
     }
 }
@@ -248,9 +261,17 @@ impl<'de> Deserialize<'de> for HighlightStyle {
             Ok(Self {
                 color: serde_json::from_value(json).map_err(de::Error::custom)?,
                 font_properties: Properties::new(),
-                underline: false,
+                underline: None,
             })
         }
+    }
+}
+
+fn underline_from_json(json: UnderlineStyleJson, text_color: Color) -> Option<Color> {
+    match json {
+        UnderlineStyleJson::Underlined(false) => None,
+        UnderlineStyleJson::Underlined(true) => Some(text_color),
+        UnderlineStyleJson::UnderlinedWithColor(color) => Some(color),
     }
 }
 

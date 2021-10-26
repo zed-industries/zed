@@ -37,7 +37,7 @@ impl Item for Buffer {
                     font_id,
                     font_size,
                     font_properties,
-                    underline: false,
+                    underline: None,
                 };
                 EditorSettings {
                     tab_size: settings.tab_size,

@@ -394,7 +394,7 @@ impl EditorElement {
                     RunStyle {
                         font_id: style.text.font_id,
                         color: Color::black(),
-                        underline: false,
+                        underline: None,
                     },
                 )],
             )
@@ -435,7 +435,7 @@ impl EditorElement {
                         RunStyle {
                             font_id: style.text.font_id,
                             color,
-                            underline: false,
+                            underline: None,
                         },
                     )],
                 )));
@@ -476,7 +476,7 @@ impl EditorElement {
                             RunStyle {
                                 font_id: placeholder_style.font_id,
                                 color: placeholder_style.color,
-                                underline: false,
+                                underline: None,
                             },
                         )],
                     )
@@ -859,7 +859,7 @@ impl LayoutState {
                 RunStyle {
                     font_id: self.style.text.font_id,
                     color: Color::black(),
-                    underline: false,
+                    underline: None,
                 },
             )],
         )
