@@ -3,7 +3,7 @@ use super::{
     ignore::IgnoreStack,
 };
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope};
 use clock::ReplicaId;
 use futures::{Stream, StreamExt};
@@ -891,17 +891,25 @@ impl LocalWorktree {
                         .select_language(file.full_path(cx))
                         .cloned()
                 });
+                let diagnostics = this.update(&mut cx, |this, _| {
+                    this.as_local_mut()
+                        .unwrap()
+                        .diagnostics
+                        .remove(path.as_ref())
+                });
                 let buffer = cx.add_model(|cx| {
-                    Buffer::from_file(0, contents, Box::new(file), cx).with_language(
-                        language,
-                        language_server,
-                        cx,
-                    )
+                    let mut buffer = Buffer::from_file(0, contents, Box::new(file), cx);
+                    buffer.set_language(language, language_server, cx);
+                    if let Some(diagnostics) = diagnostics {
+                        buffer.update_diagnostics(None, diagnostics, cx).unwrap();
+                    }
+                    buffer
                 });
                 this.update(&mut cx, |this, _| {
                     let this = this
                         .as_local_mut()
                         .ok_or_else(|| anyhow!("must be a local worktree"))?;
+
                     this.open_buffers.insert(buffer.id(), buffer.downgrade());
                     Ok(buffer)
                 })
@@ -1201,7 +1209,10 @@ impl LocalWorktree {
         let file_path = params
             .uri
             .to_file_path()
-            .map_err(|_| anyhow!("URI is not a file"))?;
+            .map_err(|_| anyhow!("URI is not a file"))?
+            .strip_prefix(&self.abs_path)
+            .context("path is not within worktree")?
+            .to_owned();
 
         for buffer in self.open_buffers.values() {
             if let Some(buffer) = buffer.upgrade(cx) {
@@ -1210,7 +1221,9 @@ impl LocalWorktree {
                     .file()
                     .map_or(false, |file| file.path().as_ref() == file_path)
                 {
-                    buffer.update(cx, |buffer, cx| buffer.update_diagnostics(params, cx))?;
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.update_diagnostics(params.version, params.diagnostics, cx)
+                    })?;
                     return Ok(());
                 }
             }
@@ -2862,8 +2875,10 @@ mod tests {
     use super::*;
     use crate::fs::FakeFs;
     use anyhow::Result;
+    use buffer::Point;
     use client::test::FakeServer;
     use fs::RealFs;
+    use language::Diagnostic;
     use lsp::Url;
     use rand::prelude::*;
     use serde_json::json;
@@ -2873,7 +2888,6 @@ mod tests {
         fmt::Write,
         time::{SystemTime, UNIX_EPOCH},
     };
-    use unindent::Unindent as _;
     use util::test::temp_tree;
 
     #[gpui::test]
@@ -3499,13 +3513,8 @@ mod tests {
     async fn test_language_server_diagnostics(mut cx: gpui::TestAppContext) {
         let (language_server, mut fake_lsp) = LanguageServer::fake(&cx.background()).await;
         let dir = temp_tree(json!({
-            "a.rs": "
-                fn a() { A }
-                fn b() { BB }
-            ".unindent(),
-            "b.rs": "
-                const y: i32 = 1
-            ".unindent(),
+            "a.rs": "fn a() { A }",
+            "b.rs": "const y: i32 = 1",
         }));
 
         let tree = Worktree::open_local(
@@ -3525,20 +3534,12 @@ mod tests {
             .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
                 uri: Url::from_file_path(dir.path().join("a.rs")).unwrap(),
                 version: None,
-                diagnostics: vec![
-                    lsp::Diagnostic {
-                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
-                        severity: Some(lsp::DiagnosticSeverity::ERROR),
-                        message: "undefined variable 'A'".to_string(),
-                        ..Default::default()
-                    },
-                    lsp::Diagnostic {
-                        range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(2, 11)),
-                        severity: Some(lsp::DiagnosticSeverity::ERROR),
-                        message: "undefined variable 'BB'".to_string(),
-                        ..Default::default()
-                    },
-                ],
+                diagnostics: vec![lsp::Diagnostic {
+                    range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                    severity: Some(lsp::DiagnosticSeverity::ERROR),
+                    message: "undefined variable 'A'".to_string(),
+                    ..Default::default()
+                }],
             })
             .await;
 
@@ -3547,7 +3548,19 @@ mod tests {
             .await
             .unwrap();
 
-        // Check buffer's diagnostics
+        buffer.read_with(&cx, |buffer, _| {
+            let diagnostics = buffer
+                .diagnostics_in_range(0..buffer.len())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                diagnostics,
+                &[Diagnostic {
+                    range: Point::new(0, 9)..Point::new(0, 10),
+                    severity: lsp::DiagnosticSeverity::ERROR,
+                    message: "undefined variable 'A'".to_string()
+                }]
+            )
+        });
     }
 
     #[gpui::test(iterations = 100)]
