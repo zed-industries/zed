@@ -165,14 +165,20 @@ impl AnchorRangeSet {
 }
 
 impl<T: Clone> AnchorRangeMultimap<T> {
-    fn intersecting_point_ranges<'a>(
+    fn intersecting_point_ranges<'a, O>(
         &'a self,
-        range: Range<Anchor>,
+        range: Range<O>,
         content: &'a Content<'a>,
         inclusive: bool,
-    ) -> impl Iterator<Item = (usize, Range<Point>, &T)> + 'a {
+    ) -> impl Iterator<Item = (usize, Range<Point>, &T)> + 'a
+    where
+        O: ToOffset,
+    {
         use super::ToPoint as _;
 
+        let end_bias = if inclusive { Bias::Right } else { Bias::Left };
+        let range = range.start.to_full_offset(content, Bias::Left)
+            ..range.end.to_full_offset(content, end_bias);
         let mut cursor = self.entries.filter::<_, usize>(
             {
                 let mut endpoint = Anchor {
@@ -183,11 +189,13 @@ impl<T: Clone> AnchorRangeMultimap<T> {
                 move |summary: &AnchorRangeMultimapSummary| {
                     endpoint.full_offset = summary.max_end;
                     endpoint.bias = self.end_bias;
-                    let start_cmp = range.start.cmp(&endpoint, content).unwrap();
+                    let max_end = endpoint.to_full_offset(content, self.end_bias);
+                    let start_cmp = range.start.cmp(&max_end);
 
                     endpoint.full_offset = summary.min_start;
                     endpoint.bias = self.start_bias;
-                    let end_cmp = range.end.cmp(&endpoint, content).unwrap();
+                    let min_start = endpoint.to_full_offset(content, self.start_bias);
+                    let end_cmp = range.end.cmp(&min_start);
 
                     if inclusive {
                         start_cmp <= Ordering::Equal && end_cmp >= Ordering::Equal
