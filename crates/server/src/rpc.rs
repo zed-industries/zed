@@ -1016,6 +1016,7 @@ mod tests {
             "/a".as_ref(),
             fs,
             lang_registry.clone(),
+            None,
             &mut cx_a.to_async(),
         )
         .await
@@ -1124,6 +1125,7 @@ mod tests {
             "/a".as_ref(),
             fs,
             lang_registry.clone(),
+            None,
             &mut cx_a.to_async(),
         )
         .await
@@ -1216,6 +1218,7 @@ mod tests {
             "/a".as_ref(),
             fs.clone(),
             lang_registry.clone(),
+            None,
             &mut cx_a.to_async(),
         )
         .await
@@ -1352,6 +1355,7 @@ mod tests {
             "/dir".as_ref(),
             fs,
             lang_registry.clone(),
+            None,
             &mut cx_a.to_async(),
         )
         .await
@@ -1436,6 +1440,7 @@ mod tests {
             "/dir".as_ref(),
             fs,
             lang_registry.clone(),
+            None,
             &mut cx_a.to_async(),
         )
         .await
@@ -1502,6 +1507,7 @@ mod tests {
             "/dir".as_ref(),
             fs,
             lang_registry.clone(),
+            None,
             &mut cx_a.to_async(),
         )
         .await
@@ -1563,6 +1569,7 @@ mod tests {
             "/a".as_ref(),
             fs,
             lang_registry.clone(),
+            None,
             &mut cx_a.to_async(),
         )
         .await
@@ -2033,6 +2040,7 @@ mod tests {
             "/a".as_ref(),
             fs.clone(),
             lang_registry.clone(),
+            None,
             &mut cx_a.to_async(),
         )
         .await
