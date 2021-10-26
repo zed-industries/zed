@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufWriter, AsyncRead, AsyncWrite};
-use gpui::{executor, AppContext, Task};
+use gpui::{executor, Task};
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, oneshot, prelude::Stream, sink::Sink};
 use serde::{Deserialize, Serialize};
@@ -86,47 +86,25 @@ struct Error {
 }
 
 impl LanguageServer {
-    pub fn rust(root_path: &Path, cx: &AppContext) -> Result<Arc<Self>> {
-        const ZED_BUNDLE: Option<&'static str> = option_env!("ZED_BUNDLE");
-        const ZED_TARGET: &'static str = env!("ZED_TARGET");
-
-        let rust_analyzer_name = format!("rust-analyzer-{}", ZED_TARGET);
-        if ZED_BUNDLE.map_or(Ok(false), |b| b.parse())? {
-            let rust_analyzer_path = cx
-                .platform()
-                .path_for_resource(Some(&rust_analyzer_name), None)?;
-            Self::new(root_path, &rust_analyzer_path, &[], cx.background())
-        } else {
-            Self::new(
-                root_path,
-                Path::new(&rust_analyzer_name),
-                &[],
-                cx.background(),
-            )
-        }
-    }
-
     pub fn new(
+        binary_path: &Path,
         root_path: &Path,
-        server_path: &Path,
-        server_args: &[&str],
         background: &executor::Background,
     ) -> Result<Arc<Self>> {
-        let mut server = Command::new(server_path)
-            .args(server_args)
+        let mut server = Command::new(binary_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()?;
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
-        Self::new_internal(root_path, stdin, stdout, background)
+        Self::new_internal(stdin, stdout, root_path, background)
     }
 
     fn new_internal<Stdin, Stdout>(
-        root_path: &Path,
         stdin: Stdin,
         stdout: Stdout,
+        root_path: &Path,
         background: &executor::Background,
     ) -> Result<Arc<Self>>
     where
@@ -410,7 +388,7 @@ impl LanguageServer {
             buffer: Vec::new(),
         };
 
-        let server = Self::new_internal(Path::new("/"), stdin.0, stdout.1, executor).unwrap();
+        let server = Self::new_internal(stdin.0, stdout.1, Path::new("/"), executor).unwrap();
 
         let (init_id, _) = fake.receive_request::<request::Initialize>().await;
         fake.respond(init_id, InitializeResult::default()).await;
@@ -535,7 +513,10 @@ mod tests {
         let lib_file_uri =
             lsp_types::Url::from_file_path(root_dir.path().join("src/lib.rs")).unwrap();
 
-        let server = cx.read(|cx| LanguageServer::rust(root_dir.path(), cx).unwrap());
+        let server = cx.read(|cx| {
+            LanguageServer::new(Path::new("rust-analyzer"), root_dir.path(), cx.background())
+                .unwrap()
+        });
         server.next_idle_notification().await;
 
         server

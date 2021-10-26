@@ -8,3 +8,7 @@ brackets = [
     { start = "\"", end = "\"", close = true, newline = false },
     { start = "/*", end = " */", close = true, newline = false },
 ]
+
+[language_server]
+binary = "rust-analyzer"
+disk_based_diagnostic_sources = ["rustc"]

@@ -295,7 +295,7 @@ impl Worktree {
         }
     }
 
-    pub fn language_server(&self) -> Option<&Arc<lsp::LanguageServer>> {
+    pub fn language_server(&self) -> Option<&Arc<LanguageServer>> {
         match self {
             Worktree::Local(worktree) => worktree.language_server.as_ref(),
             Worktree::Remote(_) => None,
@@ -2872,7 +2872,6 @@ mod tests {
     use anyhow::Result;
     use client::test::FakeServer;
     use fs::RealFs;
-    use language::Point;
     use lsp::Url;
     use rand::prelude::*;
     use serde_json::json;

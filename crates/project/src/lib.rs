@@ -8,12 +8,11 @@ use futures::Future;
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 use language::LanguageRegistry;
-use lsp::LanguageServer;
 use std::{
     path::Path,
     sync::{atomic::AtomicBool, Arc},
 };
-use util::TryFutureExt as _;
+use util::{ResultExt, TryFutureExt as _};
 
 pub use fs::*;
 pub use worktree::*;
@@ -74,11 +73,20 @@ impl Project {
         let rpc = self.client.clone();
         let languages = self.languages.clone();
         let path = Arc::from(abs_path);
-        let language_server = LanguageServer::rust(&path, cx);
+        let language_server = languages
+            .get_language("Rust")
+            .unwrap()
+            .start_server(&path, cx);
         cx.spawn(|this, mut cx| async move {
-            let worktree =
-                Worktree::open_local(rpc, path, fs, languages, Some(language_server?), &mut cx)
-                    .await?;
+            let worktree = Worktree::open_local(
+                rpc,
+                path,
+                fs,
+                languages,
+                language_server.log_err().flatten(),
+                &mut cx,
+            )
+            .await?;
             this.update(&mut cx, |this, cx| {
                 this.add_worktree(worktree.clone(), cx);
             });

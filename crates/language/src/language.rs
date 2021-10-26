@@ -1,5 +1,6 @@
 use crate::HighlightMap;
 use anyhow::Result;
+use gpui::AppContext;
 use parking_lot::Mutex;
 use serde::Deserialize;
 use std::{path::Path, str, sync::Arc};
@@ -12,6 +13,13 @@ pub struct LanguageConfig {
     pub name: String,
     pub path_suffixes: Vec<String>,
     pub brackets: Vec<BracketPair>,
+    pub language_server: Option<LanguageServerConfig>,
+}
+
+#[derive(Deserialize)]
+pub struct LanguageServerConfig {
+    pub binary: String,
+    pub disk_based_diagnostic_sources: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -49,6 +57,12 @@ impl LanguageRegistry {
         for language in &self.languages {
             language.set_theme(theme);
         }
+    }
+
+    pub fn get_language(&self, name: &str) -> Option<&Arc<Language>> {
+        self.languages
+            .iter()
+            .find(|language| language.name() == name)
     }
 
     pub fn select_language(&self, path: impl AsRef<Path>) -> Option<&Arc<Language>> {
@@ -95,6 +109,32 @@ impl Language {
 
     pub fn name(&self) -> &str {
         self.config.name.as_str()
+    }
+
+    pub fn start_server(
+        &self,
+        root_path: &Path,
+        cx: &AppContext,
+    ) -> Result<Option<Arc<lsp::LanguageServer>>> {
+        if let Some(config) = &self.config.language_server {
+            const ZED_BUNDLE: Option<&'static str> = option_env!("ZED_BUNDLE");
+            let binary_path = if ZED_BUNDLE.map_or(Ok(false), |b| b.parse())? {
+                cx.platform()
+                    .path_for_resource(Some(&config.binary), None)?
+            } else {
+                Path::new(&config.binary).to_path_buf()
+            };
+            lsp::LanguageServer::new(&binary_path, root_path, cx.background()).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn disk_based_diagnostic_sources(&self) -> &[String] {
+        self.config
+            .language_server
+            .as_ref()
+            .map_or(&[], |config| &config.disk_based_diagnostic_sources)
     }
 
     pub fn brackets(&self) -> &[BracketPair] {
