@@ -14,6 +14,7 @@ use futures::FutureExt as _;
 use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
+use postage::{prelude::Stream, sink::Sink, watch};
 use rpc::proto;
 use similar::{ChangeTag, TextDiff};
 use smol::future::yield_now;
@@ -32,7 +33,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tree_sitter::{InputEdit, Parser, QueryCursor, Tree};
-use util::TryFutureExt as _;
+use util::{post_inc, TryFutureExt as _};
 
 thread_local! {
     static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
@@ -57,6 +58,8 @@ pub struct Buffer {
     syntax_tree: Mutex<Option<SyntaxTree>>,
     parsing_in_background: bool,
     parse_count: usize,
+    diagnostics: AnchorRangeMultimap<()>,
+    language_server: Option<LanguageServerState>,
     #[cfg(test)]
     operations: Vec<Operation>,
 }
@@ -67,6 +70,20 @@ pub struct Snapshot {
     is_parsing: bool,
     language: Option<Arc<Language>>,
     query_cursor: QueryCursorHandle,
+}
+
+struct LanguageServerState {
+    latest_snapshot: watch::Sender<Option<LanguageServerSnapshot>>,
+    pending_snapshots: BTreeMap<usize, LanguageServerSnapshot>,
+    next_version: usize,
+    _maintain_server: Task<Option<()>>,
+}
+
+#[derive(Clone)]
+struct LanguageServerSnapshot {
+    buffer_snapshot: buffer::Snapshot,
+    version: usize,
+    path: Arc<Path>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -87,8 +104,14 @@ pub trait File {
 
     fn mtime(&self) -> SystemTime;
 
+    /// Returns the path of this file relative to the worktree's root directory.
     fn path(&self) -> &Arc<Path>;
 
+    /// Returns the absolute path of this file.
+    fn abs_path(&self, cx: &AppContext) -> Option<PathBuf>;
+
+    /// Returns the path of this file relative to the worktree's parent directory (this means it
+    /// includes the name of the worktree's root folder).
     fn full_path(&self, cx: &AppContext) -> PathBuf;
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
@@ -173,6 +196,7 @@ impl Buffer {
             ),
             None,
             None,
+            None,
             cx,
         )
     }
@@ -182,12 +206,14 @@ impl Buffer {
         history: History,
         file: Option<Box<dyn File>>,
         language: Option<Arc<Language>>,
+        language_server: Option<Arc<lsp::LanguageServer>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self::build(
             TextBuffer::new(replica_id, cx.model_id() as u64, history),
             file,
             language,
+            language_server,
             cx,
         )
     }
@@ -203,6 +229,7 @@ impl Buffer {
             TextBuffer::from_proto(replica_id, message)?,
             file,
             language,
+            None,
             cx,
         ))
     }
@@ -211,6 +238,7 @@ impl Buffer {
         buffer: TextBuffer,
         file: Option<Box<dyn File>>,
         language: Option<Arc<Language>>,
+        language_server: Option<Arc<lsp::LanguageServer>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let saved_mtime;
@@ -231,12 +259,13 @@ impl Buffer {
             sync_parse_timeout: Duration::from_millis(1),
             autoindent_requests: Default::default(),
             pending_autoindent: Default::default(),
-            language,
-
+            language: None,
+            diagnostics: Default::default(),
+            language_server: None,
             #[cfg(test)]
             operations: Default::default(),
         };
-        result.reparse(cx);
+        result.set_language(language, language_server, cx);
         result
     }
 
@@ -274,9 +303,90 @@ impl Buffer {
         }))
     }
 
-    pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
+    pub fn set_language(
+        &mut self,
+        language: Option<Arc<Language>>,
+        language_server: Option<Arc<lsp::LanguageServer>>,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.language = language;
+        self.language_server = if let Some(server) = language_server {
+            let (latest_snapshot_tx, mut latest_snapshot_rx) = watch::channel();
+            Some(LanguageServerState {
+                latest_snapshot: latest_snapshot_tx,
+                pending_snapshots: Default::default(),
+                next_version: 0,
+                _maintain_server: cx.background().spawn(
+                    async move {
+                        let mut prev_snapshot: Option<LanguageServerSnapshot> = None;
+                        while let Some(snapshot) = latest_snapshot_rx.recv().await {
+                            if let Some(snapshot) = snapshot {
+                                let uri = lsp::Url::from_file_path(&snapshot.path).unwrap();
+                                if let Some(prev_snapshot) = prev_snapshot {
+                                    let changes = lsp::DidChangeTextDocumentParams {
+                                        text_document: lsp::VersionedTextDocumentIdentifier::new(
+                                            uri,
+                                            snapshot.version as i32,
+                                        ),
+                                        content_changes: snapshot
+                                            .buffer_snapshot
+                                            .edits_since(
+                                                prev_snapshot.buffer_snapshot.version().clone(),
+                                            )
+                                            .map(|edit| {
+                                                lsp::TextDocumentContentChangeEvent {
+                                                    // TODO: Use UTF-16 positions.
+                                                    range: Some(lsp::Range::new(
+                                                        lsp::Position::new(
+                                                            edit.old_lines.start.row,
+                                                            edit.old_lines.start.column,
+                                                        ),
+                                                        lsp::Position::new(
+                                                            edit.old_lines.end.row,
+                                                            edit.old_lines.end.column,
+                                                        ),
+                                                    )),
+                                                    range_length: None,
+                                                    text: snapshot
+                                                        .buffer_snapshot
+                                                        .text_for_range(edit.new_bytes)
+                                                        .collect(),
+                                                }
+                                            })
+                                            .collect(),
+                                    };
+                                    server
+                                        .notify::<lsp::notification::DidChangeTextDocument>(changes)
+                                        .await?;
+                                } else {
+                                    server
+                                        .notify::<lsp::notification::DidOpenTextDocument>(
+                                            lsp::DidOpenTextDocumentParams {
+                                                text_document: lsp::TextDocumentItem::new(
+                                                    uri,
+                                                    Default::default(),
+                                                    snapshot.version as i32,
+                                                    snapshot.buffer_snapshot.text().into(),
+                                                ),
+                                            },
+                                        )
+                                        .await?;
+                                }
+
+                                prev_snapshot = Some(snapshot);
+                            }
+                        }
+                        Ok(())
+                    }
+                    .log_err(),
+                ),
+            })
+        } else {
+            None
+        };
+
         self.reparse(cx);
+        self.update_language_server(cx);
     }
 
     pub fn did_save(
@@ -484,6 +594,45 @@ impl Buffer {
         self.request_autoindent(cx);
         cx.emit(Event::Reparsed);
         cx.notify();
+    }
+
+    pub fn update_diagnostics(
+        &mut self,
+        params: lsp::PublishDiagnosticsParams,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        dbg!(&params);
+        let language_server = self.language_server.as_mut().unwrap();
+        let version = params.version.ok_or_else(|| anyhow!("missing version"))? as usize;
+        let snapshot = language_server
+            .pending_snapshots
+            .get(&version)
+            .ok_or_else(|| anyhow!("missing snapshot"))?;
+        self.diagnostics = snapshot.buffer_snapshot.content().anchor_range_multimap(
+            Bias::Left,
+            Bias::Right,
+            params.diagnostics.into_iter().map(|diagnostic| {
+                // TODO: Use UTF-16 positions.
+                let start = Point::new(
+                    diagnostic.range.start.line,
+                    diagnostic.range.start.character,
+                );
+                let end = Point::new(diagnostic.range.end.line, diagnostic.range.end.character);
+                (start..end, ())
+            }),
+        );
+
+        let versions_to_delete = language_server
+            .pending_snapshots
+            .range(..version)
+            .map(|(v, _)| *v)
+            .collect::<Vec<_>>();
+        for version in versions_to_delete {
+            language_server.pending_snapshots.remove(&version);
+        }
+
+        cx.notify();
+        Ok(())
     }
 
     fn request_autoindent(&mut self, cx: &mut ModelContext<Self>) {
@@ -811,15 +960,36 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         if let Some(start_version) = self.text.end_transaction_at(selection_set_ids, now) {
-            cx.notify();
             let was_dirty = start_version != self.saved_version;
-            let edited = self.edits_since(start_version).next().is_some();
-            if edited {
-                self.did_edit(was_dirty, cx);
-                self.reparse(cx);
-            }
+            self.did_edit(start_version, was_dirty, cx);
         }
         Ok(())
+    }
+
+    fn update_language_server(&mut self, cx: &AppContext) {
+        let language_server = if let Some(language_server) = self.language_server.as_mut() {
+            language_server
+        } else {
+            return;
+        };
+        let file = if let Some(file) = self.file.as_ref() {
+            file
+        } else {
+            return;
+        };
+
+        let version = post_inc(&mut language_server.next_version);
+        let snapshot = LanguageServerSnapshot {
+            buffer_snapshot: self.text.snapshot(),
+            version,
+            path: Arc::from(file.abs_path(cx).unwrap()),
+        };
+        language_server
+            .pending_snapshots
+            .insert(version, snapshot.clone());
+        let _ = language_server
+            .latest_snapshot
+            .blocking_send(Some(snapshot));
     }
 
     pub fn edit<I, S, T>(&mut self, ranges_iter: I, new_text: T, cx: &mut ModelContext<Self>)
@@ -929,11 +1099,24 @@ impl Buffer {
         self.send_operation(Operation::Edit(edit), cx);
     }
 
-    fn did_edit(&self, was_dirty: bool, cx: &mut ModelContext<Self>) {
+    fn did_edit(
+        &mut self,
+        old_version: clock::Global,
+        was_dirty: bool,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if self.edits_since(old_version).next().is_none() {
+            return;
+        }
+
+        self.reparse(cx);
+        self.update_language_server(cx);
+
         cx.emit(Event::Edited);
         if !was_dirty {
             cx.emit(Event::Dirtied);
         }
+        cx.notify();
     }
 
     pub fn add_selection_set(
@@ -991,18 +1174,10 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         self.pending_autoindent.take();
-
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
-
         self.text.apply_ops(ops)?;
-
-        cx.notify();
-        if self.edits_since(old_version).next().is_some() {
-            self.did_edit(was_dirty, cx);
-            self.reparse(cx);
-        }
-
+        self.did_edit(old_version, was_dirty, cx);
         Ok(())
     }
 
@@ -1031,11 +1206,7 @@ impl Buffer {
             self.send_operation(operation, cx);
         }
 
-        cx.notify();
-        if self.edits_since(old_version).next().is_some() {
-            self.did_edit(was_dirty, cx);
-            self.reparse(cx);
-        }
+        self.did_edit(old_version, was_dirty, cx);
     }
 
     pub fn redo(&mut self, cx: &mut ModelContext<Self>) {
@@ -1046,11 +1217,7 @@ impl Buffer {
             self.send_operation(operation, cx);
         }
 
-        cx.notify();
-        if self.edits_since(old_version).next().is_some() {
-            self.did_edit(was_dirty, cx);
-            self.reparse(cx);
-        }
+        self.did_edit(old_version, was_dirty, cx);
     }
 }
 
@@ -1081,6 +1248,7 @@ impl Entity for Buffer {
     }
 }
 
+// TODO: Do we need to clone a buffer?
 impl Clone for Buffer {
     fn clone(&self) -> Self {
         Self {
@@ -1095,7 +1263,8 @@ impl Clone for Buffer {
             parse_count: self.parse_count,
             autoindent_requests: Default::default(),
             pending_autoindent: Default::default(),
-
+            diagnostics: self.diagnostics.clone(),
+            language_server: None,
             #[cfg(test)]
             operations: self.operations.clone(),
         }

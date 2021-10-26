@@ -19,8 +19,7 @@ pub use rope::{Chunks, Rope, TextSummary};
 use rpc::proto;
 pub use selection::*;
 use std::{
-    cmp,
-    collections::{BTreeMap, BTreeSet},
+    cmp::{self, Reverse},
     convert::{TryFrom, TryInto},
     iter::Iterator,
     ops::Range,
@@ -534,6 +533,8 @@ impl Buffer {
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             visible_text: self.visible_text.clone(),
+            deleted_text: self.deleted_text.clone(),
+            undo_map: self.undo_map.clone(),
             fragments: self.fragments.clone(),
             version: self.version.clone(),
         }
@@ -1344,27 +1345,7 @@ impl Buffer {
     }
 
     pub fn edits_since<'a>(&'a self, since: clock::Global) -> impl 'a + Iterator<Item = Edit> {
-        let since_2 = since.clone();
-        let cursor = if since == self.version {
-            None
-        } else {
-            Some(self.fragments.filter(
-                move |summary| summary.max_version.changed_since(&since_2),
-                &None,
-            ))
-        };
-
-        Edits {
-            visible_text: &self.visible_text,
-            deleted_text: &self.deleted_text,
-            cursor,
-            undos: &self.undo_map,
-            since,
-            old_offset: 0,
-            new_offset: 0,
-            old_point: Point::zero(),
-            new_point: Point::zero(),
-        }
+        self.content().edits_since(since)
     }
 }
 
@@ -1522,6 +1503,8 @@ impl Buffer {
 #[derive(Clone)]
 pub struct Snapshot {
     visible_text: Rope,
+    deleted_text: Rope,
+    undo_map: UndoMap,
     fragments: SumTree<Fragment>,
     version: clock::Global,
 }
@@ -1596,6 +1579,14 @@ impl Snapshot {
         self.content().anchor_at(position, Bias::Right)
     }
 
+    pub fn edits_since<'a>(&'a self, since: clock::Global) -> impl 'a + Iterator<Item = Edit> {
+        self.content().edits_since(since)
+    }
+
+    pub fn version(&self) -> &clock::Global {
+        &self.version
+    }
+
     pub fn content(&self) -> Content {
         self.into()
     }
@@ -1603,6 +1594,8 @@ impl Snapshot {
 
 pub struct Content<'a> {
     visible_text: &'a Rope,
+    deleted_text: &'a Rope,
+    undo_map: &'a UndoMap,
     fragments: &'a SumTree<Fragment>,
     version: &'a clock::Global,
 }
@@ -1611,6 +1604,8 @@ impl<'a> From<&'a Snapshot> for Content<'a> {
     fn from(snapshot: &'a Snapshot) -> Self {
         Self {
             visible_text: &snapshot.visible_text,
+            deleted_text: &snapshot.deleted_text,
+            undo_map: &snapshot.undo_map,
             fragments: &snapshot.fragments,
             version: &snapshot.version,
         }
@@ -1621,6 +1616,8 @@ impl<'a> From<&'a Buffer> for Content<'a> {
     fn from(buffer: &'a Buffer) -> Self {
         Self {
             visible_text: &buffer.visible_text,
+            deleted_text: &buffer.deleted_text,
+            undo_map: &buffer.undo_map,
             fragments: &buffer.fragments,
             version: &buffer.version,
         }
@@ -1631,6 +1628,8 @@ impl<'a> From<&'a mut Buffer> for Content<'a> {
     fn from(buffer: &'a mut Buffer) -> Self {
         Self {
             visible_text: &buffer.visible_text,
+            deleted_text: &buffer.deleted_text,
+            undo_map: &buffer.undo_map,
             fragments: &buffer.fragments,
             version: &buffer.version,
         }
@@ -1641,6 +1640,8 @@ impl<'a> From<&'a Content<'a>> for Content<'a> {
     fn from(content: &'a Content) -> Self {
         Self {
             visible_text: &content.visible_text,
+            deleted_text: &content.deleted_text,
+            undo_map: &content.undo_map,
             fragments: &content.fragments,
             version: &content.version,
         }
@@ -1848,39 +1849,19 @@ impl<'a> Content<'a> {
         E: IntoIterator<Item = (Range<O>, T)>,
         O: ToOffset,
     {
-        let mut items = Vec::new();
-        let mut endpoints = BTreeMap::new();
-        for (ix, (range, value)) in entries.into_iter().enumerate() {
-            items.push(AnchorRangeMultimapEntry {
-                range: FullOffsetRange { start: 0, end: 0 },
+        let mut entries = entries
+            .into_iter()
+            .map(|(range, value)| AnchorRangeMultimapEntry {
+                range: FullOffsetRange {
+                    start: range.start.to_full_offset(self, start_bias),
+                    end: range.end.to_full_offset(self, end_bias),
+                },
                 value,
-            });
-            endpoints
-                .entry((range.start.to_offset(self), start_bias))
-                .or_insert(Vec::new())
-                .push((ix, true));
-            endpoints
-                .entry((range.end.to_offset(self), end_bias))
-                .or_insert(Vec::new())
-                .push((ix, false));
-        }
-
-        let mut cursor = self.fragments.cursor::<FragmentTextSummary>();
-        for ((endpoint, bias), item_ixs) in endpoints {
-            cursor.seek_forward(&endpoint, bias, &None);
-            let full_offset = cursor.start().deleted + endpoint;
-            for (item_ix, is_start) in item_ixs {
-                if is_start {
-                    items[item_ix].range.start = full_offset;
-                } else {
-                    items[item_ix].range.end = full_offset;
-                }
-            }
-        }
-        items.sort_unstable_by_key(|i| (i.range.start, i.range.end));
-
+            })
+            .collect::<Vec<_>>();
+        entries.sort_unstable_by_key(|i| (i.range.start, Reverse(i.range.end)));
         AnchorRangeMultimap {
-            entries: SumTree::from_iter(items, &()),
+            entries: SumTree::from_iter(entries, &()),
             version: self.version.clone(),
             start_bias,
             end_bias,
@@ -1911,6 +1892,31 @@ impl<'a> Content<'a> {
             Ok(self.text_summary_for_range(0..offset).lines)
         } else {
             Err(anyhow!("offset out of bounds"))
+        }
+    }
+
+    // TODO: take a reference to clock::Global.
+    pub fn edits_since(&self, since: clock::Global) -> impl 'a + Iterator<Item = Edit> {
+        let since_2 = since.clone();
+        let cursor = if since == *self.version {
+            None
+        } else {
+            Some(self.fragments.filter(
+                move |summary| summary.max_version.changed_since(&since_2),
+                &None,
+            ))
+        };
+
+        Edits {
+            visible_text: &self.visible_text,
+            deleted_text: &self.deleted_text,
+            cursor,
+            undos: &self.undo_map,
+            since,
+            old_offset: 0,
+            new_offset: 0,
+            old_point: Point::zero(),
+            new_point: Point::zero(),
         }
     }
 }

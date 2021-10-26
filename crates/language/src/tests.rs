@@ -80,7 +80,7 @@ async fn test_apply_diff(mut cx: gpui::TestAppContext) {
 async fn test_reparse(mut cx: gpui::TestAppContext) {
     let buffer = cx.add_model(|cx| {
         let text = "fn a() {}".into();
-        Buffer::from_history(0, History::new(text), None, Some(rust_lang()), cx)
+        Buffer::from_history(0, History::new(text), None, Some(rust_lang()), None, cx)
     });
 
     // Wait for the initial text to parse
@@ -224,7 +224,7 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
         "
         .unindent()
         .into();
-        Buffer::from_history(0, History::new(text), None, Some(rust_lang()), cx)
+        Buffer::from_history(0, History::new(text), None, Some(rust_lang()), None, cx)
     });
     let buffer = buffer.read(cx);
     assert_eq!(
@@ -254,7 +254,8 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
 fn test_edit_with_autoindent(cx: &mut MutableAppContext) {
     cx.add_model(|cx| {
         let text = "fn a() {}".into();
-        let mut buffer = Buffer::from_history(0, History::new(text), None, Some(rust_lang()), cx);
+        let mut buffer =
+            Buffer::from_history(0, History::new(text), None, Some(rust_lang()), None, cx);
 
         buffer.edit_with_autoindent([8..8], "\n\n", cx);
         assert_eq!(buffer.text(), "fn a() {\n    \n}");
@@ -273,7 +274,7 @@ fn test_edit_with_autoindent(cx: &mut MutableAppContext) {
 fn test_autoindent_moves_selections(cx: &mut MutableAppContext) {
     cx.add_model(|cx| {
         let text = History::new("fn a() {}".into());
-        let mut buffer = Buffer::from_history(0, text, None, Some(rust_lang()), cx);
+        let mut buffer = Buffer::from_history(0, text, None, Some(rust_lang()), None, cx);
 
         let selection_set_id = buffer.add_selection_set(Vec::new(), cx);
         buffer.start_transaction(Some(selection_set_id)).unwrap();
@@ -332,7 +333,8 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
         "
         .unindent()
         .into();
-        let mut buffer = Buffer::from_history(0, History::new(text), None, Some(rust_lang()), cx);
+        let mut buffer =
+            Buffer::from_history(0, History::new(text), None, Some(rust_lang()), None, cx);
 
         // Lines 2 and 3 don't match the indentation suggestion. When editing these lines,
         // their indentation is not adjusted.
@@ -383,7 +385,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
             .unindent()
             .into(),
         );
-        let mut buffer = Buffer::from_history(0, text, None, Some(rust_lang()), cx);
+        let mut buffer = Buffer::from_history(0, text, None, Some(rust_lang()), None, cx);
 
         buffer.edit_with_autoindent([5..5], "\nb", cx);
         assert_eq!(

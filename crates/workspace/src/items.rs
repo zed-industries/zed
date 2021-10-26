@@ -127,16 +127,15 @@ impl ItemView for Editor {
 
             cx.spawn(|buffer, mut cx| async move {
                 save_as.await.map(|new_file| {
-                    let language = worktree.read_with(&cx, |worktree, cx| {
-                        worktree
-                            .languages()
-                            .select_language(new_file.full_path(cx))
-                            .cloned()
+                    let (language, language_server) = worktree.read_with(&cx, |worktree, cx| {
+                        let language = worktree.languages().select_language(new_file.full_path(cx));
+                        let language_server = worktree.language_server();
+                        (language.cloned(), language_server.cloned())
                     });
 
                     buffer.update(&mut cx, |buffer, cx| {
                         buffer.did_save(version, new_file.mtime, Some(Box::new(new_file)), cx);
-                        buffer.set_language(language, cx);
+                        buffer.set_language(language, language_server, cx);
                     });
                 })
             })

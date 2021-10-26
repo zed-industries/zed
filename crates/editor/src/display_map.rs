@@ -702,7 +702,7 @@ mod tests {
         lang.set_theme(&theme);
 
         let buffer = cx.add_model(|cx| {
-            Buffer::from_history(0, History::new(text.into()), None, Some(lang), cx)
+            Buffer::from_history(0, History::new(text.into()), None, Some(lang), None, cx)
         });
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
 
@@ -790,7 +790,7 @@ mod tests {
         lang.set_theme(&theme);
 
         let buffer = cx.add_model(|cx| {
-            Buffer::from_history(0, History::new(text.into()), None, Some(lang), cx)
+            Buffer::from_history(0, History::new(text.into()), None, Some(lang), None, cx)
         });
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
 

@@ -1,6 +1,4 @@
-use crate::{Point, ToOffset};
-
-use super::{Buffer, Content};
+use super::{Buffer, Content, Point, ToOffset};
 use anyhow::Result;
 use std::{cmp::Ordering, ops::Range};
 use sum_tree::{Bias, SumTree};
@@ -30,6 +28,7 @@ pub struct AnchorRangeMap<T> {
 #[derive(Clone)]
 pub struct AnchorRangeSet(pub(crate) AnchorRangeMap<()>);
 
+#[derive(Clone)]
 pub struct AnchorRangeMultimap<T: Clone> {
     pub(crate) entries: SumTree<AnchorRangeMultimapEntry<T>>,
     pub(crate) version: clock::Global,
@@ -161,6 +160,17 @@ impl AnchorRangeSet {
 
     pub fn version(&self) -> &clock::Global {
         self.0.version()
+    }
+}
+
+impl<T: Clone> Default for AnchorRangeMultimap<T> {
+    fn default() -> Self {
+        Self {
+            entries: Default::default(),
+            version: Default::default(),
+            start_bias: Bias::Left,
+            end_bias: Bias::Left,
+        }
     }
 }
 

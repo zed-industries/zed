@@ -4422,7 +4422,7 @@ mod tests {
 
         let buffer = cx.add_model(|cx| {
             let history = History::new(text.into());
-            Buffer::from_history(0, history, None, Some(language), cx)
+            Buffer::from_history(0, history, None, Some(language), None, cx)
         });
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
@@ -4581,7 +4581,7 @@ mod tests {
 
         let buffer = cx.add_model(|cx| {
             let history = History::new(text.into());
-            Buffer::from_history(0, history, None, Some(language), cx)
+            Buffer::from_history(0, history, None, Some(language), None, cx)
         });
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
@@ -4696,7 +4696,7 @@ mod tests {
 
         let buffer = cx.add_model(|cx| {
             let history = History::new(text.into());
-            Buffer::from_history(0, history, None, Some(language), cx)
+            Buffer::from_history(0, history, None, Some(language), None, cx)
         });
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())

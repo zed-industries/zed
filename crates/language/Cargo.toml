@@ -10,6 +10,7 @@ test-support = ["rand", "buffer/test-support"]
 buffer = { path = "../buffer" }
 clock = { path = "../clock" }
 gpui = { path = "../gpui" }
+lsp = { path = "../lsp" }
 rpc = { path = "../rpc" }
 theme = { path = "../theme" }
 util = { path = "../util" }
@@ -18,6 +19,7 @@ futures = "0.3"
 lazy_static = "1.4"
 log = "0.4"
 parking_lot = "0.11.1"
+postage = { version = "0.4.1", features = ["futures-traits"] }
 rand = { version = "0.8.3", optional = true }
 serde = { version = "1", features = ["derive"] }
 similar = "1.3"

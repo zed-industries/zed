@@ -157,6 +157,7 @@ impl LanguageServer {
                         buffer.resize(message_len, 0);
                         stdout.read_exact(&mut buffer).await?;
 
+                        println!("{}", std::str::from_utf8(&buffer).unwrap());
                         if let Ok(AnyNotification { method, params }) =
                             serde_json::from_slice(&buffer)
                         {
@@ -200,6 +201,7 @@ impl LanguageServer {
                     content_len_buffer.clear();
 
                     let message = outbound_rx.recv().await?;
+                    println!("{}", std::str::from_utf8(&message).unwrap());
                     write!(content_len_buffer, "{}", message.len()).unwrap();
                     stdin.write_all(CONTENT_LEN_HEADER.as_bytes()).await?;
                     stdin.write_all(&content_len_buffer).await?;

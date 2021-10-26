@@ -40,7 +40,7 @@ use std::{
 };
 use sum_tree::Bias;
 use sum_tree::{Edit, SeekTarget, SumTree};
-use util::TryFutureExt;
+use util::{ResultExt, TryFutureExt};
 
 lazy_static! {
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
@@ -292,6 +292,13 @@ impl Worktree {
         match self {
             Worktree::Local(worktree) => &worktree.languages,
             Worktree::Remote(worktree) => &worktree.languages,
+        }
+    }
+
+    pub fn language_server(&self) -> Option<&Arc<lsp::LanguageServer>> {
+        match self {
+            Worktree::Local(worktree) => worktree.language_server.as_ref(),
+            Worktree::Remote(_) => None,
         }
     }
 
@@ -667,9 +674,10 @@ pub struct LocalWorktree {
     share: Option<ShareState>,
     open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
+    diagnostics: HashMap<PathBuf, Vec<lsp::Diagnostic>>,
     peers: HashMap<PeerId, ReplicaId>,
-    languages: Arc<LanguageRegistry>,
     queued_operations: Vec<(u64, Operation)>,
+    languages: Arc<LanguageRegistry>,
     rpc: Arc<Client>,
     fs: Arc<dyn Fs>,
     language_server: Option<Arc<LanguageServer>>,
@@ -781,6 +789,7 @@ impl LocalWorktree {
                 poll_task: None,
                 open_buffers: Default::default(),
                 shared_buffers: Default::default(),
+                diagnostics: Default::default(),
                 queued_operations: Default::default(),
                 peers: Default::default(),
                 languages,
@@ -828,7 +837,7 @@ impl LocalWorktree {
                         if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
                             handle.update(&mut cx, |this, cx| {
                                 let this = this.as_local_mut().unwrap();
-                                this.update_diagnostics(diagnostics, cx);
+                                this.update_diagnostics(diagnostics, cx).log_err();
                             });
                         } else {
                             break;
@@ -867,6 +876,7 @@ impl LocalWorktree {
         });
 
         let path = Arc::from(path);
+        let language_server = self.language_server.clone();
         cx.spawn(|this, mut cx| async move {
             if let Some(existing_buffer) = existing_buffer {
                 Ok(existing_buffer)
@@ -887,6 +897,7 @@ impl LocalWorktree {
                         History::new(contents.into()),
                         Some(Box::new(file)),
                         language,
+                        language_server,
                         cx,
                     )
                 });
@@ -1187,9 +1198,29 @@ impl LocalWorktree {
 
     fn update_diagnostics(
         &mut self,
-        diagnostics: lsp::PublishDiagnosticsParams,
+        params: lsp::PublishDiagnosticsParams,
         cx: &mut ModelContext<Worktree>,
-    ) {
+    ) -> Result<()> {
+        let file_path = params
+            .uri
+            .to_file_path()
+            .map_err(|_| anyhow!("URI is not a file"))?;
+
+        for buffer in self.open_buffers.values() {
+            if let Some(buffer) = buffer.upgrade(cx) {
+                if buffer
+                    .read(cx)
+                    .file()
+                    .map_or(false, |file| file.path().as_ref() == file_path)
+                {
+                    buffer.update(cx, |buffer, cx| buffer.update_diagnostics(params, cx))?;
+                    return Ok(());
+                }
+            }
+        }
+
+        self.diagnostics.insert(file_path, params.diagnostics);
+        Ok(())
     }
 }
 
@@ -1807,6 +1838,13 @@ impl language::File for File {
 
     fn path(&self) -> &Arc<Path> {
         &self.path
+    }
+
+    fn abs_path(&self, cx: &AppContext) -> Option<PathBuf> {
+        let worktree = self.worktree.read(cx);
+        worktree
+            .as_local()
+            .map(|worktree| worktree.absolutize(&self.path))
     }
 
     fn full_path(&self, cx: &AppContext) -> PathBuf {
