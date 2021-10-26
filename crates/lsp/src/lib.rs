@@ -14,7 +14,6 @@ use std::{
     collections::HashMap,
     future::Future,
     io::Write,
-    marker::PhantomData,
     str::FromStr,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -403,14 +402,20 @@ impl LanguageServer {
     pub async fn fake(executor: &executor::Background) -> (Arc<Self>, FakeLanguageServer) {
         let stdin = async_pipe::pipe();
         let stdout = async_pipe::pipe();
-        (
-            Self::new_internal(Path::new("/"), stdin.0, stdout.1, executor).unwrap(),
-            FakeLanguageServer {
-                stdin: smol::io::BufReader::new(stdin.1),
-                stdout: smol::io::BufWriter::new(stdout.0),
-                buffer: Vec::new(),
-            },
-        )
+        let mut fake = FakeLanguageServer {
+            stdin: smol::io::BufReader::new(stdin.1),
+            stdout: smol::io::BufWriter::new(stdout.0),
+            buffer: Vec::new(),
+        };
+
+        let server = Self::new_internal(Path::new("/"), stdin.0, stdout.1, executor).unwrap();
+
+        let (init_id, _) = fake.receive_request::<request::Initialize>().await;
+        fake.respond(init_id, InitializeResult::default()).await;
+        fake.receive_notification::<notification::Initialized>()
+            .await;
+
+        (server, fake)
     }
 }
 
@@ -449,7 +454,7 @@ impl FakeLanguageServer {
         (
             RequestId {
                 id: request.id,
-                _type: PhantomData,
+                _type: std::marker::PhantomData,
             },
             request.params,
         )
@@ -583,11 +588,6 @@ mod tests {
                 diagnostics_tx.try_send(params).unwrap()
             })
             .detach();
-
-        let (init_id, _) = fake.receive_request::<request::Initialize>().await;
-        fake.respond(init_id, InitializeResult::default()).await;
-        fake.receive_notification::<notification::Initialized>()
-            .await;
 
         server
             .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
