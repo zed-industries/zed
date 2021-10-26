@@ -13,6 +13,7 @@ use clock::ReplicaId;
 use futures::FutureExt as _;
 use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
+use lsp::LanguageServer;
 use parking_lot::Mutex;
 use postage::{prelude::Stream, sink::Sink, watch};
 use rpc::proto;
@@ -73,6 +74,7 @@ pub struct Snapshot {
 }
 
 struct LanguageServerState {
+    server: Arc<LanguageServer>,
     latest_snapshot: watch::Sender<Option<LanguageServerSnapshot>>,
     pending_snapshots: BTreeMap<usize, LanguageServerSnapshot>,
     next_version: usize,
@@ -316,6 +318,7 @@ impl Buffer {
                 latest_snapshot: latest_snapshot_tx,
                 pending_snapshots: Default::default(),
                 next_version: 0,
+                server: server.clone(),
                 _maintain_server: cx.background().spawn(
                     async move {
                         let mut prev_snapshot: Option<LanguageServerSnapshot> = None;
@@ -400,6 +403,25 @@ impl Buffer {
         self.saved_version = version;
         if let Some(new_file) = new_file {
             self.file = Some(new_file);
+        }
+        if let Some(state) = &self.language_server {
+            cx.background()
+                .spawn(
+                    state
+                        .server
+                        .notify::<lsp::notification::DidSaveTextDocument>(
+                            lsp::DidSaveTextDocumentParams {
+                                text_document: lsp::TextDocumentIdentifier {
+                                    uri: lsp::Url::from_file_path(
+                                        self.file.as_ref().unwrap().abs_path(cx).unwrap(),
+                                    )
+                                    .unwrap(),
+                                },
+                                text: None,
+                            },
+                        ),
+                )
+                .detach()
         }
         cx.emit(Event::Saved);
     }
