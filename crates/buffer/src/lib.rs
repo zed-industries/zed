@@ -1592,6 +1592,7 @@ impl Snapshot {
     }
 }
 
+#[derive(Clone)]
 pub struct Content<'a> {
     visible_text: &'a Rope,
     deleted_text: &'a Rope,

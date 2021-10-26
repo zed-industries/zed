@@ -13,7 +13,7 @@ use clock::ReplicaId;
 use futures::FutureExt as _;
 use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
-use lsp::LanguageServer;
+use lsp::{DiagnosticSeverity, LanguageServer};
 use parking_lot::Mutex;
 use postage::{prelude::Stream, sink::Sink, watch};
 use rpc::proto;
@@ -59,7 +59,7 @@ pub struct Buffer {
     syntax_tree: Mutex<Option<SyntaxTree>>,
     parsing_in_background: bool,
     parse_count: usize,
-    diagnostics: AnchorRangeMultimap<()>,
+    diagnostics: AnchorRangeMultimap<(DiagnosticSeverity, String)>,
     language_server: Option<LanguageServerState>,
     #[cfg(test)]
     operations: Vec<Operation>,
@@ -71,6 +71,13 @@ pub struct Snapshot {
     is_parsing: bool,
     language: Option<Arc<Language>>,
     query_cursor: QueryCursorHandle,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Diagnostic {
+    pub range: Range<Point>,
+    pub severity: DiagnosticSeverity,
+    pub message: String,
 }
 
 struct LanguageServerState {
@@ -613,41 +620,65 @@ impl Buffer {
 
     pub fn update_diagnostics(
         &mut self,
-        params: lsp::PublishDiagnosticsParams,
+        version: Option<i32>,
+        diagnostics: Vec<lsp::Diagnostic>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        dbg!(&params);
-        let language_server = self.language_server.as_mut().unwrap();
-        let version = params.version.ok_or_else(|| anyhow!("missing version"))? as usize;
-        let snapshot = language_server
-            .pending_snapshots
-            .get(&version)
-            .ok_or_else(|| anyhow!("missing snapshot"))?;
-        self.diagnostics = snapshot.buffer_snapshot.content().anchor_range_multimap(
+        let version = version.map(|version| version as usize);
+        let content = if let Some(version) = version {
+            let language_server = self.language_server.as_mut().unwrap();
+            let snapshot = language_server
+                .pending_snapshots
+                .get(&version)
+                .ok_or_else(|| anyhow!("missing snapshot"))?;
+            snapshot.buffer_snapshot.content()
+        } else {
+            self.content()
+        };
+        self.diagnostics = content.anchor_range_multimap(
             Bias::Left,
             Bias::Right,
-            params.diagnostics.into_iter().map(|diagnostic| {
+            diagnostics.into_iter().map(|diagnostic| {
                 // TODO: Use UTF-16 positions.
                 let start = Point::new(
                     diagnostic.range.start.line,
                     diagnostic.range.start.character,
                 );
                 let end = Point::new(diagnostic.range.end.line, diagnostic.range.end.character);
-                (start..end, ())
+                let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR);
+                (start..end, (severity, diagnostic.message))
             }),
         );
 
-        let versions_to_delete = language_server
-            .pending_snapshots
-            .range(..version)
-            .map(|(v, _)| *v)
-            .collect::<Vec<_>>();
-        for version in versions_to_delete {
-            language_server.pending_snapshots.remove(&version);
+        if let Some(version) = version {
+            let language_server = self.language_server.as_mut().unwrap();
+            let versions_to_delete = language_server
+                .pending_snapshots
+                .range(..version)
+                .map(|(v, _)| *v)
+                .collect::<Vec<_>>();
+            for version in versions_to_delete {
+                language_server.pending_snapshots.remove(&version);
+            }
         }
 
         cx.notify();
         Ok(())
+    }
+
+    pub fn diagnostics_in_range<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = Diagnostic> + 'a {
+        let content = self.content();
+        let range = range.start.to_offset(&content)..range.end.to_offset(&content);
+        self.diagnostics
+            .intersecting_point_ranges(range, content, true)
+            .map(move |(_, range, (severity, message))| Diagnostic {
+                range,
+                severity: *severity,
+                message: message.clone(),
+            })
     }
 
     fn request_autoindent(&mut self, cx: &mut ModelContext<Self>) {
@@ -987,17 +1018,16 @@ impl Buffer {
         } else {
             return;
         };
-        let file = if let Some(file) = self.file.as_ref() {
-            file
-        } else {
-            return;
-        };
+        let abs_path = self
+            .file
+            .as_ref()
+            .map_or(PathBuf::new(), |file| file.abs_path(cx).unwrap());
 
         let version = post_inc(&mut language_server.next_version);
         let snapshot = LanguageServerSnapshot {
             buffer_snapshot: self.text.snapshot(),
             version,
-            path: Arc::from(file.abs_path(cx).unwrap()),
+            path: Arc::from(abs_path),
         };
         language_server
             .pending_snapshots

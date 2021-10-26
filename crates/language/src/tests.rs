@@ -407,6 +407,78 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
     });
 }
 
+#[gpui::test]
+async fn test_diagnostics(mut cx: gpui::TestAppContext) {
+    let (language_server, mut fake) = lsp::LanguageServer::fake(&cx.background()).await;
+
+    let text = "
+        fn a() { A }
+        fn b() { BB }
+        fn c() { CCC }
+    "
+    .unindent();
+
+    let buffer = cx.add_model(|cx| {
+        Buffer::new(0, text, cx).with_language(rust_lang(), Some(language_server), cx)
+    });
+
+    let open_notification = fake
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+
+    buffer.update(&mut cx, |buffer, cx| {
+        // Edit the buffer, moving the content down
+        buffer.edit([0..0], "\n\n", cx);
+
+        // Receive diagnostics for an earlier version of the buffer.
+        buffer
+            .update_diagnostics(
+                Some(open_notification.text_document.version),
+                vec![
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "undefined variable 'A'".to_string(),
+                        ..Default::default()
+                    },
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(1, 11)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "undefined variable 'BB'".to_string(),
+                        ..Default::default()
+                    },
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(2, 9), lsp::Position::new(2, 12)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "undefined variable 'CCC'".to_string(),
+                        ..Default::default()
+                    },
+                ],
+                cx,
+            )
+            .unwrap();
+
+        // The diagnostics have moved down since they were created.
+        assert_eq!(
+            buffer
+                .diagnostics_in_range(Point::new(3, 0)..Point::new(5, 0))
+                .collect::<Vec<_>>(),
+            &[
+                Diagnostic {
+                    range: Point::new(3, 9)..Point::new(3, 11),
+                    severity: DiagnosticSeverity::ERROR,
+                    message: "undefined variable 'BB'".to_string()
+                },
+                Diagnostic {
+                    range: Point::new(4, 9)..Point::new(4, 12),
+                    severity: DiagnosticSeverity::ERROR,
+                    message: "undefined variable 'CCC'".to_string()
+                }
+            ]
+        )
+    });
+}
+
 #[test]
 fn test_contiguous_ranges() {
     assert_eq!(
