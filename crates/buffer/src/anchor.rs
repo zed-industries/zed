@@ -1,4 +1,4 @@
-use super::{Buffer, Content, Point, ToOffset};
+use super::{Buffer, Content, FromAnchor, Point, ToOffset};
 use anyhow::Result;
 use std::{cmp::Ordering, ops::Range};
 use sum_tree::{Bias, SumTree};
@@ -175,17 +175,16 @@ impl<T: Clone> Default for AnchorRangeMultimap<T> {
 }
 
 impl<T: Clone> AnchorRangeMultimap<T> {
-    pub fn intersecting_point_ranges<'a, O>(
+    pub fn intersecting_ranges<'a, I, O>(
         &'a self,
-        range: Range<O>,
+        range: Range<I>,
         content: Content<'a>,
         inclusive: bool,
-    ) -> impl Iterator<Item = (usize, Range<Point>, &T)> + 'a
+    ) -> impl Iterator<Item = (usize, Range<O>, &T)> + 'a
     where
-        O: ToOffset,
+        I: ToOffset,
+        O: FromAnchor,
     {
-        use super::ToPoint as _;
-
         let end_bias = if inclusive { Bias::Right } else { Bias::Left };
         let range = range.start.to_full_offset(&content, Bias::Left)
             ..range.end.to_full_offset(&content, end_bias);
@@ -229,10 +228,10 @@ impl<T: Clone> AnchorRangeMultimap<T> {
                     let ix = *cursor.start();
                     endpoint.full_offset = item.range.start;
                     endpoint.bias = self.start_bias;
-                    let start = endpoint.to_point(&content);
+                    let start = O::from_anchor(&endpoint, &content);
                     endpoint.full_offset = item.range.end;
                     endpoint.bias = self.end_bias;
-                    let end = endpoint.to_point(&content);
+                    let end = O::from_anchor(&endpoint, &content);
                     let value = &item.value;
                     cursor.next(&());
                     Some((ix, start..end, value))

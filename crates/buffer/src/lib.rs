@@ -2523,3 +2523,19 @@ impl ToPoint for usize {
         content.into().visible_text.to_point(*self)
     }
 }
+
+pub trait FromAnchor {
+    fn from_anchor<'a>(anchor: &Anchor, content: &Content<'a>) -> Self;
+}
+
+impl FromAnchor for Point {
+    fn from_anchor<'a>(anchor: &Anchor, content: &Content<'a>) -> Self {
+        anchor.to_point(content)
+    }
+}
+
+impl FromAnchor for usize {
+    fn from_anchor<'a>(anchor: &Anchor, content: &Content<'a>) -> Self {
+        anchor.to_offset(content)
+    }
+}
