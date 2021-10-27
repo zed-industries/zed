@@ -1,3 +1,5 @@
+use crate::FullOffset;
+
 use super::{Buffer, Content, FromAnchor, Point, ToOffset};
 use anyhow::Result;
 use std::{cmp::Ordering, ops::Range};
@@ -5,7 +7,7 @@ use sum_tree::{Bias, SumTree};
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
 pub struct Anchor {
-    pub full_offset: usize,
+    pub full_offset: FullOffset,
     pub bias: Bias,
     pub version: clock::Global,
 }
@@ -13,7 +15,7 @@ pub struct Anchor {
 #[derive(Clone)]
 pub struct AnchorMap<T> {
     pub(crate) version: clock::Global,
-    pub(crate) entries: Vec<((usize, Bias), T)>,
+    pub(crate) entries: Vec<((FullOffset, Bias), T)>,
 }
 
 #[derive(Clone)]
@@ -22,7 +24,7 @@ pub struct AnchorSet(pub(crate) AnchorMap<()>);
 #[derive(Clone)]
 pub struct AnchorRangeMap<T> {
     pub(crate) version: clock::Global,
-    pub(crate) entries: Vec<(Range<(usize, Bias)>, T)>,
+    pub(crate) entries: Vec<(Range<(FullOffset, Bias)>, T)>,
 }
 
 #[derive(Clone)]
@@ -44,23 +46,23 @@ pub(crate) struct AnchorRangeMultimapEntry<T> {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FullOffsetRange {
-    pub(crate) start: usize,
-    pub(crate) end: usize,
+    pub(crate) start: FullOffset,
+    pub(crate) end: FullOffset,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct AnchorRangeMultimapSummary {
-    start: usize,
-    end: usize,
-    min_start: usize,
-    max_end: usize,
+    start: FullOffset,
+    end: FullOffset,
+    min_start: FullOffset,
+    max_end: FullOffset,
     count: usize,
 }
 
 impl Anchor {
     pub fn min() -> Self {
         Self {
-            full_offset: 0,
+            full_offset: FullOffset(0),
             bias: Bias::Left,
             version: Default::default(),
         }
@@ -68,7 +70,7 @@ impl Anchor {
 
     pub fn max() -> Self {
         Self {
-            full_offset: usize::MAX,
+            full_offset: FullOffset::MAX,
             bias: Bias::Right,
             version: Default::default(),
         }
@@ -192,7 +194,7 @@ impl<T: Clone> AnchorRangeMultimap<T> {
             {
                 let content = content.clone();
                 let mut endpoint = Anchor {
-                    full_offset: 0,
+                    full_offset: FullOffset(0),
                     bias: Bias::Right,
                     version: self.version.clone(),
                 };
@@ -219,7 +221,7 @@ impl<T: Clone> AnchorRangeMultimap<T> {
 
         std::iter::from_fn({
             let mut endpoint = Anchor {
-                full_offset: 0,
+                full_offset: FullOffset(0),
                 bias: Bias::Left,
                 version: self.version.clone(),
             };
@@ -260,10 +262,10 @@ impl<T: Clone> sum_tree::Item for AnchorRangeMultimapEntry<T> {
 impl Default for AnchorRangeMultimapSummary {
     fn default() -> Self {
         Self {
-            start: 0,
-            end: usize::MAX,
-            min_start: usize::MAX,
-            max_end: 0,
+            start: FullOffset(0),
+            end: FullOffset::MAX,
+            min_start: FullOffset::MAX,
+            max_end: FullOffset(0),
             count: 0,
         }
     }
@@ -294,8 +296,8 @@ impl sum_tree::Summary for AnchorRangeMultimapSummary {
 impl Default for FullOffsetRange {
     fn default() -> Self {
         Self {
-            start: 0,
-            end: usize::MAX,
+            start: FullOffset(0),
+            end: FullOffset::MAX,
         }
     }
 }
