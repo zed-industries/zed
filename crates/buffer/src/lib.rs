@@ -2496,10 +2496,6 @@ impl ToOffset for Anchor {
     fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize {
         content.into().summary_for_anchor(self).bytes
     }
-
-    fn to_full_offset<'a>(&self, _: impl Into<Content<'a>>, _: Bias) -> usize {
-        self.full_offset
-    }
 }
 
 impl<'a> ToOffset for &'a Anchor {

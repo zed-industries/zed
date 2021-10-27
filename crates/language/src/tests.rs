@@ -476,11 +476,99 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                 }
             ]
         );
+        assert_eq!(
+            chunks_with_diagnostics(buffer, 0..buffer.len()),
+            [
+                ("\n\nfn a() { ".to_string(), None),
+                ("A".to_string(), Some(DiagnosticSeverity::ERROR)),
+                (" }\nfn b() { ".to_string(), None),
+                ("BB".to_string(), Some(DiagnosticSeverity::ERROR)),
+                (" }\nfn c() { ".to_string(), None),
+                ("CCC".to_string(), Some(DiagnosticSeverity::ERROR)),
+                (" }\n".to_string(), None),
+            ]
+        );
+        assert_eq!(
+            chunks_with_diagnostics(buffer, Point::new(3, 10)..Point::new(4, 11)),
+            [
+                ("B".to_string(), Some(DiagnosticSeverity::ERROR)),
+                (" }\nfn c() { ".to_string(), None),
+                ("CC".to_string(), Some(DiagnosticSeverity::ERROR)),
+            ]
+        );
 
-        dbg!(buffer
-            .snapshot()
-            .highlighted_text_for_range(0..buffer.len())
-            .collect::<Vec<_>>());
+        // Ensure overlapping diagnostics are highlighted correctly.
+        buffer
+            .update_diagnostics(
+                Some(open_notification.text_document.version),
+                vec![
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "undefined variable 'A'".to_string(),
+                        ..Default::default()
+                    },
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 12)),
+                        severity: Some(lsp::DiagnosticSeverity::WARNING),
+                        message: "unreachable statement".to_string(),
+                        ..Default::default()
+                    },
+                ],
+                cx,
+            )
+            .unwrap();
+        assert_eq!(
+            buffer
+                .diagnostics_in_range(Point::new(2, 0)..Point::new(3, 0))
+                .collect::<Vec<_>>(),
+            &[
+                Diagnostic {
+                    range: Point::new(2, 9)..Point::new(2, 12),
+                    severity: DiagnosticSeverity::WARNING,
+                    message: "unreachable statement".to_string()
+                },
+                Diagnostic {
+                    range: Point::new(2, 9)..Point::new(2, 10),
+                    severity: DiagnosticSeverity::ERROR,
+                    message: "undefined variable 'A'".to_string()
+                },
+            ]
+        );
+        assert_eq!(
+            chunks_with_diagnostics(buffer, Point::new(2, 0)..Point::new(3, 0)),
+            [
+                ("fn a() { ".to_string(), None),
+                ("A".to_string(), Some(DiagnosticSeverity::ERROR)),
+                (" }".to_string(), Some(DiagnosticSeverity::WARNING)),
+                ("\n".to_string(), None),
+            ]
+        );
+        assert_eq!(
+            chunks_with_diagnostics(buffer, Point::new(2, 10)..Point::new(3, 0)),
+            [
+                (" }".to_string(), Some(DiagnosticSeverity::WARNING)),
+                ("\n".to_string(), None),
+            ]
+        );
+
+        fn chunks_with_diagnostics<T: ToOffset>(
+            buffer: &Buffer,
+            range: Range<T>,
+        ) -> Vec<(String, Option<DiagnosticSeverity>)> {
+            let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
+            for chunk in buffer.snapshot().highlighted_text_for_range(range) {
+                if chunks
+                    .last()
+                    .map_or(false, |prev_chunk| prev_chunk.1 == chunk.diagnostic)
+                {
+                    chunks.last_mut().unwrap().0.push_str(chunk.text);
+                } else {
+                    chunks.push((chunk.text.to_string(), chunk.diagnostic));
+                }
+            }
+            chunks
+        }
     });
 }
 
