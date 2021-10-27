@@ -63,6 +63,7 @@ pub struct Buffer {
     parsing_in_background: bool,
     parse_count: usize,
     diagnostics: AnchorRangeMultimap<(DiagnosticSeverity, String)>,
+    diagnostics_update_count: usize,
     language_server: Option<LanguageServerState>,
     #[cfg(test)]
     operations: Vec<Operation>,
@@ -288,6 +289,7 @@ impl Buffer {
             pending_autoindent: Default::default(),
             language: None,
             diagnostics: Default::default(),
+            diagnostics_update_count: 0,
             language_server: None,
             #[cfg(test)]
             operations: Default::default(),
@@ -686,6 +688,7 @@ impl Buffer {
             }
         }
 
+        self.diagnostics_update_count += 1;
         cx.notify();
         Ok(())
     }
@@ -703,6 +706,10 @@ impl Buffer {
                 severity: *severity,
                 message: message.clone(),
             })
+    }
+
+    pub fn diagnostics_update_count(&self) -> usize {
+        self.diagnostics_update_count
     }
 
     fn request_autoindent(&mut self, cx: &mut ModelContext<Self>) {
@@ -1335,6 +1342,7 @@ impl Clone for Buffer {
             autoindent_requests: Default::default(),
             pending_autoindent: Default::default(),
             diagnostics: self.diagnostics.clone(),
+            diagnostics_update_count: self.diagnostics_update_count,
             language_server: None,
             #[cfg(test)]
             operations: self.operations.clone(),

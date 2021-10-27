@@ -204,6 +204,7 @@ pub struct FoldMap {
 struct SyncState {
     version: clock::Global,
     parse_count: usize,
+    diagnostics_update_count: usize,
 }
 
 impl FoldMap {
@@ -225,6 +226,7 @@ impl FoldMap {
             last_sync: Mutex::new(SyncState {
                 version: buffer.version(),
                 parse_count: buffer.parse_count(),
+                diagnostics_update_count: buffer.diagnostics_update_count(),
             }),
             version: AtomicUsize::new(0),
         };
@@ -256,6 +258,7 @@ impl FoldMap {
             SyncState {
                 version: buffer.version(),
                 parse_count: buffer.parse_count(),
+                diagnostics_update_count: buffer.diagnostics_update_count(),
             },
         );
         let edits = buffer
@@ -263,7 +266,9 @@ impl FoldMap {
             .map(Into::into)
             .collect::<Vec<_>>();
         if edits.is_empty() {
-            if last_sync.parse_count != buffer.parse_count() {
+            if last_sync.parse_count != buffer.parse_count()
+                || last_sync.diagnostics_update_count != buffer.diagnostics_update_count()
+            {
                 self.version.fetch_add(1, SeqCst);
             }
             Vec::new()
