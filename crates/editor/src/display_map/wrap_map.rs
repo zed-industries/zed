@@ -3,7 +3,7 @@ use super::{
     tab_map::{self, Edit as TabEdit, Snapshot as TabSnapshot, TabPoint, TextSummary},
 };
 use gpui::{fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, Task};
-use language::{HighlightId, Point};
+use language::{HighlightedChunk, Point};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
 use std::{collections::VecDeque, ops::Range, time::Duration};
@@ -52,8 +52,7 @@ pub struct Chunks<'a> {
 
 pub struct HighlightedChunks<'a> {
     input_chunks: tab_map::HighlightedChunks<'a>,
-    input_chunk: &'a str,
-    style_id: HighlightId,
+    input_chunk: HighlightedChunk<'a>,
     output_position: WrapPoint,
     max_output_row: u32,
     transforms: Cursor<'a, Transform, (WrapPoint, TabPoint)>,
@@ -490,8 +489,7 @@ impl Snapshot {
             .min(self.tab_snapshot.max_point());
         HighlightedChunks {
             input_chunks: self.tab_snapshot.highlighted_chunks(input_start..input_end),
-            input_chunk: "",
-            style_id: HighlightId::default(),
+            input_chunk: Default::default(),
             output_position: output_start,
             max_output_row: rows.end,
             transforms,
@@ -674,7 +672,7 @@ impl<'a> Iterator for Chunks<'a> {
 }
 
 impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = (&'a str, HighlightId);
+    type Item = HighlightedChunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_position.row() >= self.max_output_row {
@@ -699,18 +697,19 @@ impl<'a> Iterator for HighlightedChunks<'a> {
 
             self.output_position.0 += summary;
             self.transforms.next(&());
-            return Some((&display_text[start_ix..end_ix], self.style_id));
+            return Some(HighlightedChunk {
+                text: &display_text[start_ix..end_ix],
+                ..self.input_chunk
+            });
         }
 
-        if self.input_chunk.is_empty() {
-            let (chunk, style_id) = self.input_chunks.next().unwrap();
-            self.input_chunk = chunk;
-            self.style_id = style_id;
+        if self.input_chunk.text.is_empty() {
+            self.input_chunk = self.input_chunks.next().unwrap();
         }
 
         let mut input_len = 0;
         let transform_end = self.transforms.end(&()).0;
-        for c in self.input_chunk.chars() {
+        for c in self.input_chunk.text.chars() {
             let char_len = c.len_utf8();
             input_len += char_len;
             if c == '\n' {
@@ -726,9 +725,12 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             }
         }
 
-        let (prefix, suffix) = self.input_chunk.split_at(input_len);
-        self.input_chunk = suffix;
-        Some((prefix, self.style_id))
+        let (prefix, suffix) = self.input_chunk.text.split_at(input_len);
+        self.input_chunk.text = suffix;
+        Some(HighlightedChunk {
+            text: prefix,
+            ..self.input_chunk
+        })
     }
 }
 
@@ -1090,7 +1092,7 @@ mod tests {
 
                 let actual_text = self
                     .highlighted_chunks_for_rows(start_row..end_row)
-                    .map(|c| c.0)
+                    .map(|c| c.text)
                     .collect::<String>();
                 assert_eq!(
                     expected_text,

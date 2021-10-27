@@ -972,16 +972,16 @@ mod tests {
     ) -> Vec<(String, Option<&'a str>)> {
         let mut snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<&str>)> = Vec::new();
-        for (chunk, style_id) in snapshot.highlighted_chunks_for_rows(rows) {
-            let style_name = style_id.name(theme);
+        for chunk in snapshot.highlighted_chunks_for_rows(rows) {
+            let style_name = chunk.highlight_id.name(theme);
             if let Some((last_chunk, last_style_name)) = chunks.last_mut() {
                 if style_name == *last_style_name {
-                    last_chunk.push_str(chunk);
+                    last_chunk.push_str(chunk.text);
                 } else {
-                    chunks.push((chunk.to_string(), style_name));
+                    chunks.push((chunk.text.to_string(), style_name));
                 }
             } else {
-                chunks.push((chunk.to_string(), style_name));
+                chunks.push((chunk.text.to_string(), style_name));
             }
         }
         chunks

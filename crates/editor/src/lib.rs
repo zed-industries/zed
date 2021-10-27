@@ -2774,6 +2774,10 @@ impl EditorSettings {
                     selection: Default::default(),
                     guest_selections: Default::default(),
                     syntax: Default::default(),
+                    error_underline: Default::default(),
+                    warning_underline: Default::default(),
+                    information_underline: Default::default(),
+                    hint_underline: Default::default(),
                 }
             },
         }

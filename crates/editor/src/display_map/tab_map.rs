@@ -1,5 +1,5 @@
 use super::fold_map::{self, FoldEdit, FoldPoint, Snapshot as FoldSnapshot};
-use language::{rope, HighlightId};
+use language::{rope, HighlightedChunk};
 use parking_lot::Mutex;
 use std::{mem, ops::Range};
 use sum_tree::Bias;
@@ -173,9 +173,11 @@ impl Snapshot {
                 .highlighted_chunks(input_start..input_end),
             column: expanded_char_column,
             tab_size: self.tab_size,
-            chunk: &SPACES[0..to_next_stop],
+            chunk: HighlightedChunk {
+                text: &SPACES[0..to_next_stop],
+                ..Default::default()
+            },
             skip_leading_tab: to_next_stop > 0,
-            style_id: Default::default(),
         }
     }
 
@@ -415,23 +417,21 @@ impl<'a> Iterator for Chunks<'a> {
 
 pub struct HighlightedChunks<'a> {
     fold_chunks: fold_map::HighlightedChunks<'a>,
-    chunk: &'a str,
-    style_id: HighlightId,
+    chunk: HighlightedChunk<'a>,
     column: usize,
     tab_size: usize,
     skip_leading_tab: bool,
 }
 
 impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = (&'a str, HighlightId);
+    type Item = HighlightedChunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.chunk.is_empty() {
-            if let Some((chunk, style_id)) = self.fold_chunks.next() {
+        if self.chunk.text.is_empty() {
+            if let Some(chunk) = self.fold_chunks.next() {
                 self.chunk = chunk;
-                self.style_id = style_id;
                 if self.skip_leading_tab {
-                    self.chunk = &self.chunk[1..];
+                    self.chunk.text = &self.chunk.text[1..];
                     self.skip_leading_tab = false;
                 }
             } else {
@@ -439,18 +439,24 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             }
         }
 
-        for (ix, c) in self.chunk.char_indices() {
+        for (ix, c) in self.chunk.text.char_indices() {
             match c {
                 '\t' => {
                     if ix > 0 {
-                        let (prefix, suffix) = self.chunk.split_at(ix);
-                        self.chunk = suffix;
-                        return Some((prefix, self.style_id));
+                        let (prefix, suffix) = self.chunk.text.split_at(ix);
+                        self.chunk.text = suffix;
+                        return Some(HighlightedChunk {
+                            text: prefix,
+                            ..self.chunk
+                        });
                     } else {
-                        self.chunk = &self.chunk[1..];
+                        self.chunk.text = &self.chunk.text[1..];
                         let len = self.tab_size - self.column % self.tab_size;
                         self.column += len;
-                        return Some((&SPACES[0..len], self.style_id));
+                        return Some(HighlightedChunk {
+                            text: &SPACES[0..len],
+                            ..self.chunk
+                        });
                     }
                 }
                 '\n' => self.column = 0,
@@ -458,7 +464,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             }
         }
 
-        Some((mem::take(&mut self.chunk), mem::take(&mut self.style_id)))
+        Some(mem::take(&mut self.chunk))
     }
 }
 

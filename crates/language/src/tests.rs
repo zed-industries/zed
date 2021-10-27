@@ -475,7 +475,12 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     message: "undefined variable 'CCC'".to_string()
                 }
             ]
-        )
+        );
+
+        dbg!(buffer
+            .snapshot()
+            .highlighted_text_for_range(0..buffer.len())
+            .collect::<Vec<_>>());
     });
 }
 

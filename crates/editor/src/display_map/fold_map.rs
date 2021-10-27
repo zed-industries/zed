@@ -1,5 +1,7 @@
 use gpui::{AppContext, ModelHandle};
-use language::{Anchor, AnchorRangeExt, Buffer, HighlightId, Point, TextSummary, ToOffset};
+use language::{
+    Anchor, AnchorRangeExt, Buffer, HighlightId, HighlightedChunk, Point, TextSummary, ToOffset,
+};
 use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
@@ -995,12 +997,12 @@ impl<'a> Iterator for Chunks<'a> {
 pub struct HighlightedChunks<'a> {
     transform_cursor: Cursor<'a, Transform, (FoldOffset, usize)>,
     buffer_chunks: language::HighlightedChunks<'a>,
-    buffer_chunk: Option<(usize, &'a str, HighlightId)>,
+    buffer_chunk: Option<(usize, HighlightedChunk<'a>)>,
     buffer_offset: usize,
 }
 
 impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = (&'a str, HighlightId);
+    type Item = HighlightedChunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let transform = if let Some(item) = self.transform_cursor.item() {
@@ -1022,34 +1024,35 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                 self.transform_cursor.next(&());
             }
 
-            return Some((output_text, HighlightId::default()));
+            return Some(HighlightedChunk {
+                text: output_text,
+                highlight_id: HighlightId::default(),
+                diagnostic: None,
+            });
         }
 
         // Retrieve a chunk from the current location in the buffer.
         if self.buffer_chunk.is_none() {
             let chunk_offset = self.buffer_chunks.offset();
-            self.buffer_chunk = self
-                .buffer_chunks
-                .next()
-                .map(|(chunk, capture_ix)| (chunk_offset, chunk, capture_ix));
+            self.buffer_chunk = self.buffer_chunks.next().map(|chunk| (chunk_offset, chunk));
         }
 
         // Otherwise, take a chunk from the buffer's text.
-        if let Some((chunk_offset, mut chunk, capture_ix)) = self.buffer_chunk {
+        if let Some((chunk_offset, mut chunk)) = self.buffer_chunk {
             let offset_in_chunk = self.buffer_offset - chunk_offset;
-            chunk = &chunk[offset_in_chunk..];
+            chunk.text = &chunk.text[offset_in_chunk..];
 
             // Truncate the chunk so that it ends at the next fold.
             let region_end = self.transform_cursor.end(&()).1 - self.buffer_offset;
-            if chunk.len() >= region_end {
-                chunk = &chunk[0..region_end];
+            if chunk.text.len() >= region_end {
+                chunk.text = &chunk.text[0..region_end];
                 self.transform_cursor.next(&());
             } else {
                 self.buffer_chunk.take();
             }
 
-            self.buffer_offset += chunk.len();
-            return Some((chunk, capture_ix));
+            self.buffer_offset += chunk.text.len();
+            return Some(chunk);
         }
 
         None

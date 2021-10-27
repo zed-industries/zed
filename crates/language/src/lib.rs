@@ -13,7 +13,7 @@ use clock::ReplicaId;
 use futures::FutureExt as _;
 use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
-use lsp::{DiagnosticSeverity, LanguageServer};
+use lsp::LanguageServer;
 use parking_lot::Mutex;
 use postage::{prelude::Stream, sink::Sink, watch};
 use rpc::proto;
@@ -26,15 +26,18 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     ffi::OsString,
     future::Future,
-    iter::Iterator,
+    iter::{Iterator, Peekable},
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     str,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    vec,
 };
 use tree_sitter::{InputEdit, Parser, QueryCursor, Tree};
 use util::{post_inc, TryFutureExt as _};
+
+pub use lsp::DiagnosticSeverity;
 
 thread_local! {
     static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
@@ -68,6 +71,7 @@ pub struct Buffer {
 pub struct Snapshot {
     text: buffer::Snapshot,
     tree: Option<Tree>,
+    diagnostics: AnchorRangeMultimap<(DiagnosticSeverity, String)>,
     is_parsing: bool,
     language: Option<Arc<Language>>,
     query_cursor: QueryCursorHandle,
@@ -182,13 +186,32 @@ struct Highlights<'a> {
 pub struct HighlightedChunks<'a> {
     range: Range<usize>,
     chunks: Chunks<'a>,
+    diagnostic_endpoints: Peekable<vec::IntoIter<DiagnosticEndpoint>>,
+    error_depth: usize,
+    warning_depth: usize,
+    information_depth: usize,
+    hint_depth: usize,
     highlights: Option<Highlights<'a>>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HighlightedChunk<'a> {
+    pub text: &'a str,
+    pub highlight_id: HighlightId,
+    pub diagnostic: Option<DiagnosticSeverity>,
 }
 
 struct Diff {
     base_version: clock::Global,
     new_text: Arc<str>,
     changes: Vec<(ChangeTag, usize)>,
+}
+
+#[derive(Clone, Copy)]
+struct DiagnosticEndpoint {
+    offset: usize,
+    is_start: bool,
+    severity: DiagnosticSeverity,
 }
 
 impl Buffer {
@@ -275,6 +298,7 @@ impl Buffer {
         Snapshot {
             text: self.text.snapshot(),
             tree: self.syntax_tree(),
+            diagnostics: self.diagnostics.clone(),
             is_parsing: self.parsing_in_background,
             language: self.language.clone(),
             query_cursor: QueryCursorHandle::new(),
@@ -673,7 +697,7 @@ impl Buffer {
         let content = self.content();
         let range = range.start.to_offset(&content)..range.end.to_offset(&content);
         self.diagnostics
-            .intersecting_point_ranges(range, content, true)
+            .intersecting_ranges(range, content, true)
             .map(move |(_, range, (severity, message))| Diagnostic {
                 range,
                 severity: *severity,
@@ -1021,7 +1045,9 @@ impl Buffer {
         let abs_path = self
             .file
             .as_ref()
-            .map_or(PathBuf::new(), |file| file.abs_path(cx).unwrap());
+            .map_or(Path::new("/").to_path_buf(), |file| {
+                file.abs_path(cx).unwrap()
+            });
 
         let version = post_inc(&mut language_server.next_version);
         let snapshot = LanguageServerSnapshot {
@@ -1462,30 +1488,54 @@ impl Snapshot {
         range: Range<T>,
     ) -> HighlightedChunks {
         let range = range.start.to_offset(&*self)..range.end.to_offset(&*self);
-        let chunks = self.text.as_rope().chunks_in_range(range.clone());
-        if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
-            let captures = self.query_cursor.set_byte_range(range.clone()).captures(
-                &language.highlights_query,
-                tree.root_node(),
-                TextProvider(self.text.as_rope()),
-            );
 
-            HighlightedChunks {
-                range,
-                chunks,
-                highlights: Some(Highlights {
+        let mut diagnostic_endpoints = Vec::<DiagnosticEndpoint>::new();
+        for (_, range, (severity, _)) in
+            self.diagnostics
+                .intersecting_ranges(range.clone(), self.content(), true)
+        {
+            diagnostic_endpoints.push(DiagnosticEndpoint {
+                offset: range.start,
+                is_start: true,
+                severity: *severity,
+            });
+            diagnostic_endpoints.push(DiagnosticEndpoint {
+                offset: range.end,
+                is_start: false,
+                severity: *severity,
+            });
+        }
+        diagnostic_endpoints.sort_unstable_by_key(|endpoint| endpoint.offset);
+        let diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
+
+        let chunks = self.text.as_rope().chunks_in_range(range.clone());
+        let highlights =
+            if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
+                let captures = self.query_cursor.set_byte_range(range.clone()).captures(
+                    &language.highlights_query,
+                    tree.root_node(),
+                    TextProvider(self.text.as_rope()),
+                );
+
+                Some(Highlights {
                     captures,
                     next_capture: None,
                     stack: Default::default(),
                     highlight_map: language.highlight_map(),
-                }),
-            }
-        } else {
-            HighlightedChunks {
-                range,
-                chunks,
-                highlights: None,
-            }
+                })
+            } else {
+                None
+            };
+
+        HighlightedChunks {
+            range,
+            chunks,
+            diagnostic_endpoints,
+            error_depth: 0,
+            warning_depth: 0,
+            information_depth: 0,
+            hint_depth: 0,
+            highlights,
         }
     }
 }
@@ -1495,6 +1545,7 @@ impl Clone for Snapshot {
         Self {
             text: self.text.clone(),
             tree: self.tree.clone(),
+            diagnostics: self.diagnostics.clone(),
             is_parsing: self.is_parsing,
             language: self.language.clone(),
             query_cursor: QueryCursorHandle::new(),
@@ -1556,13 +1607,43 @@ impl<'a> HighlightedChunks<'a> {
     pub fn offset(&self) -> usize {
         self.range.start
     }
+
+    fn update_diagnostic_depths(&mut self, endpoint: DiagnosticEndpoint) {
+        let depth = match endpoint.severity {
+            DiagnosticSeverity::ERROR => &mut self.error_depth,
+            DiagnosticSeverity::WARNING => &mut self.warning_depth,
+            DiagnosticSeverity::INFORMATION => &mut self.information_depth,
+            DiagnosticSeverity::HINT => &mut self.hint_depth,
+            _ => return,
+        };
+        if endpoint.is_start {
+            *depth += 1;
+        } else {
+            *depth -= 1;
+        }
+    }
+
+    fn current_diagnostic_severity(&mut self) -> Option<DiagnosticSeverity> {
+        if self.error_depth > 0 {
+            Some(DiagnosticSeverity::ERROR)
+        } else if self.warning_depth > 0 {
+            Some(DiagnosticSeverity::WARNING)
+        } else if self.information_depth > 0 {
+            Some(DiagnosticSeverity::INFORMATION)
+        } else if self.hint_depth > 0 {
+            Some(DiagnosticSeverity::HINT)
+        } else {
+            None
+        }
+    }
 }
 
 impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = (&'a str, HighlightId);
+    type Item = HighlightedChunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut next_capture_start = usize::MAX;
+        let mut next_diagnostic_endpoint = usize::MAX;
 
         if let Some(highlights) = self.highlights.as_mut() {
             while let Some((parent_capture_end, _)) = highlights.stack.last() {
@@ -1583,22 +1664,36 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                     next_capture_start = capture.node.start_byte();
                     break;
                 } else {
-                    let style_id = highlights.highlight_map.get(capture.index);
-                    highlights.stack.push((capture.node.end_byte(), style_id));
+                    let highlight_id = highlights.highlight_map.get(capture.index);
+                    highlights
+                        .stack
+                        .push((capture.node.end_byte(), highlight_id));
                     highlights.next_capture = highlights.captures.next();
                 }
             }
         }
 
+        while let Some(endpoint) = self.diagnostic_endpoints.peek().copied() {
+            if endpoint.offset <= self.range.start {
+                self.update_diagnostic_depths(endpoint);
+                self.diagnostic_endpoints.next();
+            } else {
+                next_diagnostic_endpoint = endpoint.offset;
+                break;
+            }
+        }
+
         if let Some(chunk) = self.chunks.peek() {
             let chunk_start = self.range.start;
-            let mut chunk_end = (self.chunks.offset() + chunk.len()).min(next_capture_start);
-            let mut style_id = HighlightId::default();
-            if let Some((parent_capture_end, parent_style_id)) =
+            let mut chunk_end = (self.chunks.offset() + chunk.len())
+                .min(next_capture_start)
+                .min(next_diagnostic_endpoint);
+            let mut highlight_id = HighlightId::default();
+            if let Some((parent_capture_end, parent_highlight_id)) =
                 self.highlights.as_ref().and_then(|h| h.stack.last())
             {
                 chunk_end = chunk_end.min(*parent_capture_end);
-                style_id = *parent_style_id;
+                highlight_id = *parent_highlight_id;
             }
 
             let slice =
@@ -1608,7 +1703,11 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                 self.chunks.next().unwrap();
             }
 
-            Some((slice, style_id))
+            Some(HighlightedChunk {
+                text: slice,
+                highlight_id,
+                diagnostic: self.current_diagnostic_severity(),
+            })
         } else {
             None
         }
