@@ -638,7 +638,10 @@ impl Buffer {
                         if selection.start.column == 0 {
                             let delta = Point::new(
                                 0,
-                                indent_columns.get(&selection.start.row).copied().unwrap_or(0),
+                                indent_columns
+                                    .get(&selection.start.row)
+                                    .copied()
+                                    .unwrap_or(0),
                             );
                             if delta.column > 0 {
                                 return Selection {

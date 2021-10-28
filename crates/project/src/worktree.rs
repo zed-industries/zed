@@ -3348,15 +3348,15 @@ mod tests {
             .await
             .unwrap();
 
-        // Add a cursor at the start of each row.
+        // Add a cursor on each row.
         let selection_set_id = buffer.update(&mut cx, |buffer, cx| {
             assert!(!buffer.is_dirty());
             buffer.add_selection_set(
                 &(0..3)
                     .map(|row| Selection {
                         id: row as usize,
-                        start: Point::new(row, 0),
-                        end: Point::new(row, 0),
+                        start: Point::new(row, 1),
+                        end: Point::new(row, 1),
                         reversed: false,
                         goal: SelectionGoal::None,
                     })
@@ -3378,7 +3378,7 @@ mod tests {
         // contents are edited according to the diff between the old and new
         // file contents.
         buffer
-            .condition(&cx, |buffer, _| buffer.text() != initial_contents)
+            .condition(&cx, |buffer, _| buffer.text() == new_contents)
             .await;
 
         buffer.update(&mut cx, |buffer, _| {
@@ -3386,8 +3386,9 @@ mod tests {
             assert!(!buffer.is_dirty());
             assert!(!buffer.has_conflict());
 
-            let set = buffer.selection_set(selection_set_id).unwrap();
-            let cursor_positions = set
+            let cursor_positions = buffer
+                .selection_set(selection_set_id)
+                .unwrap()
                 .point_selections(&*buffer)
                 .map(|selection| {
                     assert_eq!(selection.start, selection.end);
@@ -3396,7 +3397,7 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(
                 cursor_positions,
-                &[Point::new(1, 0), Point::new(3, 0), Point::new(4, 0),]
+                [Point::new(1, 1), Point::new(3, 1), Point::new(4, 0)]
             );
         });
 
