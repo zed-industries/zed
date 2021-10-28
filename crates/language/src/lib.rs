@@ -363,16 +363,18 @@ impl Buffer {
                                                 prev_snapshot.buffer_snapshot.version().clone(),
                                             )
                                             .map(|edit| {
+                                                // TODO: Use UTF-16 positions.
+                                                let edit_start = edit.new_lines.start;
+                                                let edit_end = edit_start + edit.deleted_lines();
                                                 lsp::TextDocumentContentChangeEvent {
-                                                    // TODO: Use UTF-16 positions.
                                                     range: Some(lsp::Range::new(
                                                         lsp::Position::new(
-                                                            edit.old_lines.start.row,
-                                                            edit.old_lines.start.column,
+                                                            edit_start.row,
+                                                            edit_start.column,
                                                         ),
                                                         lsp::Position::new(
-                                                            edit.old_lines.end.row,
-                                                            edit.old_lines.end.column,
+                                                            edit_end.row,
+                                                            edit_end.column,
                                                         ),
                                                     )),
                                                     range_length: None,
