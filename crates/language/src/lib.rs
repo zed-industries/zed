@@ -1553,7 +1553,7 @@ impl Snapshot {
                 severity: *severity,
             });
         }
-        diagnostic_endpoints.sort_unstable_by_key(|endpoint| endpoint.offset);
+        diagnostic_endpoints.sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
         let diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
 
         let chunks = self.text.as_rope().chunks_in_range(range.clone());
