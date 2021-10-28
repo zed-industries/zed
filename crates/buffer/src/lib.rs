@@ -570,7 +570,7 @@ impl Buffer {
     }
 
     pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
-        self.visible_text.clip_point(point, bias)
+        self.content().clip_point(point, bias)
     }
 
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
@@ -1897,6 +1897,10 @@ impl<'a> Content<'a> {
         };
         let summary = cursor.start().1;
         FullOffset(summary.visible + summary.deleted + overshoot)
+    }
+
+    pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
+        self.visible_text.clip_point(point, bias)
     }
 
     fn point_for_offset(&self, offset: usize) -> Result<Point> {

@@ -711,7 +711,9 @@ impl Buffer {
                         end = last_edit_new_end + (end - last_edit_old_end);
                     }
 
-                    Some((start..end, (severity, diagnostic.message)))
+                    let range =
+                        content.clip_point(start, Bias::Left)..content.clip_point(end, Bias::Right);
+                    Some((range, (severity, diagnostic.message)))
                 }),
             )
         };
