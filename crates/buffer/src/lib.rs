@@ -2007,6 +2007,7 @@ impl<'a, F: FnMut(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
                 if let Some(ref mut change) = change {
                     if change.new_bytes.end == self.new_offset {
                         change.new_bytes.end += fragment.len;
+                        change.new_lines.end += fragment_lines;
                     } else {
                         break;
                     }
