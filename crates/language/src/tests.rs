@@ -1,6 +1,7 @@
 use super::*;
+use crate::language::LanguageServerConfig;
 use gpui::{ModelHandle, MutableAppContext};
-use std::rc::Rc;
+use std::{iter::FromIterator, rc::Rc};
 use unindent::Unindent as _;
 
 #[gpui::test]
@@ -426,10 +427,14 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
         .receive_notification::<lsp::notification::DidOpenTextDocument>()
         .await;
 
-    buffer.update(&mut cx, |buffer, cx| {
-        // Edit the buffer, moving the content down
-        buffer.edit([0..0], "\n\n", cx);
+    // Edit the buffer, moving the content down
+    buffer.update(&mut cx, |buffer, cx| buffer.edit([0..0], "\n\n", cx));
+    let change_notification_1 = fake
+        .receive_notification::<lsp::notification::DidChangeTextDocument>()
+        .await;
+    assert!(change_notification_1.text_document.version > open_notification.text_document.version);
 
+    buffer.update(&mut cx, |buffer, cx| {
         // Receive diagnostics for an earlier version of the buffer.
         buffer
             .update_diagnostics(
@@ -551,25 +556,80 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                 ("\n".to_string(), None),
             ]
         );
-
-        fn chunks_with_diagnostics<T: ToOffset>(
-            buffer: &Buffer,
-            range: Range<T>,
-        ) -> Vec<(String, Option<DiagnosticSeverity>)> {
-            let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
-            for chunk in buffer.snapshot().highlighted_text_for_range(range) {
-                if chunks
-                    .last()
-                    .map_or(false, |prev_chunk| prev_chunk.1 == chunk.diagnostic)
-                {
-                    chunks.last_mut().unwrap().0.push_str(chunk.text);
-                } else {
-                    chunks.push((chunk.text.to_string(), chunk.diagnostic));
-                }
-            }
-            chunks
-        }
     });
+
+    // Keep editing the buffer and ensure disk-based diagnostics get translated according to the
+    // changes since the last save.
+    buffer.update(&mut cx, |buffer, cx| {
+        buffer.edit(Some(Point::new(2, 0)..Point::new(2, 0)), "    ", cx);
+        buffer.edit(Some(Point::new(2, 8)..Point::new(2, 10)), "(x: usize)", cx);
+    });
+    let change_notification_2 = fake
+        .receive_notification::<lsp::notification::DidChangeTextDocument>()
+        .await;
+    assert!(
+        change_notification_2.text_document.version > change_notification_1.text_document.version
+    );
+
+    buffer.update(&mut cx, |buffer, cx| {
+        buffer
+            .update_diagnostics(
+                Some(change_notification_2.text_document.version),
+                vec![
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(1, 11)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "undefined variable 'BB'".to_string(),
+                        source: Some("rustc".to_string()),
+                        ..Default::default()
+                    },
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "undefined variable 'A'".to_string(),
+                        source: Some("rustc".to_string()),
+                        ..Default::default()
+                    },
+                ],
+                cx,
+            )
+            .unwrap();
+        assert_eq!(
+            buffer
+                .diagnostics_in_range(0..buffer.len())
+                .collect::<Vec<_>>(),
+            &[
+                Diagnostic {
+                    range: Point::new(2, 21)..Point::new(2, 22),
+                    severity: DiagnosticSeverity::ERROR,
+                    message: "undefined variable 'A'".to_string()
+                },
+                Diagnostic {
+                    range: Point::new(3, 9)..Point::new(3, 11),
+                    severity: DiagnosticSeverity::ERROR,
+                    message: "undefined variable 'BB'".to_string()
+                },
+            ]
+        );
+    });
+
+    fn chunks_with_diagnostics<T: ToOffset>(
+        buffer: &Buffer,
+        range: Range<T>,
+    ) -> Vec<(String, Option<DiagnosticSeverity>)> {
+        let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
+        for chunk in buffer.snapshot().highlighted_text_for_range(range) {
+            if chunks
+                .last()
+                .map_or(false, |prev_chunk| prev_chunk.1 == chunk.diagnostic)
+            {
+                chunks.last_mut().unwrap().0.push_str(chunk.text);
+            } else {
+                chunks.push((chunk.text.to_string(), chunk.diagnostic));
+            }
+        }
+        chunks
+    }
 }
 
 #[test]
@@ -605,6 +665,10 @@ fn rust_lang() -> Option<Arc<Language>> {
             LanguageConfig {
                 name: "Rust".to_string(),
                 path_suffixes: vec!["rs".to_string()],
+                language_server: Some(LanguageServerConfig {
+                    binary: "rust-analyzer".to_string(),
+                    disk_based_diagnostic_sources: HashSet::from_iter(vec!["rustc".to_string()]),
+                }),
                 ..Default::default()
             },
             tree_sitter_rust::language(),
