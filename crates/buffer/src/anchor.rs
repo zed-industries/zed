@@ -185,6 +185,16 @@ impl<T: Debug> Debug for AnchorRangeMap<T> {
     }
 }
 
+impl Debug for AnchorRangeSet {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut f = f.debug_set();
+        for (range, _) in &self.0.entries {
+            f.entry(range);
+        }
+        f.finish()
+    }
+}
+
 impl AnchorRangeSet {
     pub fn len(&self) -> usize {
         self.0.len()

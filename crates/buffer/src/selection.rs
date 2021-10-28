@@ -37,6 +37,10 @@ pub struct SelectionState {
 }
 
 impl<T: ToOffset + ToPoint + Copy + Ord> Selection<T> {
+    pub fn is_empty(&self) -> bool {
+        self.start == self.end
+    }
+
     pub fn head(&self) -> T {
         if self.reversed {
             self.start
