@@ -3323,7 +3323,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_buffer_file_changes_on_disk(mut cx: gpui::TestAppContext) {
-        use buffer::{Point, Selection, SelectionGoal, ToPoint};
+        use buffer::{Point, Selection, SelectionGoal};
         use std::fs;
 
         let initial_contents = "aaa\nbbbbb\nc\n";

@@ -1487,25 +1487,28 @@ impl Buffer {
         let mut ranges = ranges.into_iter().collect::<Vec<_>>();
         ranges.sort_unstable_by_key(|range| range.start);
 
-        let mut selections = Vec::with_capacity(ranges.len());
-        for range in ranges {
+        let mut selections = Vec::<Selection<usize>>::with_capacity(ranges.len());
+        for mut range in ranges {
+            let mut reversed = false;
             if range.start > range.end {
-                selections.push(Selection {
-                    id: NEXT_SELECTION_ID.fetch_add(1, atomic::Ordering::SeqCst),
-                    start: range.end,
-                    end: range.start,
-                    reversed: true,
-                    goal: SelectionGoal::None,
-                });
-            } else {
-                selections.push(Selection {
-                    id: NEXT_SELECTION_ID.fetch_add(1, atomic::Ordering::SeqCst),
-                    start: range.start,
-                    end: range.end,
-                    reversed: false,
-                    goal: SelectionGoal::None,
-                });
+                reversed = true;
+                std::mem::swap(&mut range.start, &mut range.end);
             }
+
+            if let Some(selection) = selections.last_mut() {
+                if selection.end >= range.start {
+                    selection.end = range.end;
+                    continue;
+                }
+            }
+
+            selections.push(Selection {
+                id: NEXT_SELECTION_ID.fetch_add(1, atomic::Ordering::SeqCst),
+                start: range.start,
+                end: range.end,
+                reversed,
+                goal: SelectionGoal::None,
+            });
         }
         Ok(selections)
     }
