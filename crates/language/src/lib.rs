@@ -661,18 +661,52 @@ impl Buffer {
         } else {
             self.content()
         };
+
+        let empty_set = HashSet::new();
+        let disk_based_sources = self
+            .language
+            .as_ref()
+            .and_then(|language| language.disk_based_diagnostic_sources())
+            .unwrap_or(&empty_set);
+
+        let mut edits_since_save = self.text.edits_since(self.saved_version.clone()).peekable();
+        let mut last_edit_old_end = Point::zero();
+        let mut last_edit_new_end = Point::zero();
+
         self.diagnostics = content.anchor_range_multimap(
             Bias::Left,
             Bias::Right,
-            diagnostics.into_iter().map(|diagnostic| {
+            diagnostics.into_iter().filter_map(|diagnostic| {
                 // TODO: Use UTF-16 positions.
-                let start = Point::new(
+                let mut start = Point::new(
                     diagnostic.range.start.line,
                     diagnostic.range.start.character,
                 );
-                let end = Point::new(diagnostic.range.end.line, diagnostic.range.end.character);
+                let mut end = Point::new(diagnostic.range.end.line, diagnostic.range.end.character);
                 let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR);
-                (start..end, (severity, diagnostic.message))
+
+                if diagnostic
+                    .source
+                    .as_ref()
+                    .map_or(false, |source| disk_based_sources.contains(source))
+                {
+                    while let Some(edit) = edits_since_save.peek() {
+                        if edit.old_lines.end <= start {
+                            last_edit_old_end = edit.old_lines.end;
+                            last_edit_new_end = edit.new_lines.end;
+                            edits_since_save.next();
+                        } else if edit.old_lines.start <= end && edit.old_lines.end >= start {
+                            return None;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    start = last_edit_new_end + (start - last_edit_old_end);
+                    end = last_edit_new_end + (end - last_edit_old_end);
+                }
+
+                Some((start..end, (severity, diagnostic.message)))
             }),
         );
 

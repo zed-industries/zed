@@ -3,7 +3,7 @@ use anyhow::Result;
 use gpui::AppContext;
 use parking_lot::Mutex;
 use serde::Deserialize;
-use std::{path::Path, str, sync::Arc};
+use std::{collections::HashSet, path::Path, str, sync::Arc};
 use theme::SyntaxTheme;
 use tree_sitter::{Language as Grammar, Query};
 pub use tree_sitter::{Parser, Tree};
@@ -19,7 +19,7 @@ pub struct LanguageConfig {
 #[derive(Deserialize)]
 pub struct LanguageServerConfig {
     pub binary: String,
-    pub disk_based_diagnostic_sources: Vec<String>,
+    pub disk_based_diagnostic_sources: HashSet<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -130,11 +130,11 @@ impl Language {
         }
     }
 
-    pub fn disk_based_diagnostic_sources(&self) -> &[String] {
+    pub fn disk_based_diagnostic_sources(&self) -> Option<&HashSet<String>> {
         self.config
             .language_server
             .as_ref()
-            .map_or(&[], |config| &config.disk_based_diagnostic_sources)
+            .map(|config| &config.disk_based_diagnostic_sources)
     }
 
     pub fn brackets(&self) -> &[BracketPair] {

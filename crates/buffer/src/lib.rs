@@ -332,6 +332,7 @@ pub struct Edit {
     pub old_bytes: Range<usize>,
     pub new_bytes: Range<usize>,
     pub old_lines: Range<Point>,
+    pub new_lines: Range<Point>,
 }
 
 impl Edit {
@@ -2014,6 +2015,7 @@ impl<'a, F: FnMut(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
                         old_bytes: self.old_offset..self.old_offset,
                         new_bytes: self.new_offset..self.new_offset + fragment.len,
                         old_lines: self.old_point..self.old_point,
+                        new_lines: self.new_point..self.new_point + fragment_lines,
                     });
                 }
 
@@ -2035,6 +2037,7 @@ impl<'a, F: FnMut(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
                         old_bytes: self.old_offset..self.old_offset + fragment.len,
                         new_bytes: self.new_offset..self.new_offset,
                         old_lines: self.old_point..self.old_point + &fragment_lines,
+                        new_lines: self.new_point..self.new_point,
                     });
                 }
 
