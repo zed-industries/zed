@@ -200,14 +200,14 @@ impl AnchorRangeSet {
         self.0.len()
     }
 
-    pub fn to_offset_ranges<'a>(
+    pub fn offset_ranges<'a>(
         &'a self,
         content: impl Into<Content<'a>> + 'a,
     ) -> impl Iterator<Item = Range<usize>> + 'a {
         self.0.offset_ranges(content).map(|(range, _)| range)
     }
 
-    pub fn to_point_ranges<'a>(
+    pub fn point_ranges<'a>(
         &'a self,
         content: impl Into<Content<'a>> + 'a,
     ) -> impl Iterator<Item = Range<Point>> + 'a {

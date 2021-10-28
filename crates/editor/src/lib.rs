@@ -985,7 +985,7 @@ impl Editor {
         let buffer = self.buffer.read(cx);
         if old_selections
             .iter()
-            .zip(autoclose_pair_state.ranges.to_offset_ranges(buffer))
+            .zip(autoclose_pair_state.ranges.offset_ranges(buffer))
             .all(|(selection, autoclose_range)| {
                 let autoclose_range_end = autoclose_range.end.to_offset(buffer);
                 selection.is_empty() && selection.start == autoclose_range_end
@@ -2327,7 +2327,7 @@ impl Editor {
                 if selections.len() == autoclose_pair_state.ranges.len() {
                     selections
                         .iter()
-                        .zip(autoclose_pair_state.ranges.to_point_ranges(buffer))
+                        .zip(autoclose_pair_state.ranges.point_ranges(buffer))
                         .all(|(selection, autoclose_range)| {
                             let head = selection.head().to_point(&*buffer);
                             autoclose_range.start <= head && autoclose_range.end >= head

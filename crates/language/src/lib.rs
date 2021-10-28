@@ -585,7 +585,7 @@ impl Buffer {
                 if let Some(inserted) = request.inserted.as_ref() {
                     let inserted_row_ranges = contiguous_ranges(
                         inserted
-                            .to_point_ranges(&snapshot)
+                            .point_ranges(&snapshot)
                             .flat_map(|range| range.start.row..range.end.row + 1),
                         max_rows_between_yields,
                     );
