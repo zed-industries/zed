@@ -87,6 +87,16 @@ impl Anchor {
 }
 
 impl<T> AnchorMap<T> {
+    pub fn offsets<'a>(
+        &'a self,
+        content: impl Into<Content<'a>> + 'a,
+    ) -> impl Iterator<Item = (usize, &'a T)> + 'a {
+        let content = content.into();
+        content
+            .summaries_for_anchors(self)
+            .map(move |(sum, value)| (sum.bytes, value))
+    }
+
     pub fn points<'a>(
         &'a self,
         content: impl Into<Content<'a>> + 'a,
@@ -103,6 +113,13 @@ impl<T> AnchorMap<T> {
 }
 
 impl AnchorSet {
+    pub fn offsets<'a>(
+        &'a self,
+        content: impl Into<Content<'a>> + 'a,
+    ) -> impl Iterator<Item = usize> + 'a {
+        self.0.offsets(content).map(move |(offset, _)| offset)
+    }
+
     pub fn points<'a>(
         &'a self,
         content: impl Into<Content<'a>> + 'a,
@@ -118,6 +135,10 @@ impl<T> AnchorRangeMap<T> {
 
     pub fn raw_entries(&self) -> &[(Range<(usize, Bias)>, T)] {
         &self.entries
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
     }
 
     pub fn point_ranges<'a>(
@@ -165,6 +186,17 @@ impl<T: Debug> Debug for AnchorRangeMap<T> {
 }
 
 impl AnchorRangeSet {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn to_offset_ranges<'a>(
+        &'a self,
+        content: impl Into<Content<'a>> + 'a,
+    ) -> impl Iterator<Item = Range<usize>> + 'a {
+        self.0.offset_ranges(content).map(|(range, _)| range)
+    }
+
     pub fn to_point_ranges<'a>(
         &'a self,
         content: impl Into<Content<'a>> + 'a,

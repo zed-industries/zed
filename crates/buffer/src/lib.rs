@@ -539,6 +539,13 @@ impl Buffer {
         self.content().anchor_at(position, bias)
     }
 
+    pub fn anchor_range_set<E>(&self, entries: E) -> AnchorRangeSet
+    where
+        E: IntoIterator<Item = Range<(usize, Bias)>>,
+    {
+        self.content().anchor_range_set(entries)
+    }
+
     pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
         self.content().point_for_offset(offset)
     }
@@ -2264,19 +2271,6 @@ impl<'a> Into<proto::operation::Edit> for &'a EditOperation {
     }
 }
 
-impl<'a> Into<proto::Anchor> for &'a Anchor {
-    fn into(self) -> proto::Anchor {
-        proto::Anchor {
-            version: (&self.version).into(),
-            offset: self.offset as u64,
-            bias: match self.bias {
-                Bias::Left => proto::anchor::Bias::Left as i32,
-                Bias::Right => proto::anchor::Bias::Right as i32,
-            },
-        }
-    }
-}
-
 impl TryFrom<proto::Operation> for Operation {
     type Error = anyhow::Error;
 
@@ -2394,32 +2388,6 @@ impl From<proto::operation::Edit> for EditOperation {
             ranges,
             new_text: edit.new_text,
         }
-    }
-}
-
-impl TryFrom<proto::Anchor> for Anchor {
-    type Error = anyhow::Error;
-
-    fn try_from(message: proto::Anchor) -> Result<Self, Self::Error> {
-        let mut version = clock::Global::new();
-        for entry in message.version {
-            version.observe(clock::Local {
-                replica_id: entry.replica_id as ReplicaId,
-                value: entry.timestamp,
-            });
-        }
-
-        Ok(Self {
-            offset: message.offset as usize,
-            bias: if message.bias == proto::anchor::Bias::Left as i32 {
-                Bias::Left
-            } else if message.bias == proto::anchor::Bias::Right as i32 {
-                Bias::Right
-            } else {
-                Err(anyhow!("invalid anchor bias {}", message.bias))?
-            },
-            version,
-        })
     }
 }
 

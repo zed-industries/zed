@@ -91,6 +91,10 @@ impl<T: ToOffset + ToPoint + Copy + Ord> Selection<T> {
 }
 
 impl SelectionSet {
+    pub fn len(&self) -> usize {
+        self.selections.len()
+    }
+
     pub fn offset_selections<'a>(
         &'a self,
         content: impl Into<Content<'a>> + 'a,
