@@ -647,7 +647,7 @@ impl Buffer {
     pub fn update_diagnostics(
         &mut self,
         version: Option<i32>,
-        diagnostics: Vec<lsp::Diagnostic>,
+        mut diagnostics: Vec<lsp::Diagnostic>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let version = version.map(|version| version as usize);
@@ -669,46 +669,50 @@ impl Buffer {
             .and_then(|language| language.disk_based_diagnostic_sources())
             .unwrap_or(&empty_set);
 
-        let mut edits_since_save = self.text.edits_since(self.saved_version.clone()).peekable();
-        let mut last_edit_old_end = Point::zero();
-        let mut last_edit_new_end = Point::zero();
+        diagnostics.sort_unstable_by_key(|d| (d.range.start, d.range.end));
+        self.diagnostics = {
+            let mut edits_since_save = content.edits_since(self.saved_version.clone()).peekable();
+            let mut last_edit_old_end = Point::zero();
+            let mut last_edit_new_end = Point::zero();
 
-        self.diagnostics = content.anchor_range_multimap(
-            Bias::Left,
-            Bias::Right,
-            diagnostics.into_iter().filter_map(|diagnostic| {
-                // TODO: Use UTF-16 positions.
-                let mut start = Point::new(
-                    diagnostic.range.start.line,
-                    diagnostic.range.start.character,
-                );
-                let mut end = Point::new(diagnostic.range.end.line, diagnostic.range.end.character);
-                let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR);
+            content.anchor_range_multimap(
+                Bias::Left,
+                Bias::Right,
+                diagnostics.into_iter().filter_map(|diagnostic| {
+                    // TODO: Use UTF-16 positions.
+                    let mut start = Point::new(
+                        diagnostic.range.start.line,
+                        diagnostic.range.start.character,
+                    );
+                    let mut end =
+                        Point::new(diagnostic.range.end.line, diagnostic.range.end.character);
+                    let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR);
 
-                if diagnostic
-                    .source
-                    .as_ref()
-                    .map_or(false, |source| disk_based_sources.contains(source))
-                {
-                    while let Some(edit) = edits_since_save.peek() {
-                        if edit.old_lines.end <= start {
-                            last_edit_old_end = edit.old_lines.end;
-                            last_edit_new_end = edit.new_lines.end;
-                            edits_since_save.next();
-                        } else if edit.old_lines.start <= end && edit.old_lines.end >= start {
-                            return None;
-                        } else {
-                            break;
+                    if diagnostic
+                        .source
+                        .as_ref()
+                        .map_or(false, |source| disk_based_sources.contains(source))
+                    {
+                        while let Some(edit) = edits_since_save.peek() {
+                            if edit.old_lines.end <= start {
+                                last_edit_old_end = edit.old_lines.end;
+                                last_edit_new_end = edit.new_lines.end;
+                                edits_since_save.next();
+                            } else if edit.old_lines.start <= end && edit.old_lines.end >= start {
+                                return None;
+                            } else {
+                                break;
+                            }
                         }
+
+                        start = last_edit_new_end + (start - last_edit_old_end);
+                        end = last_edit_new_end + (end - last_edit_old_end);
                     }
 
-                    start = last_edit_new_end + (start - last_edit_old_end);
-                    end = last_edit_new_end + (end - last_edit_old_end);
-                }
-
-                Some((start..end, (severity, diagnostic.message)))
-            }),
-        );
+                    Some((start..end, (severity, diagnostic.message)))
+                }),
+            )
+        };
 
         if let Some(version) = version {
             let language_server = self.language_server.as_mut().unwrap();
