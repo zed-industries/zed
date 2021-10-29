@@ -1,6 +1,7 @@
 mod anchor;
 mod operation_queue;
 mod point;
+mod point_utf16;
 #[cfg(any(test, feature = "test-support"))]
 pub mod random_char_iter;
 pub mod rope;
@@ -13,8 +14,10 @@ use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use operation_queue::OperationQueue;
 pub use point::*;
+pub use point_utf16::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use random_char_iter::*;
+use rope::TextDimension;
 pub use rope::{Chunks, Rope, TextSummary};
 use rpc::proto;
 pub use selection::*;
@@ -309,41 +312,34 @@ impl UndoMap {
     }
 }
 
-struct Edits<'a, F: FnMut(&FragmentSummary) -> bool> {
-    visible_text: &'a Rope,
-    deleted_text: &'a Rope,
-    cursor: Option<FilterCursor<'a, F, Fragment, FragmentTextSummary>>,
+struct Edits<'a, D: TextDimension<'a>, F: FnMut(&FragmentSummary) -> bool> {
+    visible_cursor: rope::Cursor<'a>,
+    deleted_cursor: rope::Cursor<'a>,
+    fragments_cursor: Option<FilterCursor<'a, F, Fragment, FragmentTextSummary>>,
     undos: &'a UndoMap,
     since: clock::Global,
-    old_offset: usize,
-    new_offset: usize,
-    old_point: Point,
-    new_point: Point,
+    old_end: D,
+    new_end: D,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Edit {
-    pub old_bytes: Range<usize>,
-    pub new_bytes: Range<usize>,
-    pub old_lines: Range<Point>,
-    pub new_lines: Range<Point>,
+pub struct Edit<D> {
+    pub old: Range<D>,
+    pub new: Range<D>,
 }
 
-impl Edit {
-    pub fn delta(&self) -> isize {
-        self.inserted_bytes() as isize - self.deleted_bytes() as isize
-    }
-
-    pub fn deleted_bytes(&self) -> usize {
-        self.old_bytes.end - self.old_bytes.start
-    }
-
-    pub fn inserted_bytes(&self) -> usize {
-        self.new_bytes.end - self.new_bytes.start
-    }
-
-    pub fn deleted_lines(&self) -> Point {
-        self.old_lines.end - self.old_lines.start
+impl<D1, D2> Edit<(D1, D2)> {
+    pub fn flatten(self) -> (Edit<D1>, Edit<D2>) {
+        (
+            Edit {
+                old: self.old.start.0..self.old.end.0,
+                new: self.new.start.0..self.new.end.0,
+            },
+            Edit {
+                old: self.old.start.1..self.old.end.1,
+                new: self.new.start.1..self.new.end.1,
+            },
+        )
     }
 }
 
@@ -1369,7 +1365,10 @@ impl Buffer {
         })
     }
 
-    pub fn edits_since<'a>(&'a self, since: clock::Global) -> impl 'a + Iterator<Item = Edit> {
+    pub fn edits_since<'a, D>(&'a self, since: clock::Global) -> impl 'a + Iterator<Item = Edit<D>>
+    where
+        D: 'a + TextDimension<'a> + Ord,
+    {
         self.content().edits_since(since)
     }
 }
@@ -1589,11 +1588,11 @@ impl Snapshot {
     }
 
     pub fn to_offset(&self, point: Point) -> usize {
-        self.visible_text.to_offset(point)
+        self.visible_text.point_to_offset(point)
     }
 
     pub fn to_point(&self, offset: usize) -> Point {
-        self.visible_text.to_point(offset)
+        self.visible_text.offset_to_point(offset)
     }
 
     pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
@@ -1604,7 +1603,10 @@ impl Snapshot {
         self.content().anchor_at(position, Bias::Right)
     }
 
-    pub fn edits_since<'a>(&'a self, since: clock::Global) -> impl 'a + Iterator<Item = Edit> {
+    pub fn edits_since<'a, D>(&'a self, since: clock::Global) -> impl 'a + Iterator<Item = Edit<D>>
+    where
+        D: 'a + TextDimension<'a> + Ord,
+    {
         self.content().edits_since(since)
     }
 
@@ -1756,7 +1758,7 @@ impl<'a> Content<'a> {
             } else {
                 0
             };
-            summary += rope_cursor.summary(cursor.start().1 + overshoot);
+            summary += rope_cursor.summary::<TextSummary>(cursor.start().1 + overshoot);
             (summary.clone(), value)
         })
     }
@@ -1785,7 +1787,7 @@ impl<'a> Content<'a> {
             } else {
                 0
             };
-            summary += rope_cursor.summary(cursor.start().1 + overshoot);
+            summary += rope_cursor.summary::<TextSummary>(cursor.start().1 + overshoot);
             let start_summary = summary.clone();
 
             cursor.seek_forward(&VersionedFullOffset::Offset(*end_offset), *end_bias, &cx);
@@ -1794,7 +1796,7 @@ impl<'a> Content<'a> {
             } else {
                 0
             };
-            summary += rope_cursor.summary(cursor.start().1 + overshoot);
+            summary += rope_cursor.summary::<TextSummary>(cursor.start().1 + overshoot);
             let end_summary = summary.clone();
 
             (start_summary..end_summary, value)
@@ -1921,6 +1923,10 @@ impl<'a> Content<'a> {
         self.visible_text.clip_point(point, bias)
     }
 
+    pub fn clip_point_utf16(&self, point: PointUtf16, bias: Bias) -> PointUtf16 {
+        self.visible_text.clip_point_utf16(point, bias)
+    }
+
     fn point_for_offset(&self, offset: usize) -> Result<Point> {
         if offset <= self.len() {
             Ok(self.text_summary_for_range(0..offset).lines)
@@ -1930,9 +1936,12 @@ impl<'a> Content<'a> {
     }
 
     // TODO: take a reference to clock::Global.
-    pub fn edits_since(&self, since: clock::Global) -> impl 'a + Iterator<Item = Edit> {
+    pub fn edits_since<D>(&self, since: clock::Global) -> impl 'a + Iterator<Item = Edit<D>>
+    where
+        D: 'a + TextDimension<'a> + Ord,
+    {
         let since_2 = since.clone();
-        let cursor = if since == *self.version {
+        let fragments_cursor = if since == *self.version {
             None
         } else {
             Some(self.fragments.filter(
@@ -1942,15 +1951,13 @@ impl<'a> Content<'a> {
         };
 
         Edits {
-            visible_text: &self.visible_text,
-            deleted_text: &self.deleted_text,
-            cursor,
+            visible_cursor: self.visible_text.cursor(0),
+            deleted_cursor: self.deleted_text.cursor(0),
+            fragments_cursor,
             undos: &self.undo_map,
             since,
-            old_offset: 0,
-            new_offset: 0,
-            old_point: Point::zero(),
-            new_point: Point::zero(),
+            old_end: Default::default(),
+            new_end: Default::default(),
         }
     }
 }
@@ -2008,70 +2015,61 @@ impl<'a> RopeBuilder<'a> {
     }
 }
 
-impl<'a, F: FnMut(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
-    type Item = Edit;
+impl<'a, D: TextDimension<'a> + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator
+    for Edits<'a, D, F>
+{
+    type Item = Edit<D>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut change: Option<Edit> = None;
-        let cursor = self.cursor.as_mut()?;
+        let mut pending_edit: Option<Edit<D>> = None;
+        let cursor = self.fragments_cursor.as_mut()?;
 
         while let Some(fragment) = cursor.item() {
-            let bytes = cursor.start().visible - self.new_offset;
-            let lines = self.visible_text.to_point(cursor.start().visible) - self.new_point;
-            self.old_offset += bytes;
-            self.old_point += &lines;
-            self.new_offset += bytes;
-            self.new_point += &lines;
+            let summary = self.visible_cursor.summary(cursor.start().visible);
+            self.old_end.add_assign(&summary);
+            self.new_end.add_assign(&summary);
+            if pending_edit
+                .as_ref()
+                .map_or(false, |change| change.new.end < self.new_end)
+            {
+                break;
+            }
 
             if !fragment.was_visible(&self.since, &self.undos) && fragment.visible {
-                let fragment_lines =
-                    self.visible_text.to_point(self.new_offset + fragment.len) - self.new_point;
-                if let Some(ref mut change) = change {
-                    if change.new_bytes.end == self.new_offset {
-                        change.new_bytes.end += fragment.len;
-                        change.new_lines.end += fragment_lines;
-                    } else {
-                        break;
-                    }
+                let fragment_summary = self.visible_cursor.summary(cursor.end(&None).visible);
+                let mut new_end = self.new_end.clone();
+                new_end.add_assign(&fragment_summary);
+                if let Some(pending_edit) = pending_edit.as_mut() {
+                    pending_edit.new.end = new_end.clone();
                 } else {
-                    change = Some(Edit {
-                        old_bytes: self.old_offset..self.old_offset,
-                        new_bytes: self.new_offset..self.new_offset + fragment.len,
-                        old_lines: self.old_point..self.old_point,
-                        new_lines: self.new_point..self.new_point + fragment_lines,
+                    pending_edit = Some(Edit {
+                        old: self.old_end.clone()..self.old_end.clone(),
+                        new: self.new_end.clone()..new_end.clone(),
                     });
                 }
 
-                self.new_offset += fragment.len;
-                self.new_point += &fragment_lines;
+                self.new_end = new_end;
             } else if fragment.was_visible(&self.since, &self.undos) && !fragment.visible {
-                let deleted_start = cursor.start().deleted;
-                let fragment_lines = self.deleted_text.to_point(deleted_start + fragment.len)
-                    - self.deleted_text.to_point(deleted_start);
-                if let Some(ref mut change) = change {
-                    if change.new_bytes.end == self.new_offset {
-                        change.old_bytes.end += fragment.len;
-                        change.old_lines.end += &fragment_lines;
-                    } else {
-                        break;
-                    }
+                self.deleted_cursor.seek_forward(cursor.start().deleted);
+                let fragment_summary = self.deleted_cursor.summary(cursor.end(&None).deleted);
+                let mut old_end = self.old_end.clone();
+                old_end.add_assign(&fragment_summary);
+                if let Some(pending_edit) = pending_edit.as_mut() {
+                    pending_edit.old.end = old_end.clone();
                 } else {
-                    change = Some(Edit {
-                        old_bytes: self.old_offset..self.old_offset + fragment.len,
-                        new_bytes: self.new_offset..self.new_offset,
-                        old_lines: self.old_point..self.old_point + &fragment_lines,
-                        new_lines: self.new_point..self.new_point,
+                    pending_edit = Some(Edit {
+                        old: self.old_end.clone()..old_end.clone(),
+                        new: self.new_end.clone()..self.new_end.clone(),
                     });
                 }
 
-                self.old_offset += fragment.len;
-                self.old_point += &fragment_lines;
+                self.old_end = old_end;
             }
 
             cursor.next(&None);
         }
 
-        change
+        pending_edit
     }
 }
 
@@ -2531,7 +2529,13 @@ pub trait ToOffset {
 
 impl ToOffset for Point {
     fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize {
-        content.into().visible_text.to_offset(*self)
+        content.into().visible_text.point_to_offset(*self)
+    }
+}
+
+impl ToOffset for PointUtf16 {
+    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize {
+        content.into().visible_text.point_utf16_to_offset(*self)
     }
 }
 
@@ -2566,7 +2570,7 @@ impl ToPoint for Anchor {
 
 impl ToPoint for usize {
     fn to_point<'a>(&self, content: impl Into<Content<'a>>) -> Point {
-        content.into().visible_text.to_point(*self)
+        content.into().visible_text.offset_to_point(*self)
     }
 }
 

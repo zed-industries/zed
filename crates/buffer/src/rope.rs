@@ -1,8 +1,10 @@
+use crate::PointUtf16;
+
 use super::Point;
 use arrayvec::ArrayString;
 use smallvec::SmallVec;
 use std::{cmp, ops::Range, str};
-use sum_tree::{Bias, SumTree};
+use sum_tree::{Bias, Dimension, SumTree};
 
 #[cfg(test)]
 const CHUNK_BASE: usize = 6;
@@ -136,7 +138,7 @@ impl Rope {
         Chunks::new(self, range, true)
     }
 
-    pub fn to_point(&self, offset: usize) -> Point {
+    pub fn offset_to_point(&self, offset: usize) -> Point {
         assert!(offset <= self.summary().bytes);
         let mut cursor = self.chunks.cursor::<(usize, Point)>();
         cursor.seek(&offset, Bias::Left, &());
@@ -144,15 +146,40 @@ impl Rope {
         cursor.start().1
             + cursor
                 .item()
-                .map_or(Point::zero(), |chunk| chunk.to_point(overshoot))
+                .map_or(Point::zero(), |chunk| chunk.offset_to_point(overshoot))
     }
 
-    pub fn to_offset(&self, point: Point) -> usize {
+    pub fn offset_to_point_utf16(&self, offset: usize) -> PointUtf16 {
+        assert!(offset <= self.summary().bytes);
+        let mut cursor = self.chunks.cursor::<(usize, PointUtf16)>();
+        cursor.seek(&offset, Bias::Left, &());
+        let overshoot = offset - cursor.start().0;
+        cursor.start().1
+            + cursor.item().map_or(PointUtf16::zero(), |chunk| {
+                chunk.offset_to_point_utf16(overshoot)
+            })
+    }
+
+    pub fn point_to_offset(&self, point: Point) -> usize {
         assert!(point <= self.summary().lines);
         let mut cursor = self.chunks.cursor::<(Point, usize)>();
         cursor.seek(&point, Bias::Left, &());
         let overshoot = point - cursor.start().0;
-        cursor.start().1 + cursor.item().map_or(0, |chunk| chunk.to_offset(overshoot))
+        cursor.start().1
+            + cursor
+                .item()
+                .map_or(0, |chunk| chunk.point_to_offset(overshoot))
+    }
+
+    pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
+        assert!(point <= self.summary().lines_utf16);
+        let mut cursor = self.chunks.cursor::<(PointUtf16, usize)>();
+        cursor.seek(&point, Bias::Left, &());
+        let overshoot = point - cursor.start().0;
+        cursor.start().1
+            + cursor
+                .item()
+                .map_or(0, |chunk| chunk.point_utf16_to_offset(overshoot))
     }
 
     pub fn clip_offset(&self, mut offset: usize, bias: Bias) -> usize {
@@ -186,6 +213,17 @@ impl Rope {
             *cursor.start() + chunk.clip_point(overshoot, bias)
         } else {
             self.summary().lines
+        }
+    }
+
+    pub fn clip_point_utf16(&self, point: PointUtf16, bias: Bias) -> PointUtf16 {
+        let mut cursor = self.chunks.cursor::<PointUtf16>();
+        cursor.seek(&point, Bias::Right, &());
+        if let Some(chunk) = cursor.item() {
+            let overshoot = point - cursor.start();
+            *cursor.start() + chunk.clip_point_utf16(overshoot, bias)
+        } else {
+            self.summary().lines_utf16
         }
     }
 }
@@ -258,22 +296,24 @@ impl<'a> Cursor<'a> {
         slice
     }
 
-    pub fn summary(&mut self, end_offset: usize) -> TextSummary {
+    pub fn summary<D: TextDimension<'a>>(&mut self, end_offset: usize) -> D {
         debug_assert!(end_offset >= self.offset);
 
-        let mut summary = TextSummary::default();
+        let mut summary = D::default();
         if let Some(start_chunk) = self.chunks.item() {
             let start_ix = self.offset - self.chunks.start();
             let end_ix = cmp::min(end_offset, self.chunks.end(&())) - self.chunks.start();
-            summary = TextSummary::from(&start_chunk.0[start_ix..end_ix]);
+            summary.add_assign(&D::from_summary(&TextSummary::from(
+                &start_chunk.0[start_ix..end_ix],
+            )));
         }
 
         if end_offset > self.chunks.end(&()) {
             self.chunks.next(&());
-            summary += &self.chunks.summary(&end_offset, Bias::Right, &());
+            summary.add_assign(&self.chunks.summary(&end_offset, Bias::Right, &()));
             if let Some(end_chunk) = self.chunks.item() {
                 let end_ix = end_offset - self.chunks.start();
-                summary += TextSummary::from(&end_chunk.0[..end_ix]);
+                summary.add_assign(&D::from_summary(&TextSummary::from(&end_chunk.0[..end_ix])));
             }
         }
 
@@ -375,7 +415,7 @@ impl<'a> Iterator for Chunks<'a> {
 struct Chunk(ArrayString<{ 2 * CHUNK_BASE }>);
 
 impl Chunk {
-    fn to_point(&self, target: usize) -> Point {
+    fn offset_to_point(&self, target: usize) -> Point {
         let mut offset = 0;
         let mut point = Point::new(0, 0);
         for ch in self.0.chars() {
@@ -394,7 +434,26 @@ impl Chunk {
         point
     }
 
-    fn to_offset(&self, target: Point) -> usize {
+    fn offset_to_point_utf16(&self, target: usize) -> PointUtf16 {
+        let mut offset = 0;
+        let mut point = PointUtf16::new(0, 0);
+        for ch in self.0.chars() {
+            if offset >= target {
+                break;
+            }
+
+            if ch == '\n' {
+                point.row += 1;
+                point.column = 0;
+            } else {
+                point.column += ch.len_utf16() as u32;
+            }
+            offset += ch.len_utf8();
+        }
+        point
+    }
+
+    fn point_to_offset(&self, target: Point) -> usize {
         let mut offset = 0;
         let mut point = Point::new(0, 0);
         for ch in self.0.chars() {
@@ -416,6 +475,28 @@ impl Chunk {
         offset
     }
 
+    fn point_utf16_to_offset(&self, target: PointUtf16) -> usize {
+        let mut offset = 0;
+        let mut point = PointUtf16::new(0, 0);
+        for ch in self.0.chars() {
+            if point >= target {
+                if point > target {
+                    panic!("point {:?} is inside of character {:?}", target, ch);
+                }
+                break;
+            }
+
+            if ch == '\n' {
+                point.row += 1;
+                point.column = 0;
+            } else {
+                point.column += ch.len_utf16() as u32;
+            }
+            offset += ch.len_utf8();
+        }
+        offset
+    }
+
     fn clip_point(&self, target: Point, bias: Bias) -> Point {
         for (row, line) in self.0.split('\n').enumerate() {
             if row == target.row as usize {
@@ -427,6 +508,23 @@ impl Chunk {
                     }
                 }
                 return Point::new(row as u32, column);
+            }
+        }
+        unreachable!()
+    }
+
+    fn clip_point_utf16(&self, target: PointUtf16, bias: Bias) -> PointUtf16 {
+        for (row, line) in self.0.split('\n').enumerate() {
+            if row == target.row as usize {
+                let mut code_units = line.encode_utf16();
+                let mut column = code_units.by_ref().take(target.column as usize).count();
+                if char::decode_utf16(code_units).next().transpose().is_err() {
+                    match bias {
+                        Bias::Left => column -= 1,
+                        Bias::Right => column += 1,
+                    }
+                }
+                return PointUtf16::new(row as u32, column as u32);
             }
         }
         unreachable!()
@@ -445,6 +543,7 @@ impl sum_tree::Item for Chunk {
 pub struct TextSummary {
     pub bytes: usize,
     pub lines: Point,
+    pub lines_utf16: PointUtf16,
     pub first_line_chars: u32,
     pub last_line_chars: u32,
     pub longest_row: u32,
@@ -454,17 +553,19 @@ pub struct TextSummary {
 impl<'a> From<&'a str> for TextSummary {
     fn from(text: &'a str) -> Self {
         let mut lines = Point::new(0, 0);
+        let mut lines_utf16 = PointUtf16::new(0, 0);
         let mut first_line_chars = 0;
         let mut last_line_chars = 0;
         let mut longest_row = 0;
         let mut longest_row_chars = 0;
         for c in text.chars() {
             if c == '\n' {
-                lines.row += 1;
-                lines.column = 0;
+                lines += Point::new(1, 0);
+                lines_utf16 += PointUtf16::new(1, 0);
                 last_line_chars = 0;
             } else {
                 lines.column += c.len_utf8() as u32;
+                lines_utf16.column += c.len_utf16() as u32;
                 last_line_chars += 1;
             }
 
@@ -481,6 +582,7 @@ impl<'a> From<&'a str> for TextSummary {
         TextSummary {
             bytes: text.len(),
             lines,
+            lines_utf16,
             first_line_chars,
             last_line_chars,
             longest_row,
@@ -520,7 +622,8 @@ impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
         }
 
         self.bytes += other.bytes;
-        self.lines += &other.lines;
+        self.lines += other.lines;
+        self.lines_utf16 += other.lines_utf16;
     }
 }
 
@@ -530,15 +633,77 @@ impl std::ops::AddAssign<Self> for TextSummary {
     }
 }
 
+pub trait TextDimension<'a>: Dimension<'a, TextSummary> {
+    fn from_summary(summary: &TextSummary) -> Self;
+    fn add_assign(&mut self, other: &Self);
+}
+
+impl<'a, D1: TextDimension<'a>, D2: TextDimension<'a>> TextDimension<'a> for (D1, D2) {
+    fn from_summary(summary: &TextSummary) -> Self {
+        (D1::from_summary(summary), D2::from_summary(summary))
+    }
+
+    fn add_assign(&mut self, other: &Self) {
+        self.0.add_assign(&other.0);
+        self.1.add_assign(&other.1);
+    }
+}
+
+impl<'a> TextDimension<'a> for TextSummary {
+    fn from_summary(summary: &TextSummary) -> Self {
+        summary.clone()
+    }
+
+    fn add_assign(&mut self, other: &Self) {
+        *self += other;
+    }
+}
+
 impl<'a> sum_tree::Dimension<'a, TextSummary> for usize {
     fn add_summary(&mut self, summary: &'a TextSummary, _: &()) {
         *self += summary.bytes;
     }
 }
 
+impl<'a> TextDimension<'a> for usize {
+    fn from_summary(summary: &TextSummary) -> Self {
+        summary.bytes
+    }
+
+    fn add_assign(&mut self, other: &Self) {
+        *self += other;
+    }
+}
+
 impl<'a> sum_tree::Dimension<'a, TextSummary> for Point {
     fn add_summary(&mut self, summary: &'a TextSummary, _: &()) {
-        *self += &summary.lines;
+        *self += summary.lines;
+    }
+}
+
+impl<'a> TextDimension<'a> for Point {
+    fn from_summary(summary: &TextSummary) -> Self {
+        summary.lines
+    }
+
+    fn add_assign(&mut self, other: &Self) {
+        *self += other;
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, TextSummary> for PointUtf16 {
+    fn add_summary(&mut self, summary: &'a TextSummary, _: &()) {
+        *self += summary.lines_utf16;
+    }
+}
+
+impl<'a> TextDimension<'a> for PointUtf16 {
+    fn from_summary(summary: &TextSummary) -> Self {
+        summary.lines_utf16
+    }
+
+    fn add_assign(&mut self, other: &Self) {
+        *self += other;
     }
 }
 
@@ -575,6 +740,41 @@ mod tests {
         let text = "🏀".repeat(256);
         rope.push(&text);
         assert_eq!(rope.text(), text);
+    }
+
+    #[test]
+    fn test_clip() {
+        let rope = Rope::from("🧘");
+
+        assert_eq!(rope.clip_offset(1, Bias::Left), 0);
+        assert_eq!(rope.clip_offset(1, Bias::Right), 4);
+        assert_eq!(rope.clip_offset(5, Bias::Right), 4);
+
+        assert_eq!(
+            rope.clip_point(Point::new(0, 1), Bias::Left),
+            Point::new(0, 0)
+        );
+        assert_eq!(
+            rope.clip_point(Point::new(0, 1), Bias::Right),
+            Point::new(0, 4)
+        );
+        assert_eq!(
+            rope.clip_point(Point::new(0, 5), Bias::Right),
+            Point::new(0, 4)
+        );
+
+        assert_eq!(
+            rope.clip_point_utf16(PointUtf16::new(0, 1), Bias::Left),
+            PointUtf16::new(0, 0)
+        );
+        assert_eq!(
+            rope.clip_point_utf16(PointUtf16::new(0, 1), Bias::Right),
+            PointUtf16::new(0, 2)
+        );
+        assert_eq!(
+            rope.clip_point_utf16(PointUtf16::new(0, 3), Bias::Right),
+            PointUtf16::new(0, 2)
+        );
     }
 
     #[gpui::test(iterations = 100)]
@@ -624,14 +824,33 @@ mod tests {
             }
 
             let mut point = Point::new(0, 0);
+            let mut point_utf16 = PointUtf16::new(0, 0);
             for (ix, ch) in expected.char_indices().chain(Some((expected.len(), '\0'))) {
-                assert_eq!(actual.to_point(ix), point, "to_point({})", ix);
-                assert_eq!(actual.to_offset(point), ix, "to_offset({:?})", point);
+                assert_eq!(actual.offset_to_point(ix), point, "offset_to_point({})", ix);
+                assert_eq!(
+                    actual.offset_to_point_utf16(ix),
+                    point_utf16,
+                    "offset_to_point_utf16({})",
+                    ix
+                );
+                assert_eq!(
+                    actual.point_to_offset(point),
+                    ix,
+                    "point_to_offset({:?})",
+                    point
+                );
+                assert_eq!(
+                    actual.point_utf16_to_offset(point_utf16),
+                    ix,
+                    "point_utf16_to_offset({:?})",
+                    point_utf16
+                );
                 if ch == '\n' {
-                    point.row += 1;
-                    point.column = 0
+                    point += Point::new(1, 0);
+                    point_utf16 += PointUtf16::new(1, 0);
                 } else {
                     point.column += ch.len_utf8() as u32;
+                    point_utf16.column += ch.len_utf16() as u32;
                 }
             }
 
@@ -639,7 +858,7 @@ mod tests {
                 let end_ix = clip_offset(&expected, rng.gen_range(0..=expected.len()), Right);
                 let start_ix = clip_offset(&expected, rng.gen_range(0..=end_ix), Left);
                 assert_eq!(
-                    actual.cursor(start_ix).summary(end_ix),
+                    actual.cursor(start_ix).summary::<TextSummary>(end_ix),
                     TextSummary::from(&expected[start_ix..end_ix])
                 );
             }

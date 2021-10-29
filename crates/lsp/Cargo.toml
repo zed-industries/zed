@@ -13,7 +13,7 @@ anyhow = "1.0"
 async-pipe = { git = "https://github.com/routerify/async-pipe-rs", rev = "feeb77e83142a9ff837d0767652ae41bfc5d8e47", optional = true }
 futures = "0.3"
 log = "0.4"
-lsp-types = { version = "0.91", features = ["proposed"] }
+lsp-types = "0.91"
 parking_lot = "0.11"
 postage = { version = "0.4.1", features = ["futures-traits"] }
 serde = { version = "1.0", features = ["derive"] }

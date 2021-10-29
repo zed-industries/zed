@@ -78,7 +78,7 @@ fn test_random_edits(mut rng: StdRng) {
 
     for mut old_buffer in buffer_versions {
         let edits = buffer
-            .edits_since(old_buffer.version.clone())
+            .edits_since::<usize>(old_buffer.version.clone())
             .collect::<Vec<_>>();
 
         log::info!(
@@ -88,12 +88,12 @@ fn test_random_edits(mut rng: StdRng) {
             edits,
         );
 
-        let mut delta = 0_isize;
         for edit in edits {
-            let old_start = (edit.old_bytes.start as isize + delta) as usize;
-            let new_text: String = buffer.text_for_range(edit.new_bytes.clone()).collect();
-            old_buffer.edit(Some(old_start..old_start + edit.deleted_bytes()), new_text);
-            delta += edit.delta();
+            let new_text: String = buffer.text_for_range(edit.new.clone()).collect();
+            old_buffer.edit(
+                Some(edit.new.start..edit.new.start + edit.old.len()),
+                new_text,
+            );
         }
         assert_eq!(old_buffer.text(), buffer.text());
     }
@@ -123,6 +123,7 @@ fn test_text_summary_for_range() {
         TextSummary {
             bytes: 2,
             lines: Point::new(1, 0),
+            lines_utf16: PointUtf16::new(1, 0),
             first_line_chars: 1,
             last_line_chars: 0,
             longest_row: 0,
@@ -134,6 +135,7 @@ fn test_text_summary_for_range() {
         TextSummary {
             bytes: 11,
             lines: Point::new(3, 0),
+            lines_utf16: PointUtf16::new(3, 0),
             first_line_chars: 1,
             last_line_chars: 0,
             longest_row: 2,
@@ -145,6 +147,7 @@ fn test_text_summary_for_range() {
         TextSummary {
             bytes: 20,
             lines: Point::new(4, 1),
+            lines_utf16: PointUtf16::new(4, 1),
             first_line_chars: 2,
             last_line_chars: 1,
             longest_row: 3,
@@ -156,6 +159,7 @@ fn test_text_summary_for_range() {
         TextSummary {
             bytes: 22,
             lines: Point::new(4, 3),
+            lines_utf16: PointUtf16::new(4, 3),
             first_line_chars: 2,
             last_line_chars: 3,
             longest_row: 3,
@@ -167,6 +171,7 @@ fn test_text_summary_for_range() {
         TextSummary {
             bytes: 15,
             lines: Point::new(2, 3),
+            lines_utf16: PointUtf16::new(2, 3),
             first_line_chars: 4,
             last_line_chars: 3,
             longest_row: 1,

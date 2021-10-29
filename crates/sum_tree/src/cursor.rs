@@ -537,6 +537,10 @@ where
         self.cursor.start()
     }
 
+    pub fn end(&self, cx: &<T::Summary as Summary>::Context) -> D {
+        self.cursor.end(cx)
+    }
+
     pub fn item(&self) -> Option<&'a T> {
         self.cursor.item()
     }

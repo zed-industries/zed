@@ -359,13 +359,19 @@ impl Buffer {
                                         ),
                                         content_changes: snapshot
                                             .buffer_snapshot
-                                            .edits_since(
+                                            .edits_since::<(PointUtf16, usize)>(
                                                 prev_snapshot.buffer_snapshot.version().clone(),
                                             )
                                             .map(|edit| {
-                                                // TODO: Use UTF-16 positions.
-                                                let edit_start = edit.new_lines.start;
-                                                let edit_end = edit_start + edit.deleted_lines();
+                                                let edit_start = edit.new.start.0;
+                                                let edit_end = edit_start
+                                                    + (edit.old.end.0 - edit.old.start.0);
+                                                let new_text = snapshot
+                                                    .buffer_snapshot
+                                                    .text_for_range(
+                                                        edit.new.start.1..edit.new.end.1,
+                                                    )
+                                                    .collect();
                                                 lsp::TextDocumentContentChangeEvent {
                                                     range: Some(lsp::Range::new(
                                                         lsp::Position::new(
@@ -378,10 +384,7 @@ impl Buffer {
                                                         ),
                                                     )),
                                                     range_length: None,
-                                                    text: snapshot
-                                                        .buffer_snapshot
-                                                        .text_for_range(edit.new_bytes)
-                                                        .collect(),
+                                                    text: new_text,
                                                 }
                                             })
                                             .collect(),
@@ -613,22 +616,17 @@ impl Buffer {
     }
 
     fn interpolate_tree(&self, tree: &mut SyntaxTree) {
-        let mut delta = 0_isize;
-        for edit in self.edits_since(tree.version.clone()) {
-            let start_offset = (edit.old_bytes.start as isize + delta) as usize;
-            let start_point = self.as_rope().to_point(start_offset);
+        for edit in self.edits_since::<(usize, Point)>(tree.version.clone()) {
+            let (bytes, lines) = edit.flatten();
             tree.tree.edit(&InputEdit {
-                start_byte: start_offset,
-                old_end_byte: start_offset + edit.deleted_bytes(),
-                new_end_byte: start_offset + edit.inserted_bytes(),
-                start_position: start_point.to_ts_point(),
-                old_end_position: (start_point + edit.deleted_lines()).to_ts_point(),
-                new_end_position: self
-                    .as_rope()
-                    .to_point(start_offset + edit.inserted_bytes())
+                start_byte: bytes.new.start,
+                old_end_byte: bytes.new.start + bytes.old.len(),
+                new_end_byte: bytes.new.end,
+                start_position: lines.new.start.to_ts_point(),
+                old_end_position: (lines.new.start + (lines.old.end - lines.old.start))
                     .to_ts_point(),
+                new_end_position: lines.new.end.to_ts_point(),
             });
-            delta += edit.inserted_bytes() as isize - edit.deleted_bytes() as isize;
         }
         tree.version = self.version();
     }
@@ -673,21 +671,22 @@ impl Buffer {
 
         diagnostics.sort_unstable_by_key(|d| (d.range.start, d.range.end));
         self.diagnostics = {
-            let mut edits_since_save = content.edits_since(self.saved_version.clone()).peekable();
-            let mut last_edit_old_end = Point::zero();
-            let mut last_edit_new_end = Point::zero();
+            let mut edits_since_save = content
+                .edits_since::<PointUtf16>(self.saved_version.clone())
+                .peekable();
+            let mut last_edit_old_end = PointUtf16::zero();
+            let mut last_edit_new_end = PointUtf16::zero();
 
             content.anchor_range_multimap(
                 Bias::Left,
                 Bias::Right,
                 diagnostics.into_iter().filter_map(|diagnostic| {
-                    // TODO: Use UTF-16 positions.
-                    let mut start = Point::new(
+                    let mut start = PointUtf16::new(
                         diagnostic.range.start.line,
                         diagnostic.range.start.character,
                     );
                     let mut end =
-                        Point::new(diagnostic.range.end.line, diagnostic.range.end.character);
+                        PointUtf16::new(diagnostic.range.end.line, diagnostic.range.end.character);
                     let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR);
 
                     if diagnostic
@@ -696,11 +695,11 @@ impl Buffer {
                         .map_or(false, |source| disk_based_sources.contains(source))
                     {
                         while let Some(edit) = edits_since_save.peek() {
-                            if edit.old_lines.end <= start {
-                                last_edit_old_end = edit.old_lines.end;
-                                last_edit_new_end = edit.new_lines.end;
+                            if edit.old.end <= start {
+                                last_edit_old_end = edit.old.end;
+                                last_edit_new_end = edit.new.end;
                                 edits_since_save.next();
-                            } else if edit.old_lines.start <= end && edit.old_lines.end >= start {
+                            } else if edit.old.start <= end && edit.old.end >= start {
                                 return None;
                             } else {
                                 break;
@@ -711,8 +710,8 @@ impl Buffer {
                         end = last_edit_new_end + (end - last_edit_old_end);
                     }
 
-                    let range =
-                        content.clip_point(start, Bias::Left)..content.clip_point(end, Bias::Right);
+                    let range = content.clip_point_utf16(start, Bias::Left)
+                        ..content.clip_point_utf16(end, Bias::Right);
                     Some((range, (severity, diagnostic.message)))
                 }),
             )
@@ -1223,7 +1222,7 @@ impl Buffer {
         was_dirty: bool,
         cx: &mut ModelContext<Self>,
     ) {
-        if self.edits_since(old_version).next().is_none() {
+        if self.edits_since::<usize>(old_version).next().is_none() {
             return;
         }
 
