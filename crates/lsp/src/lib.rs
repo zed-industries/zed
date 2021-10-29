@@ -226,6 +226,7 @@ impl LanguageServer {
                 experimental: Some(json!({
                     "serverStatusNotification": true,
                 })),
+                offset_encoding: Some(vec!["utf-8".to_string()]),
                 ..Default::default()
             },
             trace: Default::default(),
