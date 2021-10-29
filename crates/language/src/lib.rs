@@ -710,8 +710,12 @@ impl Buffer {
                         end = last_edit_new_end + (end - last_edit_old_end);
                     }
 
-                    let range = content.clip_point_utf16(start, Bias::Left)
+                    let mut range = content.clip_point_utf16(start, Bias::Left)
                         ..content.clip_point_utf16(end, Bias::Right);
+                    if range.start == range.end {
+                        range.end.column += 1;
+                        range.end = content.clip_point_utf16(range.end, Bias::Right);
+                    }
                     Some((range, (severity, diagnostic.message)))
                 }),
             )
