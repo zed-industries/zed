@@ -75,18 +75,11 @@ impl Project {
         let path = Arc::from(abs_path);
         let language_server = languages
             .get_language("Rust")
-            .unwrap()
-            .start_server(&path, cx);
+            .map(|language| language.start_server(&path, cx));
         cx.spawn(|this, mut cx| async move {
-            let worktree = Worktree::open_local(
-                rpc,
-                path,
-                fs,
-                languages,
-                language_server.log_err().flatten(),
-                &mut cx,
-            )
-            .await?;
+            let language_server = language_server.and_then(|language| language.log_err().flatten());
+            let worktree =
+                Worktree::open_local(rpc, path, fs, languages, language_server, &mut cx).await?;
             this.update(&mut cx, |this, cx| {
                 this.add_worktree(worktree.clone(), cx);
             });
