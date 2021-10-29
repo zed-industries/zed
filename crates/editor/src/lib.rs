@@ -10,9 +10,9 @@ pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
 use gpui::{
-    action, color::Color, fonts::TextStyle, geometry::vector::Vector2F, keymap::Binding,
-    text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
-    MutableAppContext, RenderContext, View, ViewContext, WeakViewHandle,
+    action, geometry::vector::Vector2F, keymap::Binding, text_layout, AppContext, ClipboardItem,
+    Element, ElementBox, Entity, ModelHandle, MutableAppContext, RenderContext, View, ViewContext,
+    WeakViewHandle,
 };
 use language::*;
 use serde::{Deserialize, Serialize};
@@ -20,8 +20,7 @@ use smallvec::SmallVec;
 use smol::Timer;
 use std::{
     cell::RefCell,
-    cmp::{self, Ordering},
-    iter, mem,
+    cmp, iter, mem,
     ops::{Range, RangeInclusive},
     rc::Rc,
     sync::Arc,
@@ -293,11 +292,11 @@ pub struct Editor {
     buffer: ModelHandle<Buffer>,
     display_map: ModelHandle<DisplayMap>,
     selection_set_id: SelectionSetId,
-    pending_selection: Option<Selection>,
+    pending_selection: Option<Selection<Point>>,
     next_selection_id: usize,
     add_selections_state: Option<AddSelectionsState>,
     autoclose_stack: Vec<BracketPairState>,
-    select_larger_syntax_node_stack: Vec<Arc<[Selection]>>,
+    select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
     autoscroll_requested: bool,
@@ -324,8 +323,9 @@ struct AddSelectionsState {
     stack: Vec<usize>,
 }
 
+#[derive(Debug)]
 struct BracketPairState {
-    ranges: SmallVec<[Range<Anchor>; 32]>,
+    ranges: AnchorRangeSet,
     pair: BracketPair,
 }
 
@@ -396,10 +396,10 @@ impl Editor {
         let mut next_selection_id = 0;
         let selection_set_id = buffer.update(cx, |buffer, cx| {
             buffer.add_selection_set(
-                vec![Selection {
+                &[Selection {
                     id: post_inc(&mut next_selection_id),
-                    start: buffer.anchor_before(0),
-                    end: buffer.anchor_before(0),
+                    start: 0,
+                    end: 0,
                     reversed: false,
                     goal: SelectionGoal::None,
                 }],
@@ -512,9 +512,9 @@ impl Editor {
             return false;
         }
 
-        let selections = self.selections(cx);
+        let mut selections = self.point_selections(cx).peekable();
         let first_cursor_top = selections
-            .first()
+            .peek()
             .unwrap()
             .head()
             .to_display_point(&display_map, Bias::Left)
@@ -563,11 +563,11 @@ impl Editor {
         layouts: &[text_layout::Line],
         cx: &mut ViewContext<Self>,
     ) -> bool {
-        let selections = self.selections(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let selections = self.point_selections(cx);
         let mut target_left = std::f32::INFINITY;
         let mut target_right = 0.0_f32;
-        for selection in selections.iter() {
+        for selection in selections {
             let head = selection.head().to_display_point(&display_map, Bias::Left);
             let start_column = head.column().saturating_sub(3);
             let end_column = cmp::min(display_map.line_len(head.row()), head.column() + 3);
@@ -617,17 +617,17 @@ impl Editor {
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let cursor = display_map.anchor_before(position, Bias::Left);
+        let cursor = position.to_buffer_point(&display_map, Bias::Left);
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
-            start: cursor.clone(),
+            start: cursor,
             end: cursor,
             reversed: false,
             goal: SelectionGoal::None,
         };
 
         if !add {
-            self.update_selections(Vec::new(), false, cx);
+            self.update_selections::<usize>(Vec::new(), false, cx);
         }
         self.pending_selection = Some(selection);
 
@@ -641,10 +641,9 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx);
-        let cursor = display_map.anchor_before(position, Bias::Left);
+        let cursor = position.to_buffer_point(&display_map, Bias::Left);
         if let Some(selection) = self.pending_selection.as_mut() {
-            selection.set_head(buffer, cursor);
+            selection.set_head(cursor);
         } else {
             log::error!("update_selection dispatched with no pending selection");
             return;
@@ -656,8 +655,8 @@ impl Editor {
 
     fn end_selection(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(selection) = self.pending_selection.take() {
-            let mut selections = self.selections(cx).to_vec();
-            let ix = self.selection_insertion_index(&selections, &selection.start, cx.as_ref());
+            let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+            let ix = self.selection_insertion_index(&selections, selection.start);
             selections.insert(ix, selection);
             self.update_selections(selections, false, cx);
         }
@@ -669,14 +668,14 @@ impl Editor {
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         if let Some(pending_selection) = self.pending_selection.take() {
-            let selections = self.selections(cx);
-            if selections.is_empty() {
+            if self.point_selections(cx).next().is_none() {
                 self.update_selections(vec![pending_selection], true, cx);
             }
         } else {
-            let selections = self.selections(cx);
-            let mut oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
-            if selections.len() == 1 {
+            let selection_count = self.selection_count(cx);
+            let selections = self.point_selections(cx);
+            let mut oldest_selection = selections.min_by_key(|s| s.id).unwrap().clone();
+            if selection_count == 1 {
                 oldest_selection.start = oldest_selection.head().clone();
                 oldest_selection.end = oldest_selection.head().clone();
             }
@@ -690,24 +689,26 @@ impl Editor {
         T: ToOffset,
     {
         let buffer = self.buffer.read(cx);
-        let mut selections = Vec::new();
-        for range in ranges {
-            let mut start = range.start.to_offset(buffer);
-            let mut end = range.end.to_offset(buffer);
-            let reversed = if start > end {
-                mem::swap(&mut start, &mut end);
-                true
-            } else {
-                false
-            };
-            selections.push(Selection {
-                id: post_inc(&mut self.next_selection_id),
-                start: buffer.anchor_before(start),
-                end: buffer.anchor_before(end),
-                reversed,
-                goal: SelectionGoal::None,
-            });
-        }
+        let selections = ranges
+            .into_iter()
+            .map(|range| {
+                let mut start = range.start.to_offset(buffer);
+                let mut end = range.end.to_offset(buffer);
+                let reversed = if start > end {
+                    mem::swap(&mut start, &mut end);
+                    true
+                } else {
+                    false
+                };
+                Selection {
+                    id: post_inc(&mut self.next_selection_id),
+                    start: start,
+                    end: end,
+                    reversed,
+                    goal: SelectionGoal::None,
+                }
+            })
+            .collect();
         self.update_selections(selections, autoscroll, cx);
     }
 
@@ -720,26 +721,27 @@ impl Editor {
     where
         T: IntoIterator<Item = &'a Range<DisplayPoint>>,
     {
-        let mut selections = Vec::new();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        for range in ranges {
-            let mut start = range.start;
-            let mut end = range.end;
-            let reversed = if start > end {
-                mem::swap(&mut start, &mut end);
-                true
-            } else {
-                false
-            };
-
-            selections.push(Selection {
-                id: post_inc(&mut self.next_selection_id),
-                start: display_map.anchor_before(start, Bias::Left),
-                end: display_map.anchor_before(end, Bias::Left),
-                reversed,
-                goal: SelectionGoal::None,
-            });
-        }
+        let selections = ranges
+            .into_iter()
+            .map(|range| {
+                let mut start = range.start;
+                let mut end = range.end;
+                let reversed = if start > end {
+                    mem::swap(&mut start, &mut end);
+                    true
+                } else {
+                    false
+                };
+                Selection {
+                    id: post_inc(&mut self.next_selection_id),
+                    start: start.to_buffer_point(&display_map, Bias::Left),
+                    end: end.to_buffer_point(&display_map, Bias::Left),
+                    reversed,
+                    goal: SelectionGoal::None,
+                }
+            })
+            .collect();
         self.update_selections(selections, false, cx);
         Ok(())
     }
@@ -758,10 +760,10 @@ impl Editor {
         self.start_transaction(cx);
         let mut old_selections = SmallVec::<[_; 32]>::new();
         {
-            let selections = self.selections(cx);
+            let selections = self.point_selections(cx).collect::<Vec<_>>();
             let buffer = self.buffer.read(cx);
             for selection in selections.iter() {
-                let start_point = selection.start.to_point(buffer);
+                let start_point = selection.start;
                 let indent = buffer
                     .indent_column_for_line(start_point.row)
                     .min(start_point.column);
@@ -848,7 +850,7 @@ impl Editor {
                     let start = (range.start as isize + delta) as usize;
                     let end = (range.end as isize + delta) as usize;
                     let text_before_cursor_len = indent as usize + 1;
-                    let anchor = buffer.anchor_before(start + text_before_cursor_len);
+                    let cursor = start + text_before_cursor_len;
                     let text_len = if insert_extra_newline {
                         text_before_cursor_len * 2
                     } else {
@@ -857,8 +859,8 @@ impl Editor {
                     delta += text_len as isize - (end - start) as isize;
                     Selection {
                         id,
-                        start: anchor.clone(),
-                        end: anchor,
+                        start: cursor,
+                        end: cursor,
                         reversed: false,
                         goal: SelectionGoal::None,
                     }
@@ -880,35 +882,25 @@ impl Editor {
 
     fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
-        let mut old_selections = SmallVec::<[_; 32]>::new();
-        {
-            let selections = self.selections(cx);
-            let buffer = self.buffer.read(cx);
-            for selection in selections.iter() {
-                let start = selection.start.to_offset(buffer);
-                let end = selection.end.to_offset(buffer);
-                old_selections.push((selection.id, start..end));
-            }
-        }
-
+        let old_selections = self.offset_selections(cx).collect::<SmallVec<[_; 32]>>();
         let mut new_selections = Vec::new();
         self.buffer.update(cx, |buffer, cx| {
-            let edit_ranges = old_selections.iter().map(|(_, range)| range.clone());
+            let edit_ranges = old_selections.iter().map(|s| s.start..s.end);
             buffer.edit_with_autoindent(edit_ranges, text, cx);
             let text_len = text.len() as isize;
             let mut delta = 0_isize;
             new_selections = old_selections
                 .into_iter()
-                .map(|(id, range)| {
-                    let start = range.start as isize;
-                    let end = range.end as isize;
-                    let anchor = buffer.anchor_before((start + delta + text_len) as usize);
+                .map(|selection| {
+                    let start = selection.start as isize;
+                    let end = selection.end as isize;
+                    let cursor = (start + delta + text_len) as usize;
                     let deleted_count = end - start;
                     delta += text_len - deleted_count;
                     Selection {
-                        id,
-                        start: anchor.clone(),
-                        end: anchor,
+                        id: selection.id,
+                        start: cursor,
+                        end: cursor,
                         reversed: false,
                         goal: SelectionGoal::None,
                     }
@@ -921,10 +913,10 @@ impl Editor {
     }
 
     fn autoclose_pairs(&mut self, cx: &mut ViewContext<Self>) {
-        let selections = self.selections(cx);
+        let selections = self.offset_selections(cx).collect::<Vec<_>>();
         let new_autoclose_pair_state = self.buffer.update(cx, |buffer, cx| {
             let autoclose_pair = buffer.language().and_then(|language| {
-                let first_selection_start = selections.first().unwrap().start.to_offset(&*buffer);
+                let first_selection_start = selections.first().unwrap().start;
                 let pair = language.brackets().iter().find(|pair| {
                     buffer.contains_str_at(
                         first_selection_start.saturating_sub(pair.start.len()),
@@ -933,9 +925,8 @@ impl Editor {
                 });
                 pair.and_then(|pair| {
                     let should_autoclose = selections[1..].iter().all(|selection| {
-                        let selection_start = selection.start.to_offset(&*buffer);
                         buffer.contains_str_at(
-                            selection_start.saturating_sub(pair.start.len()),
+                            selection.start.saturating_sub(pair.start.len()),
                             &pair.start,
                         )
                     });
@@ -960,14 +951,13 @@ impl Editor {
                 buffer.edit(selection_ranges, &pair.end, cx);
 
                 if pair.end.len() == 1 {
+                    let mut delta = 0;
                     Some(BracketPairState {
-                        ranges: selections
-                            .iter()
-                            .map(|selection| {
-                                selection.start.bias_left(buffer)
-                                    ..selection.start.bias_right(buffer)
-                            })
-                            .collect(),
+                        ranges: buffer.anchor_range_set(selections.iter().map(move |selection| {
+                            let offset = selection.start + delta;
+                            delta += 1;
+                            (offset, Bias::Left)..(offset, Bias::Right)
+                        })),
                         pair,
                     })
                 } else {
@@ -979,7 +969,8 @@ impl Editor {
     }
 
     fn skip_autoclose_end(&mut self, text: &str, cx: &mut ViewContext<Self>) -> bool {
-        let old_selections = self.selections(cx);
+        let old_selection_count = self.selection_count(cx);
+        let old_selections = self.offset_selections(cx).collect::<Vec<_>>();
         let autoclose_pair_state = if let Some(autoclose_pair_state) = self.autoclose_stack.last() {
             autoclose_pair_state
         } else {
@@ -989,29 +980,25 @@ impl Editor {
             return false;
         }
 
-        debug_assert_eq!(old_selections.len(), autoclose_pair_state.ranges.len());
+        debug_assert_eq!(old_selection_count, autoclose_pair_state.ranges.len());
 
         let buffer = self.buffer.read(cx);
-        let old_selection_ranges: SmallVec<[_; 32]> = old_selections
+        if old_selections
             .iter()
-            .map(|selection| (selection.id, selection.offset_range(buffer)))
-            .collect();
-        if old_selection_ranges
-            .iter()
-            .zip(&autoclose_pair_state.ranges)
-            .all(|((_, selection_range), autoclose_range)| {
+            .zip(autoclose_pair_state.ranges.offset_ranges(buffer))
+            .all(|(selection, autoclose_range)| {
                 let autoclose_range_end = autoclose_range.end.to_offset(buffer);
-                selection_range.is_empty() && selection_range.start == autoclose_range_end
+                selection.is_empty() && selection.start == autoclose_range_end
             })
         {
-            let new_selections = old_selection_ranges
+            let new_selections = old_selections
                 .into_iter()
-                .map(|(id, range)| {
-                    let new_head = buffer.anchor_before(range.start + 1);
+                .map(|selection| {
+                    let cursor = selection.start + 1;
                     Selection {
-                        id,
-                        start: new_head.clone(),
-                        end: new_head,
+                        id: selection.id,
+                        start: cursor,
+                        end: cursor,
                         reversed: false,
                         goal: SelectionGoal::None,
                     }
@@ -1034,22 +1021,18 @@ impl Editor {
 
     pub fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
-        let mut selections = self.selections(cx).to_vec();
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        {
-            let buffer = self.buffer.read(cx);
-            for selection in &mut selections {
-                let range = selection.point_range(buffer);
-                if range.start == range.end {
-                    let head = selection.head().to_display_point(&display_map, Bias::Left);
-                    let cursor = display_map
-                        .anchor_before(movement::left(&display_map, head).unwrap(), Bias::Left);
-                    selection.set_head(&buffer, cursor);
-                    selection.goal = SelectionGoal::None;
-                }
+        for selection in &mut selections {
+            if selection.is_empty() {
+                let head = selection.head().to_display_point(&display_map, Bias::Left);
+                let cursor = movement::left(&display_map, head)
+                    .unwrap()
+                    .to_buffer_point(&display_map, Bias::Left);
+                selection.set_head(cursor);
+                selection.goal = SelectionGoal::None;
             }
         }
-
         self.update_selections(selections, true, cx);
         self.insert("", cx);
         self.end_transaction(cx);
@@ -1058,21 +1041,17 @@ impl Editor {
     pub fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
-        {
-            let buffer = self.buffer.read(cx);
-            for selection in &mut selections {
-                let range = selection.point_range(buffer);
-                if range.start == range.end {
-                    let head = selection.head().to_display_point(&display_map, Bias::Left);
-                    let cursor = display_map
-                        .anchor_before(movement::right(&display_map, head).unwrap(), Bias::Right);
-                    selection.set_head(&buffer, cursor);
-                    selection.goal = SelectionGoal::None;
-                }
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+        for selection in &mut selections {
+            if selection.is_empty() {
+                let head = selection.head().to_display_point(&display_map, Bias::Left);
+                let cursor = movement::right(&display_map, head)
+                    .unwrap()
+                    .to_buffer_point(&display_map, Bias::Right);
+                selection.set_head(cursor);
+                selection.goal = SelectionGoal::None;
             }
         }
-
         self.update_selections(selections, true, cx);
         self.insert(&"", cx);
         self.end_transaction(cx);
@@ -1081,28 +1060,24 @@ impl Editor {
     pub fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         let tab_size = self.build_settings.borrow()(cx).tab_size;
-        let mut selections = self.selections(cx).to_vec();
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
         self.buffer.update(cx, |buffer, cx| {
             let mut last_indented_row = None;
             for selection in &mut selections {
-                let mut range = selection.point_range(buffer);
-                if range.is_empty() {
+                if selection.is_empty() {
                     let char_column = buffer
-                        .chars_for_range(Point::new(range.start.row, 0)..range.start)
+                        .chars_for_range(Point::new(selection.start.row, 0)..selection.start)
                         .count();
                     let chars_to_next_tab_stop = tab_size - (char_column % tab_size);
                     buffer.edit(
-                        [range.start..range.start],
+                        [selection.start..selection.start],
                         " ".repeat(chars_to_next_tab_stop),
                         cx,
                     );
-                    range.start.column += chars_to_next_tab_stop as u32;
-
-                    let head = buffer.anchor_before(range.start);
-                    selection.start = head.clone();
-                    selection.end = head;
+                    selection.start.column += chars_to_next_tab_stop as u32;
+                    selection.end = selection.start;
                 } else {
-                    for row in range.start.row..=range.end.row {
+                    for row in selection.start.row..=selection.end.row {
                         if last_indented_row != Some(row) {
                             let char_column = buffer.indent_column_for_line(row) as usize;
                             let chars_to_next_tab_stop = tab_size - (char_column % tab_size);
@@ -1126,13 +1101,13 @@ impl Editor {
     pub fn delete_line(&mut self, _: &DeleteLine, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
-        let selections = self.selections(cx);
+        let selections = self.point_selections(cx).collect::<Vec<_>>();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
 
+        let mut row_delta = 0;
         let mut new_cursors = Vec::new();
         let mut edit_ranges = Vec::new();
-
         let mut selections = selections.iter().peekable();
         while let Some(selection) = selections.next() {
             let mut rows = selection.spanned_rows(false, &display_map).buffer_rows;
@@ -1159,7 +1134,7 @@ impl Editor {
                 // If there's a line after the range, delete the \n from the end of the row range
                 // and position the cursor on the next line.
                 edit_end = Point::new(rows.end, 0).to_offset(buffer);
-                cursor_buffer_row = rows.end;
+                cursor_buffer_row = rows.start;
             } else {
                 // If there isn't a line after the range, delete the \n from the line before the
                 // start of the row range and position the cursor there.
@@ -1168,10 +1143,11 @@ impl Editor {
                 cursor_buffer_row = rows.start.saturating_sub(1);
             }
 
-            let mut cursor =
-                Point::new(cursor_buffer_row, 0).to_display_point(&display_map, Bias::Left);
+            let mut cursor = Point::new(cursor_buffer_row - row_delta, 0)
+                .to_display_point(&display_map, Bias::Left);
             *cursor.column_mut() =
                 cmp::min(goal_display_column, display_map.line_len(cursor.row()));
+            row_delta += rows.len() as u32;
 
             new_cursors.push((
                 selection.id,
@@ -1180,18 +1156,15 @@ impl Editor {
             edit_ranges.push(edit_start..edit_end);
         }
 
-        new_cursors.sort_unstable_by_key(|(_, range)| range.clone());
+        new_cursors.sort_unstable_by_key(|(_, point)| point.clone());
         let new_selections = new_cursors
             .into_iter()
-            .map(|(id, cursor)| {
-                let anchor = buffer.anchor_before(cursor);
-                Selection {
-                    id,
-                    start: anchor.clone(),
-                    end: anchor,
-                    reversed: false,
-                    goal: SelectionGoal::None,
-                }
+            .map(|(id, cursor)| Selection {
+                id,
+                start: cursor,
+                end: cursor,
+                reversed: false,
+                goal: SelectionGoal::None,
             })
             .collect();
         self.buffer
@@ -1203,26 +1176,16 @@ impl Editor {
     pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
-        let mut selections = self.selections(cx).to_vec();
-        {
-            // Temporarily bias selections right to allow newly duplicate lines to push them down
-            // when the selections are at the beginning of a line.
-            let buffer = self.buffer.read(cx);
-            for selection in &mut selections {
-                selection.start = selection.start.bias_right(buffer);
-                selection.end = selection.end.bias_right(buffer);
-            }
-        }
-        self.update_selections(selections.clone(), false, cx);
-
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
 
         let mut edits = Vec::new();
-        let mut selections_iter = selections.iter_mut().peekable();
+        let mut selections_iter = selections.iter().peekable();
         while let Some(selection) = selections_iter.next() {
             // Avoid duplicating the same lines twice.
             let mut rows = selection.spanned_rows(false, &display_map).buffer_rows;
+
             while let Some(next_selection) = selections_iter.peek() {
                 let next_rows = next_selection.spanned_rows(false, &display_map).buffer_rows;
                 if next_rows.start <= rows.end - 1 {
@@ -1240,30 +1203,38 @@ impl Editor {
                 .text_for_range(start..end)
                 .chain(Some("\n"))
                 .collect::<String>();
-            edits.push((start, text));
+            edits.push((start, text, rows.len() as u32));
+        }
+
+        let mut edits_iter = edits.iter().peekable();
+        let mut row_delta = 0;
+        for selection in selections.iter_mut() {
+            while let Some((point, _, line_count)) = edits_iter.peek() {
+                if *point <= selection.start {
+                    row_delta += line_count;
+                    edits_iter.next();
+                } else {
+                    break;
+                }
+            }
+            selection.start.row += row_delta;
+            selection.end.row += row_delta;
         }
 
         self.buffer.update(cx, |buffer, cx| {
-            for (offset, text) in edits.into_iter().rev() {
-                buffer.edit(Some(offset..offset), text, cx);
+            for (point, text, _) in edits.into_iter().rev() {
+                buffer.edit(Some(point..point), text, cx);
             }
         });
 
-        // Restore bias on selections.
-        let buffer = self.buffer.read(cx);
-        for selection in &mut selections {
-            selection.start = selection.start.bias_left(buffer);
-            selection.end = selection.end.bias_left(buffer);
-        }
         self.update_selections(selections, true, cx);
-
         self.end_transaction(cx);
     }
 
     pub fn move_line_up(&mut self, _: &MoveLineUp, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
-        let selections = self.selections(cx);
+        let selections = self.point_selections(cx).collect::<Vec<_>>();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
 
@@ -1353,7 +1324,7 @@ impl Editor {
     pub fn move_line_down(&mut self, _: &MoveLineDown, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
-        let selections = self.selections(cx);
+        let selections = self.point_selections(cx).collect::<Vec<_>>();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
 
@@ -1440,23 +1411,19 @@ impl Editor {
     pub fn cut(&mut self, _: &Cut, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         let mut text = String::new();
-        let mut selections = self.selections(cx).to_vec();
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
         let mut clipboard_selections = Vec::with_capacity(selections.len());
         {
             let buffer = self.buffer.read(cx);
             let max_point = buffer.max_point();
             for selection in &mut selections {
-                let mut start = selection.start.to_point(buffer);
-                let mut end = selection.end.to_point(buffer);
-                let is_entire_line = start == end;
+                let is_entire_line = selection.is_empty();
                 if is_entire_line {
-                    start = Point::new(start.row, 0);
-                    end = cmp::min(max_point, Point::new(start.row + 1, 0));
-                    selection.start = buffer.anchor_before(start);
-                    selection.end = buffer.anchor_before(end);
+                    selection.start = Point::new(selection.start.row, 0);
+                    selection.end = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
                 }
                 let mut len = 0;
-                for chunk in buffer.text_for_range(start..end) {
+                for chunk in buffer.text_for_range(selection.start..selection.end) {
                     text.push_str(chunk);
                     len += chunk.len();
                 }
@@ -1475,15 +1442,15 @@ impl Editor {
     }
 
     pub fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
-        let selections = self.selections(cx);
+        let selections = self.point_selections(cx).collect::<Vec<_>>();
         let buffer = self.buffer.read(cx);
         let max_point = buffer.max_point();
         let mut text = String::new();
         let mut clipboard_selections = Vec::with_capacity(selections.len());
         for selection in selections.iter() {
-            let mut start = selection.start.to_point(buffer);
-            let mut end = selection.end.to_point(buffer);
-            let is_entire_line = start == end;
+            let mut start = selection.start;
+            let mut end = selection.end;
+            let is_entire_line = selection.is_empty();
             if is_entire_line {
                 start = Point::new(start.row, 0);
                 end = cmp::min(max_point, Point::new(start.row + 1, 0));
@@ -1507,16 +1474,16 @@ impl Editor {
         if let Some(item) = cx.as_mut().read_from_clipboard() {
             let clipboard_text = item.text();
             if let Some(mut clipboard_selections) = item.metadata::<Vec<ClipboardSelection>>() {
-                let selections = self.selections(cx);
+                let mut selections = self.offset_selections(cx).collect::<Vec<_>>();
                 let all_selections_were_entire_line =
                     clipboard_selections.iter().all(|s| s.is_entire_line);
                 if clipboard_selections.len() != selections.len() {
                     clipboard_selections.clear();
                 }
 
+                let mut delta = 0_isize;
                 let mut start_offset = 0;
-                let mut new_selections = Vec::with_capacity(selections.len());
-                for (i, selection) in selections.iter().enumerate() {
+                for (i, selection) in selections.iter_mut().enumerate() {
                     let to_insert;
                     let entire_line;
                     if let Some(clipboard_selection) = clipboard_selections.get(i) {
@@ -1529,33 +1496,29 @@ impl Editor {
                         entire_line = all_selections_were_entire_line;
                     }
 
-                    self.buffer.update(cx, |buffer, cx| {
-                        let selection_start = selection.start.to_point(&*buffer);
-                        let selection_end = selection.end.to_point(&*buffer);
+                    selection.start = (selection.start as isize + delta) as usize;
+                    selection.end = (selection.end as isize + delta) as usize;
 
+                    self.buffer.update(cx, |buffer, cx| {
                         // If the corresponding selection was empty when this slice of the
                         // clipboard text was written, then the entire line containing the
                         // selection was copied. If this selection is also currently empty,
                         // then paste the line before the current line of the buffer.
-                        let new_selection_start = selection.end.bias_right(buffer);
-                        if selection_start == selection_end && entire_line {
-                            let line_start = Point::new(selection_start.row, 0);
-                            buffer.edit(Some(line_start..line_start), to_insert, cx);
+                        let range = if selection.is_empty() && entire_line {
+                            let column = selection.start.to_point(&*buffer).column as usize;
+                            let line_start = selection.start - column;
+                            line_start..line_start
                         } else {
-                            buffer.edit(Some(&selection.start..&selection.end), to_insert, cx);
+                            selection.start..selection.end
                         };
 
-                        let new_selection_start = new_selection_start.bias_left(buffer);
-                        new_selections.push(Selection {
-                            id: selection.id,
-                            start: new_selection_start.clone(),
-                            end: new_selection_start,
-                            reversed: false,
-                            goal: SelectionGoal::None,
-                        });
+                        delta += to_insert.len() as isize - range.len() as isize;
+                        buffer.edit([range], to_insert, cx);
+                        selection.start += to_insert.len();
+                        selection.end = selection.start;
                     });
                 }
-                self.update_selections(new_selections, true, cx);
+                self.update_selections(selections, true, cx);
             } else {
                 self.insert(clipboard_text, cx);
             }
@@ -1572,121 +1535,110 @@ impl Editor {
 
     pub fn move_left(&mut self, _: &MoveLeft, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
-        {
-            for selection in &mut selections {
-                let start = selection.start.to_display_point(&display_map, Bias::Left);
-                let end = selection.end.to_display_point(&display_map, Bias::Left);
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+        for selection in &mut selections {
+            let start = selection.start.to_display_point(&display_map, Bias::Left);
+            let end = selection.end.to_display_point(&display_map, Bias::Left);
 
-                if start != end {
-                    selection.end = selection.start.clone();
-                } else {
-                    let cursor = display_map
-                        .anchor_before(movement::left(&display_map, start).unwrap(), Bias::Left);
-                    selection.start = cursor.clone();
-                    selection.end = cursor;
-                }
-                selection.reversed = false;
-                selection.goal = SelectionGoal::None;
+            if start != end {
+                selection.end = selection.start.clone();
+            } else {
+                let cursor = movement::left(&display_map, start)
+                    .unwrap()
+                    .to_buffer_point(&display_map, Bias::Left);
+                selection.start = cursor.clone();
+                selection.end = cursor;
             }
+            selection.reversed = false;
+            selection.goal = SelectionGoal::None;
         }
         self.update_selections(selections, true, cx);
     }
 
     pub fn select_left(&mut self, _: &SelectLeft, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
-        {
-            let buffer = self.buffer.read(cx);
-            for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map, Bias::Left);
-                let cursor = display_map
-                    .anchor_before(movement::left(&display_map, head).unwrap(), Bias::Left);
-                selection.set_head(&buffer, cursor);
-                selection.goal = SelectionGoal::None;
-            }
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+        for selection in &mut selections {
+            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let cursor = movement::left(&display_map, head)
+                .unwrap()
+                .to_buffer_point(&display_map, Bias::Left);
+            selection.set_head(cursor);
+            selection.goal = SelectionGoal::None;
         }
         self.update_selections(selections, true, cx);
     }
 
     pub fn move_right(&mut self, _: &MoveRight, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
-        {
-            for selection in &mut selections {
-                let start = selection.start.to_display_point(&display_map, Bias::Left);
-                let end = selection.end.to_display_point(&display_map, Bias::Left);
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+        for selection in &mut selections {
+            let start = selection.start.to_display_point(&display_map, Bias::Left);
+            let end = selection.end.to_display_point(&display_map, Bias::Left);
 
-                if start != end {
-                    selection.start = selection.end.clone();
-                } else {
-                    let cursor = display_map
-                        .anchor_before(movement::right(&display_map, end).unwrap(), Bias::Right);
-                    selection.start = cursor.clone();
-                    selection.end = cursor;
-                }
-                selection.reversed = false;
-                selection.goal = SelectionGoal::None;
+            if start != end {
+                selection.start = selection.end.clone();
+            } else {
+                let cursor = movement::right(&display_map, end)
+                    .unwrap()
+                    .to_buffer_point(&display_map, Bias::Right);
+                selection.start = cursor;
+                selection.end = cursor;
             }
+            selection.reversed = false;
+            selection.goal = SelectionGoal::None;
         }
         self.update_selections(selections, true, cx);
     }
 
     pub fn select_right(&mut self, _: &SelectRight, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
-        {
-            let app = cx.as_ref();
-            let buffer = self.buffer.read(app);
-            for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map, Bias::Left);
-                let cursor = display_map
-                    .anchor_before(movement::right(&display_map, head).unwrap(), Bias::Right);
-                selection.set_head(&buffer, cursor);
-                selection.goal = SelectionGoal::None;
-            }
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+        for selection in &mut selections {
+            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let cursor = movement::right(&display_map, head)
+                .unwrap()
+                .to_buffer_point(&display_map, Bias::Right);
+            selection.set_head(cursor);
+            selection.goal = SelectionGoal::None;
         }
         self.update_selections(selections, true, cx);
     }
 
     pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
-        } else {
-            let mut selections = self.selections(cx).to_vec();
-            {
-                for selection in &mut selections {
-                    let start = selection.start.to_display_point(&display_map, Bias::Left);
-                    let end = selection.end.to_display_point(&display_map, Bias::Left);
-                    if start != end {
-                        selection.goal = SelectionGoal::None;
-                    }
-
-                    let (start, goal) = movement::up(&display_map, start, selection.goal).unwrap();
-                    let cursor = display_map.anchor_before(start, Bias::Left);
-                    selection.start = cursor.clone();
-                    selection.end = cursor;
-                    selection.goal = goal;
-                    selection.reversed = false;
-                }
-            }
-            self.update_selections(selections, true, cx);
+            return;
         }
+
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+        for selection in &mut selections {
+            let start = selection.start.to_display_point(&display_map, Bias::Left);
+            let end = selection.end.to_display_point(&display_map, Bias::Left);
+            if start != end {
+                selection.goal = SelectionGoal::None;
+            }
+
+            let (start, goal) = movement::up(&display_map, start, selection.goal).unwrap();
+            let cursor = start.to_buffer_point(&display_map, Bias::Left);
+            selection.start = cursor;
+            selection.end = cursor;
+            selection.goal = goal;
+            selection.reversed = false;
+        }
+        self.update_selections(selections, true, cx);
     }
 
     pub fn select_up(&mut self, _: &SelectUp, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
-        {
-            let app = cx.as_ref();
-            let buffer = self.buffer.read(app);
-            for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map, Bias::Left);
-                let (head, goal) = movement::up(&display_map, head, selection.goal).unwrap();
-                selection.set_head(&buffer, display_map.anchor_before(head, Bias::Left));
-                selection.goal = goal;
-            }
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+        for selection in &mut selections {
+            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let (head, goal) = movement::up(&display_map, head, selection.goal).unwrap();
+            let cursor = head.to_buffer_point(&display_map, Bias::Left);
+            selection.set_head(cursor);
+            selection.goal = goal;
         }
         self.update_selections(selections, true, cx);
     }
@@ -1694,41 +1646,37 @@ impl Editor {
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
-        } else {
-            let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-            let mut selections = self.selections(cx).to_vec();
-            {
-                for selection in &mut selections {
-                    let start = selection.start.to_display_point(&display_map, Bias::Left);
-                    let end = selection.end.to_display_point(&display_map, Bias::Left);
-                    if start != end {
-                        selection.goal = SelectionGoal::None;
-                    }
-
-                    let (start, goal) = movement::down(&display_map, end, selection.goal).unwrap();
-                    let cursor = display_map.anchor_before(start, Bias::Right);
-                    selection.start = cursor.clone();
-                    selection.end = cursor;
-                    selection.goal = goal;
-                    selection.reversed = false;
-                }
-            }
-            self.update_selections(selections, true, cx);
+            return;
         }
+
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+        for selection in &mut selections {
+            let start = selection.start.to_display_point(&display_map, Bias::Left);
+            let end = selection.end.to_display_point(&display_map, Bias::Left);
+            if start != end {
+                selection.goal = SelectionGoal::None;
+            }
+
+            let (start, goal) = movement::down(&display_map, end, selection.goal).unwrap();
+            let cursor = start.to_buffer_point(&display_map, Bias::Right);
+            selection.start = cursor;
+            selection.end = cursor;
+            selection.goal = goal;
+            selection.reversed = false;
+        }
+        self.update_selections(selections, true, cx);
     }
 
     pub fn select_down(&mut self, _: &SelectDown, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
-        {
-            let app = cx.as_ref();
-            let buffer = self.buffer.read(app);
-            for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map, Bias::Left);
-                let (head, goal) = movement::down(&display_map, head, selection.goal).unwrap();
-                selection.set_head(&buffer, display_map.anchor_before(head, Bias::Right));
-                selection.goal = goal;
-            }
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+        for selection in &mut selections {
+            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let (head, goal) = movement::down(&display_map, head, selection.goal).unwrap();
+            let cursor = head.to_buffer_point(&display_map, Bias::Right);
+            selection.set_head(cursor);
+            selection.goal = goal;
         }
         self.update_selections(selections, true, cx);
     }
@@ -1739,17 +1687,15 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
-        {
-            for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map, Bias::Left);
-                let new_head = movement::prev_word_boundary(&display_map, head).unwrap();
-                let anchor = display_map.anchor_before(new_head, Bias::Left);
-                selection.start = anchor.clone();
-                selection.end = anchor;
-                selection.reversed = false;
-                selection.goal = SelectionGoal::None;
-            }
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+        for selection in &mut selections {
+            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let new_head = movement::prev_word_boundary(&display_map, head).unwrap();
+            let cursor = new_head.to_buffer_point(&display_map, Bias::Left);
+            selection.start = cursor.clone();
+            selection.end = cursor;
+            selection.reversed = false;
+            selection.goal = SelectionGoal::None;
         }
         self.update_selections(selections, true, cx);
     }
@@ -1760,16 +1706,13 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
-        {
-            let buffer = self.buffer.read(cx);
-            for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map, Bias::Left);
-                let new_head = movement::prev_word_boundary(&display_map, head).unwrap();
-                let anchor = display_map.anchor_before(new_head, Bias::Left);
-                selection.set_head(buffer, anchor);
-                selection.goal = SelectionGoal::None;
-            }
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+        for selection in &mut selections {
+            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let new_head = movement::prev_word_boundary(&display_map, head).unwrap();
+            let cursor = new_head.to_buffer_point(&display_map, Bias::Left);
+            selection.set_head(cursor);
+            selection.goal = SelectionGoal::None;
         }
         self.update_selections(selections, true, cx);
     }
@@ -1781,23 +1724,16 @@ impl Editor {
     ) {
         self.start_transaction(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
-        {
-            let buffer = self.buffer.read(cx);
-            for selection in &mut selections {
-                let range = selection.point_range(buffer);
-                if range.start == range.end {
-                    let head = selection.head().to_display_point(&display_map, Bias::Left);
-                    let cursor = display_map.anchor_before(
-                        movement::prev_word_boundary(&display_map, head).unwrap(),
-                        Bias::Right,
-                    );
-                    selection.set_head(&buffer, cursor);
-                    selection.goal = SelectionGoal::None;
-                }
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+        for selection in &mut selections {
+            if selection.is_empty() {
+                let head = selection.head().to_display_point(&display_map, Bias::Left);
+                let new_head = movement::prev_word_boundary(&display_map, head).unwrap();
+                let cursor = new_head.to_buffer_point(&display_map, Bias::Right);
+                selection.set_head(cursor);
+                selection.goal = SelectionGoal::None;
             }
         }
-
         self.update_selections(selections, true, cx);
         self.insert("", cx);
         self.end_transaction(cx);
@@ -1809,17 +1745,15 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
-        {
-            for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map, Bias::Left);
-                let new_head = movement::next_word_boundary(&display_map, head).unwrap();
-                let anchor = display_map.anchor_before(new_head, Bias::Left);
-                selection.start = anchor.clone();
-                selection.end = anchor;
-                selection.reversed = false;
-                selection.goal = SelectionGoal::None;
-            }
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+        for selection in &mut selections {
+            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let new_head = movement::next_word_boundary(&display_map, head).unwrap();
+            let cursor = new_head.to_buffer_point(&display_map, Bias::Left);
+            selection.start = cursor;
+            selection.end = cursor;
+            selection.reversed = false;
+            selection.goal = SelectionGoal::None;
         }
         self.update_selections(selections, true, cx);
     }
@@ -1830,16 +1764,13 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
-        {
-            let buffer = self.buffer.read(cx);
-            for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map, Bias::Left);
-                let new_head = movement::next_word_boundary(&display_map, head).unwrap();
-                let anchor = display_map.anchor_before(new_head, Bias::Left);
-                selection.set_head(buffer, anchor);
-                selection.goal = SelectionGoal::None;
-            }
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+        for selection in &mut selections {
+            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let new_head = movement::next_word_boundary(&display_map, head).unwrap();
+            let cursor = new_head.to_buffer_point(&display_map, Bias::Left);
+            selection.set_head(cursor);
+            selection.goal = SelectionGoal::None;
         }
         self.update_selections(selections, true, cx);
     }
@@ -1851,23 +1782,16 @@ impl Editor {
     ) {
         self.start_transaction(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
-        {
-            let buffer = self.buffer.read(cx);
-            for selection in &mut selections {
-                let range = selection.point_range(buffer);
-                if range.start == range.end {
-                    let head = selection.head().to_display_point(&display_map, Bias::Left);
-                    let cursor = display_map.anchor_before(
-                        movement::next_word_boundary(&display_map, head).unwrap(),
-                        Bias::Right,
-                    );
-                    selection.set_head(&buffer, cursor);
-                    selection.goal = SelectionGoal::None;
-                }
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+        for selection in &mut selections {
+            if selection.is_empty() {
+                let head = selection.head().to_display_point(&display_map, Bias::Left);
+                let new_head = movement::next_word_boundary(&display_map, head).unwrap();
+                let cursor = new_head.to_buffer_point(&display_map, Bias::Right);
+                selection.set_head(cursor);
+                selection.goal = SelectionGoal::None;
             }
         }
-
         self.update_selections(selections, true, cx);
         self.insert("", cx);
         self.end_transaction(cx);
@@ -1879,17 +1803,15 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
-        {
-            for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map, Bias::Left);
-                let new_head = movement::line_beginning(&display_map, head, true).unwrap();
-                let anchor = display_map.anchor_before(new_head, Bias::Left);
-                selection.start = anchor.clone();
-                selection.end = anchor;
-                selection.reversed = false;
-                selection.goal = SelectionGoal::None;
-            }
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+        for selection in &mut selections {
+            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let new_head = movement::line_beginning(&display_map, head, true).unwrap();
+            let cursor = new_head.to_buffer_point(&display_map, Bias::Left);
+            selection.start = cursor;
+            selection.end = cursor;
+            selection.reversed = false;
+            selection.goal = SelectionGoal::None;
         }
         self.update_selections(selections, true, cx);
     }
@@ -1900,17 +1822,12 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
-        {
-            let buffer = self.buffer.read(cx);
-            for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map, Bias::Left);
-                let new_head =
-                    movement::line_beginning(&display_map, head, *toggle_indent).unwrap();
-                let anchor = display_map.anchor_before(new_head, Bias::Left);
-                selection.set_head(buffer, anchor);
-                selection.goal = SelectionGoal::None;
-            }
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+        for selection in &mut selections {
+            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let new_head = movement::line_beginning(&display_map, head, *toggle_indent).unwrap();
+            selection.set_head(new_head.to_buffer_point(&display_map, Bias::Left));
+            selection.goal = SelectionGoal::None;
         }
         self.update_selections(selections, true, cx);
     }
@@ -1928,12 +1845,12 @@ impl Editor {
 
     pub fn move_to_end_of_line(&mut self, _: &MoveToEndOfLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
         {
             for selection in &mut selections {
                 let head = selection.head().to_display_point(&display_map, Bias::Left);
                 let new_head = movement::line_end(&display_map, head).unwrap();
-                let anchor = display_map.anchor_before(new_head, Bias::Left);
+                let anchor = new_head.to_buffer_point(&display_map, Bias::Left);
                 selection.start = anchor.clone();
                 selection.end = anchor;
                 selection.reversed = false;
@@ -1945,16 +1862,12 @@ impl Editor {
 
     pub fn select_to_end_of_line(&mut self, _: &SelectToEndOfLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
-        {
-            let buffer = self.buffer.read(cx);
-            for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map, Bias::Left);
-                let new_head = movement::line_end(&display_map, head).unwrap();
-                let anchor = display_map.anchor_before(new_head, Bias::Left);
-                selection.set_head(buffer, anchor);
-                selection.goal = SelectionGoal::None;
-            }
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
+        for selection in &mut selections {
+            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let new_head = movement::line_end(&display_map, head).unwrap();
+            selection.set_head(new_head.to_buffer_point(&display_map, Bias::Left));
+            selection.goal = SelectionGoal::None;
         }
         self.update_selections(selections, true, cx);
     }
@@ -1974,12 +1887,10 @@ impl Editor {
     }
 
     pub fn move_to_beginning(&mut self, _: &MoveToBeginning, cx: &mut ViewContext<Self>) {
-        let buffer = self.buffer.read(cx);
-        let cursor = buffer.anchor_before(Point::new(0, 0));
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
-            start: cursor.clone(),
-            end: cursor,
+            start: 0,
+            end: 0,
             reversed: false,
             goal: SelectionGoal::None,
         };
@@ -1987,17 +1898,17 @@ impl Editor {
     }
 
     pub fn select_to_beginning(&mut self, _: &SelectToBeginning, cx: &mut ViewContext<Self>) {
-        let mut selection = self.selections(cx).last().unwrap().clone();
-        selection.set_head(self.buffer.read(cx), Anchor::min());
+        let mut selection = self.point_selections(cx).last().unwrap().clone();
+        selection.set_head(Point::zero());
         self.update_selections(vec![selection], true, cx);
     }
 
     pub fn move_to_end(&mut self, _: &MoveToEnd, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx);
-        let cursor = buffer.anchor_before(buffer.max_point());
+        let cursor = buffer.len();
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
-            start: cursor.clone(),
+            start: cursor,
             end: cursor,
             reversed: false,
             goal: SelectionGoal::None,
@@ -2006,16 +1917,16 @@ impl Editor {
     }
 
     pub fn select_to_end(&mut self, _: &SelectToEnd, cx: &mut ViewContext<Self>) {
-        let mut selection = self.selections(cx).last().unwrap().clone();
-        selection.set_head(self.buffer.read(cx), Anchor::max());
+        let mut selection = self.offset_selections(cx).last().unwrap().clone();
+        selection.set_head(self.buffer.read(cx).len());
         self.update_selections(vec![selection], true, cx);
     }
 
     pub fn select_all(&mut self, _: &SelectAll, cx: &mut ViewContext<Self>) {
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
-            start: Anchor::min(),
-            end: Anchor::max(),
+            start: 0,
+            end: self.buffer.read(cx).len(),
             reversed: false,
             goal: SelectionGoal::None,
         };
@@ -2024,13 +1935,13 @@ impl Editor {
 
     pub fn select_line(&mut self, _: &SelectLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
         let buffer = self.buffer.read(cx);
         let max_point = buffer.max_point();
         for selection in &mut selections {
             let rows = selection.spanned_rows(true, &display_map).buffer_rows;
-            selection.start = buffer.anchor_before(Point::new(rows.start, 0));
-            selection.end = buffer.anchor_before(cmp::min(max_point, Point::new(rows.end, 0)));
+            selection.start = Point::new(rows.start, 0);
+            selection.end = cmp::min(max_point, Point::new(rows.end, 0));
             selection.reversed = false;
         }
         self.update_selections(selections, true, cx);
@@ -2041,27 +1952,26 @@ impl Editor {
         _: &SplitSelectionIntoLines,
         cx: &mut ViewContext<Self>,
     ) {
-        let selections = self.selections(cx);
+        let selections = self.point_selections(cx).collect::<Vec<_>>();
         let buffer = self.buffer.read(cx);
 
         let mut to_unfold = Vec::new();
         let mut new_selections = Vec::new();
         for selection in selections.iter() {
-            let range = selection.point_range(buffer).sorted();
-            if range.start.row != range.end.row {
+            if selection.start.row != selection.end.row {
                 new_selections.push(Selection {
                     id: post_inc(&mut self.next_selection_id),
-                    start: selection.start.clone(),
-                    end: selection.start.clone(),
+                    start: selection.start,
+                    end: selection.start,
                     reversed: false,
                     goal: SelectionGoal::None,
                 });
             }
-            for row in range.start.row + 1..range.end.row {
-                let cursor = buffer.anchor_before(Point::new(row, buffer.line_len(row)));
+            for row in selection.start.row + 1..selection.end.row {
+                let cursor = Point::new(row, buffer.line_len(row));
                 new_selections.push(Selection {
                     id: post_inc(&mut self.next_selection_id),
-                    start: cursor.clone(),
+                    start: cursor,
                     end: cursor,
                     reversed: false,
                     goal: SelectionGoal::None,
@@ -2069,12 +1979,12 @@ impl Editor {
             }
             new_selections.push(Selection {
                 id: selection.id,
-                start: selection.end.clone(),
-                end: selection.end.clone(),
+                start: selection.end,
+                end: selection.end,
                 reversed: false,
                 goal: SelectionGoal::None,
             });
-            to_unfold.push(range);
+            to_unfold.push(selection.start..selection.end);
         }
         self.unfold_ranges(to_unfold, cx);
         self.update_selections(new_selections, true, cx);
@@ -2090,7 +2000,7 @@ impl Editor {
 
     fn add_selection(&mut self, above: bool, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections(cx).to_vec();
+        let mut selections = self.point_selections(cx).collect::<Vec<_>>();
         let mut state = self.add_selections_state.take().unwrap_or_else(|| {
             let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
             let range = oldest_selection.display_range(&display_map).sorted();
@@ -2186,42 +2096,42 @@ impl Editor {
         _: &SelectLargerSyntaxNode,
         cx: &mut ViewContext<Self>,
     ) {
-        let old_selections = self.selections(cx);
+        let old_selections = self.offset_selections(cx).collect::<Box<_>>();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
 
         let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
         let mut selected_larger_node = false;
-        let mut new_selection_ranges = Vec::new();
-        for selection in old_selections.iter() {
-            let old_range = selection.start.to_offset(buffer)..selection.end.to_offset(buffer);
-            let mut new_range = old_range.clone();
-            while let Some(containing_range) = buffer.range_for_syntax_ancestor(new_range.clone()) {
-                new_range = containing_range;
-                if !display_map.intersects_fold(new_range.start)
-                    && !display_map.intersects_fold(new_range.end)
+        let mut new_selections = old_selections
+            .iter()
+            .map(|selection| {
+                let old_range = selection.start..selection.end;
+                let mut new_range = old_range.clone();
+                while let Some(containing_range) =
+                    buffer.range_for_syntax_ancestor(new_range.clone())
                 {
-                    break;
+                    new_range = containing_range;
+                    if !display_map.intersects_fold(new_range.start)
+                        && !display_map.intersects_fold(new_range.end)
+                    {
+                        break;
+                    }
                 }
-            }
 
-            selected_larger_node |= new_range != old_range;
-            new_selection_ranges.push((selection.id, new_range, selection.reversed));
-        }
+                selected_larger_node |= new_range != old_range;
+                Selection {
+                    id: selection.id,
+                    start: new_range.start,
+                    end: new_range.end,
+                    goal: SelectionGoal::None,
+                    reversed: selection.reversed,
+                }
+            })
+            .collect::<Vec<_>>();
 
         if selected_larger_node {
             stack.push(old_selections);
-            new_selection_ranges.sort_unstable_by_key(|(_, range, _)| range.start.clone());
-            let new_selections = new_selection_ranges
-                .into_iter()
-                .map(|(id, range, reversed)| Selection {
-                    id,
-                    start: buffer.anchor_before(range.start),
-                    end: buffer.anchor_before(range.end),
-                    reversed,
-                    goal: SelectionGoal::None,
-                })
-                .collect();
+            new_selections.sort_unstable_by_key(|selection| selection.start);
             self.update_selections(new_selections, true, cx);
         }
         self.select_larger_syntax_node_stack = stack;
@@ -2244,23 +2154,22 @@ impl Editor {
         _: &MoveToEnclosingBracket,
         cx: &mut ViewContext<Self>,
     ) {
-        let mut selections = self.selections(cx).to_vec();
+        let mut selections = self.offset_selections(cx).collect::<Vec<_>>();
         let buffer = self.buffer.read(cx.as_ref());
         for selection in &mut selections {
-            let selection_range = selection.offset_range(buffer);
             if let Some((open_range, close_range)) =
-                buffer.enclosing_bracket_ranges(selection_range.clone())
+                buffer.enclosing_bracket_ranges(selection.start..selection.end)
             {
                 let close_range = close_range.to_inclusive();
-                let destination = if close_range.contains(&selection_range.start)
-                    && close_range.contains(&selection_range.end)
+                let destination = if close_range.contains(&selection.start)
+                    && close_range.contains(&selection.end)
                 {
                     open_range.end
                 } else {
                     *close_range.start()
                 };
-                selection.start = buffer.anchor_before(destination);
-                selection.end = selection.start.clone();
+                selection.start = destination;
+                selection.end = destination;
             }
         }
 
@@ -2273,7 +2182,7 @@ impl Editor {
         row: u32,
         columns: &Range<u32>,
         reversed: bool,
-    ) -> Option<Selection> {
+    ) -> Option<Selection<Point>> {
         let is_empty = columns.start == columns.end;
         let line_len = display_map.line_len(row);
         if columns.start < line_len || (is_empty && columns.start == line_len) {
@@ -2281,8 +2190,8 @@ impl Editor {
             let end = DisplayPoint::new(row, cmp::min(columns.end, line_len));
             Some(Selection {
                 id: post_inc(&mut self.next_selection_id),
-                start: display_map.anchor_before(start, Bias::Left),
-                end: display_map.anchor_before(end, Bias::Left),
+                start: start.to_buffer_point(display_map, Bias::Left),
+                end: end.to_buffer_point(display_map, Bias::Left),
                 reversed,
                 goal: SelectionGoal::ColumnRange {
                     start: columns.start,
@@ -2316,9 +2225,13 @@ impl Editor {
     ) -> impl 'a + Iterator<Item = Range<DisplayPoint>> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
-        let selections = &buffer.selection_set(set_id).unwrap().selections;
-        let start = display_map.anchor_before(range.start, Bias::Left);
-        let start_index = self.selection_insertion_index(selections, &start, cx);
+        let selections = buffer
+            .selection_set(set_id)
+            .unwrap()
+            .point_selections(buffer)
+            .collect::<Vec<_>>();
+        let start = range.start.to_buffer_point(&display_map, Bias::Left);
+        let start_index = self.selection_insertion_index(&selections, start);
         let pending_selection = if set_id.replica_id == self.buffer.read(cx).replica_id() {
             self.pending_selection.as_ref().and_then(|s| {
                 let selection_range = s.display_range(&display_map);
@@ -2331,26 +2244,19 @@ impl Editor {
         } else {
             None
         };
-        selections[start_index..]
-            .iter()
+        selections
+            .into_iter()
+            .skip(start_index)
             .map(move |s| s.display_range(&display_map))
             .take_while(move |r| r.start <= range.end || r.end <= range.end)
             .chain(pending_selection)
     }
 
-    fn selection_insertion_index(
-        &self,
-        selections: &[Selection],
-        start: &Anchor,
-        cx: &AppContext,
-    ) -> usize {
-        let buffer = self.buffer.read(cx);
-        match selections.binary_search_by(|probe| probe.start.cmp(&start, buffer).unwrap()) {
+    fn selection_insertion_index(&self, selections: &[Selection<Point>], start: Point) -> usize {
+        match selections.binary_search_by_key(&start, |probe| probe.start) {
             Ok(index) => index,
             Err(index) => {
-                if index > 0
-                    && selections[index - 1].end.cmp(&start, buffer).unwrap() == Ordering::Greater
-                {
+                if index > 0 && selections[index - 1].end > start {
                     index - 1
                 } else {
                     index
@@ -2359,37 +2265,54 @@ impl Editor {
         }
     }
 
-    fn selections(&mut self, cx: &mut ViewContext<Self>) -> Arc<[Selection]> {
+    fn point_selections<'a>(
+        &mut self,
+        cx: &'a mut ViewContext<Self>,
+    ) -> impl 'a + Iterator<Item = Selection<Point>> {
         self.end_selection(cx);
         let buffer = self.buffer.read(cx);
         buffer
             .selection_set(self.selection_set_id)
             .unwrap()
-            .selections
-            .clone()
+            .point_selections(buffer)
     }
 
-    fn update_selections(
+    fn offset_selections<'a>(
         &mut self,
-        mut selections: Vec<Selection>,
+        cx: &'a mut ViewContext<Self>,
+    ) -> impl 'a + Iterator<Item = Selection<usize>> {
+        self.end_selection(cx);
+        let buffer = self.buffer.read(cx);
+        buffer
+            .selection_set(self.selection_set_id)
+            .unwrap()
+            .offset_selections(buffer)
+    }
+
+    fn selection_count(&mut self, cx: &mut ViewContext<Self>) -> usize {
+        self.end_selection(cx);
+        let buffer = self.buffer.read(cx);
+        buffer.selection_set(self.selection_set_id).unwrap().len()
+    }
+
+    fn update_selections<T>(
+        &mut self,
+        mut selections: Vec<Selection<T>>,
         autoscroll: bool,
         cx: &mut ViewContext<Self>,
-    ) {
+    ) where
+        T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
+    {
         // Merge overlapping selections.
         let buffer = self.buffer.read(cx);
         let mut i = 1;
         while i < selections.len() {
-            if selections[i - 1]
-                .end
-                .cmp(&selections[i].start, buffer)
-                .unwrap()
-                >= Ordering::Equal
-            {
+            if selections[i - 1].end >= selections[i].start {
                 let removed = selections.remove(i);
-                if removed.start.cmp(&selections[i - 1].start, buffer).unwrap() < Ordering::Equal {
+                if removed.start < selections[i - 1].start {
                     selections[i - 1].start = removed.start;
                 }
-                if removed.end.cmp(&selections[i - 1].end, buffer).unwrap() > Ordering::Equal {
+                if removed.end > selections[i - 1].end {
                     selections[i - 1].end = removed.end;
                 }
             } else {
@@ -2402,13 +2325,13 @@ impl Editor {
         while let Some(autoclose_pair_state) = self.autoclose_stack.last() {
             let all_selections_inside_autoclose_ranges =
                 if selections.len() == autoclose_pair_state.ranges.len() {
-                    selections.iter().zip(&autoclose_pair_state.ranges).all(
-                        |(selection, autoclose_range)| {
-                            let head = selection.head();
-                            autoclose_range.start.cmp(head, buffer).unwrap() <= Ordering::Equal
-                                && autoclose_range.end.cmp(head, buffer).unwrap() >= Ordering::Equal
-                        },
-                    )
+                    selections
+                        .iter()
+                        .zip(autoclose_pair_state.ranges.point_ranges(buffer))
+                        .all(|(selection, autoclose_range)| {
+                            let head = selection.head().to_point(&*buffer);
+                            autoclose_range.start <= head && autoclose_range.end >= head
+                        })
                 } else {
                     false
                 };
@@ -2429,7 +2352,7 @@ impl Editor {
 
         self.buffer.update(cx, |buffer, cx| {
             buffer
-                .update_selection_set(self.selection_set_id, selections, cx)
+                .update_selection_set(self.selection_set_id, &selections, cx)
                 .unwrap();
         });
     }
@@ -2461,9 +2384,9 @@ impl Editor {
     pub fn fold(&mut self, _: &Fold, cx: &mut ViewContext<Self>) {
         let mut fold_ranges = Vec::new();
 
-        let selections = self.selections(cx);
+        let selections = self.point_selections(cx).collect::<Vec<_>>();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        for selection in selections.iter() {
+        for selection in selections {
             let range = selection.display_range(&display_map).sorted();
             let buffer_start_row = range.start.to_buffer_point(&display_map, Bias::Left).row;
 
@@ -2484,7 +2407,7 @@ impl Editor {
     }
 
     pub fn unfold(&mut self, _: &Unfold, cx: &mut ViewContext<Self>) {
-        let selections = self.selections(cx);
+        let selections = self.point_selections(cx).collect::<Vec<_>>();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
         let ranges = selections
@@ -2545,12 +2468,8 @@ impl Editor {
     }
 
     pub fn fold_selected_ranges(&mut self, _: &FoldSelectedRanges, cx: &mut ViewContext<Self>) {
-        let selections = self.selections(cx);
-        let buffer = self.buffer.read(cx);
-        let ranges = selections
-            .iter()
-            .map(|s| s.point_range(buffer).sorted())
-            .collect();
+        let selections = self.point_selections(cx);
+        let ranges = selections.map(|s| s.start..s.end).collect();
         self.fold_ranges(ranges, cx);
     }
 
@@ -2756,12 +2675,12 @@ impl EditorSettings {
                     .select_font(font_family_id, &font_properties)
                     .unwrap();
                 EditorStyle {
-                    text: TextStyle {
+                    text: gpui::fonts::TextStyle {
                         font_family_name,
                         font_family_id,
                         font_id,
                         font_size: 14.,
-                        color: Color::from_u32(0xff0000ff),
+                        color: gpui::color::Color::from_u32(0xff0000ff),
                         font_properties,
                         underline: false,
                     },
@@ -2863,7 +2782,7 @@ impl View for Editor {
     }
 }
 
-impl SelectionExt for Selection {
+impl SelectionExt for Selection<Point> {
     fn display_range(&self, map: &DisplayMapSnapshot) -> Range<DisplayPoint> {
         let start = self.start.to_display_point(map, Bias::Left);
         let end = self.end.to_display_point(map, Bias::Left);

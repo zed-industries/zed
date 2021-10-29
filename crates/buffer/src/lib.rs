@@ -20,7 +20,7 @@ use rpc::proto;
 pub use selection::*;
 use std::{
     cmp,
-    convert::{TryFrom, TryInto},
+    convert::TryFrom,
     iter::Iterator,
     ops::Range,
     str,
@@ -73,20 +73,14 @@ pub struct Buffer {
     lamport_clock: clock::Lamport,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct SelectionSet {
-    pub selections: Arc<[Selection]>,
-    pub active: bool,
-}
-
 #[derive(Clone, Debug)]
 pub struct Transaction {
     start: clock::Global,
     end: clock::Global,
     edits: Vec<clock::Local>,
     ranges: Vec<Range<usize>>,
-    selections_before: HashMap<SelectionSetId, Arc<[Selection]>>,
-    selections_after: HashMap<SelectionSetId, Arc<[Selection]>>,
+    selections_before: HashMap<SelectionSetId, Arc<AnchorRangeMap<SelectionState>>>,
+    selections_after: HashMap<SelectionSetId, Arc<AnchorRangeMap<SelectionState>>>,
     first_edit_at: Instant,
     last_edit_at: Instant,
 }
@@ -173,7 +167,7 @@ impl History {
     fn start_transaction(
         &mut self,
         start: clock::Global,
-        selections_before: HashMap<SelectionSetId, Arc<[Selection]>>,
+        selections_before: HashMap<SelectionSetId, Arc<AnchorRangeMap<SelectionState>>>,
         now: Instant,
     ) {
         self.transaction_depth += 1;
@@ -193,7 +187,7 @@ impl History {
 
     fn end_transaction(
         &mut self,
-        selections_after: HashMap<SelectionSetId, Arc<[Selection]>>,
+        selections_after: HashMap<SelectionSetId, Arc<AnchorRangeMap<SelectionState>>>,
         now: Instant,
     ) -> Option<&Transaction> {
         assert_ne!(self.transaction_depth, 0);
@@ -414,7 +408,11 @@ pub enum Operation {
     },
     UpdateSelections {
         set_id: SelectionSetId,
-        selections: Option<Arc<[Selection]>>,
+        selections: Arc<AnchorRangeMap<SelectionState>>,
+        lamport_timestamp: clock::Lamport,
+    },
+    RemoveSelections {
+        set_id: SelectionSetId,
         lamport_timestamp: clock::Lamport,
     },
     SetActiveSelections {
@@ -488,20 +486,8 @@ impl Buffer {
             .selections
             .into_iter()
             .map(|set| {
-                let set_id = clock::Lamport {
-                    replica_id: set.replica_id as ReplicaId,
-                    value: set.local_timestamp,
-                };
-                let selections: Vec<Selection> = set
-                    .selections
-                    .into_iter()
-                    .map(TryFrom::try_from)
-                    .collect::<Result<_, _>>()?;
-                let set = SelectionSet {
-                    selections: Arc::from(selections),
-                    active: set.is_active,
-                };
-                Result::<_, anyhow::Error>::Ok((set_id, set))
+                let set = SelectionSet::try_from(set)?;
+                Result::<_, anyhow::Error>::Ok((set.id, set))
             })
             .collect::<Result<_, _>>()?;
         Ok(buffer)
@@ -513,16 +499,7 @@ impl Buffer {
             id: self.remote_id,
             content: self.history.base_text.to_string(),
             history: ops,
-            selections: self
-                .selections
-                .iter()
-                .map(|(set_id, set)| proto::SelectionSetSnapshot {
-                    replica_id: set_id.replica_id as u32,
-                    local_timestamp: set_id.value,
-                    selections: set.selections.iter().map(Into::into).collect(),
-                    is_active: set.active,
-                })
-                .collect(),
+            selections: self.selections.iter().map(|(_, set)| set.into()).collect(),
         }
     }
 
@@ -560,6 +537,13 @@ impl Buffer {
 
     pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
         self.content().anchor_at(position, bias)
+    }
+
+    pub fn anchor_range_set<E>(&self, entries: E) -> AnchorRangeSet
+    where
+        E: IntoIterator<Item = Range<(usize, Bias)>>,
+    {
+        self.content().anchor_range_set(entries)
     }
 
     pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
@@ -855,21 +839,25 @@ impl Buffer {
                 selections,
                 lamport_timestamp,
             } => {
-                if let Some(selections) = selections {
-                    if let Some(set) = self.selections.get_mut(&set_id) {
-                        set.selections = selections;
-                    } else {
-                        self.selections.insert(
-                            set_id,
-                            SelectionSet {
-                                selections,
-                                active: false,
-                            },
-                        );
-                    }
+                if let Some(set) = self.selections.get_mut(&set_id) {
+                    set.selections = selections;
                 } else {
-                    self.selections.remove(&set_id);
+                    self.selections.insert(
+                        set_id,
+                        SelectionSet {
+                            id: set_id,
+                            selections,
+                            active: false,
+                        },
+                    );
                 }
+                self.lamport_clock.observe(lamport_timestamp);
+            }
+            Operation::RemoveSelections {
+                set_id,
+                lamport_timestamp,
+            } => {
+                self.selections.remove(&set_id);
                 self.lamport_clock.observe(lamport_timestamp);
             }
             Operation::SetActiveSelections {
@@ -1133,16 +1121,9 @@ impl Buffer {
                 Operation::Edit(edit) => self.version >= edit.version,
                 Operation::Undo { undo, .. } => self.version >= undo.version,
                 Operation::UpdateSelections { selections, .. } => {
-                    if let Some(selections) = selections {
-                        selections.iter().all(|selection| {
-                            let contains_start = self.version >= selection.start.version;
-                            let contains_end = self.version >= selection.end.version;
-                            contains_start && contains_end
-                        })
-                    } else {
-                        true
-                    }
+                    self.version >= *selections.version()
                 }
+                Operation::RemoveSelections { .. } => true,
                 Operation::SetActiveSelections { set_id, .. } => {
                     set_id.map_or(true, |set_id| self.selections.contains_key(&set_id))
                 }
@@ -1223,7 +1204,7 @@ impl Buffer {
             let selections = transaction.selections_before.clone();
             ops.push(self.undo_or_redo(transaction).unwrap());
             for (set_id, selections) in selections {
-                ops.extend(self.update_selection_set(set_id, selections));
+                ops.extend(self.restore_selection_set(set_id, selections));
             }
         }
         ops
@@ -1235,7 +1216,7 @@ impl Buffer {
             let selections = transaction.selections_after.clone();
             ops.push(self.undo_or_redo(transaction).unwrap());
             for (set_id, selections) in selections {
-                ops.extend(self.update_selection_set(set_id, selections));
+                ops.extend(self.restore_selection_set(set_id, selections));
             }
         }
         ops
@@ -1272,12 +1253,32 @@ impl Buffer {
         self.selections.iter()
     }
 
-    pub fn update_selection_set(
+    fn build_selection_anchor_range_map<T: ToOffset>(
+        &self,
+        selections: &[Selection<T>],
+    ) -> Arc<AnchorRangeMap<SelectionState>> {
+        Arc::new(
+            self.content()
+                .anchor_range_map(selections.iter().map(|selection| {
+                    let start = selection.start.to_offset(self);
+                    let end = selection.end.to_offset(self);
+                    let range = (start, Bias::Left)..(end, Bias::Left);
+                    let state = SelectionState {
+                        id: selection.id,
+                        reversed: selection.reversed,
+                        goal: selection.goal,
+                    };
+                    (range, state)
+                })),
+        )
+    }
+
+    pub fn update_selection_set<T: ToOffset>(
         &mut self,
         set_id: SelectionSetId,
-        selections: impl Into<Arc<[Selection]>>,
+        selections: &[Selection<T>],
     ) -> Result<Operation> {
-        let selections = selections.into();
+        let selections = self.build_selection_anchor_range_map(selections);
         let set = self
             .selections
             .get_mut(&set_id)
@@ -1285,25 +1286,43 @@ impl Buffer {
         set.selections = selections.clone();
         Ok(Operation::UpdateSelections {
             set_id,
-            selections: Some(selections),
+            selections,
             lamport_timestamp: self.lamport_clock.tick(),
         })
     }
 
-    pub fn add_selection_set(&mut self, selections: impl Into<Arc<[Selection]>>) -> Operation {
-        let selections = selections.into();
-        let lamport_timestamp = self.lamport_clock.tick();
+    pub fn restore_selection_set(
+        &mut self,
+        set_id: SelectionSetId,
+        selections: Arc<AnchorRangeMap<SelectionState>>,
+    ) -> Result<Operation> {
+        let set = self
+            .selections
+            .get_mut(&set_id)
+            .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
+        set.selections = selections.clone();
+        Ok(Operation::UpdateSelections {
+            set_id,
+            selections,
+            lamport_timestamp: self.lamport_clock.tick(),
+        })
+    }
+
+    pub fn add_selection_set<T: ToOffset>(&mut self, selections: &[Selection<T>]) -> Operation {
+        let selections = self.build_selection_anchor_range_map(selections);
+        let set_id = self.lamport_clock.tick();
         self.selections.insert(
-            lamport_timestamp,
+            set_id,
             SelectionSet {
+                id: set_id,
                 selections: selections.clone(),
                 active: false,
             },
         );
         Operation::UpdateSelections {
-            set_id: lamport_timestamp,
-            selections: Some(selections),
-            lamport_timestamp,
+            set_id,
+            selections,
+            lamport_timestamp: set_id,
         }
     }
 
@@ -1335,9 +1354,8 @@ impl Buffer {
         self.selections
             .remove(&set_id)
             .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
-        Ok(Operation::UpdateSelections {
+        Ok(Operation::RemoveSelections {
             set_id,
-            selections: None,
             lamport_timestamp: self.lamport_clock.tick(),
         })
     }
@@ -1430,9 +1448,9 @@ impl Buffer {
             let new_selections = self.selections_from_ranges(ranges).unwrap();
 
             let op = if set_id.is_none() || rng.gen_bool(1.0 / 5.0) {
-                self.add_selection_set(new_selections)
+                self.add_selection_set(&new_selections)
             } else {
-                self.update_selection_set(*set_id.unwrap(), new_selections)
+                self.update_selection_set(*set_id.unwrap(), &new_selections)
                     .unwrap()
             };
             ops.push(op);
@@ -1458,7 +1476,7 @@ impl Buffer {
         ops
     }
 
-    fn selections_from_ranges<I>(&self, ranges: I) -> Result<Vec<Selection>>
+    fn selections_from_ranges<I>(&self, ranges: I) -> Result<Vec<Selection<usize>>>
     where
         I: IntoIterator<Item = Range<usize>>,
     {
@@ -1469,25 +1487,28 @@ impl Buffer {
         let mut ranges = ranges.into_iter().collect::<Vec<_>>();
         ranges.sort_unstable_by_key(|range| range.start);
 
-        let mut selections = Vec::with_capacity(ranges.len());
-        for range in ranges {
+        let mut selections = Vec::<Selection<usize>>::with_capacity(ranges.len());
+        for mut range in ranges {
+            let mut reversed = false;
             if range.start > range.end {
-                selections.push(Selection {
-                    id: NEXT_SELECTION_ID.fetch_add(1, atomic::Ordering::SeqCst),
-                    start: self.anchor_before(range.end),
-                    end: self.anchor_before(range.start),
-                    reversed: true,
-                    goal: SelectionGoal::None,
-                });
-            } else {
-                selections.push(Selection {
-                    id: NEXT_SELECTION_ID.fetch_add(1, atomic::Ordering::SeqCst),
-                    start: self.anchor_after(range.start),
-                    end: self.anchor_before(range.end),
-                    reversed: false,
-                    goal: SelectionGoal::None,
-                });
+                reversed = true;
+                std::mem::swap(&mut range.start, &mut range.end);
             }
+
+            if let Some(selection) = selections.last_mut() {
+                if selection.end >= range.start {
+                    selection.end = range.end;
+                    continue;
+                }
+            }
+
+            selections.push(Selection {
+                id: NEXT_SELECTION_ID.fetch_add(1, atomic::Ordering::SeqCst),
+                start: range.start,
+                end: range.end,
+                reversed,
+                goal: SelectionGoal::None,
+            });
         }
         Ok(selections)
     }
@@ -1495,15 +1516,12 @@ impl Buffer {
     pub fn selection_ranges<'a>(&'a self, set_id: SelectionSetId) -> Result<Vec<Range<usize>>> {
         Ok(self
             .selection_set(set_id)?
-            .selections
-            .iter()
+            .offset_selections(self)
             .map(move |selection| {
-                let start = selection.start.to_offset(self);
-                let end = selection.end.to_offset(self);
                 if selection.reversed {
-                    end..start
+                    selection.end..selection.start
                 } else {
-                    start..end
+                    selection.start..selection.end
                 }
             })
             .collect())
@@ -2136,6 +2154,9 @@ impl Operation {
             Operation::UpdateSelections {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
+            Operation::RemoveSelections {
+                lamport_timestamp, ..
+            } => *lamport_timestamp,
             Operation::SetActiveSelections {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
@@ -2192,9 +2213,27 @@ impl<'a> Into<proto::Operation> for &'a Operation {
                         replica_id: set_id.replica_id as u32,
                         local_timestamp: set_id.value,
                         lamport_timestamp: lamport_timestamp.value,
-                        set: selections.as_ref().map(|selections| proto::SelectionSet {
-                            selections: selections.iter().map(Into::into).collect(),
-                        }),
+                        version: selections.version().into(),
+                        selections: selections
+                            .raw_entries()
+                            .iter()
+                            .map(|(range, state)| proto::Selection {
+                                id: state.id as u64,
+                                start: range.start.0 as u64,
+                                end: range.end.0 as u64,
+                                reversed: state.reversed,
+                            })
+                            .collect(),
+                    },
+                ),
+                Operation::RemoveSelections {
+                    set_id,
+                    lamport_timestamp,
+                } => proto::operation::Variant::RemoveSelections(
+                    proto::operation::RemoveSelections {
+                        replica_id: set_id.replica_id as u32,
+                        local_timestamp: set_id.value,
+                        lamport_timestamp: lamport_timestamp.value,
                     },
                 ),
                 Operation::SetActiveSelections {
@@ -2231,30 +2270,6 @@ impl<'a> Into<proto::operation::Edit> for &'a EditOperation {
             version: From::from(&self.version),
             ranges,
             new_text: self.new_text.clone(),
-        }
-    }
-}
-
-impl<'a> Into<proto::Anchor> for &'a Anchor {
-    fn into(self) -> proto::Anchor {
-        proto::Anchor {
-            version: (&self.version).into(),
-            offset: self.offset as u64,
-            bias: match self.bias {
-                Bias::Left => proto::anchor::Bias::Left as i32,
-                Bias::Right => proto::anchor::Bias::Right as i32,
-            },
-        }
-    }
-}
-
-impl<'a> Into<proto::Selection> for &'a Selection {
-    fn into(self) -> proto::Selection {
-        proto::Selection {
-            id: self.id as u64,
-            start: Some((&self.start).into()),
-            end: Some((&self.end).into()),
-            reversed: self.reversed,
         }
     }
 }
@@ -2301,16 +2316,23 @@ impl TryFrom<proto::Operation> for Operation {
                     },
                 },
                 proto::operation::Variant::UpdateSelections(message) => {
-                    let selections: Option<Vec<Selection>> = if let Some(set) = message.set {
-                        Some(
-                            set.selections
-                                .into_iter()
-                                .map(TryFrom::try_from)
-                                .collect::<Result<_, _>>()?,
-                        )
-                    } else {
-                        None
-                    };
+                    let version = message.version.into();
+                    let entries = message
+                        .selections
+                        .iter()
+                        .map(|selection| {
+                            let range = (selection.start as usize, Bias::Left)
+                                ..(selection.end as usize, Bias::Right);
+                            let state = SelectionState {
+                                id: selection.id as usize,
+                                reversed: selection.reversed,
+                                goal: SelectionGoal::None,
+                            };
+                            (range, state)
+                        })
+                        .collect();
+                    let selections = AnchorRangeMap::from_raw(version, entries);
+
                     Operation::UpdateSelections {
                         set_id: clock::Lamport {
                             replica_id: message.replica_id as ReplicaId,
@@ -2320,7 +2342,19 @@ impl TryFrom<proto::Operation> for Operation {
                             replica_id: message.replica_id as ReplicaId,
                             value: message.lamport_timestamp,
                         },
-                        selections: selections.map(Arc::from),
+                        selections: Arc::from(selections),
+                    }
+                }
+                proto::operation::Variant::RemoveSelections(message) => {
+                    Operation::RemoveSelections {
+                        set_id: clock::Lamport {
+                            replica_id: message.replica_id as ReplicaId,
+                            value: message.local_timestamp,
+                        },
+                        lamport_timestamp: clock::Lamport {
+                            replica_id: message.replica_id as ReplicaId,
+                            value: message.lamport_timestamp,
+                        },
                     }
                 }
                 proto::operation::Variant::SetActiveSelections(message) => {
@@ -2357,52 +2391,6 @@ impl From<proto::operation::Edit> for EditOperation {
             ranges,
             new_text: edit.new_text,
         }
-    }
-}
-
-impl TryFrom<proto::Anchor> for Anchor {
-    type Error = anyhow::Error;
-
-    fn try_from(message: proto::Anchor) -> Result<Self, Self::Error> {
-        let mut version = clock::Global::new();
-        for entry in message.version {
-            version.observe(clock::Local {
-                replica_id: entry.replica_id as ReplicaId,
-                value: entry.timestamp,
-            });
-        }
-
-        Ok(Self {
-            offset: message.offset as usize,
-            bias: if message.bias == proto::anchor::Bias::Left as i32 {
-                Bias::Left
-            } else if message.bias == proto::anchor::Bias::Right as i32 {
-                Bias::Right
-            } else {
-                Err(anyhow!("invalid anchor bias {}", message.bias))?
-            },
-            version,
-        })
-    }
-}
-
-impl TryFrom<proto::Selection> for Selection {
-    type Error = anyhow::Error;
-
-    fn try_from(selection: proto::Selection) -> Result<Self, Self::Error> {
-        Ok(Selection {
-            id: selection.id as usize,
-            start: selection
-                .start
-                .ok_or_else(|| anyhow!("missing selection start"))?
-                .try_into()?,
-            end: selection
-                .end
-                .ok_or_else(|| anyhow!("missing selection end"))?
-                .try_into()?,
-            reversed: selection.reversed,
-            goal: SelectionGoal::None,
-        })
     }
 }
 
@@ -2447,5 +2435,11 @@ impl ToPoint for Anchor {
 impl ToPoint for usize {
     fn to_point<'a>(&self, content: impl Into<Content<'a>>) -> Point {
         content.into().visible_text.to_point(*self)
+    }
+}
+
+impl ToPoint for Point {
+    fn to_point<'a>(&self, _: impl Into<Content<'a>>) -> Point {
+        *self
     }
 }
