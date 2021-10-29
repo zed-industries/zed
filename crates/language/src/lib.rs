@@ -735,12 +735,11 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn diagnostics_in_range<'a, T: ToOffset>(
+    pub fn diagnostics_in_range<'a, T: 'a + ToOffset>(
         &'a self,
         range: Range<T>,
     ) -> impl Iterator<Item = Diagnostic> + 'a {
         let content = self.content();
-        let range = range.start.to_offset(&content)..range.end.to_offset(&content);
         self.diagnostics
             .intersecting_ranges(range, content, true)
             .map(move |(_, range, (severity, message))| Diagnostic {
