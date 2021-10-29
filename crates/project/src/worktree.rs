@@ -3410,7 +3410,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_buffer_file_changes_on_disk(mut cx: gpui::TestAppContext) {
-        use buffer::{Point, Selection, SelectionGoal, ToPoint};
+        use buffer::{Point, Selection, SelectionGoal};
         use std::fs;
 
         let initial_contents = "aaa\nbbbbb\nc\n";
@@ -3436,20 +3436,17 @@ mod tests {
             .await
             .unwrap();
 
-        // Add a cursor at the start of each row.
+        // Add a cursor on each row.
         let selection_set_id = buffer.update(&mut cx, |buffer, cx| {
             assert!(!buffer.is_dirty());
             buffer.add_selection_set(
-                (0..3)
-                    .map(|row| {
-                        let anchor = buffer.anchor_at(Point::new(row, 0), Bias::Right);
-                        Selection {
-                            id: row as usize,
-                            start: anchor.clone(),
-                            end: anchor,
-                            reversed: false,
-                            goal: SelectionGoal::None,
-                        }
+                &(0..3)
+                    .map(|row| Selection {
+                        id: row as usize,
+                        start: Point::new(row, 1),
+                        end: Point::new(row, 1),
+                        reversed: false,
+                        goal: SelectionGoal::None,
                     })
                     .collect::<Vec<_>>(),
                 cx,
@@ -3469,7 +3466,7 @@ mod tests {
         // contents are edited according to the diff between the old and new
         // file contents.
         buffer
-            .condition(&cx, |buffer, _| buffer.text() != initial_contents)
+            .condition(&cx, |buffer, _| buffer.text() == new_contents)
             .await;
 
         buffer.update(&mut cx, |buffer, _| {
@@ -3477,18 +3474,18 @@ mod tests {
             assert!(!buffer.is_dirty());
             assert!(!buffer.has_conflict());
 
-            let set = buffer.selection_set(selection_set_id).unwrap();
-            let cursor_positions = set
-                .selections
-                .iter()
+            let cursor_positions = buffer
+                .selection_set(selection_set_id)
+                .unwrap()
+                .point_selections(&*buffer)
                 .map(|selection| {
                     assert_eq!(selection.start, selection.end);
-                    selection.start.to_point(&*buffer)
+                    selection.start
                 })
                 .collect::<Vec<_>>();
             assert_eq!(
                 cursor_positions,
-                &[Point::new(1, 0), Point::new(3, 0), Point::new(4, 0),]
+                [Point::new(1, 1), Point::new(3, 1), Point::new(4, 0)]
             );
         });
 

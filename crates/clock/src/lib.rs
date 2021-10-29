@@ -86,6 +86,12 @@ impl<'a> From<&'a Global> for Vec<rpc::proto::VectorClockEntry> {
     }
 }
 
+impl From<Global> for Vec<rpc::proto::VectorClockEntry> {
+    fn from(version: Global) -> Self {
+        (&version).into()
+    }
+}
+
 impl Global {
     pub fn new() -> Self {
         Self::default()

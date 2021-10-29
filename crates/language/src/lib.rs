@@ -790,9 +790,9 @@ impl Buffer {
             for request in autoindent_requests {
                 let old_to_new_rows = request
                     .edited
-                    .to_points(&request.before_edit)
+                    .points(&request.before_edit)
                     .map(|point| point.row)
-                    .zip(request.edited.to_points(&snapshot).map(|point| point.row))
+                    .zip(request.edited.points(&snapshot).map(|point| point.row))
                     .collect::<BTreeMap<u32, u32>>();
 
                 let mut old_suggestions = HashMap::<u32, u32>::default();
@@ -853,7 +853,7 @@ impl Buffer {
                 if let Some(inserted) = request.inserted.as_ref() {
                     let inserted_row_ranges = contiguous_ranges(
                         inserted
-                            .to_point_ranges(&snapshot)
+                            .point_ranges(&snapshot)
                             .flat_map(|range| range.start.row..range.end.row + 1),
                         max_rows_between_yields,
                     );
@@ -901,31 +901,30 @@ impl Buffer {
         for selection_set_id in &selection_set_ids {
             if let Ok(set) = self.selection_set(*selection_set_id) {
                 let new_selections = set
-                    .selections
-                    .iter()
+                    .point_selections(&*self)
                     .map(|selection| {
-                        let start_point = selection.start.to_point(&self.text);
-                        if start_point.column == 0 {
-                            let end_point = selection.end.to_point(&self.text);
+                        if selection.start.column == 0 {
                             let delta = Point::new(
                                 0,
-                                indent_columns.get(&start_point.row).copied().unwrap_or(0),
+                                indent_columns
+                                    .get(&selection.start.row)
+                                    .copied()
+                                    .unwrap_or(0),
                             );
                             if delta.column > 0 {
                                 return Selection {
                                     id: selection.id,
                                     goal: selection.goal,
                                     reversed: selection.reversed,
-                                    start: self
-                                        .anchor_at(start_point + delta, selection.start.bias),
-                                    end: self.anchor_at(end_point + delta, selection.end.bias),
+                                    start: selection.start + delta,
+                                    end: selection.end + delta,
                                 };
                             }
                         }
-                        selection.clone()
+                        selection
                     })
-                    .collect::<Arc<[_]>>();
-                self.update_selection_set(*selection_set_id, new_selections, cx)
+                    .collect::<Vec<_>>();
+                self.update_selection_set(*selection_set_id, &new_selections, cx)
                     .unwrap();
             }
         }
@@ -1239,9 +1238,9 @@ impl Buffer {
         cx.notify();
     }
 
-    pub fn add_selection_set(
+    pub fn add_selection_set<T: ToOffset>(
         &mut self,
-        selections: impl Into<Arc<[Selection]>>,
+        selections: &[Selection<T>],
         cx: &mut ModelContext<Self>,
     ) -> SelectionSetId {
         let operation = self.text.add_selection_set(selections);
@@ -1255,10 +1254,10 @@ impl Buffer {
         }
     }
 
-    pub fn update_selection_set(
+    pub fn update_selection_set<T: ToOffset>(
         &mut self,
         set_id: SelectionSetId,
-        selections: impl Into<Arc<[Selection]>>,
+        selections: &[Selection<T>],
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let operation = self.text.update_selection_set(set_id, selections)?;

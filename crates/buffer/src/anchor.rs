@@ -1,8 +1,10 @@
-use crate::FullOffset;
-
-use super::{Buffer, Content, FromAnchor, Point, ToOffset};
+use super::{Buffer, Content, FromAnchor, FullOffset, Point, ToOffset};
 use anyhow::Result;
-use std::{cmp::Ordering, ops::Range};
+use std::{
+    cmp::Ordering,
+    fmt::{Debug, Formatter},
+    ops::Range,
+};
 use sum_tree::{Bias, SumTree};
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
@@ -112,7 +114,25 @@ impl Anchor {
 }
 
 impl<T> AnchorMap<T> {
-    pub fn to_points<'a>(
+    pub fn version(&self) -> &clock::Global {
+        &self.version
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn offsets<'a>(
+        &'a self,
+        content: impl Into<Content<'a>> + 'a,
+    ) -> impl Iterator<Item = (usize, &'a T)> + 'a {
+        let content = content.into();
+        content
+            .summaries_for_anchors(self)
+            .map(move |(sum, value)| (sum.bytes, value))
+    }
+
+    pub fn points<'a>(
         &'a self,
         content: impl Into<Content<'a>> + 'a,
     ) -> impl Iterator<Item = (Point, &'a T)> + 'a {
@@ -121,23 +141,50 @@ impl<T> AnchorMap<T> {
             .summaries_for_anchors(self)
             .map(move |(sum, value)| (sum.lines, value))
     }
-
-    pub fn version(&self) -> &clock::Global {
-        &self.version
-    }
 }
 
 impl AnchorSet {
-    pub fn to_points<'a>(
+    pub fn version(&self) -> &clock::Global {
+        &self.0.version
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn offsets<'a>(
+        &'a self,
+        content: impl Into<Content<'a>> + 'a,
+    ) -> impl Iterator<Item = usize> + 'a {
+        self.0.offsets(content).map(|(offset, _)| offset)
+    }
+
+    pub fn points<'a>(
         &'a self,
         content: impl Into<Content<'a>> + 'a,
     ) -> impl Iterator<Item = Point> + 'a {
-        self.0.to_points(content).map(move |(point, _)| point)
+        self.0.points(content).map(|(point, _)| point)
     }
 }
 
 impl<T> AnchorRangeMap<T> {
-    pub fn to_point_ranges<'a>(
+    pub fn version(&self) -> &clock::Global {
+        &self.version
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn from_raw(version: clock::Global, entries: Vec<(Range<(FullOffset, Bias)>, T)>) -> Self {
+        Self { version, entries }
+    }
+
+    pub fn raw_entries(&self) -> &[(Range<(FullOffset, Bias)>, T)] {
+        &self.entries
+    }
+
+    pub fn point_ranges<'a>(
         &'a self,
         content: impl Into<Content<'a>> + 'a,
     ) -> impl Iterator<Item = (Range<Point>, &'a T)> + 'a {
@@ -147,21 +194,67 @@ impl<T> AnchorRangeMap<T> {
             .map(move |(range, value)| ((range.start.lines..range.end.lines), value))
     }
 
-    pub fn version(&self) -> &clock::Global {
-        &self.version
+    pub fn offset_ranges<'a>(
+        &'a self,
+        content: impl Into<Content<'a>> + 'a,
+    ) -> impl Iterator<Item = (Range<usize>, &'a T)> + 'a {
+        let content = content.into();
+        content
+            .summaries_for_anchor_ranges(self)
+            .map(move |(range, value)| ((range.start.bytes..range.end.bytes), value))
+    }
+}
+
+impl<T: PartialEq> PartialEq for AnchorRangeMap<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.version == other.version && self.entries == other.entries
+    }
+}
+
+impl<T: Eq> Eq for AnchorRangeMap<T> {}
+
+impl<T: Debug> Debug for AnchorRangeMap<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        let mut f = f.debug_map();
+        for (range, value) in &self.entries {
+            f.key(range);
+            f.value(value);
+        }
+        f.finish()
+    }
+}
+
+impl Debug for AnchorRangeSet {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut f = f.debug_set();
+        for (range, _) in &self.0.entries {
+            f.entry(range);
+        }
+        f.finish()
     }
 }
 
 impl AnchorRangeSet {
-    pub fn to_point_ranges<'a>(
-        &'a self,
-        content: impl Into<Content<'a>> + 'a,
-    ) -> impl Iterator<Item = Range<Point>> + 'a {
-        self.0.to_point_ranges(content).map(|(range, _)| range)
+    pub fn len(&self) -> usize {
+        self.0.len()
     }
 
     pub fn version(&self) -> &clock::Global {
         self.0.version()
+    }
+
+    pub fn offset_ranges<'a>(
+        &'a self,
+        content: impl Into<Content<'a>> + 'a,
+    ) -> impl Iterator<Item = Range<usize>> + 'a {
+        self.0.offset_ranges(content).map(|(range, _)| range)
+    }
+
+    pub fn point_ranges<'a>(
+        &'a self,
+        content: impl Into<Content<'a>> + 'a,
+    ) -> impl Iterator<Item = Range<Point>> + 'a {
+        self.0.point_ranges(content).map(|(range, _)| range)
     }
 }
 

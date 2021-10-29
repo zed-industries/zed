@@ -509,7 +509,7 @@ where
     }
 }
 
-pub struct FilterCursor<'a, F: FnMut(&T::Summary) -> bool, T: Item, D> {
+pub struct FilterCursor<'a, F, T: Item, D> {
     cursor: Cursor<'a, T, D>,
     filter_node: F,
 }
