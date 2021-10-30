@@ -17,11 +17,13 @@ path = "src/main.rs"
 test-support = [
     "buffer/test-support",
     "client/test-support",
+    "editor/test-support",
     "gpui/test-support",
     "language/test-support",
     "project/test-support",
     "rpc/test-support",
     "tempdir",
+    "workspace/test-support",
 ]
 
 [dependencies]
