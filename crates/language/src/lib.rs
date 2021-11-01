@@ -1,5 +1,6 @@
 mod highlight_map;
 mod language;
+pub mod proto;
 #[cfg(test)]
 mod tests;
 
@@ -16,7 +17,6 @@ use lazy_static::lazy_static;
 use lsp::LanguageServer;
 use parking_lot::Mutex;
 use postage::{prelude::Stream, sink::Sink, watch};
-use rpc::proto;
 use similar::{ChangeTag, TextDiff};
 use smol::future::yield_now;
 use std::{
@@ -251,10 +251,34 @@ impl Buffer {
         message: proto::Buffer,
         file: Option<Box<dyn File>>,
     ) -> Result<Self> {
-        Ok(Self::build(
-            TextBuffer::from_proto(replica_id, message)?,
-            file,
-        ))
+        let mut buffer =
+            buffer::Buffer::new(replica_id, message.id, History::new(message.content.into()));
+        let ops = message
+            .history
+            .into_iter()
+            .map(|op| Operation::Edit(proto::deserialize_edit_operation(op)));
+        buffer.apply_ops(ops)?;
+        for set in message.selections {
+            let set = proto::deserialize_selection_set(set);
+            buffer.add_raw_selection_set(set.id, set);
+        }
+        Ok(Self::build(buffer, file))
+    }
+
+    pub fn to_proto(&self) -> proto::Buffer {
+        proto::Buffer {
+            id: self.remote_id(),
+            content: self.text.base_text().to_string(),
+            history: self
+                .text
+                .history()
+                .map(proto::serialize_edit_operation)
+                .collect(),
+            selections: self
+                .selection_sets()
+                .map(|(_, set)| proto::serialize_selection_set(set))
+                .collect(),
+        }
     }
 
     pub fn with_language(
@@ -319,7 +343,7 @@ impl Buffer {
             .as_ref()
             .ok_or_else(|| anyhow!("buffer has no file"))?;
         let text = self.as_rope().clone();
-        let version = self.version.clone();
+        let version = self.version();
         let save = file.save(self.remote_id(), text, version, cx.as_mut());
         Ok(cx.spawn(|this, mut cx| async move {
             let (version, mtime) = save.await?;
@@ -494,7 +518,7 @@ impl Buffer {
                                     .await;
                                 this.update(&mut cx, |this, cx| {
                                     if this.apply_diff(diff, cx) {
-                                        this.saved_version = this.version.clone();
+                                        this.saved_version = this.version();
                                         this.saved_mtime = new_mtime;
                                         cx.emit(Event::Reloaded);
                                     }

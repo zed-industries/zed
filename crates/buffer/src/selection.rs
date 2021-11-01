@@ -1,7 +1,5 @@
-use super::{AnchorRangeMap, Buffer, Content, FullOffset, Point, ToOffset, ToPoint};
-use rpc::proto;
+use super::{AnchorRangeMap, Buffer, Content, Point, ToOffset, ToPoint};
 use std::{cmp::Ordering, ops::Range, sync::Arc};
-use sum_tree::Bias;
 
 pub type SelectionSetId = clock::Lamport;
 pub type SelectionsVersion = usize;
@@ -127,55 +125,5 @@ impl SelectionSet {
                 reversed: state.reversed,
                 goal: state.goal,
             })
-    }
-}
-
-impl<'a> Into<proto::SelectionSet> for &'a SelectionSet {
-    fn into(self) -> proto::SelectionSet {
-        let version = self.selections.version();
-        let entries = self.selections.raw_entries();
-        proto::SelectionSet {
-            replica_id: self.id.replica_id as u32,
-            lamport_timestamp: self.id.value as u32,
-            is_active: self.active,
-            version: version.into(),
-            selections: entries
-                .iter()
-                .map(|(range, state)| proto::Selection {
-                    id: state.id as u64,
-                    start: range.start.0.to_proto(),
-                    end: range.end.0.to_proto(),
-                    reversed: state.reversed,
-                })
-                .collect(),
-        }
-    }
-}
-
-impl From<proto::SelectionSet> for SelectionSet {
-    fn from(set: proto::SelectionSet) -> Self {
-        Self {
-            id: clock::Lamport {
-                replica_id: set.replica_id as u16,
-                value: set.lamport_timestamp,
-            },
-            active: set.is_active,
-            selections: Arc::new(AnchorRangeMap::from_raw(
-                set.version.into(),
-                set.selections
-                    .into_iter()
-                    .map(|selection| {
-                        let range = (FullOffset::from_proto(selection.start), Bias::Left)
-                            ..(FullOffset::from_proto(selection.end), Bias::Right);
-                        let state = SelectionState {
-                            id: selection.id as usize,
-                            reversed: selection.reversed,
-                            goal: SelectionGoal::None,
-                        };
-                        (range, state)
-                    })
-                    .collect(),
-            )),
-        }
     }
 }

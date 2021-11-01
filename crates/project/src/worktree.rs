@@ -430,8 +430,8 @@ impl Worktree {
         let ops = payload
             .operations
             .into_iter()
-            .map(|op| op.try_into())
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .map(|op| language::proto::deserialize_operation(op))
+            .collect::<Result<Vec<_>, _>>()?;
 
         match self {
             Worktree::Local(worktree) => {
@@ -1944,7 +1944,7 @@ impl language::File for File {
                         .request(proto::UpdateBuffer {
                             worktree_id: remote_id,
                             buffer_id,
-                            operations: vec![(&operation).into()],
+                            operations: vec![language::proto::serialize_operation(&operation)],
                         })
                         .await
                     {

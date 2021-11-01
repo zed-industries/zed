@@ -761,7 +761,6 @@ dependencies = [
  "gpui",
  "log",
  "rand 0.8.3",
- "rpc",
  "seahash",
  "smallvec",
  "sum_tree",

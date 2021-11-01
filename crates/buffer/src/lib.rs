@@ -19,11 +19,9 @@ pub use point_utf16::*;
 pub use random_char_iter::*;
 use rope::TextDimension;
 pub use rope::{Chunks, Rope, TextSummary};
-use rpc::proto;
 pub use selection::*;
 use std::{
     cmp::{self, Reverse},
-    convert::TryFrom,
     iter::Iterator,
     ops::{self, Range},
     str,
@@ -35,7 +33,7 @@ use sum_tree::{FilterCursor, SumTree};
 
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Default)]
-struct DeterministicState;
+pub struct DeterministicState;
 
 #[cfg(any(test, feature = "test-support"))]
 impl std::hash::BuildHasher for DeterministicState {
@@ -344,10 +342,10 @@ impl<D1, D2> Edit<(D1, D2)> {
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-struct InsertionTimestamp {
-    replica_id: ReplicaId,
-    local: clock::Seq,
-    lamport: clock::Seq,
+pub struct InsertionTimestamp {
+    pub replica_id: ReplicaId,
+    pub local: clock::Seq,
+    pub lamport: clock::Seq,
 }
 
 impl InsertionTimestamp {
@@ -422,18 +420,18 @@ pub enum Operation {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EditOperation {
-    timestamp: InsertionTimestamp,
-    version: clock::Global,
-    ranges: Vec<Range<FullOffset>>,
-    new_text: Option<String>,
+    pub timestamp: InsertionTimestamp,
+    pub version: clock::Global,
+    pub ranges: Vec<Range<FullOffset>>,
+    pub new_text: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UndoOperation {
-    id: clock::Local,
-    counts: HashMap<clock::Local, u32>,
-    ranges: Vec<Range<FullOffset>>,
-    version: clock::Global,
+    pub id: clock::Local,
+    pub counts: HashMap<clock::Local, u32>,
+    pub ranges: Vec<Range<FullOffset>>,
+    pub version: clock::Global,
 }
 
 impl Buffer {
@@ -469,34 +467,6 @@ impl Buffer {
             remote_id,
             local_clock: clock::Local::new(replica_id),
             lamport_clock: clock::Lamport::new(replica_id),
-        }
-    }
-
-    pub fn from_proto(replica_id: u16, message: proto::Buffer) -> Result<Self> {
-        let mut buffer = Buffer::new(replica_id, message.id, History::new(message.content.into()));
-        let ops = message
-            .history
-            .into_iter()
-            .map(|op| Operation::Edit(op.into()));
-        buffer.apply_ops(ops)?;
-        buffer.selections = message
-            .selections
-            .into_iter()
-            .map(|set| {
-                let set = SelectionSet::try_from(set)?;
-                Result::<_, anyhow::Error>::Ok((set.id, set))
-            })
-            .collect::<Result<_, _>>()?;
-        Ok(buffer)
-    }
-
-    pub fn to_proto(&self) -> proto::Buffer {
-        let ops = self.history.ops.values().map(Into::into).collect();
-        proto::Buffer {
-            id: self.remote_id,
-            content: self.history.base_text.to_string(),
-            history: ops,
-            selections: self.selections.iter().map(|(_, set)| set.into()).collect(),
         }
     }
 
@@ -1203,6 +1173,14 @@ impl Buffer {
             .retain(|set_id, _| set_id.replica_id != replica_id)
     }
 
+    pub fn base_text(&self) -> &Arc<str> {
+        &self.history.base_text
+    }
+
+    pub fn history(&self) -> impl Iterator<Item = &EditOperation> {
+        self.history.ops.values()
+    }
+
     pub fn undo(&mut self) -> Vec<Operation> {
         let mut ops = Vec::new();
         if let Some(transaction) = self.history.pop_undo().cloned() {
@@ -1329,6 +1307,10 @@ impl Buffer {
             selections,
             lamport_timestamp: set_id,
         }
+    }
+
+    pub fn add_raw_selection_set(&mut self, id: SelectionSetId, selections: SelectionSet) {
+        self.selections.insert(id, selections);
     }
 
     pub fn set_active_selection_set(
@@ -2157,18 +2139,10 @@ impl Default for FragmentSummary {
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct FullOffset(usize);
+pub struct FullOffset(pub usize);
 
 impl FullOffset {
     const MAX: Self = FullOffset(usize::MAX);
-
-    fn to_proto(self) -> u64 {
-        self.0 as u64
-    }
-
-    fn from_proto(value: u64) -> Self {
-        Self(value as usize)
-    }
 }
 
 impl ops::AddAssign<usize> for FullOffset {
@@ -2294,227 +2268,6 @@ impl Operation {
         match self {
             Operation::Edit { .. } => true,
             _ => false,
-        }
-    }
-}
-
-impl<'a> Into<proto::Operation> for &'a Operation {
-    fn into(self) -> proto::Operation {
-        proto::Operation {
-            variant: Some(match self {
-                Operation::Edit(edit) => proto::operation::Variant::Edit(edit.into()),
-                Operation::Undo {
-                    undo,
-                    lamport_timestamp,
-                } => proto::operation::Variant::Undo(proto::operation::Undo {
-                    replica_id: undo.id.replica_id as u32,
-                    local_timestamp: undo.id.value,
-                    lamport_timestamp: lamport_timestamp.value,
-                    ranges: undo
-                        .ranges
-                        .iter()
-                        .map(|r| proto::Range {
-                            start: r.start.to_proto(),
-                            end: r.end.to_proto(),
-                        })
-                        .collect(),
-                    counts: undo
-                        .counts
-                        .iter()
-                        .map(|(edit_id, count)| proto::operation::UndoCount {
-                            replica_id: edit_id.replica_id as u32,
-                            local_timestamp: edit_id.value,
-                            count: *count,
-                        })
-                        .collect(),
-                    version: From::from(&undo.version),
-                }),
-                Operation::UpdateSelections {
-                    set_id,
-                    selections,
-                    lamport_timestamp,
-                } => proto::operation::Variant::UpdateSelections(
-                    proto::operation::UpdateSelections {
-                        replica_id: set_id.replica_id as u32,
-                        local_timestamp: set_id.value,
-                        lamport_timestamp: lamport_timestamp.value,
-                        version: selections.version().into(),
-                        selections: selections
-                            .raw_entries()
-                            .iter()
-                            .map(|(range, state)| proto::Selection {
-                                id: state.id as u64,
-                                start: range.start.0.to_proto(),
-                                end: range.end.0.to_proto(),
-                                reversed: state.reversed,
-                            })
-                            .collect(),
-                    },
-                ),
-                Operation::RemoveSelections {
-                    set_id,
-                    lamport_timestamp,
-                } => proto::operation::Variant::RemoveSelections(
-                    proto::operation::RemoveSelections {
-                        replica_id: set_id.replica_id as u32,
-                        local_timestamp: set_id.value,
-                        lamport_timestamp: lamport_timestamp.value,
-                    },
-                ),
-                Operation::SetActiveSelections {
-                    set_id,
-                    lamport_timestamp,
-                } => proto::operation::Variant::SetActiveSelections(
-                    proto::operation::SetActiveSelections {
-                        replica_id: lamport_timestamp.replica_id as u32,
-                        local_timestamp: set_id.map(|set_id| set_id.value),
-                        lamport_timestamp: lamport_timestamp.value,
-                    },
-                ),
-                #[cfg(test)]
-                Operation::Test(_) => unimplemented!(),
-            }),
-        }
-    }
-}
-
-impl<'a> Into<proto::operation::Edit> for &'a EditOperation {
-    fn into(self) -> proto::operation::Edit {
-        let ranges = self
-            .ranges
-            .iter()
-            .map(|range| proto::Range {
-                start: range.start.to_proto(),
-                end: range.end.to_proto(),
-            })
-            .collect();
-        proto::operation::Edit {
-            replica_id: self.timestamp.replica_id as u32,
-            local_timestamp: self.timestamp.local,
-            lamport_timestamp: self.timestamp.lamport,
-            version: From::from(&self.version),
-            ranges,
-            new_text: self.new_text.clone(),
-        }
-    }
-}
-
-impl TryFrom<proto::Operation> for Operation {
-    type Error = anyhow::Error;
-
-    fn try_from(message: proto::Operation) -> Result<Self, Self::Error> {
-        Ok(
-            match message
-                .variant
-                .ok_or_else(|| anyhow!("missing operation variant"))?
-            {
-                proto::operation::Variant::Edit(edit) => Operation::Edit(edit.into()),
-                proto::operation::Variant::Undo(undo) => Operation::Undo {
-                    lamport_timestamp: clock::Lamport {
-                        replica_id: undo.replica_id as ReplicaId,
-                        value: undo.lamport_timestamp,
-                    },
-                    undo: UndoOperation {
-                        id: clock::Local {
-                            replica_id: undo.replica_id as ReplicaId,
-                            value: undo.local_timestamp,
-                        },
-                        counts: undo
-                            .counts
-                            .into_iter()
-                            .map(|c| {
-                                (
-                                    clock::Local {
-                                        replica_id: c.replica_id as ReplicaId,
-                                        value: c.local_timestamp,
-                                    },
-                                    c.count,
-                                )
-                            })
-                            .collect(),
-                        ranges: undo
-                            .ranges
-                            .into_iter()
-                            .map(|r| FullOffset::from_proto(r.start)..FullOffset::from_proto(r.end))
-                            .collect(),
-                        version: undo.version.into(),
-                    },
-                },
-                proto::operation::Variant::UpdateSelections(message) => {
-                    let version = message.version.into();
-                    let entries = message
-                        .selections
-                        .iter()
-                        .map(|selection| {
-                            let range = (FullOffset::from_proto(selection.start), Bias::Left)
-                                ..(FullOffset::from_proto(selection.end), Bias::Right);
-                            let state = SelectionState {
-                                id: selection.id as usize,
-                                reversed: selection.reversed,
-                                goal: SelectionGoal::None,
-                            };
-                            (range, state)
-                        })
-                        .collect();
-                    let selections = AnchorRangeMap::from_raw(version, entries);
-
-                    Operation::UpdateSelections {
-                        set_id: clock::Lamport {
-                            replica_id: message.replica_id as ReplicaId,
-                            value: message.local_timestamp,
-                        },
-                        lamport_timestamp: clock::Lamport {
-                            replica_id: message.replica_id as ReplicaId,
-                            value: message.lamport_timestamp,
-                        },
-                        selections: Arc::from(selections),
-                    }
-                }
-                proto::operation::Variant::RemoveSelections(message) => {
-                    Operation::RemoveSelections {
-                        set_id: clock::Lamport {
-                            replica_id: message.replica_id as ReplicaId,
-                            value: message.local_timestamp,
-                        },
-                        lamport_timestamp: clock::Lamport {
-                            replica_id: message.replica_id as ReplicaId,
-                            value: message.lamport_timestamp,
-                        },
-                    }
-                }
-                proto::operation::Variant::SetActiveSelections(message) => {
-                    Operation::SetActiveSelections {
-                        set_id: message.local_timestamp.map(|value| clock::Lamport {
-                            replica_id: message.replica_id as ReplicaId,
-                            value,
-                        }),
-                        lamport_timestamp: clock::Lamport {
-                            replica_id: message.replica_id as ReplicaId,
-                            value: message.lamport_timestamp,
-                        },
-                    }
-                }
-            },
-        )
-    }
-}
-
-impl From<proto::operation::Edit> for EditOperation {
-    fn from(edit: proto::operation::Edit) -> Self {
-        let ranges = edit
-            .ranges
-            .into_iter()
-            .map(|range| FullOffset::from_proto(range.start)..FullOffset::from_proto(range.end))
-            .collect();
-        EditOperation {
-            timestamp: InsertionTimestamp {
-                replica_id: edit.replica_id as ReplicaId,
-                local: edit.local_timestamp,
-                lamport: edit.lamport_timestamp,
-            },
-            version: edit.version.into(),
-            ranges,
-            new_text: edit.new_text,
         }
     }
 }
