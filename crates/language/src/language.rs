@@ -124,7 +124,7 @@ impl Language {
             } else {
                 Path::new(&config.binary).to_path_buf()
             };
-            lsp::LanguageServer::new(&binary_path, root_path, cx.background()).map(Some)
+            lsp::LanguageServer::new(&binary_path, root_path, cx.background().clone()).map(Some)
         } else {
             Ok(None)
         }

@@ -3508,7 +3508,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_language_server_diagnostics(mut cx: gpui::TestAppContext) {
-        let (language_server, mut fake_lsp) = LanguageServer::fake(&cx.background()).await;
+        let (language_server, mut fake_lsp) = LanguageServer::fake(cx.background()).await;
         let dir = temp_tree(json!({
             "a.rs": "fn a() { A }",
             "b.rs": "const y: i32 = 1",

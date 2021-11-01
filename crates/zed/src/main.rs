@@ -7,7 +7,7 @@ use gpui::AssetSource;
 use log::LevelFilter;
 use parking_lot::Mutex;
 use simplelog::SimpleLogger;
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{fs, path::PathBuf, sync::Arc, time::Duration};
 use theme::ThemeRegistry;
 use workspace::{self, settings, OpenNew};
 use zed::{self, assets::Assets, fs::RealFs, language, menus, AppState, OpenParams, OpenPaths};
@@ -29,7 +29,15 @@ fn main() {
     let languages = Arc::new(language::build_language_registry());
     languages.set_theme(&settings.borrow().theme.editor.syntax);
 
-    app.run(move |cx| {
+    app.on_quit(|cx| {
+        let did_finish = cx
+            .background()
+            .block_on_critical_tasks(Duration::from_millis(100));
+        if !did_finish {
+            log::error!("timed out on quit before critical tasks finished");
+        }
+    })
+    .run(move |cx| {
         let client = client::Client::new();
         let http = http::client();
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
