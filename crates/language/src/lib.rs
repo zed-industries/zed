@@ -9,7 +9,7 @@ pub use self::{
     language::{BracketPair, Language, LanguageConfig, LanguageRegistry},
 };
 use anyhow::{anyhow, Result};
-pub use buffer::{Buffer as TextBuffer, *};
+pub use buffer::{Buffer as TextBuffer, Operation as _, *};
 use clock::ReplicaId;
 use futures::FutureExt as _;
 use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
@@ -97,6 +97,12 @@ struct LanguageServerSnapshot {
     buffer_snapshot: buffer::Snapshot,
     version: usize,
     path: Arc<Path>,
+}
+
+#[derive(Clone)]
+pub enum Operation {
+    Buffer(buffer::Operation),
+    UpdateDiagnostics(AnchorRangeMultimap<Diagnostic>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -256,7 +262,7 @@ impl Buffer {
         let ops = message
             .history
             .into_iter()
-            .map(|op| Operation::Edit(proto::deserialize_edit_operation(op)));
+            .map(|op| buffer::Operation::Edit(proto::deserialize_edit_operation(op)));
         buffer.apply_ops(ops)?;
         for set in message.selections {
             let set = proto::deserialize_selection_set(set);
@@ -278,6 +284,7 @@ impl Buffer {
                 .selection_sets()
                 .map(|(_, set)| proto::serialize_selection_set(set))
                 .collect(),
+            diagnostics: Some(proto::serialize_diagnostics(&self.diagnostics)),
         }
     }
 
@@ -761,6 +768,7 @@ impl Buffer {
         }
 
         self.diagnostics_update_count += 1;
+        self.send_operation(Operation::UpdateDiagnostics(self.diagnostics.clone()), cx);
         cx.notify();
         Ok(())
     }
@@ -1240,7 +1248,7 @@ impl Buffer {
         }
 
         self.end_transaction(None, cx).unwrap();
-        self.send_operation(Operation::Edit(edit), cx);
+        self.send_operation(Operation::Buffer(buffer::Operation::Edit(edit)), cx);
     }
 
     fn did_edit(
@@ -1269,10 +1277,10 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) -> SelectionSetId {
         let operation = self.text.add_selection_set(selections);
-        if let Operation::UpdateSelections { set_id, .. } = &operation {
+        if let buffer::Operation::UpdateSelections { set_id, .. } = &operation {
             let set_id = *set_id;
             cx.notify();
-            self.send_operation(operation, cx);
+            self.send_operation(Operation::Buffer(operation), cx);
             set_id
         } else {
             unreachable!()
@@ -1287,7 +1295,7 @@ impl Buffer {
     ) -> Result<()> {
         let operation = self.text.update_selection_set(set_id, selections)?;
         cx.notify();
-        self.send_operation(operation, cx);
+        self.send_operation(Operation::Buffer(operation), cx);
         Ok(())
     }
 
@@ -1297,7 +1305,7 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let operation = self.text.set_active_selection_set(set_id)?;
-        self.send_operation(operation, cx);
+        self.send_operation(Operation::Buffer(operation), cx);
         Ok(())
     }
 
@@ -1308,7 +1316,7 @@ impl Buffer {
     ) -> Result<()> {
         let operation = self.text.remove_selection_set(set_id)?;
         cx.notify();
-        self.send_operation(operation, cx);
+        self.send_operation(Operation::Buffer(operation), cx);
         Ok(())
     }
 
@@ -1320,12 +1328,31 @@ impl Buffer {
         self.pending_autoindent.take();
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
-        self.text.apply_ops(ops)?;
+        let buffer_ops = ops
+            .into_iter()
+            .filter_map(|op| match op {
+                Operation::Buffer(op) => Some(op),
+                Operation::UpdateDiagnostics(diagnostics) => {
+                    self.apply_diagnostic_update(diagnostics, cx);
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        self.text.apply_ops(buffer_ops)?;
         self.did_edit(&old_version, was_dirty, cx);
         // Notify independently of whether the buffer was edited as the operations could include a
         // selection update.
         cx.notify();
         Ok(())
+    }
+
+    fn apply_diagnostic_update(
+        &mut self,
+        diagnostics: AnchorRangeMultimap<Diagnostic>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.diagnostics = diagnostics;
+        cx.notify();
     }
 
     #[cfg(not(test))]
@@ -1350,7 +1377,7 @@ impl Buffer {
         let old_version = self.version.clone();
 
         for operation in self.text.undo() {
-            self.send_operation(operation, cx);
+            self.send_operation(Operation::Buffer(operation), cx);
         }
 
         self.did_edit(&old_version, was_dirty, cx);
@@ -1361,7 +1388,7 @@ impl Buffer {
         let old_version = self.version.clone();
 
         for operation in self.text.redo() {
-            self.send_operation(operation, cx);
+            self.send_operation(Operation::Buffer(operation), cx);
         }
 
         self.did_edit(&old_version, was_dirty, cx);

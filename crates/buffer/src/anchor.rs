@@ -176,12 +176,17 @@ impl<T> AnchorRangeMap<T> {
         self.entries.len()
     }
 
-    pub fn from_raw(version: clock::Global, entries: Vec<(Range<(FullOffset, Bias)>, T)>) -> Self {
+    pub fn from_full_offset_ranges(
+        version: clock::Global,
+        entries: Vec<(Range<(FullOffset, Bias)>, T)>,
+    ) -> Self {
         Self { version, entries }
     }
 
-    pub fn raw_entries(&self) -> &[(Range<(FullOffset, Bias)>, T)] {
-        &self.entries
+    pub fn full_offset_ranges(&self) -> impl Iterator<Item = (Range<FullOffset>, &T)> {
+        self.entries
+            .iter()
+            .map(|(range, value)| (range.start.0..range.end.0, value))
     }
 
     pub fn point_ranges<'a>(
@@ -270,6 +275,10 @@ impl<T: Clone> Default for AnchorRangeMultimap<T> {
 }
 
 impl<T: Clone> AnchorRangeMultimap<T> {
+    pub fn version(&self) -> &clock::Global {
+        &self.version
+    }
+
     pub fn intersecting_ranges<'a, I, O>(
         &'a self,
         range: Range<I>,
@@ -335,6 +344,35 @@ impl<T: Clone> AnchorRangeMultimap<T> {
                 }
             }
         })
+    }
+
+    pub fn from_full_offset_ranges(
+        version: clock::Global,
+        start_bias: Bias,
+        end_bias: Bias,
+        entries: impl Iterator<Item = (Range<FullOffset>, T)>,
+    ) -> Self {
+        Self {
+            version,
+            start_bias,
+            end_bias,
+            entries: SumTree::from_iter(
+                entries.map(|(range, value)| AnchorRangeMultimapEntry {
+                    range: FullOffsetRange {
+                        start: range.start,
+                        end: range.end,
+                    },
+                    value,
+                }),
+                &(),
+            ),
+        }
+    }
+
+    pub fn full_offset_ranges(&self) -> impl Iterator<Item = (Range<FullOffset>, &T)> {
+        self.entries
+            .cursor::<()>()
+            .map(|entry| (entry.range.start..entry.range.end, &entry.value))
     }
 }
 

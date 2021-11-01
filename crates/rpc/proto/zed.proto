@@ -228,6 +228,7 @@ message Buffer {
     string content = 2;
     repeated Operation.Edit history = 3;
     repeated SelectionSet selections = 4;
+    DiagnosticSet diagnostics = 5;
 }
 
 message SelectionSet {
@@ -245,6 +246,27 @@ message Selection {
     bool reversed = 4;
 }
 
+message DiagnosticSet {
+    repeated VectorClockEntry version = 1;
+    repeated Diagnostic diagnostics = 2;
+}
+
+message Diagnostic {
+    uint64 start = 1;
+    uint64 end = 2;
+    Severity severity = 3;
+    string message = 4;
+    enum Severity {
+        None = 0;
+        Error = 1;
+        Warning = 2;
+        Information = 3;
+        Hint = 4;
+    }
+}
+
+
+
 message Operation {
     oneof variant {
         Edit edit = 1;
@@ -252,6 +274,7 @@ message Operation {
         UpdateSelections update_selections = 3;
         RemoveSelections remove_selections = 4;
         SetActiveSelections set_active_selections = 5;
+        DiagnosticSet update_diagnostics = 6;
     }
 
     message Edit {

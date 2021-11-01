@@ -1,8 +1,12 @@
 use std::sync::Arc;
 
+use crate::Diagnostic;
+
+use super::Operation;
 use anyhow::{anyhow, Result};
 use buffer::*;
 use clock::ReplicaId;
+use lsp::DiagnosticSeverity;
 use rpc::proto;
 
 pub use proto::Buffer;
@@ -10,13 +14,13 @@ pub use proto::Buffer;
 pub fn serialize_operation(operation: &Operation) -> proto::Operation {
     proto::Operation {
         variant: Some(match operation {
-            Operation::Edit(edit) => {
+            Operation::Buffer(buffer::Operation::Edit(edit)) => {
                 proto::operation::Variant::Edit(serialize_edit_operation(edit))
             }
-            Operation::Undo {
+            Operation::Buffer(buffer::Operation::Undo {
                 undo,
                 lamport_timestamp,
-            } => proto::operation::Variant::Undo(proto::operation::Undo {
+            }) => proto::operation::Variant::Undo(proto::operation::Undo {
                 replica_id: undo.id.replica_id as u32,
                 local_timestamp: undo.id.value,
                 lamport_timestamp: lamport_timestamp.value,
@@ -39,44 +43,46 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                     .collect(),
                 version: From::from(&undo.version),
             }),
-            Operation::UpdateSelections {
+            Operation::Buffer(buffer::Operation::UpdateSelections {
                 set_id,
                 selections,
                 lamport_timestamp,
-            } => proto::operation::Variant::UpdateSelections(proto::operation::UpdateSelections {
+            }) => proto::operation::Variant::UpdateSelections(proto::operation::UpdateSelections {
                 replica_id: set_id.replica_id as u32,
                 local_timestamp: set_id.value,
                 lamport_timestamp: lamport_timestamp.value,
                 version: selections.version().into(),
                 selections: selections
-                    .raw_entries()
-                    .iter()
+                    .full_offset_ranges()
                     .map(|(range, state)| proto::Selection {
                         id: state.id as u64,
-                        start: range.start.0 .0 as u64,
-                        end: range.end.0 .0 as u64,
+                        start: range.start.0 as u64,
+                        end: range.end.0 as u64,
                         reversed: state.reversed,
                     })
                     .collect(),
             }),
-            Operation::RemoveSelections {
+            Operation::Buffer(buffer::Operation::RemoveSelections {
                 set_id,
                 lamport_timestamp,
-            } => proto::operation::Variant::RemoveSelections(proto::operation::RemoveSelections {
+            }) => proto::operation::Variant::RemoveSelections(proto::operation::RemoveSelections {
                 replica_id: set_id.replica_id as u32,
                 local_timestamp: set_id.value,
                 lamport_timestamp: lamport_timestamp.value,
             }),
-            Operation::SetActiveSelections {
+            Operation::Buffer(buffer::Operation::SetActiveSelections {
                 set_id,
                 lamport_timestamp,
-            } => proto::operation::Variant::SetActiveSelections(
+            }) => proto::operation::Variant::SetActiveSelections(
                 proto::operation::SetActiveSelections {
                     replica_id: lamport_timestamp.replica_id as u32,
                     local_timestamp: set_id.map(|set_id| set_id.value),
                     lamport_timestamp: lamport_timestamp.value,
                 },
             ),
+            Operation::UpdateDiagnostics(diagnostic_set) => {
+                proto::operation::Variant::UpdateDiagnostics(serialize_diagnostics(diagnostic_set))
+            }
         }),
     }
 }
@@ -102,19 +108,39 @@ pub fn serialize_edit_operation(operation: &EditOperation) -> proto::operation::
 
 pub fn serialize_selection_set(set: &SelectionSet) -> proto::SelectionSet {
     let version = set.selections.version();
-    let entries = set.selections.raw_entries();
+    let entries = set.selections.full_offset_ranges();
     proto::SelectionSet {
         replica_id: set.id.replica_id as u32,
         lamport_timestamp: set.id.value as u32,
         is_active: set.active,
         version: version.into(),
         selections: entries
-            .iter()
             .map(|(range, state)| proto::Selection {
                 id: state.id as u64,
-                start: range.start.0 .0 as u64,
-                end: range.end.0 .0 as u64,
+                start: range.start.0 as u64,
+                end: range.end.0 as u64,
                 reversed: state.reversed,
+            })
+            .collect(),
+    }
+}
+
+pub fn serialize_diagnostics(map: &AnchorRangeMultimap<Diagnostic>) -> proto::DiagnosticSet {
+    proto::DiagnosticSet {
+        version: map.version().into(),
+        diagnostics: map
+            .full_offset_ranges()
+            .map(|(range, diagnostic)| proto::Diagnostic {
+                start: range.start.0 as u64,
+                end: range.end.0 as u64,
+                message: diagnostic.message.clone(),
+                severity: match diagnostic.severity {
+                    DiagnosticSeverity::ERROR => proto::diagnostic::Severity::Error,
+                    DiagnosticSeverity::WARNING => proto::diagnostic::Severity::Warning,
+                    DiagnosticSeverity::INFORMATION => proto::diagnostic::Severity::Information,
+                    DiagnosticSeverity::HINT => proto::diagnostic::Severity::Hint,
+                    _ => proto::diagnostic::Severity::None,
+                } as i32,
             })
             .collect(),
     }
@@ -127,9 +153,9 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
             .ok_or_else(|| anyhow!("missing operation variant"))?
         {
             proto::operation::Variant::Edit(edit) => {
-                Operation::Edit(deserialize_edit_operation(edit))
+                Operation::Buffer(buffer::Operation::Edit(deserialize_edit_operation(edit)))
             }
-            proto::operation::Variant::Undo(undo) => Operation::Undo {
+            proto::operation::Variant::Undo(undo) => Operation::Buffer(buffer::Operation::Undo {
                 lamport_timestamp: clock::Lamport {
                     replica_id: undo.replica_id as ReplicaId,
                     value: undo.lamport_timestamp,
@@ -159,7 +185,7 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                         .collect(),
                     version: undo.version.into(),
                 },
-            },
+            }),
             proto::operation::Variant::UpdateSelections(message) => {
                 let version = message.version.into();
                 let entries = message
@@ -176,9 +202,9 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                         (range, state)
                     })
                     .collect();
-                let selections = AnchorRangeMap::from_raw(version, entries);
+                let selections = AnchorRangeMap::from_full_offset_ranges(version, entries);
 
-                Operation::UpdateSelections {
+                Operation::Buffer(buffer::Operation::UpdateSelections {
                     set_id: clock::Lamport {
                         replica_id: message.replica_id as ReplicaId,
                         value: message.local_timestamp,
@@ -188,20 +214,22 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                         value: message.lamport_timestamp,
                     },
                     selections: Arc::from(selections),
-                }
+                })
             }
-            proto::operation::Variant::RemoveSelections(message) => Operation::RemoveSelections {
-                set_id: clock::Lamport {
-                    replica_id: message.replica_id as ReplicaId,
-                    value: message.local_timestamp,
-                },
-                lamport_timestamp: clock::Lamport {
-                    replica_id: message.replica_id as ReplicaId,
-                    value: message.lamport_timestamp,
-                },
-            },
+            proto::operation::Variant::RemoveSelections(message) => {
+                Operation::Buffer(buffer::Operation::RemoveSelections {
+                    set_id: clock::Lamport {
+                        replica_id: message.replica_id as ReplicaId,
+                        value: message.local_timestamp,
+                    },
+                    lamport_timestamp: clock::Lamport {
+                        replica_id: message.replica_id as ReplicaId,
+                        value: message.lamport_timestamp,
+                    },
+                })
+            }
             proto::operation::Variant::SetActiveSelections(message) => {
-                Operation::SetActiveSelections {
+                Operation::Buffer(buffer::Operation::SetActiveSelections {
                     set_id: message.local_timestamp.map(|value| clock::Lamport {
                         replica_id: message.replica_id as ReplicaId,
                         value,
@@ -210,7 +238,10 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                         replica_id: message.replica_id as ReplicaId,
                         value: message.lamport_timestamp,
                     },
-                }
+                })
+            }
+            proto::operation::Variant::UpdateDiagnostics(message) => {
+                Operation::UpdateDiagnostics(deserialize_diagnostics(message))
             }
         },
     )
@@ -241,7 +272,7 @@ pub fn deserialize_selection_set(set: proto::SelectionSet) -> SelectionSet {
             value: set.lamport_timestamp,
         },
         active: set.is_active,
-        selections: Arc::new(AnchorRangeMap::from_raw(
+        selections: Arc::new(AnchorRangeMap::from_full_offset_ranges(
             set.version.into(),
             set.selections
                 .into_iter()
@@ -258,4 +289,27 @@ pub fn deserialize_selection_set(set: proto::SelectionSet) -> SelectionSet {
                 .collect(),
         )),
     }
+}
+
+pub fn deserialize_diagnostics(message: proto::DiagnosticSet) -> AnchorRangeMultimap<Diagnostic> {
+    AnchorRangeMultimap::from_full_offset_ranges(
+        message.version.into(),
+        Bias::Left,
+        Bias::Right,
+        message.diagnostics.into_iter().filter_map(|diagnostic| {
+            Some((
+                FullOffset(diagnostic.start as usize)..FullOffset(diagnostic.end as usize),
+                Diagnostic {
+                    severity: match proto::diagnostic::Severity::from_i32(diagnostic.severity)? {
+                        proto::diagnostic::Severity::Error => DiagnosticSeverity::ERROR,
+                        proto::diagnostic::Severity::Warning => DiagnosticSeverity::WARNING,
+                        proto::diagnostic::Severity::Information => DiagnosticSeverity::INFORMATION,
+                        proto::diagnostic::Severity::Hint => DiagnosticSeverity::HINT,
+                        proto::diagnostic::Severity::None => return None,
+                    },
+                    message: diagnostic.message,
+                },
+            ))
+        }),
+    )
 }

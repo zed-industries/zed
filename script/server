@@ -2,5 +2,5 @@
 
 set -e
 
-cd server
+cd crates/server
 cargo run $@
