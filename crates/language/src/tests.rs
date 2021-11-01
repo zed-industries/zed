@@ -468,16 +468,20 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                 .diagnostics_in_range(Point::new(3, 0)..Point::new(5, 0))
                 .collect::<Vec<_>>(),
             &[
-                Diagnostic {
-                    range: Point::new(3, 9)..Point::new(3, 11),
-                    severity: DiagnosticSeverity::ERROR,
-                    message: "undefined variable 'BB'".to_string()
-                },
-                Diagnostic {
-                    range: Point::new(4, 9)..Point::new(4, 12),
-                    severity: DiagnosticSeverity::ERROR,
-                    message: "undefined variable 'CCC'".to_string()
-                }
+                (
+                    Point::new(3, 9)..Point::new(3, 11),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'BB'".to_string()
+                    },
+                ),
+                (
+                    Point::new(4, 9)..Point::new(4, 12),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'CCC'".to_string()
+                    }
+                )
             ]
         );
         assert_eq!(
@@ -527,16 +531,20 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                 .diagnostics_in_range(Point::new(2, 0)..Point::new(3, 0))
                 .collect::<Vec<_>>(),
             &[
-                Diagnostic {
-                    range: Point::new(2, 9)..Point::new(2, 12),
-                    severity: DiagnosticSeverity::WARNING,
-                    message: "unreachable statement".to_string()
-                },
-                Diagnostic {
-                    range: Point::new(2, 9)..Point::new(2, 10),
-                    severity: DiagnosticSeverity::ERROR,
-                    message: "undefined variable 'A'".to_string()
-                },
+                (
+                    Point::new(2, 9)..Point::new(2, 12),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::WARNING,
+                        message: "unreachable statement".to_string()
+                    }
+                ),
+                (
+                    Point::new(2, 9)..Point::new(2, 10),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'A'".to_string()
+                    },
+                )
             ]
         );
         assert_eq!(
@@ -598,16 +606,20 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                 .diagnostics_in_range(0..buffer.len())
                 .collect::<Vec<_>>(),
             &[
-                Diagnostic {
-                    range: Point::new(2, 21)..Point::new(2, 22),
-                    severity: DiagnosticSeverity::ERROR,
-                    message: "undefined variable 'A'".to_string()
-                },
-                Diagnostic {
-                    range: Point::new(3, 9)..Point::new(3, 11),
-                    severity: DiagnosticSeverity::ERROR,
-                    message: "undefined variable 'BB'".to_string()
-                },
+                (
+                    Point::new(2, 21)..Point::new(2, 22),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'A'".to_string()
+                    }
+                ),
+                (
+                    Point::new(3, 9)..Point::new(3, 11),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'BB'".to_string()
+                    },
+                )
             ]
         );
     });

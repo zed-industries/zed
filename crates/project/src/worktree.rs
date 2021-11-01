@@ -3551,11 +3551,13 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(
                 diagnostics,
-                &[Diagnostic {
-                    range: Point::new(0, 9)..Point::new(0, 10),
-                    severity: lsp::DiagnosticSeverity::ERROR,
-                    message: "undefined variable 'A'".to_string()
-                }]
+                &[(
+                    Point::new(0, 9)..Point::new(0, 10),
+                    &Diagnostic {
+                        severity: lsp::DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'A'".to_string()
+                    }
+                )]
             )
         });
     }

@@ -62,7 +62,7 @@ pub struct Buffer {
     syntax_tree: Mutex<Option<SyntaxTree>>,
     parsing_in_background: bool,
     parse_count: usize,
-    diagnostics: AnchorRangeMultimap<(DiagnosticSeverity, String)>,
+    diagnostics: AnchorRangeMultimap<Diagnostic>,
     diagnostics_update_count: usize,
     language_server: Option<LanguageServerState>,
     #[cfg(test)]
@@ -72,15 +72,14 @@ pub struct Buffer {
 pub struct Snapshot {
     text: buffer::Snapshot,
     tree: Option<Tree>,
-    diagnostics: AnchorRangeMultimap<(DiagnosticSeverity, String)>,
+    diagnostics: AnchorRangeMultimap<Diagnostic>,
     is_parsing: bool,
     language: Option<Arc<Language>>,
     query_cursor: QueryCursorHandle,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diagnostic {
-    pub range: Range<Point>,
     pub severity: DiagnosticSeverity,
     pub message: String,
 }
@@ -687,8 +686,6 @@ impl Buffer {
                     );
                     let mut end =
                         PointUtf16::new(diagnostic.range.end.line, diagnostic.range.end.character);
-                    let severity = diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR);
-
                     if diagnostic
                         .source
                         .as_ref()
@@ -716,7 +713,13 @@ impl Buffer {
                         range.end.column += 1;
                         range.end = content.clip_point_utf16(range.end, Bias::Right);
                     }
-                    Some((range, (severity, diagnostic.message)))
+                    Some((
+                        range,
+                        Diagnostic {
+                            severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
+                            message: diagnostic.message,
+                        },
+                    ))
                 }),
             )
         };
@@ -741,15 +744,11 @@ impl Buffer {
     pub fn diagnostics_in_range<'a, T: 'a + ToOffset>(
         &'a self,
         range: Range<T>,
-    ) -> impl Iterator<Item = Diagnostic> + 'a {
+    ) -> impl Iterator<Item = (Range<Point>, &Diagnostic)> + 'a {
         let content = self.content();
         self.diagnostics
             .intersecting_ranges(range, content, true)
-            .map(move |(_, range, (severity, message))| Diagnostic {
-                range,
-                severity: *severity,
-                message: message.clone(),
-            })
+            .map(move |(_, range, diagnostic)| (range, diagnostic))
     }
 
     pub fn diagnostics_update_count(&self) -> usize {
@@ -1544,19 +1543,19 @@ impl Snapshot {
         let range = range.start.to_offset(&*self)..range.end.to_offset(&*self);
 
         let mut diagnostic_endpoints = Vec::<DiagnosticEndpoint>::new();
-        for (_, range, (severity, _)) in
+        for (_, range, diagnostic) in
             self.diagnostics
                 .intersecting_ranges(range.clone(), self.content(), true)
         {
             diagnostic_endpoints.push(DiagnosticEndpoint {
                 offset: range.start,
                 is_start: true,
-                severity: *severity,
+                severity: diagnostic.severity,
             });
             diagnostic_endpoints.push(DiagnosticEndpoint {
                 offset: range.end,
                 is_start: false,
-                severity: *severity,
+                severity: diagnostic.severity,
             });
         }
         diagnostic_endpoints.sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
