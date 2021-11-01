@@ -82,6 +82,10 @@ unsafe fn build_classes() {
             did_resign_active as extern "C" fn(&mut Object, Sel, id),
         );
         decl.add_method(
+            sel!(applicationWillTerminate:),
+            will_terminate as extern "C" fn(&mut Object, Sel, id),
+        );
+        decl.add_method(
             sel!(handleGPUIMenuItem:),
             handle_menu_item as extern "C" fn(&mut Object, Sel, id),
         );
@@ -100,6 +104,7 @@ pub struct MacForegroundPlatform(RefCell<MacForegroundPlatformState>);
 pub struct MacForegroundPlatformState {
     become_active: Option<Box<dyn FnMut()>>,
     resign_active: Option<Box<dyn FnMut()>>,
+    quit: Option<Box<dyn FnMut()>>,
     event: Option<Box<dyn FnMut(crate::Event) -> bool>>,
     menu_command: Option<Box<dyn FnMut(&dyn AnyAction)>>,
     open_files: Option<Box<dyn FnMut(Vec<PathBuf>)>>,
@@ -194,6 +199,10 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
 
     fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
         self.0.borrow_mut().resign_active = Some(callback);
+    }
+
+    fn on_quit(&self, callback: Box<dyn FnMut()>) {
+        self.0.borrow_mut().quit = Some(callback);
     }
 
     fn on_event(&self, callback: Box<dyn FnMut(crate::Event) -> bool>) {
@@ -660,6 +669,13 @@ extern "C" fn did_become_active(this: &mut Object, _: Sel, _: id) {
 extern "C" fn did_resign_active(this: &mut Object, _: Sel, _: id) {
     let platform = unsafe { get_foreground_platform(this) };
     if let Some(callback) = platform.0.borrow_mut().resign_active.as_mut() {
+        callback();
+    }
+}
+
+extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
+    let platform = unsafe { get_foreground_platform(this) };
+    if let Some(callback) = platform.0.borrow_mut().quit.as_mut() {
         callback();
     }
 }

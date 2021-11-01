@@ -265,6 +265,18 @@ impl App {
         self
     }
 
+    pub fn on_quit<F>(self, mut callback: F) -> Self
+    where
+        F: 'static + FnMut(&mut MutableAppContext),
+    {
+        let cx = self.0.clone();
+        self.0
+            .borrow_mut()
+            .foreground_platform
+            .on_quit(Box::new(move || callback(&mut *cx.borrow_mut())));
+        self
+    }
+
     pub fn on_event<F>(self, mut callback: F) -> Self
     where
         F: 'static + FnMut(Event, &mut MutableAppContext) -> bool,
