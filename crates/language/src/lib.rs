@@ -1299,6 +1299,9 @@ impl Buffer {
         let old_version = self.version.clone();
         self.text.apply_ops(ops)?;
         self.did_edit(old_version, was_dirty, cx);
+        // Notify independently of whether the buffer was edited as the operations could include a
+        // selection update.
+        cx.notify();
         Ok(())
     }
 
