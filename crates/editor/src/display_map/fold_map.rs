@@ -261,7 +261,7 @@ impl FoldMap {
             },
         );
         let edits = buffer
-            .edits_since(last_sync.version)
+            .edits_since(&last_sync.version)
             .map(Into::into)
             .collect::<Vec<_>>();
         if edits.is_empty() {
@@ -1344,7 +1344,7 @@ mod tests {
                         let edit_count = rng.gen_range(1..=5);
                         buffer.randomly_edit(&mut rng, edit_count);
                         buffer
-                            .edits_since::<Point>(start_version)
+                            .edits_since::<Point>(&start_version)
                             .collect::<Vec<_>>()
                     });
                     log::info!("editing {:?}", edits);

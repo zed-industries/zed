@@ -78,7 +78,7 @@ fn test_random_edits(mut rng: StdRng) {
 
     for mut old_buffer in buffer_versions {
         let edits = buffer
-            .edits_since::<usize>(old_buffer.version.clone())
+            .edits_since::<usize>(&old_buffer.version)
             .collect::<Vec<_>>();
 
         log::info!(

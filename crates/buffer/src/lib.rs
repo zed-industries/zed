@@ -317,7 +317,7 @@ struct Edits<'a, D: TextDimension<'a>, F: FnMut(&FragmentSummary) -> bool> {
     deleted_cursor: rope::Cursor<'a>,
     fragments_cursor: Option<FilterCursor<'a, F, Fragment, FragmentTextSummary>>,
     undos: &'a UndoMap,
-    since: clock::Global,
+    since: &'a clock::Global,
     old_end: D,
     new_end: D,
 }
@@ -1365,7 +1365,10 @@ impl Buffer {
         })
     }
 
-    pub fn edits_since<'a, D>(&'a self, since: clock::Global) -> impl 'a + Iterator<Item = Edit<D>>
+    pub fn edits_since<'a, D>(
+        &'a self,
+        since: &'a clock::Global,
+    ) -> impl 'a + Iterator<Item = Edit<D>>
     where
         D: 'a + TextDimension<'a> + Ord,
     {
@@ -1603,7 +1606,10 @@ impl Snapshot {
         self.content().anchor_at(position, Bias::Right)
     }
 
-    pub fn edits_since<'a, D>(&'a self, since: clock::Global) -> impl 'a + Iterator<Item = Edit<D>>
+    pub fn edits_since<'a, D>(
+        &'a self,
+        since: &'a clock::Global,
+    ) -> impl 'a + Iterator<Item = Edit<D>>
     where
         D: 'a + TextDimension<'a> + Ord,
     {
@@ -1935,17 +1941,15 @@ impl<'a> Content<'a> {
         }
     }
 
-    // TODO: take a reference to clock::Global.
-    pub fn edits_since<D>(&self, since: clock::Global) -> impl 'a + Iterator<Item = Edit<D>>
+    pub fn edits_since<D>(&self, since: &'a clock::Global) -> impl 'a + Iterator<Item = Edit<D>>
     where
         D: 'a + TextDimension<'a> + Ord,
     {
-        let since_2 = since.clone();
-        let fragments_cursor = if since == *self.version {
+        let fragments_cursor = if since == self.version {
             None
         } else {
             Some(self.fragments.filter(
-                move |summary| summary.max_version.changed_since(&since_2),
+                move |summary| summary.max_version.changed_since(since),
                 &None,
             ))
         };

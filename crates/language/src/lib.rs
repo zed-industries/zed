@@ -360,7 +360,7 @@ impl Buffer {
                                         content_changes: snapshot
                                             .buffer_snapshot
                                             .edits_since::<(PointUtf16, usize)>(
-                                                prev_snapshot.buffer_snapshot.version().clone(),
+                                                prev_snapshot.buffer_snapshot.version(),
                                             )
                                             .map(|edit| {
                                                 let edit_start = edit.new.start.0;
@@ -616,7 +616,7 @@ impl Buffer {
     }
 
     fn interpolate_tree(&self, tree: &mut SyntaxTree) {
-        for edit in self.edits_since::<(usize, Point)>(tree.version.clone()) {
+        for edit in self.edits_since::<(usize, Point)>(&tree.version) {
             let (bytes, lines) = edit.flatten();
             tree.tree.edit(&InputEdit {
                 start_byte: bytes.new.start,
@@ -672,7 +672,7 @@ impl Buffer {
         diagnostics.sort_unstable_by_key(|d| (d.range.start, d.range.end));
         self.diagnostics = {
             let mut edits_since_save = content
-                .edits_since::<PointUtf16>(self.saved_version.clone())
+                .edits_since::<PointUtf16>(&self.saved_version)
                 .peekable();
             let mut last_edit_old_end = PointUtf16::zero();
             let mut last_edit_new_end = PointUtf16::zero();
@@ -1081,7 +1081,7 @@ impl Buffer {
     ) -> Result<()> {
         if let Some(start_version) = self.text.end_transaction_at(selection_set_ids, now) {
             let was_dirty = start_version != self.saved_version;
-            self.did_edit(start_version, was_dirty, cx);
+            self.did_edit(&start_version, was_dirty, cx);
         }
         Ok(())
     }
@@ -1222,7 +1222,7 @@ impl Buffer {
 
     fn did_edit(
         &mut self,
-        old_version: clock::Global,
+        old_version: &clock::Global,
         was_dirty: bool,
         cx: &mut ModelContext<Self>,
     ) {
@@ -1298,7 +1298,7 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
         self.text.apply_ops(ops)?;
-        self.did_edit(old_version, was_dirty, cx);
+        self.did_edit(&old_version, was_dirty, cx);
         // Notify independently of whether the buffer was edited as the operations could include a
         // selection update.
         cx.notify();
@@ -1330,7 +1330,7 @@ impl Buffer {
             self.send_operation(operation, cx);
         }
 
-        self.did_edit(old_version, was_dirty, cx);
+        self.did_edit(&old_version, was_dirty, cx);
     }
 
     pub fn redo(&mut self, cx: &mut ModelContext<Self>) {
@@ -1341,7 +1341,7 @@ impl Buffer {
             self.send_operation(operation, cx);
         }
 
-        self.did_edit(old_version, was_dirty, cx);
+        self.did_edit(&old_version, was_dirty, cx);
     }
 }
 
