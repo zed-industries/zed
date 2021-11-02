@@ -649,6 +649,79 @@ impl Worktree {
             }
         }
     }
+
+    fn update_diagnostics(
+        &mut self,
+        params: lsp::PublishDiagnosticsParams,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Result<()> {
+        let this = self.as_local_mut().ok_or_else(|| anyhow!("not local"))?;
+        let file_path = params
+            .uri
+            .to_file_path()
+            .map_err(|_| anyhow!("URI is not a file"))?
+            .strip_prefix(&this.abs_path)
+            .context("path is not within worktree")?
+            .to_owned();
+
+        for buffer in this.open_buffers.values() {
+            if let Some(buffer) = buffer.upgrade(cx) {
+                if buffer
+                    .read(cx)
+                    .file()
+                    .map_or(false, |file| file.path().as_ref() == file_path)
+                {
+                    let (remote_id, operation) = buffer.update(cx, |buffer, cx| {
+                        (
+                            buffer.remote_id(),
+                            buffer.update_diagnostics(params.version, params.diagnostics, cx),
+                        )
+                    });
+                    self.send_buffer_update(remote_id, operation?, cx);
+                    return Ok(());
+                }
+            }
+        }
+
+        this.diagnostics.insert(file_path, params.diagnostics);
+        Ok(())
+    }
+
+    fn send_buffer_update(
+        &mut self,
+        buffer_id: u64,
+        operation: Operation,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some((rpc, remote_id)) = match self {
+            Worktree::Local(worktree) => worktree
+                .remote_id
+                .borrow()
+                .map(|id| (worktree.rpc.clone(), id)),
+            Worktree::Remote(worktree) => Some((worktree.client.clone(), worktree.remote_id)),
+        } {
+            cx.spawn(|worktree, mut cx| async move {
+                if let Err(error) = rpc
+                    .request(proto::UpdateBuffer {
+                        worktree_id: remote_id,
+                        buffer_id,
+                        operations: vec![language::proto::serialize_operation(&operation)],
+                    })
+                    .await
+                {
+                    worktree.update(&mut cx, |worktree, _| {
+                        log::error!("error sending buffer operation: {}", error);
+                        match worktree {
+                            Worktree::Local(t) => &mut t.queued_operations,
+                            Worktree::Remote(t) => &mut t.queued_operations,
+                        }
+                        .push((buffer_id, operation));
+                    });
+                }
+            })
+            .detach();
+        }
+    }
 }
 
 impl Deref for Worktree {
@@ -836,7 +909,6 @@ impl LocalWorktree {
                     while let Ok(diagnostics) = diagnostics_rx.recv().await {
                         if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
                             handle.update(&mut cx, |this, cx| {
-                                let this = this.as_local_mut().unwrap();
                                 this.update_diagnostics(diagnostics, cx).log_err();
                             });
                         } else {
@@ -1199,38 +1271,6 @@ impl LocalWorktree {
                 }
             })
         })
-    }
-
-    fn update_diagnostics(
-        &mut self,
-        params: lsp::PublishDiagnosticsParams,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Result<()> {
-        let file_path = params
-            .uri
-            .to_file_path()
-            .map_err(|_| anyhow!("URI is not a file"))?
-            .strip_prefix(&self.abs_path)
-            .context("path is not within worktree")?
-            .to_owned();
-
-        for buffer in self.open_buffers.values() {
-            if let Some(buffer) = buffer.upgrade(cx) {
-                if buffer
-                    .read(cx)
-                    .file()
-                    .map_or(false, |file| file.path().as_ref() == file_path)
-                {
-                    buffer.update(cx, |buffer, cx| {
-                        buffer.update_diagnostics(params.version, params.diagnostics, cx)
-                    })?;
-                    return Ok(());
-                }
-            }
-        }
-
-        self.diagnostics.insert(file_path, params.diagnostics);
-        Ok(())
     }
 }
 
@@ -1932,34 +1972,7 @@ impl language::File for File {
 
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext) {
         self.worktree.update(cx, |worktree, cx| {
-            if let Some((rpc, remote_id)) = match worktree {
-                Worktree::Local(worktree) => worktree
-                    .remote_id
-                    .borrow()
-                    .map(|id| (worktree.rpc.clone(), id)),
-                Worktree::Remote(worktree) => Some((worktree.client.clone(), worktree.remote_id)),
-            } {
-                cx.spawn(|worktree, mut cx| async move {
-                    if let Err(error) = rpc
-                        .request(proto::UpdateBuffer {
-                            worktree_id: remote_id,
-                            buffer_id,
-                            operations: vec![language::proto::serialize_operation(&operation)],
-                        })
-                        .await
-                    {
-                        worktree.update(&mut cx, |worktree, _| {
-                            log::error!("error sending buffer operation: {}", error);
-                            match worktree {
-                                Worktree::Local(t) => &mut t.queued_operations,
-                                Worktree::Remote(t) => &mut t.queued_operations,
-                            }
-                            .push((buffer_id, operation));
-                        });
-                    }
-                })
-                .detach();
-            }
+            worktree.send_buffer_update(buffer_id, operation, cx);
         });
     }
 

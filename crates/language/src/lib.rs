@@ -679,7 +679,7 @@ impl Buffer {
         version: Option<i32>,
         mut diagnostics: Vec<lsp::Diagnostic>,
         cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
+    ) -> Result<Operation> {
         let version = version.map(|version| version as usize);
         let content = if let Some(version) = version {
             let language_server = self.language_server.as_mut().unwrap();
@@ -768,9 +768,8 @@ impl Buffer {
         }
 
         self.diagnostics_update_count += 1;
-        self.send_operation(Operation::UpdateDiagnostics(self.diagnostics.clone()), cx);
         cx.notify();
-        Ok(())
+        Ok(Operation::UpdateDiagnostics(self.diagnostics.clone()))
     }
 
     pub fn diagnostics_in_range<'a, T: 'a + ToOffset>(
