@@ -616,6 +616,8 @@ impl Worktree {
             }
         };
 
+        let local = self.as_local().is_some();
+        let worktree_path = self.abs_path.clone();
         let worktree_handle = cx.handle();
         let mut buffers_to_delete = Vec::new();
         for (buffer_id, buffer) in open_buffers {
@@ -627,6 +629,8 @@ impl Worktree {
                             .and_then(|entry_id| self.entry_for_id(entry_id))
                         {
                             File {
+                                is_local: local,
+                                worktree_path: worktree_path.clone(),
                                 entry_id: Some(entry.id),
                                 mtime: entry.mtime,
                                 path: entry.path.clone(),
@@ -634,6 +638,8 @@ impl Worktree {
                             }
                         } else if let Some(entry) = self.entry_for_path(old_file.path().as_ref()) {
                             File {
+                                is_local: local,
+                                worktree_path: worktree_path.clone(),
                                 entry_id: Some(entry.id),
                                 mtime: entry.mtime,
                                 path: entry.path.clone(),
@@ -641,6 +647,8 @@ impl Worktree {
                             }
                         } else {
                             File {
+                                is_local: local,
+                                worktree_path: worktree_path.clone(),
                                 entry_id: None,
                                 path: old_file.path().clone(),
                                 mtime: old_file.mtime(),
@@ -976,12 +984,9 @@ impl LocalWorktree {
                 let (file, contents) = this
                     .update(&mut cx, |this, cx| this.as_local().unwrap().load(&path, cx))
                     .await?;
-                let language = this.read_with(&cx, |this, cx| {
+                let language = this.read_with(&cx, |this, _| {
                     use language::File;
-
-                    this.languages()
-                        .select_language(file.full_path(cx))
-                        .cloned()
+                    this.languages().select_language(file.full_path()).cloned()
                 });
                 let diagnostics = this.update(&mut cx, |this, _| {
                     this.as_local_mut()
@@ -1144,6 +1149,7 @@ impl LocalWorktree {
     fn load(&self, path: &Path, cx: &mut ModelContext<Worktree>) -> Task<Result<(File, String)>> {
         let handle = cx.handle();
         let path = Arc::from(path);
+        let worktree_path = self.abs_path.clone();
         let abs_path = self.absolutize(&path);
         let background_snapshot = self.background_snapshot.clone();
         let fs = self.fs.clone();
@@ -1152,7 +1158,17 @@ impl LocalWorktree {
             // Eagerly populate the snapshot with an updated entry for the loaded file
             let entry = refresh_entry(fs.as_ref(), &background_snapshot, path, &abs_path).await?;
             this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
-            Ok((File::new(entry.id, handle, entry.path, entry.mtime), text))
+            Ok((
+                File {
+                    entry_id: Some(entry.id),
+                    worktree: handle,
+                    worktree_path,
+                    path: entry.path,
+                    mtime: entry.mtime,
+                    is_local: true,
+                },
+                text,
+            ))
         })
     }
 
@@ -1167,11 +1183,16 @@ impl LocalWorktree {
         cx.spawn(|this, mut cx| async move {
             let entry = save.await?;
             this.update(&mut cx, |this, cx| {
-                this.as_local_mut()
-                    .unwrap()
-                    .open_buffers
-                    .insert(buffer.id(), buffer.downgrade());
-                Ok(File::new(entry.id, cx.handle(), entry.path, entry.mtime))
+                let this = this.as_local_mut().unwrap();
+                this.open_buffers.insert(buffer.id(), buffer.downgrade());
+                Ok(File {
+                    entry_id: Some(entry.id),
+                    worktree: cx.handle(),
+                    worktree_path: this.abs_path.clone(),
+                    path: entry.path,
+                    mtime: entry.mtime,
+                    is_local: true,
+                })
             })
         })
     }
@@ -1360,6 +1381,7 @@ impl RemoteWorktree {
         let rpc = self.client.clone();
         let replica_id = self.replica_id;
         let remote_worktree_id = self.remote_id;
+        let root_path = self.snapshot.abs_path.clone();
         let path = path.to_string_lossy().to_string();
         cx.spawn_weak(|this, mut cx| async move {
             if let Some(existing_buffer) = existing_buffer {
@@ -1380,13 +1402,17 @@ impl RemoteWorktree {
                 let this = this
                     .upgrade(&cx)
                     .ok_or_else(|| anyhow!("worktree was closed"))?;
-                let file = File::new(entry.id, this.clone(), entry.path, entry.mtime);
-                let language = this.read_with(&cx, |this, cx| {
+                let file = File {
+                    entry_id: Some(entry.id),
+                    worktree: this.clone(),
+                    worktree_path: root_path,
+                    path: entry.path,
+                    mtime: entry.mtime,
+                    is_local: false,
+                };
+                let language = this.read_with(&cx, |this, _| {
                     use language::File;
-
-                    this.languages()
-                        .select_language(file.full_path(cx))
-                        .cloned()
+                    this.languages().select_language(file.full_path()).cloned()
                 });
                 let remote_buffer = response.buffer.ok_or_else(|| anyhow!("empty buffer"))?;
                 let buffer_id = remote_buffer.id as usize;
@@ -1868,24 +1894,10 @@ impl fmt::Debug for Snapshot {
 pub struct File {
     entry_id: Option<usize>,
     worktree: ModelHandle<Worktree>,
+    worktree_path: Arc<Path>,
     pub path: Arc<Path>,
     pub mtime: SystemTime,
-}
-
-impl File {
-    pub fn new(
-        entry_id: usize,
-        worktree: ModelHandle<Worktree>,
-        path: Arc<Path>,
-        mtime: SystemTime,
-    ) -> Self {
-        Self {
-            entry_id: Some(entry_id),
-            worktree,
-            path,
-            mtime,
-        }
-    }
+    is_local: bool,
 }
 
 impl language::File for File {
@@ -1905,27 +1917,29 @@ impl language::File for File {
         &self.path
     }
 
-    fn abs_path(&self, cx: &AppContext) -> Option<PathBuf> {
-        let worktree = self.worktree.read(cx);
-        worktree
-            .as_local()
-            .map(|worktree| worktree.absolutize(&self.path))
+    fn abs_path(&self) -> Option<PathBuf> {
+        if self.is_local {
+            Some(self.worktree_path.join(&self.path))
+        } else {
+            None
+        }
     }
 
-    fn full_path(&self, cx: &AppContext) -> PathBuf {
-        let worktree = self.worktree.read(cx);
+    fn full_path(&self) -> PathBuf {
         let mut full_path = PathBuf::new();
-        full_path.push(worktree.root_name());
+        if let Some(worktree_name) = self.worktree_path.file_name() {
+            full_path.push(worktree_name);
+        }
         full_path.push(&self.path);
         full_path
     }
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
-    fn file_name<'a>(&'a self, cx: &'a AppContext) -> Option<OsString> {
+    fn file_name<'a>(&'a self) -> Option<OsString> {
         self.path
             .file_name()
-            .or_else(|| Some(OsStr::new(self.worktree.read(cx).root_name())))
+            .or_else(|| self.worktree_path.file_name())
             .map(Into::into)
     }
 

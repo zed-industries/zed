@@ -77,7 +77,7 @@ impl ItemView for Editor {
             .buffer()
             .read(cx)
             .file()
-            .and_then(|file| file.file_name(cx));
+            .and_then(|file| file.file_name());
         if let Some(name) = filename {
             name.to_string_lossy().into()
         } else {
@@ -127,8 +127,8 @@ impl ItemView for Editor {
 
             cx.spawn(|buffer, mut cx| async move {
                 save_as.await.map(|new_file| {
-                    let (language, language_server) = worktree.read_with(&cx, |worktree, cx| {
-                        let language = worktree.languages().select_language(new_file.full_path(cx));
+                    let (language, language_server) = worktree.read_with(&cx, |worktree, _| {
+                        let language = worktree.languages().select_language(new_file.full_path());
                         let language_server = worktree.language_server();
                         (language.cloned(), language_server.cloned())
                     });
