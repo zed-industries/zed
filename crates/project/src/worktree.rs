@@ -20,6 +20,7 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
+
 use serde::Deserialize;
 use smol::channel::{self, Sender};
 use std::{
@@ -89,6 +90,25 @@ impl Entity for Worktree {
                 .detach();
             }
         }
+    }
+
+    fn app_will_quit(
+        &mut self,
+        _: &mut MutableAppContext,
+    ) -> Option<std::pin::Pin<Box<dyn 'static + Future<Output = ()>>>> {
+        use futures::FutureExt;
+
+        if let Some(server) = self.language_server() {
+            if let Some(shutdown) = server.shutdown() {
+                return Some(
+                    async move {
+                        shutdown.await.log_err();
+                    }
+                    .boxed(),
+                );
+            }
+        }
+        None
     }
 }
 

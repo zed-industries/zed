@@ -33,13 +33,13 @@ type ResponseHandler = Box<dyn Send + FnOnce(Result<&str, Error>)>;
 
 pub struct LanguageServer {
     next_id: AtomicUsize,
-    outbound_tx: channel::Sender<Vec<u8>>,
+    outbound_tx: RwLock<Option<channel::Sender<Vec<u8>>>>,
     notification_handlers: Arc<RwLock<HashMap<&'static str, NotificationHandler>>>,
     response_handlers: Arc<Mutex<HashMap<usize, ResponseHandler>>>,
     executor: Arc<executor::Background>,
-    io_tasks: Option<(Task<Option<()>>, Task<Option<()>>)>,
+    io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     initialized: barrier::Receiver,
-    output_done_rx: Option<barrier::Receiver>,
+    output_done_rx: Mutex<Option<barrier::Receiver>>,
 }
 
 pub struct Subscription {
@@ -198,11 +198,11 @@ impl LanguageServer {
             notification_handlers,
             response_handlers,
             next_id: Default::default(),
-            outbound_tx,
+            outbound_tx: RwLock::new(Some(outbound_tx)),
             executor: executor.clone(),
-            io_tasks: Some((input_task, output_task)),
+            io_tasks: Mutex::new(Some((input_task, output_task))),
             initialized: initialized_rx,
-            output_done_rx: Some(output_done_rx),
+            output_done_rx: Mutex::new(Some(output_done_rx)),
         });
 
         let root_uri =
@@ -240,18 +240,43 @@ impl LanguageServer {
         };
 
         let this = self.clone();
-        Self::request_internal::<lsp_types::request::Initialize>(
+        let request = Self::request_internal::<lsp_types::request::Initialize>(
             &this.next_id,
             &this.response_handlers,
-            &this.outbound_tx,
+            this.outbound_tx.read().as_ref(),
             params,
-        )
-        .await?;
+        );
+        request.await?;
         Self::notify_internal::<lsp_types::notification::Initialized>(
-            &this.outbound_tx,
+            this.outbound_tx.read().as_ref(),
             lsp_types::InitializedParams {},
         )?;
         Ok(())
+    }
+
+    pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Result<()>>> {
+        if let Some(tasks) = self.io_tasks.lock().take() {
+            let response_handlers = self.response_handlers.clone();
+            let outbound_tx = self.outbound_tx.write().take();
+            let next_id = AtomicUsize::new(self.next_id.load(SeqCst));
+            let mut output_done = self.output_done_rx.lock().take().unwrap();
+            Some(async move {
+                Self::request_internal::<lsp_types::request::Shutdown>(
+                    &next_id,
+                    &response_handlers,
+                    outbound_tx.as_ref(),
+                    (),
+                )
+                .await?;
+                Self::notify_internal::<lsp_types::notification::Exit>(outbound_tx.as_ref(), ())?;
+                drop(outbound_tx);
+                output_done.recv().await;
+                drop(tasks);
+                Ok(())
+            })
+        } else {
+            None
+        }
     }
 
     pub fn on_notification<T, F>(&self, f: F) -> Subscription
@@ -293,7 +318,7 @@ impl LanguageServer {
             Self::request_internal::<T>(
                 &this.next_id,
                 &this.response_handlers,
-                &this.outbound_tx,
+                this.outbound_tx.read().as_ref(),
                 params,
             )
             .await
@@ -303,9 +328,9 @@ impl LanguageServer {
     fn request_internal<T: lsp_types::request::Request>(
         next_id: &AtomicUsize,
         response_handlers: &Mutex<HashMap<usize, ResponseHandler>>,
-        outbound_tx: &channel::Sender<Vec<u8>>,
+        outbound_tx: Option<&channel::Sender<Vec<u8>>>,
         params: T::Params,
-    ) -> impl Future<Output = Result<T::Result>>
+    ) -> impl 'static + Future<Output = Result<T::Result>>
     where
         T::Result: 'static + Send,
     {
@@ -332,7 +357,15 @@ impl LanguageServer {
             }),
         );
 
-        let send = outbound_tx.try_send(message);
+        let send = outbound_tx
+            .as_ref()
+            .ok_or_else(|| {
+                anyhow!("tried to send a request to a language server that has been shut down")
+            })
+            .and_then(|outbound_tx| {
+                outbound_tx.try_send(message)?;
+                Ok(())
+            });
         async move {
             send?;
             rx.recv().await.unwrap()
@@ -346,13 +379,13 @@ impl LanguageServer {
         let this = self.clone();
         async move {
             this.initialized.clone().recv().await;
-            Self::notify_internal::<T>(&this.outbound_tx, params)?;
+            Self::notify_internal::<T>(this.outbound_tx.read().as_ref(), params)?;
             Ok(())
         }
     }
 
     fn notify_internal<T: lsp_types::notification::Notification>(
-        outbound_tx: &channel::Sender<Vec<u8>>,
+        outbound_tx: Option<&channel::Sender<Vec<u8>>>,
         params: T::Params,
     ) -> Result<()> {
         let message = serde_json::to_vec(&Notification {
@@ -361,6 +394,9 @@ impl LanguageServer {
             params,
         })
         .unwrap();
+        let outbound_tx = outbound_tx
+            .as_ref()
+            .ok_or_else(|| anyhow!("tried to notify a language server that has been shut down"))?;
         outbound_tx.try_send(message)?;
         Ok(())
     }
@@ -368,28 +404,9 @@ impl LanguageServer {
 
 impl Drop for LanguageServer {
     fn drop(&mut self) {
-        let tasks = self.io_tasks.take();
-        let response_handlers = self.response_handlers.clone();
-        let outbound_tx = self.outbound_tx.clone();
-        let next_id = AtomicUsize::new(self.next_id.load(SeqCst));
-        let mut output_done = self.output_done_rx.take().unwrap();
-        self.executor.spawn_critical(
-            async move {
-                Self::request_internal::<lsp_types::request::Shutdown>(
-                    &next_id,
-                    &response_handlers,
-                    &outbound_tx,
-                    (),
-                )
-                .await?;
-                Self::notify_internal::<lsp_types::notification::Exit>(&outbound_tx, ())?;
-                drop(outbound_tx);
-                output_done.recv().await;
-                drop(tasks);
-                Ok(())
-            }
-            .log_err(),
-        )
+        if let Some(shutdown) = self.shutdown() {
+            self.executor.spawn(shutdown).detach();
+        }
     }
 }
 
