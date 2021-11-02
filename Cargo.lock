@@ -6256,6 +6256,7 @@ dependencies = [
  "libc",
  "log",
  "log-panics",
+ "lsp",
  "num_cpus",
  "parking_lot",
  "people_panel",

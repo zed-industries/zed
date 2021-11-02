@@ -1,4 +1,4 @@
-pub use language::{Language, LanguageRegistry};
+pub use language::{Buffer, Diagnostic, Language, LanguageRegistry, Point};
 use rust_embed::RustEmbed;
 use std::borrow::Cow;
 use std::{str, sync::Arc};

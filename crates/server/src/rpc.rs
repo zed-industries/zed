@@ -982,7 +982,8 @@ mod tests {
         },
         editor::{Editor, EditorSettings, Input},
         fs::{FakeFs, Fs as _},
-        language::LanguageRegistry,
+        language::{Diagnostic, LanguageRegistry, Point},
+        lsp,
         people_panel::JoinWorktree,
         project::{ProjectPath, Worktree},
         workspace::{Workspace, WorkspaceParams},
@@ -1600,6 +1601,114 @@ mod tests {
         worktree_a
             .condition(&cx_a, |tree, _| tree.peers().len() == 0)
             .await;
+    }
+
+    #[gpui::test]
+    async fn test_collaborating_with_diagnostics(
+        mut cx_a: TestAppContext,
+        mut cx_b: TestAppContext,
+    ) {
+        cx_a.foreground().forbid_parking();
+        let lang_registry = Arc::new(LanguageRegistry::new());
+
+        let (language_server, mut fake_lsp) = lsp::LanguageServer::fake(cx_a.background()).await;
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start().await;
+        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_b, _) = server.create_client(&mut cx_a, "user_b").await;
+
+        // Share a local worktree as client A
+        let fs = Arc::new(FakeFs::new());
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "a.txt": "one two three",
+                "b.txt": "b-contents",
+            }),
+        )
+        .await;
+        let worktree_a = Worktree::open_local(
+            client_a.clone(),
+            "/a".as_ref(),
+            fs,
+            lang_registry.clone(),
+            Some(language_server),
+            &mut cx_a.to_async(),
+        )
+        .await
+        .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let worktree_id = worktree_a
+            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
+            .await
+            .unwrap();
+
+        // Simulate a language server reporting errors for a file.
+        fake_lsp
+            .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+                uri: lsp::Url::from_file_path("/a/a.txt").unwrap(),
+                version: None,
+                diagnostics: vec![
+                    lsp::Diagnostic {
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 3)),
+                        message: "message 1".to_string(),
+                        ..Default::default()
+                    },
+                    lsp::Diagnostic {
+                        severity: Some(lsp::DiagnosticSeverity::WARNING),
+                        range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 13)),
+                        message: "message 2".to_string(),
+                        ..Default::default()
+                    },
+                ],
+            })
+            .await;
+
+        // Join the worktree as client B.
+        let worktree_b = Worktree::open_remote(
+            client_b.clone(),
+            worktree_id,
+            lang_registry.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+
+        // Open the file with the errors.
+        let buffer_b = cx_b
+            .background()
+            .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.txt", cx)))
+            .await
+            .unwrap();
+
+        buffer_b.read_with(&cx_b, |buffer, _| {
+            assert_eq!(
+                buffer
+                    .diagnostics_in_range(0..buffer.len())
+                    .collect::<Vec<_>>(),
+                &[
+                    (
+                        Point::new(0, 0)..Point::new(0, 3),
+                        &Diagnostic {
+                            message: "message 1".to_string(),
+                            severity: lsp::DiagnosticSeverity::ERROR,
+                        }
+                    ),
+                    (
+                        Point { row: 0, column: 8 }..Point { row: 0, column: 13 },
+                        &Diagnostic {
+                            severity: lsp::DiagnosticSeverity::WARNING,
+                            message: "message 2".to_string()
+                        }
+                    )
+                ]
+            );
+        });
     }
 
     #[gpui::test]
