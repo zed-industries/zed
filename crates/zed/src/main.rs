@@ -30,6 +30,7 @@ fn main() {
     languages.set_theme(&settings.borrow().theme.editor.syntax);
 
     app.on_quit(|cx| {
+        cx.remove_all_windows();
         let did_finish = cx
             .background()
             .block_on_critical_tasks(Duration::from_millis(100));
