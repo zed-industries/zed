@@ -61,7 +61,7 @@ struct AnyResponse<'a> {
     #[serde(default)]
     error: Option<Error>,
     #[serde(borrow)]
-    result: &'a RawValue,
+    result: Option<&'a RawValue>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -157,8 +157,10 @@ impl LanguageServer {
                             if let Some(handler) = response_handlers.lock().remove(&id) {
                                 if let Some(error) = error {
                                     handler(Err(error));
-                                } else {
+                                } else if let Some(result) = result {
                                     handler(Ok(result.get()));
+                                } else {
+                                    handler(Ok("null"));
                                 }
                             }
                         } else {
@@ -459,7 +461,7 @@ impl FakeLanguageServer {
         let message = serde_json::to_vec(&AnyResponse {
             id: request_id.id,
             error: None,
-            result: &RawValue::from_string(result).unwrap(),
+            result: Some(&RawValue::from_string(result).unwrap()),
         })
         .unwrap();
         self.send(message).await;
