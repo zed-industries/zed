@@ -256,6 +256,7 @@ impl Buffer {
         replica_id: ReplicaId,
         message: proto::Buffer,
         file: Option<Box<dyn File>>,
+        cx: &mut ModelContext<Self>,
     ) -> Result<Self> {
         let mut buffer =
             buffer::Buffer::new(replica_id, message.id, History::new(message.content.into()));
@@ -268,7 +269,11 @@ impl Buffer {
             let set = proto::deserialize_selection_set(set);
             buffer.add_raw_selection_set(set.id, set);
         }
-        Ok(Self::build(buffer, file))
+        let mut this = Self::build(buffer, file);
+        if let Some(diagnostics) = message.diagnostics {
+            this.apply_diagnostic_update(proto::deserialize_diagnostics(diagnostics), cx);
+        }
+        Ok(this)
     }
 
     pub fn to_proto(&self) -> proto::Buffer {
@@ -1351,6 +1356,7 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         self.diagnostics = diagnostics;
+        self.diagnostics_update_count += 1;
         cx.notify();
     }
 

@@ -1391,7 +1391,7 @@ impl RemoteWorktree {
                 let remote_buffer = response.buffer.ok_or_else(|| anyhow!("empty buffer"))?;
                 let buffer_id = remote_buffer.id as usize;
                 let buffer = cx.add_model(|cx| {
-                    Buffer::from_proto(replica_id, remote_buffer, Some(Box::new(file)))
+                    Buffer::from_proto(replica_id, remote_buffer, Some(Box::new(file)), cx)
                         .unwrap()
                         .with_language(language, None, cx)
                 });
