@@ -39,10 +39,6 @@ bad = "#b7372e"
 active_line = "#00000033"
 hover = "#00000033"
 
-[editor]
-error_underline = "#ff0000"
-warning_underline = "#00ffff"
-
 [editor.syntax]
 keyword = { color = "#0086c0", weight = "bold" }
 function = "#dcdcaa"
