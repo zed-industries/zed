@@ -350,8 +350,10 @@ impl Workspace {
         cx.focus(&pane);
 
         let cursor_position = cx.add_view(|_| items::CursorPosition::new(params.settings.clone()));
+        let diagnostic = cx.add_view(|_| items::DiagnosticMessage::new(params.settings.clone()));
         let status_bar = cx.add_view(|cx| {
             let mut status_bar = StatusBar::new(&pane, params.settings.clone(), cx);
+            status_bar.add_left_item(diagnostic, cx);
             status_bar.add_right_item(cursor_position, cx);
             status_bar
         });

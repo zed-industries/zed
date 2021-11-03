@@ -7,7 +7,7 @@ use gpui::{
     elements::*, fonts::TextStyle, AppContext, Entity, ModelHandle, RenderContext, Subscription,
     Task, View, ViewContext, ViewHandle,
 };
-use language::{Buffer, File as _};
+use language::{Buffer, Diagnostic, DiagnosticSeverity, File as _};
 use postage::watch;
 use project::{ProjectPath, Worktree};
 use std::fmt::Write;
@@ -237,6 +237,84 @@ impl StatusItemView for CursorPosition {
             self._observe_active_editor = None;
         }
 
+        cx.notify();
+    }
+}
+
+pub struct DiagnosticMessage {
+    settings: watch::Receiver<Settings>,
+    diagnostic: Option<Diagnostic>,
+    _observe_active_editor: Option<Subscription>,
+}
+
+impl DiagnosticMessage {
+    pub fn new(settings: watch::Receiver<Settings>) -> Self {
+        Self {
+            diagnostic: None,
+            settings,
+            _observe_active_editor: None,
+        }
+    }
+
+    fn update(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
+        let editor = editor.read(cx);
+        let cursor_position = editor
+            .selections::<usize>(cx)
+            .max_by_key(|selection| selection.id)
+            .unwrap()
+            .head();
+        let new_diagnostic = editor
+            .buffer()
+            .read(cx)
+            .diagnostics_in_range::<usize, usize>(cursor_position..cursor_position)
+            .min_by_key(|(range, diagnostic)| (diagnostic.severity, range.len()))
+            .map(|(_, diagnostic)| diagnostic.clone());
+        if new_diagnostic != self.diagnostic {
+            self.diagnostic = new_diagnostic;
+            cx.notify();
+        }
+    }
+}
+
+impl Entity for DiagnosticMessage {
+    type Event = ();
+}
+
+impl View for DiagnosticMessage {
+    fn ui_name() -> &'static str {
+        "DiagnosticMessage"
+    }
+
+    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+        if let Some(diagnostic) = &self.diagnostic {
+            let theme = &self.settings.borrow().theme.workspace.status_bar;
+            let style = match diagnostic.severity {
+                DiagnosticSeverity::ERROR => theme.diagnostic_error.clone(),
+                DiagnosticSeverity::WARNING => theme.diagnostic_warning.clone(),
+                DiagnosticSeverity::INFORMATION => theme.diagnostic_information.clone(),
+                DiagnosticSeverity::HINT => theme.diagnostic_hint.clone(),
+                _ => Default::default(),
+            };
+            Label::new(diagnostic.message.replace('\n', " "), style).boxed()
+        } else {
+            Empty::new().boxed()
+        }
+    }
+}
+
+impl StatusItemView for DiagnosticMessage {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn crate::ItemViewHandle>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(editor) = active_pane_item.and_then(|item| item.to_any().downcast::<Editor>()) {
+            self._observe_active_editor = Some(cx.observe(&editor, Self::update));
+            self.update(editor, cx);
+        } else {
+            self.diagnostic = Default::default();
+            self._observe_active_editor = None;
+        }
         cx.notify();
     }
 }

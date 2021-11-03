@@ -780,10 +780,14 @@ impl Buffer {
         Ok(Operation::UpdateDiagnostics(self.diagnostics.clone()))
     }
 
-    pub fn diagnostics_in_range<'a, T: 'a + ToOffset>(
+    pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
         range: Range<T>,
-    ) -> impl Iterator<Item = (Range<Point>, &Diagnostic)> + 'a {
+    ) -> impl Iterator<Item = (Range<O>, &Diagnostic)> + 'a
+    where
+        T: 'a + ToOffset,
+        O: 'a + FromAnchor,
+    {
         let content = self.content();
         self.diagnostics
             .intersecting_ranges(range, content, true)

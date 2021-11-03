@@ -95,6 +95,10 @@ pub struct StatusBar {
     pub container: ContainerStyle,
     pub height: f32,
     pub cursor_position: TextStyle,
+    pub diagnostic_error: TextStyle,
+    pub diagnostic_warning: TextStyle,
+    pub diagnostic_information: TextStyle,
+    pub diagnostic_hint: TextStyle,
 }
 
 #[derive(Deserialize, Default)]

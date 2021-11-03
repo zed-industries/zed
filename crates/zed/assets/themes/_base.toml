@@ -64,6 +64,10 @@ border = { width = 1, color = "$border.0", left = true }
 padding = { left = 6, right = 6 }
 height = 24
 cursor_position = "$text.2"
+diagnostic_error = { extends = "$text.2", color = "$status.bad" }
+diagnostic_warning = { extends = "$text.2", color = "$status.warn" }
+diagnostic_information = { extends = "$text.2", color = "$status.info" }
+diagnostic_hint = { extends = "$text.2", color = "$status.info" }
 
 [panel]
 padding = { top = 12, left = 12, bottom = 12, right = 12 }
