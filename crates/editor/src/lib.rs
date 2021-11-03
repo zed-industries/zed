@@ -1527,10 +1527,12 @@ impl Editor {
 
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
         self.buffer.update(cx, |buffer, cx| buffer.undo(cx));
+        self.request_autoscroll(cx);
     }
 
     pub fn redo(&mut self, _: &Redo, cx: &mut ViewContext<Self>) {
         self.buffer.update(cx, |buffer, cx| buffer.redo(cx));
+        self.request_autoscroll(cx);
     }
 
     pub fn move_left(&mut self, _: &MoveLeft, cx: &mut ViewContext<Self>) {
@@ -2344,10 +2346,8 @@ impl Editor {
         }
 
         if autoscroll {
-            self.autoscroll_requested = true;
-            cx.notify();
+            self.request_autoscroll(cx);
         }
-
         self.pause_cursor_blinking(cx);
 
         self.buffer.update(cx, |buffer, cx| {
@@ -2355,6 +2355,11 @@ impl Editor {
                 .update_selection_set(self.selection_set_id, &selections, cx)
                 .unwrap();
         });
+    }
+
+    fn request_autoscroll(&mut self, cx: &mut ViewContext<Self>) {
+        self.autoscroll_requested = true;
+        cx.notify();
     }
 
     fn start_transaction(&self, cx: &mut ViewContext<Self>) {
