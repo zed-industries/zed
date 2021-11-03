@@ -3569,8 +3569,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_language_server_diagnostics(mut cx: gpui::TestAppContext) {
-        simplelog::SimpleLogger::init(log::LevelFilter::Info, Default::default()).unwrap();
-
         let (language_server_config, mut fake_server) =
             LanguageServerConfig::fake(cx.background()).await;
         let mut languages = LanguageRegistry::new();
