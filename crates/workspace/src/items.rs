@@ -1,11 +1,16 @@
 use super::{Item, ItemView};
-use crate::Settings;
+use crate::{status_bar::StatusItemView, Settings};
 use anyhow::Result;
+use buffer::{Point, ToOffset};
 use editor::{Editor, EditorSettings, Event};
-use gpui::{fonts::TextStyle, AppContext, ModelHandle, Task, ViewContext};
+use gpui::{
+    elements::*, fonts::TextStyle, AppContext, Entity, ModelHandle, RenderContext, Subscription,
+    Task, View, ViewContext, ViewHandle,
+};
 use language::{Buffer, File as _};
 use postage::watch;
 use project::{ProjectPath, Worktree};
+use std::fmt::Write;
 use std::path::Path;
 
 impl Item for Buffer {
@@ -154,5 +159,80 @@ impl ItemView for Editor {
 
     fn has_conflict(&self, cx: &AppContext) -> bool {
         self.buffer().read(cx).has_conflict()
+    }
+}
+
+pub struct CursorPosition {
+    position: Option<Point>,
+    selected_count: usize,
+    settings: watch::Receiver<Settings>,
+    _observe_active_editor: Option<Subscription>,
+}
+
+impl CursorPosition {
+    pub fn new(settings: watch::Receiver<Settings>) -> Self {
+        Self {
+            position: None,
+            selected_count: 0,
+            settings,
+            _observe_active_editor: None,
+        }
+    }
+
+    fn update_position(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
+        let editor = editor.read(cx);
+
+        let last_selection = editor.last_selection(cx);
+        self.position = Some(last_selection.head());
+        if last_selection.is_empty() {
+            self.selected_count = 0;
+        } else {
+            let buffer = editor.buffer().read(cx);
+            let start = last_selection.start.to_offset(buffer);
+            let end = last_selection.end.to_offset(buffer);
+            self.selected_count = end - start;
+        }
+        cx.notify();
+    }
+}
+
+impl Entity for CursorPosition {
+    type Event = ();
+}
+
+impl View for CursorPosition {
+    fn ui_name() -> &'static str {
+        "CursorPosition"
+    }
+
+    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+        if let Some(position) = self.position {
+            let theme = &self.settings.borrow().theme.workspace.status_bar;
+            let mut text = format!("{},{}", position.row + 1, position.column + 1);
+            if self.selected_count > 0 {
+                write!(text, " ({} selected)", self.selected_count).unwrap();
+            }
+            Label::new(text, theme.cursor_position.clone()).boxed()
+        } else {
+            Empty::new().boxed()
+        }
+    }
+}
+
+impl StatusItemView for CursorPosition {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn crate::ItemViewHandle>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(editor) = active_pane_item.and_then(|item| item.to_any().downcast::<Editor>()) {
+            self._observe_active_editor = Some(cx.observe(&editor, Self::update_position));
+            self.update_position(editor, cx);
+        } else {
+            self.position = None;
+            self._observe_active_editor = None;
+        }
+
+        cx.notify();
     }
 }

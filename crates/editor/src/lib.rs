@@ -2219,6 +2219,21 @@ impl Editor {
             .map(|(set_id, _)| *set_id)
     }
 
+    pub fn last_selection(&self, cx: &AppContext) -> Selection<Point> {
+        if let Some(pending_selection) = self.pending_selection.as_ref() {
+            pending_selection.clone()
+        } else {
+            let buffer = self.buffer.read(cx);
+            let last_selection = buffer
+                .selection_set(self.selection_set_id)
+                .unwrap()
+                .point_selections(buffer)
+                .max_by_key(|s| s.id)
+                .unwrap();
+            last_selection
+        }
+    }
+
     pub fn selections_in_range<'a>(
         &'a self,
         set_id: SelectionSetId,
