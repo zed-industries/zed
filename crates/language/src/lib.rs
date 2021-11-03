@@ -830,9 +830,14 @@ impl Buffer {
             for request in autoindent_requests {
                 let old_to_new_rows = request
                     .edited
-                    .points(&request.before_edit)
+                    .iter::<Point, _>(&request.before_edit)
                     .map(|point| point.row)
-                    .zip(request.edited.points(&snapshot).map(|point| point.row))
+                    .zip(
+                        request
+                            .edited
+                            .iter::<Point, _>(&snapshot)
+                            .map(|point| point.row),
+                    )
                     .collect::<BTreeMap<u32, u32>>();
 
                 let mut old_suggestions = HashMap::<u32, u32>::default();

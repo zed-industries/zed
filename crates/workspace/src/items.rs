@@ -1,7 +1,7 @@
 use super::{Item, ItemView};
 use crate::{status_bar::StatusItemView, Settings};
 use anyhow::Result;
-use buffer::{Point, ToOffset};
+use buffer::{Point, Selection, ToPoint};
 use editor::{Editor, EditorSettings, Event};
 use gpui::{
     elements::*, fonts::TextStyle, AppContext, Entity, ModelHandle, RenderContext, Subscription,
@@ -181,17 +181,21 @@ impl CursorPosition {
 
     fn update_position(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
         let editor = editor.read(cx);
+        let buffer = editor.buffer().read(cx);
 
-        let last_selection = editor.last_selection(cx);
-        self.position = Some(last_selection.head());
-        if last_selection.is_empty() {
-            self.selected_count = 0;
-        } else {
-            let buffer = editor.buffer().read(cx);
-            let start = last_selection.start.to_offset(buffer);
-            let end = last_selection.end.to_offset(buffer);
-            self.selected_count = end - start;
+        self.selected_count = 0;
+        let mut last_selection: Option<Selection<usize>> = None;
+        for selection in editor.selections::<usize>(cx) {
+            self.selected_count += selection.end - selection.start;
+            if last_selection
+                .as_ref()
+                .map_or(true, |last_selection| selection.id > last_selection.id)
+            {
+                last_selection = Some(selection);
+            }
         }
+        self.position = last_selection.map(|s| s.head().to_point(buffer));
+
         cx.notify();
     }
 }

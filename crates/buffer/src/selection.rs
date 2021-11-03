@@ -36,17 +36,27 @@ pub struct SelectionState {
     pub goal: SelectionGoal,
 }
 
+impl<T: Clone> Selection<T> {
+    pub fn head(&self) -> T {
+        if self.reversed {
+            self.start.clone()
+        } else {
+            self.end.clone()
+        }
+    }
+
+    pub fn tail(&self) -> T {
+        if self.reversed {
+            self.end.clone()
+        } else {
+            self.start.clone()
+        }
+    }
+}
+
 impl<T: ToOffset + ToPoint + Copy + Ord> Selection<T> {
     pub fn is_empty(&self) -> bool {
         self.start == self.end
-    }
-
-    pub fn head(&self) -> T {
-        if self.reversed {
-            self.start
-        } else {
-            self.end
-        }
     }
 
     pub fn set_head(&mut self, head: T) {
@@ -62,14 +72,6 @@ impl<T: ToOffset + ToPoint + Copy + Ord> Selection<T> {
                 self.reversed = false;
             }
             self.end = head;
-        }
-    }
-
-    pub fn tail(&self) -> T {
-        if self.reversed {
-            self.end
-        } else {
-            self.start
         }
     }
 

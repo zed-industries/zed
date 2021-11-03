@@ -113,6 +113,14 @@ impl Anchor {
             buffer.anchor_after(self)
         }
     }
+
+    pub fn summary<'a, D, C>(&self, content: C) -> D
+    where
+        D: TextDimension<'a>,
+        C: Into<Content<'a>>,
+    {
+        content.into().summary_for_anchor(self)
+    }
 }
 
 impl<T> AnchorMap<T> {
@@ -124,24 +132,15 @@ impl<T> AnchorMap<T> {
         self.entries.len()
     }
 
-    pub fn offsets<'a>(
-        &'a self,
-        content: impl Into<Content<'a>> + 'a,
-    ) -> impl Iterator<Item = (usize, &'a T)> + 'a {
+    pub fn iter<'a, D, C>(&'a self, content: C) -> impl Iterator<Item = (D, &'a T)> + 'a
+    where
+        D: 'a + TextDimension<'a>,
+        C: 'a + Into<Content<'a>>,
+    {
         let content = content.into();
         content
             .summaries_for_anchors(self)
-            .map(move |(sum, value)| (sum.bytes, value))
-    }
-
-    pub fn points<'a>(
-        &'a self,
-        content: impl Into<Content<'a>> + 'a,
-    ) -> impl Iterator<Item = (Point, &'a T)> + 'a {
-        let content = content.into();
-        content
-            .summaries_for_anchors(self)
-            .map(move |(sum, value)| (sum.lines, value))
+            .map(move |(sum, value)| (sum, value))
     }
 }
 
@@ -154,18 +153,12 @@ impl AnchorSet {
         self.0.len()
     }
 
-    pub fn offsets<'a>(
-        &'a self,
-        content: impl Into<Content<'a>> + 'a,
-    ) -> impl Iterator<Item = usize> + 'a {
-        self.0.offsets(content).map(|(offset, _)| offset)
-    }
-
-    pub fn points<'a>(
-        &'a self,
-        content: impl Into<Content<'a>> + 'a,
-    ) -> impl Iterator<Item = Point> + 'a {
-        self.0.points(content).map(|(point, _)| point)
+    pub fn iter<'a, D, C>(&'a self, content: C) -> impl Iterator<Item = D> + 'a
+    where
+        D: 'a + TextDimension<'a>,
+        C: 'a + Into<Content<'a>>,
+    {
+        self.0.iter(content).map(|(position, _)| position)
     }
 }
 

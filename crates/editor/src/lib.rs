@@ -21,7 +21,8 @@ use smallvec::SmallVec;
 use smol::Timer;
 use std::{
     cell::RefCell,
-    cmp, iter, mem,
+    cmp::{self, Ordering},
+    iter, mem,
     ops::{Range, RangeInclusive},
     rc::Rc,
     sync::Arc,
@@ -293,7 +294,7 @@ pub struct Editor {
     buffer: ModelHandle<Buffer>,
     display_map: ModelHandle<DisplayMap>,
     selection_set_id: SelectionSetId,
-    pending_selection: Option<Selection<Point>>,
+    pending_selection: Option<Selection<Anchor>>,
     next_selection_id: usize,
     add_selections_state: Option<AddSelectionsState>,
     autoclose_stack: Vec<BracketPairState>,
@@ -618,10 +619,11 @@ impl Editor {
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let cursor = position.to_buffer_point(&display_map, Bias::Left);
+        let buffer = self.buffer.read(cx);
+        let cursor = buffer.anchor_before(position.to_buffer_point(&display_map, Bias::Left));
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
-            start: cursor,
+            start: cursor.clone(),
             end: cursor,
             reversed: false,
             goal: SelectionGoal::None,
@@ -642,9 +644,22 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let cursor = position.to_buffer_point(&display_map, Bias::Left);
-        if let Some(selection) = self.pending_selection.as_mut() {
-            selection.set_head(cursor);
+        if let Some(pending_selection) = self.pending_selection.as_mut() {
+            let buffer = self.buffer.read(cx);
+            let cursor = buffer.anchor_before(position.to_buffer_point(&display_map, Bias::Left));
+            if cursor.cmp(&pending_selection.tail(), buffer).unwrap() < Ordering::Equal {
+                if !pending_selection.reversed {
+                    pending_selection.end = pending_selection.start.clone();
+                    pending_selection.reversed = true;
+                }
+                pending_selection.start = cursor;
+            } else {
+                if pending_selection.reversed {
+                    pending_selection.start = pending_selection.end.clone();
+                    pending_selection.reversed = false;
+                }
+                pending_selection.end = cursor;
+            }
         } else {
             log::error!("update_selection dispatched with no pending selection");
             return;
@@ -655,12 +670,8 @@ impl Editor {
     }
 
     fn end_selection(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(selection) = self.pending_selection.take() {
-            let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
-            let ix = self.selection_insertion_index(&selections, selection.start);
-            selections.insert(ix, selection);
-            self.update_selections(selections, false, cx);
-        }
+        let selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        self.update_selections(selections, false, cx);
     }
 
     pub fn is_selecting(&self) -> bool {
@@ -669,13 +680,27 @@ impl Editor {
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         if let Some(pending_selection) = self.pending_selection.take() {
+            let buffer = self.buffer.read(cx);
+            let pending_selection = Selection {
+                id: pending_selection.id,
+                start: pending_selection.start.to_point(buffer),
+                end: pending_selection.end.to_point(buffer),
+                reversed: pending_selection.reversed,
+                goal: pending_selection.goal,
+            };
             if self.selections::<Point>(cx).next().is_none() {
                 self.update_selections(vec![pending_selection], true, cx);
             }
         } else {
-            let selection_count = self.selection_count(cx);
             let selections = self.selections::<Point>(cx);
-            let mut oldest_selection = selections.min_by_key(|s| s.id).unwrap().clone();
+            let mut selection_count = 0;
+            let mut oldest_selection = selections
+                .min_by_key(|s| {
+                    selection_count += 1;
+                    s.id
+                })
+                .unwrap()
+                .clone();
             if selection_count == 1 {
                 oldest_selection.start = oldest_selection.head().clone();
                 oldest_selection.end = oldest_selection.head().clone();
@@ -970,7 +995,6 @@ impl Editor {
     }
 
     fn skip_autoclose_end(&mut self, text: &str, cx: &mut ViewContext<Self>) -> bool {
-        let old_selection_count = self.selection_count(cx);
         let old_selections = self.selections::<usize>(cx).collect::<Vec<_>>();
         let autoclose_pair_state = if let Some(autoclose_pair_state) = self.autoclose_stack.last() {
             autoclose_pair_state
@@ -981,7 +1005,7 @@ impl Editor {
             return false;
         }
 
-        debug_assert_eq!(old_selection_count, autoclose_pair_state.ranges.len());
+        debug_assert_eq!(old_selections.len(), autoclose_pair_state.ranges.len());
 
         let buffer = self.buffer.read(cx);
         if old_selections
@@ -2220,21 +2244,6 @@ impl Editor {
             .map(|(set_id, _)| *set_id)
     }
 
-    pub fn last_selection(&self, cx: &AppContext) -> Selection<Point> {
-        if let Some(pending_selection) = self.pending_selection.as_ref() {
-            pending_selection.clone()
-        } else {
-            let buffer = self.buffer.read(cx);
-            let last_selection = buffer
-                .selection_set(self.selection_set_id)
-                .unwrap()
-                .selections::<Point, _>(buffer)
-                .max_by_key(|s| s.id)
-                .unwrap();
-            last_selection
-        }
-    }
-
     pub fn selections_in_range<'a>(
         &'a self,
         set_id: SelectionSetId,
@@ -2251,10 +2260,14 @@ impl Editor {
         let start = range.start.to_buffer_point(&display_map, Bias::Left);
         let start_index = self.selection_insertion_index(&selections, start);
         let pending_selection = if set_id.replica_id == self.buffer.read(cx).replica_id() {
-            self.pending_selection.as_ref().and_then(|s| {
-                let selection_range = s.display_range(&display_map);
-                if selection_range.start <= range.end || selection_range.end <= range.end {
-                    Some(selection_range)
+            self.pending_selection.as_ref().and_then(|pending| {
+                let mut selection_start = pending.start.to_display_point(&display_map, Bias::Left);
+                let mut selection_end = pending.end.to_display_point(&display_map, Bias::Left);
+                if pending.reversed {
+                    mem::swap(&mut selection_start, &mut selection_end);
+                }
+                if selection_start <= range.end || selection_end <= range.end {
+                    Some(selection_start..selection_end)
                 } else {
                     None
                 }
@@ -2283,25 +2296,46 @@ impl Editor {
         }
     }
 
-    fn selections<'a, D>(
-        &mut self,
-        cx: &'a mut ViewContext<Self>,
-    ) -> impl 'a + Iterator<Item = Selection<D>>
+    pub fn selections<'a, D>(&self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Selection<D>>
     where
-        D: 'a + TextDimension<'a>,
+        D: 'a + TextDimension<'a> + Ord,
     {
-        self.end_selection(cx);
         let buffer = self.buffer.read(cx);
-        buffer
+        let mut selections = buffer
             .selection_set(self.selection_set_id)
             .unwrap()
             .selections::<D, _>(buffer)
-    }
+            .peekable();
+        let mut pending_selection = self.pending_selection.clone().map(|selection| Selection {
+            id: selection.id,
+            start: selection.start.summary::<D, _>(buffer),
+            end: selection.end.summary::<D, _>(buffer),
+            reversed: selection.reversed,
+            goal: selection.goal,
+        });
+        iter::from_fn(move || {
+            if let Some(pending) = pending_selection.as_mut() {
+                while let Some(next_selection) = selections.peek() {
+                    if pending.start <= next_selection.end && pending.end >= next_selection.start {
+                        let next_selection = selections.next().unwrap();
+                        if next_selection.start < pending.start {
+                            pending.start = next_selection.start;
+                        }
+                        if next_selection.end > pending.end {
+                            pending.end = next_selection.end;
+                        }
+                    } else if next_selection.end < pending.start {
+                        return selections.next();
+                    } else {
+                        break;
+                    }
+                }
 
-    fn selection_count(&mut self, cx: &mut ViewContext<Self>) -> usize {
-        self.end_selection(cx);
-        let buffer = self.buffer.read(cx);
-        buffer.selection_set(self.selection_set_id).unwrap().len()
+                pending_selection.take()
+            } else {
+                selections.next()
+            }
+        })
     }
 
     fn update_selections<T>(
@@ -2329,6 +2363,7 @@ impl Editor {
             }
         }
 
+        self.pending_selection = None;
         self.add_selections_state = None;
         self.select_larger_syntax_node_stack.clear();
         while let Some(autoclose_pair_state) = self.autoclose_stack.last() {
