@@ -300,7 +300,7 @@ impl View for DiagnosticMessage {
                 )
                 .with_child(
                     Label::new(
-                        diagnostic.message.replace('\n', " "),
+                        diagnostic.message.lines().next().unwrap().to_string(),
                         theme.diagnostic_message.clone(),
                     )
                     .boxed(),
