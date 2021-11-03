@@ -1,11 +1,16 @@
 use super::{Item, ItemView};
-use crate::Settings;
+use crate::{status_bar::StatusItemView, Settings};
 use anyhow::Result;
+use buffer::{Point, Selection, ToPoint};
 use editor::{Editor, EditorSettings, Event};
-use gpui::{fonts::TextStyle, AppContext, ModelHandle, Task, ViewContext};
-use language::{Buffer, File as _};
+use gpui::{
+    elements::*, fonts::TextStyle, AppContext, Entity, ModelHandle, RenderContext, Subscription,
+    Task, View, ViewContext, ViewHandle,
+};
+use language::{Buffer, Diagnostic, File as _};
 use postage::watch;
 use project::{ProjectPath, Worktree};
+use std::fmt::Write;
 use std::path::Path;
 
 impl Item for Buffer {
@@ -154,5 +159,172 @@ impl ItemView for Editor {
 
     fn has_conflict(&self, cx: &AppContext) -> bool {
         self.buffer().read(cx).has_conflict()
+    }
+}
+
+pub struct CursorPosition {
+    position: Option<Point>,
+    selected_count: usize,
+    settings: watch::Receiver<Settings>,
+    _observe_active_editor: Option<Subscription>,
+}
+
+impl CursorPosition {
+    pub fn new(settings: watch::Receiver<Settings>) -> Self {
+        Self {
+            position: None,
+            selected_count: 0,
+            settings,
+            _observe_active_editor: None,
+        }
+    }
+
+    fn update_position(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
+        let editor = editor.read(cx);
+        let buffer = editor.buffer().read(cx);
+
+        self.selected_count = 0;
+        let mut last_selection: Option<Selection<usize>> = None;
+        for selection in editor.selections::<usize>(cx) {
+            self.selected_count += selection.end - selection.start;
+            if last_selection
+                .as_ref()
+                .map_or(true, |last_selection| selection.id > last_selection.id)
+            {
+                last_selection = Some(selection);
+            }
+        }
+        self.position = last_selection.map(|s| s.head().to_point(buffer));
+
+        cx.notify();
+    }
+}
+
+impl Entity for CursorPosition {
+    type Event = ();
+}
+
+impl View for CursorPosition {
+    fn ui_name() -> &'static str {
+        "CursorPosition"
+    }
+
+    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+        if let Some(position) = self.position {
+            let theme = &self.settings.borrow().theme.workspace.status_bar;
+            let mut text = format!("{},{}", position.row + 1, position.column + 1);
+            if self.selected_count > 0 {
+                write!(text, " ({} selected)", self.selected_count).unwrap();
+            }
+            Label::new(text, theme.cursor_position.clone()).boxed()
+        } else {
+            Empty::new().boxed()
+        }
+    }
+}
+
+impl StatusItemView for CursorPosition {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn crate::ItemViewHandle>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(editor) = active_pane_item.and_then(|item| item.to_any().downcast::<Editor>()) {
+            self._observe_active_editor = Some(cx.observe(&editor, Self::update_position));
+            self.update_position(editor, cx);
+        } else {
+            self.position = None;
+            self._observe_active_editor = None;
+        }
+
+        cx.notify();
+    }
+}
+
+pub struct DiagnosticMessage {
+    settings: watch::Receiver<Settings>,
+    diagnostic: Option<Diagnostic>,
+    _observe_active_editor: Option<Subscription>,
+}
+
+impl DiagnosticMessage {
+    pub fn new(settings: watch::Receiver<Settings>) -> Self {
+        Self {
+            diagnostic: None,
+            settings,
+            _observe_active_editor: None,
+        }
+    }
+
+    fn update(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
+        let editor = editor.read(cx);
+        let cursor_position = editor
+            .selections::<usize>(cx)
+            .max_by_key(|selection| selection.id)
+            .unwrap()
+            .head();
+        let new_diagnostic = editor
+            .buffer()
+            .read(cx)
+            .diagnostics_in_range::<usize, usize>(cursor_position..cursor_position)
+            .min_by_key(|(range, diagnostic)| (diagnostic.severity, range.len()))
+            .map(|(_, diagnostic)| diagnostic.clone());
+        if new_diagnostic != self.diagnostic {
+            self.diagnostic = new_diagnostic;
+            cx.notify();
+        }
+    }
+}
+
+impl Entity for DiagnosticMessage {
+    type Event = ();
+}
+
+impl View for DiagnosticMessage {
+    fn ui_name() -> &'static str {
+        "DiagnosticMessage"
+    }
+
+    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+        if let Some(diagnostic) = &self.diagnostic {
+            let theme = &self.settings.borrow().theme.workspace.status_bar;
+            Flex::row()
+                .with_child(
+                    Svg::new("icons/warning.svg")
+                        .with_color(theme.diagnostic_icon_color)
+                        .constrained()
+                        .with_height(theme.diagnostic_icon_size)
+                        .contained()
+                        .with_margin_right(theme.diagnostic_icon_spacing)
+                        .boxed(),
+                )
+                .with_child(
+                    Label::new(
+                        diagnostic.message.replace('\n', " "),
+                        theme.diagnostic_message.clone(),
+                    )
+                    .boxed(),
+                )
+                .boxed()
+        } else {
+            Empty::new().boxed()
+        }
+    }
+}
+
+impl StatusItemView for DiagnosticMessage {
+    fn set_active_pane_item(
+        &mut self,
+        active_pane_item: Option<&dyn crate::ItemViewHandle>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(editor) = active_pane_item.and_then(|item| item.to_any().downcast::<Editor>()) {
+            self._observe_active_editor = Some(cx.observe(&editor, Self::update));
+            self.update(editor, cx);
+        } else {
+            self.diagnostic = Default::default();
+            self._observe_active_editor = None;
+        }
+        cx.notify();
     }
 }

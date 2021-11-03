@@ -2456,6 +2456,12 @@ impl<V: View> UpdateModel for RenderContext<'_, V> {
     }
 }
 
+impl<V: View> ReadView for RenderContext<'_, V> {
+    fn read_view<T: View>(&self, handle: &ViewHandle<T>) -> &T {
+        self.app.read_view(handle)
+    }
+}
+
 impl<M> AsRef<AppContext> for ViewContext<'_, M> {
     fn as_ref(&self) -> &AppContext {
         &self.app.cx

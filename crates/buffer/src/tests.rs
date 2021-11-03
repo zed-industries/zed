@@ -576,9 +576,11 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
             first_buffer.selection_sets().collect::<HashMap<_, _>>()
         );
         assert_eq!(
-            buffer.all_selection_ranges().collect::<HashMap<_, _>>(),
+            buffer
+                .all_selection_ranges::<usize>()
+                .collect::<HashMap<_, _>>(),
             first_buffer
-                .all_selection_ranges()
+                .all_selection_ranges::<usize>()
                 .collect::<HashMap<_, _>>()
         );
     }

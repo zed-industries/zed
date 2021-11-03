@@ -1486,10 +1486,14 @@ impl Buffer {
         Ok(selections)
     }
 
-    pub fn selection_ranges<'a>(&'a self, set_id: SelectionSetId) -> Result<Vec<Range<usize>>> {
+    #[cfg(test)]
+    pub fn selection_ranges<'a, D>(&'a self, set_id: SelectionSetId) -> Result<Vec<Range<D>>>
+    where
+        D: 'a + TextDimension<'a>,
+    {
         Ok(self
             .selection_set(set_id)?
-            .offset_selections(self)
+            .selections(self)
             .map(move |selection| {
                 if selection.reversed {
                     selection.end..selection.start
@@ -1500,9 +1504,13 @@ impl Buffer {
             .collect())
     }
 
-    pub fn all_selection_ranges<'a>(
+    #[cfg(test)]
+    pub fn all_selection_ranges<'a, D>(
         &'a self,
-    ) -> impl 'a + Iterator<Item = (SelectionSetId, Vec<Range<usize>>)> {
+    ) -> impl 'a + Iterator<Item = (SelectionSetId, Vec<Range<usize>>)>
+    where
+        D: 'a + TextDimension<'a>,
+    {
         self.selections
             .keys()
             .map(move |set_id| (*set_id, self.selection_ranges(*set_id).unwrap()))
@@ -1711,7 +1719,10 @@ impl<'a> Content<'a> {
         result
     }
 
-    fn summary_for_anchor(&self, anchor: &Anchor) -> TextSummary {
+    fn summary_for_anchor<D>(&self, anchor: &Anchor) -> D
+    where
+        D: TextDimension<'a>,
+    {
         let cx = Some(anchor.version.clone());
         let mut cursor = self.fragments.cursor::<(VersionedFullOffset, usize)>();
         cursor.seek(
@@ -1727,16 +1738,19 @@ impl<'a> Content<'a> {
         self.text_summary_for_range(0..cursor.start().1 + overshoot)
     }
 
-    fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
+    fn text_summary_for_range<D>(&self, range: Range<usize>) -> D
+    where
+        D: TextDimension<'a>,
+    {
         self.visible_text.cursor(range.start).summary(range.end)
     }
 
-    fn summaries_for_anchors<T>(
-        &self,
-        map: &'a AnchorMap<T>,
-    ) -> impl Iterator<Item = (TextSummary, &'a T)> {
+    fn summaries_for_anchors<D, T>(&self, map: &'a AnchorMap<T>) -> impl Iterator<Item = (D, &'a T)>
+    where
+        D: TextDimension<'a>,
+    {
         let cx = Some(map.version.clone());
-        let mut summary = TextSummary::default();
+        let mut summary = D::default();
         let mut rope_cursor = self.visible_text.cursor(0);
         let mut cursor = self.fragments.cursor::<(VersionedFullOffset, usize)>();
         map.entries.iter().map(move |((offset, bias), value)| {
@@ -1746,17 +1760,20 @@ impl<'a> Content<'a> {
             } else {
                 0
             };
-            summary += rope_cursor.summary::<TextSummary>(cursor.start().1 + overshoot);
+            summary.add_assign(&rope_cursor.summary(cursor.start().1 + overshoot));
             (summary.clone(), value)
         })
     }
 
-    fn summaries_for_anchor_ranges<T>(
+    fn summaries_for_anchor_ranges<D, T>(
         &self,
         map: &'a AnchorRangeMap<T>,
-    ) -> impl Iterator<Item = (Range<TextSummary>, &'a T)> {
+    ) -> impl Iterator<Item = (Range<D>, &'a T)>
+    where
+        D: TextDimension<'a>,
+    {
         let cx = Some(map.version.clone());
-        let mut summary = TextSummary::default();
+        let mut summary = D::default();
         let mut rope_cursor = self.visible_text.cursor(0);
         let mut cursor = self.fragments.cursor::<(VersionedFullOffset, usize)>();
         map.entries.iter().map(move |(range, value)| {
@@ -1775,7 +1792,7 @@ impl<'a> Content<'a> {
             } else {
                 0
             };
-            summary += rope_cursor.summary::<TextSummary>(cursor.start().1 + overshoot);
+            summary.add_assign(&rope_cursor.summary::<D>(cursor.start().1 + overshoot));
             let start_summary = summary.clone();
 
             cursor.seek_forward(&VersionedFullOffset::Offset(*end_offset), *end_bias, &cx);
@@ -1784,7 +1801,7 @@ impl<'a> Content<'a> {
             } else {
                 0
             };
-            summary += rope_cursor.summary::<TextSummary>(cursor.start().1 + overshoot);
+            summary.add_assign(&rope_cursor.summary::<D>(cursor.start().1 + overshoot));
             let end_summary = summary.clone();
 
             (start_summary..end_summary, value)
@@ -1917,7 +1934,7 @@ impl<'a> Content<'a> {
 
     fn point_for_offset(&self, offset: usize) -> Result<Point> {
         if offset <= self.len() {
-            Ok(self.text_summary_for_range(0..offset).lines)
+            Ok(self.text_summary_for_range(0..offset))
         } else {
             Err(anyhow!("offset out of bounds"))
         }
@@ -2305,13 +2322,13 @@ impl ToOffset for usize {
 
 impl ToOffset for Anchor {
     fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize {
-        content.into().summary_for_anchor(self).bytes
+        content.into().summary_for_anchor(self)
     }
 }
 
 impl<'a> ToOffset for &'a Anchor {
     fn to_offset<'b>(&self, content: impl Into<Content<'b>>) -> usize {
-        content.into().summary_for_anchor(self).bytes
+        content.into().summary_for_anchor(self)
     }
 }
 
@@ -2321,7 +2338,7 @@ pub trait ToPoint {
 
 impl ToPoint for Anchor {
     fn to_point<'a>(&self, content: impl Into<Content<'a>>) -> Point {
-        content.into().summary_for_anchor(self).lines
+        content.into().summary_for_anchor(self)
     }
 }
 

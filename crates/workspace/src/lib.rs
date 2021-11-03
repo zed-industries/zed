@@ -3,15 +3,16 @@ pub mod pane;
 pub mod pane_group;
 pub mod settings;
 pub mod sidebar;
+mod status_bar;
 
 use anyhow::Result;
-use language::{Buffer, LanguageRegistry};
 use client::{Authenticate, ChannelList, Client, UserStore};
 use gpui::{
     action, elements::*, json::to_string_pretty, keymap::Binding, platform::CursorStyle,
     AnyViewHandle, AppContext, ClipboardItem, Entity, ModelHandle, MutableAppContext, PromptLevel,
     RenderContext, Task, View, ViewContext, ViewHandle, WeakModelHandle,
 };
+use language::{Buffer, LanguageRegistry};
 use log::error;
 pub use pane::*;
 pub use pane_group::*;
@@ -25,6 +26,8 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+
+use crate::status_bar::StatusBar;
 
 action!(OpenNew, WorkspaceParams);
 action!(Save);
@@ -311,6 +314,7 @@ pub struct Workspace {
     right_sidebar: Sidebar,
     panes: Vec<ViewHandle<Pane>>,
     active_pane: ViewHandle<Pane>,
+    status_bar: ViewHandle<StatusBar>,
     project: ModelHandle<Project>,
     items: Vec<Box<dyn WeakItemHandle>>,
     loading_items: HashMap<
@@ -345,6 +349,15 @@ impl Workspace {
         .detach();
         cx.focus(&pane);
 
+        let cursor_position = cx.add_view(|_| items::CursorPosition::new(params.settings.clone()));
+        let diagnostic = cx.add_view(|_| items::DiagnosticMessage::new(params.settings.clone()));
+        let status_bar = cx.add_view(|cx| {
+            let mut status_bar = StatusBar::new(&pane, params.settings.clone(), cx);
+            status_bar.add_left_item(diagnostic, cx);
+            status_bar.add_right_item(cursor_position, cx);
+            status_bar
+        });
+
         let mut current_user = params.user_store.read(cx).watch_current_user().clone();
         let mut connection_status = params.client.status().clone();
         let _observe_current_user = cx.spawn_weak(|this, mut cx| async move {
@@ -367,6 +380,7 @@ impl Workspace {
             center: PaneGroup::new(pane.id()),
             panes: vec![pane.clone()],
             active_pane: pane.clone(),
+            status_bar,
             settings: params.settings.clone(),
             client: params.client.clone(),
             user_store: params.user_store.clone(),
@@ -824,6 +838,9 @@ impl Workspace {
 
     fn activate_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
         self.active_pane = pane;
+        self.status_bar.update(cx, |status_bar, cx| {
+            status_bar.set_active_pane(&self.active_pane, cx);
+        });
         cx.focus(&self.active_pane);
         cx.notify();
     }
@@ -1017,7 +1034,14 @@ impl View for Workspace {
                                     content.add_child(Flexible::new(0.8, element).boxed());
                                 }
                                 content.add_child(
-                                    Expanded::new(1.0, self.center.render(&settings.theme)).boxed(),
+                                    Flex::column()
+                                        .with_child(
+                                            Expanded::new(1.0, self.center.render(&settings.theme))
+                                                .boxed(),
+                                        )
+                                        .with_child(ChildView::new(self.status_bar.id()).boxed())
+                                        .expanded(1.)
+                                        .boxed(),
                                 );
                                 if let Some(element) =
                                     self.right_sidebar.render_active_item(&settings, cx)

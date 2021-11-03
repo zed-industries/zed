@@ -35,6 +35,7 @@ pub struct Workspace {
     pub pane_divider: Border,
     pub left_sidebar: Sidebar,
     pub right_sidebar: Sidebar,
+    pub status_bar: StatusBar,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -86,6 +87,18 @@ pub struct SidebarItem {
     pub icon_color: Color,
     pub icon_size: f32,
     pub height: f32,
+}
+
+#[derive(Deserialize, Default)]
+pub struct StatusBar {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub height: f32,
+    pub cursor_position: TextStyle,
+    pub diagnostic_icon_size: f32,
+    pub diagnostic_icon_spacing: f32,
+    pub diagnostic_icon_color: Color,
+    pub diagnostic_message: TextStyle,
 }
 
 #[derive(Deserialize, Default)]

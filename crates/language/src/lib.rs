@@ -751,6 +751,10 @@ impl Buffer {
                     if range.start == range.end {
                         range.end.column += 1;
                         range.end = content.clip_point_utf16(range.end, Bias::Right);
+                        if range.start == range.end && range.end.column > 0 {
+                            range.start.column -= 1;
+                            range.start = content.clip_point_utf16(range.start, Bias::Left);
+                        }
                     }
                     Some((
                         range,
@@ -780,10 +784,14 @@ impl Buffer {
         Ok(Operation::UpdateDiagnostics(self.diagnostics.clone()))
     }
 
-    pub fn diagnostics_in_range<'a, T: 'a + ToOffset>(
+    pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
         range: Range<T>,
-    ) -> impl Iterator<Item = (Range<Point>, &Diagnostic)> + 'a {
+    ) -> impl Iterator<Item = (Range<O>, &Diagnostic)> + 'a
+    where
+        T: 'a + ToOffset,
+        O: 'a + FromAnchor,
+    {
         let content = self.content();
         self.diagnostics
             .intersecting_ranges(range, content, true)
@@ -830,9 +838,14 @@ impl Buffer {
             for request in autoindent_requests {
                 let old_to_new_rows = request
                     .edited
-                    .points(&request.before_edit)
+                    .iter::<Point, _>(&request.before_edit)
                     .map(|point| point.row)
-                    .zip(request.edited.points(&snapshot).map(|point| point.row))
+                    .zip(
+                        request
+                            .edited
+                            .iter::<Point, _>(&snapshot)
+                            .map(|point| point.row),
+                    )
                     .collect::<BTreeMap<u32, u32>>();
 
                 let mut old_suggestions = HashMap::<u32, u32>::default();
@@ -893,7 +906,7 @@ impl Buffer {
                 if let Some(inserted) = request.inserted.as_ref() {
                     let inserted_row_ranges = contiguous_ranges(
                         inserted
-                            .point_ranges(&snapshot)
+                            .ranges::<Point, _>(&snapshot)
                             .flat_map(|range| range.start.row..range.end.row + 1),
                         max_rows_between_yields,
                     );
@@ -941,7 +954,7 @@ impl Buffer {
         for selection_set_id in &selection_set_ids {
             if let Ok(set) = self.selection_set(*selection_set_id) {
                 let new_selections = set
-                    .point_selections(&*self)
+                    .selections::<Point, _>(&*self)
                     .map(|selection| {
                         if selection.start.column == 0 {
                             let delta = Point::new(

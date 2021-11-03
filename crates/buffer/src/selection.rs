@@ -1,3 +1,5 @@
+use crate::rope::TextDimension;
+
 use super::{AnchorRangeMap, Buffer, Content, Point, ToOffset, ToPoint};
 use std::{cmp::Ordering, ops::Range, sync::Arc};
 
@@ -34,17 +36,27 @@ pub struct SelectionState {
     pub goal: SelectionGoal,
 }
 
+impl<T: Clone> Selection<T> {
+    pub fn head(&self) -> T {
+        if self.reversed {
+            self.start.clone()
+        } else {
+            self.end.clone()
+        }
+    }
+
+    pub fn tail(&self) -> T {
+        if self.reversed {
+            self.end.clone()
+        } else {
+            self.start.clone()
+        }
+    }
+}
+
 impl<T: ToOffset + ToPoint + Copy + Ord> Selection<T> {
     pub fn is_empty(&self) -> bool {
         self.start == self.end
-    }
-
-    pub fn head(&self) -> T {
-        if self.reversed {
-            self.start
-        } else {
-            self.end
-        }
     }
 
     pub fn set_head(&mut self, head: T) {
@@ -60,14 +72,6 @@ impl<T: ToOffset + ToPoint + Copy + Ord> Selection<T> {
                 self.reversed = false;
             }
             self.end = head;
-        }
-    }
-
-    pub fn tail(&self) -> T {
-        if self.reversed {
-            self.end
-        } else {
-            self.start
         }
     }
 
@@ -97,27 +101,13 @@ impl SelectionSet {
         self.selections.len()
     }
 
-    pub fn offset_selections<'a>(
-        &'a self,
-        content: impl Into<Content<'a>> + 'a,
-    ) -> impl 'a + Iterator<Item = Selection<usize>> {
+    pub fn selections<'a, D, C>(&'a self, content: C) -> impl 'a + Iterator<Item = Selection<D>>
+    where
+        D: 'a + TextDimension<'a>,
+        C: 'a + Into<Content<'a>>,
+    {
         self.selections
-            .offset_ranges(content)
-            .map(|(range, state)| Selection {
-                id: state.id,
-                start: range.start,
-                end: range.end,
-                reversed: state.reversed,
-                goal: state.goal,
-            })
-    }
-
-    pub fn point_selections<'a>(
-        &'a self,
-        content: impl Into<Content<'a>> + 'a,
-    ) -> impl 'a + Iterator<Item = Selection<Point>> {
-        self.selections
-            .point_ranges(content)
+            .ranges(content)
             .map(|(range, state)| Selection {
                 id: state.id,
                 start: range.start,

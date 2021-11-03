@@ -3538,7 +3538,7 @@ mod tests {
             let cursor_positions = buffer
                 .selection_set(selection_set_id)
                 .unwrap()
-                .point_selections(&*buffer)
+                .selections::<Point, _>(&*buffer)
                 .map(|selection| {
                     assert_eq!(selection.start, selection.end);
                     selection.start
@@ -3569,8 +3569,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_language_server_diagnostics(mut cx: gpui::TestAppContext) {
-        simplelog::SimpleLogger::init(log::LevelFilter::Info, Default::default()).unwrap();
-
         let (language_server_config, mut fake_server) =
             LanguageServerConfig::fake(cx.background()).await;
         let mut languages = LanguageRegistry::new();
