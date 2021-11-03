@@ -1,3 +1,5 @@
+use crate::rope::TextDimension;
+
 use super::{AnchorRangeMap, Buffer, Content, Point, ToOffset, ToPoint};
 use std::{cmp::Ordering, ops::Range, sync::Arc};
 
@@ -97,27 +99,13 @@ impl SelectionSet {
         self.selections.len()
     }
 
-    pub fn offset_selections<'a>(
-        &'a self,
-        content: impl Into<Content<'a>> + 'a,
-    ) -> impl 'a + Iterator<Item = Selection<usize>> {
+    pub fn selections<'a, D, C>(&'a self, content: C) -> impl 'a + Iterator<Item = Selection<D>>
+    where
+        D: 'a + TextDimension<'a>,
+        C: 'a + Into<Content<'a>>,
+    {
         self.selections
-            .offset_ranges(content)
-            .map(|(range, state)| Selection {
-                id: state.id,
-                start: range.start,
-                end: range.end,
-                reversed: state.reversed,
-                goal: state.goal,
-            })
-    }
-
-    pub fn point_selections<'a>(
-        &'a self,
-        content: impl Into<Content<'a>> + 'a,
-    ) -> impl 'a + Iterator<Item = Selection<Point>> {
-        self.selections
-            .point_ranges(content)
+            .ranges(content)
             .map(|(range, state)| Selection {
                 id: state.id,
                 start: range.start,

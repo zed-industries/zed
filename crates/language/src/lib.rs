@@ -893,7 +893,7 @@ impl Buffer {
                 if let Some(inserted) = request.inserted.as_ref() {
                     let inserted_row_ranges = contiguous_ranges(
                         inserted
-                            .point_ranges(&snapshot)
+                            .ranges::<Point, _>(&snapshot)
                             .flat_map(|range| range.start.row..range.end.row + 1),
                         max_rows_between_yields,
                     );
@@ -941,7 +941,7 @@ impl Buffer {
         for selection_set_id in &selection_set_ids {
             if let Ok(set) = self.selection_set(*selection_set_id) {
                 let new_selections = set
-                    .point_selections(&*self)
+                    .selections::<Point, _>(&*self)
                     .map(|selection| {
                         if selection.start.column == 0 {
                             let delta = Point::new(

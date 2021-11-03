@@ -311,7 +311,7 @@ fn test_autoindent_moves_selections(cx: &mut MutableAppContext) {
         let selection_ranges = buffer
             .selection_set(selection_set_id)
             .unwrap()
-            .point_selections(&buffer)
+            .selections::<Point, _>(&buffer)
             .map(|selection| selection.point_range(&buffer))
             .collect::<Vec<_>>();
 

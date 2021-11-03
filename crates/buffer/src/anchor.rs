@@ -1,3 +1,5 @@
+use crate::rope::TextDimension;
+
 use super::{Buffer, Content, FromAnchor, FullOffset, Point, ToOffset};
 use anyhow::Result;
 use std::{
@@ -183,30 +185,21 @@ impl<T> AnchorRangeMap<T> {
         Self { version, entries }
     }
 
+    pub fn ranges<'a, D>(
+        &'a self,
+        content: impl Into<Content<'a>> + 'a,
+    ) -> impl Iterator<Item = (Range<D>, &'a T)> + 'a
+    where
+        D: 'a + TextDimension<'a>,
+    {
+        let content = content.into();
+        content.summaries_for_anchor_ranges(self)
+    }
+
     pub fn full_offset_ranges(&self) -> impl Iterator<Item = (Range<FullOffset>, &T)> {
         self.entries
             .iter()
             .map(|(range, value)| (range.start.0..range.end.0, value))
-    }
-
-    pub fn point_ranges<'a>(
-        &'a self,
-        content: impl Into<Content<'a>> + 'a,
-    ) -> impl Iterator<Item = (Range<Point>, &'a T)> + 'a {
-        let content = content.into();
-        content
-            .summaries_for_anchor_ranges(self)
-            .map(move |(range, value)| ((range.start.lines..range.end.lines), value))
-    }
-
-    pub fn offset_ranges<'a>(
-        &'a self,
-        content: impl Into<Content<'a>> + 'a,
-    ) -> impl Iterator<Item = (Range<usize>, &'a T)> + 'a {
-        let content = content.into();
-        content
-            .summaries_for_anchor_ranges(self)
-            .map(move |(range, value)| ((range.start.bytes..range.end.bytes), value))
     }
 }
 
@@ -248,18 +241,12 @@ impl AnchorRangeSet {
         self.0.version()
     }
 
-    pub fn offset_ranges<'a>(
-        &'a self,
-        content: impl Into<Content<'a>> + 'a,
-    ) -> impl Iterator<Item = Range<usize>> + 'a {
-        self.0.offset_ranges(content).map(|(range, _)| range)
-    }
-
-    pub fn point_ranges<'a>(
-        &'a self,
-        content: impl Into<Content<'a>> + 'a,
-    ) -> impl Iterator<Item = Range<Point>> + 'a {
-        self.0.point_ranges(content).map(|(range, _)| range)
+    pub fn ranges<'a, D, C>(&'a self, content: C) -> impl 'a + Iterator<Item = Range<Point>>
+    where
+        D: 'a + TextDimension<'a>,
+        C: 'a + Into<Content<'a>>,
+    {
+        self.0.ranges(content).map(|(range, _)| range)
     }
 }
 

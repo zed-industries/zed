@@ -1486,10 +1486,14 @@ impl Buffer {
         Ok(selections)
     }
 
-    pub fn selection_ranges<'a>(&'a self, set_id: SelectionSetId) -> Result<Vec<Range<usize>>> {
+    #[cfg(test)]
+    pub fn selection_ranges<'a, D>(&'a self, set_id: SelectionSetId) -> Result<Vec<Range<D>>>
+    where
+        D: 'a + TextDimension<'a>,
+    {
         Ok(self
             .selection_set(set_id)?
-            .offset_selections(self)
+            .selections(self)
             .map(move |selection| {
                 if selection.reversed {
                     selection.end..selection.start
@@ -1500,9 +1504,13 @@ impl Buffer {
             .collect())
     }
 
-    pub fn all_selection_ranges<'a>(
+    #[cfg(test)]
+    pub fn all_selection_ranges<'a, D>(
         &'a self,
-    ) -> impl 'a + Iterator<Item = (SelectionSetId, Vec<Range<usize>>)> {
+    ) -> impl 'a + Iterator<Item = (SelectionSetId, Vec<Range<usize>>)>
+    where
+        D: 'a + TextDimension<'a>,
+    {
         self.selections
             .keys()
             .map(move |set_id| (*set_id, self.selection_ranges(*set_id).unwrap()))
@@ -1751,12 +1759,15 @@ impl<'a> Content<'a> {
         })
     }
 
-    fn summaries_for_anchor_ranges<T>(
+    fn summaries_for_anchor_ranges<D, T>(
         &self,
         map: &'a AnchorRangeMap<T>,
-    ) -> impl Iterator<Item = (Range<TextSummary>, &'a T)> {
+    ) -> impl Iterator<Item = (Range<D>, &'a T)>
+    where
+        D: TextDimension<'a>,
+    {
         let cx = Some(map.version.clone());
-        let mut summary = TextSummary::default();
+        let mut summary = D::default();
         let mut rope_cursor = self.visible_text.cursor(0);
         let mut cursor = self.fragments.cursor::<(VersionedFullOffset, usize)>();
         map.entries.iter().map(move |(range, value)| {
@@ -1775,7 +1786,7 @@ impl<'a> Content<'a> {
             } else {
                 0
             };
-            summary += rope_cursor.summary::<TextSummary>(cursor.start().1 + overshoot);
+            summary.add_assign(&rope_cursor.summary::<D>(cursor.start().1 + overshoot));
             let start_summary = summary.clone();
 
             cursor.seek_forward(&VersionedFullOffset::Offset(*end_offset), *end_bias, &cx);
@@ -1784,7 +1795,7 @@ impl<'a> Content<'a> {
             } else {
                 0
             };
-            summary += rope_cursor.summary::<TextSummary>(cursor.start().1 + overshoot);
+            summary.add_assign(&rope_cursor.summary::<D>(cursor.start().1 + overshoot));
             let end_summary = summary.clone();
 
             (start_summary..end_summary, value)
