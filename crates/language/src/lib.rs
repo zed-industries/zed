@@ -751,6 +751,10 @@ impl Buffer {
                     if range.start == range.end {
                         range.end.column += 1;
                         range.end = content.clip_point_utf16(range.end, Bias::Right);
+                        if range.start == range.end && range.end.column > 0 {
+                            range.start.column -= 1;
+                            range.start = content.clip_point_utf16(range.start, Bias::Left);
+                        }
                     }
                     Some((
                         range,

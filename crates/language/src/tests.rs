@@ -633,24 +633,83 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
             ]
         );
     });
+}
 
-    fn chunks_with_diagnostics<T: ToOffset>(
-        buffer: &Buffer,
-        range: Range<T>,
-    ) -> Vec<(String, Option<DiagnosticSeverity>)> {
-        let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
-        for chunk in buffer.snapshot().highlighted_text_for_range(range) {
-            if chunks
-                .last()
-                .map_or(false, |prev_chunk| prev_chunk.1 == chunk.diagnostic)
-            {
-                chunks.last_mut().unwrap().0.push_str(chunk.text);
-            } else {
-                chunks.push((chunk.text.to_string(), chunk.diagnostic));
-            }
+#[gpui::test]
+async fn test_empty_diagnostic_ranges(mut cx: gpui::TestAppContext) {
+    cx.add_model(|cx| {
+        let text = concat!(
+            "let one = ;\n", //
+            "let two = \n",
+            "let three = 3;\n",
+        );
+
+        let mut buffer = Buffer::new(0, text, cx);
+        buffer.set_language(Some(Arc::new(rust_lang())), None, cx);
+        buffer
+            .update_diagnostics(
+                None,
+                vec![
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 10),
+                            lsp::Position::new(0, 10),
+                        ),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "syntax error 1".to_string(),
+                        ..Default::default()
+                    },
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(
+                            lsp::Position::new(1, 10),
+                            lsp::Position::new(1, 10),
+                        ),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "syntax error 2".to_string(),
+                        ..Default::default()
+                    },
+                ],
+                cx,
+            )
+            .unwrap();
+
+        // An empty range is extended forward to include the following character.
+        // At the end of a line, an empty range is extended backward to include
+        // the preceding character.
+        let chunks = chunks_with_diagnostics(&buffer, 0..buffer.len());
+        assert_eq!(
+            chunks
+                .iter()
+                .map(|(s, d)| (s.as_str(), *d))
+                .collect::<Vec<_>>(),
+            &[
+                ("let one = ", None),
+                (";", Some(lsp::DiagnosticSeverity::ERROR)),
+                ("\nlet two =", None),
+                (" ", Some(lsp::DiagnosticSeverity::ERROR)),
+                ("\nlet three = 3;\n", None)
+            ]
+        );
+        buffer
+    });
+}
+
+fn chunks_with_diagnostics<T: ToOffset>(
+    buffer: &Buffer,
+    range: Range<T>,
+) -> Vec<(String, Option<DiagnosticSeverity>)> {
+    let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
+    for chunk in buffer.snapshot().highlighted_text_for_range(range) {
+        if chunks
+            .last()
+            .map_or(false, |prev_chunk| prev_chunk.1 == chunk.diagnostic)
+        {
+            chunks.last_mut().unwrap().0.push_str(chunk.text);
+        } else {
+            chunks.push((chunk.text.to_string(), chunk.diagnostic));
         }
-        chunks
     }
+    chunks
 }
 
 #[test]
