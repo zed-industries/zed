@@ -1,6 +1,6 @@
 use super::*;
 use gpui::{ModelHandle, MutableAppContext};
-use std::rc::Rc;
+use std::{iter::FromIterator, rc::Rc};
 use unindent::Unindent as _;
 
 #[gpui::test]
@@ -78,9 +78,9 @@ async fn test_apply_diff(mut cx: gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_reparse(mut cx: gpui::TestAppContext) {
+    let text = "fn a() {}";
     let buffer = cx.add_model(|cx| {
-        let text = "fn a() {}".into();
-        Buffer::from_history(0, History::new(text), None, Some(rust_lang()), cx)
+        Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx)
     });
 
     // Wait for the initial text to parse
@@ -222,9 +222,8 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
                 }
             }
         "
-        .unindent()
-        .into();
-        Buffer::from_history(0, History::new(text), None, Some(rust_lang()), cx)
+        .unindent();
+        Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx)
     });
     let buffer = buffer.read(cx);
     assert_eq!(
@@ -253,8 +252,9 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
 #[gpui::test]
 fn test_edit_with_autoindent(cx: &mut MutableAppContext) {
     cx.add_model(|cx| {
-        let text = "fn a() {}".into();
-        let mut buffer = Buffer::from_history(0, History::new(text), None, Some(rust_lang()), cx);
+        let text = "fn a() {}";
+        let mut buffer =
+            Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx);
 
         buffer.edit_with_autoindent([8..8], "\n\n", cx);
         assert_eq!(buffer.text(), "fn a() {\n    \n}");
@@ -272,8 +272,10 @@ fn test_edit_with_autoindent(cx: &mut MutableAppContext) {
 #[gpui::test]
 fn test_autoindent_moves_selections(cx: &mut MutableAppContext) {
     cx.add_model(|cx| {
-        let text = History::new("fn a() {}".into());
-        let mut buffer = Buffer::from_history(0, text, None, Some(rust_lang()), cx);
+        let text = "fn a() {}";
+
+        let mut buffer =
+            Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx);
 
         let selection_set_id = buffer.add_selection_set::<usize>(&[], cx);
         buffer.start_transaction(Some(selection_set_id)).unwrap();
@@ -329,9 +331,10 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
             d;
             }
         "
-        .unindent()
-        .into();
-        let mut buffer = Buffer::from_history(0, History::new(text), None, Some(rust_lang()), cx);
+        .unindent();
+
+        let mut buffer =
+            Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx);
 
         // Lines 2 and 3 don't match the indentation suggestion. When editing these lines,
         // their indentation is not adjusted.
@@ -375,14 +378,13 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
 #[gpui::test]
 fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppContext) {
     cx.add_model(|cx| {
-        let text = History::new(
-            "
-                fn a() {}
-            "
-            .unindent()
-            .into(),
-        );
-        let mut buffer = Buffer::from_history(0, text, None, Some(rust_lang()), cx);
+        let text = "
+            fn a() {}
+        "
+        .unindent();
+
+        let mut buffer =
+            Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx);
 
         buffer.edit_with_autoindent([5..5], "\nb", cx);
         assert_eq!(
@@ -408,6 +410,247 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
 
         buffer
     });
+}
+
+#[gpui::test]
+async fn test_diagnostics(mut cx: gpui::TestAppContext) {
+    let (language_server, mut fake) = lsp::LanguageServer::fake(cx.background()).await;
+    let mut rust_lang = rust_lang();
+    rust_lang.config.language_server = Some(LanguageServerConfig {
+        disk_based_diagnostic_sources: HashSet::from_iter(["disk".to_string()]),
+        ..Default::default()
+    });
+
+    let text = "
+        fn a() { A }
+        fn b() { BB }
+        fn c() { CCC }
+    "
+    .unindent();
+
+    let buffer = cx.add_model(|cx| {
+        Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang)), Some(language_server), cx)
+    });
+
+    let open_notification = fake
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await;
+
+    // Edit the buffer, moving the content down
+    buffer.update(&mut cx, |buffer, cx| buffer.edit([0..0], "\n\n", cx));
+    let change_notification_1 = fake
+        .receive_notification::<lsp::notification::DidChangeTextDocument>()
+        .await;
+    assert!(change_notification_1.text_document.version > open_notification.text_document.version);
+
+    buffer.update(&mut cx, |buffer, cx| {
+        // Receive diagnostics for an earlier version of the buffer.
+        buffer
+            .update_diagnostics(
+                Some(open_notification.text_document.version),
+                vec![
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "undefined variable 'A'".to_string(),
+                        ..Default::default()
+                    },
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(1, 11)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "undefined variable 'BB'".to_string(),
+                        ..Default::default()
+                    },
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(2, 9), lsp::Position::new(2, 12)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "undefined variable 'CCC'".to_string(),
+                        ..Default::default()
+                    },
+                ],
+                cx,
+            )
+            .unwrap();
+
+        // The diagnostics have moved down since they were created.
+        assert_eq!(
+            buffer
+                .diagnostics_in_range(Point::new(3, 0)..Point::new(5, 0))
+                .collect::<Vec<_>>(),
+            &[
+                (
+                    Point::new(3, 9)..Point::new(3, 11),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'BB'".to_string()
+                    },
+                ),
+                (
+                    Point::new(4, 9)..Point::new(4, 12),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'CCC'".to_string()
+                    }
+                )
+            ]
+        );
+        assert_eq!(
+            chunks_with_diagnostics(buffer, 0..buffer.len()),
+            [
+                ("\n\nfn a() { ".to_string(), None),
+                ("A".to_string(), Some(DiagnosticSeverity::ERROR)),
+                (" }\nfn b() { ".to_string(), None),
+                ("BB".to_string(), Some(DiagnosticSeverity::ERROR)),
+                (" }\nfn c() { ".to_string(), None),
+                ("CCC".to_string(), Some(DiagnosticSeverity::ERROR)),
+                (" }\n".to_string(), None),
+            ]
+        );
+        assert_eq!(
+            chunks_with_diagnostics(buffer, Point::new(3, 10)..Point::new(4, 11)),
+            [
+                ("B".to_string(), Some(DiagnosticSeverity::ERROR)),
+                (" }\nfn c() { ".to_string(), None),
+                ("CC".to_string(), Some(DiagnosticSeverity::ERROR)),
+            ]
+        );
+
+        // Ensure overlapping diagnostics are highlighted correctly.
+        buffer
+            .update_diagnostics(
+                Some(open_notification.text_document.version),
+                vec![
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "undefined variable 'A'".to_string(),
+                        ..Default::default()
+                    },
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 12)),
+                        severity: Some(lsp::DiagnosticSeverity::WARNING),
+                        message: "unreachable statement".to_string(),
+                        ..Default::default()
+                    },
+                ],
+                cx,
+            )
+            .unwrap();
+        assert_eq!(
+            buffer
+                .diagnostics_in_range(Point::new(2, 0)..Point::new(3, 0))
+                .collect::<Vec<_>>(),
+            &[
+                (
+                    Point::new(2, 9)..Point::new(2, 12),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::WARNING,
+                        message: "unreachable statement".to_string()
+                    }
+                ),
+                (
+                    Point::new(2, 9)..Point::new(2, 10),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'A'".to_string()
+                    },
+                )
+            ]
+        );
+        assert_eq!(
+            chunks_with_diagnostics(buffer, Point::new(2, 0)..Point::new(3, 0)),
+            [
+                ("fn a() { ".to_string(), None),
+                ("A".to_string(), Some(DiagnosticSeverity::ERROR)),
+                (" }".to_string(), Some(DiagnosticSeverity::WARNING)),
+                ("\n".to_string(), None),
+            ]
+        );
+        assert_eq!(
+            chunks_with_diagnostics(buffer, Point::new(2, 10)..Point::new(3, 0)),
+            [
+                (" }".to_string(), Some(DiagnosticSeverity::WARNING)),
+                ("\n".to_string(), None),
+            ]
+        );
+    });
+
+    // Keep editing the buffer and ensure disk-based diagnostics get translated according to the
+    // changes since the last save.
+    buffer.update(&mut cx, |buffer, cx| {
+        buffer.edit(Some(Point::new(2, 0)..Point::new(2, 0)), "    ", cx);
+        buffer.edit(Some(Point::new(2, 8)..Point::new(2, 10)), "(x: usize)", cx);
+    });
+    let change_notification_2 = fake
+        .receive_notification::<lsp::notification::DidChangeTextDocument>()
+        .await;
+    assert!(
+        change_notification_2.text_document.version > change_notification_1.text_document.version
+    );
+
+    buffer.update(&mut cx, |buffer, cx| {
+        buffer
+            .update_diagnostics(
+                Some(change_notification_2.text_document.version),
+                vec![
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(1, 11)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "undefined variable 'BB'".to_string(),
+                        source: Some("disk".to_string()),
+                        ..Default::default()
+                    },
+                    lsp::Diagnostic {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        message: "undefined variable 'A'".to_string(),
+                        source: Some("disk".to_string()),
+                        ..Default::default()
+                    },
+                ],
+                cx,
+            )
+            .unwrap();
+        assert_eq!(
+            buffer
+                .diagnostics_in_range(0..buffer.len())
+                .collect::<Vec<_>>(),
+            &[
+                (
+                    Point::new(2, 21)..Point::new(2, 22),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'A'".to_string()
+                    }
+                ),
+                (
+                    Point::new(3, 9)..Point::new(3, 11),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'BB'".to_string()
+                    },
+                )
+            ]
+        );
+    });
+
+    fn chunks_with_diagnostics<T: ToOffset>(
+        buffer: &Buffer,
+        range: Range<T>,
+    ) -> Vec<(String, Option<DiagnosticSeverity>)> {
+        let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
+        for chunk in buffer.snapshot().highlighted_text_for_range(range) {
+            if chunks
+                .last()
+                .map_or(false, |prev_chunk| prev_chunk.1 == chunk.diagnostic)
+            {
+                chunks.last_mut().unwrap().0.push_str(chunk.text);
+            } else {
+                chunks.push((chunk.text.to_string(), chunk.diagnostic));
+            }
+        }
+        chunks
+    }
 }
 
 #[test]
@@ -437,28 +680,27 @@ impl Buffer {
     }
 }
 
-fn rust_lang() -> Arc<Language> {
-    Arc::new(
-        Language::new(
-            LanguageConfig {
-                name: "Rust".to_string(),
-                path_suffixes: vec!["rs".to_string()],
-                ..Default::default()
-            },
-            tree_sitter_rust::language(),
-        )
-        .with_indents_query(
-            r#"
+fn rust_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "Rust".to_string(),
+            path_suffixes: vec!["rs".to_string()],
+            language_server: None,
+            ..Default::default()
+        },
+        tree_sitter_rust::language(),
+    )
+    .with_indents_query(
+        r#"
                 (call_expression) @indent
                 (field_expression) @indent
                 (_ "(" ")" @end) @indent
                 (_ "{" "}" @end) @indent
             "#,
-        )
-        .unwrap()
-        .with_brackets_query(r#" ("{" @open "}" @close) "#)
-        .unwrap(),
     )
+    .unwrap()
+    .with_brackets_query(r#" ("{" @open "}" @close) "#)
+    .unwrap()
 }
 
 fn empty(point: Point) -> Range<Point> {

@@ -15,6 +15,7 @@ use gpui::{
     platform::WindowOptions,
     ModelHandle, MutableAppContext, PathPromptOptions, Task, ViewContext,
 };
+pub use lsp;
 use parking_lot::Mutex;
 pub use people_panel;
 use people_panel::PeoplePanel;

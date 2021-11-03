@@ -53,11 +53,14 @@ pub trait Platform: Send + Sync {
     fn set_cursor_style(&self, style: CursorStyle);
 
     fn local_timezone(&self) -> UtcOffset;
+
+    fn path_for_resource(&self, name: Option<&str>, extension: Option<&str>) -> Result<PathBuf>;
 }
 
 pub(crate) trait ForegroundPlatform {
     fn on_become_active(&self, callback: Box<dyn FnMut()>);
     fn on_resign_active(&self, callback: Box<dyn FnMut()>);
+    fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_event(&self, callback: Box<dyn FnMut(Event) -> bool>);
     fn on_open_files(&self, callback: Box<dyn FnMut(Vec<PathBuf>)>);
     fn run(&self, on_finish_launching: Box<dyn FnOnce() -> ()>);

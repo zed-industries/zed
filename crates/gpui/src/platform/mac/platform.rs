@@ -14,7 +14,9 @@ use cocoa::{
         NSPasteboardTypeString, NSSavePanel, NSWindow,
     },
     base::{id, nil, selector, YES},
-    foundation::{NSArray, NSAutoreleasePool, NSData, NSInteger, NSString, NSURL},
+    foundation::{
+        NSArray, NSAutoreleasePool, NSBundle, NSData, NSInteger, NSString, NSUInteger, NSURL,
+    },
 };
 use core_foundation::{
     base::{CFType, CFTypeRef, OSStatus, TCFType as _},
@@ -44,6 +46,9 @@ use std::{
     sync::Arc,
 };
 use time::UtcOffset;
+
+#[allow(non_upper_case_globals)]
+const NSUTF8StringEncoding: NSUInteger = 4;
 
 const MAC_PLATFORM_IVAR: &'static str = "platform";
 static mut APP_CLASS: *const Class = ptr::null();
@@ -77,6 +82,10 @@ unsafe fn build_classes() {
             did_resign_active as extern "C" fn(&mut Object, Sel, id),
         );
         decl.add_method(
+            sel!(applicationWillTerminate:),
+            will_terminate as extern "C" fn(&mut Object, Sel, id),
+        );
+        decl.add_method(
             sel!(handleGPUIMenuItem:),
             handle_menu_item as extern "C" fn(&mut Object, Sel, id),
         );
@@ -95,6 +104,7 @@ pub struct MacForegroundPlatform(RefCell<MacForegroundPlatformState>);
 pub struct MacForegroundPlatformState {
     become_active: Option<Box<dyn FnMut()>>,
     resign_active: Option<Box<dyn FnMut()>>,
+    quit: Option<Box<dyn FnMut()>>,
     event: Option<Box<dyn FnMut(crate::Event) -> bool>>,
     menu_command: Option<Box<dyn FnMut(&dyn AnyAction)>>,
     open_files: Option<Box<dyn FnMut(Vec<PathBuf>)>>,
@@ -189,6 +199,10 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
 
     fn on_resign_active(&self, callback: Box<dyn FnMut()>) {
         self.0.borrow_mut().resign_active = Some(callback);
+    }
+
+    fn on_quit(&self, callback: Box<dyn FnMut()>) {
+        self.0.borrow_mut().quit = Some(callback);
     }
 
     fn on_event(&self, callback: Box<dyn FnMut(crate::Event) -> bool>) {
@@ -588,6 +602,27 @@ impl platform::Platform for MacPlatform {
             UtcOffset::from_whole_seconds(seconds_from_gmt.try_into().unwrap()).unwrap()
         }
     }
+
+    fn path_for_resource(&self, name: Option<&str>, extension: Option<&str>) -> Result<PathBuf> {
+        unsafe {
+            let bundle: id = NSBundle::mainBundle();
+            if bundle.is_null() {
+                Err(anyhow!("app is not running inside a bundle"))
+            } else {
+                let name = name.map_or(nil, |name| ns_string(name));
+                let extension = extension.map_or(nil, |extension| ns_string(extension));
+                let path: id = msg_send![bundle, pathForResource: name ofType: extension];
+                if path.is_null() {
+                    Err(anyhow!("resource could not be found"))
+                } else {
+                    let len = msg_send![path, lengthOfBytesUsingEncoding: NSUTF8StringEncoding];
+                    let bytes = path.UTF8String() as *const u8;
+                    let path = str::from_utf8(slice::from_raw_parts(bytes, len)).unwrap();
+                    Ok(PathBuf::from(path))
+                }
+            }
+        }
+    }
 }
 
 unsafe fn get_foreground_platform(object: &mut Object) -> &MacForegroundPlatform {
@@ -634,6 +669,13 @@ extern "C" fn did_become_active(this: &mut Object, _: Sel, _: id) {
 extern "C" fn did_resign_active(this: &mut Object, _: Sel, _: id) {
     let platform = unsafe { get_foreground_platform(this) };
     if let Some(callback) = platform.0.borrow_mut().resign_active.as_mut() {
+        callback();
+    }
+}
+
+extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
+    let platform = unsafe { get_foreground_platform(this) };
+    if let Some(callback) = platform.0.borrow_mut().quit.as_mut() {
         callback();
     }
 }

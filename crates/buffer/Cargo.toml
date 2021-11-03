@@ -1,14 +1,13 @@
 [package]
 name = "buffer"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 
 [features]
 test-support = ["rand", "seahash"]
 
 [dependencies]
 clock = { path = "../clock" }
-rpc = { path = "../rpc" }
 sum_tree = { path = "../sum_tree" }
 anyhow = "1.0.38"
 arrayvec = "0.7.1"

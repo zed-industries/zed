@@ -1,6 +1,6 @@
 use super::CursorStyle;
 use crate::{AnyAction, ClipboardItem};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
 use pathfinder_geometry::vector::Vector2F;
 use std::{
@@ -57,6 +57,8 @@ impl super::ForegroundPlatform for ForegroundPlatform {
     fn on_become_active(&self, _: Box<dyn FnMut()>) {}
 
     fn on_resign_active(&self, _: Box<dyn FnMut()>) {}
+
+    fn on_quit(&self, _: Box<dyn FnMut()>) {}
 
     fn on_event(&self, _: Box<dyn FnMut(crate::Event) -> bool>) {}
 
@@ -147,6 +149,10 @@ impl super::Platform for Platform {
 
     fn local_timezone(&self) -> UtcOffset {
         UtcOffset::UTC
+    }
+
+    fn path_for_resource(&self, _name: Option<&str>, _extension: Option<&str>) -> Result<PathBuf> {
+        Err(anyhow!("app not running inside a bundle"))
     }
 }
 

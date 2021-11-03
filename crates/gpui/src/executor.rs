@@ -38,7 +38,9 @@ pub enum Foreground {
 }
 
 pub enum Background {
-    Deterministic(Arc<Deterministic>),
+    Deterministic {
+        executor: Arc<Deterministic>,
+    },
     Production {
         executor: Arc<smol::Executor<'static>>,
         _stop: channel::Sender<()>,
@@ -50,6 +52,7 @@ type AnyFuture = Pin<Box<dyn 'static + Send + Future<Output = Box<dyn Any + Send
 type AnyTask = async_task::Task<Box<dyn Any + Send + 'static>>;
 type AnyLocalTask = async_task::Task<Box<dyn Any + 'static>>;
 
+#[must_use]
 pub enum Task<T> {
     Local {
         any_task: AnyLocalTask,
@@ -515,7 +518,7 @@ impl Background {
         let future = any_future(future);
         let any_task = match self {
             Self::Production { executor, .. } => executor.spawn(future),
-            Self::Deterministic(executor) => executor.spawn(future),
+            Self::Deterministic { executor, .. } => executor.spawn(future),
         };
         Task::send(any_task)
     }
@@ -533,7 +536,7 @@ impl Background {
         if !timeout.is_zero() {
             let output = match self {
                 Self::Production { .. } => smol::block_on(util::timeout(timeout, &mut future)).ok(),
-                Self::Deterministic(executor) => executor.block_on(&mut future),
+                Self::Deterministic { executor, .. } => executor.block_on(&mut future),
             };
             if let Some(output) = output {
                 return Ok(*output.downcast().unwrap());
@@ -586,7 +589,7 @@ pub fn deterministic(seed: u64) -> (Rc<Foreground>, Arc<Background>) {
     let executor = Arc::new(Deterministic::new(seed));
     (
         Rc::new(Foreground::Deterministic(executor.clone())),
-        Arc::new(Background::Deterministic(executor)),
+        Arc::new(Background::Deterministic { executor }),
     )
 }
 

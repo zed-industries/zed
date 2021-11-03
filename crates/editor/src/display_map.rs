@@ -359,7 +359,7 @@ mod tests {
     use super::*;
     use crate::{movement, test::*};
     use gpui::{color::Color, MutableAppContext};
-    use language::{History, Language, LanguageConfig, RandomCharIter, SelectionGoal};
+    use language::{Language, LanguageConfig, RandomCharIter, SelectionGoal};
     use rand::{prelude::StdRng, Rng};
     use std::{env, sync::Arc};
     use theme::SyntaxTheme;
@@ -701,9 +701,8 @@ mod tests {
         );
         lang.set_theme(&theme);
 
-        let buffer = cx.add_model(|cx| {
-            Buffer::from_history(0, History::new(text.into()), None, Some(lang), cx)
-        });
+        let buffer =
+            cx.add_model(|cx| Buffer::new(0, text, cx).with_language(Some(lang), None, cx));
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
 
         let tab_size = 2;
@@ -789,9 +788,8 @@ mod tests {
         );
         lang.set_theme(&theme);
 
-        let buffer = cx.add_model(|cx| {
-            Buffer::from_history(0, History::new(text.into()), None, Some(lang), cx)
-        });
+        let buffer =
+            cx.add_model(|cx| Buffer::new(0, text, cx).with_language(Some(lang), None, cx));
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
 
         let font_cache = cx.font_cache();
@@ -974,16 +972,16 @@ mod tests {
     ) -> Vec<(String, Option<&'a str>)> {
         let mut snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<&str>)> = Vec::new();
-        for (chunk, style_id) in snapshot.highlighted_chunks_for_rows(rows) {
-            let style_name = style_id.name(theme);
+        for chunk in snapshot.highlighted_chunks_for_rows(rows) {
+            let style_name = chunk.highlight_id.name(theme);
             if let Some((last_chunk, last_style_name)) = chunks.last_mut() {
                 if style_name == *last_style_name {
-                    last_chunk.push_str(chunk);
+                    last_chunk.push_str(chunk.text);
                 } else {
-                    chunks.push((chunk.to_string(), style_name));
+                    chunks.push((chunk.text.to_string(), style_name));
                 }
             } else {
-                chunks.push((chunk.to_string(), style_name));
+                chunks.push((chunk.text.to_string(), style_name));
             }
         }
         chunks

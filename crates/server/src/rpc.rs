@@ -982,7 +982,11 @@ mod tests {
         },
         editor::{Editor, EditorSettings, Input},
         fs::{FakeFs, Fs as _},
-        language::LanguageRegistry,
+        language::{
+            tree_sitter_rust, Diagnostic, Language, LanguageConfig, LanguageRegistry,
+            LanguageServerConfig, Point,
+        },
+        lsp,
         people_panel::JoinWorktree,
         project::{ProjectPath, Worktree},
         workspace::{Workspace, WorkspaceParams},
@@ -1593,6 +1597,136 @@ mod tests {
         worktree_a
             .condition(&cx_a, |tree, _| tree.peers().len() == 0)
             .await;
+    }
+
+    #[gpui::test]
+    async fn test_collaborating_with_diagnostics(
+        mut cx_a: TestAppContext,
+        mut cx_b: TestAppContext,
+    ) {
+        cx_a.foreground().forbid_parking();
+        let (language_server_config, mut fake_language_server) =
+            LanguageServerConfig::fake(cx_a.background()).await;
+        let mut lang_registry = LanguageRegistry::new();
+        lang_registry.add(Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".to_string(),
+                path_suffixes: vec!["rs".to_string()],
+                language_server: Some(language_server_config),
+                ..Default::default()
+            },
+            tree_sitter_rust::language(),
+        )));
+
+        let lang_registry = Arc::new(lang_registry);
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start().await;
+        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_b, _) = server.create_client(&mut cx_a, "user_b").await;
+
+        // Share a local worktree as client A
+        let fs = Arc::new(FakeFs::new());
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "a.rs": "let one = two",
+                "other.rs": "",
+            }),
+        )
+        .await;
+        let worktree_a = Worktree::open_local(
+            client_a.clone(),
+            "/a".as_ref(),
+            fs,
+            lang_registry.clone(),
+            &mut cx_a.to_async(),
+        )
+        .await
+        .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let worktree_id = worktree_a
+            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
+            .await
+            .unwrap();
+
+        // Cause language server to start.
+        let _ = cx_a
+            .background()
+            .spawn(worktree_a.update(&mut cx_a, |worktree, cx| {
+                worktree.open_buffer("other.rs", cx)
+            }))
+            .await
+            .unwrap();
+
+        // Simulate a language server reporting errors for a file.
+        fake_language_server
+            .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+                uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
+                version: None,
+                diagnostics: vec![
+                    lsp::Diagnostic {
+                        severity: Some(lsp::DiagnosticSeverity::ERROR),
+                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 7)),
+                        message: "message 1".to_string(),
+                        ..Default::default()
+                    },
+                    lsp::Diagnostic {
+                        severity: Some(lsp::DiagnosticSeverity::WARNING),
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 10),
+                            lsp::Position::new(0, 13),
+                        ),
+                        message: "message 2".to_string(),
+                        ..Default::default()
+                    },
+                ],
+            })
+            .await;
+
+        // Join the worktree as client B.
+        let worktree_b = Worktree::open_remote(
+            client_b.clone(),
+            worktree_id,
+            lang_registry.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+
+        // Open the file with the errors.
+        let buffer_b = cx_b
+            .background()
+            .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.rs", cx)))
+            .await
+            .unwrap();
+
+        buffer_b.read_with(&cx_b, |buffer, _| {
+            assert_eq!(
+                buffer
+                    .diagnostics_in_range(0..buffer.len())
+                    .collect::<Vec<_>>(),
+                &[
+                    (
+                        Point::new(0, 4)..Point::new(0, 7),
+                        &Diagnostic {
+                            message: "message 1".to_string(),
+                            severity: lsp::DiagnosticSeverity::ERROR,
+                        }
+                    ),
+                    (
+                        Point::new(0, 10)..Point::new(0, 13),
+                        &Diagnostic {
+                            severity: lsp::DiagnosticSeverity::WARNING,
+                            message: "message 2".to_string()
+                        }
+                    )
+                ]
+            );
+        });
     }
 
     #[gpui::test]

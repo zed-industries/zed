@@ -37,7 +37,7 @@ impl Item for Buffer {
                     font_id,
                     font_size,
                     font_properties,
-                    underline: false,
+                    underline: None,
                 };
                 EditorSettings {
                     tab_size: settings.tab_size,
@@ -77,7 +77,7 @@ impl ItemView for Editor {
             .buffer()
             .read(cx)
             .file()
-            .and_then(|file| file.file_name(cx));
+            .and_then(|file| file.file_name());
         if let Some(name) = filename {
             name.to_string_lossy().into()
         } else {
@@ -127,16 +127,21 @@ impl ItemView for Editor {
 
             cx.spawn(|buffer, mut cx| async move {
                 save_as.await.map(|new_file| {
-                    let language = worktree.read_with(&cx, |worktree, cx| {
-                        worktree
+                    let (language, language_server) = worktree.update(&mut cx, |worktree, cx| {
+                        let worktree = worktree.as_local_mut().unwrap();
+                        let language = worktree
                             .languages()
-                            .select_language(new_file.full_path(cx))
-                            .cloned()
+                            .select_language(new_file.full_path())
+                            .cloned();
+                        let language_server = language
+                            .as_ref()
+                            .and_then(|language| worktree.ensure_language_server(language, cx));
+                        (language, language_server.clone())
                     });
 
                     buffer.update(&mut cx, |buffer, cx| {
                         buffer.did_save(version, new_file.mtime, Some(Box::new(new_file)), cx);
-                        buffer.set_language(language, cx);
+                        buffer.set_language(language, language_server, cx);
                     });
                 })
             })

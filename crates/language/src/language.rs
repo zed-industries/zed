@@ -1,8 +1,10 @@
 use crate::HighlightMap;
 use anyhow::Result;
+use gpui::{executor::Background, AppContext};
+use lsp::LanguageServer;
 use parking_lot::Mutex;
 use serde::Deserialize;
-use std::{path::Path, str, sync::Arc};
+use std::{collections::HashSet, path::Path, str, sync::Arc};
 use theme::SyntaxTheme;
 use tree_sitter::{Language as Grammar, Query};
 pub use tree_sitter::{Parser, Tree};
@@ -12,6 +14,16 @@ pub struct LanguageConfig {
     pub name: String,
     pub path_suffixes: Vec<String>,
     pub brackets: Vec<BracketPair>,
+    pub language_server: Option<LanguageServerConfig>,
+}
+
+#[derive(Default, Deserialize)]
+pub struct LanguageServerConfig {
+    pub binary: String,
+    pub disk_based_diagnostic_sources: HashSet<String>,
+    #[cfg(any(test, feature = "test-support"))]
+    #[serde(skip)]
+    pub fake_server: Option<(Arc<LanguageServer>, Arc<std::sync::atomic::AtomicBool>)>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -49,6 +61,12 @@ impl LanguageRegistry {
         for language in &self.languages {
             language.set_theme(theme);
         }
+    }
+
+    pub fn get_language(&self, name: &str) -> Option<&Arc<Language>> {
+        self.languages
+            .iter()
+            .find(|language| language.name() == name)
     }
 
     pub fn select_language(&self, path: impl AsRef<Path>) -> Option<&Arc<Language>> {
@@ -97,6 +115,38 @@ impl Language {
         self.config.name.as_str()
     }
 
+    pub fn start_server(
+        &self,
+        root_path: &Path,
+        cx: &AppContext,
+    ) -> Result<Option<Arc<lsp::LanguageServer>>> {
+        if let Some(config) = &self.config.language_server {
+            #[cfg(any(test, feature = "test-support"))]
+            if let Some((server, started)) = &config.fake_server {
+                started.store(true, std::sync::atomic::Ordering::SeqCst);
+                return Ok(Some(server.clone()));
+            }
+
+            const ZED_BUNDLE: Option<&'static str> = option_env!("ZED_BUNDLE");
+            let binary_path = if ZED_BUNDLE.map_or(Ok(false), |b| b.parse())? {
+                cx.platform()
+                    .path_for_resource(Some(&config.binary), None)?
+            } else {
+                Path::new(&config.binary).to_path_buf()
+            };
+            lsp::LanguageServer::new(&binary_path, root_path, cx.background().clone()).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn disk_based_diagnostic_sources(&self) -> Option<&HashSet<String>> {
+        self.config
+            .language_server
+            .as_ref()
+            .map(|config| &config.disk_based_diagnostic_sources)
+    }
+
     pub fn brackets(&self) -> &[BracketPair] {
         &self.config.brackets
     }
@@ -108,6 +158,23 @@ impl Language {
     pub fn set_theme(&self, theme: &SyntaxTheme) {
         *self.highlight_map.lock() =
             HighlightMap::new(self.highlights_query.capture_names(), theme);
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl LanguageServerConfig {
+    pub async fn fake(executor: Arc<Background>) -> (Self, lsp::FakeLanguageServer) {
+        let (server, fake) = lsp::LanguageServer::fake(executor).await;
+        fake.started
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let started = fake.started.clone();
+        (
+            Self {
+                fake_server: Some((server, started)),
+                ..Default::default()
+            },
+            fake,
+        )
     }
 }
 

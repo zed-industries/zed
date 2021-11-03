@@ -15,6 +15,7 @@ backtrace = "0.3"
 ctor = "0.1"
 env_logger = { version = "0.8", optional = true }
 etagere = "0.2"
+futures = "0.3"
 image = "0.23"
 lazy_static = "1.4.0"
 log = "0.4"

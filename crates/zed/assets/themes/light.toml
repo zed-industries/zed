@@ -26,7 +26,7 @@ guests = [
   { selection = "#EE823133", cursor = "#EE8231" },
   { selection = "#5A2B9233", cursor = "#5A2B92" },
   { selection = "#FDF35133", cursor = "#FDF351" },
-  { selection = "#4EACAD33", cursor = "#4EACAD" }
+  { selection = "#4EACAD33", cursor = "#4EACAD" },
 ]
 
 [status]

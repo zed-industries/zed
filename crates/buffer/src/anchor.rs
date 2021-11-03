@@ -1,15 +1,15 @@
-use super::{Buffer, Content, Point};
+use super::{Buffer, Content, FromAnchor, FullOffset, Point, ToOffset};
 use anyhow::Result;
 use std::{
     cmp::Ordering,
     fmt::{Debug, Formatter},
     ops::Range,
 };
-use sum_tree::Bias;
+use sum_tree::{Bias, SumTree};
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
 pub struct Anchor {
-    pub offset: usize,
+    pub full_offset: FullOffset,
     pub bias: Bias,
     pub version: clock::Global,
 }
@@ -17,7 +17,7 @@ pub struct Anchor {
 #[derive(Clone)]
 pub struct AnchorMap<T> {
     pub(crate) version: clock::Global,
-    pub(crate) entries: Vec<((usize, Bias), T)>,
+    pub(crate) entries: Vec<((FullOffset, Bias), T)>,
 }
 
 #[derive(Clone)]
@@ -26,16 +26,45 @@ pub struct AnchorSet(pub(crate) AnchorMap<()>);
 #[derive(Clone)]
 pub struct AnchorRangeMap<T> {
     pub(crate) version: clock::Global,
-    pub(crate) entries: Vec<(Range<(usize, Bias)>, T)>,
+    pub(crate) entries: Vec<(Range<(FullOffset, Bias)>, T)>,
 }
 
 #[derive(Clone)]
 pub struct AnchorRangeSet(pub(crate) AnchorRangeMap<()>);
 
+#[derive(Clone)]
+pub struct AnchorRangeMultimap<T: Clone> {
+    pub(crate) entries: SumTree<AnchorRangeMultimapEntry<T>>,
+    pub(crate) version: clock::Global,
+    pub(crate) start_bias: Bias,
+    pub(crate) end_bias: Bias,
+}
+
+#[derive(Clone)]
+pub(crate) struct AnchorRangeMultimapEntry<T> {
+    pub(crate) range: FullOffsetRange,
+    pub(crate) value: T,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct FullOffsetRange {
+    pub(crate) start: FullOffset,
+    pub(crate) end: FullOffset,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct AnchorRangeMultimapSummary {
+    start: FullOffset,
+    end: FullOffset,
+    min_start: FullOffset,
+    max_end: FullOffset,
+    count: usize,
+}
+
 impl Anchor {
     pub fn min() -> Self {
         Self {
-            offset: 0,
+            full_offset: FullOffset(0),
             bias: Bias::Left,
             version: Default::default(),
         }
@@ -43,7 +72,7 @@ impl Anchor {
 
     pub fn max() -> Self {
         Self {
-            offset: usize::MAX,
+            full_offset: FullOffset::MAX,
             bias: Bias::Right,
             version: Default::default(),
         }
@@ -57,7 +86,7 @@ impl Anchor {
         }
 
         let offset_comparison = if self.version == other.version {
-            self.offset.cmp(&other.offset)
+            self.full_offset.cmp(&other.full_offset)
         } else {
             buffer
                 .full_offset_for_anchor(self)
@@ -147,12 +176,17 @@ impl<T> AnchorRangeMap<T> {
         self.entries.len()
     }
 
-    pub fn from_raw(version: clock::Global, entries: Vec<(Range<(usize, Bias)>, T)>) -> Self {
+    pub fn from_full_offset_ranges(
+        version: clock::Global,
+        entries: Vec<(Range<(FullOffset, Bias)>, T)>,
+    ) -> Self {
         Self { version, entries }
     }
 
-    pub fn raw_entries(&self) -> &[(Range<(usize, Bias)>, T)] {
-        &self.entries
+    pub fn full_offset_ranges(&self) -> impl Iterator<Item = (Range<FullOffset>, &T)> {
+        self.entries
+            .iter()
+            .map(|(range, value)| (range.start.0..range.end.0, value))
     }
 
     pub fn point_ranges<'a>(
@@ -226,6 +260,196 @@ impl AnchorRangeSet {
         content: impl Into<Content<'a>> + 'a,
     ) -> impl Iterator<Item = Range<Point>> + 'a {
         self.0.point_ranges(content).map(|(range, _)| range)
+    }
+}
+
+impl<T: Clone> Default for AnchorRangeMultimap<T> {
+    fn default() -> Self {
+        Self {
+            entries: Default::default(),
+            version: Default::default(),
+            start_bias: Bias::Left,
+            end_bias: Bias::Left,
+        }
+    }
+}
+
+impl<T: Clone> AnchorRangeMultimap<T> {
+    pub fn version(&self) -> &clock::Global {
+        &self.version
+    }
+
+    pub fn intersecting_ranges<'a, I, O>(
+        &'a self,
+        range: Range<I>,
+        content: Content<'a>,
+        inclusive: bool,
+    ) -> impl Iterator<Item = (usize, Range<O>, &T)> + 'a
+    where
+        I: ToOffset,
+        O: FromAnchor,
+    {
+        let end_bias = if inclusive { Bias::Right } else { Bias::Left };
+        let range = range.start.to_full_offset(&content, Bias::Left)
+            ..range.end.to_full_offset(&content, end_bias);
+        let mut cursor = self.entries.filter::<_, usize>(
+            {
+                let content = content.clone();
+                let mut endpoint = Anchor {
+                    full_offset: FullOffset(0),
+                    bias: Bias::Right,
+                    version: self.version.clone(),
+                };
+                move |summary: &AnchorRangeMultimapSummary| {
+                    endpoint.full_offset = summary.max_end;
+                    endpoint.bias = self.end_bias;
+                    let max_end = endpoint.to_full_offset(&content, self.end_bias);
+                    let start_cmp = range.start.cmp(&max_end);
+
+                    endpoint.full_offset = summary.min_start;
+                    endpoint.bias = self.start_bias;
+                    let min_start = endpoint.to_full_offset(&content, self.start_bias);
+                    let end_cmp = range.end.cmp(&min_start);
+
+                    if inclusive {
+                        start_cmp <= Ordering::Equal && end_cmp >= Ordering::Equal
+                    } else {
+                        start_cmp == Ordering::Less && end_cmp == Ordering::Greater
+                    }
+                }
+            },
+            &(),
+        );
+
+        std::iter::from_fn({
+            let mut endpoint = Anchor {
+                full_offset: FullOffset(0),
+                bias: Bias::Left,
+                version: self.version.clone(),
+            };
+            move || {
+                if let Some(item) = cursor.item() {
+                    let ix = *cursor.start();
+                    endpoint.full_offset = item.range.start;
+                    endpoint.bias = self.start_bias;
+                    let start = O::from_anchor(&endpoint, &content);
+                    endpoint.full_offset = item.range.end;
+                    endpoint.bias = self.end_bias;
+                    let end = O::from_anchor(&endpoint, &content);
+                    let value = &item.value;
+                    cursor.next(&());
+                    Some((ix, start..end, value))
+                } else {
+                    None
+                }
+            }
+        })
+    }
+
+    pub fn from_full_offset_ranges(
+        version: clock::Global,
+        start_bias: Bias,
+        end_bias: Bias,
+        entries: impl Iterator<Item = (Range<FullOffset>, T)>,
+    ) -> Self {
+        Self {
+            version,
+            start_bias,
+            end_bias,
+            entries: SumTree::from_iter(
+                entries.map(|(range, value)| AnchorRangeMultimapEntry {
+                    range: FullOffsetRange {
+                        start: range.start,
+                        end: range.end,
+                    },
+                    value,
+                }),
+                &(),
+            ),
+        }
+    }
+
+    pub fn full_offset_ranges(&self) -> impl Iterator<Item = (Range<FullOffset>, &T)> {
+        self.entries
+            .cursor::<()>()
+            .map(|entry| (entry.range.start..entry.range.end, &entry.value))
+    }
+}
+
+impl<T: Clone> sum_tree::Item for AnchorRangeMultimapEntry<T> {
+    type Summary = AnchorRangeMultimapSummary;
+
+    fn summary(&self) -> Self::Summary {
+        AnchorRangeMultimapSummary {
+            start: self.range.start,
+            end: self.range.end,
+            min_start: self.range.start,
+            max_end: self.range.end,
+            count: 1,
+        }
+    }
+}
+
+impl Default for AnchorRangeMultimapSummary {
+    fn default() -> Self {
+        Self {
+            start: FullOffset(0),
+            end: FullOffset::MAX,
+            min_start: FullOffset::MAX,
+            max_end: FullOffset(0),
+            count: 0,
+        }
+    }
+}
+
+impl sum_tree::Summary for AnchorRangeMultimapSummary {
+    type Context = ();
+
+    fn add_summary(&mut self, other: &Self, _: &Self::Context) {
+        self.min_start = self.min_start.min(other.min_start);
+        self.max_end = self.max_end.max(other.max_end);
+
+        #[cfg(debug_assertions)]
+        {
+            let start_comparison = self.start.cmp(&other.start);
+            assert!(start_comparison <= Ordering::Equal);
+            if start_comparison == Ordering::Equal {
+                assert!(self.end.cmp(&other.end) >= Ordering::Equal);
+            }
+        }
+
+        self.start = other.start;
+        self.end = other.end;
+        self.count += other.count;
+    }
+}
+
+impl Default for FullOffsetRange {
+    fn default() -> Self {
+        Self {
+            start: FullOffset(0),
+            end: FullOffset::MAX,
+        }
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, AnchorRangeMultimapSummary> for usize {
+    fn add_summary(&mut self, summary: &'a AnchorRangeMultimapSummary, _: &()) {
+        *self += summary.count;
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, AnchorRangeMultimapSummary> for FullOffsetRange {
+    fn add_summary(&mut self, summary: &'a AnchorRangeMultimapSummary, _: &()) {
+        self.start = summary.start;
+        self.end = summary.end;
+    }
+}
+
+impl<'a> sum_tree::SeekTarget<'a, AnchorRangeMultimapSummary, FullOffsetRange> for FullOffsetRange {
+    fn cmp(&self, cursor_location: &FullOffsetRange, _: &()) -> Ordering {
+        Ord::cmp(&self.start, &cursor_location.start)
+            .then_with(|| Ord::cmp(&cursor_location.end, &self.end))
     }
 }
 

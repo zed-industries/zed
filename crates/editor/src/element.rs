@@ -17,7 +17,7 @@ use gpui::{
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
-use language::HighlightId;
+use language::{DiagnosticSeverity, HighlightedChunk};
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
@@ -394,7 +394,7 @@ impl EditorElement {
                     RunStyle {
                         font_id: style.text.font_id,
                         color: Color::black(),
-                        underline: false,
+                        underline: None,
                     },
                 )],
             )
@@ -435,7 +435,7 @@ impl EditorElement {
                         RunStyle {
                             font_id: style.text.font_id,
                             color,
-                            underline: false,
+                            underline: None,
                         },
                     )],
                 )));
@@ -476,7 +476,7 @@ impl EditorElement {
                             RunStyle {
                                 font_id: placeholder_style.font_id,
                                 color: placeholder_style.color,
-                                underline: false,
+                                underline: None,
                             },
                         )],
                     )
@@ -495,8 +495,12 @@ impl EditorElement {
         let mut line_exceeded_max_len = false;
         let chunks = snapshot.highlighted_chunks_for_rows(rows.clone());
 
-        'outer: for (chunk, style_ix) in chunks.chain(Some(("\n", HighlightId::default()))) {
-            for (ix, mut line_chunk) in chunk.split('\n').enumerate() {
+        let newline_chunk = HighlightedChunk {
+            text: "\n",
+            ..Default::default()
+        };
+        'outer: for chunk in chunks.chain([newline_chunk]) {
+            for (ix, mut line_chunk) in chunk.text.split('\n').enumerate() {
                 if ix > 0 {
                     layouts.push(cx.text_layout_cache.layout_str(
                         &line,
@@ -513,7 +517,8 @@ impl EditorElement {
                 }
 
                 if !line_chunk.is_empty() && !line_exceeded_max_len {
-                    let highlight_style = style_ix
+                    let highlight_style = chunk
+                        .highlight_id
                         .style(&style.syntax)
                         .unwrap_or(style.text.clone().into());
                     // Avoid a lookup if the font properties match the previous ones.
@@ -537,13 +542,25 @@ impl EditorElement {
                         line_exceeded_max_len = true;
                     }
 
+                    let underline = if let Some(severity) = chunk.diagnostic {
+                        match severity {
+                            DiagnosticSeverity::ERROR => Some(style.error_underline),
+                            DiagnosticSeverity::WARNING => Some(style.warning_underline),
+                            DiagnosticSeverity::INFORMATION => Some(style.information_underline),
+                            DiagnosticSeverity::HINT => Some(style.hint_underline),
+                            _ => highlight_style.underline,
+                        }
+                    } else {
+                        highlight_style.underline
+                    };
+
                     line.push_str(line_chunk);
                     styles.push((
                         line_chunk.len(),
                         RunStyle {
                             font_id,
                             color: highlight_style.color,
-                            underline: highlight_style.underline,
+                            underline,
                         },
                     ));
                     prev_font_id = font_id;
@@ -859,7 +876,7 @@ impl LayoutState {
                 RunStyle {
                     font_id: self.style.text.font_id,
                     color: Color::black(),
-                    underline: false,
+                    underline: None,
                 },
             )],
         )

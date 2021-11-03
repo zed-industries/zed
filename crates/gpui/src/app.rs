@@ -23,6 +23,7 @@ use std::{
     mem,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
+    pin::Pin,
     rc::{self, Rc},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -35,6 +36,12 @@ pub trait Entity: 'static {
     type Event;
 
     fn release(&mut self, _: &mut MutableAppContext) {}
+    fn app_will_quit(
+        &mut self,
+        _: &mut MutableAppContext,
+    ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>> {
+        None
+    }
 }
 
 pub trait View: Entity + Sized {
@@ -198,8 +205,6 @@ pub struct App(Rc<RefCell<MutableAppContext>>);
 #[derive(Clone)]
 pub struct AsyncAppContext(Rc<RefCell<MutableAppContext>>);
 
-pub struct BackgroundAppContext(*const RefCell<MutableAppContext>);
-
 #[derive(Clone)]
 pub struct TestAppContext {
     cx: Rc<RefCell<MutableAppContext>>,
@@ -220,20 +225,29 @@ impl App {
             asset_source,
         ))));
 
-        let cx = app.0.clone();
-        foreground_platform.on_menu_command(Box::new(move |action| {
-            let mut cx = cx.borrow_mut();
-            if let Some(key_window_id) = cx.cx.platform.key_window_id() {
-                if let Some((presenter, _)) = cx.presenters_and_platform_windows.get(&key_window_id)
-                {
-                    let presenter = presenter.clone();
-                    let path = presenter.borrow().dispatch_path(cx.as_ref());
-                    cx.dispatch_action_any(key_window_id, &path, action);
+        foreground_platform.on_quit(Box::new({
+            let cx = app.0.clone();
+            move || {
+                cx.borrow_mut().quit();
+            }
+        }));
+        foreground_platform.on_menu_command(Box::new({
+            let cx = app.0.clone();
+            move |action| {
+                let mut cx = cx.borrow_mut();
+                if let Some(key_window_id) = cx.cx.platform.key_window_id() {
+                    if let Some((presenter, _)) =
+                        cx.presenters_and_platform_windows.get(&key_window_id)
+                    {
+                        let presenter = presenter.clone();
+                        let path = presenter.borrow().dispatch_path(cx.as_ref());
+                        cx.dispatch_action_any(key_window_id, &path, action);
+                    } else {
+                        cx.dispatch_global_action_any(action);
+                    }
                 } else {
                     cx.dispatch_global_action_any(action);
                 }
-            } else {
-                cx.dispatch_global_action_any(action);
             }
         }));
 
@@ -262,6 +276,18 @@ impl App {
             .borrow_mut()
             .foreground_platform
             .on_resign_active(Box::new(move || callback(&mut *cx.borrow_mut())));
+        self
+    }
+
+    pub fn on_quit<F>(self, mut callback: F) -> Self
+    where
+        F: 'static + FnMut(&mut MutableAppContext),
+    {
+        let cx = self.0.clone();
+        self.0
+            .borrow_mut()
+            .foreground_platform
+            .on_quit(Box::new(move || callback(&mut *cx.borrow_mut())));
         self
     }
 
@@ -737,6 +763,39 @@ impl MutableAppContext {
 
     pub fn upgrade(&self) -> App {
         App(self.weak_self.as_ref().unwrap().upgrade().unwrap())
+    }
+
+    pub fn quit(&mut self) {
+        let mut futures = Vec::new();
+        for model_id in self.cx.models.keys().copied().collect::<Vec<_>>() {
+            let mut model = self.cx.models.remove(&model_id).unwrap();
+            futures.extend(model.app_will_quit(self));
+            self.cx.models.insert(model_id, model);
+        }
+
+        for view_id in self.cx.views.keys().copied().collect::<Vec<_>>() {
+            let mut view = self.cx.views.remove(&view_id).unwrap();
+            futures.extend(view.app_will_quit(self));
+            self.cx.views.insert(view_id, view);
+        }
+
+        self.remove_all_windows();
+
+        let futures = futures::future::join_all(futures);
+        if self
+            .background
+            .block_with_timeout(Duration::from_millis(100), futures)
+            .is_err()
+        {
+            log::error!("timed out waiting on app_will_quit");
+        }
+    }
+
+    fn remove_all_windows(&mut self) {
+        for (window_id, _) in self.cx.windows.drain() {
+            self.presenters_and_platform_windows.remove(&window_id);
+        }
+        self.remove_dropped_entities();
     }
 
     pub fn platform(&self) -> Arc<dyn platform::Platform> {
@@ -1879,6 +1938,10 @@ pub trait AnyModel {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn release(&mut self, cx: &mut MutableAppContext);
+    fn app_will_quit(
+        &mut self,
+        cx: &mut MutableAppContext,
+    ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>>;
 }
 
 impl<T> AnyModel for T
@@ -1896,12 +1959,23 @@ where
     fn release(&mut self, cx: &mut MutableAppContext) {
         self.release(cx);
     }
+
+    fn app_will_quit(
+        &mut self,
+        cx: &mut MutableAppContext,
+    ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>> {
+        self.app_will_quit(cx)
+    }
 }
 
 pub trait AnyView {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn release(&mut self, cx: &mut MutableAppContext);
+    fn app_will_quit(
+        &mut self,
+        cx: &mut MutableAppContext,
+    ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>>;
     fn ui_name(&self) -> &'static str;
     fn render<'a>(
         &mut self,
@@ -1930,6 +2004,13 @@ where
 
     fn release(&mut self, cx: &mut MutableAppContext) {
         self.release(cx);
+    }
+
+    fn app_will_quit(
+        &mut self,
+        cx: &mut MutableAppContext,
+    ) -> Option<Pin<Box<dyn 'static + Future<Output = ()>>>> {
+        self.app_will_quit(cx)
     }
 
     fn ui_name(&self) -> &'static str {

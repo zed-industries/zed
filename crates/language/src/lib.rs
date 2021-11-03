@@ -1,20 +1,22 @@
 mod highlight_map;
 mod language;
+pub mod proto;
 #[cfg(test)]
 mod tests;
 
 pub use self::{
     highlight_map::{HighlightId, HighlightMap},
-    language::{BracketPair, Language, LanguageConfig, LanguageRegistry},
+    language::{BracketPair, Language, LanguageConfig, LanguageRegistry, LanguageServerConfig},
 };
 use anyhow::{anyhow, Result};
-pub use buffer::{Buffer as TextBuffer, *};
+pub use buffer::{Buffer as TextBuffer, Operation as _, *};
 use clock::ReplicaId;
 use futures::FutureExt as _;
 use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
+use lsp::LanguageServer;
 use parking_lot::Mutex;
-use rpc::proto;
+use postage::{prelude::Stream, sink::Sink, watch};
 use similar::{ChangeTag, TextDiff};
 use smol::future::yield_now;
 use std::{
@@ -24,15 +26,21 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     ffi::OsString,
     future::Future,
-    iter::Iterator,
+    iter::{Iterator, Peekable},
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     str,
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    vec,
 };
 use tree_sitter::{InputEdit, Parser, QueryCursor, Tree};
-use util::TryFutureExt as _;
+use util::{post_inc, TryFutureExt as _};
+
+#[cfg(any(test, feature = "test-support"))]
+pub use tree_sitter_rust;
+
+pub use lsp::DiagnosticSeverity;
 
 thread_local! {
     static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
@@ -57,6 +65,9 @@ pub struct Buffer {
     syntax_tree: Mutex<Option<SyntaxTree>>,
     parsing_in_background: bool,
     parse_count: usize,
+    diagnostics: AnchorRangeMultimap<Diagnostic>,
+    diagnostics_update_count: usize,
+    language_server: Option<LanguageServerState>,
     #[cfg(test)]
     operations: Vec<Operation>,
 }
@@ -64,9 +75,37 @@ pub struct Buffer {
 pub struct Snapshot {
     text: buffer::Snapshot,
     tree: Option<Tree>,
+    diagnostics: AnchorRangeMultimap<Diagnostic>,
     is_parsing: bool,
     language: Option<Arc<Language>>,
     query_cursor: QueryCursorHandle,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Diagnostic {
+    pub severity: DiagnosticSeverity,
+    pub message: String,
+}
+
+struct LanguageServerState {
+    server: Arc<LanguageServer>,
+    latest_snapshot: watch::Sender<Option<LanguageServerSnapshot>>,
+    pending_snapshots: BTreeMap<usize, LanguageServerSnapshot>,
+    next_version: usize,
+    _maintain_server: Task<Option<()>>,
+}
+
+#[derive(Clone)]
+struct LanguageServerSnapshot {
+    buffer_snapshot: buffer::Snapshot,
+    version: usize,
+    path: Arc<Path>,
+}
+
+#[derive(Clone)]
+pub enum Operation {
+    Buffer(buffer::Operation),
+    UpdateDiagnostics(AnchorRangeMultimap<Diagnostic>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -87,13 +126,19 @@ pub trait File {
 
     fn mtime(&self) -> SystemTime;
 
+    /// Returns the path of this file relative to the worktree's root directory.
     fn path(&self) -> &Arc<Path>;
 
-    fn full_path(&self, cx: &AppContext) -> PathBuf;
+    /// Returns the absolute path of this file.
+    fn abs_path(&self) -> Option<PathBuf>;
+
+    /// Returns the path of this file relative to the worktree's parent directory (this means it
+    /// includes the name of the worktree's root folder).
+    fn full_path(&self) -> PathBuf;
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
-    fn file_name<'a>(&'a self, cx: &'a AppContext) -> Option<OsString>;
+    fn file_name(&self) -> Option<OsString>;
 
     fn is_deleted(&self) -> bool;
 
@@ -150,13 +195,32 @@ struct Highlights<'a> {
 pub struct HighlightedChunks<'a> {
     range: Range<usize>,
     chunks: Chunks<'a>,
+    diagnostic_endpoints: Peekable<vec::IntoIter<DiagnosticEndpoint>>,
+    error_depth: usize,
+    warning_depth: usize,
+    information_depth: usize,
+    hint_depth: usize,
     highlights: Option<Highlights<'a>>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HighlightedChunk<'a> {
+    pub text: &'a str,
+    pub highlight_id: HighlightId,
+    pub diagnostic: Option<DiagnosticSeverity>,
 }
 
 struct Diff {
     base_version: clock::Global,
     new_text: Arc<str>,
     changes: Vec<(ChangeTag, usize)>,
+}
+
+#[derive(Clone, Copy)]
+struct DiagnosticEndpoint {
+    offset: usize,
+    is_start: bool,
+    severity: DiagnosticSeverity,
 }
 
 impl Buffer {
@@ -172,23 +236,22 @@ impl Buffer {
                 History::new(base_text.into()),
             ),
             None,
-            None,
-            cx,
         )
     }
 
-    pub fn from_history(
+    pub fn from_file<T: Into<Arc<str>>>(
         replica_id: ReplicaId,
-        history: History,
-        file: Option<Box<dyn File>>,
-        language: Option<Arc<Language>>,
+        base_text: T,
+        file: Box<dyn File>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self::build(
-            TextBuffer::new(replica_id, cx.model_id() as u64, history),
-            file,
-            language,
-            cx,
+            TextBuffer::new(
+                replica_id,
+                cx.model_id() as u64,
+                History::new(base_text.into()),
+            ),
+            Some(file),
         )
     }
 
@@ -196,23 +259,54 @@ impl Buffer {
         replica_id: ReplicaId,
         message: proto::Buffer,
         file: Option<Box<dyn File>>,
-        language: Option<Arc<Language>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<Self> {
-        Ok(Self::build(
-            TextBuffer::from_proto(replica_id, message)?,
-            file,
-            language,
-            cx,
-        ))
+        let mut buffer =
+            buffer::Buffer::new(replica_id, message.id, History::new(message.content.into()));
+        let ops = message
+            .history
+            .into_iter()
+            .map(|op| buffer::Operation::Edit(proto::deserialize_edit_operation(op)));
+        buffer.apply_ops(ops)?;
+        for set in message.selections {
+            let set = proto::deserialize_selection_set(set);
+            buffer.add_raw_selection_set(set.id, set);
+        }
+        let mut this = Self::build(buffer, file);
+        if let Some(diagnostics) = message.diagnostics {
+            this.apply_diagnostic_update(proto::deserialize_diagnostics(diagnostics), cx);
+        }
+        Ok(this)
     }
 
-    fn build(
-        buffer: TextBuffer,
-        file: Option<Box<dyn File>>,
+    pub fn to_proto(&self) -> proto::Buffer {
+        proto::Buffer {
+            id: self.remote_id(),
+            content: self.text.base_text().to_string(),
+            history: self
+                .text
+                .history()
+                .map(proto::serialize_edit_operation)
+                .collect(),
+            selections: self
+                .selection_sets()
+                .map(|(_, set)| proto::serialize_selection_set(set))
+                .collect(),
+            diagnostics: Some(proto::serialize_diagnostics(&self.diagnostics)),
+        }
+    }
+
+    pub fn with_language(
+        mut self,
         language: Option<Arc<Language>>,
+        language_server: Option<Arc<LanguageServer>>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
+        self.set_language(language, language_server, cx);
+        self
+    }
+
+    fn build(buffer: TextBuffer, file: Option<Box<dyn File>>) -> Self {
         let saved_mtime;
         if let Some(file) = file.as_ref() {
             saved_mtime = file.mtime();
@@ -220,7 +314,7 @@ impl Buffer {
             saved_mtime = UNIX_EPOCH;
         }
 
-        let mut result = Self {
+        Self {
             text: buffer,
             saved_mtime,
             saved_version: clock::Global::new(),
@@ -231,19 +325,20 @@ impl Buffer {
             sync_parse_timeout: Duration::from_millis(1),
             autoindent_requests: Default::default(),
             pending_autoindent: Default::default(),
-            language,
-
+            language: None,
+            diagnostics: Default::default(),
+            diagnostics_update_count: 0,
+            language_server: None,
             #[cfg(test)]
             operations: Default::default(),
-        };
-        result.reparse(cx);
-        result
+        }
     }
 
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             text: self.text.snapshot(),
             tree: self.syntax_tree(),
+            diagnostics: self.diagnostics.clone(),
             is_parsing: self.parsing_in_background,
             language: self.language.clone(),
             query_cursor: QueryCursorHandle::new(),
@@ -263,7 +358,7 @@ impl Buffer {
             .as_ref()
             .ok_or_else(|| anyhow!("buffer has no file"))?;
         let text = self.as_rope().clone();
-        let version = self.version.clone();
+        let version = self.version();
         let save = file.save(self.remote_id(), text, version, cx.as_mut());
         Ok(cx.spawn(|this, mut cx| async move {
             let (version, mtime) = save.await?;
@@ -274,9 +369,96 @@ impl Buffer {
         }))
     }
 
-    pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
+    pub fn set_language(
+        &mut self,
+        language: Option<Arc<Language>>,
+        language_server: Option<Arc<lsp::LanguageServer>>,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.language = language;
+        self.language_server = if let Some(server) = language_server {
+            let (latest_snapshot_tx, mut latest_snapshot_rx) = watch::channel();
+            Some(LanguageServerState {
+                latest_snapshot: latest_snapshot_tx,
+                pending_snapshots: Default::default(),
+                next_version: 0,
+                server: server.clone(),
+                _maintain_server: cx.background().spawn(
+                    async move {
+                        let mut prev_snapshot: Option<LanguageServerSnapshot> = None;
+                        while let Some(snapshot) = latest_snapshot_rx.recv().await {
+                            if let Some(snapshot) = snapshot {
+                                let uri = lsp::Url::from_file_path(&snapshot.path).unwrap();
+                                if let Some(prev_snapshot) = prev_snapshot {
+                                    let changes = lsp::DidChangeTextDocumentParams {
+                                        text_document: lsp::VersionedTextDocumentIdentifier::new(
+                                            uri,
+                                            snapshot.version as i32,
+                                        ),
+                                        content_changes: snapshot
+                                            .buffer_snapshot
+                                            .edits_since::<(PointUtf16, usize)>(
+                                                prev_snapshot.buffer_snapshot.version(),
+                                            )
+                                            .map(|edit| {
+                                                let edit_start = edit.new.start.0;
+                                                let edit_end = edit_start
+                                                    + (edit.old.end.0 - edit.old.start.0);
+                                                let new_text = snapshot
+                                                    .buffer_snapshot
+                                                    .text_for_range(
+                                                        edit.new.start.1..edit.new.end.1,
+                                                    )
+                                                    .collect();
+                                                lsp::TextDocumentContentChangeEvent {
+                                                    range: Some(lsp::Range::new(
+                                                        lsp::Position::new(
+                                                            edit_start.row,
+                                                            edit_start.column,
+                                                        ),
+                                                        lsp::Position::new(
+                                                            edit_end.row,
+                                                            edit_end.column,
+                                                        ),
+                                                    )),
+                                                    range_length: None,
+                                                    text: new_text,
+                                                }
+                                            })
+                                            .collect(),
+                                    };
+                                    server
+                                        .notify::<lsp::notification::DidChangeTextDocument>(changes)
+                                        .await?;
+                                } else {
+                                    server
+                                        .notify::<lsp::notification::DidOpenTextDocument>(
+                                            lsp::DidOpenTextDocumentParams {
+                                                text_document: lsp::TextDocumentItem::new(
+                                                    uri,
+                                                    Default::default(),
+                                                    snapshot.version as i32,
+                                                    snapshot.buffer_snapshot.text().into(),
+                                                ),
+                                            },
+                                        )
+                                        .await?;
+                                }
+
+                                prev_snapshot = Some(snapshot);
+                            }
+                        }
+                        Ok(())
+                    }
+                    .log_err(),
+                ),
+            })
+        } else {
+            None
+        };
+
         self.reparse(cx);
+        self.update_language_server();
     }
 
     pub fn did_save(
@@ -290,6 +472,25 @@ impl Buffer {
         self.saved_version = version;
         if let Some(new_file) = new_file {
             self.file = Some(new_file);
+        }
+        if let Some(state) = &self.language_server {
+            cx.background()
+                .spawn(
+                    state
+                        .server
+                        .notify::<lsp::notification::DidSaveTextDocument>(
+                            lsp::DidSaveTextDocumentParams {
+                                text_document: lsp::TextDocumentIdentifier {
+                                    uri: lsp::Url::from_file_path(
+                                        self.file.as_ref().unwrap().abs_path().unwrap(),
+                                    )
+                                    .unwrap(),
+                                },
+                                text: None,
+                            },
+                        ),
+                )
+                .detach()
         }
         cx.emit(Event::Saved);
     }
@@ -332,7 +533,7 @@ impl Buffer {
                                     .await;
                                 this.update(&mut cx, |this, cx| {
                                     if this.apply_diff(diff, cx) {
-                                        this.saved_version = this.version.clone();
+                                        this.saved_version = this.version();
                                         this.saved_mtime = new_mtime;
                                         cx.emit(Event::Reloaded);
                                     }
@@ -453,22 +654,17 @@ impl Buffer {
     }
 
     fn interpolate_tree(&self, tree: &mut SyntaxTree) {
-        let mut delta = 0_isize;
-        for edit in self.edits_since(tree.version.clone()) {
-            let start_offset = (edit.old_bytes.start as isize + delta) as usize;
-            let start_point = self.as_rope().to_point(start_offset);
+        for edit in self.edits_since::<(usize, Point)>(&tree.version) {
+            let (bytes, lines) = edit.flatten();
             tree.tree.edit(&InputEdit {
-                start_byte: start_offset,
-                old_end_byte: start_offset + edit.deleted_bytes(),
-                new_end_byte: start_offset + edit.inserted_bytes(),
-                start_position: start_point.to_ts_point(),
-                old_end_position: (start_point + edit.deleted_lines()).to_ts_point(),
-                new_end_position: self
-                    .as_rope()
-                    .to_point(start_offset + edit.inserted_bytes())
+                start_byte: bytes.new.start,
+                old_end_byte: bytes.new.start + bytes.old.len(),
+                new_end_byte: bytes.new.end,
+                start_position: lines.new.start.to_ts_point(),
+                old_end_position: (lines.new.start + (lines.old.end - lines.old.start))
                     .to_ts_point(),
+                new_end_position: lines.new.end.to_ts_point(),
             });
-            delta += edit.inserted_bytes() as isize - edit.deleted_bytes() as isize;
         }
         tree.version = self.version();
     }
@@ -484,6 +680,118 @@ impl Buffer {
         self.request_autoindent(cx);
         cx.emit(Event::Reparsed);
         cx.notify();
+    }
+
+    pub fn update_diagnostics(
+        &mut self,
+        version: Option<i32>,
+        mut diagnostics: Vec<lsp::Diagnostic>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<Operation> {
+        let version = version.map(|version| version as usize);
+        let content = if let Some(version) = version {
+            let language_server = self.language_server.as_mut().unwrap();
+            let snapshot = language_server
+                .pending_snapshots
+                .get(&version)
+                .ok_or_else(|| anyhow!("missing snapshot"))?;
+            snapshot.buffer_snapshot.content()
+        } else {
+            self.content()
+        };
+
+        let empty_set = HashSet::new();
+        let disk_based_sources = self
+            .language
+            .as_ref()
+            .and_then(|language| language.disk_based_diagnostic_sources())
+            .unwrap_or(&empty_set);
+
+        diagnostics.sort_unstable_by_key(|d| (d.range.start, d.range.end));
+        self.diagnostics = {
+            let mut edits_since_save = content
+                .edits_since::<PointUtf16>(&self.saved_version)
+                .peekable();
+            let mut last_edit_old_end = PointUtf16::zero();
+            let mut last_edit_new_end = PointUtf16::zero();
+
+            content.anchor_range_multimap(
+                Bias::Left,
+                Bias::Right,
+                diagnostics.into_iter().filter_map(|diagnostic| {
+                    let mut start = PointUtf16::new(
+                        diagnostic.range.start.line,
+                        diagnostic.range.start.character,
+                    );
+                    let mut end =
+                        PointUtf16::new(diagnostic.range.end.line, diagnostic.range.end.character);
+                    if diagnostic
+                        .source
+                        .as_ref()
+                        .map_or(false, |source| disk_based_sources.contains(source))
+                    {
+                        while let Some(edit) = edits_since_save.peek() {
+                            if edit.old.end <= start {
+                                last_edit_old_end = edit.old.end;
+                                last_edit_new_end = edit.new.end;
+                                edits_since_save.next();
+                            } else if edit.old.start <= end && edit.old.end >= start {
+                                return None;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        start = last_edit_new_end + (start - last_edit_old_end);
+                        end = last_edit_new_end + (end - last_edit_old_end);
+                    }
+
+                    let mut range = content.clip_point_utf16(start, Bias::Left)
+                        ..content.clip_point_utf16(end, Bias::Right);
+                    if range.start == range.end {
+                        range.end.column += 1;
+                        range.end = content.clip_point_utf16(range.end, Bias::Right);
+                    }
+                    Some((
+                        range,
+                        Diagnostic {
+                            severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
+                            message: diagnostic.message,
+                        },
+                    ))
+                }),
+            )
+        };
+
+        if let Some(version) = version {
+            let language_server = self.language_server.as_mut().unwrap();
+            let versions_to_delete = language_server
+                .pending_snapshots
+                .range(..version)
+                .map(|(v, _)| *v)
+                .collect::<Vec<_>>();
+            for version in versions_to_delete {
+                language_server.pending_snapshots.remove(&version);
+            }
+        }
+
+        self.diagnostics_update_count += 1;
+        cx.notify();
+        Ok(Operation::UpdateDiagnostics(self.diagnostics.clone()))
+    }
+
+    pub fn diagnostics_in_range<'a, T: 'a + ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = (Range<Point>, &Diagnostic)> + 'a {
+        let content = self.content();
+        self.diagnostics
+            .intersecting_ranges(range, content, true)
+            .map(move |(_, range, diagnostic)| (range, diagnostic))
+    }
+
+    pub fn diagnostics_update_count(&self) -> usize {
+        self.diagnostics_update_count
     }
 
     fn request_autoindent(&mut self, cx: &mut ModelContext<Self>) {
@@ -810,15 +1118,37 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         if let Some(start_version) = self.text.end_transaction_at(selection_set_ids, now) {
-            cx.notify();
             let was_dirty = start_version != self.saved_version;
-            let edited = self.edits_since(start_version).next().is_some();
-            if edited {
-                self.did_edit(was_dirty, cx);
-                self.reparse(cx);
-            }
+            self.did_edit(&start_version, was_dirty, cx);
         }
         Ok(())
+    }
+
+    fn update_language_server(&mut self) {
+        let language_server = if let Some(language_server) = self.language_server.as_mut() {
+            language_server
+        } else {
+            return;
+        };
+        let abs_path = self
+            .file
+            .as_ref()
+            .map_or(Path::new("/").to_path_buf(), |file| {
+                file.abs_path().unwrap()
+            });
+
+        let version = post_inc(&mut language_server.next_version);
+        let snapshot = LanguageServerSnapshot {
+            buffer_snapshot: self.text.snapshot(),
+            version,
+            path: Arc::from(abs_path),
+        };
+        language_server
+            .pending_snapshots
+            .insert(version, snapshot.clone());
+        let _ = language_server
+            .latest_snapshot
+            .blocking_send(Some(snapshot));
     }
 
     pub fn edit<I, S, T>(&mut self, ranges_iter: I, new_text: T, cx: &mut ModelContext<Self>)
@@ -925,14 +1255,27 @@ impl Buffer {
         }
 
         self.end_transaction(None, cx).unwrap();
-        self.send_operation(Operation::Edit(edit), cx);
+        self.send_operation(Operation::Buffer(buffer::Operation::Edit(edit)), cx);
     }
 
-    fn did_edit(&self, was_dirty: bool, cx: &mut ModelContext<Self>) {
+    fn did_edit(
+        &mut self,
+        old_version: &clock::Global,
+        was_dirty: bool,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if self.edits_since::<usize>(old_version).next().is_none() {
+            return;
+        }
+
+        self.reparse(cx);
+        self.update_language_server();
+
         cx.emit(Event::Edited);
         if !was_dirty {
             cx.emit(Event::Dirtied);
         }
+        cx.notify();
     }
 
     pub fn add_selection_set<T: ToOffset>(
@@ -941,10 +1284,10 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) -> SelectionSetId {
         let operation = self.text.add_selection_set(selections);
-        if let Operation::UpdateSelections { set_id, .. } = &operation {
+        if let buffer::Operation::UpdateSelections { set_id, .. } = &operation {
             let set_id = *set_id;
             cx.notify();
-            self.send_operation(operation, cx);
+            self.send_operation(Operation::Buffer(operation), cx);
             set_id
         } else {
             unreachable!()
@@ -959,7 +1302,7 @@ impl Buffer {
     ) -> Result<()> {
         let operation = self.text.update_selection_set(set_id, selections)?;
         cx.notify();
-        self.send_operation(operation, cx);
+        self.send_operation(Operation::Buffer(operation), cx);
         Ok(())
     }
 
@@ -969,7 +1312,7 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let operation = self.text.set_active_selection_set(set_id)?;
-        self.send_operation(operation, cx);
+        self.send_operation(Operation::Buffer(operation), cx);
         Ok(())
     }
 
@@ -980,7 +1323,7 @@ impl Buffer {
     ) -> Result<()> {
         let operation = self.text.remove_selection_set(set_id)?;
         cx.notify();
-        self.send_operation(operation, cx);
+        self.send_operation(Operation::Buffer(operation), cx);
         Ok(())
     }
 
@@ -990,19 +1333,34 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         self.pending_autoindent.take();
-
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
-
-        self.text.apply_ops(ops)?;
-
+        let buffer_ops = ops
+            .into_iter()
+            .filter_map(|op| match op {
+                Operation::Buffer(op) => Some(op),
+                Operation::UpdateDiagnostics(diagnostics) => {
+                    self.apply_diagnostic_update(diagnostics, cx);
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        self.text.apply_ops(buffer_ops)?;
+        self.did_edit(&old_version, was_dirty, cx);
+        // Notify independently of whether the buffer was edited as the operations could include a
+        // selection update.
         cx.notify();
-        if self.edits_since(old_version).next().is_some() {
-            self.did_edit(was_dirty, cx);
-            self.reparse(cx);
-        }
-
         Ok(())
+    }
+
+    fn apply_diagnostic_update(
+        &mut self,
+        diagnostics: AnchorRangeMultimap<Diagnostic>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.diagnostics = diagnostics;
+        self.diagnostics_update_count += 1;
+        cx.notify();
     }
 
     #[cfg(not(test))]
@@ -1027,14 +1385,10 @@ impl Buffer {
         let old_version = self.version.clone();
 
         for operation in self.text.undo() {
-            self.send_operation(operation, cx);
+            self.send_operation(Operation::Buffer(operation), cx);
         }
 
-        cx.notify();
-        if self.edits_since(old_version).next().is_some() {
-            self.did_edit(was_dirty, cx);
-            self.reparse(cx);
-        }
+        self.did_edit(&old_version, was_dirty, cx);
     }
 
     pub fn redo(&mut self, cx: &mut ModelContext<Self>) {
@@ -1042,14 +1396,10 @@ impl Buffer {
         let old_version = self.version.clone();
 
         for operation in self.text.redo() {
-            self.send_operation(operation, cx);
+            self.send_operation(Operation::Buffer(operation), cx);
         }
 
-        cx.notify();
-        if self.edits_since(old_version).next().is_some() {
-            self.did_edit(was_dirty, cx);
-            self.reparse(cx);
-        }
+        self.did_edit(&old_version, was_dirty, cx);
     }
 }
 
@@ -1080,6 +1430,7 @@ impl Entity for Buffer {
     }
 }
 
+// TODO: Do we need to clone a buffer?
 impl Clone for Buffer {
     fn clone(&self) -> Self {
         Self {
@@ -1094,7 +1445,9 @@ impl Clone for Buffer {
             parse_count: self.parse_count,
             autoindent_requests: Default::default(),
             pending_autoindent: Default::default(),
-
+            diagnostics: self.diagnostics.clone(),
+            diagnostics_update_count: self.diagnostics_update_count,
+            language_server: None,
             #[cfg(test)]
             operations: self.operations.clone(),
         }
@@ -1247,30 +1600,54 @@ impl Snapshot {
         range: Range<T>,
     ) -> HighlightedChunks {
         let range = range.start.to_offset(&*self)..range.end.to_offset(&*self);
-        let chunks = self.text.as_rope().chunks_in_range(range.clone());
-        if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
-            let captures = self.query_cursor.set_byte_range(range.clone()).captures(
-                &language.highlights_query,
-                tree.root_node(),
-                TextProvider(self.text.as_rope()),
-            );
 
-            HighlightedChunks {
-                range,
-                chunks,
-                highlights: Some(Highlights {
+        let mut diagnostic_endpoints = Vec::<DiagnosticEndpoint>::new();
+        for (_, range, diagnostic) in
+            self.diagnostics
+                .intersecting_ranges(range.clone(), self.content(), true)
+        {
+            diagnostic_endpoints.push(DiagnosticEndpoint {
+                offset: range.start,
+                is_start: true,
+                severity: diagnostic.severity,
+            });
+            diagnostic_endpoints.push(DiagnosticEndpoint {
+                offset: range.end,
+                is_start: false,
+                severity: diagnostic.severity,
+            });
+        }
+        diagnostic_endpoints.sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
+        let diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
+
+        let chunks = self.text.as_rope().chunks_in_range(range.clone());
+        let highlights =
+            if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
+                let captures = self.query_cursor.set_byte_range(range.clone()).captures(
+                    &language.highlights_query,
+                    tree.root_node(),
+                    TextProvider(self.text.as_rope()),
+                );
+
+                Some(Highlights {
                     captures,
                     next_capture: None,
                     stack: Default::default(),
                     highlight_map: language.highlight_map(),
-                }),
-            }
-        } else {
-            HighlightedChunks {
-                range,
-                chunks,
-                highlights: None,
-            }
+                })
+            } else {
+                None
+            };
+
+        HighlightedChunks {
+            range,
+            chunks,
+            diagnostic_endpoints,
+            error_depth: 0,
+            warning_depth: 0,
+            information_depth: 0,
+            hint_depth: 0,
+            highlights,
         }
     }
 }
@@ -1280,6 +1657,7 @@ impl Clone for Snapshot {
         Self {
             text: self.text.clone(),
             tree: self.tree.clone(),
+            diagnostics: self.diagnostics.clone(),
             is_parsing: self.is_parsing,
             language: self.language.clone(),
             query_cursor: QueryCursorHandle::new(),
@@ -1341,13 +1719,43 @@ impl<'a> HighlightedChunks<'a> {
     pub fn offset(&self) -> usize {
         self.range.start
     }
+
+    fn update_diagnostic_depths(&mut self, endpoint: DiagnosticEndpoint) {
+        let depth = match endpoint.severity {
+            DiagnosticSeverity::ERROR => &mut self.error_depth,
+            DiagnosticSeverity::WARNING => &mut self.warning_depth,
+            DiagnosticSeverity::INFORMATION => &mut self.information_depth,
+            DiagnosticSeverity::HINT => &mut self.hint_depth,
+            _ => return,
+        };
+        if endpoint.is_start {
+            *depth += 1;
+        } else {
+            *depth -= 1;
+        }
+    }
+
+    fn current_diagnostic_severity(&mut self) -> Option<DiagnosticSeverity> {
+        if self.error_depth > 0 {
+            Some(DiagnosticSeverity::ERROR)
+        } else if self.warning_depth > 0 {
+            Some(DiagnosticSeverity::WARNING)
+        } else if self.information_depth > 0 {
+            Some(DiagnosticSeverity::INFORMATION)
+        } else if self.hint_depth > 0 {
+            Some(DiagnosticSeverity::HINT)
+        } else {
+            None
+        }
+    }
 }
 
 impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = (&'a str, HighlightId);
+    type Item = HighlightedChunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut next_capture_start = usize::MAX;
+        let mut next_diagnostic_endpoint = usize::MAX;
 
         if let Some(highlights) = self.highlights.as_mut() {
             while let Some((parent_capture_end, _)) = highlights.stack.last() {
@@ -1368,22 +1776,36 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                     next_capture_start = capture.node.start_byte();
                     break;
                 } else {
-                    let style_id = highlights.highlight_map.get(capture.index);
-                    highlights.stack.push((capture.node.end_byte(), style_id));
+                    let highlight_id = highlights.highlight_map.get(capture.index);
+                    highlights
+                        .stack
+                        .push((capture.node.end_byte(), highlight_id));
                     highlights.next_capture = highlights.captures.next();
                 }
             }
         }
 
+        while let Some(endpoint) = self.diagnostic_endpoints.peek().copied() {
+            if endpoint.offset <= self.range.start {
+                self.update_diagnostic_depths(endpoint);
+                self.diagnostic_endpoints.next();
+            } else {
+                next_diagnostic_endpoint = endpoint.offset;
+                break;
+            }
+        }
+
         if let Some(chunk) = self.chunks.peek() {
             let chunk_start = self.range.start;
-            let mut chunk_end = (self.chunks.offset() + chunk.len()).min(next_capture_start);
-            let mut style_id = HighlightId::default();
-            if let Some((parent_capture_end, parent_style_id)) =
+            let mut chunk_end = (self.chunks.offset() + chunk.len())
+                .min(next_capture_start)
+                .min(next_diagnostic_endpoint);
+            let mut highlight_id = HighlightId::default();
+            if let Some((parent_capture_end, parent_highlight_id)) =
                 self.highlights.as_ref().and_then(|h| h.stack.last())
             {
                 chunk_end = chunk_end.min(*parent_capture_end);
-                style_id = *parent_style_id;
+                highlight_id = *parent_highlight_id;
             }
 
             let slice =
@@ -1393,7 +1815,11 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                 self.chunks.next().unwrap();
             }
 
-            Some((slice, style_id))
+            Some(HighlightedChunk {
+                text: slice,
+                highlight_id,
+                diagnostic: self.current_diagnostic_severity(),
+            })
         } else {
             None
         }

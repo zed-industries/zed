@@ -3,7 +3,7 @@ use super::{
     ignore::IgnoreStack,
 };
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope};
 use clock::ReplicaId;
 use futures::{Stream, StreamExt};
@@ -12,13 +12,15 @@ use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task, UpgradeModelHandle, WeakModelHandle,
 };
-use language::{Buffer, History, LanguageRegistry, Operation, Rope};
+use language::{Buffer, Language, LanguageRegistry, Operation, Rope};
 use lazy_static::lazy_static;
+use lsp::LanguageServer;
 use parking_lot::Mutex;
 use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
+
 use serde::Deserialize;
 use smol::channel::{self, Sender};
 use std::{
@@ -39,7 +41,7 @@ use std::{
 };
 use sum_tree::Bias;
 use sum_tree::{Edit, SeekTarget, SumTree};
-use util::TryFutureExt;
+use util::{ResultExt, TryFutureExt};
 
 lazy_static! {
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
@@ -87,6 +89,29 @@ impl Entity for Worktree {
                 })
                 .detach();
             }
+        }
+    }
+
+    fn app_will_quit(
+        &mut self,
+        _: &mut MutableAppContext,
+    ) -> Option<std::pin::Pin<Box<dyn 'static + Future<Output = ()>>>> {
+        use futures::FutureExt;
+
+        if let Self::Local(worktree) = self {
+            let shutdown_futures = worktree
+                .language_servers
+                .drain()
+                .filter_map(|(_, server)| server.shutdown())
+                .collect::<Vec<_>>();
+            Some(
+                async move {
+                    futures::future::join_all(shutdown_futures).await;
+                }
+                .boxed(),
+            )
+        } else {
+            None
         }
     }
 }
@@ -421,8 +446,8 @@ impl Worktree {
         let ops = payload
             .operations
             .into_iter()
-            .map(|op| op.try_into())
-            .collect::<anyhow::Result<Vec<_>>>()?;
+            .map(|op| language::proto::deserialize_operation(op))
+            .collect::<Result<Vec<_>, _>>()?;
 
         match self {
             Worktree::Local(worktree) => {
@@ -587,6 +612,8 @@ impl Worktree {
             }
         };
 
+        let local = self.as_local().is_some();
+        let worktree_path = self.abs_path.clone();
         let worktree_handle = cx.handle();
         let mut buffers_to_delete = Vec::new();
         for (buffer_id, buffer) in open_buffers {
@@ -598,6 +625,8 @@ impl Worktree {
                             .and_then(|entry_id| self.entry_for_id(entry_id))
                         {
                             File {
+                                is_local: local,
+                                worktree_path: worktree_path.clone(),
                                 entry_id: Some(entry.id),
                                 mtime: entry.mtime,
                                 path: entry.path.clone(),
@@ -605,6 +634,8 @@ impl Worktree {
                             }
                         } else if let Some(entry) = self.entry_for_path(old_file.path().as_ref()) {
                             File {
+                                is_local: local,
+                                worktree_path: worktree_path.clone(),
                                 entry_id: Some(entry.id),
                                 mtime: entry.mtime,
                                 path: entry.path.clone(),
@@ -612,6 +643,8 @@ impl Worktree {
                             }
                         } else {
                             File {
+                                is_local: local,
+                                worktree_path: worktree_path.clone(),
                                 entry_id: None,
                                 path: old_file.path().clone(),
                                 mtime: old_file.mtime(),
@@ -640,6 +673,79 @@ impl Worktree {
             }
         }
     }
+
+    fn update_diagnostics(
+        &mut self,
+        params: lsp::PublishDiagnosticsParams,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Result<()> {
+        let this = self.as_local_mut().ok_or_else(|| anyhow!("not local"))?;
+        let file_path = params
+            .uri
+            .to_file_path()
+            .map_err(|_| anyhow!("URI is not a file"))?
+            .strip_prefix(&this.abs_path)
+            .context("path is not within worktree")?
+            .to_owned();
+
+        for buffer in this.open_buffers.values() {
+            if let Some(buffer) = buffer.upgrade(cx) {
+                if buffer
+                    .read(cx)
+                    .file()
+                    .map_or(false, |file| file.path().as_ref() == file_path)
+                {
+                    let (remote_id, operation) = buffer.update(cx, |buffer, cx| {
+                        (
+                            buffer.remote_id(),
+                            buffer.update_diagnostics(params.version, params.diagnostics, cx),
+                        )
+                    });
+                    self.send_buffer_update(remote_id, operation?, cx);
+                    return Ok(());
+                }
+            }
+        }
+
+        this.diagnostics.insert(file_path, params.diagnostics);
+        Ok(())
+    }
+
+    fn send_buffer_update(
+        &mut self,
+        buffer_id: u64,
+        operation: Operation,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some((rpc, remote_id)) = match self {
+            Worktree::Local(worktree) => worktree
+                .remote_id
+                .borrow()
+                .map(|id| (worktree.rpc.clone(), id)),
+            Worktree::Remote(worktree) => Some((worktree.client.clone(), worktree.remote_id)),
+        } {
+            cx.spawn(|worktree, mut cx| async move {
+                if let Err(error) = rpc
+                    .request(proto::UpdateBuffer {
+                        worktree_id: remote_id,
+                        buffer_id,
+                        operations: vec![language::proto::serialize_operation(&operation)],
+                    })
+                    .await
+                {
+                    worktree.update(&mut cx, |worktree, _| {
+                        log::error!("error sending buffer operation: {}", error);
+                        match worktree {
+                            Worktree::Local(t) => &mut t.queued_operations,
+                            Worktree::Remote(t) => &mut t.queued_operations,
+                        }
+                        .push((buffer_id, operation));
+                    });
+                }
+            })
+            .detach();
+        }
+    }
 }
 
 impl Deref for Worktree {
@@ -665,11 +771,13 @@ pub struct LocalWorktree {
     share: Option<ShareState>,
     open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
+    diagnostics: HashMap<PathBuf, Vec<lsp::Diagnostic>>,
     peers: HashMap<PeerId, ReplicaId>,
-    languages: Arc<LanguageRegistry>,
     queued_operations: Vec<(u64, Operation)>,
+    languages: Arc<LanguageRegistry>,
     rpc: Arc<Client>,
     fs: Arc<dyn Fs>,
+    language_servers: HashMap<String, Arc<LanguageServer>>,
 }
 
 #[derive(Default, Deserialize)]
@@ -777,11 +885,13 @@ impl LocalWorktree {
                 poll_task: None,
                 open_buffers: Default::default(),
                 shared_buffers: Default::default(),
+                diagnostics: Default::default(),
                 queued_operations: Default::default(),
                 peers: Default::default(),
                 languages,
                 rpc,
                 fs,
+                language_servers: Default::default(),
             };
 
             cx.spawn_weak(|this, mut cx| async move {
@@ -817,6 +927,51 @@ impl LocalWorktree {
         Ok((tree, scan_states_tx))
     }
 
+    pub fn languages(&self) -> &LanguageRegistry {
+        &self.languages
+    }
+
+    pub fn ensure_language_server(
+        &mut self,
+        language: &Language,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Option<Arc<LanguageServer>> {
+        if let Some(server) = self.language_servers.get(language.name()) {
+            return Some(server.clone());
+        }
+
+        if let Some(language_server) = language
+            .start_server(self.abs_path(), cx)
+            .log_err()
+            .flatten()
+        {
+            let (diagnostics_tx, diagnostics_rx) = smol::channel::unbounded();
+            language_server
+                .on_notification::<lsp::notification::PublishDiagnostics, _>(move |params| {
+                    smol::block_on(diagnostics_tx.send(params)).ok();
+                })
+                .detach();
+            cx.spawn_weak(|this, mut cx| async move {
+                while let Ok(diagnostics) = diagnostics_rx.recv().await {
+                    if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
+                        handle.update(&mut cx, |this, cx| {
+                            this.update_diagnostics(diagnostics, cx).log_err();
+                        });
+                    } else {
+                        break;
+                    }
+                }
+            })
+            .detach();
+
+            self.language_servers
+                .insert(language.name().to_string(), language_server.clone());
+            Some(language_server.clone())
+        } else {
+            None
+        }
+    }
+
     pub fn open_buffer(
         &mut self,
         path: &Path,
@@ -847,26 +1002,32 @@ impl LocalWorktree {
                 let (file, contents) = this
                     .update(&mut cx, |this, cx| this.as_local().unwrap().load(&path, cx))
                     .await?;
-                let language = this.read_with(&cx, |this, cx| {
+                let language = this.read_with(&cx, |this, _| {
                     use language::File;
-
-                    this.languages()
-                        .select_language(file.full_path(cx))
-                        .cloned()
+                    this.languages().select_language(file.full_path()).cloned()
+                });
+                let (diagnostics, language_server) = this.update(&mut cx, |this, cx| {
+                    let this = this.as_local_mut().unwrap();
+                    (
+                        this.diagnostics.remove(path.as_ref()),
+                        language
+                            .as_ref()
+                            .and_then(|language| this.ensure_language_server(language, cx)),
+                    )
                 });
                 let buffer = cx.add_model(|cx| {
-                    Buffer::from_history(
-                        0,
-                        History::new(contents.into()),
-                        Some(Box::new(file)),
-                        language,
-                        cx,
-                    )
+                    let mut buffer = Buffer::from_file(0, contents, Box::new(file), cx);
+                    buffer.set_language(language, language_server, cx);
+                    if let Some(diagnostics) = diagnostics {
+                        buffer.update_diagnostics(None, diagnostics, cx).unwrap();
+                    }
+                    buffer
                 });
                 this.update(&mut cx, |this, _| {
                     let this = this
                         .as_local_mut()
                         .ok_or_else(|| anyhow!("must be a local worktree"))?;
+
                     this.open_buffers.insert(buffer.id(), buffer.downgrade());
                     Ok(buffer)
                 })
@@ -1009,6 +1170,7 @@ impl LocalWorktree {
     fn load(&self, path: &Path, cx: &mut ModelContext<Worktree>) -> Task<Result<(File, String)>> {
         let handle = cx.handle();
         let path = Arc::from(path);
+        let worktree_path = self.abs_path.clone();
         let abs_path = self.absolutize(&path);
         let background_snapshot = self.background_snapshot.clone();
         let fs = self.fs.clone();
@@ -1017,7 +1179,17 @@ impl LocalWorktree {
             // Eagerly populate the snapshot with an updated entry for the loaded file
             let entry = refresh_entry(fs.as_ref(), &background_snapshot, path, &abs_path).await?;
             this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
-            Ok((File::new(entry.id, handle, entry.path, entry.mtime), text))
+            Ok((
+                File {
+                    entry_id: Some(entry.id),
+                    worktree: handle,
+                    worktree_path,
+                    path: entry.path,
+                    mtime: entry.mtime,
+                    is_local: true,
+                },
+                text,
+            ))
         })
     }
 
@@ -1032,11 +1204,16 @@ impl LocalWorktree {
         cx.spawn(|this, mut cx| async move {
             let entry = save.await?;
             this.update(&mut cx, |this, cx| {
-                this.as_local_mut()
-                    .unwrap()
-                    .open_buffers
-                    .insert(buffer.id(), buffer.downgrade());
-                Ok(File::new(entry.id, cx.handle(), entry.path, entry.mtime))
+                let this = this.as_local_mut().unwrap();
+                this.open_buffers.insert(buffer.id(), buffer.downgrade());
+                Ok(File {
+                    entry_id: Some(entry.id),
+                    worktree: cx.handle(),
+                    worktree_path: this.abs_path.clone(),
+                    path: entry.path,
+                    mtime: entry.mtime,
+                    is_local: true,
+                })
             })
         })
     }
@@ -1225,6 +1402,7 @@ impl RemoteWorktree {
         let rpc = self.client.clone();
         let replica_id = self.replica_id;
         let remote_worktree_id = self.remote_id;
+        let root_path = self.snapshot.abs_path.clone();
         let path = path.to_string_lossy().to_string();
         cx.spawn_weak(|this, mut cx| async move {
             if let Some(existing_buffer) = existing_buffer {
@@ -1245,25 +1423,24 @@ impl RemoteWorktree {
                 let this = this
                     .upgrade(&cx)
                     .ok_or_else(|| anyhow!("worktree was closed"))?;
-                let file = File::new(entry.id, this.clone(), entry.path, entry.mtime);
-                let language = this.read_with(&cx, |this, cx| {
+                let file = File {
+                    entry_id: Some(entry.id),
+                    worktree: this.clone(),
+                    worktree_path: root_path,
+                    path: entry.path,
+                    mtime: entry.mtime,
+                    is_local: false,
+                };
+                let language = this.read_with(&cx, |this, _| {
                     use language::File;
-
-                    this.languages()
-                        .select_language(file.full_path(cx))
-                        .cloned()
+                    this.languages().select_language(file.full_path()).cloned()
                 });
                 let remote_buffer = response.buffer.ok_or_else(|| anyhow!("empty buffer"))?;
                 let buffer_id = remote_buffer.id as usize;
                 let buffer = cx.add_model(|cx| {
-                    Buffer::from_proto(
-                        replica_id,
-                        remote_buffer,
-                        Some(Box::new(file)),
-                        language,
-                        cx,
-                    )
-                    .unwrap()
+                    Buffer::from_proto(replica_id, remote_buffer, Some(Box::new(file)), cx)
+                        .unwrap()
+                        .with_language(language, None, cx)
                 });
                 this.update(&mut cx, |this, cx| {
                     let this = this.as_remote_mut().unwrap();
@@ -1738,24 +1915,10 @@ impl fmt::Debug for Snapshot {
 pub struct File {
     entry_id: Option<usize>,
     worktree: ModelHandle<Worktree>,
+    worktree_path: Arc<Path>,
     pub path: Arc<Path>,
     pub mtime: SystemTime,
-}
-
-impl File {
-    pub fn new(
-        entry_id: usize,
-        worktree: ModelHandle<Worktree>,
-        path: Arc<Path>,
-        mtime: SystemTime,
-    ) -> Self {
-        Self {
-            entry_id: Some(entry_id),
-            worktree,
-            path,
-            mtime,
-        }
-    }
+    is_local: bool,
 }
 
 impl language::File for File {
@@ -1775,20 +1938,29 @@ impl language::File for File {
         &self.path
     }
 
-    fn full_path(&self, cx: &AppContext) -> PathBuf {
-        let worktree = self.worktree.read(cx);
+    fn abs_path(&self) -> Option<PathBuf> {
+        if self.is_local {
+            Some(self.worktree_path.join(&self.path))
+        } else {
+            None
+        }
+    }
+
+    fn full_path(&self) -> PathBuf {
         let mut full_path = PathBuf::new();
-        full_path.push(worktree.root_name());
+        if let Some(worktree_name) = self.worktree_path.file_name() {
+            full_path.push(worktree_name);
+        }
         full_path.push(&self.path);
         full_path
     }
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
-    fn file_name<'a>(&'a self, cx: &'a AppContext) -> Option<OsString> {
+    fn file_name<'a>(&'a self) -> Option<OsString> {
         self.path
             .file_name()
-            .or_else(|| Some(OsStr::new(self.worktree.read(cx).root_name())))
+            .or_else(|| self.worktree_path.file_name())
             .map(Into::into)
     }
 
@@ -1855,34 +2027,7 @@ impl language::File for File {
 
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext) {
         self.worktree.update(cx, |worktree, cx| {
-            if let Some((rpc, remote_id)) = match worktree {
-                Worktree::Local(worktree) => worktree
-                    .remote_id
-                    .borrow()
-                    .map(|id| (worktree.rpc.clone(), id)),
-                Worktree::Remote(worktree) => Some((worktree.client.clone(), worktree.remote_id)),
-            } {
-                cx.spawn(|worktree, mut cx| async move {
-                    if let Err(error) = rpc
-                        .request(proto::UpdateBuffer {
-                            worktree_id: remote_id,
-                            buffer_id,
-                            operations: vec![(&operation).into()],
-                        })
-                        .await
-                    {
-                        worktree.update(&mut cx, |worktree, _| {
-                            log::error!("error sending buffer operation: {}", error);
-                            match worktree {
-                                Worktree::Local(t) => &mut t.queued_operations,
-                                Worktree::Remote(t) => &mut t.queued_operations,
-                            }
-                            .push((buffer_id, operation));
-                        });
-                    }
-                })
-                .detach();
-            }
+            worktree.send_buffer_update(buffer_id, operation, cx);
         });
     }
 
@@ -2798,8 +2943,12 @@ mod tests {
     use super::*;
     use crate::fs::FakeFs;
     use anyhow::Result;
+    use buffer::Point;
     use client::test::FakeServer;
     use fs::RealFs;
+    use language::{tree_sitter_rust, LanguageServerConfig};
+    use language::{Diagnostic, LanguageConfig};
+    use lsp::Url;
     use rand::prelude::*;
     use serde_json::json;
     use std::{cell::RefCell, rc::Rc};
@@ -3416,6 +3565,81 @@ mod tests {
         buffer
             .condition(&cx, |buffer, _| buffer.has_conflict())
             .await;
+    }
+
+    #[gpui::test]
+    async fn test_language_server_diagnostics(mut cx: gpui::TestAppContext) {
+        simplelog::SimpleLogger::init(log::LevelFilter::Info, Default::default()).unwrap();
+
+        let (language_server_config, mut fake_server) =
+            LanguageServerConfig::fake(cx.background()).await;
+        let mut languages = LanguageRegistry::new();
+        languages.add(Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".to_string(),
+                path_suffixes: vec!["rs".to_string()],
+                language_server: Some(language_server_config),
+                ..Default::default()
+            },
+            tree_sitter_rust::language(),
+        )));
+
+        let dir = temp_tree(json!({
+            "a.rs": "fn a() { A }",
+            "b.rs": "const y: i32 = 1",
+        }));
+
+        let tree = Worktree::open_local(
+            Client::new(),
+            dir.path(),
+            Arc::new(RealFs),
+            Arc::new(languages),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+
+        // Cause worktree to start the fake language server
+        let _buffer = tree
+            .update(&mut cx, |tree, cx| tree.open_buffer("b.rs", cx))
+            .await
+            .unwrap();
+
+        fake_server
+            .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+                uri: Url::from_file_path(dir.path().join("a.rs")).unwrap(),
+                version: None,
+                diagnostics: vec![lsp::Diagnostic {
+                    range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                    severity: Some(lsp::DiagnosticSeverity::ERROR),
+                    message: "undefined variable 'A'".to_string(),
+                    ..Default::default()
+                }],
+            })
+            .await;
+
+        let buffer = tree
+            .update(&mut cx, |tree, cx| tree.open_buffer("a.rs", cx))
+            .await
+            .unwrap();
+
+        buffer.read_with(&cx, |buffer, _| {
+            let diagnostics = buffer
+                .diagnostics_in_range(0..buffer.len())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                diagnostics,
+                &[(
+                    Point::new(0, 9)..Point::new(0, 10),
+                    &Diagnostic {
+                        severity: lsp::DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'A'".to_string()
+                    }
+                )]
+            )
+        });
     }
 
     #[gpui::test(iterations = 100)]

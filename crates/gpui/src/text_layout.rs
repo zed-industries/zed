@@ -28,7 +28,7 @@ pub struct TextLayoutCache {
 pub struct RunStyle {
     pub color: Color,
     pub font_id: FontId,
-    pub underline: bool,
+    pub underline: Option<Color>,
 }
 
 impl TextLayoutCache {
@@ -167,7 +167,7 @@ impl<'a> Hash for CacheKeyRef<'a> {
 #[derive(Default, Debug)]
 pub struct Line {
     layout: Arc<LineLayout>,
-    style_runs: SmallVec<[(u32, Color, bool); 32]>,
+    style_runs: SmallVec<[(u32, Color, Option<Color>); 32]>,
 }
 
 #[derive(Default, Debug)]
@@ -249,7 +249,7 @@ impl Line {
         let mut style_runs = self.style_runs.iter();
         let mut run_end = 0;
         let mut color = Color::black();
-        let mut underline_start = None;
+        let mut underline = None;
 
         for run in &self.layout.runs {
             let max_glyph_width = cx
@@ -268,24 +268,24 @@ impl Line {
                 }
 
                 if glyph.index >= run_end {
-                    if let Some((run_len, run_color, run_underlined)) = style_runs.next() {
-                        if let Some(underline_origin) = underline_start {
-                            if !*run_underlined || *run_color != color {
+                    if let Some((run_len, run_color, run_underline_color)) = style_runs.next() {
+                        if let Some((underline_origin, underline_color)) = underline {
+                            if *run_underline_color != Some(underline_color) {
                                 cx.scene.push_underline(scene::Quad {
                                     bounds: RectF::from_points(
                                         underline_origin,
                                         glyph_origin + vec2f(0., 1.),
                                     ),
-                                    background: Some(color),
+                                    background: Some(underline_color),
                                     border: Default::default(),
                                     corner_radius: 0.,
                                 });
-                                underline_start = None;
+                                underline = None;
                             }
                         }
 
-                        if *run_underlined {
-                            underline_start.get_or_insert(glyph_origin);
+                        if let Some(run_underline_color) = run_underline_color {
+                            underline.get_or_insert((glyph_origin, *run_underline_color));
                         }
 
                         run_end += *run_len as usize;
@@ -293,13 +293,13 @@ impl Line {
                     } else {
                         run_end = self.layout.len;
                         color = Color::black();
-                        if let Some(underline_origin) = underline_start.take() {
+                        if let Some((underline_origin, underline_color)) = underline.take() {
                             cx.scene.push_underline(scene::Quad {
                                 bounds: RectF::from_points(
                                     underline_origin,
                                     glyph_origin + vec2f(0., 1.),
                                 ),
-                                background: Some(color),
+                                background: Some(underline_color),
                                 border: Default::default(),
                                 corner_radius: 0.,
                             });
@@ -317,12 +317,12 @@ impl Line {
             }
         }
 
-        if let Some(underline_start) = underline_start.take() {
+        if let Some((underline_start, underline_color)) = underline.take() {
             let line_end = origin + baseline_offset + vec2f(self.layout.width, 0.);
 
             cx.scene.push_underline(scene::Quad {
                 bounds: RectF::from_points(underline_start, line_end + vec2f(0., 1.)),
-                background: Some(color),
+                background: Some(underline_color),
                 border: Default::default(),
                 corner_radius: 0.,
             });
@@ -597,7 +597,7 @@ impl LineWrapper {
                     RunStyle {
                         font_id: self.font_id,
                         color: Default::default(),
-                        underline: false,
+                        underline: None,
                     },
                 )],
             )
@@ -681,7 +681,7 @@ mod tests {
         let normal = RunStyle {
             font_id,
             color: Default::default(),
-            underline: false,
+            underline: None,
         };
         let bold = RunStyle {
             font_id: font_cache
@@ -694,7 +694,7 @@ mod tests {
                 )
                 .unwrap(),
             color: Default::default(),
-            underline: false,
+            underline: None,
         };
 
         let text = "aa bbb cccc ddddd eeee";

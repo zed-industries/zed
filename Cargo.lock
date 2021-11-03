@@ -329,6 +329,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-pipe"
+version = "0.1.3"
+source = "git+https://github.com/routerify/async-pipe-rs?rev=feeb77e83142a9ff837d0767652ae41bfc5d8e47#feeb77e83142a9ff837d0767652ae41bfc5d8e47"
+dependencies = [
+ "futures",
+ "log",
+]
+
+[[package]]
 name = "async-process"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -752,7 +761,6 @@ dependencies = [
  "gpui",
  "log",
  "rand 0.8.3",
- "rpc",
  "seahash",
  "smallvec",
  "sum_tree",
@@ -2300,6 +2308,7 @@ dependencies = [
  "etagere",
  "font-kit",
  "foreign-types",
+ "futures",
  "gpui_macros",
  "image 0.23.14",
  "lazy_static",
@@ -2819,7 +2828,9 @@ dependencies = [
  "gpui",
  "lazy_static",
  "log",
+ "lsp",
  "parking_lot",
+ "postage",
  "rand 0.8.3",
  "rpc",
  "serde 1.0.125",
@@ -2964,6 +2975,39 @@ dependencies = [
  "cfg-if 1.0.0",
  "generator",
  "scoped-tls",
+]
+
+[[package]]
+name = "lsp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-pipe",
+ "futures",
+ "gpui",
+ "log",
+ "lsp-types",
+ "parking_lot",
+ "postage",
+ "serde 1.0.125",
+ "serde_json 1.0.64",
+ "simplelog",
+ "smol",
+ "unindent",
+ "util",
+]
+
+[[package]]
+name = "lsp-types"
+version = "0.91.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be7801b458592d0998af808d97f6a85a6057af3aaf2a2a5c3c677702bbeb4ed7"
+dependencies = [
+ "bitflags 1.2.1",
+ "serde 1.0.125",
+ "serde_json 1.0.64",
+ "serde_repr",
+ "url",
 ]
 
 [[package]]
@@ -3780,16 +3824,19 @@ dependencies = [
  "lazy_static",
  "libc",
  "log",
+ "lsp",
  "parking_lot",
  "postage",
  "rand 0.8.3",
  "rpc",
  "serde 1.0.125",
  "serde_json 1.0.64",
+ "simplelog",
  "smol",
  "sum_tree",
  "tempdir",
  "toml 0.5.8",
+ "unindent",
  "util",
 ]
 
@@ -4587,6 +4634,17 @@ dependencies = [
  "percent-encoding",
  "serde 1.0.125",
  "thiserror",
+]
+
+[[package]]
+name = "serde_repr"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98d0516900518c29efa217c298fa1f4e6c6ffc85ae29fd7f4ee48f176e1a9ed5"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -6199,6 +6257,7 @@ dependencies = [
  "libc",
  "log",
  "log-panics",
+ "lsp",
  "num_cpus",
  "parking_lot",
  "people_panel",

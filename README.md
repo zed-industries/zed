@@ -6,6 +6,14 @@ Welcome to Zed, a lightning-fast, collaborative code editor that makes your drea
 
 ## Development tips
 
+### Compiling on macOS Monterey
+
+The Zed server uses libcurl, which currently triggers [a bug](https://github.com/rust-lang/rust/issues/90342) in `rustc`. To work around this bug, export the following environment variable:
+
+```
+export MACOSX_DEPLOYMENT_TARGET=10.7
+```
+
 ### Dump element JSON
 
 If you trigger `cmd-shift-i`, Zed will copy a JSON representation of the current window contents to the clipboard. You can paste this in a tool like [DJSON](https://chrome.google.com/webstore/detail/djson-json-viewer-formatt/chaeijjekipecdajnijdldjjipaegdjc?hl=en) to navigate the state of on-screen elements in a structured way.

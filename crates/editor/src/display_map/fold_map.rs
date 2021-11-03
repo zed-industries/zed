@@ -1,5 +1,8 @@
 use gpui::{AppContext, ModelHandle};
-use language::{Anchor, AnchorRangeExt, Buffer, HighlightId, Point, TextSummary, ToOffset};
+use language::{
+    Anchor, AnchorRangeExt, Buffer, HighlightId, HighlightedChunk, Point, PointUtf16, TextSummary,
+    ToOffset,
+};
 use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
@@ -110,9 +113,8 @@ impl<'a> FoldMapWriter<'a> {
                 let fold = Fold(buffer.anchor_after(range.start)..buffer.anchor_before(range.end));
                 folds.push(fold);
                 edits.push(buffer::Edit {
-                    old_bytes: range.clone(),
-                    new_bytes: range.clone(),
-                    ..Default::default()
+                    old: range.clone(),
+                    new: range,
                 });
             }
         }
@@ -155,9 +157,8 @@ impl<'a> FoldMapWriter<'a> {
             while let Some(fold) = folds_cursor.item() {
                 let offset_range = fold.0.start.to_offset(&buffer)..fold.0.end.to_offset(&buffer);
                 edits.push(buffer::Edit {
-                    old_bytes: offset_range.clone(),
-                    new_bytes: offset_range,
-                    ..Default::default()
+                    old: offset_range.clone(),
+                    new: offset_range,
                 });
                 fold_ixs_to_delete.push(*folds_cursor.start());
                 folds_cursor.next(&buffer);
@@ -202,6 +203,7 @@ pub struct FoldMap {
 struct SyncState {
     version: clock::Global,
     parse_count: usize,
+    diagnostics_update_count: usize,
 }
 
 impl FoldMap {
@@ -223,6 +225,7 @@ impl FoldMap {
             last_sync: Mutex::new(SyncState {
                 version: buffer.version(),
                 parse_count: buffer.parse_count(),
+                diagnostics_update_count: buffer.diagnostics_update_count(),
             }),
             version: AtomicUsize::new(0),
         };
@@ -254,14 +257,17 @@ impl FoldMap {
             SyncState {
                 version: buffer.version(),
                 parse_count: buffer.parse_count(),
+                diagnostics_update_count: buffer.diagnostics_update_count(),
             },
         );
         let edits = buffer
-            .edits_since(last_sync.version)
+            .edits_since(&last_sync.version)
             .map(Into::into)
             .collect::<Vec<_>>();
         if edits.is_empty() {
-            if last_sync.parse_count != buffer.parse_count() {
+            if last_sync.parse_count != buffer.parse_count()
+                || last_sync.diagnostics_update_count != buffer.diagnostics_update_count()
+            {
                 self.version.fetch_add(1, SeqCst);
             }
             Vec::new()
@@ -281,7 +287,11 @@ impl FoldMap {
         }
     }
 
-    fn apply_edits(&self, buffer_edits: Vec<buffer::Edit>, cx: &AppContext) -> Vec<FoldEdit> {
+    fn apply_edits(
+        &self,
+        buffer_edits: Vec<buffer::Edit<usize>>,
+        cx: &AppContext,
+    ) -> Vec<FoldEdit> {
         let buffer = self.buffer.read(cx).snapshot();
         let mut buffer_edits_iter = buffer_edits.iter().cloned().peekable();
 
@@ -291,28 +301,28 @@ impl FoldMap {
         cursor.seek(&0, Bias::Right, &());
 
         while let Some(mut edit) = buffer_edits_iter.next() {
-            new_transforms.push_tree(cursor.slice(&edit.old_bytes.start, Bias::Left, &()), &());
-            edit.new_bytes.start -= edit.old_bytes.start - cursor.start();
-            edit.old_bytes.start = *cursor.start();
+            new_transforms.push_tree(cursor.slice(&edit.old.start, Bias::Left, &()), &());
+            edit.new.start -= edit.old.start - cursor.start();
+            edit.old.start = *cursor.start();
 
-            cursor.seek(&edit.old_bytes.end, Bias::Right, &());
+            cursor.seek(&edit.old.end, Bias::Right, &());
             cursor.next(&());
 
-            let mut delta = edit.delta();
+            let mut delta = edit.new.len() as isize - edit.old.len() as isize;
             loop {
-                edit.old_bytes.end = *cursor.start();
+                edit.old.end = *cursor.start();
 
                 if let Some(next_edit) = buffer_edits_iter.peek() {
-                    if next_edit.old_bytes.start > edit.old_bytes.end {
+                    if next_edit.old.start > edit.old.end {
                         break;
                     }
 
                     let next_edit = buffer_edits_iter.next().unwrap();
-                    delta += next_edit.delta();
+                    delta += next_edit.new.len() as isize - next_edit.old.len() as isize;
 
-                    if next_edit.old_bytes.end >= edit.old_bytes.end {
-                        edit.old_bytes.end = next_edit.old_bytes.end;
-                        cursor.seek(&edit.old_bytes.end, Bias::Right, &());
+                    if next_edit.old.end >= edit.old.end {
+                        edit.old.end = next_edit.old.end;
+                        cursor.seek(&edit.old.end, Bias::Right, &());
                         cursor.next(&());
                     }
                 } else {
@@ -320,10 +330,9 @@ impl FoldMap {
                 }
             }
 
-            edit.new_bytes.end =
-                ((edit.new_bytes.start + edit.deleted_bytes()) as isize + delta) as usize;
+            edit.new.end = ((edit.new.start + edit.old.len()) as isize + delta) as usize;
 
-            let anchor = buffer.anchor_before(edit.new_bytes.start);
+            let anchor = buffer.anchor_before(edit.new.start);
             let mut folds_cursor = self.folds.cursor::<Fold>();
             folds_cursor.seek(&Fold(anchor..Anchor::max()), Bias::Left, &buffer);
 
@@ -339,10 +348,7 @@ impl FoldMap {
             })
             .peekable();
 
-            while folds
-                .peek()
-                .map_or(false, |fold| fold.start < edit.new_bytes.end)
-            {
+            while folds.peek().map_or(false, |fold| fold.start < edit.new.end) {
                 let mut fold = folds.next().unwrap();
                 let sum = new_transforms.summary();
 
@@ -375,13 +381,15 @@ impl FoldMap {
                 if fold.end > fold.start {
                     let output_text = "…";
                     let chars = output_text.chars().count() as u32;
-                    let lines = super::Point::new(0, output_text.len() as u32);
+                    let lines = Point::new(0, output_text.len() as u32);
+                    let lines_utf16 = PointUtf16::new(0, output_text.encode_utf16().count() as u32);
                     new_transforms.push(
                         Transform {
                             summary: TransformSummary {
                                 output: TextSummary {
                                     bytes: output_text.len(),
                                     lines,
+                                    lines_utf16,
                                     first_line_chars: chars,
                                     last_line_chars: chars,
                                     longest_row: 0,
@@ -397,9 +405,8 @@ impl FoldMap {
             }
 
             let sum = new_transforms.summary();
-            if sum.input.bytes < edit.new_bytes.end {
-                let text_summary =
-                    buffer.text_summary_for_range(sum.input.bytes..edit.new_bytes.end);
+            if sum.input.bytes < edit.new.end {
+                let text_summary = buffer.text_summary_for_range(sum.input.bytes..edit.new.end);
                 new_transforms.push(
                     Transform {
                         summary: TransformSummary {
@@ -436,35 +443,35 @@ impl FoldMap {
             let mut new_transforms = new_transforms.cursor::<(usize, FoldOffset)>();
 
             for mut edit in buffer_edits {
-                old_transforms.seek(&edit.old_bytes.start, Bias::Left, &());
+                old_transforms.seek(&edit.old.start, Bias::Left, &());
                 if old_transforms.item().map_or(false, |t| t.is_fold()) {
-                    edit.old_bytes.start = old_transforms.start().0;
+                    edit.old.start = old_transforms.start().0;
                 }
                 let old_start =
-                    old_transforms.start().1 .0 + (edit.old_bytes.start - old_transforms.start().0);
+                    old_transforms.start().1 .0 + (edit.old.start - old_transforms.start().0);
 
-                old_transforms.seek_forward(&edit.old_bytes.end, Bias::Right, &());
+                old_transforms.seek_forward(&edit.old.end, Bias::Right, &());
                 if old_transforms.item().map_or(false, |t| t.is_fold()) {
                     old_transforms.next(&());
-                    edit.old_bytes.end = old_transforms.start().0;
+                    edit.old.end = old_transforms.start().0;
                 }
                 let old_end =
-                    old_transforms.start().1 .0 + (edit.old_bytes.end - old_transforms.start().0);
+                    old_transforms.start().1 .0 + (edit.old.end - old_transforms.start().0);
 
-                new_transforms.seek(&edit.new_bytes.start, Bias::Left, &());
+                new_transforms.seek(&edit.new.start, Bias::Left, &());
                 if new_transforms.item().map_or(false, |t| t.is_fold()) {
-                    edit.new_bytes.start = new_transforms.start().0;
+                    edit.new.start = new_transforms.start().0;
                 }
                 let new_start =
-                    new_transforms.start().1 .0 + (edit.new_bytes.start - new_transforms.start().0);
+                    new_transforms.start().1 .0 + (edit.new.start - new_transforms.start().0);
 
-                new_transforms.seek_forward(&edit.new_bytes.end, Bias::Right, &());
+                new_transforms.seek_forward(&edit.new.end, Bias::Right, &());
                 if new_transforms.item().map_or(false, |t| t.is_fold()) {
                     new_transforms.next(&());
-                    edit.new_bytes.end = new_transforms.start().0;
+                    edit.new.end = new_transforms.start().0;
                 }
                 let new_end =
-                    new_transforms.start().1 .0 + (edit.new_bytes.end - new_transforms.start().0);
+                    new_transforms.start().1 .0 + (edit.new.end - new_transforms.start().0);
 
                 fold_edits.push(FoldEdit {
                     old_bytes: FoldOffset(old_start)..FoldOffset(old_end),
@@ -720,7 +727,7 @@ fn intersecting_folds<'a, T>(
     folds: &'a SumTree<Fold>,
     range: Range<T>,
     inclusive: bool,
-) -> FilterCursor<'a, impl 'a + Fn(&FoldSummary) -> bool, Fold, usize>
+) -> FilterCursor<'a, impl 'a + FnMut(&FoldSummary) -> bool, Fold, usize>
 where
     T: ToOffset,
 {
@@ -741,22 +748,22 @@ where
     )
 }
 
-fn consolidate_buffer_edits(edits: &mut Vec<buffer::Edit>) {
+fn consolidate_buffer_edits(edits: &mut Vec<buffer::Edit<usize>>) {
     edits.sort_unstable_by(|a, b| {
-        a.old_bytes
+        a.old
             .start
-            .cmp(&b.old_bytes.start)
-            .then_with(|| b.old_bytes.end.cmp(&a.old_bytes.end))
+            .cmp(&b.old.start)
+            .then_with(|| b.old.end.cmp(&a.old.end))
     });
 
     let mut i = 1;
     while i < edits.len() {
         let edit = edits[i].clone();
         let prev_edit = &mut edits[i - 1];
-        if prev_edit.old_bytes.end >= edit.old_bytes.start {
-            prev_edit.old_bytes.end = prev_edit.old_bytes.end.max(edit.old_bytes.end);
-            prev_edit.new_bytes.start = prev_edit.new_bytes.start.min(edit.new_bytes.start);
-            prev_edit.new_bytes.end = prev_edit.new_bytes.end.max(edit.new_bytes.end);
+        if prev_edit.old.end >= edit.old.start {
+            prev_edit.old.end = prev_edit.old.end.max(edit.old.end);
+            prev_edit.new.start = prev_edit.new.start.min(edit.new.start);
+            prev_edit.new.end = prev_edit.new.end.max(edit.new.end);
             edits.remove(i);
             continue;
         }
@@ -995,12 +1002,12 @@ impl<'a> Iterator for Chunks<'a> {
 pub struct HighlightedChunks<'a> {
     transform_cursor: Cursor<'a, Transform, (FoldOffset, usize)>,
     buffer_chunks: language::HighlightedChunks<'a>,
-    buffer_chunk: Option<(usize, &'a str, HighlightId)>,
+    buffer_chunk: Option<(usize, HighlightedChunk<'a>)>,
     buffer_offset: usize,
 }
 
 impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = (&'a str, HighlightId);
+    type Item = HighlightedChunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let transform = if let Some(item) = self.transform_cursor.item() {
@@ -1022,34 +1029,35 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                 self.transform_cursor.next(&());
             }
 
-            return Some((output_text, HighlightId::default()));
+            return Some(HighlightedChunk {
+                text: output_text,
+                highlight_id: HighlightId::default(),
+                diagnostic: None,
+            });
         }
 
         // Retrieve a chunk from the current location in the buffer.
         if self.buffer_chunk.is_none() {
             let chunk_offset = self.buffer_chunks.offset();
-            self.buffer_chunk = self
-                .buffer_chunks
-                .next()
-                .map(|(chunk, capture_ix)| (chunk_offset, chunk, capture_ix));
+            self.buffer_chunk = self.buffer_chunks.next().map(|chunk| (chunk_offset, chunk));
         }
 
         // Otherwise, take a chunk from the buffer's text.
-        if let Some((chunk_offset, mut chunk, capture_ix)) = self.buffer_chunk {
+        if let Some((chunk_offset, mut chunk)) = self.buffer_chunk {
             let offset_in_chunk = self.buffer_offset - chunk_offset;
-            chunk = &chunk[offset_in_chunk..];
+            chunk.text = &chunk.text[offset_in_chunk..];
 
             // Truncate the chunk so that it ends at the next fold.
             let region_end = self.transform_cursor.end(&()).1 - self.buffer_offset;
-            if chunk.len() >= region_end {
-                chunk = &chunk[0..region_end];
+            if chunk.text.len() >= region_end {
+                chunk.text = &chunk.text[0..region_end];
                 self.transform_cursor.next(&());
             } else {
                 self.buffer_chunk.take();
             }
 
-            self.buffer_offset += chunk.len();
-            return Some((chunk, capture_ix));
+            self.buffer_offset += chunk.text.len();
+            return Some(chunk);
         }
 
         None
@@ -1335,7 +1343,9 @@ mod tests {
                         let start_version = buffer.version.clone();
                         let edit_count = rng.gen_range(1..=5);
                         buffer.randomly_edit(&mut rng, edit_count);
-                        buffer.edits_since(start_version).collect::<Vec<_>>()
+                        buffer
+                            .edits_since::<Point>(&start_version)
+                            .collect::<Vec<_>>()
                     });
                     log::info!("editing {:?}", edits);
                 }

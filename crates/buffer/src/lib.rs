@@ -1,6 +1,7 @@
 mod anchor;
 mod operation_queue;
 mod point;
+mod point_utf16;
 #[cfg(any(test, feature = "test-support"))]
 pub mod random_char_iter;
 pub mod rope;
@@ -13,16 +14,16 @@ use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use operation_queue::OperationQueue;
 pub use point::*;
+pub use point_utf16::*;
 #[cfg(any(test, feature = "test-support"))]
 pub use random_char_iter::*;
+use rope::TextDimension;
 pub use rope::{Chunks, Rope, TextSummary};
-use rpc::proto;
 pub use selection::*;
 use std::{
-    cmp,
-    convert::TryFrom,
+    cmp::{self, Reverse},
     iter::Iterator,
-    ops::Range,
+    ops::{self, Range},
     str,
     sync::Arc,
     time::{Duration, Instant},
@@ -32,7 +33,7 @@ use sum_tree::{FilterCursor, SumTree};
 
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Default)]
-struct DeterministicState;
+pub struct DeterministicState;
 
 #[cfg(any(test, feature = "test-support"))]
 impl std::hash::BuildHasher for DeterministicState {
@@ -78,7 +79,7 @@ pub struct Transaction {
     start: clock::Global,
     end: clock::Global,
     edits: Vec<clock::Local>,
-    ranges: Vec<Range<usize>>,
+    ranges: Vec<Range<FullOffset>>,
     selections_before: HashMap<SelectionSetId, Arc<AnchorRangeMap<SelectionState>>>,
     selections_after: HashMap<SelectionSetId, Arc<AnchorRangeMap<SelectionState>>>,
     first_edit_at: Instant,
@@ -95,7 +96,7 @@ impl Transaction {
         self.end.observe(edit.timestamp.local());
 
         let mut other_ranges = edit.ranges.iter().peekable();
-        let mut new_ranges: Vec<Range<usize>> = Vec::new();
+        let mut new_ranges = Vec::new();
         let insertion_len = edit.new_text.as_ref().map_or(0, |t| t.len());
         let mut delta = 0;
 
@@ -309,48 +310,42 @@ impl UndoMap {
     }
 }
 
-struct Edits<'a, F: Fn(&FragmentSummary) -> bool> {
-    visible_text: &'a Rope,
-    deleted_text: &'a Rope,
-    cursor: Option<FilterCursor<'a, F, Fragment, FragmentTextSummary>>,
+struct Edits<'a, D: TextDimension<'a>, F: FnMut(&FragmentSummary) -> bool> {
+    visible_cursor: rope::Cursor<'a>,
+    deleted_cursor: rope::Cursor<'a>,
+    fragments_cursor: Option<FilterCursor<'a, F, Fragment, FragmentTextSummary>>,
     undos: &'a UndoMap,
-    since: clock::Global,
-    old_offset: usize,
-    new_offset: usize,
-    old_point: Point,
-    new_point: Point,
+    since: &'a clock::Global,
+    old_end: D,
+    new_end: D,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Edit {
-    pub old_bytes: Range<usize>,
-    pub new_bytes: Range<usize>,
-    pub old_lines: Range<Point>,
+pub struct Edit<D> {
+    pub old: Range<D>,
+    pub new: Range<D>,
 }
 
-impl Edit {
-    pub fn delta(&self) -> isize {
-        self.inserted_bytes() as isize - self.deleted_bytes() as isize
-    }
-
-    pub fn deleted_bytes(&self) -> usize {
-        self.old_bytes.end - self.old_bytes.start
-    }
-
-    pub fn inserted_bytes(&self) -> usize {
-        self.new_bytes.end - self.new_bytes.start
-    }
-
-    pub fn deleted_lines(&self) -> Point {
-        self.old_lines.end - self.old_lines.start
+impl<D1, D2> Edit<(D1, D2)> {
+    pub fn flatten(self) -> (Edit<D1>, Edit<D2>) {
+        (
+            Edit {
+                old: self.old.start.0..self.old.end.0,
+                new: self.new.start.0..self.new.end.0,
+            },
+            Edit {
+                old: self.old.start.1..self.old.end.1,
+                new: self.new.start.1..self.new.end.1,
+            },
+        )
     }
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
-struct InsertionTimestamp {
-    replica_id: ReplicaId,
-    local: clock::Seq,
-    lamport: clock::Seq,
+pub struct InsertionTimestamp {
+    pub replica_id: ReplicaId,
+    pub local: clock::Seq,
+    pub lamport: clock::Seq,
 }
 
 impl InsertionTimestamp {
@@ -425,18 +420,18 @@ pub enum Operation {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EditOperation {
-    timestamp: InsertionTimestamp,
-    version: clock::Global,
-    ranges: Vec<Range<usize>>,
-    new_text: Option<String>,
+    pub timestamp: InsertionTimestamp,
+    pub version: clock::Global,
+    pub ranges: Vec<Range<FullOffset>>,
+    pub new_text: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UndoOperation {
-    id: clock::Local,
-    counts: HashMap<clock::Local, u32>,
-    ranges: Vec<Range<usize>>,
-    version: clock::Global,
+    pub id: clock::Local,
+    pub counts: HashMap<clock::Local, u32>,
+    pub ranges: Vec<Range<FullOffset>>,
+    pub version: clock::Global,
 }
 
 impl Buffer {
@@ -475,34 +470,6 @@ impl Buffer {
         }
     }
 
-    pub fn from_proto(replica_id: u16, message: proto::Buffer) -> Result<Self> {
-        let mut buffer = Buffer::new(replica_id, message.id, History::new(message.content.into()));
-        let ops = message
-            .history
-            .into_iter()
-            .map(|op| Operation::Edit(op.into()));
-        buffer.apply_ops(ops)?;
-        buffer.selections = message
-            .selections
-            .into_iter()
-            .map(|set| {
-                let set = SelectionSet::try_from(set)?;
-                Result::<_, anyhow::Error>::Ok((set.id, set))
-            })
-            .collect::<Result<_, _>>()?;
-        Ok(buffer)
-    }
-
-    pub fn to_proto(&self) -> proto::Buffer {
-        let ops = self.history.ops.values().map(Into::into).collect();
-        proto::Buffer {
-            id: self.remote_id,
-            content: self.history.base_text.to_string(),
-            history: ops,
-            selections: self.selections.iter().map(|(_, set)| set.into()).collect(),
-        }
-    }
-
     pub fn version(&self) -> clock::Global {
         self.version.clone()
     }
@@ -510,6 +477,8 @@ impl Buffer {
     pub fn snapshot(&self) -> Snapshot {
         Snapshot {
             visible_text: self.visible_text.clone(),
+            deleted_text: self.deleted_text.clone(),
+            undo_map: self.undo_map.clone(),
             fragments: self.fragments.clone(),
             version: self.version.clone(),
         }
@@ -551,7 +520,7 @@ impl Buffer {
     }
 
     pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
-        self.visible_text.clip_point(point, bias)
+        self.content().clip_point(point, bias)
     }
 
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
@@ -717,7 +686,7 @@ impl Buffer {
                 fragment_start = old_fragments.start().visible;
             }
 
-            let full_range_start = range.start + old_fragments.start().deleted;
+            let full_range_start = FullOffset(range.start + old_fragments.start().deleted);
 
             // Preserve any portion of the current fragment that precedes this range.
             if fragment_start < range.start {
@@ -765,7 +734,7 @@ impl Buffer {
                 }
             }
 
-            let full_range_end = range.end + old_fragments.start().deleted;
+            let full_range_end = FullOffset(range.end + old_fragments.start().deleted);
             edit.ranges.push(full_range_start..full_range_end);
         }
 
@@ -884,7 +853,7 @@ impl Buffer {
     fn apply_remote_edit(
         &mut self,
         version: &clock::Global,
-        ranges: &[Range<usize>],
+        ranges: &[Range<FullOffset>],
         new_text: Option<&str>,
         timestamp: InsertionTimestamp,
     ) {
@@ -895,24 +864,27 @@ impl Buffer {
         let cx = Some(version.clone());
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
-        let mut old_fragments = self.fragments.cursor::<VersionedOffset>();
-        let mut new_fragments =
-            old_fragments.slice(&VersionedOffset::Offset(ranges[0].start), Bias::Left, &cx);
+        let mut old_fragments = self.fragments.cursor::<VersionedFullOffset>();
+        let mut new_fragments = old_fragments.slice(
+            &VersionedFullOffset::Offset(ranges[0].start),
+            Bias::Left,
+            &cx,
+        );
         new_ropes.push_tree(new_fragments.summary().text);
 
-        let mut fragment_start = old_fragments.start().offset();
+        let mut fragment_start = old_fragments.start().full_offset();
         for range in ranges {
-            let fragment_end = old_fragments.end(&cx).offset();
+            let fragment_end = old_fragments.end(&cx).full_offset();
 
             // If the current fragment ends before this range, then jump ahead to the first fragment
             // that extends past the start of this range, reusing any intervening fragments.
             if fragment_end < range.start {
                 // If the current fragment has been partially consumed, then consume the rest of it
                 // and advance to the next fragment before slicing.
-                if fragment_start > old_fragments.start().offset() {
+                if fragment_start > old_fragments.start().full_offset() {
                     if fragment_end > fragment_start {
                         let mut suffix = old_fragments.item().unwrap().clone();
-                        suffix.len = fragment_end - fragment_start;
+                        suffix.len = fragment_end.0 - fragment_start.0;
                         new_ropes.push_fragment(&suffix, suffix.visible);
                         new_fragments.push(suffix, &None);
                     }
@@ -920,21 +892,21 @@ impl Buffer {
                 }
 
                 let slice =
-                    old_fragments.slice(&VersionedOffset::Offset(range.start), Bias::Left, &cx);
+                    old_fragments.slice(&VersionedFullOffset::Offset(range.start), Bias::Left, &cx);
                 new_ropes.push_tree(slice.summary().text);
                 new_fragments.push_tree(slice, &None);
-                fragment_start = old_fragments.start().offset();
+                fragment_start = old_fragments.start().full_offset();
             }
 
             // If we are at the end of a non-concurrent fragment, advance to the next one.
-            let fragment_end = old_fragments.end(&cx).offset();
+            let fragment_end = old_fragments.end(&cx).full_offset();
             if fragment_end == range.start && fragment_end > fragment_start {
                 let mut fragment = old_fragments.item().unwrap().clone();
-                fragment.len = fragment_end - fragment_start;
+                fragment.len = fragment_end.0 - fragment_start.0;
                 new_ropes.push_fragment(&fragment, fragment.visible);
                 new_fragments.push(fragment, &None);
                 old_fragments.next(&cx);
-                fragment_start = old_fragments.start().offset();
+                fragment_start = old_fragments.start().full_offset();
             }
 
             // Skip over insertions that are concurrent to this edit, but have a lower lamport
@@ -956,7 +928,7 @@ impl Buffer {
             // Preserve any portion of the current fragment that precedes this range.
             if fragment_start < range.start {
                 let mut prefix = old_fragments.item().unwrap().clone();
-                prefix.len = range.start - fragment_start;
+                prefix.len = range.start.0 - fragment_start.0;
                 fragment_start = range.start;
                 new_ropes.push_fragment(&prefix, prefix.visible);
                 new_fragments.push(prefix, &None);
@@ -981,11 +953,11 @@ impl Buffer {
             // portions as deleted.
             while fragment_start < range.end {
                 let fragment = old_fragments.item().unwrap();
-                let fragment_end = old_fragments.end(&cx).offset();
+                let fragment_end = old_fragments.end(&cx).full_offset();
                 let mut intersection = fragment.clone();
                 let intersection_end = cmp::min(range.end, fragment_end);
                 if fragment.was_visible(version, &self.undo_map) {
-                    intersection.len = intersection_end - fragment_start;
+                    intersection.len = intersection_end.0 - fragment_start.0;
                     intersection.deletions.insert(timestamp.local());
                     intersection.visible = false;
                 }
@@ -1002,11 +974,11 @@ impl Buffer {
 
         // If the current fragment has been partially consumed, then consume the rest of it
         // and advance to the next fragment before slicing.
-        if fragment_start > old_fragments.start().offset() {
-            let fragment_end = old_fragments.end(&cx).offset();
+        if fragment_start > old_fragments.start().full_offset() {
+            let fragment_end = old_fragments.end(&cx).full_offset();
             if fragment_end > fragment_start {
                 let mut suffix = old_fragments.item().unwrap().clone();
-                suffix.len = fragment_end - fragment_start;
+                suffix.len = fragment_end.0 - fragment_start.0;
                 new_ropes.push_fragment(&suffix, suffix.visible);
                 new_fragments.push(suffix, &None);
             }
@@ -1035,9 +1007,9 @@ impl Buffer {
         }
         let cx = Some(cx);
 
-        let mut old_fragments = self.fragments.cursor::<VersionedOffset>();
+        let mut old_fragments = self.fragments.cursor::<VersionedFullOffset>();
         let mut new_fragments = old_fragments.slice(
-            &VersionedOffset::Offset(undo.ranges[0].start),
+            &VersionedFullOffset::Offset(undo.ranges[0].start),
             Bias::Right,
             &cx,
         );
@@ -1046,11 +1018,14 @@ impl Buffer {
         new_ropes.push_tree(new_fragments.summary().text);
 
         for range in &undo.ranges {
-            let mut end_offset = old_fragments.end(&cx).offset();
+            let mut end_offset = old_fragments.end(&cx).full_offset();
 
             if end_offset < range.start {
-                let preceding_fragments =
-                    old_fragments.slice(&VersionedOffset::Offset(range.start), Bias::Right, &cx);
+                let preceding_fragments = old_fragments.slice(
+                    &VersionedFullOffset::Offset(range.start),
+                    Bias::Right,
+                    &cx,
+                );
                 new_ropes.push_tree(preceding_fragments.summary().text);
                 new_fragments.push_tree(preceding_fragments, &None);
             }
@@ -1070,16 +1045,16 @@ impl Buffer {
                     new_fragments.push(fragment, &None);
 
                     old_fragments.next(&cx);
-                    if end_offset == old_fragments.end(&cx).offset() {
+                    if end_offset == old_fragments.end(&cx).full_offset() {
                         let unseen_fragments = old_fragments.slice(
-                            &VersionedOffset::Offset(end_offset),
+                            &VersionedFullOffset::Offset(end_offset),
                             Bias::Right,
                             &cx,
                         );
                         new_ropes.push_tree(unseen_fragments.summary().text);
                         new_fragments.push_tree(unseen_fragments, &None);
                     }
-                    end_offset = old_fragments.end(&cx).offset();
+                    end_offset = old_fragments.end(&cx).full_offset();
                 } else {
                     break;
                 }
@@ -1196,6 +1171,14 @@ impl Buffer {
     pub fn remove_peer(&mut self, replica_id: ReplicaId) {
         self.selections
             .retain(|set_id, _| set_id.replica_id != replica_id)
+    }
+
+    pub fn base_text(&self) -> &Arc<str> {
+        &self.history.base_text
+    }
+
+    pub fn history(&self) -> impl Iterator<Item = &EditOperation> {
+        self.history.ops.values()
     }
 
     pub fn undo(&mut self) -> Vec<Operation> {
@@ -1326,6 +1309,10 @@ impl Buffer {
         }
     }
 
+    pub fn add_raw_selection_set(&mut self, id: SelectionSetId, selections: SelectionSet) {
+        self.selections.insert(id, selections);
+    }
+
     pub fn set_active_selection_set(
         &mut self,
         set_id: Option<SelectionSetId>,
@@ -1360,28 +1347,14 @@ impl Buffer {
         })
     }
 
-    pub fn edits_since<'a>(&'a self, since: clock::Global) -> impl 'a + Iterator<Item = Edit> {
-        let since_2 = since.clone();
-        let cursor = if since == self.version {
-            None
-        } else {
-            Some(self.fragments.filter(
-                move |summary| summary.max_version.changed_since(&since_2),
-                &None,
-            ))
-        };
-
-        Edits {
-            visible_text: &self.visible_text,
-            deleted_text: &self.deleted_text,
-            cursor,
-            undos: &self.undo_map,
-            since,
-            old_offset: 0,
-            new_offset: 0,
-            old_point: Point::zero(),
-            new_point: Point::zero(),
-        }
+    pub fn edits_since<'a, D>(
+        &'a self,
+        since: &'a clock::Global,
+    ) -> impl 'a + Iterator<Item = Edit<D>>
+    where
+        D: 'a + TextDimension<'a> + Ord,
+    {
+        self.content().edits_since(since)
     }
 }
 
@@ -1539,6 +1512,8 @@ impl Buffer {
 #[derive(Clone)]
 pub struct Snapshot {
     visible_text: Rope,
+    deleted_text: Rope,
+    undo_map: UndoMap,
     fragments: SumTree<Fragment>,
     version: clock::Global,
 }
@@ -1598,11 +1573,11 @@ impl Snapshot {
     }
 
     pub fn to_offset(&self, point: Point) -> usize {
-        self.visible_text.to_offset(point)
+        self.visible_text.point_to_offset(point)
     }
 
     pub fn to_point(&self, offset: usize) -> Point {
-        self.visible_text.to_point(offset)
+        self.visible_text.offset_to_point(offset)
     }
 
     pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
@@ -1613,13 +1588,30 @@ impl Snapshot {
         self.content().anchor_at(position, Bias::Right)
     }
 
+    pub fn edits_since<'a, D>(
+        &'a self,
+        since: &'a clock::Global,
+    ) -> impl 'a + Iterator<Item = Edit<D>>
+    where
+        D: 'a + TextDimension<'a> + Ord,
+    {
+        self.content().edits_since(since)
+    }
+
+    pub fn version(&self) -> &clock::Global {
+        &self.version
+    }
+
     pub fn content(&self) -> Content {
         self.into()
     }
 }
 
+#[derive(Clone)]
 pub struct Content<'a> {
     visible_text: &'a Rope,
+    deleted_text: &'a Rope,
+    undo_map: &'a UndoMap,
     fragments: &'a SumTree<Fragment>,
     version: &'a clock::Global,
 }
@@ -1628,6 +1620,8 @@ impl<'a> From<&'a Snapshot> for Content<'a> {
     fn from(snapshot: &'a Snapshot) -> Self {
         Self {
             visible_text: &snapshot.visible_text,
+            deleted_text: &snapshot.deleted_text,
+            undo_map: &snapshot.undo_map,
             fragments: &snapshot.fragments,
             version: &snapshot.version,
         }
@@ -1638,6 +1632,8 @@ impl<'a> From<&'a Buffer> for Content<'a> {
     fn from(buffer: &'a Buffer) -> Self {
         Self {
             visible_text: &buffer.visible_text,
+            deleted_text: &buffer.deleted_text,
+            undo_map: &buffer.undo_map,
             fragments: &buffer.fragments,
             version: &buffer.version,
         }
@@ -1648,6 +1644,8 @@ impl<'a> From<&'a mut Buffer> for Content<'a> {
     fn from(buffer: &'a mut Buffer) -> Self {
         Self {
             visible_text: &buffer.visible_text,
+            deleted_text: &buffer.deleted_text,
+            undo_map: &buffer.undo_map,
             fragments: &buffer.fragments,
             version: &buffer.version,
         }
@@ -1658,6 +1656,8 @@ impl<'a> From<&'a Content<'a>> for Content<'a> {
     fn from(content: &'a Content) -> Self {
         Self {
             visible_text: &content.visible_text,
+            deleted_text: &content.deleted_text,
+            undo_map: &content.undo_map,
             fragments: &content.fragments,
             version: &content.version,
         }
@@ -1713,10 +1713,14 @@ impl<'a> Content<'a> {
 
     fn summary_for_anchor(&self, anchor: &Anchor) -> TextSummary {
         let cx = Some(anchor.version.clone());
-        let mut cursor = self.fragments.cursor::<(VersionedOffset, usize)>();
-        cursor.seek(&VersionedOffset::Offset(anchor.offset), anchor.bias, &cx);
+        let mut cursor = self.fragments.cursor::<(VersionedFullOffset, usize)>();
+        cursor.seek(
+            &VersionedFullOffset::Offset(anchor.full_offset),
+            anchor.bias,
+            &cx,
+        );
         let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
-            anchor.offset - cursor.start().0.offset()
+            anchor.full_offset - cursor.start().0.full_offset()
         } else {
             0
         };
@@ -1734,15 +1738,15 @@ impl<'a> Content<'a> {
         let cx = Some(map.version.clone());
         let mut summary = TextSummary::default();
         let mut rope_cursor = self.visible_text.cursor(0);
-        let mut cursor = self.fragments.cursor::<(VersionedOffset, usize)>();
+        let mut cursor = self.fragments.cursor::<(VersionedFullOffset, usize)>();
         map.entries.iter().map(move |((offset, bias), value)| {
-            cursor.seek_forward(&VersionedOffset::Offset(*offset), *bias, &cx);
+            cursor.seek_forward(&VersionedFullOffset::Offset(*offset), *bias, &cx);
             let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
-                offset - cursor.start().0.offset()
+                *offset - cursor.start().0.full_offset()
             } else {
                 0
             };
-            summary += rope_cursor.summary(cursor.start().1 + overshoot);
+            summary += rope_cursor.summary::<TextSummary>(cursor.start().1 + overshoot);
             (summary.clone(), value)
         })
     }
@@ -1754,29 +1758,33 @@ impl<'a> Content<'a> {
         let cx = Some(map.version.clone());
         let mut summary = TextSummary::default();
         let mut rope_cursor = self.visible_text.cursor(0);
-        let mut cursor = self.fragments.cursor::<(VersionedOffset, usize)>();
+        let mut cursor = self.fragments.cursor::<(VersionedFullOffset, usize)>();
         map.entries.iter().map(move |(range, value)| {
             let Range {
                 start: (start_offset, start_bias),
                 end: (end_offset, end_bias),
             } = range;
 
-            cursor.seek_forward(&VersionedOffset::Offset(*start_offset), *start_bias, &cx);
+            cursor.seek_forward(
+                &VersionedFullOffset::Offset(*start_offset),
+                *start_bias,
+                &cx,
+            );
             let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
-                start_offset - cursor.start().0.offset()
+                *start_offset - cursor.start().0.full_offset()
             } else {
                 0
             };
-            summary += rope_cursor.summary(cursor.start().1 + overshoot);
+            summary += rope_cursor.summary::<TextSummary>(cursor.start().1 + overshoot);
             let start_summary = summary.clone();
 
-            cursor.seek_forward(&VersionedOffset::Offset(*end_offset), *end_bias, &cx);
+            cursor.seek_forward(&VersionedFullOffset::Offset(*end_offset), *end_bias, &cx);
             let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
-                end_offset - cursor.start().0.offset()
+                *end_offset - cursor.start().0.full_offset()
             } else {
                 0
             };
-            summary += rope_cursor.summary(cursor.start().1 + overshoot);
+            summary += rope_cursor.summary::<TextSummary>(cursor.start().1 + overshoot);
             let end_summary = summary.clone();
 
             (start_summary..end_summary, value)
@@ -1784,13 +1792,8 @@ impl<'a> Content<'a> {
     }
 
     fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
-        let offset = position.to_offset(self);
-        let max_offset = self.len();
-        assert!(offset <= max_offset, "offset is out of range");
-        let mut cursor = self.fragments.cursor::<FragmentTextSummary>();
-        cursor.seek(&offset, bias, &None);
         Anchor {
-            offset: offset + cursor.start().deleted,
+            full_offset: position.to_full_offset(self, bias),
             bias,
             version: self.version.clone(),
         }
@@ -1806,7 +1809,7 @@ impl<'a> Content<'a> {
             .into_iter()
             .map(|((offset, bias), value)| {
                 cursor.seek_forward(&offset, bias, &None);
-                let full_offset = cursor.start().deleted + offset;
+                let full_offset = FullOffset(cursor.start().deleted + offset);
                 ((full_offset, bias), value)
             })
             .collect();
@@ -1828,9 +1831,9 @@ impl<'a> Content<'a> {
                     end: (end_offset, end_bias),
                 } = range;
                 cursor.seek_forward(&start_offset, start_bias, &None);
-                let full_start_offset = cursor.start().deleted + start_offset;
+                let full_start_offset = FullOffset(cursor.start().deleted + start_offset);
                 cursor.seek_forward(&end_offset, end_bias, &None);
-                let full_end_offset = cursor.start().deleted + end_offset;
+                let full_end_offset = FullOffset(cursor.start().deleted + end_offset);
                 (
                     (full_start_offset, start_bias)..(full_end_offset, end_bias),
                     value,
@@ -1855,19 +1858,61 @@ impl<'a> Content<'a> {
         AnchorRangeSet(self.anchor_range_map(entries.into_iter().map(|range| (range, ()))))
     }
 
-    fn full_offset_for_anchor(&self, anchor: &Anchor) -> usize {
+    pub fn anchor_range_multimap<T, E, O>(
+        &self,
+        start_bias: Bias,
+        end_bias: Bias,
+        entries: E,
+    ) -> AnchorRangeMultimap<T>
+    where
+        T: Clone,
+        E: IntoIterator<Item = (Range<O>, T)>,
+        O: ToOffset,
+    {
+        let mut entries = entries
+            .into_iter()
+            .map(|(range, value)| AnchorRangeMultimapEntry {
+                range: FullOffsetRange {
+                    start: range.start.to_full_offset(self, start_bias),
+                    end: range.end.to_full_offset(self, end_bias),
+                },
+                value,
+            })
+            .collect::<Vec<_>>();
+        entries.sort_unstable_by_key(|i| (i.range.start, Reverse(i.range.end)));
+        AnchorRangeMultimap {
+            entries: SumTree::from_iter(entries, &()),
+            version: self.version.clone(),
+            start_bias,
+            end_bias,
+        }
+    }
+
+    fn full_offset_for_anchor(&self, anchor: &Anchor) -> FullOffset {
         let cx = Some(anchor.version.clone());
         let mut cursor = self
             .fragments
-            .cursor::<(VersionedOffset, FragmentTextSummary)>();
-        cursor.seek(&VersionedOffset::Offset(anchor.offset), anchor.bias, &cx);
+            .cursor::<(VersionedFullOffset, FragmentTextSummary)>();
+        cursor.seek(
+            &VersionedFullOffset::Offset(anchor.full_offset),
+            anchor.bias,
+            &cx,
+        );
         let overshoot = if cursor.item().is_some() {
-            anchor.offset - cursor.start().0.offset()
+            anchor.full_offset - cursor.start().0.full_offset()
         } else {
             0
         };
         let summary = cursor.start().1;
-        summary.visible + summary.deleted + overshoot
+        FullOffset(summary.visible + summary.deleted + overshoot)
+    }
+
+    pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
+        self.visible_text.clip_point(point, bias)
+    }
+
+    pub fn clip_point_utf16(&self, point: PointUtf16, bias: Bias) -> PointUtf16 {
+        self.visible_text.clip_point_utf16(point, bias)
     }
 
     fn point_for_offset(&self, offset: usize) -> Result<Point> {
@@ -1875,6 +1920,30 @@ impl<'a> Content<'a> {
             Ok(self.text_summary_for_range(0..offset).lines)
         } else {
             Err(anyhow!("offset out of bounds"))
+        }
+    }
+
+    pub fn edits_since<D>(&self, since: &'a clock::Global) -> impl 'a + Iterator<Item = Edit<D>>
+    where
+        D: 'a + TextDimension<'a> + Ord,
+    {
+        let fragments_cursor = if since == self.version {
+            None
+        } else {
+            Some(self.fragments.filter(
+                move |summary| summary.max_version.changed_since(since),
+                &None,
+            ))
+        };
+
+        Edits {
+            visible_cursor: self.visible_text.cursor(0),
+            deleted_cursor: self.deleted_text.cursor(0),
+            fragments_cursor,
+            undos: &self.undo_map,
+            since,
+            old_end: Default::default(),
+            new_end: Default::default(),
         }
     }
 }
@@ -1932,67 +2001,61 @@ impl<'a> RopeBuilder<'a> {
     }
 }
 
-impl<'a, F: Fn(&FragmentSummary) -> bool> Iterator for Edits<'a, F> {
-    type Item = Edit;
+impl<'a, D: TextDimension<'a> + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator
+    for Edits<'a, D, F>
+{
+    type Item = Edit<D>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut change: Option<Edit> = None;
-        let cursor = self.cursor.as_mut()?;
+        let mut pending_edit: Option<Edit<D>> = None;
+        let cursor = self.fragments_cursor.as_mut()?;
 
         while let Some(fragment) = cursor.item() {
-            let bytes = cursor.start().visible - self.new_offset;
-            let lines = self.visible_text.to_point(cursor.start().visible) - self.new_point;
-            self.old_offset += bytes;
-            self.old_point += &lines;
-            self.new_offset += bytes;
-            self.new_point += &lines;
+            let summary = self.visible_cursor.summary(cursor.start().visible);
+            self.old_end.add_assign(&summary);
+            self.new_end.add_assign(&summary);
+            if pending_edit
+                .as_ref()
+                .map_or(false, |change| change.new.end < self.new_end)
+            {
+                break;
+            }
 
             if !fragment.was_visible(&self.since, &self.undos) && fragment.visible {
-                let fragment_lines =
-                    self.visible_text.to_point(self.new_offset + fragment.len) - self.new_point;
-                if let Some(ref mut change) = change {
-                    if change.new_bytes.end == self.new_offset {
-                        change.new_bytes.end += fragment.len;
-                    } else {
-                        break;
-                    }
+                let fragment_summary = self.visible_cursor.summary(cursor.end(&None).visible);
+                let mut new_end = self.new_end.clone();
+                new_end.add_assign(&fragment_summary);
+                if let Some(pending_edit) = pending_edit.as_mut() {
+                    pending_edit.new.end = new_end.clone();
                 } else {
-                    change = Some(Edit {
-                        old_bytes: self.old_offset..self.old_offset,
-                        new_bytes: self.new_offset..self.new_offset + fragment.len,
-                        old_lines: self.old_point..self.old_point,
+                    pending_edit = Some(Edit {
+                        old: self.old_end.clone()..self.old_end.clone(),
+                        new: self.new_end.clone()..new_end.clone(),
                     });
                 }
 
-                self.new_offset += fragment.len;
-                self.new_point += &fragment_lines;
+                self.new_end = new_end;
             } else if fragment.was_visible(&self.since, &self.undos) && !fragment.visible {
-                let deleted_start = cursor.start().deleted;
-                let fragment_lines = self.deleted_text.to_point(deleted_start + fragment.len)
-                    - self.deleted_text.to_point(deleted_start);
-                if let Some(ref mut change) = change {
-                    if change.new_bytes.end == self.new_offset {
-                        change.old_bytes.end += fragment.len;
-                        change.old_lines.end += &fragment_lines;
-                    } else {
-                        break;
-                    }
+                self.deleted_cursor.seek_forward(cursor.start().deleted);
+                let fragment_summary = self.deleted_cursor.summary(cursor.end(&None).deleted);
+                let mut old_end = self.old_end.clone();
+                old_end.add_assign(&fragment_summary);
+                if let Some(pending_edit) = pending_edit.as_mut() {
+                    pending_edit.old.end = old_end.clone();
                 } else {
-                    change = Some(Edit {
-                        old_bytes: self.old_offset..self.old_offset + fragment.len,
-                        new_bytes: self.new_offset..self.new_offset,
-                        old_lines: self.old_point..self.old_point + &fragment_lines,
+                    pending_edit = Some(Edit {
+                        old: self.old_end.clone()..old_end.clone(),
+                        new: self.new_end.clone()..self.new_end.clone(),
                     });
                 }
 
-                self.old_offset += fragment.len;
-                self.old_point += &fragment_lines;
+                self.old_end = old_end;
             }
 
             cursor.next(&None);
         }
 
-        change
+        pending_edit
     }
 }
 
@@ -2075,9 +2138,45 @@ impl Default for FragmentSummary {
     }
 }
 
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FullOffset(pub usize);
+
+impl FullOffset {
+    const MAX: Self = FullOffset(usize::MAX);
+}
+
+impl ops::AddAssign<usize> for FullOffset {
+    fn add_assign(&mut self, rhs: usize) {
+        self.0 += rhs;
+    }
+}
+
+impl ops::Add<usize> for FullOffset {
+    type Output = Self;
+
+    fn add(mut self, rhs: usize) -> Self::Output {
+        self += rhs;
+        self
+    }
+}
+
+impl ops::Sub for FullOffset {
+    type Output = usize;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        self.0 - rhs.0
+    }
+}
+
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for usize {
     fn add_summary(&mut self, summary: &FragmentSummary, _: &Option<clock::Global>) {
         *self += summary.text.visible;
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FullOffset {
+    fn add_summary(&mut self, summary: &FragmentSummary, _: &Option<clock::Global>) {
+        self.0 += summary.text.visible + summary.text.deleted;
     }
 }
 
@@ -2092,28 +2191,28 @@ impl<'a> sum_tree::SeekTarget<'a, FragmentSummary, FragmentTextSummary> for usiz
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum VersionedOffset {
-    Offset(usize),
-    InvalidVersion,
+enum VersionedFullOffset {
+    Offset(FullOffset),
+    Invalid,
 }
 
-impl VersionedOffset {
-    fn offset(&self) -> usize {
-        if let Self::Offset(offset) = self {
-            *offset
+impl VersionedFullOffset {
+    fn full_offset(&self) -> FullOffset {
+        if let Self::Offset(position) = self {
+            *position
         } else {
             panic!("invalid version")
         }
     }
 }
 
-impl Default for VersionedOffset {
+impl Default for VersionedFullOffset {
     fn default() -> Self {
-        Self::Offset(0)
+        Self::Offset(Default::default())
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, FragmentSummary> for VersionedOffset {
+impl<'a> sum_tree::Dimension<'a, FragmentSummary> for VersionedFullOffset {
     fn add_summary(&mut self, summary: &'a FragmentSummary, cx: &Option<clock::Global>) {
         if let Self::Offset(offset) = self {
             let version = cx.as_ref().unwrap();
@@ -2124,18 +2223,18 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for VersionedOffset {
                 .iter()
                 .all(|t| !version.observed(*t))
             {
-                *self = Self::InvalidVersion;
+                *self = Self::Invalid;
             }
         }
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, FragmentSummary, Self> for VersionedOffset {
-    fn cmp(&self, other: &Self, _: &Option<clock::Global>) -> cmp::Ordering {
-        match (self, other) {
+impl<'a> sum_tree::SeekTarget<'a, FragmentSummary, Self> for VersionedFullOffset {
+    fn cmp(&self, cursor_position: &Self, _: &Option<clock::Global>) -> cmp::Ordering {
+        match (self, cursor_position) {
             (Self::Offset(a), Self::Offset(b)) => Ord::cmp(a, b),
-            (Self::Offset(_), Self::InvalidVersion) => cmp::Ordering::Less,
-            (Self::InvalidVersion, _) => unreachable!(),
+            (Self::Offset(_), Self::Invalid) => cmp::Ordering::Less,
+            (Self::Invalid, _) => unreachable!(),
         }
     }
 }
@@ -2173,239 +2272,33 @@ impl Operation {
     }
 }
 
-impl<'a> Into<proto::Operation> for &'a Operation {
-    fn into(self) -> proto::Operation {
-        proto::Operation {
-            variant: Some(match self {
-                Operation::Edit(edit) => proto::operation::Variant::Edit(edit.into()),
-                Operation::Undo {
-                    undo,
-                    lamport_timestamp,
-                } => proto::operation::Variant::Undo(proto::operation::Undo {
-                    replica_id: undo.id.replica_id as u32,
-                    local_timestamp: undo.id.value,
-                    lamport_timestamp: lamport_timestamp.value,
-                    ranges: undo
-                        .ranges
-                        .iter()
-                        .map(|r| proto::Range {
-                            start: r.start as u64,
-                            end: r.end as u64,
-                        })
-                        .collect(),
-                    counts: undo
-                        .counts
-                        .iter()
-                        .map(|(edit_id, count)| proto::operation::UndoCount {
-                            replica_id: edit_id.replica_id as u32,
-                            local_timestamp: edit_id.value,
-                            count: *count,
-                        })
-                        .collect(),
-                    version: From::from(&undo.version),
-                }),
-                Operation::UpdateSelections {
-                    set_id,
-                    selections,
-                    lamport_timestamp,
-                } => proto::operation::Variant::UpdateSelections(
-                    proto::operation::UpdateSelections {
-                        replica_id: set_id.replica_id as u32,
-                        local_timestamp: set_id.value,
-                        lamport_timestamp: lamport_timestamp.value,
-                        version: selections.version().into(),
-                        selections: selections
-                            .raw_entries()
-                            .iter()
-                            .map(|(range, state)| proto::Selection {
-                                id: state.id as u64,
-                                start: range.start.0 as u64,
-                                end: range.end.0 as u64,
-                                reversed: state.reversed,
-                            })
-                            .collect(),
-                    },
-                ),
-                Operation::RemoveSelections {
-                    set_id,
-                    lamport_timestamp,
-                } => proto::operation::Variant::RemoveSelections(
-                    proto::operation::RemoveSelections {
-                        replica_id: set_id.replica_id as u32,
-                        local_timestamp: set_id.value,
-                        lamport_timestamp: lamport_timestamp.value,
-                    },
-                ),
-                Operation::SetActiveSelections {
-                    set_id,
-                    lamport_timestamp,
-                } => proto::operation::Variant::SetActiveSelections(
-                    proto::operation::SetActiveSelections {
-                        replica_id: lamport_timestamp.replica_id as u32,
-                        local_timestamp: set_id.map(|set_id| set_id.value),
-                        lamport_timestamp: lamport_timestamp.value,
-                    },
-                ),
-                #[cfg(test)]
-                Operation::Test(_) => unimplemented!(),
-            }),
-        }
-    }
-}
-
-impl<'a> Into<proto::operation::Edit> for &'a EditOperation {
-    fn into(self) -> proto::operation::Edit {
-        let ranges = self
-            .ranges
-            .iter()
-            .map(|range| proto::Range {
-                start: range.start as u64,
-                end: range.end as u64,
-            })
-            .collect();
-        proto::operation::Edit {
-            replica_id: self.timestamp.replica_id as u32,
-            local_timestamp: self.timestamp.local,
-            lamport_timestamp: self.timestamp.lamport,
-            version: From::from(&self.version),
-            ranges,
-            new_text: self.new_text.clone(),
-        }
-    }
-}
-
-impl TryFrom<proto::Operation> for Operation {
-    type Error = anyhow::Error;
-
-    fn try_from(message: proto::Operation) -> Result<Self, Self::Error> {
-        Ok(
-            match message
-                .variant
-                .ok_or_else(|| anyhow!("missing operation variant"))?
-            {
-                proto::operation::Variant::Edit(edit) => Operation::Edit(edit.into()),
-                proto::operation::Variant::Undo(undo) => Operation::Undo {
-                    lamport_timestamp: clock::Lamport {
-                        replica_id: undo.replica_id as ReplicaId,
-                        value: undo.lamport_timestamp,
-                    },
-                    undo: UndoOperation {
-                        id: clock::Local {
-                            replica_id: undo.replica_id as ReplicaId,
-                            value: undo.local_timestamp,
-                        },
-                        counts: undo
-                            .counts
-                            .into_iter()
-                            .map(|c| {
-                                (
-                                    clock::Local {
-                                        replica_id: c.replica_id as ReplicaId,
-                                        value: c.local_timestamp,
-                                    },
-                                    c.count,
-                                )
-                            })
-                            .collect(),
-                        ranges: undo
-                            .ranges
-                            .into_iter()
-                            .map(|r| r.start as usize..r.end as usize)
-                            .collect(),
-                        version: undo.version.into(),
-                    },
-                },
-                proto::operation::Variant::UpdateSelections(message) => {
-                    let version = message.version.into();
-                    let entries = message
-                        .selections
-                        .iter()
-                        .map(|selection| {
-                            let range = (selection.start as usize, Bias::Left)
-                                ..(selection.end as usize, Bias::Right);
-                            let state = SelectionState {
-                                id: selection.id as usize,
-                                reversed: selection.reversed,
-                                goal: SelectionGoal::None,
-                            };
-                            (range, state)
-                        })
-                        .collect();
-                    let selections = AnchorRangeMap::from_raw(version, entries);
-
-                    Operation::UpdateSelections {
-                        set_id: clock::Lamport {
-                            replica_id: message.replica_id as ReplicaId,
-                            value: message.local_timestamp,
-                        },
-                        lamport_timestamp: clock::Lamport {
-                            replica_id: message.replica_id as ReplicaId,
-                            value: message.lamport_timestamp,
-                        },
-                        selections: Arc::from(selections),
-                    }
-                }
-                proto::operation::Variant::RemoveSelections(message) => {
-                    Operation::RemoveSelections {
-                        set_id: clock::Lamport {
-                            replica_id: message.replica_id as ReplicaId,
-                            value: message.local_timestamp,
-                        },
-                        lamport_timestamp: clock::Lamport {
-                            replica_id: message.replica_id as ReplicaId,
-                            value: message.lamport_timestamp,
-                        },
-                    }
-                }
-                proto::operation::Variant::SetActiveSelections(message) => {
-                    Operation::SetActiveSelections {
-                        set_id: message.local_timestamp.map(|value| clock::Lamport {
-                            replica_id: message.replica_id as ReplicaId,
-                            value,
-                        }),
-                        lamport_timestamp: clock::Lamport {
-                            replica_id: message.replica_id as ReplicaId,
-                            value: message.lamport_timestamp,
-                        },
-                    }
-                }
-            },
-        )
-    }
-}
-
-impl From<proto::operation::Edit> for EditOperation {
-    fn from(edit: proto::operation::Edit) -> Self {
-        let ranges = edit
-            .ranges
-            .into_iter()
-            .map(|range| range.start as usize..range.end as usize)
-            .collect();
-        EditOperation {
-            timestamp: InsertionTimestamp {
-                replica_id: edit.replica_id as ReplicaId,
-                local: edit.local_timestamp,
-                lamport: edit.lamport_timestamp,
-            },
-            version: edit.version.into(),
-            ranges,
-            new_text: edit.new_text,
-        }
-    }
-}
-
 pub trait ToOffset {
     fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize;
+
+    fn to_full_offset<'a>(&self, content: impl Into<Content<'a>>, bias: Bias) -> FullOffset {
+        let content = content.into();
+        let offset = self.to_offset(&content);
+        let mut cursor = content.fragments.cursor::<FragmentTextSummary>();
+        cursor.seek(&offset, bias, &None);
+        FullOffset(offset + cursor.start().deleted)
+    }
 }
 
 impl ToOffset for Point {
     fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize {
-        content.into().visible_text.to_offset(*self)
+        content.into().visible_text.point_to_offset(*self)
+    }
+}
+
+impl ToOffset for PointUtf16 {
+    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize {
+        content.into().visible_text.point_utf16_to_offset(*self)
     }
 }
 
 impl ToOffset for usize {
-    fn to_offset<'a>(&self, _: impl Into<Content<'a>>) -> usize {
+    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize {
+        assert!(*self <= content.into().len(), "offset is out of range");
         *self
     }
 }
@@ -2434,12 +2327,28 @@ impl ToPoint for Anchor {
 
 impl ToPoint for usize {
     fn to_point<'a>(&self, content: impl Into<Content<'a>>) -> Point {
-        content.into().visible_text.to_point(*self)
+        content.into().visible_text.offset_to_point(*self)
     }
 }
 
 impl ToPoint for Point {
     fn to_point<'a>(&self, _: impl Into<Content<'a>>) -> Point {
         *self
+    }
+}
+
+pub trait FromAnchor {
+    fn from_anchor<'a>(anchor: &Anchor, content: &Content<'a>) -> Self;
+}
+
+impl FromAnchor for Point {
+    fn from_anchor<'a>(anchor: &Anchor, content: &Content<'a>) -> Self {
+        anchor.to_point(content)
+    }
+}
+
+impl FromAnchor for usize {
+    fn from_anchor<'a>(anchor: &Anchor, content: &Content<'a>) -> Self {
+        anchor.to_offset(content)
     }
 }
