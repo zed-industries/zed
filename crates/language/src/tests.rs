@@ -1,6 +1,6 @@
 use super::*;
 use gpui::{ModelHandle, MutableAppContext};
-use std::rc::Rc;
+use std::{iter::FromIterator, rc::Rc};
 use unindent::Unindent as _;
 
 #[gpui::test]
@@ -79,7 +79,9 @@ async fn test_apply_diff(mut cx: gpui::TestAppContext) {
 #[gpui::test]
 async fn test_reparse(mut cx: gpui::TestAppContext) {
     let text = "fn a() {}";
-    let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(rust_lang(), None, cx));
+    let buffer = cx.add_model(|cx| {
+        Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx)
+    });
 
     // Wait for the initial text to parse
     buffer
@@ -221,7 +223,7 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
             }
         "
         .unindent();
-        Buffer::new(0, text, cx).with_language(rust_lang(), None, cx)
+        Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx)
     });
     let buffer = buffer.read(cx);
     assert_eq!(
@@ -251,7 +253,8 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
 fn test_edit_with_autoindent(cx: &mut MutableAppContext) {
     cx.add_model(|cx| {
         let text = "fn a() {}";
-        let mut buffer = Buffer::new(0, text, cx).with_language(rust_lang(), None, cx);
+        let mut buffer =
+            Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx);
 
         buffer.edit_with_autoindent([8..8], "\n\n", cx);
         assert_eq!(buffer.text(), "fn a() {\n    \n}");
@@ -271,7 +274,8 @@ fn test_autoindent_moves_selections(cx: &mut MutableAppContext) {
     cx.add_model(|cx| {
         let text = "fn a() {}";
 
-        let mut buffer = Buffer::new(0, text, cx).with_language(rust_lang(), None, cx);
+        let mut buffer =
+            Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx);
 
         let selection_set_id = buffer.add_selection_set::<usize>(&[], cx);
         buffer.start_transaction(Some(selection_set_id)).unwrap();
@@ -329,7 +333,8 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
         "
         .unindent();
 
-        let mut buffer = Buffer::new(0, text, cx).with_language(rust_lang(), None, cx);
+        let mut buffer =
+            Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx);
 
         // Lines 2 and 3 don't match the indentation suggestion. When editing these lines,
         // their indentation is not adjusted.
@@ -378,7 +383,8 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
         "
         .unindent();
 
-        let mut buffer = Buffer::new(0, text, cx).with_language(rust_lang(), None, cx);
+        let mut buffer =
+            Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx);
 
         buffer.edit_with_autoindent([5..5], "\nb", cx);
         assert_eq!(
@@ -409,6 +415,11 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
 #[gpui::test]
 async fn test_diagnostics(mut cx: gpui::TestAppContext) {
     let (language_server, mut fake) = lsp::LanguageServer::fake(cx.background()).await;
+    let mut rust_lang = rust_lang();
+    rust_lang.config.language_server = Some(LanguageServerConfig {
+        disk_based_diagnostic_sources: HashSet::from_iter(["disk".to_string()]),
+        ..Default::default()
+    });
 
     let text = "
         fn a() { A }
@@ -418,7 +429,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
     .unindent();
 
     let buffer = cx.add_model(|cx| {
-        Buffer::new(0, text, cx).with_language(rust_lang(), Some(language_server), cx)
+        Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang)), Some(language_server), cx)
     });
 
     let open_notification = fake
@@ -586,14 +597,14 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         range: lsp::Range::new(lsp::Position::new(1, 9), lsp::Position::new(1, 11)),
                         severity: Some(lsp::DiagnosticSeverity::ERROR),
                         message: "undefined variable 'BB'".to_string(),
-                        source: Some("rustc".to_string()),
+                        source: Some("disk".to_string()),
                         ..Default::default()
                     },
                     lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
                         severity: Some(lsp::DiagnosticSeverity::ERROR),
                         message: "undefined variable 'A'".to_string(),
-                        source: Some("rustc".to_string()),
+                        source: Some("disk".to_string()),
                         ..Default::default()
                     },
                 ],
@@ -669,29 +680,27 @@ impl Buffer {
     }
 }
 
-fn rust_lang() -> Option<Arc<Language>> {
-    Some(Arc::new(
-        Language::new(
-            LanguageConfig {
-                name: "Rust".to_string(),
-                path_suffixes: vec!["rs".to_string()],
-                language_server: None,
-                ..Default::default()
-            },
-            tree_sitter_rust::language(),
-        )
-        .with_indents_query(
-            r#"
+fn rust_lang() -> Language {
+    Language::new(
+        LanguageConfig {
+            name: "Rust".to_string(),
+            path_suffixes: vec!["rs".to_string()],
+            language_server: None,
+            ..Default::default()
+        },
+        tree_sitter_rust::language(),
+    )
+    .with_indents_query(
+        r#"
                 (call_expression) @indent
                 (field_expression) @indent
                 (_ "(" ")" @end) @indent
                 (_ "{" "}" @end) @indent
             "#,
-        )
-        .unwrap()
-        .with_brackets_query(r#" ("{" @open "}" @close) "#)
-        .unwrap(),
-    ))
+    )
+    .unwrap()
+    .with_brackets_query(r#" ("{" @open "}" @close) "#)
+    .unwrap()
 }
 
 fn empty(point: Point) -> Range<Point> {
