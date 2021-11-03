@@ -982,7 +982,10 @@ mod tests {
         },
         editor::{Editor, EditorSettings, Input},
         fs::{FakeFs, Fs as _},
-        language::{Diagnostic, LanguageRegistry, Point},
+        language::{
+            tree_sitter_rust, Diagnostic, Language, LanguageConfig, LanguageRegistry,
+            LanguageServerConfig, Point,
+        },
         lsp,
         people_panel::JoinWorktree,
         project::{ProjectPath, Worktree},
@@ -1017,7 +1020,6 @@ mod tests {
             "/a".as_ref(),
             fs,
             lang_registry.clone(),
-            None,
             &mut cx_a.to_async(),
         )
         .await
@@ -1126,7 +1128,6 @@ mod tests {
             "/a".as_ref(),
             fs,
             lang_registry.clone(),
-            None,
             &mut cx_a.to_async(),
         )
         .await
@@ -1219,7 +1220,6 @@ mod tests {
             "/a".as_ref(),
             fs.clone(),
             lang_registry.clone(),
-            None,
             &mut cx_a.to_async(),
         )
         .await
@@ -1356,7 +1356,6 @@ mod tests {
             "/dir".as_ref(),
             fs,
             lang_registry.clone(),
-            None,
             &mut cx_a.to_async(),
         )
         .await
@@ -1441,7 +1440,6 @@ mod tests {
             "/dir".as_ref(),
             fs,
             lang_registry.clone(),
-            None,
             &mut cx_a.to_async(),
         )
         .await
@@ -1508,7 +1506,6 @@ mod tests {
             "/dir".as_ref(),
             fs,
             lang_registry.clone(),
-            None,
             &mut cx_a.to_async(),
         )
         .await
@@ -1570,7 +1567,6 @@ mod tests {
             "/a".as_ref(),
             fs,
             lang_registry.clone(),
-            None,
             &mut cx_a.to_async(),
         )
         .await
@@ -1609,9 +1605,20 @@ mod tests {
         mut cx_b: TestAppContext,
     ) {
         cx_a.foreground().forbid_parking();
-        let lang_registry = Arc::new(LanguageRegistry::new());
+        let (language_server_config, mut fake_language_server) =
+            LanguageServerConfig::fake(cx_a.background()).await;
+        let mut lang_registry = LanguageRegistry::new();
+        lang_registry.add(Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".to_string(),
+                path_suffixes: vec!["rs".to_string()],
+                language_server: Some(language_server_config),
+                ..Default::default()
+            },
+            tree_sitter_rust::language(),
+        )));
 
-        let (language_server, mut fake_lsp) = lsp::LanguageServer::fake(cx_a.background()).await;
+        let lang_registry = Arc::new(lang_registry);
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
@@ -1624,8 +1631,8 @@ mod tests {
             "/a",
             json!({
                 ".zed.toml": r#"collaborators = ["user_b"]"#,
-                "a.txt": "one two three",
-                "b.txt": "b-contents",
+                "a.rs": "let one = two",
+                "other.rs": "",
             }),
         )
         .await;
@@ -1634,7 +1641,6 @@ mod tests {
             "/a".as_ref(),
             fs,
             lang_registry.clone(),
-            Some(language_server),
             &mut cx_a.to_async(),
         )
         .await
@@ -1647,21 +1653,33 @@ mod tests {
             .await
             .unwrap();
 
+        // Cause language server to start.
+        let _ = cx_a
+            .background()
+            .spawn(worktree_a.update(&mut cx_a, |worktree, cx| {
+                worktree.open_buffer("other.rs", cx)
+            }))
+            .await
+            .unwrap();
+
         // Simulate a language server reporting errors for a file.
-        fake_lsp
+        fake_language_server
             .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-                uri: lsp::Url::from_file_path("/a/a.txt").unwrap(),
+                uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
                 version: None,
                 diagnostics: vec![
                     lsp::Diagnostic {
                         severity: Some(lsp::DiagnosticSeverity::ERROR),
-                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 3)),
+                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 7)),
                         message: "message 1".to_string(),
                         ..Default::default()
                     },
                     lsp::Diagnostic {
                         severity: Some(lsp::DiagnosticSeverity::WARNING),
-                        range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 13)),
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 10),
+                            lsp::Position::new(0, 13),
+                        ),
                         message: "message 2".to_string(),
                         ..Default::default()
                     },
@@ -1682,7 +1700,7 @@ mod tests {
         // Open the file with the errors.
         let buffer_b = cx_b
             .background()
-            .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.txt", cx)))
+            .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.rs", cx)))
             .await
             .unwrap();
 
@@ -1693,14 +1711,14 @@ mod tests {
                     .collect::<Vec<_>>(),
                 &[
                     (
-                        Point::new(0, 0)..Point::new(0, 3),
+                        Point::new(0, 4)..Point::new(0, 7),
                         &Diagnostic {
                             message: "message 1".to_string(),
                             severity: lsp::DiagnosticSeverity::ERROR,
                         }
                     ),
                     (
-                        Point { row: 0, column: 8 }..Point { row: 0, column: 13 },
+                        Point::new(0, 10)..Point::new(0, 13),
                         &Diagnostic {
                             severity: lsp::DiagnosticSeverity::WARNING,
                             message: "message 2".to_string()
@@ -2149,7 +2167,6 @@ mod tests {
             "/a".as_ref(),
             fs.clone(),
             lang_registry.clone(),
-            None,
             &mut cx_a.to_async(),
         )
         .await

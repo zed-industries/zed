@@ -1,6 +1,7 @@
 use crate::HighlightMap;
 use anyhow::Result;
-use gpui::AppContext;
+use gpui::{executor::Background, AppContext};
+use lsp::LanguageServer;
 use parking_lot::Mutex;
 use serde::Deserialize;
 use std::{collections::HashSet, path::Path, str, sync::Arc};
@@ -16,10 +17,13 @@ pub struct LanguageConfig {
     pub language_server: Option<LanguageServerConfig>,
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 pub struct LanguageServerConfig {
     pub binary: String,
     pub disk_based_diagnostic_sources: HashSet<String>,
+    #[cfg(any(test, feature = "test-support"))]
+    #[serde(skip)]
+    pub fake_server: Option<(Arc<LanguageServer>, Arc<std::sync::atomic::AtomicBool>)>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -117,6 +121,12 @@ impl Language {
         cx: &AppContext,
     ) -> Result<Option<Arc<lsp::LanguageServer>>> {
         if let Some(config) = &self.config.language_server {
+            #[cfg(any(test, feature = "test-support"))]
+            if let Some((server, started)) = &config.fake_server {
+                started.store(true, std::sync::atomic::Ordering::SeqCst);
+                return Ok(Some(server.clone()));
+            }
+
             const ZED_BUNDLE: Option<&'static str> = option_env!("ZED_BUNDLE");
             let binary_path = if ZED_BUNDLE.map_or(Ok(false), |b| b.parse())? {
                 cx.platform()
@@ -148,6 +158,23 @@ impl Language {
     pub fn set_theme(&self, theme: &SyntaxTheme) {
         *self.highlight_map.lock() =
             HighlightMap::new(self.highlights_query.capture_names(), theme);
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl LanguageServerConfig {
+    pub async fn fake(executor: Arc<Background>) -> (Self, lsp::FakeLanguageServer) {
+        let (server, fake) = lsp::LanguageServer::fake(executor).await;
+        fake.started
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let started = fake.started.clone();
+        (
+            Self {
+                fake_server: Some((server, started)),
+                ..Default::default()
+            },
+            fake,
+        )
     }
 }
 

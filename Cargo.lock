@@ -3831,6 +3831,7 @@ dependencies = [
  "rpc",
  "serde 1.0.125",
  "serde_json 1.0.64",
+ "simplelog",
  "smol",
  "sum_tree",
  "tempdir",

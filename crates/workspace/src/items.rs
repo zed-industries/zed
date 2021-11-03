@@ -127,10 +127,16 @@ impl ItemView for Editor {
 
             cx.spawn(|buffer, mut cx| async move {
                 save_as.await.map(|new_file| {
-                    let (language, language_server) = worktree.read_with(&cx, |worktree, _| {
-                        let language = worktree.languages().select_language(new_file.full_path());
-                        let language_server = worktree.language_server();
-                        (language.cloned(), language_server.cloned())
+                    let (language, language_server) = worktree.update(&mut cx, |worktree, cx| {
+                        let worktree = worktree.as_local_mut().unwrap();
+                        let language = worktree
+                            .languages()
+                            .select_language(new_file.full_path())
+                            .cloned();
+                        let language_server = language
+                            .as_ref()
+                            .and_then(|language| worktree.ensure_language_server(language, cx));
+                        (language, language_server.clone())
                     });
 
                     buffer.update(&mut cx, |buffer, cx| {

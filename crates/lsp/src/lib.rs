@@ -16,7 +16,7 @@ use std::{
     io::Write,
     str::FromStr,
     sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
         Arc,
     },
 };
@@ -427,6 +427,7 @@ pub struct FakeLanguageServer {
     buffer: Vec<u8>,
     stdin: smol::io::BufReader<async_pipe::PipeReader>,
     stdout: smol::io::BufWriter<async_pipe::PipeWriter>,
+    pub started: Arc<AtomicBool>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -444,6 +445,7 @@ impl LanguageServer {
             stdin: smol::io::BufReader::new(stdin.1),
             stdout: smol::io::BufWriter::new(stdout.0),
             buffer: Vec::new(),
+            started: Arc::new(AtomicBool::new(true)),
         };
 
         let server = Self::new_internal(stdin.0, stdout.1, Path::new("/"), executor).unwrap();
@@ -460,6 +462,9 @@ impl LanguageServer {
 #[cfg(any(test, feature = "test-support"))]
 impl FakeLanguageServer {
     pub async fn notify<T: notification::Notification>(&mut self, params: T::Params) {
+        if !self.started.load(std::sync::atomic::Ordering::SeqCst) {
+            panic!("can't simulate an LSP notification before the server has been started");
+        }
         let message = serde_json::to_vec(&Notification {
             jsonrpc: JSON_RPC_VERSION,
             method: T::METHOD,

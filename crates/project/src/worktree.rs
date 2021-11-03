@@ -12,7 +12,7 @@ use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task, UpgradeModelHandle, WeakModelHandle,
 };
-use language::{Buffer, LanguageRegistry, Operation, Rope};
+use language::{Buffer, Language, LanguageRegistry, Operation, Rope};
 use lazy_static::lazy_static;
 use lsp::LanguageServer;
 use parking_lot::Mutex;
@@ -98,17 +98,21 @@ impl Entity for Worktree {
     ) -> Option<std::pin::Pin<Box<dyn 'static + Future<Output = ()>>>> {
         use futures::FutureExt;
 
-        if let Some(server) = self.language_server() {
-            if let Some(shutdown) = server.shutdown() {
-                return Some(
-                    async move {
-                        shutdown.await.log_err();
-                    }
-                    .boxed(),
-                );
-            }
+        if let Self::Local(worktree) = self {
+            let shutdown_futures = worktree
+                .language_servers
+                .drain()
+                .filter_map(|(_, server)| server.shutdown())
+                .collect::<Vec<_>>();
+            Some(
+                async move {
+                    futures::future::join_all(shutdown_futures).await;
+                }
+                .boxed(),
+            )
+        } else {
+            None
         }
-        None
     }
 }
 
@@ -118,11 +122,10 @@ impl Worktree {
         path: impl Into<Arc<Path>>,
         fs: Arc<dyn Fs>,
         languages: Arc<LanguageRegistry>,
-        language_server: Option<Arc<LanguageServer>>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
         let (tree, scan_states_tx) =
-            LocalWorktree::new(rpc, path, fs.clone(), languages, language_server, cx).await?;
+            LocalWorktree::new(rpc, path, fs.clone(), languages, cx).await?;
         tree.update(cx, |tree, cx| {
             let tree = tree.as_local_mut().unwrap();
             let abs_path = tree.snapshot.abs_path.clone();
@@ -312,13 +315,6 @@ impl Worktree {
         match self {
             Worktree::Local(worktree) => &worktree.languages,
             Worktree::Remote(worktree) => &worktree.languages,
-        }
-    }
-
-    pub fn language_server(&self) -> Option<&Arc<LanguageServer>> {
-        match self {
-            Worktree::Local(worktree) => worktree.language_server.as_ref(),
-            Worktree::Remote(_) => None,
         }
     }
 
@@ -781,7 +777,7 @@ pub struct LocalWorktree {
     languages: Arc<LanguageRegistry>,
     rpc: Arc<Client>,
     fs: Arc<dyn Fs>,
-    language_server: Option<Arc<LanguageServer>>,
+    language_servers: HashMap<String, Arc<LanguageServer>>,
 }
 
 #[derive(Default, Deserialize)]
@@ -795,7 +791,6 @@ impl LocalWorktree {
         path: impl Into<Arc<Path>>,
         fs: Arc<dyn Fs>,
         languages: Arc<LanguageRegistry>,
-        language_server: Option<Arc<LanguageServer>>,
         cx: &mut AsyncAppContext,
     ) -> Result<(ModelHandle<Worktree>, Sender<ScanState>)> {
         let abs_path = path.into();
@@ -896,7 +891,7 @@ impl LocalWorktree {
                 languages,
                 rpc,
                 fs,
-                language_server,
+                language_servers: Default::default(),
             };
 
             cx.spawn_weak(|this, mut cx| async move {
@@ -926,31 +921,55 @@ impl LocalWorktree {
             })
             .detach();
 
-            if let Some(language_server) = &tree.language_server {
-                let (diagnostics_tx, diagnostics_rx) = smol::channel::unbounded();
-                language_server
-                    .on_notification::<lsp::notification::PublishDiagnostics, _>(move |params| {
-                        smol::block_on(diagnostics_tx.send(params)).ok();
-                    })
-                    .detach();
-                cx.spawn_weak(|this, mut cx| async move {
-                    while let Ok(diagnostics) = diagnostics_rx.recv().await {
-                        if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
-                            handle.update(&mut cx, |this, cx| {
-                                this.update_diagnostics(diagnostics, cx).log_err();
-                            });
-                        } else {
-                            break;
-                        }
-                    }
-                })
-                .detach();
-            }
-
             Worktree::Local(tree)
         });
 
         Ok((tree, scan_states_tx))
+    }
+
+    pub fn languages(&self) -> &LanguageRegistry {
+        &self.languages
+    }
+
+    pub fn ensure_language_server(
+        &mut self,
+        language: &Language,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Option<Arc<LanguageServer>> {
+        if let Some(server) = self.language_servers.get(language.name()) {
+            return Some(server.clone());
+        }
+
+        if let Some(language_server) = language
+            .start_server(self.abs_path(), cx)
+            .log_err()
+            .flatten()
+        {
+            let (diagnostics_tx, diagnostics_rx) = smol::channel::unbounded();
+            language_server
+                .on_notification::<lsp::notification::PublishDiagnostics, _>(move |params| {
+                    smol::block_on(diagnostics_tx.send(params)).ok();
+                })
+                .detach();
+            cx.spawn_weak(|this, mut cx| async move {
+                while let Ok(diagnostics) = diagnostics_rx.recv().await {
+                    if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
+                        handle.update(&mut cx, |this, cx| {
+                            this.update_diagnostics(diagnostics, cx).log_err();
+                        });
+                    } else {
+                        break;
+                    }
+                }
+            })
+            .detach();
+
+            self.language_servers
+                .insert(language.name().to_string(), language_server.clone());
+            Some(language_server.clone())
+        } else {
+            None
+        }
     }
 
     pub fn open_buffer(
@@ -976,7 +995,6 @@ impl LocalWorktree {
         });
 
         let path = Arc::from(path);
-        let language_server = self.language_server.clone();
         cx.spawn(|this, mut cx| async move {
             if let Some(existing_buffer) = existing_buffer {
                 Ok(existing_buffer)
@@ -988,11 +1006,14 @@ impl LocalWorktree {
                     use language::File;
                     this.languages().select_language(file.full_path()).cloned()
                 });
-                let diagnostics = this.update(&mut cx, |this, _| {
-                    this.as_local_mut()
-                        .unwrap()
-                        .diagnostics
-                        .remove(path.as_ref())
+                let (diagnostics, language_server) = this.update(&mut cx, |this, cx| {
+                    let this = this.as_local_mut().unwrap();
+                    (
+                        this.diagnostics.remove(path.as_ref()),
+                        language
+                            .as_ref()
+                            .and_then(|language| this.ensure_language_server(language, cx)),
+                    )
                 });
                 let buffer = cx.add_model(|cx| {
                     let mut buffer = Buffer::from_file(0, contents, Box::new(file), cx);
@@ -2925,7 +2946,8 @@ mod tests {
     use buffer::Point;
     use client::test::FakeServer;
     use fs::RealFs;
-    use language::Diagnostic;
+    use language::{tree_sitter_rust, LanguageServerConfig};
+    use language::{Diagnostic, LanguageConfig};
     use lsp::Url;
     use rand::prelude::*;
     use serde_json::json;
@@ -2957,7 +2979,6 @@ mod tests {
             Arc::from(Path::new("/root")),
             Arc::new(fs),
             Default::default(),
-            None,
             &mut cx.to_async(),
         )
         .await
@@ -2990,7 +3011,6 @@ mod tests {
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
-            None,
             &mut cx.to_async(),
         )
         .await
@@ -3021,7 +3041,6 @@ mod tests {
             file_path.clone(),
             Arc::new(RealFs),
             Default::default(),
-            None,
             &mut cx.to_async(),
         )
         .await
@@ -3068,7 +3087,6 @@ mod tests {
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
-            None,
             &mut cx.to_async(),
         )
         .await
@@ -3229,7 +3247,6 @@ mod tests {
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
-            None,
             &mut cx.to_async(),
         )
         .await
@@ -3284,7 +3301,6 @@ mod tests {
             "/path/to/the-dir".as_ref(),
             fs,
             Default::default(),
-            None,
             &mut cx.to_async(),
         )
         .await
@@ -3333,7 +3349,6 @@ mod tests {
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
-            None,
             &mut cx.to_async(),
         )
         .await
@@ -3467,7 +3482,6 @@ mod tests {
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
-            None,
             &mut cx.to_async(),
         )
         .await
@@ -3555,7 +3569,21 @@ mod tests {
 
     #[gpui::test]
     async fn test_language_server_diagnostics(mut cx: gpui::TestAppContext) {
-        let (language_server, mut fake_lsp) = LanguageServer::fake(cx.background()).await;
+        simplelog::SimpleLogger::init(log::LevelFilter::Info, Default::default()).unwrap();
+
+        let (language_server_config, mut fake_server) =
+            LanguageServerConfig::fake(cx.background()).await;
+        let mut languages = LanguageRegistry::new();
+        languages.add(Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".to_string(),
+                path_suffixes: vec!["rs".to_string()],
+                language_server: Some(language_server_config),
+                ..Default::default()
+            },
+            tree_sitter_rust::language(),
+        )));
+
         let dir = temp_tree(json!({
             "a.rs": "fn a() { A }",
             "b.rs": "const y: i32 = 1",
@@ -3565,8 +3593,7 @@ mod tests {
             Client::new(),
             dir.path(),
             Arc::new(RealFs),
-            Default::default(),
-            Some(language_server),
+            Arc::new(languages),
             &mut cx.to_async(),
         )
         .await
@@ -3574,7 +3601,13 @@ mod tests {
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
 
-        fake_lsp
+        // Cause worktree to start the fake language server
+        let _buffer = tree
+            .update(&mut cx, |tree, cx| tree.open_buffer("b.rs", cx))
+            .await
+            .unwrap();
+
+        fake_server
             .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
                 uri: Url::from_file_path(dir.path().join("a.rs")).unwrap(),
                 version: None,

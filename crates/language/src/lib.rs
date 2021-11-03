@@ -6,7 +6,7 @@ mod tests;
 
 pub use self::{
     highlight_map::{HighlightId, HighlightMap},
-    language::{BracketPair, Language, LanguageConfig, LanguageRegistry},
+    language::{BracketPair, Language, LanguageConfig, LanguageRegistry, LanguageServerConfig},
 };
 use anyhow::{anyhow, Result};
 pub use buffer::{Buffer as TextBuffer, Operation as _, *};
@@ -36,6 +36,9 @@ use std::{
 };
 use tree_sitter::{InputEdit, Parser, QueryCursor, Tree};
 use util::{post_inc, TryFutureExt as _};
+
+#[cfg(any(test, feature = "test-support"))]
+pub use tree_sitter_rust;
 
 pub use lsp::DiagnosticSeverity;
 

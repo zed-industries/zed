@@ -1,7 +1,6 @@
 use super::*;
-use crate::language::LanguageServerConfig;
 use gpui::{ModelHandle, MutableAppContext};
-use std::{iter::FromIterator, rc::Rc};
+use std::rc::Rc;
 use unindent::Unindent as _;
 
 #[gpui::test]
@@ -676,10 +675,7 @@ fn rust_lang() -> Option<Arc<Language>> {
             LanguageConfig {
                 name: "Rust".to_string(),
                 path_suffixes: vec!["rs".to_string()],
-                language_server: Some(LanguageServerConfig {
-                    binary: "rust-analyzer".to_string(),
-                    disk_based_diagnostic_sources: HashSet::from_iter(vec!["rustc".to_string()]),
-                }),
+                language_server: None,
                 ..Default::default()
             },
             tree_sitter_rust::language(),

@@ -12,7 +12,7 @@ use std::{
     path::Path,
     sync::{atomic::AtomicBool, Arc},
 };
-use util::{ResultExt, TryFutureExt as _};
+use util::TryFutureExt as _;
 
 pub use fs::*;
 pub use worktree::*;
@@ -73,13 +73,8 @@ impl Project {
         let rpc = self.client.clone();
         let languages = self.languages.clone();
         let path = Arc::from(abs_path);
-        let language_server = languages
-            .get_language("Rust")
-            .map(|language| language.start_server(&path, cx));
         cx.spawn(|this, mut cx| async move {
-            let language_server = language_server.and_then(|language| language.log_err().flatten());
-            let worktree =
-                Worktree::open_local(rpc, path, fs, languages, language_server, &mut cx).await?;
+            let worktree = Worktree::open_local(rpc, path, fs, languages, &mut cx).await?;
             this.update(&mut cx, |this, cx| {
                 this.add_worktree(worktree.clone(), cx);
             });
