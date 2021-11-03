@@ -7,7 +7,7 @@ use gpui::{
     elements::*, fonts::TextStyle, AppContext, Entity, ModelHandle, RenderContext, Subscription,
     Task, View, ViewContext, ViewHandle,
 };
-use language::{Buffer, Diagnostic, DiagnosticSeverity, File as _};
+use language::{Buffer, Diagnostic, File as _};
 use postage::watch;
 use project::{ProjectPath, Worktree};
 use std::fmt::Write;
@@ -288,14 +288,24 @@ impl View for DiagnosticMessage {
     fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
         if let Some(diagnostic) = &self.diagnostic {
             let theme = &self.settings.borrow().theme.workspace.status_bar;
-            let style = match diagnostic.severity {
-                DiagnosticSeverity::ERROR => theme.diagnostic_error.clone(),
-                DiagnosticSeverity::WARNING => theme.diagnostic_warning.clone(),
-                DiagnosticSeverity::INFORMATION => theme.diagnostic_information.clone(),
-                DiagnosticSeverity::HINT => theme.diagnostic_hint.clone(),
-                _ => Default::default(),
-            };
-            Label::new(diagnostic.message.replace('\n', " "), style).boxed()
+            Flex::row()
+                .with_child(
+                    Svg::new("icons/warning.svg")
+                        .with_color(theme.diagnostic_icon_color)
+                        .constrained()
+                        .with_height(theme.diagnostic_icon_size)
+                        .contained()
+                        .with_margin_right(theme.diagnostic_icon_spacing)
+                        .boxed(),
+                )
+                .with_child(
+                    Label::new(
+                        diagnostic.message.replace('\n', " "),
+                        theme.diagnostic_message.clone(),
+                    )
+                    .boxed(),
+                )
+                .boxed()
         } else {
             Empty::new().boxed()
         }

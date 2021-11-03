@@ -64,10 +64,10 @@ border = { width = 1, color = "$border.0", left = true }
 padding = { left = 6, right = 6 }
 height = 24
 cursor_position = "$text.2"
-diagnostic_error = { extends = "$text.2", color = "$status.bad" }
-diagnostic_warning = { extends = "$text.2", color = "$status.warn" }
-diagnostic_information = { extends = "$text.2", color = "$status.info" }
-diagnostic_hint = { extends = "$text.2", color = "$status.info" }
+diagnostic_message = "$text.2"
+diagnostic_icon_size = 18
+diagnostic_icon_spacing = 8
+diagnostic_icon_color = "$text.2.color"
 
 [panel]
 padding = { top = 12, left = 12, bottom = 12, right = 12 }
@@ -173,7 +173,7 @@ corner_radius = 6
 
 [project_panel]
 extends = "$panel"
-padding.top = 6 # ($workspace.tab.height - $project_panel.entry.height) / 2
+padding.top = 6    # ($workspace.tab.height - $project_panel.entry.height) / 2
 
 [project_panel.entry]
 text = "$text.1"
