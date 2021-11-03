@@ -670,8 +670,10 @@ impl Editor {
     }
 
     fn end_selection(&mut self, cx: &mut ViewContext<Self>) {
-        let selections = self.selections::<Point>(cx).collect::<Vec<_>>();
-        self.update_selections(selections, false, cx);
+        if self.pending_selection.is_some() {
+            let selections = self.selections::<usize>(cx).collect::<Vec<_>>();
+            self.update_selections(selections, false, cx);
+        }
     }
 
     pub fn is_selecting(&self) -> bool {
@@ -2404,7 +2406,8 @@ impl Editor {
         cx.notify();
     }
 
-    fn start_transaction(&self, cx: &mut ViewContext<Self>) {
+    fn start_transaction(&mut self, cx: &mut ViewContext<Self>) {
+        self.end_selection(cx);
         self.buffer.update(cx, |buffer, _| {
             buffer
                 .start_transaction(Some(self.selection_set_id))
