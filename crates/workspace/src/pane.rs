@@ -182,7 +182,7 @@ impl Pane {
         let theme = &settings.theme;
 
         enum Tabs {}
-        let tabs = MouseEventHandler::new::<Tabs, _, _, _>(0, cx, |mouse_state, cx| {
+        let tabs = MouseEventHandler::new::<Tabs, _, _, _>(cx.view_id(), cx, |mouse_state, cx| {
             let mut row = Flex::row();
             for (ix, item) in self.items.iter().enumerate() {
                 let is_active = ix == self.active_item;

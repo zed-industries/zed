@@ -2418,6 +2418,10 @@ impl<'a, T: View> RenderContext<'a, T> {
     pub fn handle(&self) -> WeakViewHandle<T> {
         WeakViewHandle::new(self.window_id, self.view_id)
     }
+
+    pub fn view_id(&self) -> usize {
+        self.view_id
+    }
 }
 
 impl AsRef<AppContext> for &AppContext {
