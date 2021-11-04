@@ -256,6 +256,7 @@ message Diagnostic {
     uint64 end = 2;
     Severity severity = 3;
     string message = 4;
+    uint64 group_id = 5;
     enum Severity {
         None = 0;
         Error = 1;
