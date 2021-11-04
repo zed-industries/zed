@@ -812,6 +812,19 @@ impl Buffer {
             .map(move |(_, range, diagnostic)| (range, diagnostic))
     }
 
+    pub fn diagnostic_group<'a, O>(
+        &'a self,
+        group_id: usize,
+    ) -> impl Iterator<Item = (Range<O>, &Diagnostic)> + 'a
+    where
+        O: 'a + FromAnchor,
+    {
+        let content = self.content();
+        self.diagnostics
+            .filter(content, move |diagnostic| diagnostic.group_id == group_id)
+            .map(move |(_, range, diagnostic)| (range, diagnostic))
+    }
+
     pub fn diagnostics_update_count(&self) -> usize {
         self.diagnostics_update_count
     }

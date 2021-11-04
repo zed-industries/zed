@@ -846,6 +846,57 @@ async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
             ]
         );
 
+        assert_eq!(
+            buffer.diagnostic_group(0).collect::<Vec<_>>(),
+            &[
+                (
+                    Point::new(1, 8)..Point::new(1, 9),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::WARNING,
+                        message: "error 1".to_string(),
+                        group_id: 0
+                    }
+                ),
+                (
+                    Point::new(1, 8)..Point::new(1, 9),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 1 hint 1".to_string(),
+                        group_id: 0
+                    }
+                ),
+            ]
+        );
+        assert_eq!(
+            buffer.diagnostic_group(1).collect::<Vec<_>>(),
+            &[
+                (
+                    Point::new(1, 13)..Point::new(1, 15),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 2 hint 1".to_string(),
+                        group_id: 1
+                    }
+                ),
+                (
+                    Point::new(1, 13)..Point::new(1, 15),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 2 hint 2".to_string(),
+                        group_id: 1
+                    }
+                ),
+                (
+                    Point::new(2, 8)..Point::new(2, 17),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "error 2".to_string(),
+                        group_id: 1
+                    }
+                )
+            ]
+        );
+
         buffer
     });
 }

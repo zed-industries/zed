@@ -354,6 +354,38 @@ impl<T: Clone> AnchorRangeMultimap<T> {
             .cursor::<()>()
             .map(|entry| (entry.range.start..entry.range.end, &entry.value))
     }
+
+    pub fn filter<'a, O, F>(
+        &'a self,
+        content: Content<'a>,
+        mut f: F,
+    ) -> impl 'a + Iterator<Item = (usize, Range<O>, &T)>
+    where
+        O: FromAnchor,
+        F: 'a + FnMut(&'a T) -> bool,
+    {
+        let mut endpoint = Anchor {
+            full_offset: FullOffset(0),
+            bias: Bias::Left,
+            version: self.version.clone(),
+        };
+        self.entries
+            .cursor::<()>()
+            .enumerate()
+            .filter_map(move |(ix, entry)| {
+                if f(&entry.value) {
+                    endpoint.full_offset = entry.range.start;
+                    endpoint.bias = self.start_bias;
+                    let start = O::from_anchor(&endpoint, &content);
+                    endpoint.full_offset = entry.range.end;
+                    endpoint.bias = self.end_bias;
+                    let end = O::from_anchor(&endpoint, &content);
+                    Some((ix, start..end, &entry.value))
+                } else {
+                    None
+                }
+            })
+    }
 }
 
 impl<T: Clone> sum_tree::Item for AnchorRangeMultimapEntry<T> {
