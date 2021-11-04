@@ -694,6 +694,116 @@ async fn test_empty_diagnostic_ranges(mut cx: gpui::TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
+    cx.add_model(|cx| {
+        let text = "
+            fn foo(mut v: Vec<usize>) {
+                for x in &v {
+                    v.push(1);
+                }
+            }
+        "
+        .unindent();
+
+        let mut buffer = Buffer::new(0, text, cx);
+        buffer.set_language(Some(Arc::new(rust_lang())), None, cx);
+        let diagnostics = vec![
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
+                severity: Some(DiagnosticSeverity::WARNING),
+                message: "unused variable: `x`\n`#[warn(unused_variables)]` on by default"
+                    .to_string(),
+                related_information: Some(vec![lsp::DiagnosticRelatedInformation {
+                    location: lsp::Location {
+                        uri: lsp::Url::from_file_path("/example.rs").unwrap(),
+                        range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
+                    },
+                    message: "if this is intentional, prefix it with an underscore: `_x`"
+                        .to_string(),
+                }]),
+                ..Default::default()
+            },
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
+                severity: Some(DiagnosticSeverity::HINT),
+                message: "if this is intentional, prefix it with an underscore: `_x`".to_string(),
+                related_information: Some(vec![lsp::DiagnosticRelatedInformation {
+                    location: lsp::Location {
+                        uri: lsp::Url::from_file_path("/example.rs").unwrap(),
+                        range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
+                    },
+                    message: "original diagnostic".to_string(),
+                }]),
+                ..Default::default()
+            },
+            lsp::Diagnostic {
+                range: lsp::Range::new( lsp::Position::new(2, 8), lsp::Position::new(2, 17)),
+                severity: Some(DiagnosticSeverity::ERROR),
+                message: "cannot borrow `v` as mutable because it is also borrowed as immutable\nmutable borrow occurs here".to_string(),
+                related_information: Some(
+                    vec![
+                        lsp::DiagnosticRelatedInformation {
+                            location: lsp::Location {
+                                uri: lsp::Url::from_file_path("/example.rs").unwrap(),
+                                range: lsp::Range::new(lsp::Position::new( 1, 13, ), lsp::Position::new(1, 15)),
+                            },
+                            message: "immutable borrow occurs here".to_string(),
+                        },
+                        lsp::DiagnosticRelatedInformation {
+                            location: lsp::Location {
+                                uri: lsp::Url::from_file_path("/example.rs").unwrap(),
+                                range: lsp::Range::new(lsp::Position::new( 1, 13, ), lsp::Position::new(1, 15)),
+                            },
+                            message: "immutable borrow later used here".to_string(),
+                        },
+                    ],
+                ),
+                ..Default::default()
+            },
+            lsp::Diagnostic {
+                range: lsp::Range::new( lsp::Position::new(1, 13), lsp::Position::new(1, 15)),
+                severity: Some( DiagnosticSeverity::HINT),
+                message: "immutable borrow occurs here".to_string(),
+                related_information: Some(
+                    vec![
+                        lsp::DiagnosticRelatedInformation {
+                            location: lsp::Location {
+                                uri: lsp::Url::from_file_path("/example.rs").unwrap(),
+                                range: lsp::Range::new(lsp::Position::new( 2, 8, ), lsp::Position::new(2, 17)),
+                            },
+                            message: "original diagnostic".to_string(),
+                        },
+                    ],
+                ),
+                ..Default::default()
+            },
+            lsp::Diagnostic {
+                range: lsp::Range::new( lsp::Position::new(1, 13), lsp::Position::new(1, 15)),
+                severity: Some(DiagnosticSeverity::HINT),
+                message: "immutable borrow later used here".to_string(),
+                related_information: Some(
+                    vec![
+                        lsp::DiagnosticRelatedInformation {
+                            location: lsp::Location {
+                                uri: lsp::Url::from_file_path("/example.rs").unwrap(),
+                                range: lsp::Range::new(lsp::Position::new( 2, 8, ), lsp::Position::new(2, 17)),
+                            },
+                            message: "original diagnostic".to_string(),
+                        },
+                    ],
+                ),
+                ..Default::default()
+            },
+        ];
+        buffer.update_diagnostics(None, diagnostics, cx).unwrap();
+
+        // TODO: Group these diagnostics somehow.
+
+        buffer
+    });
+}
+
 fn chunks_with_diagnostics<T: ToOffset>(
     buffer: &Buffer,
     range: Range<T>,
