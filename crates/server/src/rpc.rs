@@ -1713,6 +1713,7 @@ mod tests {
                     (
                         Point::new(0, 4)..Point::new(0, 7),
                         &Diagnostic {
+                            group_id: 0,
                             message: "message 1".to_string(),
                             severity: lsp::DiagnosticSeverity::ERROR,
                         }
@@ -1720,6 +1721,7 @@ mod tests {
                     (
                         Point::new(0, 10)..Point::new(0, 13),
                         &Diagnostic {
+                            group_id: 1,
                             severity: lsp::DiagnosticSeverity::WARNING,
                             message: "message 2".to_string()
                         }
