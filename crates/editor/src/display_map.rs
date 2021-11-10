@@ -1,4 +1,5 @@
 mod fold_map;
+mod injection_map;
 mod tab_map;
 mod wrap_map;
 
