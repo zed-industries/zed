@@ -31,6 +31,12 @@ pub trait Summary: Default + Clone + fmt::Debug {
 
 pub trait Dimension<'a, S: Summary>: Clone + fmt::Debug + Default {
     fn add_summary(&mut self, _summary: &'a S, _: &S::Context);
+
+    fn from_summary(summary: &'a S, cx: &S::Context) -> Self {
+        let mut dimension = Self::default();
+        dimension.add_summary(summary, cx);
+        dimension
+    }
 }
 
 impl<'a, T: Summary> Dimension<'a, T> for T {
