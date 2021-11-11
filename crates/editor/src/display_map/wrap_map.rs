@@ -269,8 +269,56 @@ impl WrapMap {
 }
 
 impl Patch {
-    fn compose(&mut self, other: &Self) -> &mut Self {
+    fn compose(&mut self, new: &Self) -> &mut Self {
+        let mut new_edits = new.0.iter().peekable();
+        let mut old_delta = 0;
+        let mut new_delta = 0;
+        let mut ix = 0;
+        'outer: while ix < self.0.len() {
+            let old_edit = &mut self.0[ix];
+            old_edit.new.start = (old_edit.new.start as i32 + new_delta) as u32;
+            old_edit.new.end = (old_edit.new.end as i32 + new_delta) as u32;
 
+            while let Some(new_edit) = new_edits.peek() {
+                let new_edit_delta = new_edit.new.len() as i32 - new_edit.old.len() as i32;
+                if new_edit.old.end < self.0[ix].new.start {
+                    let new_edit = new_edits.next().unwrap().clone();
+                    self.0.insert(ix, new_edit);
+                    ix += 1;
+
+                    let old_edit = &mut self.0[ix];
+                    old_edit.new.start = (old_edit.new.start as i32 + new_edit_delta) as u32;
+                    old_edit.new.end = (old_edit.new.end as i32 + new_edit_delta) as u32;
+                    new_delta += new_edit_delta;
+                } else if new_edit.old.start <= self.0[ix].new.end {
+                    let new_edit = new_edits.next().unwrap().clone();
+                    let old_edit = &mut self.0[ix];
+                    if new_edit.old.start < old_edit.new.start {
+                        old_edit.old.start -= old_edit.new.start - new_edit.old.start;
+                        old_edit.new.start = new_edit.new.start;
+                    }
+                    if new_edit.old.end > old_edit.new.end {
+                        old_edit.old.end += new_edit.old.end - old_edit.new.end;
+                        old_edit.new.end = new_edit.old.end;
+                    }
+
+                    old_edit.new.end = (old_edit.new.end as i32 + new_edit_delta) as u32;
+                    new_delta += new_edit_delta;
+                    if old_edit.old.len() == 0 && old_edit.new.len() == 0 {
+                        self.0.remove(ix);
+                        continue 'outer;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            ix += 1;
+        }
+
+        self.0.extend(new_edits.cloned());
+
+        self
         // let mut other_ranges = edit.ranges.iter().peekable();
         // let mut new_ranges = Vec::new();
         // let insertion_len = edit.new_text.as_ref().map_or(0, |t| t.len());
