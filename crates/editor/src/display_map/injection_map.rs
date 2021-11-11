@@ -25,7 +25,7 @@ pub struct InjectionMap {
     next_injection_id: usize,
 }
 
-pub struct InjectionSnapshot {
+pub struct Snapshot {
     transforms: SumTree<Transform>,
     injections: SumTree<Injection>,
     buffer_snapshot: language::Snapshot,
@@ -103,7 +103,7 @@ struct TransformSummary {
 }
 
 #[derive(Copy, Clone, Debug, Default)]
-struct InjectionOffset(usize);
+pub struct InjectionOffset(usize);
 
 impl sum_tree::Summary for InjectionId {
     type Context = ();
@@ -114,10 +114,32 @@ impl sum_tree::Summary for InjectionId {
 }
 
 impl InjectionMap {
-    pub fn read(&self, cx: &AppContext) -> (InjectionSnapshot, Vec<Edit<InjectionOffset>>) {
+    pub fn new(buffer_handle: ModelHandle<Buffer>, cx: &AppContext) -> (Self, Snapshot) {
+        let buffer = buffer_handle.read(cx);
+        let this = Self {
+            buffer: buffer_handle,
+            injections: Default::default(),
+            injection_sites: Default::default(),
+            transforms: Mutex::new(SumTree::from_item(
+                Transform::isomorphic(buffer.text_summary()),
+                &(),
+            )),
+            last_sync: Mutex::new(SyncState {
+                version: buffer.version(),
+                parse_count: buffer.parse_count(),
+                diagnostics_update_count: buffer.diagnostics_update_count(),
+            }),
+            version: AtomicUsize::new(0),
+            next_injection_id: 0,
+        };
+        let (snapshot, _) = this.read(cx);
+        (this, snapshot)
+    }
+
+    pub fn read(&self, cx: &AppContext) -> (Snapshot, Vec<Edit<InjectionOffset>>) {
         let edits = self.sync(cx);
         // self.check_invariants(cx);
-        let snapshot = InjectionSnapshot {
+        let snapshot = Snapshot {
             transforms: self.transforms.lock().clone(),
             injections: self.injections.clone(),
             buffer_snapshot: self.buffer.read(cx).snapshot(),
@@ -129,11 +151,7 @@ impl InjectionMap {
     pub fn write(
         &mut self,
         cx: &AppContext,
-    ) -> (
-        InjectionMapWriter,
-        InjectionSnapshot,
-        Vec<Edit<InjectionOffset>>,
-    ) {
+    ) -> (InjectionMapWriter, Snapshot, Vec<Edit<InjectionOffset>>) {
         let (snapshot, edits) = self.read(cx);
         (InjectionMapWriter(self), snapshot, edits)
     }
@@ -174,31 +192,47 @@ impl InjectionMap {
 
         let mut new_transforms = SumTree::<Transform>::new();
         let mut transforms = self.transforms.lock();
+        let old_max_point = transforms.summary().input.lines;
+        let new_max_point = buffer.max_point();
         let mut cursor = transforms.cursor::<Point>();
         let mut injection_sites = self.injection_sites.cursor::<InjectionSitePosition>();
         let mut pending_after_injections: Vec<InjectionId> = Vec::new();
 
         while let Some(mut edit) = buffer_edits_iter.next() {
-            // Expand this edit to line boundaries
+            dbg!(&edit);
+            // Expand this edit to line boundaries.
             edit.old.start.column = 0;
             edit.old.end += Point::new(1, 0);
             edit.new.start.column = 0;
             edit.new.end += Point::new(1, 0);
 
-            // Merge with subsequent edits that intersect the same lines
-            while let Some(next_edit) = buffer_edits_iter.peek() {
-                if next_edit.old.start.row > edit.old.end.row {
-                    break;
+            // Push any transforms preceding the edit.
+            new_transforms.push_tree(cursor.slice(&edit.old.start, Bias::Left, &()), &());
+
+            // Snap edits to row boundaries of intersecting transforms.
+            loop {
+                if cmp::min(edit.old.end, old_max_point) <= cursor.end(&()) {
+                    cursor.seek(&edit.old.end, Bias::Left, &());
+                    cursor.next(&());
+                    let new_old_end = *cursor.start() + Point::new(1, 0);
+                    edit.new.end += new_old_end - edit.old.end;
+                    edit.old.end = new_old_end;
                 }
 
-                let next_edit = buffer_edits_iter.next().unwrap();
-                edit.old.end.row = next_edit.old.end.row + 1;
-                let row_delta = next_edit.new.end.row as i32 - next_edit.old.end.row as i32;
-                edit.new.end.row = (edit.new.end.row as i32 + row_delta) as u32;
+                if buffer_edits_iter.peek().map_or(false, |next_edit| {
+                    edit.old.end.row >= next_edit.old.start.row
+                }) {
+                    let next_edit = buffer_edits_iter.next().unwrap();
+                    edit.old.end = cmp::max(edit.old.end, next_edit.old.end + Point::new(1, 0));
+                    let row_delta = (next_edit.new.end.row as i32 - next_edit.new.start.row as i32)
+                        - (next_edit.old.end.row as i32 - next_edit.old.start.row as i32);
+                    edit.new.end.row = (edit.new.end.row as i32 + row_delta) as u32;
+                } else {
+                    break;
+                }
             }
 
-            // Push any transforms preceding the edit
-            new_transforms.push_tree(cursor.slice(&edit.old.start, Bias::Left, &()), &());
+            dbg!(&edit);
 
             // Find and insert all injections on the lines spanned by the edit, interleaved with isomorphic regions
             injection_sites.seek(
@@ -264,13 +298,38 @@ impl InjectionMap {
                 last_injection_row = Some(injection_row);
             }
 
-            if let Some(last_injection_row) = injection_row {}
+            if let Some(last_injection_row) = last_injection_row {
+                let injection_point = Point::new(last_injection_row + 1, 0);
+                if injection_point > new_transforms.summary().input.lines {
+                    let injection_offset = injection_point.to_offset(buffer);
+                    new_transforms.push(
+                        Transform::isomorphic(buffer.text_summary_for_range(
+                            new_transforms.summary().input.bytes..injection_offset,
+                        )),
+                        &(),
+                    );
+                }
+                for injection_id in pending_after_injections.drain(..) {
+                    new_transforms.push(
+                        Transform::for_injection(self.injections.get(&injection_id, &()).unwrap()),
+                        &(),
+                    )
+                }
+            }
+
+            let sum = new_transforms.summary();
+            let new_end = cmp::min(edit.new.end, new_max_point);
+            if sum.input.lines < new_end {
+                let text_summary =
+                    buffer.text_summary_for_range(sum.input.bytes..new_end.to_offset(buffer));
+                new_transforms.push(Transform::isomorphic(text_summary), &());
+            }
         }
         new_transforms.push_tree(cursor.suffix(&()), &());
         drop(cursor);
 
         *transforms = new_transforms;
-        todo!()
+        Vec::new()
     }
 }
 
@@ -279,11 +338,7 @@ impl<'a> InjectionMapWriter<'a> {
         &mut self,
         injections: T,
         cx: &AppContext,
-    ) -> (
-        Vec<InjectionId>,
-        InjectionSnapshot,
-        Vec<Edit<InjectionOffset>>,
-    )
+    ) -> (Vec<InjectionId>, Snapshot, Vec<Edit<InjectionOffset>>)
     where
         T: IntoIterator<Item = (Anchor, InjectionProps)>,
     {
@@ -314,6 +369,7 @@ impl<'a> InjectionMapWriter<'a> {
                 InjectionSite {
                     injection_id: id,
                     position,
+                    disposition: props.disposition,
                 },
                 buffer,
             );
@@ -332,7 +388,7 @@ impl<'a> InjectionMapWriter<'a> {
         self.0.injection_sites = new_sites;
 
         let edits = self.0.apply_edits(edits, cx);
-        let snapshot = InjectionSnapshot {
+        let snapshot = Snapshot {
             transforms: self.0.transforms.lock().clone(),
             injections: self.0.injections.clone(),
             buffer_snapshot: buffer.snapshot(),
@@ -384,13 +440,13 @@ impl sum_tree::Summary for InjectionSiteSummary {
     fn add_summary(&mut self, summary: &Self, _: &Self::Context) {
         self.min_injection_id = cmp::min(self.min_injection_id, summary.min_injection_id);
         self.max_injection_id = cmp::max(self.max_injection_id, summary.max_injection_id);
-        self.max_position = summary.max_position;
+        self.max_position = summary.max_position.clone();
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, InjectionSiteSummary> for InjectionSitePosition {
     fn add_summary(&mut self, summary: &'a InjectionSiteSummary, _: &buffer::Buffer) {
-        self.0 = summary.max_position;
+        self.0 = summary.max_position.clone();
     }
 }
 
@@ -476,5 +532,55 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for InjectionOffset {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         self.0 += summary.output.bytes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::env;
+
+    use super::*;
+    use buffer::RandomCharIter;
+    use rand::prelude::*;
+
+    #[gpui::test(iterations = 1000)]
+    fn test_random(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
+        let operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(1);
+
+        let buffer = cx.add_model(|cx| {
+            let len = rng.gen_range(0..10);
+            let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+            Buffer::new(0, text, cx)
+        });
+        let (map, initial_snapshot) = InjectionMap::new(buffer.clone(), cx.as_ref());
+        assert_eq!(
+            initial_snapshot.transforms.summary().input,
+            buffer.read(cx).text_summary()
+        );
+
+        for _ in 0..operations {
+            log::info!("text: {:?}", buffer.read(cx).text());
+            match rng.gen_range(0..=100) {
+                _ => {
+                    let edits = buffer.update(cx, |buffer, _| {
+                        let start_version = buffer.version.clone();
+                        let edit_count = rng.gen_range(1..=5);
+                        buffer.randomly_edit(&mut rng, edit_count);
+                        buffer
+                            .edits_since::<Point>(&start_version)
+                            .collect::<Vec<_>>()
+                    });
+                    log::info!("editing {:?}", edits);
+                }
+            }
+
+            let (snapshot, edits) = map.read(cx.as_ref());
+            assert_eq!(
+                snapshot.transforms.summary().input,
+                buffer.read(cx).text_summary()
+            );
+        }
     }
 }
