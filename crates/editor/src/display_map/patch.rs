@@ -11,25 +11,28 @@ impl Patch {
         let mut new_edits = new.0.iter().cloned().peekable();
         let mut old_delta = 0;
         let mut new_delta = 0;
+
         for mut old_edit in self.0.iter().cloned() {
+            let old_edit_new_start = old_edit.new.start;
+            let old_edit_new_end = old_edit.new.end;
             let mut next_new_delta = new_delta;
             while let Some(mut new_edit) = new_edits.peek().cloned() {
                 let new_edit_delta = new_edit.new.len() as i32 - new_edit.old.len() as i32;
-                if new_edit.old.end < old_edit.new.start {
+                if new_edit.old.end < old_edit_new_start {
                     new_edit.old.start = (new_edit.old.start as i32 - old_delta) as u32;
                     new_edit.old.end = (new_edit.old.end as i32 - old_delta) as u32;
                     new_edits.next();
                     new_delta += new_edit_delta;
                     next_new_delta += new_edit_delta;
                     composed.push(new_edit);
-                } else if new_edit.old.start <= old_edit.new.end {
-                    if new_edit.old.start < old_edit.new.start {
-                        old_edit.old.start -= old_edit.new.start - new_edit.old.start;
-                        old_edit.new.start = new_edit.new.start;
+                } else if new_edit.old.start <= old_edit_new_end {
+                    if new_edit.old.start < old_edit_new_start {
+                        old_edit.old.start -= old_edit_new_start - new_edit.old.start;
+                        old_edit.new.start -= old_edit_new_start - new_edit.old.start;
                     }
-                    if new_edit.old.end > old_edit.new.end {
-                        old_edit.old.end += new_edit.old.end - old_edit.new.end;
-                        old_edit.new.end = new_edit.old.end;
+                    if new_edit.old.end > old_edit_new_end {
+                        old_edit.old.end += new_edit.old.end - old_edit_new_end;
+                        old_edit.new.end += new_edit.old.end - old_edit_new_end;
                     }
 
                     old_edit.new.end = (old_edit.new.end as i32 + new_edit_delta) as u32;
@@ -69,7 +72,7 @@ mod tests {
     use rand::prelude::*;
     use std::env;
 
-    #[gpui::test(iterations = 1000, seed = 28)]
+    #[gpui::test(iterations = 1000, seed = 131)]
     fn test_random(mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
