@@ -9,6 +9,8 @@ use smol::future::yield_now;
 use std::{collections::VecDeque, ops::Range, time::Duration};
 use sum_tree::{Bias, Cursor, SumTree};
 
+pub type Edit = buffer::Edit<u32>;
+
 pub struct WrapMap {
     snapshot: Snapshot,
     pending_edits: VecDeque<(TabSnapshot, Vec<TabEdit>)>,
