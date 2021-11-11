@@ -1,6 +1,5 @@
 mod block_map;
 mod fold_map;
-mod injection_map;
 mod tab_map;
 mod wrap_map;
 
@@ -53,7 +52,7 @@ impl DisplayMap {
     pub fn snapshot(&self, cx: &mut ModelContext<Self>) -> DisplayMapSnapshot {
         let (folds_snapshot, edits) = self.fold_map.read(cx);
         let (tabs_snapshot, edits) = self.tab_map.sync(folds_snapshot.clone(), edits);
-        let wraps_snapshot = self
+        let (wraps_snapshot, _) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(tabs_snapshot.clone(), edits, cx));
         DisplayMapSnapshot {
