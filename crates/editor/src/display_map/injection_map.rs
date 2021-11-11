@@ -1,14 +1,15 @@
 use std::{
-    cmp::Ordering,
+    cmp::{self, Ordering},
+    collections::BTreeMap,
     mem,
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
 
-use buffer::{rope::TextDimension, Anchor, Bias, Edit, Rope, TextSummary, ToOffset};
+use buffer::{Anchor, Bias, Edit, Point, Rope, TextSummary, ToOffset, ToPoint};
 use gpui::{fonts::HighlightStyle, AppContext, ModelHandle};
 use language::Buffer;
 use parking_lot::Mutex;
-use sum_tree::{SeekTarget, SumTree};
+use sum_tree::SumTree;
 use util::post_inc;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd)]
@@ -18,6 +19,7 @@ pub struct InjectionMap {
     buffer: ModelHandle<Buffer>,
     transforms: Mutex<SumTree<Transform>>,
     injections: SumTree<Injection>,
+    injection_sites: SumTree<InjectionSite>,
     version: AtomicUsize,
     last_sync: Mutex<SyncState>,
     next_injection_id: usize,
@@ -52,6 +54,37 @@ struct Injection {
     id: InjectionId,
     text: Rope,
     runs: Vec<(usize, HighlightStyle)>,
+}
+
+#[derive(Clone, Debug)]
+pub struct InjectionProps {
+    text: Rope,
+    runs: Vec<(usize, HighlightStyle)>,
+    disposition: Disposition,
+}
+
+#[derive(Clone, Debug)]
+pub enum Disposition {
+    BeforeLine,
+    AfterLine,
+}
+
+#[derive(Clone, Debug)]
+struct InjectionSite {
+    injection_id: InjectionId,
+    position: Anchor,
+    disposition: Disposition,
+}
+
+#[derive(Clone, Debug)]
+struct InjectionSitePosition(Anchor);
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct InjectionSiteSummary {
+    min_injection_id: InjectionId,
+    max_injection_id: InjectionId,
+    min_position: Anchor,
+    max_position: Anchor,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -133,96 +166,111 @@ impl InjectionMap {
 
     fn apply_edits(
         &self,
-        buffer_edits: Vec<buffer::Edit<usize>>,
+        buffer_edits: Vec<buffer::Edit<Point>>,
         cx: &AppContext,
     ) -> Vec<Edit<InjectionOffset>> {
-        let buffer = self.buffer.read(cx).snapshot();
+        let buffer = self.buffer.read(cx);
         let mut buffer_edits_iter = buffer_edits.iter().cloned().peekable();
 
         let mut new_transforms = SumTree::<Transform>::new();
         let mut transforms = self.transforms.lock();
-        let mut cursor = transforms.cursor::<usize>();
+        let mut cursor = transforms.cursor::<Point>();
+        let mut injection_sites = self.injection_sites.cursor::<InjectionSitePosition>();
+        let mut pending_after_injections: Vec<InjectionId> = Vec::new();
 
         while let Some(mut edit) = buffer_edits_iter.next() {
-            new_transforms.push_tree(cursor.slice(&edit.old.start, Bias::Right, &()), &());
-            edit.new.start -= edit.old.start - cursor.start();
-            edit.old.start = *cursor.start();
+            // Expand this edit to line boundaries
+            edit.old.start.column = 0;
+            edit.old.end += Point::new(1, 0);
+            edit.new.start.column = 0;
+            edit.new.end += Point::new(1, 0);
 
-            cursor.seek(&edit.old.end, Bias::Left, &());
-            cursor.next(&());
-
-            let mut delta = edit.new.len() as isize - edit.old.len() as isize;
-            loop {
-                edit.old.end = *cursor.start();
-
-                if let Some(next_edit) = buffer_edits_iter.peek() {
-                    if next_edit.old.start >= edit.old.end {
-                        break;
-                    }
-
-                    let next_edit = buffer_edits_iter.next().unwrap();
-                    delta += next_edit.new.len() as isize - next_edit.old.len() as isize;
-
-                    if next_edit.old.end >= edit.old.end {
-                        edit.old.end = next_edit.old.end;
-                        cursor.seek(&edit.old.end, Bias::Left, &());
-                        cursor.next(&());
-                    }
-                } else {
+            // Merge with subsequent edits that intersect the same lines
+            while let Some(next_edit) = buffer_edits_iter.peek() {
+                if next_edit.old.start.row > edit.old.end.row {
                     break;
                 }
+
+                let next_edit = buffer_edits_iter.next().unwrap();
+                edit.old.end.row = next_edit.old.end.row + 1;
+                let row_delta = next_edit.new.end.row as i32 - next_edit.old.end.row as i32;
+                edit.new.end.row = (edit.new.end.row as i32 + row_delta) as u32;
             }
 
-            edit.new.end = ((edit.new.start + edit.old.len()) as isize + delta) as usize;
+            // Push any transforms preceding the edit
+            new_transforms.push_tree(cursor.slice(&edit.old.start, Bias::Left, &()), &());
 
-            if !edit.new.is_empty() {
-                let text_summary = buffer.text_summary_for_range(edit.new.start..edit.new.end);
-                new_transforms.push(
-                    Transform {
-                        input: text_summary.clone(),
-                        output: text_summary,
-                        injection_id: None,
-                    },
-                    &(),
-                );
+            // Find and insert all injections on the lines spanned by the edit, interleaved with isomorphic regions
+            injection_sites.seek(
+                &InjectionSitePosition(buffer.anchor_before(edit.new.start)),
+                Bias::Right,
+                buffer,
+            );
+            let mut last_injection_row: Option<u32> = None;
+            while let Some(site) = injection_sites.item() {
+                let injection_row = site.position.to_point(buffer).row;
+
+                if injection_row > edit.new.end.row {
+                    break;
+                }
+
+                // If we've moved on to a new injection row, ensure that any pending injections with an after
+                // disposition are inserted after their target row
+                if let Some(last_injection_row) = last_injection_row {
+                    if injection_row != last_injection_row {
+                        let injection_point = Point::new(last_injection_row + 1, 0);
+                        if injection_point > new_transforms.summary().input.lines {
+                            let injection_offset = injection_point.to_offset(buffer);
+                            new_transforms.push(
+                                Transform::isomorphic(buffer.text_summary_for_range(
+                                    new_transforms.summary().input.bytes..injection_offset,
+                                )),
+                                &(),
+                            );
+                        }
+                        for injection_id in pending_after_injections.drain(..) {
+                            new_transforms.push(
+                                Transform::for_injection(
+                                    self.injections.get(&injection_id, &()).unwrap(),
+                                ),
+                                &(),
+                            )
+                        }
+                    }
+                }
+
+                match site.disposition {
+                    Disposition::AfterLine => pending_after_injections.push(site.injection_id),
+                    Disposition::BeforeLine => {
+                        let injection_point = Point::new(injection_row, 0);
+                        if injection_point > new_transforms.summary().input.lines {
+                            let injection_offset = injection_point.to_offset(buffer);
+                            new_transforms.push(
+                                Transform::isomorphic(buffer.text_summary_for_range(
+                                    new_transforms.summary().input.bytes..injection_offset,
+                                )),
+                                &(),
+                            );
+                        }
+                        new_transforms.push(
+                            Transform::for_injection(
+                                self.injections.get(&site.injection_id, &()).unwrap(),
+                            ),
+                            &(),
+                        );
+                    }
+                }
+
+                last_injection_row = Some(injection_row);
             }
+
+            if let Some(last_injection_row) = injection_row {}
         }
         new_transforms.push_tree(cursor.suffix(&()), &());
         drop(cursor);
 
-        let injection_edits = {
-            let mut old_transforms = transforms.cursor::<(usize, InjectionOffset)>();
-            let mut new_transforms = new_transforms.cursor::<(usize, InjectionOffset)>();
-
-            buffer_edits
-                .into_iter()
-                .map(|edit| {
-                    old_transforms.seek(&edit.old.start, Bias::Right, &());
-                    let old_start =
-                        old_transforms.start().1 .0 + (edit.old.start - old_transforms.start().0);
-
-                    old_transforms.seek_forward(&edit.old.end, Bias::Left, &());
-                    let old_end =
-                        old_transforms.start().1 .0 + (edit.old.end - old_transforms.start().0);
-
-                    new_transforms.seek(&edit.new.start, Bias::Right, &());
-                    let new_start =
-                        new_transforms.start().1 .0 + (edit.new.start - new_transforms.start().0);
-
-                    new_transforms.seek_forward(&edit.new.end, Bias::Left, &());
-                    let new_end =
-                        new_transforms.start().1 .0 + (edit.new.end - new_transforms.start().0);
-
-                    Edit {
-                        old: InjectionOffset(old_start)..InjectionOffset(old_end),
-                        new: InjectionOffset(new_start)..InjectionOffset(new_end),
-                    }
-                })
-                .collect()
-        };
-
         *transforms = new_transforms;
-        injection_edits
+        todo!()
     }
 }
 
@@ -237,62 +285,61 @@ impl<'a> InjectionMapWriter<'a> {
         Vec<Edit<InjectionOffset>>,
     )
     where
-        T: IntoIterator<Item = (U, &'b str, Vec<(usize, HighlightStyle)>)>,
-        U: ToOffset,
+        T: IntoIterator<Item = (Anchor, InjectionProps)>,
     {
         let buffer = self.0.buffer.read(cx);
-        let mut injections = injections
-            .into_iter()
-            .map(|(position, text, runs)| (position.to_offset(buffer), text, runs))
-            .peekable();
-        let mut edits = Vec::new();
+        let mut cursor = self.0.injection_sites.cursor::<InjectionSitePosition>();
+        let mut new_sites = SumTree::new();
         let mut injection_ids = Vec::new();
-        let mut new_transforms = SumTree::new();
-        let mut transforms = self.0.transforms.lock();
-        let mut cursor = transforms.cursor::<usize>();
+        let mut edits = Vec::new();
 
-        while let Some((injection_offset, text, runs)) = injections.next() {
-            new_transforms.push_tree(cursor.slice(&injection_offset, Bias::Right, &()), &());
-            let new_transforms_end = new_transforms.summary().input.bytes;
-            if injection_offset > new_transforms_end {
-                new_transforms.push(
-                    Transform::isomorphic(
-                        buffer.text_summary_for_range(new_transforms_end..injection_offset),
-                    ),
-                    &(),
-                );
-            }
+        for (position, props) in injections {
+            let point = position.to_point(buffer);
+            edits.push(Edit {
+                old: point..point,
+                new: point..point,
+            });
 
-            let injection = Injection {
-                id: InjectionId(post_inc(&mut self.0.next_injection_id)),
-                runs,
-                text: text.into(),
-            };
-            new_transforms.push(
-                Transform {
-                    input: Default::default(),
-                    output: injection.text.summary(),
-                    injection_id: Some(injection.id),
+            let id = InjectionId(post_inc(&mut self.0.next_injection_id));
+            injection_ids.push(id);
+            new_sites.push_tree(
+                cursor.slice(
+                    &InjectionSitePosition(position.clone()),
+                    Bias::Right,
+                    buffer,
+                ),
+                buffer,
+            );
+            new_sites.push(
+                InjectionSite {
+                    injection_id: id,
+                    position,
+                },
+                buffer,
+            );
+            self.0.injections.push(
+                Injection {
+                    id,
+                    text: props.text,
+                    runs: props.runs,
                 },
                 &(),
             );
-            self.0.injections.push(injection, &());
-
-            if let Some((next_injection_offset, _, _)) = injections.peek() {
-                let old_transform_end = cursor.end(&());
-                if *next_injection_offset > old_transform_end {
-                    new_transforms.push(
-                        Transform::isomorphic(
-                            buffer.text_summary_for_range(new_transforms_end..old_transform_end),
-                        ),
-                        &(),
-                    );
-                    cursor.next(&());
-                }
-            }
         }
+        new_sites.push_tree(cursor.suffix(buffer), buffer);
 
-        (injection_ids, todo!(), edits)
+        drop(cursor);
+        self.0.injection_sites = new_sites;
+
+        let edits = self.0.apply_edits(edits, cx);
+        let snapshot = InjectionSnapshot {
+            transforms: self.0.transforms.lock().clone(),
+            injections: self.0.injections.clone(),
+            buffer_snapshot: buffer.snapshot(),
+            version: self.0.version.load(SeqCst),
+        };
+
+        (injection_ids, snapshot, edits)
     }
 }
 
@@ -304,12 +351,80 @@ impl sum_tree::Item for Injection {
     }
 }
 
+impl sum_tree::KeyedItem for Injection {
+    type Key = InjectionId;
+
+    fn key(&self) -> Self::Key {
+        self.id
+    }
+}
+
+impl sum_tree::Item for InjectionSite {
+    type Summary = InjectionSiteSummary;
+
+    fn summary(&self) -> Self::Summary {
+        InjectionSiteSummary {
+            min_injection_id: self.injection_id,
+            max_injection_id: self.injection_id,
+            min_position: self.position.clone(),
+            max_position: self.position.clone(),
+        }
+    }
+}
+
+impl Default for InjectionSitePosition {
+    fn default() -> Self {
+        Self(Anchor::min())
+    }
+}
+
+impl sum_tree::Summary for InjectionSiteSummary {
+    type Context = buffer::Buffer;
+
+    fn add_summary(&mut self, summary: &Self, _: &Self::Context) {
+        self.min_injection_id = cmp::min(self.min_injection_id, summary.min_injection_id);
+        self.max_injection_id = cmp::max(self.max_injection_id, summary.max_injection_id);
+        self.max_position = summary.max_position;
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, InjectionSiteSummary> for InjectionSitePosition {
+    fn add_summary(&mut self, summary: &'a InjectionSiteSummary, _: &buffer::Buffer) {
+        self.0 = summary.max_position;
+    }
+}
+
+impl<'a> sum_tree::SeekTarget<'a, InjectionSiteSummary, Self> for InjectionSitePosition {
+    fn cmp(&self, cursor_location: &Self, snapshot: &buffer::Buffer) -> Ordering {
+        self.0.cmp(&cursor_location.0, snapshot).unwrap()
+    }
+}
+
+impl Default for InjectionSiteSummary {
+    fn default() -> Self {
+        Self {
+            min_injection_id: InjectionId(usize::MAX),
+            max_injection_id: InjectionId(0),
+            min_position: Anchor::max(),
+            max_position: Anchor::min(),
+        }
+    }
+}
+
 impl Transform {
     fn isomorphic(text_summary: TextSummary) -> Self {
         Self {
             input: text_summary.clone(),
             output: text_summary,
             injection_id: None,
+        }
+    }
+
+    fn for_injection(injection: &Injection) -> Self {
+        Self {
+            input: Default::default(),
+            output: injection.text.summary(),
+            injection_id: Some(injection.id),
         }
     }
 }
@@ -349,6 +464,12 @@ impl sum_tree::Summary for TransformSummary {
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for usize {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         *self += summary.input.bytes
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for Point {
+    fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
+        *self += summary.input.lines
     }
 }
 
