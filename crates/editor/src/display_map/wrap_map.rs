@@ -361,6 +361,55 @@ impl Patch {
         // self.ranges = new_ranges;
     }
 
+    fn compose2(&self, new: &Self) -> Patch {
+        let mut composed = Vec::new();
+        let mut new_edits = new.0.iter().cloned().peekable();
+        let mut old_delta = 0;
+        let mut new_delta = 0;
+        for mut old_edit in self.0.iter().cloned() {
+            let mut next_new_delta = new_delta;
+            while let Some(mut new_edit) = new_edits.peek().cloned() {
+                let new_edit_delta = new_edit.new.len() as i32 - new_edit.old.len() as i32;
+                if new_edit.old.end < old_edit.new.start {
+                    new_edit.old.start = (new_edit.old.start as i32 - old_delta) as u32;
+                    new_edit.old.end = (new_edit.old.end as i32 - old_delta) as u32;
+                    new_edits.next();
+                    new_delta += new_edit_delta;
+                    next_new_delta += new_edit_delta;
+                    composed.push(new_edit);
+                } else if new_edit.old.start <= old_edit.new.end {
+                    if new_edit.old.start < old_edit.new.start {
+                        old_edit.old.start -= old_edit.new.start - new_edit.old.start;
+                        old_edit.new.start = new_edit.new.start;
+                    }
+                    if new_edit.old.end > old_edit.new.end {
+                        old_edit.old.end += new_edit.old.end - old_edit.new.end;
+                        old_edit.new.end = new_edit.old.end;
+                    }
+
+                    old_edit.new.end = (old_edit.new.end as i32 + new_edit_delta) as u32;
+                    new_edits.next();
+                    next_new_delta += new_edit_delta;
+                } else {
+                    break;
+                }
+            }
+
+            old_edit.new.start = (old_edit.new.start as i32 + new_delta) as u32;
+            old_edit.new.end = (old_edit.new.end as i32 + new_delta) as u32;
+            old_delta += old_edit.new.len() as i32 - old_edit.old.len() as i32;
+            new_delta = next_new_delta;
+            composed.push(old_edit);
+        }
+        composed.extend(new_edits.map(|mut new_edit| {
+            new_edit.old.start = (new_edit.old.start as i32 - old_delta) as u32;
+            new_edit.old.end = (new_edit.old.end as i32 - old_delta) as u32;
+            new_edit
+        }));
+
+        Patch(composed)
+    }
+
     fn invert(&mut self) -> &mut Self {
         for edit in &mut self.0 {
             mem::swap(&mut edit.old, &mut edit.new);
