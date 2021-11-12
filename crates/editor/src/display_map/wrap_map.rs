@@ -1,5 +1,6 @@
 use super::{
     fold_map,
+    patch::Patch,
     tab_map::{self, Edit as TabEdit, Snapshot as TabSnapshot, TabPoint, TextSummary},
 };
 use gpui::{fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, Task};
@@ -14,8 +15,8 @@ pub type Edit = buffer::Edit<u32>;
 pub struct WrapMap {
     snapshot: Snapshot,
     pending_edits: VecDeque<(TabSnapshot, Vec<TabEdit>)>,
-    interpolated_edits: Vec<Vec<Edit>>,
-    edits_since_sync: Vec<Vec<Edit>>,
+    interpolated_edits: Patch,
+    edits_since_sync: Patch,
     wrap_width: Option<f32>,
     background_task: Option<Task<()>>,
     font: (FontId, f32),
@@ -89,7 +90,7 @@ impl WrapMap {
             background_task: None,
         };
         this.set_wrap_width(wrap_width, cx);
-
+        mem::take(&mut this.edits_since_sync);
         this
     }
 
@@ -103,7 +104,7 @@ impl WrapMap {
         tab_snapshot: TabSnapshot,
         edits: Vec<TabEdit>,
         cx: &mut ModelContext<Self>,
-    ) -> (Snapshot, Vec<Vec<Edit>>) {
+    ) -> (Snapshot, Patch) {
         self.pending_edits.push_back((tab_snapshot, edits));
         self.flush_edits(cx);
         (self.snapshot.clone(), mem::take(&mut self.edits_since_sync))
@@ -128,6 +129,8 @@ impl WrapMap {
 
     fn rewrap(&mut self, cx: &mut ModelContext<Self>) {
         self.background_task.take();
+        self.interpolated_edits.clear();
+        self.pending_edits.clear();
 
         if let Some(wrap_width) = self.wrap_width {
             let mut new_snapshot = self.snapshot.clone();
@@ -157,7 +160,7 @@ impl WrapMap {
             {
                 Ok((snapshot, edits)) => {
                     self.snapshot = snapshot;
-                    self.edits_since_sync.push(edits);
+                    self.edits_since_sync = self.edits_since_sync.compose(&edits);
                     cx.notify();
                 }
                 Err(wrap_task) => {
@@ -165,11 +168,10 @@ impl WrapMap {
                         let (snapshot, edits) = wrap_task.await;
                         this.update(&mut cx, |this, cx| {
                             this.snapshot = snapshot;
-                            for mut edits in this.interpolated_edits.drain(..) {
-                                invert(&mut edits);
-                                this.edits_since_sync.push(edits);
-                            }
-                            this.edits_since_sync.push(edits);
+                            this.edits_since_sync = this
+                                .edits_since_sync
+                                .compose(mem::take(&mut this.interpolated_edits).invert())
+                                .compose(&edits);
                             this.background_task = None;
                             this.flush_edits(cx);
                             cx.notify();
@@ -188,12 +190,12 @@ impl WrapMap {
             }
             let new_rows = self.snapshot.transforms.summary().output.lines.row + 1;
             self.snapshot.interpolated = false;
-            self.pending_edits.clear();
-            self.interpolated_edits.clear();
-            self.edits_since_sync.push(vec![Edit {
-                old: 0..old_rows,
-                new: 0..new_rows,
-            }]);
+            self.edits_since_sync = self.edits_since_sync.compose(&unsafe {
+                Patch::new_unchecked(vec![Edit {
+                    old: 0..old_rows,
+                    new: 0..new_rows,
+                }])
+            });
         }
     }
 
@@ -223,14 +225,14 @@ impl WrapMap {
                 let update_task = cx.background().spawn(async move {
                     let mut line_wrapper = font_cache.line_wrapper(font_id, font_size);
 
-                    let mut output_edits = Vec::new();
-                    for (tab_snapshot, edits) in pending_edits {
+                    let mut edits = Patch::default();
+                    for (tab_snapshot, tab_edits) in pending_edits {
                         let wrap_edits = snapshot
-                            .update(tab_snapshot, &edits, wrap_width, &mut line_wrapper)
+                            .update(tab_snapshot, &tab_edits, wrap_width, &mut line_wrapper)
                             .await;
-                        output_edits.push(wrap_edits);
+                        edits = edits.compose(&wrap_edits);
                     }
-                    (snapshot, output_edits)
+                    (snapshot, edits)
                 });
 
                 match cx
@@ -239,18 +241,17 @@ impl WrapMap {
                 {
                     Ok((snapshot, output_edits)) => {
                         self.snapshot = snapshot;
-                        self.edits_since_sync.extend(output_edits);
+                        self.edits_since_sync = self.edits_since_sync.compose(&output_edits);
                     }
                     Err(update_task) => {
                         self.background_task = Some(cx.spawn(|this, mut cx| async move {
-                            let (snapshot, output_edits) = update_task.await;
+                            let (snapshot, edits) = update_task.await;
                             this.update(&mut cx, |this, cx| {
                                 this.snapshot = snapshot;
-                                for mut edits in this.interpolated_edits.drain(..) {
-                                    invert(&mut edits);
-                                    this.edits_since_sync.push(edits);
-                                }
-                                this.edits_since_sync.extend(output_edits);
+                                this.edits_since_sync = this
+                                    .edits_since_sync
+                                    .compose(mem::take(&mut this.interpolated_edits).invert())
+                                    .compose(&edits);
                                 this.background_task = None;
                                 this.flush_edits(cx);
                                 cx.notify();
@@ -268,8 +269,8 @@ impl WrapMap {
                 to_remove_len += 1;
             } else {
                 let interpolated_edits = self.snapshot.interpolate(tab_snapshot.clone(), &edits);
-                self.edits_since_sync.push(interpolated_edits.clone());
-                self.interpolated_edits.push(interpolated_edits);
+                self.edits_since_sync = self.edits_since_sync.compose(&interpolated_edits);
+                self.interpolated_edits = self.interpolated_edits.compose(&interpolated_edits);
             }
         }
 
@@ -293,17 +294,20 @@ impl Snapshot {
         }
     }
 
-    fn interpolate(&mut self, new_tab_snapshot: TabSnapshot, edits: &[TabEdit]) -> Vec<Edit> {
+    fn interpolate(&mut self, new_tab_snapshot: TabSnapshot, tab_edits: &[TabEdit]) -> Patch {
         let mut new_transforms;
-        if edits.is_empty() {
+        if tab_edits.is_empty() {
             new_transforms = self.transforms.clone();
         } else {
             let mut old_cursor = self.transforms.cursor::<TabPoint>();
-            let mut edits = edits.into_iter().peekable();
-            new_transforms =
-                old_cursor.slice(&edits.peek().unwrap().old_lines.start, Bias::Right, &());
+            let mut tab_edits_iter = tab_edits.iter().peekable();
+            new_transforms = old_cursor.slice(
+                &tab_edits_iter.peek().unwrap().old_lines.start,
+                Bias::Right,
+                &(),
+            );
 
-            while let Some(edit) = edits.next() {
+            while let Some(edit) = tab_edits_iter.next() {
                 if edit.new_lines.start > TabPoint::from(new_transforms.summary().input.lines) {
                     let summary = new_tab_snapshot.text_summary_for_range(
                         TabPoint::from(new_transforms.summary().input.lines)..edit.new_lines.start,
@@ -318,7 +322,7 @@ impl Snapshot {
                 }
 
                 old_cursor.seek_forward(&edit.old_lines.end, Bias::Right, &());
-                if let Some(next_edit) = edits.peek() {
+                if let Some(next_edit) = tab_edits_iter.peek() {
                     if next_edit.old_lines.start > old_cursor.end(&()) {
                         if old_cursor.end(&()) > edit.old_lines.end {
                             let summary = self
@@ -345,39 +349,44 @@ impl Snapshot {
             }
         }
 
-        self.transforms = new_transforms;
-        self.tab_snapshot = new_tab_snapshot;
-        self.interpolated = true;
+        let old_snapshot = mem::replace(
+            self,
+            Snapshot {
+                tab_snapshot: new_tab_snapshot,
+                transforms: new_transforms,
+                interpolated: true,
+            },
+        );
         self.check_invariants();
-        todo!()
+        old_snapshot.compute_edits(tab_edits, self)
     }
 
     async fn update(
         &mut self,
         new_tab_snapshot: TabSnapshot,
-        edits: &[TabEdit],
+        tab_edits: &[TabEdit],
         wrap_width: f32,
         line_wrapper: &mut LineWrapper,
-    ) -> Vec<Edit> {
+    ) -> Patch {
         #[derive(Debug)]
         struct RowEdit {
             old_rows: Range<u32>,
             new_rows: Range<u32>,
         }
 
-        let mut edits = edits.into_iter().peekable();
+        let mut tab_edits_iter = tab_edits.into_iter().peekable();
         let mut row_edits = Vec::new();
-        while let Some(edit) = edits.next() {
+        while let Some(edit) = tab_edits_iter.next() {
             let mut row_edit = RowEdit {
                 old_rows: edit.old_lines.start.row()..edit.old_lines.end.row() + 1,
                 new_rows: edit.new_lines.start.row()..edit.new_lines.end.row() + 1,
             };
 
-            while let Some(next_edit) = edits.peek() {
+            while let Some(next_edit) = tab_edits_iter.peek() {
                 if next_edit.old_lines.start.row() <= row_edit.old_rows.end {
                     row_edit.old_rows.end = next_edit.old_lines.end.row() + 1;
                     row_edit.new_rows.end = next_edit.new_lines.end.row() + 1;
-                    edits.next();
+                    tab_edits_iter.next();
                 } else {
                     break;
                 }
@@ -484,11 +493,52 @@ impl Snapshot {
             }
         }
 
-        self.transforms = new_transforms;
-        self.tab_snapshot = new_tab_snapshot;
-        self.interpolated = false;
+        let old_snapshot = mem::replace(
+            self,
+            Snapshot {
+                tab_snapshot: new_tab_snapshot,
+                transforms: new_transforms,
+                interpolated: false,
+            },
+        );
         self.check_invariants();
-        todo!()
+        old_snapshot.compute_edits(tab_edits, self)
+    }
+
+    fn compute_edits(&self, tab_edits: &[TabEdit], new_snapshot: &Snapshot) -> Patch {
+        let mut wrap_edits = Vec::new();
+        let mut old_cursor = self.transforms.cursor::<TransformSummary>();
+        let mut new_cursor = new_snapshot.transforms.cursor::<TransformSummary>();
+        for mut tab_edit in tab_edits.iter().cloned() {
+            tab_edit.old_lines.start.0.column = 0;
+            tab_edit.old_lines.end.0 += Point::new(1, 0);
+            tab_edit.new_lines.start.0.column = 0;
+            tab_edit.new_lines.end.0 += Point::new(1, 0);
+
+            old_cursor.seek(&tab_edit.old_lines.start, Bias::Right, &());
+            let mut old_start = old_cursor.start().output.lines;
+            old_start += tab_edit.old_lines.start.0 - old_cursor.start().input.lines;
+
+            old_cursor.seek(&tab_edit.old_lines.end, Bias::Right, &());
+            let mut old_end = old_cursor.start().output.lines;
+            old_end += tab_edit.old_lines.end.0 - old_cursor.start().input.lines;
+
+            new_cursor.seek(&tab_edit.new_lines.start, Bias::Right, &());
+            let mut new_start = new_cursor.start().output.lines;
+            new_start += tab_edit.new_lines.start.0 - new_cursor.start().input.lines;
+
+            new_cursor.seek(&tab_edit.new_lines.end, Bias::Right, &());
+            let mut new_end = new_cursor.start().output.lines;
+            new_end += tab_edit.new_lines.end.0 - new_cursor.start().input.lines;
+
+            wrap_edits.push(Edit {
+                old: old_start.row..old_end.row,
+                new: new_start.row..new_end.row,
+            });
+        }
+
+        consolidate_wrap_edits(&mut wrap_edits);
+        unsafe { Patch::new_unchecked(wrap_edits) }
     }
 
     pub fn chunks_at(&self, wrap_row: u32) -> Chunks {
@@ -921,6 +971,12 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for TabPoint {
     }
 }
 
+impl<'a> sum_tree::SeekTarget<'a, TransformSummary, TransformSummary> for TabPoint {
+    fn cmp(&self, cursor_location: &TransformSummary, _: &()) -> std::cmp::Ordering {
+        Ord::cmp(&self.0, &cursor_location.input.lines)
+    }
+}
+
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for WrapPoint {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         self.0 += summary.output.lines;
@@ -933,6 +989,21 @@ fn invert(edits: &mut Vec<Edit>) {
     }
 }
 
+fn consolidate_wrap_edits(edits: &mut Vec<Edit>) {
+    let mut i = 1;
+    while i < edits.len() {
+        let edit = edits[i].clone();
+        let prev_edit = &mut edits[i - 1];
+        if prev_edit.old.end >= edit.old.start {
+            prev_edit.old.end = edit.old.end;
+            prev_edit.new.end = edit.new.end;
+            edits.remove(i);
+            continue;
+        }
+        i += 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -940,9 +1011,10 @@ mod tests {
         display_map::{fold_map::FoldMap, tab_map::TabMap},
         test::Observer,
     };
+    use buffer::Rope;
     use language::{Buffer, RandomCharIter};
     use rand::prelude::*;
-    use std::env;
+    use std::{cmp, env};
 
     #[gpui::test(iterations = 100)]
     async fn test_random_wraps(mut cx: gpui::TestAppContext, mut rng: StdRng) {
@@ -999,9 +1071,9 @@ mod tests {
             notifications.recv().await.unwrap();
         }
 
-        let (snapshot, _) =
+        let (initial_snapshot, _) =
             wrap_map.update(&mut cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
-        let actual_text = snapshot.text();
+        let actual_text = initial_snapshot.text();
         assert_eq!(
             actual_text, expected_text,
             "unwrapped text is: {:?}",
@@ -1009,6 +1081,7 @@ mod tests {
         );
         log::info!("Wrapped text: {:?}", actual_text);
 
+        let mut edits = Vec::new();
         for _i in 0..operations {
             match rng.gen_range(0..=100) {
                 0..=19 => {
@@ -1021,14 +1094,15 @@ mod tests {
                     wrap_map.update(&mut cx, |map, cx| map.set_wrap_width(wrap_width, cx));
                 }
                 20..=39 => {
-                    for (folds_snapshot, edits) in
+                    for (folds_snapshot, fold_edits) in
                         cx.read(|cx| fold_map.randomly_mutate(&mut rng, cx))
                     {
-                        let (tabs_snapshot, edits) = tab_map.sync(folds_snapshot, edits);
-                        let (mut snapshot, _) =
-                            wrap_map.update(&mut cx, |map, cx| map.sync(tabs_snapshot, edits, cx));
+                        let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+                        let (mut snapshot, wrap_edits) = wrap_map
+                            .update(&mut cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
                         snapshot.check_invariants();
                         snapshot.verify_chunks(&mut rng);
+                        edits.push((snapshot, wrap_edits));
                     }
                 }
                 _ => {
@@ -1040,21 +1114,22 @@ mod tests {
                 "Unwrapped text (no folds): {:?}",
                 buffer.read_with(&cx, |buf, _| buf.text())
             );
-            let (folds_snapshot, edits) = cx.read(|cx| fold_map.read(cx));
+            let (folds_snapshot, fold_edits) = cx.read(|cx| fold_map.read(cx));
             log::info!(
                 "Unwrapped text (unexpanded tabs): {:?}",
                 folds_snapshot.text()
             );
-            let (tabs_snapshot, edits) = tab_map.sync(folds_snapshot, edits);
+            let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
             log::info!("Unwrapped text (expanded tabs): {:?}", tabs_snapshot.text());
 
             let unwrapped_text = tabs_snapshot.text();
             let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
-            let (mut snapshot, _) = wrap_map.update(&mut cx, |map, cx| {
-                map.sync(tabs_snapshot.clone(), edits, cx)
+            let (mut snapshot, wrap_edits) = wrap_map.update(&mut cx, |map, cx| {
+                map.sync(tabs_snapshot.clone(), tab_edits, cx)
             });
             snapshot.check_invariants();
             snapshot.verify_chunks(&mut rng);
+            edits.push((snapshot, wrap_edits));
 
             if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) && rng.gen_bool(0.4) {
                 log::info!("Waiting for wrapping to finish");
@@ -1064,18 +1139,42 @@ mod tests {
             }
 
             if !wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
-                let (mut wrapped_snapshot, _) =
+                let (mut wrapped_snapshot, wrap_edits) =
                     wrap_map.update(&mut cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
                 let actual_text = wrapped_snapshot.text();
                 log::info!("Wrapping finished: {:?}", actual_text);
                 wrapped_snapshot.check_invariants();
                 wrapped_snapshot.verify_chunks(&mut rng);
+                edits.push((wrapped_snapshot, wrap_edits));
                 assert_eq!(
                     actual_text, expected_text,
                     "unwrapped text is: {:?}",
                     unwrapped_text
                 );
             }
+        }
+
+        let mut initial_text = Rope::from(initial_snapshot.text().as_str());
+        for (snapshot, edits) in edits {
+            let snapshot_text = Rope::from(snapshot.text().as_str());
+            for edit in &edits {
+                let old_start = initial_text.point_to_offset(Point::new(edit.new.start, 0));
+                let old_end = initial_text.point_to_offset(cmp::min(
+                    Point::new(edit.new.start + edit.old.len() as u32, 0),
+                    initial_text.max_point(),
+                ));
+                let new_start = snapshot_text.point_to_offset(Point::new(edit.new.start, 0));
+                let new_end = snapshot_text.point_to_offset(cmp::min(
+                    Point::new(edit.new.end, 0),
+                    snapshot_text.max_point(),
+                ));
+                let new_text = snapshot_text
+                    .chunks_in_range(new_start..new_end)
+                    .collect::<String>();
+
+                initial_text.replace(old_start..old_end, &new_text);
+            }
+            assert_eq!(initial_text.to_string(), snapshot_text.to_string());
         }
     }
 
