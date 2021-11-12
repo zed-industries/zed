@@ -20,129 +20,68 @@ fn compose_edits(old_edit: &Edit, new_edit: &Edit) -> Edit {
     composed
 }
 
+fn merge_edits(left_edit: &mut Option<Edit>, right_edit: Edit) {
+    if let Some(left_edit) = left_edit.as_mut() {
+        left_edit.old.end = right_edit.old.end;
+        left_edit.new.end = right_edit.new.end;
+    } else {
+        *left_edit = Some(right_edit);
+    }
+}
+
 impl Patch {
     fn compose(&self, new: &Self) -> Patch {
-        enum EditSource {
-            Old,
-            New,
-        }
-
-        let mut composed_edits = Vec::new();
-        let mut old_delta = 0;
-        let mut new_delta = 0;
+        let mut composed = Vec::new();
         let mut old_edits = self.0.iter().cloned().peekable();
         let mut new_edits = new.0.iter().cloned().peekable();
+        let old_delta = 0;
 
-        fn peek_next(
-            old_edits: &mut Peekable<impl Iterator<Item = Edit>>,
-            new_edits: &mut Peekable<impl Iterator<Item = Edit>>,
-        ) -> Option<EditSource> {
-            match (old_edits.peek(), new_edits.peek()) {
+        'outer: loop {
+            // Find the next edit in the intermediate coordinate space
+            // Then merge together all old and new edits that intersect this edit in the intermediate coordinate space.
+            let mut pending_old_edit = None;
+            let mut pending_new_edit = None;
+            let mut intermediate_end = u32::MAX;
+            loop {
+                match (old_edits.peek(), new_edits.peek()) {
+                    (None, None) => break,
+                    (Some(edit), None) => {
+                        if edit.new.start <= intermediate_end {
+                            intermediate_end = edit.new.end;
+                            merge_edits(&mut pending_old_edit, old_edits.next().unwrap())
+                        } else {
+                            break;
+                        }
+                    }
+                    (None, Some(edit)) => {
+                        if edit.old.start <= intermediate_end {
+                            intermediate_end = edit.old.end;
+                            merge_edits(&mut pending_new_edit, new_edits.next().unwrap());
+                        }
+                    }
+                    (Some(old_edit), Some(new_edit)) => {
+                        if old_edit.new.start <= new_edit.old.start {
+                            intermediate_end = old_edit.new.end;
+                            merge_edits(&mut pending_old_edit, old_edits.next().unwrap())
+                        } else {
+                            intermediate_end = new_edit.old.end;
+                            merge_edits(&mut pending_new_edit, new_edits.next().unwrap());
+                        }
+                    }
+                }
+            }
+
+            match (pending_old_edit, pending_new_edit) {
+                (None, None) => break,
+                (None, Some(new_edit)) => todo!(),
+                (Some(old_edit), None) => todo!(),
                 (Some(old_edit), Some(new_edit)) => {
-                    if old_edit.new.start <= new_edit.old.start {
-                        Some(EditSource::Old)
-                    } else {
-                        Some(EditSource::New)
-                    }
+                    let composed = compose_edits(&old_edit, &new_edit);
                 }
-                (Some(_), None) => Some(EditSource::Old),
-                (None, Some(_)) => Some(EditSource::New),
-                (None, None) => None,
             }
         }
 
-        while let Some(source) = peek_next(&mut old_edits, &mut new_edits) {
-            let mut intermediate_end;
-            let mut composed_edit;
-            match source {
-                EditSource::Old => {
-                    let edit = old_edits.next().unwrap();
-                    println!("pulling an old edit {:?}", edit);
-                    old_delta += edit_delta(&edit);
-                    intermediate_end = edit.new.end;
-                    composed_edit = edit.clone();
-                    apply_delta(&mut composed_edit.new, new_delta);
-                    println!("  composed edit: {:?}", composed_edit);
-                }
-                EditSource::New => {
-                    let edit = new_edits.next().unwrap();
-                    println!("pulling a new edit {:?}", edit);
-                    new_delta += edit_delta(&edit);
-                    intermediate_end = edit.old.end;
-                    composed_edit = edit.clone();
-                    apply_delta(&mut composed_edit.old, -old_delta);
-                    println!("  composed edit: {:?}", composed_edit);
-                }
-            }
-
-            while let Some(source) = peek_next(&mut old_edits, &mut new_edits) {
-                match source {
-                    EditSource::Old => {
-                        if let Some(old_edit) = old_edits.peek() {
-                            if old_edit.new.start <= intermediate_end {
-                                let old_edit = old_edits.next().unwrap();
-                                println!("  merging with an old edit {:?}", old_edit);
-
-                                if old_edit.old.start < composed_edit.old.start {
-                                    composed_edit.new.start =
-                                        composed_edit.old.start - old_edit.old.start;
-                                    composed_edit.old.start = old_edit.old.start;
-                                }
-
-                                if old_edit.old.end > composed_edit.old.end {
-                                    println!(
-                                        "    old edit end exceeds composed edit by {:?}",
-                                        old_edit.old.end - composed_edit.old.end
-                                    );
-                                    composed_edit.new.end +=
-                                        old_edit.old.end - composed_edit.old.end;
-                                    composed_edit.old.end = old_edit.old.end;
-                                    intermediate_end = old_edit.new.end;
-
-                                    println!(
-                                        "    composed edit after expansion, before delta {:?}",
-                                        composed_edit,
-                                    );
-                                }
-                                let edit_delta = edit_delta(&old_edit);
-                                println!("    edit delta is {}", edit_delta);
-                                composed_edit.old.end =
-                                    (composed_edit.old.end as i32 - edit_delta) as u32;
-                                println!("    composed edit is now {:?}", composed_edit);
-                                old_delta += edit_delta;
-                                continue;
-                            }
-                        }
-                        break;
-                    }
-                    EditSource::New => {
-                        if let Some(new_edit) = new_edits.peek() {
-                            if new_edit.old.start <= intermediate_end {
-                                let new_edit = new_edits.next().unwrap();
-                                println!("  merging with a new edit {:?}", new_edit);
-                                if new_edit.old.end > intermediate_end {
-                                    let expansion = new_edit.old.end - intermediate_end;
-                                    composed_edit.old.end += expansion;
-                                    composed_edit.new.end += expansion;
-                                    intermediate_end = new_edit.old.end;
-                                }
-                                let edit_delta = edit_delta(&new_edit);
-                                composed_edit.new.end =
-                                    (composed_edit.new.end as i32 + edit_delta) as u32;
-                                println!("    composed edit is now {:?}", composed_edit);
-                                new_delta += edit_delta;
-                                continue;
-                            }
-                        }
-                        break;
-                    }
-                }
-            }
-
-            composed_edits.push(composed_edit);
-        }
-
-        Patch(composed_edits)
+        Patch(composed)
     }
 
     fn compose1(&self, new: &Self) -> Patch {
