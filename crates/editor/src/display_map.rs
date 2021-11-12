@@ -39,8 +39,7 @@ impl DisplayMap {
     ) -> Self {
         let (fold_map, snapshot) = FoldMap::new(buffer.clone(), cx);
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
-        let wrap_map =
-            cx.add_model(|cx| WrapMap::new(snapshot, font_id, font_size, wrap_width, cx));
+        let (wrap_map, _) = WrapMap::new(snapshot, font_id, font_size, wrap_width, cx);
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
         DisplayMap {
             buffer,

@@ -1,4 +1,4 @@
-use std::{cmp, mem, slice};
+use std::{cmp, mem};
 
 type Edit = buffer::Edit<u32>;
 
@@ -8,6 +8,10 @@ pub struct Patch(Vec<Edit>);
 impl Patch {
     pub unsafe fn new_unchecked(edits: Vec<Edit>) -> Self {
         Self(edits)
+    }
+
+    pub fn into_inner(self) -> Vec<Edit> {
+        self.0
     }
 
     pub fn compose(&self, other: &Self) -> Self {
@@ -164,15 +168,6 @@ impl Patch {
         } else {
             self.0.push(edit);
         }
-    }
-}
-
-impl<'a> IntoIterator for &'a Patch {
-    type Item = &'a Edit;
-    type IntoIter = slice::Iter<'a, Edit>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.iter()
     }
 }
 

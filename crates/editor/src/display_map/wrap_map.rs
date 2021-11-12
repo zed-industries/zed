@@ -3,7 +3,10 @@ use super::{
     patch::Patch,
     tab_map::{self, Edit as TabEdit, Snapshot as TabSnapshot, TabPoint, TextSummary},
 };
-use gpui::{fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, Task};
+use gpui::{
+    fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, ModelHandle, MutableAppContext,
+    Task,
+};
 use language::{HighlightedChunk, Point};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
@@ -78,20 +81,24 @@ impl WrapMap {
         font_id: FontId,
         font_size: f32,
         wrap_width: Option<f32>,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
-        let mut this = Self {
-            font: (font_id, font_size),
-            wrap_width: None,
-            pending_edits: Default::default(),
-            interpolated_edits: Default::default(),
-            edits_since_sync: Default::default(),
-            snapshot: Snapshot::new(tab_snapshot),
-            background_task: None,
-        };
-        this.set_wrap_width(wrap_width, cx);
-        mem::take(&mut this.edits_since_sync);
-        this
+        cx: &mut MutableAppContext,
+    ) -> (ModelHandle<Self>, Snapshot) {
+        let handle = cx.add_model(|cx| {
+            let mut this = Self {
+                font: (font_id, font_size),
+                wrap_width: None,
+                pending_edits: Default::default(),
+                interpolated_edits: Default::default(),
+                edits_since_sync: Default::default(),
+                snapshot: Snapshot::new(tab_snapshot),
+                background_task: None,
+            };
+            this.set_wrap_width(wrap_width, cx);
+            mem::take(&mut this.edits_since_sync);
+            this
+        });
+        let snapshot = handle.read(cx).snapshot.clone();
+        (handle, snapshot)
     }
 
     #[cfg(test)]
@@ -104,10 +111,13 @@ impl WrapMap {
         tab_snapshot: TabSnapshot,
         edits: Vec<TabEdit>,
         cx: &mut ModelContext<Self>,
-    ) -> (Snapshot, Patch) {
+    ) -> (Snapshot, Vec<Edit>) {
         self.pending_edits.push_back((tab_snapshot, edits));
         self.flush_edits(cx);
-        (self.snapshot.clone(), mem::take(&mut self.edits_since_sync))
+        (
+            self.snapshot.clone(),
+            mem::take(&mut self.edits_since_sync).into_inner(),
+        )
     }
 
     pub fn set_font(&mut self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) {
@@ -983,12 +993,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for WrapPoint {
     }
 }
 
-fn invert(edits: &mut Vec<Edit>) {
-    for edit in edits {
-        mem::swap(&mut edit.old, &mut edit.new);
-    }
-}
-
 fn consolidate_wrap_edits(edits: &mut Vec<Edit>) {
     let mut i = 1;
     while i < edits.len() {
@@ -1062,17 +1066,14 @@ mod tests {
         let unwrapped_text = tabs_snapshot.text();
         let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
 
-        let wrap_map = cx.add_model(|cx| {
-            WrapMap::new(tabs_snapshot.clone(), font_id, font_size, wrap_width, cx)
-        });
+        let (wrap_map, initial_snapshot) =
+            cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font_id, font_size, wrap_width, cx));
         let (_observer, notifications) = Observer::new(&wrap_map, &mut cx);
 
         if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
             notifications.recv().await.unwrap();
         }
 
-        let (initial_snapshot, _) =
-            wrap_map.update(&mut cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
         let actual_text = initial_snapshot.text();
         assert_eq!(
             actual_text, expected_text,
@@ -1155,9 +1156,9 @@ mod tests {
         }
 
         let mut initial_text = Rope::from(initial_snapshot.text().as_str());
-        for (snapshot, edits) in edits {
+        for (snapshot, patch) in edits {
             let snapshot_text = Rope::from(snapshot.text().as_str());
-            for edit in &edits {
+            for edit in &patch {
                 let old_start = initial_text.point_to_offset(Point::new(edit.new.start, 0));
                 let old_end = initial_text.point_to_offset(cmp::min(
                     Point::new(edit.new.start + edit.old.len() as u32, 0),
@@ -1206,7 +1207,7 @@ mod tests {
     }
 
     impl Snapshot {
-        fn text(&self) -> String {
+        pub fn text(&self) -> String {
             self.chunks_at(0).collect()
         }
 
