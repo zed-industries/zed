@@ -3,6 +3,7 @@ use buffer::{rope, Anchor, Bias, Point, Rope, ToOffset};
 use gpui::fonts::HighlightStyle;
 use language::HighlightedChunk;
 use parking_lot::Mutex;
+use smol::io::AsyncBufReadExt;
 use std::{borrow::Borrow, cmp, collections::HashSet, iter, ops::Range, slice, sync::Arc};
 use sum_tree::SumTree;
 
@@ -63,11 +64,11 @@ struct TransformSummary {
 }
 
 struct HighlightedChunks<'a> {
-    transform_cursor: sum_tree::Cursor<'a, Transform, (OutputRow, InputRow)>,
+    transforms: sum_tree::Cursor<'a, Transform, (OutputRow, InputRow)>,
     input_chunks: wrap_map::HighlightedChunks<'a>,
-    input_chunk: Option<HighlightedChunk<'a>>,
+    input_chunk: HighlightedChunk<'a>,
     block_chunks: Option<BlockChunks<'a>>,
-    output_position: BlockPoint,
+    output_row: u32,
     max_output_row: u32,
 }
 
@@ -163,6 +164,24 @@ impl BlockMap {
     }
 }
 
+impl BlockPoint {
+    fn row(&self) -> u32 {
+        self.0.row
+    }
+
+    fn row_mut(&self) -> &mut u32 {
+        &mut self.0.row
+    }
+
+    fn column(&self) -> u32 {
+        self.0.column
+    }
+
+    fn column_mut(&self) -> &mut u32 {
+        &mut self.0.column
+    }
+}
+
 impl<'a> BlockMapWriter<'a> {
     pub fn insert<P, T>(
         &self,
@@ -202,7 +221,7 @@ impl BlockSnapshot {
             input_chunks,
             input_chunk: None,
             block_chunks: None,
-            transform_cursor: cursor,
+            transforms: cursor,
             output_position: BlockPoint(Point::new(rows.start, 0)),
             max_output_row: rows.end,
         }
@@ -258,35 +277,62 @@ impl<'a> Iterator for HighlightedChunks<'a> {
     type Item = HighlightedChunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(current_block) = self.block_chunks.as_mut() {
-            if let Some(chunk) = current_block.next() {
-                return Some(chunk);
+        if self.output_row >= self.max_output_row {
+            return None;
+        }
+
+        if let Some(block_chunks) = self.block_chunks.as_mut() {
+            if let Some(mut block_chunk) = block_chunks.next() {
+                self.output_row += block_chunk.text.matches('\n').count() as u32;
+                return Some(block_chunk);
             } else {
                 self.block_chunks.take();
             }
         }
 
-        let transform = if let Some(item) = self.transform_cursor.item() {
-            item
-        } else {
-            return None;
-        };
-
-        if let Some(block) = &transform.block {
-            let of
+        let transform = self.transforms.item()?;
+        if let Some(block) = transform.block.as_ref() {
+            let block_start = self.transforms.start().0 .0;
+            let block_end = self.transforms.end(&()).0 .0;
+            let start_row_in_block = self.output_row - block_start;
+            let end_row_in_block = cmp::min(self.max_output_row, block_end) - block_start;
+            self.transforms.next(&());
+            let mut block_chunks = BlockChunks::new(block, start_row_in_block..end_row_in_block);
+            if let Some(block_chunk) = block_chunks.next() {
+                self.output_row += block_chunk.text.matches('\n').count() as u32;
+                return Some(block_chunk);
+            }
         }
 
-        None
+        if self.input_chunk.text.is_empty() {
+            self.input_chunk = self.input_chunks.next().unwrap();
+        }
+
+        let transform_end = self.transforms.end(&()).0 .0;
+        let (prefix_rows, prefix_bytes) =
+            offset_for_row(self.input_chunk.text, transform_end - self.output_row);
+        self.output_row += prefix_rows;
+        let (prefix, suffix) = self.input_chunk.text.split_at(prefix_bytes);
+
+        self.input_chunk.text = suffix;
+        Some(HighlightedChunk {
+            text: prefix,
+            ..self.input_chunk
+        })
     }
 }
 
 impl<'a> BlockChunks<'a> {
-    fn new(block: &'a Block, range: Range<usize>) -> Self {
+    fn new(block: &'a Block, row_range: Range<u32>) -> Self {
+        let point_range = Point::new(row_range.start, 0)..Point::new(row_range.end, 0);
+        let offset_range = block.text.point_to_offset(point_range.start)
+            ..block.text.point_to_offset(point_range.end);
+
         let mut runs = block.runs.iter().peekable();
         let mut run_start = 0;
         while let Some((run_len, _)) = runs.peek() {
             let run_end = run_start + run_len;
-            if run_end <= range.start {
+            if run_end <= offset_range.start {
                 run_start = run_end;
                 runs.next();
             } else {
@@ -297,9 +343,9 @@ impl<'a> BlockChunks<'a> {
         Self {
             chunk: None,
             run_start,
-            chunks: block.text.chunks_in_range(range.clone()),
+            chunks: block.text.chunks_in_range(offset_range.clone()),
             runs,
-            offset: range.start,
+            offset: offset_range.start,
         }
     }
 }
@@ -368,6 +414,26 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for OutputRow {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         self.0 += summary.output_rows;
     }
+}
+
+// Count the number of bytes prior to a target row.
+// If the string doesn't contain the target row, return the total number of rows it does contain.
+// Otherwise return the target row itself.
+fn offset_for_row(s: &str, target_row: u32) -> (u32, usize) {
+    assert!(target_row > 0);
+    let mut row = 0;
+    let mut offset = 0;
+    for (ix, line) in s.split('\n').enumerate() {
+        if ix > 0 {
+            row += 1;
+            offset += 1;
+            if row as u32 >= target_row {
+                break;
+            }
+        }
+        offset += line.len();
+    }
+    (row, offset)
 }
 
 #[cfg(test)]

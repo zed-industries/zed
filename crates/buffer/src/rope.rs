@@ -149,7 +149,9 @@ impl Rope {
     }
 
     pub fn offset_to_point(&self, offset: usize) -> Point {
-        assert!(offset <= self.summary().bytes);
+        if offset >= self.summary().bytes {
+            return self.summary().lines;
+        }
         let mut cursor = self.chunks.cursor::<(usize, Point)>();
         cursor.seek(&offset, Bias::Left, &());
         let overshoot = offset - cursor.start().0;
@@ -160,7 +162,9 @@ impl Rope {
     }
 
     pub fn offset_to_point_utf16(&self, offset: usize) -> PointUtf16 {
-        assert!(offset <= self.summary().bytes);
+        if offset >= self.summary().bytes {
+            return self.summary().lines_utf16;
+        }
         let mut cursor = self.chunks.cursor::<(usize, PointUtf16)>();
         cursor.seek(&offset, Bias::Left, &());
         let overshoot = offset - cursor.start().0;
@@ -171,7 +175,9 @@ impl Rope {
     }
 
     pub fn point_to_offset(&self, point: Point) -> usize {
-        assert!(point <= self.summary().lines);
+        if point >= self.summary().lines {
+            return self.summary().bytes;
+        }
         let mut cursor = self.chunks.cursor::<(Point, usize)>();
         cursor.seek(&point, Bias::Left, &());
         let overshoot = point - cursor.start().0;
@@ -182,7 +188,9 @@ impl Rope {
     }
 
     pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
-        assert!(point <= self.summary().lines_utf16);
+        if point >= self.summary().lines_utf16 {
+            return self.summary().bytes;
+        }
         let mut cursor = self.chunks.cursor::<(PointUtf16, usize)>();
         cursor.seek(&point, Bias::Left, &());
         let overshoot = point - cursor.start().0;
