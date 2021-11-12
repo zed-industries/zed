@@ -439,7 +439,7 @@ impl Buffer {
                                                     uri,
                                                     Default::default(),
                                                     snapshot.version as i32,
-                                                    snapshot.buffer_snapshot.text().into(),
+                                                    snapshot.buffer_snapshot.text().to_string(),
                                                 ),
                                             },
                                         )

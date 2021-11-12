@@ -3,7 +3,7 @@ use crate::PointUtf16;
 use super::Point;
 use arrayvec::ArrayString;
 use smallvec::SmallVec;
-use std::{cmp, ops::Range, str};
+use std::{cmp, fmt, ops::Range, str};
 use sum_tree::{Bias, Dimension, SumTree};
 
 #[cfg(test)]
@@ -36,6 +36,16 @@ impl Rope {
 
         self.chunks.push_tree(chunks.suffix(&()), &());
         self.check_invariants();
+    }
+
+    pub fn replace(&mut self, range: Range<usize>, text: &str) {
+        let mut new_rope = Rope::new();
+        let mut cursor = self.cursor(0);
+        new_rope.append(cursor.slice(range.start));
+        cursor.seek_forward(range.end);
+        new_rope.push(text);
+        new_rope.append(cursor.suffix());
+        *self = new_rope;
     }
 
     pub fn push(&mut self, text: &str) {
@@ -236,9 +246,12 @@ impl<'a> From<&'a str> for Rope {
     }
 }
 
-impl Into<String> for Rope {
-    fn into(self) -> String {
-        self.chunks().collect()
+impl fmt::Display for Rope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for chunk in self.chunks() {
+            write!(f, "{}", chunk)?;
+        }
+        Ok(())
     }
 }
 

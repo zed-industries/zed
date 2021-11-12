@@ -1352,7 +1352,7 @@ mod tests {
             }
 
             let buffer = map.buffer.read(cx).snapshot();
-            let mut expected_text: String = buffer.text().into();
+            let mut expected_text: String = buffer.text().to_string();
             let mut expected_buffer_rows = Vec::new();
             let mut next_row = buffer.max_point().row;
             for fold_range in map.merged_fold_ranges(cx.as_ref()).into_iter().rev() {
