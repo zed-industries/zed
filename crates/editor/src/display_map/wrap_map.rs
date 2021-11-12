@@ -14,15 +14,12 @@ pub type Edit = buffer::Edit<u32>;
 pub struct WrapMap {
     snapshot: Snapshot,
     pending_edits: VecDeque<(TabSnapshot, Vec<TabEdit>)>,
-    interpolated_edits: Patch,
-    edits_since_sync: Patch,
+    interpolated_edits: Vec<Vec<Edit>>,
+    edits_since_sync: Vec<Vec<Edit>>,
     wrap_width: Option<f32>,
     background_task: Option<Task<()>>,
     font: (FontId, f32),
 }
-
-#[derive(Default)]
-struct Patch(Vec<Edit>);
 
 impl Entity for WrapMap {
     type Event = ();
@@ -106,13 +103,10 @@ impl WrapMap {
         tab_snapshot: TabSnapshot,
         edits: Vec<TabEdit>,
         cx: &mut ModelContext<Self>,
-    ) -> (Snapshot, Vec<Edit>) {
+    ) -> (Snapshot, Vec<Vec<Edit>>) {
         self.pending_edits.push_back((tab_snapshot, edits));
         self.flush_edits(cx);
-        (
-            self.snapshot.clone(),
-            mem::take(&mut self.edits_since_sync).0,
-        )
+        (self.snapshot.clone(), mem::take(&mut self.edits_since_sync))
     }
 
     pub fn set_font(&mut self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) {
@@ -143,7 +137,7 @@ impl WrapMap {
                 let mut line_wrapper = font_cache.line_wrapper(font_id, font_size);
                 let tab_snapshot = new_snapshot.tab_snapshot.clone();
                 let range = TabPoint::zero()..tab_snapshot.max_point();
-                new_snapshot
+                let edits = new_snapshot
                     .update(
                         tab_snapshot,
                         &[TabEdit {
@@ -154,22 +148,28 @@ impl WrapMap {
                         &mut line_wrapper,
                     )
                     .await;
-                new_snapshot
+                (new_snapshot, edits)
             });
 
             match cx
                 .background()
                 .block_with_timeout(Duration::from_millis(5), task)
             {
-                Ok(snapshot) => {
+                Ok((snapshot, edits)) => {
                     self.snapshot = snapshot;
+                    self.edits_since_sync.push(edits);
                     cx.notify();
                 }
                 Err(wrap_task) => {
                     self.background_task = Some(cx.spawn(|this, mut cx| async move {
-                        let snapshot = wrap_task.await;
+                        let (snapshot, edits) = wrap_task.await;
                         this.update(&mut cx, |this, cx| {
                             this.snapshot = snapshot;
+                            for mut edits in this.interpolated_edits.drain(..) {
+                                invert(&mut edits);
+                                this.edits_since_sync.push(edits);
+                            }
+                            this.edits_since_sync.push(edits);
                             this.background_task = None;
                             this.flush_edits(cx);
                             cx.notify();
@@ -178,6 +178,7 @@ impl WrapMap {
                 }
             }
         } else {
+            let old_rows = self.snapshot.transforms.summary().output.lines.row + 1;
             self.snapshot.transforms = SumTree::new();
             let summary = self.snapshot.tab_snapshot.text_summary();
             if !summary.lines.is_zero() {
@@ -185,6 +186,14 @@ impl WrapMap {
                     .transforms
                     .push(Transform::isomorphic(summary), &());
             }
+            let new_rows = self.snapshot.transforms.summary().output.lines.row + 1;
+            self.snapshot.interpolated = false;
+            self.pending_edits.clear();
+            self.interpolated_edits.clear();
+            self.edits_since_sync.push(vec![Edit {
+                old: 0..old_rows,
+                new: 0..new_rows,
+            }]);
         }
     }
 
@@ -214,12 +223,12 @@ impl WrapMap {
                 let update_task = cx.background().spawn(async move {
                     let mut line_wrapper = font_cache.line_wrapper(font_id, font_size);
 
-                    let mut output_edits = Patch::default();
+                    let mut output_edits = Vec::new();
                     for (tab_snapshot, edits) in pending_edits {
                         let wrap_edits = snapshot
                             .update(tab_snapshot, &edits, wrap_width, &mut line_wrapper)
                             .await;
-                        output_edits.compose(&wrap_edits);
+                        output_edits.push(wrap_edits);
                     }
                     (snapshot, output_edits)
                 });
@@ -230,16 +239,18 @@ impl WrapMap {
                 {
                     Ok((snapshot, output_edits)) => {
                         self.snapshot = snapshot;
-                        self.edits_since_sync.compose(&output_edits);
+                        self.edits_since_sync.extend(output_edits);
                     }
                     Err(update_task) => {
                         self.background_task = Some(cx.spawn(|this, mut cx| async move {
                             let (snapshot, output_edits) = update_task.await;
                             this.update(&mut cx, |this, cx| {
                                 this.snapshot = snapshot;
-                                this.edits_since_sync
-                                    .compose(mem::take(&mut this.interpolated_edits).invert())
-                                    .compose(&output_edits);
+                                for mut edits in this.interpolated_edits.drain(..) {
+                                    invert(&mut edits);
+                                    this.edits_since_sync.push(edits);
+                                }
+                                this.edits_since_sync.extend(output_edits);
                                 this.background_task = None;
                                 this.flush_edits(cx);
                                 cx.notify();
@@ -257,164 +268,14 @@ impl WrapMap {
                 to_remove_len += 1;
             } else {
                 let interpolated_edits = self.snapshot.interpolate(tab_snapshot.clone(), &edits);
-                self.edits_since_sync.compose(&interpolated_edits);
-                self.interpolated_edits.compose(&interpolated_edits);
+                self.edits_since_sync.push(interpolated_edits.clone());
+                self.interpolated_edits.push(interpolated_edits);
             }
         }
 
         if !was_interpolated {
             self.pending_edits.drain(..to_remove_len);
         }
-    }
-}
-
-impl Patch {
-    fn compose(&mut self, new: &Self) -> &mut Self {
-        let mut new_edits = new.0.iter().peekable();
-        let mut old_delta = 0;
-        let mut new_delta = 0;
-        let mut ix = 0;
-        'outer: while ix < self.0.len() {
-            let old_edit = &mut self.0[ix];
-            old_edit.new.start = (old_edit.new.start as i32 + new_delta) as u32;
-            old_edit.new.end = (old_edit.new.end as i32 + new_delta) as u32;
-
-            while let Some(new_edit) = new_edits.peek() {
-                let new_edit_delta = new_edit.new.len() as i32 - new_edit.old.len() as i32;
-                if new_edit.old.end < self.0[ix].new.start {
-                    let new_edit = new_edits.next().unwrap().clone();
-                    self.0.insert(ix, new_edit);
-                    ix += 1;
-
-                    let old_edit = &mut self.0[ix];
-                    old_edit.new.start = (old_edit.new.start as i32 + new_edit_delta) as u32;
-                    old_edit.new.end = (old_edit.new.end as i32 + new_edit_delta) as u32;
-                    new_delta += new_edit_delta;
-                } else if new_edit.old.start <= self.0[ix].new.end {
-                    let new_edit = new_edits.next().unwrap().clone();
-                    let old_edit = &mut self.0[ix];
-                    if new_edit.old.start < old_edit.new.start {
-                        old_edit.old.start -= old_edit.new.start - new_edit.old.start;
-                        old_edit.new.start = new_edit.new.start;
-                    }
-                    if new_edit.old.end > old_edit.new.end {
-                        old_edit.old.end += new_edit.old.end - old_edit.new.end;
-                        old_edit.new.end = new_edit.old.end;
-                    }
-
-                    old_edit.new.end = (old_edit.new.end as i32 + new_edit_delta) as u32;
-                    new_delta += new_edit_delta;
-                    if old_edit.old.len() == 0 && old_edit.new.len() == 0 {
-                        self.0.remove(ix);
-                        continue 'outer;
-                    }
-                } else {
-                    break;
-                }
-            }
-
-            ix += 1;
-        }
-
-        self.0.extend(new_edits.cloned());
-
-        self
-        // let mut other_ranges = edit.ranges.iter().peekable();
-        // let mut new_ranges = Vec::new();
-        // let insertion_len = edit.new_text.as_ref().map_or(0, |t| t.len());
-        // let mut delta = 0;
-
-        // for mut self_range in self.ranges.iter().cloned() {
-        //     self_range.start += delta;
-        //     self_range.end += delta;
-
-        //     while let Some(other_range) = other_ranges.peek() {
-        //         let mut other_range = (*other_range).clone();
-        //         other_range.start += delta;
-        //         other_range.end += delta;
-
-        //         if other_range.start <= self_range.end {
-        //             other_ranges.next().unwrap();
-        //             delta += insertion_len;
-
-        //             if other_range.end < self_range.start {
-        //                 new_ranges.push(other_range.start..other_range.end + insertion_len);
-        //                 self_range.start += insertion_len;
-        //                 self_range.end += insertion_len;
-        //             } else {
-        //                 self_range.start = cmp::min(self_range.start, other_range.start);
-        //                 self_range.end = cmp::max(self_range.end, other_range.end) + insertion_len;
-        //             }
-        //         } else {
-        //             break;
-        //         }
-        //     }
-
-        //     new_ranges.push(self_range);
-        // }
-
-        // for other_range in other_ranges {
-        //     new_ranges.push(other_range.start + delta..other_range.end + delta + insertion_len);
-        //     delta += insertion_len;
-        // }
-
-        // self.ranges = new_ranges;
-    }
-
-    fn compose2(&self, new: &Self) -> Patch {
-        let mut composed = Vec::new();
-        let mut new_edits = new.0.iter().cloned().peekable();
-        let mut old_delta = 0;
-        let mut new_delta = 0;
-        for mut old_edit in self.0.iter().cloned() {
-            let mut next_new_delta = new_delta;
-            while let Some(mut new_edit) = new_edits.peek().cloned() {
-                let new_edit_delta = new_edit.new.len() as i32 - new_edit.old.len() as i32;
-                if new_edit.old.end < old_edit.new.start {
-                    new_edit.old.start = (new_edit.old.start as i32 - old_delta) as u32;
-                    new_edit.old.end = (new_edit.old.end as i32 - old_delta) as u32;
-                    new_edits.next();
-                    new_delta += new_edit_delta;
-                    next_new_delta += new_edit_delta;
-                    composed.push(new_edit);
-                } else if new_edit.old.start <= old_edit.new.end {
-                    if new_edit.old.start < old_edit.new.start {
-                        old_edit.old.start -= old_edit.new.start - new_edit.old.start;
-                        old_edit.new.start = new_edit.new.start;
-                    }
-                    if new_edit.old.end > old_edit.new.end {
-                        old_edit.old.end += new_edit.old.end - old_edit.new.end;
-                        old_edit.new.end = new_edit.old.end;
-                    }
-
-                    old_edit.new.end = (old_edit.new.end as i32 + new_edit_delta) as u32;
-                    new_edits.next();
-                    next_new_delta += new_edit_delta;
-                } else {
-                    break;
-                }
-            }
-
-            old_edit.new.start = (old_edit.new.start as i32 + new_delta) as u32;
-            old_edit.new.end = (old_edit.new.end as i32 + new_delta) as u32;
-            old_delta += old_edit.new.len() as i32 - old_edit.old.len() as i32;
-            new_delta = next_new_delta;
-            composed.push(old_edit);
-        }
-        composed.extend(new_edits.map(|mut new_edit| {
-            new_edit.old.start = (new_edit.old.start as i32 - old_delta) as u32;
-            new_edit.old.end = (new_edit.old.end as i32 - old_delta) as u32;
-            new_edit
-        }));
-
-        Patch(composed)
-    }
-
-    fn invert(&mut self) -> &mut Self {
-        for edit in &mut self.0 {
-            mem::swap(&mut edit.old, &mut edit.new);
-        }
-        self
     }
 }
 
@@ -432,7 +293,7 @@ impl Snapshot {
         }
     }
 
-    fn interpolate(&mut self, new_tab_snapshot: TabSnapshot, edits: &[TabEdit]) -> Patch {
+    fn interpolate(&mut self, new_tab_snapshot: TabSnapshot, edits: &[TabEdit]) -> Vec<Edit> {
         let mut new_transforms;
         if edits.is_empty() {
             new_transforms = self.transforms.clone();
@@ -497,7 +358,7 @@ impl Snapshot {
         edits: &[TabEdit],
         wrap_width: f32,
         line_wrapper: &mut LineWrapper,
-    ) -> Patch {
+    ) -> Vec<Edit> {
         #[derive(Debug)]
         struct RowEdit {
             old_rows: Range<u32>,
@@ -1066,7 +927,11 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for WrapPoint {
     }
 }
 
-fn compose(prev: &mut Vec<Edit>, next: &[Edit]) {}
+fn invert(edits: &mut Vec<Edit>) {
+    for edit in edits {
+        mem::swap(&mut edit.old, &mut edit.new);
+    }
+}
 
 #[cfg(test)]
 mod tests {
