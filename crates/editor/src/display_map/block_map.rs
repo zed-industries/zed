@@ -1,13 +1,26 @@
 use super::wrap_map::{self, Edit as WrapEdit, Snapshot as WrapSnapshot, WrapPoint};
-use buffer::{rope, Anchor, Bias, Point, Rope, ToOffset};
-use gpui::fonts::HighlightStyle;
-use language::HighlightedChunk;
+use buffer::{rope, Anchor, Bias, Edit, Point, Rope, ToOffset, ToPoint as _};
+use gpui::{fonts::HighlightStyle, AppContext, ModelHandle};
+use language::{Buffer, HighlightedChunk};
 use parking_lot::Mutex;
-use std::{cmp, collections::HashSet, iter, ops::Range, slice, sync::Arc};
+use std::{
+    cmp,
+    collections::HashSet,
+    iter,
+    ops::Range,
+    slice,
+    sync::{
+        atomic::{AtomicUsize, Ordering::SeqCst},
+        Arc,
+    },
+};
 use sum_tree::SumTree;
 
 struct BlockMap {
-    blocks: Vec<(BlockId, Arc<Block>)>,
+    buffer: ModelHandle<Buffer>,
+    next_block_id: AtomicUsize,
+    wrap_snapshot: Mutex<WrapSnapshot>,
+    blocks: Vec<Arc<Block>>,
     transforms: Mutex<SumTree<Transform>>,
 }
 
@@ -24,6 +37,7 @@ struct BlockId(usize);
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct BlockPoint(super::Point);
 
+#[derive(Debug)]
 struct Block {
     id: BlockId,
     position: Anchor,
@@ -44,13 +58,13 @@ where
     disposition: BlockDisposition,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum BlockDisposition {
     Above,
     Below,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 struct Transform {
     summary: TransformSummary,
     block: Option<Arc<Block>>,
@@ -86,34 +100,53 @@ struct InputRow(u32);
 struct OutputRow(u32);
 
 impl BlockMap {
-    fn new(wrap_snapshot: WrapSnapshot) -> Self {
+    fn new(buffer: ModelHandle<Buffer>, wrap_snapshot: WrapSnapshot) -> Self {
         Self {
+            buffer,
+            next_block_id: AtomicUsize::new(0),
             blocks: Vec::new(),
             transforms: Mutex::new(SumTree::from_item(
                 Transform::isomorphic(wrap_snapshot.max_point().row() + 1),
                 &(),
             )),
+            wrap_snapshot: Mutex::new(wrap_snapshot),
         }
     }
 
-    fn read(&self, wrap_snapshot: WrapSnapshot, edits: Vec<WrapEdit>) -> BlockSnapshot {
-        self.sync(&wrap_snapshot, edits);
+    fn read(
+        &self,
+        wrap_snapshot: WrapSnapshot,
+        edits: Vec<WrapEdit>,
+        cx: &AppContext,
+    ) -> BlockSnapshot {
+        self.apply_edits(&wrap_snapshot, edits, cx);
+        *self.wrap_snapshot.lock() = wrap_snapshot.clone();
         BlockSnapshot {
             wrap_snapshot,
             transforms: self.transforms.lock().clone(),
         }
     }
 
-    fn write(&mut self, wrap_snapshot: WrapSnapshot, edits: Vec<WrapEdit>) -> BlockMapWriter {
-        self.sync(&wrap_snapshot, edits);
+    fn write(
+        &mut self,
+        wrap_snapshot: WrapSnapshot,
+        edits: Vec<WrapEdit>,
+        cx: &AppContext,
+    ) -> BlockMapWriter {
+        self.apply_edits(&wrap_snapshot, edits, cx);
+        *self.wrap_snapshot.lock() = wrap_snapshot;
         BlockMapWriter(self)
     }
 
-    fn sync(&self, wrap_snapshot: &WrapSnapshot, edits: Vec<WrapEdit>) {
+    fn apply_edits(&self, wrap_snapshot: &WrapSnapshot, edits: Vec<WrapEdit>, cx: &AppContext) {
+        let buffer = self.buffer.read(cx);
         let mut transforms = self.transforms.lock();
         let mut new_transforms = SumTree::new();
         let mut cursor = transforms.cursor::<InputRow>();
         let mut edits = edits.into_iter().peekable();
+        let mut last_block_ix = 0;
+        let mut blocks_in_edit = Vec::new();
+
         while let Some(mut edit) = edits.next() {
             new_transforms.push_tree(
                 cursor.slice(&InputRow(edit.old.start), Bias::Left, &()),
@@ -147,7 +180,45 @@ impl BlockMap {
                 }
             }
 
-            // TODO: process injections
+            let start_anchor = buffer.anchor_before(Point::new(edit.new.start, 0));
+            let end_anchor = buffer.anchor_after(Point::new(edit.new.end, 0));
+            let start_block_ix = match self.blocks[last_block_ix..]
+                .binary_search_by(|probe| probe.position.cmp(&start_anchor, buffer).unwrap())
+            {
+                Ok(ix) | Err(ix) => last_block_ix + ix,
+            };
+            let end_block_ix = match self.blocks[start_block_ix..]
+                .binary_search_by(|probe| probe.position.cmp(&end_anchor, buffer).unwrap())
+            {
+                Ok(ix) | Err(ix) => start_block_ix + ix,
+            };
+            last_block_ix = end_block_ix;
+
+            blocks_in_edit.clear();
+            blocks_in_edit.extend(
+                self.blocks[start_block_ix..end_block_ix]
+                    .iter()
+                    .map(|block| (block.position.to_point(buffer).row, block)),
+            );
+            blocks_in_edit.sort_unstable_by_key(|(row, block)| (*row, block.disposition));
+
+            for (row, block) in blocks_in_edit.iter().copied() {
+                let insertion_row = if block.disposition.is_above() {
+                    row
+                } else {
+                    row + 1
+                };
+
+                let new_transforms_end = new_transforms.summary().input_rows;
+                if new_transforms_end < insertion_row {
+                    new_transforms.push(
+                        Transform::isomorphic(insertion_row - new_transforms_end),
+                        &(),
+                    );
+                }
+
+                new_transforms.push(Transform::block(block.clone()), &());
+            }
 
             let new_transforms_end = new_transforms.summary().input_rows;
             if new_transforms_end < edit.new.end {
@@ -183,14 +254,58 @@ impl BlockPoint {
 
 impl<'a> BlockMapWriter<'a> {
     pub fn insert<P, T>(
-        &self,
+        &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<P, T>>,
+        cx: &AppContext,
     ) -> Vec<BlockId>
     where
         P: ToOffset + Clone,
         T: Into<Rope> + Clone,
     {
-        vec![]
+        let buffer = self.0.buffer.read(cx);
+        let mut ids = Vec::new();
+        let mut edits = Vec::<Edit<u32>>::new();
+
+        for block in blocks {
+            let id = BlockId(self.0.next_block_id.fetch_add(1, SeqCst));
+            ids.push(id);
+
+            let position = buffer.anchor_before(block.position);
+            let row = position.to_point(buffer).row;
+
+            let block_ix = match self
+                .0
+                .blocks
+                .binary_search_by(|probe| probe.position.cmp(&position, buffer).unwrap())
+            {
+                Ok(ix) | Err(ix) => ix,
+            };
+            let mut text = block.text.into();
+            text.push("\n");
+            self.0.blocks.insert(
+                block_ix,
+                Arc::new(Block {
+                    id,
+                    position,
+                    text,
+                    runs: block.runs,
+                    disposition: block.disposition,
+                }),
+            );
+
+            if let Err(edit_ix) = edits.binary_search_by_key(&row, |edit| edit.old.start) {
+                edits.insert(
+                    edit_ix,
+                    Edit {
+                        old: row..(row + 1),
+                        new: row..(row + 1),
+                    },
+                );
+            }
+        }
+
+        self.0.apply_edits(&*self.0.wrap_snapshot.lock(), edits, cx);
+        ids
     }
 
     pub fn remove(&self, ids: HashSet<BlockId>) {
@@ -269,6 +384,16 @@ impl Transform {
         }
     }
 
+    fn block(block: Arc<Block>) -> Self {
+        Self {
+            summary: TransformSummary {
+                input_rows: 0,
+                output_rows: block.text.summary().lines.row,
+            },
+            block: Some(block),
+        }
+    }
+
     fn is_isomorphic(&self) -> bool {
         self.block.is_none()
     }
@@ -283,7 +408,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
         }
 
         if let Some(block_chunks) = self.block_chunks.as_mut() {
-            if let Some(mut block_chunk) = block_chunks.next() {
+            if let Some(block_chunk) = block_chunks.next() {
                 self.output_row += block_chunk.text.matches('\n').count() as u32;
                 return Some(block_chunk);
             } else {
@@ -306,7 +431,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
         }
 
         if self.input_chunk.text.is_empty() {
-            self.input_chunk = self.input_chunks.next().unwrap();
+            self.input_chunk = self.input_chunks.next()?;
         }
 
         let transform_end = self.transforms.end(&()).0 .0;
@@ -314,8 +439,11 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             offset_for_row(self.input_chunk.text, transform_end - self.output_row);
         self.output_row += prefix_rows;
         let (prefix, suffix) = self.input_chunk.text.split_at(prefix_bytes);
-
         self.input_chunk.text = suffix;
+        if self.output_row == transform_end {
+            self.transforms.next(&());
+        }
+
         Some(HighlightedChunk {
             text: prefix,
             ..self.input_chunk
@@ -417,20 +545,25 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for OutputRow {
     }
 }
 
+impl BlockDisposition {
+    fn is_above(&self) -> bool {
+        matches!(self, BlockDisposition::Above)
+    }
+}
+
 // Count the number of bytes prior to a target row.
 // If the string doesn't contain the target row, return the total number of rows it does contain.
 // Otherwise return the target row itself.
 fn offset_for_row(s: &str, target_row: u32) -> (u32, usize) {
-    assert!(target_row > 0);
     let mut row = 0;
     let mut offset = 0;
     for (ix, line) in s.split('\n').enumerate() {
         if ix > 0 {
             row += 1;
             offset += 1;
-            if row as u32 >= target_row {
-                break;
-            }
+        }
+        if row as u32 >= target_row {
+            break;
         }
         offset += line.len();
     }
@@ -441,13 +574,78 @@ fn offset_for_row(s: &str, target_row: u32) -> (u32, usize) {
 mod tests {
     use super::*;
     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
-    use buffer::{RandomCharIter, ToPoint as _};
+    use buffer::RandomCharIter;
     use language::Buffer;
     use rand::prelude::*;
     use std::env;
 
+    #[gpui::test]
+    fn test_basic_blocks(cx: &mut gpui::MutableAppContext) {
+        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let font_id = cx
+            .font_cache()
+            .select_font(family_id, &Default::default())
+            .unwrap();
+
+        let text = "aaa\nbbb\nccc\nddd\n";
+
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+        let (fold_map, folds_snapshot) = FoldMap::new(buffer.clone(), cx);
+        let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), 1);
+        let (wrap_map, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, None, cx);
+        let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot.clone());
+
+        let mut writer = block_map.write(wraps_snapshot.clone(), vec![], cx);
+        writer.insert(
+            vec![
+                BlockProperties {
+                    position: Point::new(1, 0),
+                    text: "BLOCK 1",
+                    disposition: BlockDisposition::Above,
+                    runs: vec![],
+                },
+                BlockProperties {
+                    position: Point::new(1, 2),
+                    text: "BLOCK 2",
+                    disposition: BlockDisposition::Above,
+                    runs: vec![],
+                },
+                BlockProperties {
+                    position: Point::new(3, 2),
+                    text: "BLOCK 3",
+                    disposition: BlockDisposition::Below,
+                    runs: vec![],
+                },
+            ],
+            cx,
+        );
+
+        let mut snapshot = block_map.read(wraps_snapshot, vec![], cx);
+        assert_eq!(
+            snapshot.text(),
+            "aaa\nBLOCK 1\nBLOCK 2\nbbb\nccc\nddd\nBLOCK 3\n"
+        );
+
+        // Insert a line break, separating two block decorations into separate
+        // lines.
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([Point::new(1, 1)..Point::new(1, 1)], "!!!\n", cx)
+        });
+
+        let (folds_snapshot, fold_edits) = fold_map.read(cx);
+        let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+        let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+            wrap_map.sync(tabs_snapshot, tab_edits, cx)
+        });
+        let mut snapshot = block_map.read(wraps_snapshot, wrap_edits, cx);
+        assert_eq!(
+            snapshot.text(),
+            "aaa\nBLOCK 1\nb!!!\nBLOCK 2\nbb\nccc\nddd\nBLOCK 3\n"
+        );
+    }
+
     #[gpui::test(iterations = 100)]
-    fn test_random(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
+    fn test_random_blocks(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
@@ -461,7 +659,6 @@ mod tests {
             .unwrap();
         let font_size = 14.0;
 
-        log::info!("Tab size: {}", tab_size);
         log::info!("Wrap width: {:?}", wrap_width);
 
         let buffer = cx.add_model(|cx| {
@@ -473,7 +670,7 @@ mod tests {
         let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
         let (wrap_map, wraps_snapshot) =
             WrapMap::new(tabs_snapshot, font_id, font_size, wrap_width, cx);
-        let mut block_map = BlockMap::new(wraps_snapshot);
+        let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot);
         let mut expected_blocks = Vec::new();
 
         for _ in 0..operations {
@@ -519,11 +716,11 @@ mod tests {
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tabs_snapshot, tab_edits, cx)
                     });
-                    let block_map = block_map.write(wraps_snapshot, wrap_edits);
+                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits, cx);
 
                     expected_blocks.extend(
                         block_map
-                            .insert(block_properties.clone())
+                            .insert(block_properties.clone(), cx)
                             .into_iter()
                             .zip(block_properties),
                     );
@@ -543,7 +740,7 @@ mod tests {
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tabs_snapshot, tab_edits, cx)
                     });
-                    let block_map = block_map.write(wraps_snapshot, wrap_edits);
+                    let block_map = block_map.write(wraps_snapshot, wrap_edits, cx);
 
                     block_map.remove(block_ids_to_remove);
                 }
@@ -557,7 +754,7 @@ mod tests {
             let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                 wrap_map.sync(tabs_snapshot, tab_edits, cx)
             });
-            let mut blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
+            let mut blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits, cx);
             assert_eq!(
                 blocks_snapshot.transforms.summary().input_rows,
                 wraps_snapshot.max_point().row() + 1
