@@ -61,11 +61,19 @@ impl Patch {
                     }
                     (Some(old_edit), Some(new_edit)) => {
                         if old_edit.new.start <= new_edit.old.start {
-                            intermediate_end = old_edit.new.end;
-                            merge_edits(&mut pending_old_edit, old_edits.next().unwrap())
+                            if old_edit.new.start <= intermediate_end {
+                                intermediate_end = old_edit.new.end;
+                                merge_edits(&mut pending_old_edit, old_edits.next().unwrap())
+                            } else {
+                                break;
+                            }
                         } else {
-                            intermediate_end = new_edit.old.end;
-                            merge_edits(&mut pending_new_edit, new_edits.next().unwrap());
+                            if new_edit.old.start <= intermediate_end {
+                                intermediate_end = new_edit.old.end;
+                                merge_edits(&mut pending_new_edit, new_edits.next().unwrap());
+                            } else {
+                                break;
+                            }
                         }
                     }
                 }
