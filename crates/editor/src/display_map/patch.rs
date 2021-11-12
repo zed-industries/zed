@@ -427,13 +427,13 @@ mod tests {
         let initial_chars = (0..rng.gen_range(0..=100))
             .map(|_| rng.gen_range(b'a'..=b'z') as char)
             .collect::<Vec<_>>();
-        println!("initial chars: {:?}", initial_chars);
+        log::info!("initial chars: {:?}", initial_chars);
 
         // Generate two sequential patches
         let mut patches = Vec::new();
         let mut expected_chars = initial_chars.clone();
         for i in 0..2 {
-            println!("patch {}:", i);
+            log::info!("patch {}:", i);
 
             let mut delta = 0i32;
             let mut last_edit_end = 0;
@@ -458,7 +458,7 @@ mod tests {
                 let new_chars = (0..new_len)
                     .map(|_| rng.gen_range(b'A'..=b'Z') as char)
                     .collect::<Vec<_>>();
-                println!(
+                log::info!(
                     "  editing {:?}: {:?}",
                     start..end,
                     new_chars.iter().collect::<String>()
@@ -475,15 +475,15 @@ mod tests {
             patches.push(Patch(edits));
         }
 
-        println!("old patch: {:?}", &patches[0]);
-        println!("new patch: {:?}", &patches[1]);
-        println!("initial chars: {:?}", initial_chars);
-        println!("final chars: {:?}", expected_chars);
+        log::info!("old patch: {:?}", &patches[0]);
+        log::info!("new patch: {:?}", &patches[1]);
+        log::info!("initial chars: {:?}", initial_chars);
+        log::info!("final chars: {:?}", expected_chars);
 
         // Compose the patches, and verify that it has the same effect as applying the
         // two patches separately.
         let composed = patches[0].compose(&patches[1]);
-        println!("composed patch: {:?}", &composed);
+        log::info!("composed patch: {:?}", &composed);
 
         let mut actual_chars = initial_chars.clone();
         for edit in composed.0 {
