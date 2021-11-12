@@ -1,29 +1,82 @@
-use std::cmp;
-
-use super::wrap_map::{Edit as WrapEdit, Snapshot as WrapSnapshot};
-use buffer::Bias;
+use super::wrap_map::{self, Edit as WrapEdit, Snapshot as WrapSnapshot, WrapPoint};
+use buffer::{rope, Anchor, Bias, Point, Rope, ToOffset};
+use gpui::fonts::HighlightStyle;
+use language::HighlightedChunk;
 use parking_lot::Mutex;
+use std::{cmp, collections::HashSet, iter, ops::Range, slice, sync::Arc};
 use sum_tree::SumTree;
 
 struct BlockMap {
+    blocks: Vec<(BlockId, Arc<Block>)>,
     transforms: Mutex<SumTree<Transform>>,
 }
 
 struct BlockMapWriter<'a>(&'a mut BlockMap);
 
 struct BlockSnapshot {
+    wrap_snapshot: WrapSnapshot,
     transforms: SumTree<Transform>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+struct BlockId(usize);
+
+#[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
+pub struct BlockPoint(super::Point);
+
+struct Block {
+    id: BlockId,
+    position: Anchor,
+    text: Rope,
+    runs: Vec<(usize, HighlightStyle)>,
+    disposition: BlockDisposition,
+}
+
+#[derive(Clone)]
+struct BlockProperties<P, T>
+where
+    P: Clone,
+    T: Clone,
+{
+    position: P,
+    text: T,
+    runs: Vec<(usize, HighlightStyle)>,
+    disposition: BlockDisposition,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum BlockDisposition {
+    Above,
+    Below,
 }
 
 #[derive(Clone)]
 struct Transform {
     summary: TransformSummary,
+    block: Option<Arc<Block>>,
 }
 
 #[derive(Copy, Clone, Debug, Default)]
 struct TransformSummary {
     input_rows: u32,
     output_rows: u32,
+}
+
+struct HighlightedChunks<'a> {
+    transforms: sum_tree::Cursor<'a, Transform, (OutputRow, InputRow)>,
+    input_chunks: wrap_map::HighlightedChunks<'a>,
+    input_chunk: Option<HighlightedChunk<'a>>,
+    block_chunks: Option<BlockChunks<'a>>,
+    output_position: BlockPoint,
+    max_output_row: u32,
+}
+
+struct BlockChunks<'a> {
+    chunks: rope::Chunks<'a>,
+    runs: iter::Peekable<slice::Iter<'a, (usize, HighlightStyle)>>,
+    chunk: Option<&'a str>,
+    run_start: usize,
+    offset: usize,
 }
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -35,6 +88,7 @@ struct OutputRow(u32);
 impl BlockMap {
     fn new(wrap_snapshot: WrapSnapshot) -> Self {
         Self {
+            blocks: Vec::new(),
             transforms: Mutex::new(SumTree::from_item(
                 Transform::isomorphic(wrap_snapshot.max_point().row() + 1),
                 &(),
@@ -43,18 +97,19 @@ impl BlockMap {
     }
 
     fn read(&self, wrap_snapshot: WrapSnapshot, edits: Vec<WrapEdit>) -> BlockSnapshot {
-        self.sync(wrap_snapshot, edits);
+        self.sync(&wrap_snapshot, edits);
         BlockSnapshot {
+            wrap_snapshot,
             transforms: self.transforms.lock().clone(),
         }
     }
 
     fn write(&mut self, wrap_snapshot: WrapSnapshot, edits: Vec<WrapEdit>) -> BlockMapWriter {
-        self.sync(wrap_snapshot, edits);
+        self.sync(&wrap_snapshot, edits);
         BlockMapWriter(self)
     }
 
-    fn sync(&self, wrap_snapshot: WrapSnapshot, edits: Vec<WrapEdit>) {
+    fn sync(&self, wrap_snapshot: &WrapSnapshot, edits: Vec<WrapEdit>) {
         let mut transforms = self.transforms.lock();
         let mut new_transforms = SumTree::new();
         let mut cursor = transforms.cursor::<InputRow>();
@@ -108,6 +163,81 @@ impl BlockMap {
     }
 }
 
+impl<'a> BlockMapWriter<'a> {
+    pub fn insert<P, T>(
+        &self,
+        blocks: impl IntoIterator<Item = BlockProperties<P, T>>,
+    ) -> Vec<BlockId>
+    where
+        P: ToOffset + Clone,
+        T: Into<Rope> + Clone,
+    {
+        vec![]
+    }
+
+    pub fn remove(&self, ids: HashSet<BlockId>) {
+        //
+    }
+}
+
+impl BlockSnapshot {
+    #[cfg(test)]
+    fn text(&mut self) -> String {
+        self.highlighted_chunks_for_rows(0..(self.max_point().0.row + 1))
+            .map(|chunk| chunk.text)
+            .collect()
+    }
+
+    pub fn highlighted_chunks_for_rows(&mut self, rows: Range<u32>) -> HighlightedChunks {
+        let mut cursor = self.transforms.cursor::<(OutputRow, InputRow)>();
+        cursor.seek(&OutputRow(rows.start), Bias::Right, &());
+        let (input_start, output_start) = cursor.start();
+        let row_overshoot = rows.start - output_start.0;
+        let input_row = input_start.0 + row_overshoot;
+        let input_end = self.to_wrap_point(BlockPoint(Point::new(rows.end, 0)));
+        let input_chunks = self
+            .wrap_snapshot
+            .highlighted_chunks_for_rows(input_row..input_end.row());
+        HighlightedChunks {
+            input_chunks,
+            input_chunk: None,
+            block_chunks: None,
+            transforms: cursor,
+            output_position: BlockPoint(Point::new(rows.start, 0)),
+            max_output_row: rows.end,
+        }
+    }
+
+    pub fn max_point(&self) -> BlockPoint {
+        self.to_block_point(self.wrap_snapshot.max_point())
+    }
+
+    pub fn to_block_point(&self, wrap_point: WrapPoint) -> BlockPoint {
+        let mut cursor = self.transforms.cursor::<(InputRow, OutputRow)>();
+        cursor.seek(&InputRow(wrap_point.row()), Bias::Left, &());
+        while let Some(item) = cursor.item() {
+            if item.is_isomorphic() {
+                break;
+            }
+            cursor.next(&());
+        }
+        let (input_start, output_start) = cursor.start();
+        let row_overshoot = wrap_point.row() - input_start.0;
+        BlockPoint(Point::new(
+            output_start.0 + row_overshoot,
+            wrap_point.column(),
+        ))
+    }
+
+    pub fn to_wrap_point(&self, block_point: BlockPoint) -> WrapPoint {
+        let mut cursor = self.transforms.cursor::<(OutputRow, InputRow)>();
+        cursor.seek(&OutputRow(block_point.0.row), Bias::Right, &());
+        let (output_start, input_start) = cursor.start();
+        let row_overshoot = block_point.0.row - output_start.0;
+        WrapPoint::new(input_start.0 + row_overshoot, block_point.0.column)
+    }
+}
+
 impl Transform {
     fn isomorphic(rows: u32) -> Self {
         Self {
@@ -115,7 +245,81 @@ impl Transform {
                 input_rows: rows,
                 output_rows: rows,
             },
+            block: None,
         }
+    }
+
+    fn is_isomorphic(&self) -> bool {
+        self.block.is_none()
+    }
+}
+
+impl<'a> Iterator for HighlightedChunks<'a> {
+    type Item = HighlightedChunk<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        //
+    }
+}
+
+impl<'a> BlockChunks<'a> {
+    fn new(block: &'a Block, range: Range<usize>) -> Self {
+        let mut runs = block.runs.iter().peekable();
+        let mut run_start = 0;
+        while let Some((run_len, _)) = runs.peek() {
+            let run_end = run_start + run_len;
+            if run_end <= range.start {
+                run_start = run_end;
+                runs.next();
+            } else {
+                break;
+            }
+        }
+
+        Self {
+            chunk: None,
+            run_start,
+            chunks: block.text.chunks_in_range(range.clone()),
+            runs,
+            offset: range.start,
+        }
+    }
+}
+
+impl<'a> Iterator for BlockChunks<'a> {
+    type Item = HighlightedChunk<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.chunk.is_none() {
+            self.chunk = self.chunks.next();
+        }
+
+        let chunk = self.chunk?;
+        let mut chunk_len = chunk.len();
+        let mut highlight_style = None;
+        if let Some((run_len, style)) = self.runs.peek() {
+            highlight_style = Some(style.clone());
+            let run_end_in_chunk = self.run_start + run_len - self.offset;
+            if run_end_in_chunk <= chunk_len {
+                chunk_len = run_end_in_chunk;
+                self.run_start += run_len;
+                self.runs.next();
+            }
+        }
+
+        self.offset += chunk_len;
+        let (chunk, suffix) = chunk.split_at(chunk_len);
+        self.chunk = if suffix.is_empty() {
+            None
+        } else {
+            Some(suffix)
+        };
+
+        Some(HighlightedChunk {
+            text: chunk,
+            highlight_id: Default::default(),
+            diagnostic: None,
+        })
     }
 }
 
@@ -150,9 +354,9 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for OutputRow {
 
 #[cfg(test)]
 mod tests {
-    use super::BlockMap;
+    use super::*;
     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
-    use buffer::RandomCharIter;
+    use buffer::{RandomCharIter, ToPoint as _};
     use language::Buffer;
     use rand::prelude::*;
     use std::env;
@@ -184,7 +388,8 @@ mod tests {
         let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
         let (wrap_map, wraps_snapshot) =
             WrapMap::new(tabs_snapshot, font_id, font_size, wrap_width, cx);
-        let block_map = BlockMap::new(wraps_snapshot);
+        let mut block_map = BlockMap::new(wraps_snapshot);
+        let mut expected_blocks = Vec::new();
 
         for _ in 0..operations {
             match rng.gen_range(0..=100) {
@@ -197,6 +402,66 @@ mod tests {
                     log::info!("Setting wrap width to {:?}", wrap_width);
                     wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
                 }
+                20..=39 => {
+                    let block_count = rng.gen_range(1..=4);
+                    let block_properties = (0..block_count)
+                        .map(|_| {
+                            let buffer = buffer.read(cx);
+                            let position = buffer.anchor_before(rng.gen_range(0..=buffer.len()));
+
+                            let len = rng.gen_range(0..10);
+                            let text = Rope::from(
+                                RandomCharIter::new(&mut rng)
+                                    .take(len)
+                                    .collect::<String>()
+                                    .as_str(),
+                            );
+                            BlockProperties {
+                                position,
+                                text,
+                                runs: Vec::<(usize, HighlightStyle)>::new(),
+                                disposition: if rng.gen() {
+                                    BlockDisposition::Above
+                                } else {
+                                    BlockDisposition::Below
+                                },
+                            }
+                        })
+                        .collect::<Vec<_>>();
+
+                    let (folds_snapshot, fold_edits) = fold_map.read(cx);
+                    let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+                    let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+                        wrap_map.sync(tabs_snapshot, tab_edits, cx)
+                    });
+                    let block_map = block_map.write(wraps_snapshot, wrap_edits);
+
+                    expected_blocks.extend(
+                        block_map
+                            .insert(block_properties.clone())
+                            .into_iter()
+                            .zip(block_properties),
+                    );
+                }
+                40..=59 => {
+                    let block_count = rng.gen_range(1..=4.min(expected_blocks.len()));
+                    let block_ids_to_remove = (0..block_count)
+                        .map(|_| {
+                            expected_blocks
+                                .remove(rng.gen_range(0..expected_blocks.len()))
+                                .0
+                        })
+                        .collect();
+
+                    let (folds_snapshot, fold_edits) = fold_map.read(cx);
+                    let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+                    let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+                        wrap_map.sync(tabs_snapshot, tab_edits, cx)
+                    });
+                    let block_map = block_map.write(wraps_snapshot, wrap_edits);
+
+                    block_map.remove(block_ids_to_remove);
+                }
                 _ => {
                     buffer.update(cx, |buffer, _| buffer.randomly_edit(&mut rng, 5));
                 }
@@ -207,11 +472,58 @@ mod tests {
             let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                 wrap_map.sync(tabs_snapshot, tab_edits, cx)
             });
-            let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
+            let mut blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
             assert_eq!(
                 blocks_snapshot.transforms.summary().input_rows,
                 wraps_snapshot.max_point().row() + 1
             );
+
+            let buffer = buffer.read(cx);
+            let mut sorted_blocks = expected_blocks
+                .iter()
+                .cloned()
+                .map(|(_, block)| BlockProperties {
+                    position: block.position.to_point(buffer),
+                    text: block.text,
+                    runs: block.runs,
+                    disposition: block.disposition,
+                })
+                .collect::<Vec<_>>();
+            sorted_blocks.sort_unstable_by_key(|block| (block.position.row, block.disposition));
+            let mut sorted_blocks = sorted_blocks.into_iter().peekable();
+
+            let mut expected_text = String::new();
+            let input_text = wraps_snapshot.text();
+            for (row, input_line) in input_text.split('\n').enumerate() {
+                let row = row as u32;
+                if row > 0 {
+                    expected_text.push('\n');
+                }
+
+                while let Some(block) = sorted_blocks.peek() {
+                    if block.position.row == row && block.disposition == BlockDisposition::Above {
+                        expected_text.extend(block.text.chunks());
+                        expected_text.push('\n');
+                        sorted_blocks.next();
+                    } else {
+                        break;
+                    }
+                }
+
+                expected_text.push_str(input_line);
+
+                while let Some(block) = sorted_blocks.peek() {
+                    if block.position.row == row && block.disposition == BlockDisposition::Below {
+                        expected_text.push('\n');
+                        expected_text.extend(block.text.chunks());
+                        sorted_blocks.next();
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            assert_eq!(blocks_snapshot.text(), expected_text);
         }
     }
 }
