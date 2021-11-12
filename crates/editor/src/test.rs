@@ -2,6 +2,12 @@ use gpui::{Entity, ModelHandle};
 use smol::channel;
 use std::marker::PhantomData;
 
+#[cfg(test)]
+#[ctor::ctor]
+fn init_logger() {
+    env_logger::init();
+}
+
 pub fn sample_text(rows: usize, cols: usize) -> String {
     let mut text = String::new();
     for row in 0..rows {

@@ -31,6 +31,8 @@ smol = "1.2"
 buffer = { path = "../buffer", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
+ctor = "0.1"
+env_logger = "0.8"
 rand = "0.8"
 unindent = "0.1.7"
 tree-sitter = "0.19"
