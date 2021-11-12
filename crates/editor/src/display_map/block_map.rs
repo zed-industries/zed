@@ -3,7 +3,7 @@ use buffer::{rope, Anchor, Bias, Point, Rope, ToOffset};
 use gpui::fonts::HighlightStyle;
 use language::HighlightedChunk;
 use parking_lot::Mutex;
-use std::{cmp, collections::HashSet, iter, ops::Range, slice, sync::Arc};
+use std::{borrow::Borrow, cmp, collections::HashSet, iter, ops::Range, slice, sync::Arc};
 use sum_tree::SumTree;
 
 struct BlockMap {
@@ -63,7 +63,7 @@ struct TransformSummary {
 }
 
 struct HighlightedChunks<'a> {
-    transforms: sum_tree::Cursor<'a, Transform, (OutputRow, InputRow)>,
+    transform_cursor: sum_tree::Cursor<'a, Transform, (OutputRow, InputRow)>,
     input_chunks: wrap_map::HighlightedChunks<'a>,
     input_chunk: Option<HighlightedChunk<'a>>,
     block_chunks: Option<BlockChunks<'a>>,
@@ -202,7 +202,7 @@ impl BlockSnapshot {
             input_chunks,
             input_chunk: None,
             block_chunks: None,
-            transforms: cursor,
+            transform_cursor: cursor,
             output_position: BlockPoint(Point::new(rows.start, 0)),
             max_output_row: rows.end,
         }
@@ -258,7 +258,25 @@ impl<'a> Iterator for HighlightedChunks<'a> {
     type Item = HighlightedChunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        //
+        if let Some(current_block) = self.block_chunks.as_mut() {
+            if let Some(chunk) = current_block.next() {
+                return Some(chunk);
+            } else {
+                self.block_chunks.take();
+            }
+        }
+
+        let transform = if let Some(item) = self.transform_cursor.item() {
+            item
+        } else {
+            return None;
+        };
+
+        if let Some(block) = &transform.block {
+            let of
+        }
+
+        None
     }
 }
 
