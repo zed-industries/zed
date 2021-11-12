@@ -1,204 +1,175 @@
-use std::{iter::Peekable, mem, ops::Range};
+use std::{cmp, iter::Peekable, mem, ops::Range};
 
 type Edit = buffer::Edit<u32>;
 
 #[derive(Default, Debug, PartialEq, Eq)]
 struct Patch(Vec<Edit>);
 
-fn compose_edits(old_edit: &Edit, new_edit: &Edit) -> Edit {
-    let mut composed = old_edit.clone();
-    if old_edit.new.start > new_edit.old.start {
-        composed.old.start -= old_edit.new.start - new_edit.old.start;
-        composed.new.start = new_edit.old.start;
-    }
-    if new_edit.old.end > old_edit.new.end {
-        composed.old.end += new_edit.old.end - old_edit.new.end;
-        composed.new.end = new_edit.old.end;
-    }
-    let new_edit_delta = new_edit.new.len() as i32 - new_edit.old.len() as i32;
-    composed.new.end = (composed.new.end as i32 + new_edit_delta) as u32;
-    composed
-}
-
-fn merge_edits(left_edit: &mut Option<Edit>, right_edit: Edit) {
-    if let Some(left_edit) = left_edit.as_mut() {
-        left_edit.old.end = right_edit.old.end;
-        left_edit.new.end = right_edit.new.end;
-    } else {
-        *left_edit = Some(right_edit);
-    }
-}
-
 impl Patch {
-    fn compose(&self, new: &Self) -> Patch {
-        let mut composed = Vec::new();
-        let mut old_edits = self.0.iter().cloned().peekable();
-        let mut new_edits = new.0.iter().cloned().peekable();
-        let old_delta = 0;
+    fn compose(&self, other: &Self) -> Self {
+        let mut old_edits_iter = self.0.iter().cloned().peekable();
+        let mut new_edits_iter = other.0.iter().cloned().peekable();
+        let mut composed = Patch(Vec::new());
 
-        'outer: loop {
-            // Find the next edit in the intermediate coordinate space
-            // Then merge together all old and new edits that intersect this edit in the intermediate coordinate space.
-            let mut pending_old_edit = None;
-            let mut pending_new_edit = None;
-            let mut intermediate_end = u32::MAX;
-            loop {
-                match (old_edits.peek(), new_edits.peek()) {
-                    (None, None) => break,
-                    (Some(edit), None) => {
-                        if edit.new.start <= intermediate_end {
-                            intermediate_end = edit.new.end;
-                            merge_edits(&mut pending_old_edit, old_edits.next().unwrap())
-                        } else {
-                            break;
-                        }
-                    }
-                    (None, Some(edit)) => {
-                        if edit.old.start <= intermediate_end {
-                            intermediate_end = edit.old.end;
-                            merge_edits(&mut pending_new_edit, new_edits.next().unwrap());
-                        }
-                    }
-                    (Some(old_edit), Some(new_edit)) => {
-                        if old_edit.new.start <= new_edit.old.start {
-                            if old_edit.new.start <= intermediate_end {
-                                intermediate_end = old_edit.new.end;
-                                merge_edits(&mut pending_old_edit, old_edits.next().unwrap())
-                            } else {
-                                break;
-                            }
-                        } else {
-                            if new_edit.old.start <= intermediate_end {
-                                intermediate_end = new_edit.old.end;
-                                merge_edits(&mut pending_new_edit, new_edits.next().unwrap());
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            match (pending_old_edit, pending_new_edit) {
+        let mut old_start = 0;
+        let mut new_start = 0;
+        loop {
+            match (old_edits_iter.peek_mut(), new_edits_iter.peek_mut()) {
                 (None, None) => break,
-                (None, Some(new_edit)) => todo!(),
-                (Some(old_edit), None) => todo!(),
+                (Some(old_edit), None) => {
+                    let catchup = old_edit.old.start - old_start;
+                    old_start += catchup;
+                    new_start += catchup;
+
+                    let old_end = old_start + old_edit.old.len() as u32;
+                    let new_end = new_start + old_edit.new.len() as u32;
+                    composed.push(Edit {
+                        old: old_start..old_end,
+                        new: new_start..new_end,
+                    });
+                    old_start = old_end;
+                    new_start = new_end;
+                    old_edits_iter.next();
+                }
+                (None, Some(new_edit)) => {
+                    let catchup = new_edit.new.start - new_start;
+                    old_start += catchup;
+                    new_start += catchup;
+
+                    let old_end = old_start + new_edit.old.len() as u32;
+                    let new_end = new_start + new_edit.new.len() as u32;
+                    composed.push(Edit {
+                        old: old_start..old_end,
+                        new: new_start..new_end,
+                    });
+                    old_start = old_end;
+                    new_start = new_end;
+                    new_edits_iter.next();
+                }
                 (Some(old_edit), Some(new_edit)) => {
-                    let composed = compose_edits(&old_edit, &new_edit);
+                    if old_edit.new.end < new_edit.old.start {
+                        let catchup = old_edit.old.start - old_start;
+                        old_start += catchup;
+                        new_start += catchup;
+
+                        let old_end = old_start + old_edit.old.len() as u32;
+                        let new_end = new_start + old_edit.new.len() as u32;
+                        composed.push(Edit {
+                            old: old_start..old_end,
+                            new: new_start..new_end,
+                        });
+                        old_start = old_end;
+                        new_start = new_end;
+                        old_edits_iter.next();
+                        continue;
+                    } else if new_edit.old.end < old_edit.new.start {
+                        let catchup = new_edit.new.start - new_start;
+                        old_start += catchup;
+                        new_start += catchup;
+
+                        let old_end = old_start + new_edit.old.len() as u32;
+                        let new_end = new_start + new_edit.new.len() as u32;
+                        composed.push(Edit {
+                            old: old_start..old_end,
+                            new: new_start..new_end,
+                        });
+                        old_start = old_end;
+                        new_start = new_end;
+                        new_edits_iter.next();
+                    } else {
+                        if old_edit.new.start < new_edit.old.start {
+                            let catchup = old_edit.old.start - old_start;
+                            old_start += catchup;
+                            new_start += catchup;
+
+                            let overshoot = new_edit.old.start - old_edit.new.start;
+                            let old_end = cmp::min(old_start + overshoot, old_edit.old.end);
+                            let new_end = new_start + overshoot;
+                            composed.push(Edit {
+                                old: old_start..old_end,
+                                new: new_start..new_end,
+                            });
+
+                            old_edit.old.start += overshoot;
+                            old_edit.new.start += overshoot;
+                            old_start = old_end;
+                            new_start = new_end;
+                        } else {
+                            let catchup = new_edit.new.start - new_start;
+                            old_start += catchup;
+                            new_start += catchup;
+
+                            let overshoot = old_edit.new.start - new_edit.old.start;
+                            let old_end = old_start + overshoot;
+                            let new_end = cmp::min(new_start + overshoot, new_edit.new.end);
+                            composed.push(Edit {
+                                old: old_start..old_end,
+                                new: new_start..new_end,
+                            });
+
+                            new_edit.old.start += overshoot;
+                            new_edit.new.start += overshoot;
+                            old_start = old_end;
+                            new_start = new_end;
+                        }
+
+                        if old_edit.new.end > new_edit.old.end {
+                            let old_len =
+                                cmp::min(old_edit.old.len() as u32, new_edit.old.len() as u32);
+
+                            let old_end = old_start + old_len;
+                            let new_end = new_start + new_edit.new.len() as u32;
+                            composed.push(Edit {
+                                old: old_start..old_end,
+                                new: new_start..new_end,
+                            });
+
+                            old_edit.old.start = old_end;
+                            old_edit.new.start = new_edit.old.end;
+                            old_start = old_end;
+                            new_start = new_end;
+                            new_edits_iter.next();
+                        } else {
+                            let new_len =
+                                cmp::min(old_edit.new.len() as u32, new_edit.new.len() as u32);
+
+                            let old_end = old_start + old_edit.old.len() as u32;
+                            let new_end = new_start + new_len;
+                            composed.push(Edit {
+                                old: old_start..old_end,
+                                new: new_start..new_end,
+                            });
+
+                            new_edit.old.start = old_edit.new.end;
+                            new_edit.new.start = new_end;
+                            old_start = old_end;
+                            new_start = new_end;
+                            old_edits_iter.next();
+                        }
+                    }
                 }
             }
         }
 
-        Patch(composed)
+        composed
     }
 
-    fn compose1(&self, new: &Self) -> Patch {
-        let mut composed = Vec::<Edit>::new();
-        let mut old_edits = self.0.iter().cloned().peekable();
-        let mut old_delta = 0;
-        let mut new_delta = 0;
-        let mut intermediate_start;
-        let mut intermediate_end = 0;
-
-        for mut new_edit in new.0.iter().cloned() {
-            eprintln!("edit {:?}", new_edit);
-
-            let new_edit_delta = new_edit.new.len() as i32 - new_edit.old.len() as i32;
-
-            if let Some(last_edit) = composed.last_mut() {
-                if intermediate_end >= new_edit.old.start {
-                    if new_edit.old.end > intermediate_end {
-                        last_edit.old.end += new_edit.old.end - intermediate_end;
-                        last_edit.new.end += new_edit.old.end - intermediate_end;
-                        intermediate_end = new_edit.old.end;
-                    }
-                    last_edit.new.end = (last_edit.new.end as i32 + new_edit_delta) as u32;
-                    new_delta += new_edit_delta;
-                    eprintln!("  merged {:?}", &composed);
-                    continue;
-                }
-            }
-
-            intermediate_start = new_edit.old.start;
-            intermediate_end = new_edit.old.end;
-            new_edit.old.start = (new_edit.old.start as i32 - old_delta) as u32;
-            new_edit.old.end = (new_edit.old.end as i32 - old_delta) as u32;
-
-            while let Some(old_edit) = old_edits.peek() {
-                let old_edit_delta = old_edit.new.len() as i32 - old_edit.old.len() as i32;
-
-                if old_edit.new.end < intermediate_start {
-                    let mut old_edit = old_edit.clone();
-                    old_edit.new.start = (old_edit.new.start as i32 + new_delta) as u32;
-                    old_edit.new.end = (old_edit.new.end as i32 + new_delta) as u32;
-                    new_edit.old.start = (new_edit.old.start as i32 - old_edit_delta) as u32;
-                    new_edit.old.end = (new_edit.old.end as i32 - old_edit_delta) as u32;
-                    composed.push(old_edit);
-                    eprintln!("  pushed preceding {:?}", &composed);
-                } else if old_edit.new.start <= intermediate_end {
-                    if old_edit.new.start < intermediate_start {
-                        new_edit.new.start -= intermediate_start - old_edit.new.start;
-                        new_edit.old.start -= intermediate_start - old_edit.new.start;
-                    }
-                    if old_edit.new.end > intermediate_end {
-                        new_edit.new.end += old_edit.new.end - intermediate_end;
-                        new_edit.old.end += old_edit.new.end - intermediate_end;
-                        intermediate_end = old_edit.new.end;
-                    }
-                    eprintln!("  expanded w/ intersecting {:?} - {:?}", old_edit, new_edit);
-                    new_edit.old.end = (new_edit.old.end as i32 - old_edit_delta) as u32;
-                } else {
-                    break;
-                }
-
-                old_delta += old_edit_delta;
-                old_edits.next();
-            }
-
-            new_delta += new_edit_delta;
-            composed.push(new_edit);
-            eprintln!("  pushing {:?}", &composed);
+    fn push(&mut self, edit: Edit) {
+        if edit.old.len() == 0 && edit.new.len() == 0 {
+            return;
         }
 
-        while let Some(mut old_edit) = old_edits.next() {
-            let old_edit_delta = old_edit.new.len() as i32 - old_edit.old.len() as i32;
-
-            if let Some(last_edit) = composed.last_mut() {
-                if intermediate_end >= old_edit.new.start {
-                    if old_edit.new.end > intermediate_end {
-                        last_edit.old.end += old_edit.new.end - intermediate_end;
-                        last_edit.new.end += old_edit.new.end - intermediate_end;
-                        intermediate_end = old_edit.new.end;
-                    }
-                    last_edit.old.end = (last_edit.old.end as i32 - old_edit_delta) as u32;
-                    eprintln!("  merged {:?}", &composed);
-                    continue;
-                }
+        if let Some(last) = self.0.last_mut() {
+            if last.old.end >= edit.old.start {
+                last.old.end = edit.old.end;
+                last.new.end = edit.new.end;
+            } else {
+                self.0.push(edit);
             }
-
-            old_edit.new.start = (old_edit.new.start as i32 + new_delta) as u32;
-            old_edit.new.end = (old_edit.new.end as i32 + new_delta) as u32;
-            composed.push(old_edit);
+        } else {
+            self.0.push(edit);
         }
-
-        Patch(composed)
     }
-
-    fn invert(&mut self) -> &mut Self {
-        for edit in &mut self.0 {
-            mem::swap(&mut edit.old, &mut edit.new);
-        }
-        self
-    }
-}
-
-fn edit_delta(edit: &Edit) -> i32 {
-    edit.new.len() as i32 - edit.old.len() as i32
-}
-
-fn apply_delta(range: &mut Range<u32>, delta: i32) {
-    range.start = (range.start as i32 + delta) as u32;
-    range.end = (range.end as i32 + delta) as u32;
 }
 
 #[cfg(test)]
@@ -372,25 +343,25 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_compose_edits() {
-        assert_eq!(
-            compose_edits(
-                &Edit {
-                    old: 3..3,
-                    new: 3..6,
-                },
-                &Edit {
-                    old: 2..7,
-                    new: 2..4,
-                },
-            ),
-            Edit {
-                old: 2..4,
-                new: 2..4
-            }
-        );
-    }
+    // #[test]
+    // fn test_compose_edits() {
+    //     assert_eq!(
+    //         compose_edits(
+    //             &Edit {
+    //                 old: 3..3,
+    //                 new: 3..6,
+    //             },
+    //             &Edit {
+    //                 old: 2..7,
+    //                 new: 2..4,
+    //             },
+    //         ),
+    //         Edit {
+    //             old: 2..4,
+    //             new: 2..4
+    //         }
+    //     );
+    // }
 
     #[gpui::test]
     fn test_two_new_edits_touching_one_old_edit() {
@@ -428,11 +399,11 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 1000)]
+    #[gpui::test(iterations = 100, seed = 1)]
     fn test_random_patch_compositions(mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-            .unwrap_or(2);
+            .unwrap_or(5);
 
         let initial_chars = (0..rng.gen_range(0..=10))
             .map(|_| rng.gen_range(b'a'..=b'z') as char)
@@ -448,6 +419,7 @@ mod tests {
             let mut delta = 0i32;
             let mut last_edit_end = 0;
             let mut edits = Vec::new();
+
             for _ in 0..operations {
                 if last_edit_end >= expected_chars.len() {
                     break;
