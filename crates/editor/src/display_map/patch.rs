@@ -18,9 +18,13 @@ impl Patch {
         let mut old_start = 0;
         let mut new_start = 0;
         loop {
-            match (old_edits_iter.peek_mut(), new_edits_iter.peek_mut()) {
-                (None, None) => break,
-                (Some(old_edit), None) => {
+            let old_edit = old_edits_iter.peek_mut();
+            let new_edit = new_edits_iter.peek_mut();
+
+            // Push the old edit if its new end is before the new edit's old start.
+            if let Some(old_edit) = old_edit.as_ref() {
+                let new_edit = new_edit.as_ref();
+                if new_edit.map_or(true, |new_edit| old_edit.new.end < new_edit.old.start) {
                     let catchup = old_edit.old.start - old_start;
                     old_start += catchup;
                     new_start += catchup;
@@ -34,8 +38,14 @@ impl Patch {
                     old_start = old_end;
                     new_start = new_end;
                     old_edits_iter.next();
+                    continue;
                 }
-                (None, Some(new_edit)) => {
+            }
+
+            // Push the new edit if its old end is before the old edit's new start.
+            if let Some(new_edit) = new_edit.as_ref() {
+                let old_edit = old_edit.as_ref();
+                if old_edit.map_or(true, |old_edit| new_edit.old.end < old_edit.new.start) {
                     let catchup = new_edit.new.start - new_start;
                     old_start += catchup;
                     new_start += catchup;
@@ -49,104 +59,79 @@ impl Patch {
                     old_start = old_end;
                     new_start = new_end;
                     new_edits_iter.next();
+                    continue;
                 }
-                (Some(old_edit), Some(new_edit)) => {
-                    if old_edit.new.end < new_edit.old.start {
-                        let catchup = old_edit.old.start - old_start;
-                        old_start += catchup;
-                        new_start += catchup;
+            }
 
-                        let old_end = old_start + old_edit.old.len() as u32;
-                        let new_end = new_start + old_edit.new.len() as u32;
-                        composed.push(Edit {
-                            old: old_start..old_end,
-                            new: new_start..new_end,
-                        });
-                        old_start = old_end;
-                        new_start = new_end;
-                        old_edits_iter.next();
-                    } else if new_edit.old.end < old_edit.new.start {
-                        let catchup = new_edit.new.start - new_start;
-                        old_start += catchup;
-                        new_start += catchup;
+            // If we still have edits by this point then they must intersect, so we compose them.
+            if let Some((old_edit, new_edit)) = old_edit.zip(new_edit) {
+                if old_edit.new.start < new_edit.old.start {
+                    let catchup = old_edit.old.start - old_start;
+                    old_start += catchup;
+                    new_start += catchup;
 
-                        let old_end = old_start + new_edit.old.len() as u32;
-                        let new_end = new_start + new_edit.new.len() as u32;
-                        composed.push(Edit {
-                            old: old_start..old_end,
-                            new: new_start..new_end,
-                        });
-                        old_start = old_end;
-                        new_start = new_end;
-                        new_edits_iter.next();
-                    } else {
-                        if old_edit.new.start < new_edit.old.start {
-                            let catchup = old_edit.old.start - old_start;
-                            old_start += catchup;
-                            new_start += catchup;
+                    let overshoot = new_edit.old.start - old_edit.new.start;
+                    let old_end = cmp::min(old_start + overshoot, old_edit.old.end);
+                    let new_end = new_start + overshoot;
+                    composed.push(Edit {
+                        old: old_start..old_end,
+                        new: new_start..new_end,
+                    });
 
-                            let overshoot = new_edit.old.start - old_edit.new.start;
-                            let old_end = cmp::min(old_start + overshoot, old_edit.old.end);
-                            let new_end = new_start + overshoot;
-                            composed.push(Edit {
-                                old: old_start..old_end,
-                                new: new_start..new_end,
-                            });
+                    old_edit.old.start += overshoot;
+                    old_edit.new.start += overshoot;
+                    old_start = old_end;
+                    new_start = new_end;
+                } else {
+                    let catchup = new_edit.new.start - new_start;
+                    old_start += catchup;
+                    new_start += catchup;
 
-                            old_edit.old.start += overshoot;
-                            old_edit.new.start += overshoot;
-                            old_start = old_end;
-                            new_start = new_end;
-                        } else {
-                            let catchup = new_edit.new.start - new_start;
-                            old_start += catchup;
-                            new_start += catchup;
+                    let overshoot = old_edit.new.start - new_edit.old.start;
+                    let old_end = old_start + overshoot;
+                    let new_end = cmp::min(new_start + overshoot, new_edit.new.end);
+                    composed.push(Edit {
+                        old: old_start..old_end,
+                        new: new_start..new_end,
+                    });
 
-                            let overshoot = old_edit.new.start - new_edit.old.start;
-                            let old_end = old_start + overshoot;
-                            let new_end = cmp::min(new_start + overshoot, new_edit.new.end);
-                            composed.push(Edit {
-                                old: old_start..old_end,
-                                new: new_start..new_end,
-                            });
-
-                            new_edit.old.start += overshoot;
-                            new_edit.new.start += overshoot;
-                            old_start = old_end;
-                            new_start = new_end;
-                        }
-
-                        if old_edit.new.end > new_edit.old.end {
-                            let old_end = old_start
-                                + cmp::min(old_edit.old.len() as u32, new_edit.old.len() as u32);
-                            let new_end = new_start + new_edit.new.len() as u32;
-                            composed.push(Edit {
-                                old: old_start..old_end,
-                                new: new_start..new_end,
-                            });
-
-                            old_edit.old.start = old_end;
-                            old_edit.new.start = new_edit.old.end;
-                            old_start = old_end;
-                            new_start = new_end;
-                            new_edits_iter.next();
-                        } else {
-                            let old_end = old_start + old_edit.old.len() as u32;
-                            let new_end = new_start
-                                + cmp::min(old_edit.new.len() as u32, new_edit.new.len() as u32);
-                            composed.push(Edit {
-                                old: old_start..old_end,
-                                new: new_start..new_end,
-                            });
-
-                            new_edit.old.start = old_edit.new.end;
-                            new_edit.new.start = new_end;
-                            old_start = old_end;
-                            new_start = new_end;
-                            old_edits_iter.next();
-                        }
-                    }
+                    new_edit.old.start += overshoot;
+                    new_edit.new.start += overshoot;
+                    old_start = old_end;
+                    new_start = new_end;
                 }
+
+                if old_edit.new.end > new_edit.old.end {
+                    let old_end =
+                        old_start + cmp::min(old_edit.old.len() as u32, new_edit.old.len() as u32);
+                    let new_end = new_start + new_edit.new.len() as u32;
+                    composed.push(Edit {
+                        old: old_start..old_end,
+                        new: new_start..new_end,
+                    });
+
+                    old_edit.old.start = old_end;
+                    old_edit.new.start = new_edit.old.end;
+                    old_start = old_end;
+                    new_start = new_end;
+                    new_edits_iter.next();
+                } else {
+                    let old_end = old_start + old_edit.old.len() as u32;
+                    let new_end =
+                        new_start + cmp::min(old_edit.new.len() as u32, new_edit.new.len() as u32);
+                    composed.push(Edit {
+                        old: old_start..old_end,
+                        new: new_start..new_end,
+                    });
+
+                    new_edit.old.start = old_edit.new.end;
+                    new_edit.new.start = new_end;
+                    old_start = old_end;
+                    new_start = new_end;
+                    old_edits_iter.next();
+                }
+            } else {
+                break;
             }
         }
 
