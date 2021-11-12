@@ -3,8 +3,7 @@ use buffer::{rope, Anchor, Bias, Point, Rope, ToOffset};
 use gpui::fonts::HighlightStyle;
 use language::HighlightedChunk;
 use parking_lot::Mutex;
-use smol::io::AsyncBufReadExt;
-use std::{borrow::Borrow, cmp, collections::HashSet, iter, ops::Range, slice, sync::Arc};
+use std::{cmp, collections::HashSet, iter, ops::Range, slice, sync::Arc};
 use sum_tree::SumTree;
 
 struct BlockMap {
@@ -169,7 +168,7 @@ impl BlockPoint {
         self.0.row
     }
 
-    fn row_mut(&self) -> &mut u32 {
+    fn row_mut(&mut self) -> &mut u32 {
         &mut self.0.row
     }
 
@@ -177,7 +176,7 @@ impl BlockPoint {
         self.0.column
     }
 
-    fn column_mut(&self) -> &mut u32 {
+    fn column_mut(&mut self) -> &mut u32 {
         &mut self.0.column
     }
 }
@@ -212,17 +211,19 @@ impl BlockSnapshot {
         cursor.seek(&OutputRow(rows.start), Bias::Right, &());
         let (input_start, output_start) = cursor.start();
         let row_overshoot = rows.start - output_start.0;
-        let input_row = input_start.0 + row_overshoot;
-        let input_end = self.to_wrap_point(BlockPoint(Point::new(rows.end, 0)));
+        let input_start_row = input_start.0 + row_overshoot;
+        let input_end_row = self
+            .to_wrap_point(BlockPoint(Point::new(rows.end, 0)))
+            .row();
         let input_chunks = self
             .wrap_snapshot
-            .highlighted_chunks_for_rows(input_row..input_end.row());
+            .highlighted_chunks_for_rows(input_start_row..input_end_row);
         HighlightedChunks {
             input_chunks,
-            input_chunk: None,
+            input_chunk: Default::default(),
             block_chunks: None,
             transforms: cursor,
-            output_position: BlockPoint(Point::new(rows.start, 0)),
+            output_row: rows.start,
             max_output_row: rows.end,
         }
     }
