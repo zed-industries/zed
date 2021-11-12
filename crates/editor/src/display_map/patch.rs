@@ -1,12 +1,16 @@
-use std::{cmp, iter::Peekable, mem, ops::Range};
+use std::{cmp, mem, slice};
 
 type Edit = buffer::Edit<u32>;
 
 #[derive(Default, Debug, PartialEq, Eq)]
-struct Patch(Vec<Edit>);
+pub struct Patch(Vec<Edit>);
 
 impl Patch {
-    fn compose(&self, other: &Self) -> Self {
+    pub unsafe fn new_unchecked(edits: Vec<Edit>) -> Self {
+        Self(edits)
+    }
+
+    pub fn compose(&self, other: &Self) -> Self {
         let mut old_edits_iter = self.0.iter().cloned().peekable();
         let mut new_edits_iter = other.0.iter().cloned().peekable();
         let mut composed = Patch(Vec::new());
@@ -61,7 +65,6 @@ impl Patch {
                         old_start = old_end;
                         new_start = new_end;
                         old_edits_iter.next();
-                        continue;
                     } else if new_edit.old.end < old_edit.new.start {
                         let catchup = new_edit.new.start - new_start;
                         old_start += catchup;
@@ -114,10 +117,8 @@ impl Patch {
                         }
 
                         if old_edit.new.end > new_edit.old.end {
-                            let old_len =
-                                cmp::min(old_edit.old.len() as u32, new_edit.old.len() as u32);
-
-                            let old_end = old_start + old_len;
+                            let old_end = old_start
+                                + cmp::min(old_edit.old.len() as u32, new_edit.old.len() as u32);
                             let new_end = new_start + new_edit.new.len() as u32;
                             composed.push(Edit {
                                 old: old_start..old_end,
@@ -130,11 +131,9 @@ impl Patch {
                             new_start = new_end;
                             new_edits_iter.next();
                         } else {
-                            let new_len =
-                                cmp::min(old_edit.new.len() as u32, new_edit.new.len() as u32);
-
                             let old_end = old_start + old_edit.old.len() as u32;
-                            let new_end = new_start + new_len;
+                            let new_end = new_start
+                                + cmp::min(old_edit.new.len() as u32, new_edit.new.len() as u32);
                             composed.push(Edit {
                                 old: old_start..old_end,
                                 new: new_start..new_end,
@@ -154,6 +153,17 @@ impl Patch {
         composed
     }
 
+    pub fn invert(&mut self) -> &mut Self {
+        for edit in &mut self.0 {
+            mem::swap(&mut edit.old, &mut edit.new);
+        }
+        self
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
     fn push(&mut self, edit: Edit) {
         if edit.old.len() == 0 && edit.new.len() == 0 {
             return;
@@ -169,6 +179,15 @@ impl Patch {
         } else {
             self.0.push(edit);
         }
+    }
+}
+
+impl<'a> IntoIterator for &'a Patch {
+    type Item = &'a Edit;
+    type IntoIter = slice::Iter<'a, Edit>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
     }
 }
 
@@ -399,13 +418,13 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 100, seed = 1)]
+    #[gpui::test(iterations = 100)]
     fn test_random_patch_compositions(mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-            .unwrap_or(5);
+            .unwrap_or(20);
 
-        let initial_chars = (0..rng.gen_range(0..=10))
+        let initial_chars = (0..rng.gen_range(0..=100))
             .map(|_| rng.gen_range(b'a'..=b'z') as char)
             .collect::<Vec<_>>();
         println!("initial chars: {:?}", initial_chars);
