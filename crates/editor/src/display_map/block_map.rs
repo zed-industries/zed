@@ -16,7 +16,7 @@ use std::{
 };
 use sum_tree::SumTree;
 
-struct BlockMap {
+pub struct BlockMap {
     buffer: ModelHandle<Buffer>,
     next_block_id: AtomicUsize,
     wrap_snapshot: Mutex<WrapSnapshot>,
@@ -24,18 +24,18 @@ struct BlockMap {
     transforms: Mutex<SumTree<Transform>>,
 }
 
-struct BlockMapWriter<'a>(&'a mut BlockMap);
+pub struct BlockMapWriter<'a>(&'a mut BlockMap);
 
-struct BlockSnapshot {
+pub struct BlockSnapshot {
     wrap_snapshot: WrapSnapshot,
     transforms: SumTree<Transform>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-struct BlockId(usize);
+pub struct BlockId(usize);
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct BlockPoint(super::Point);
+pub struct BlockPoint(pub super::Point);
 
 #[derive(Debug)]
 struct Block {
@@ -47,7 +47,7 @@ struct Block {
 }
 
 #[derive(Clone)]
-struct BlockProperties<P, T>
+pub struct BlockProperties<P, T>
 where
     P: Clone,
     T: Clone,
@@ -76,7 +76,7 @@ struct TransformSummary {
     output_rows: u32,
 }
 
-struct HighlightedChunks<'a> {
+pub struct HighlightedChunks<'a> {
     transforms: sum_tree::Cursor<'a, Transform, (OutputRow, InputRow)>,
     input_chunks: wrap_map::HighlightedChunks<'a>,
     input_chunk: HighlightedChunk<'a>,
@@ -100,7 +100,7 @@ struct InputRow(u32);
 struct OutputRow(u32);
 
 impl BlockMap {
-    fn new(buffer: ModelHandle<Buffer>, wrap_snapshot: WrapSnapshot) -> Self {
+    pub fn new(buffer: ModelHandle<Buffer>, wrap_snapshot: WrapSnapshot) -> Self {
         Self {
             buffer,
             next_block_id: AtomicUsize::new(0),
@@ -113,7 +113,7 @@ impl BlockMap {
         }
     }
 
-    fn read(
+    pub fn read(
         &self,
         wrap_snapshot: WrapSnapshot,
         edits: Vec<WrapEdit>,
@@ -127,7 +127,7 @@ impl BlockMap {
         }
     }
 
-    fn write(
+    pub fn write(
         &mut self,
         wrap_snapshot: WrapSnapshot,
         edits: Vec<WrapEdit>,
@@ -234,21 +234,17 @@ impl BlockMap {
     }
 }
 
-impl BlockPoint {
-    fn row(&self) -> u32 {
-        self.0.row
-    }
+impl std::ops::Deref for BlockPoint {
+    type Target = Point;
 
-    fn row_mut(&mut self) -> &mut u32 {
-        &mut self.0.row
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
+}
 
-    fn column(&self) -> u32 {
-        self.0.column
-    }
-
-    fn column_mut(&mut self) -> &mut u32 {
-        &mut self.0.column
+impl std::ops::DerefMut for BlockPoint {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
@@ -308,8 +304,8 @@ impl<'a> BlockMapWriter<'a> {
         ids
     }
 
-    pub fn remove(&self, ids: HashSet<BlockId>) {
-        //
+    pub fn remove(&mut self, _: HashSet<BlockId>, _: &AppContext) {
+        todo!()
     }
 }
 
@@ -347,9 +343,13 @@ impl BlockSnapshot {
         self.to_block_point(self.wrap_snapshot.max_point())
     }
 
+    pub fn clip_point(&self, point: BlockPoint, bias: Bias) -> BlockPoint {
+        todo!()
+    }
+
     pub fn to_block_point(&self, wrap_point: WrapPoint) -> BlockPoint {
         let mut cursor = self.transforms.cursor::<(InputRow, OutputRow)>();
-        cursor.seek(&InputRow(wrap_point.row()), Bias::Left, &());
+        cursor.seek(&InputRow(wrap_point.row()), Bias::Right, &());
         while let Some(item) = cursor.item() {
             if item.is_isomorphic() {
                 break;
@@ -625,6 +625,10 @@ mod tests {
             snapshot.text(),
             "aaa\nBLOCK 1\nBLOCK 2\nbbb\nccc\nddd\nBLOCK 3\n"
         );
+        assert_eq!(
+            snapshot.to_block_point(WrapPoint::new(1, 0)),
+            BlockPoint(Point::new(3, 0))
+        );
 
         // Insert a line break, separating two block decorations into separate
         // lines.
@@ -717,13 +721,8 @@ mod tests {
                         wrap_map.sync(tabs_snapshot, tab_edits, cx)
                     });
                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits, cx);
-
-                    expected_blocks.extend(
-                        block_map
-                            .insert(block_properties.clone(), cx)
-                            .into_iter()
-                            .zip(block_properties),
-                    );
+                    let block_ids = block_map.insert(block_properties.clone(), cx);
+                    expected_blocks.extend(block_ids.into_iter().zip(block_properties));
                 }
                 40..=59 => {
                     let block_count = rng.gen_range(1..=4.min(expected_blocks.len()));
@@ -740,9 +739,8 @@ mod tests {
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tabs_snapshot, tab_edits, cx)
                     });
-                    let block_map = block_map.write(wraps_snapshot, wrap_edits, cx);
-
-                    block_map.remove(block_ids_to_remove);
+                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits, cx);
+                    block_map.remove(block_ids_to_remove, cx);
                 }
                 _ => {
                     buffer.update(cx, |buffer, _| buffer.randomly_edit(&mut rng, 5));

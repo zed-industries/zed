@@ -4,14 +4,18 @@ mod patch;
 mod tab_map;
 mod wrap_map;
 
+use block_map::{BlockId, BlockMap, BlockPoint, BlockProperties};
+use buffer::Rope;
 use fold_map::{FoldMap, ToFoldPoint as _};
 use gpui::{fonts::FontId, Entity, ModelContext, ModelHandle};
 use language::{Anchor, Buffer, Point, ToOffset, ToPoint};
-use std::ops::Range;
+use std::{collections::HashSet, ops::Range};
 use sum_tree::Bias;
 use tab_map::TabMap;
 use wrap_map::WrapMap;
-pub use wrap_map::{BufferRows, HighlightedChunks};
+
+pub use block_map::HighlightedChunks;
+pub use wrap_map::BufferRows;
 
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplayMapSnapshot, bias: Bias) -> DisplayPoint;
@@ -22,6 +26,7 @@ pub struct DisplayMap {
     fold_map: FoldMap,
     tab_map: TabMap,
     wrap_map: ModelHandle<WrapMap>,
+    block_map: BlockMap,
 }
 
 impl Entity for DisplayMap {
@@ -39,28 +44,32 @@ impl DisplayMap {
     ) -> Self {
         let (fold_map, snapshot) = FoldMap::new(buffer.clone(), cx);
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
-        let (wrap_map, _) = WrapMap::new(snapshot, font_id, font_size, wrap_width, cx);
+        let (wrap_map, snapshot) = WrapMap::new(snapshot, font_id, font_size, wrap_width, cx);
+        let block_map = BlockMap::new(buffer.clone(), snapshot);
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
         DisplayMap {
             buffer,
             fold_map,
             tab_map,
             wrap_map,
+            block_map,
         }
     }
 
     pub fn snapshot(&self, cx: &mut ModelContext<Self>) -> DisplayMapSnapshot {
         let (folds_snapshot, edits) = self.fold_map.read(cx);
         let (tabs_snapshot, edits) = self.tab_map.sync(folds_snapshot.clone(), edits);
-        let (wraps_snapshot, _) = self
+        let (wraps_snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(tabs_snapshot.clone(), edits, cx));
+        let blocks_snapshot = self.block_map.read(wraps_snapshot.clone(), edits, cx);
 
         DisplayMapSnapshot {
             buffer_snapshot: self.buffer.read(cx).snapshot(),
             folds_snapshot,
             tabs_snapshot,
             wraps_snapshot,
+            blocks_snapshot,
         }
     }
 
@@ -94,6 +103,34 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
     }
 
+    pub fn insert_blocks<P, T>(
+        &mut self,
+        blocks: impl IntoIterator<Item = BlockProperties<P, T>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Vec<BlockId>
+    where
+        P: ToOffset + Clone,
+        T: Into<Rope> + Clone,
+    {
+        let (snapshot, edits) = self.fold_map.read(cx);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        let mut block_map = self.block_map.write(snapshot, edits, cx);
+        block_map.insert(blocks, cx)
+    }
+
+    pub fn remove_blocks(&mut self, ids: HashSet<BlockId>, cx: &mut ModelContext<Self>) {
+        let (snapshot, edits) = self.fold_map.read(cx);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        let mut block_map = self.block_map.write(snapshot, edits, cx);
+        block_map.remove(ids, cx);
+    }
+
     pub fn set_font(&self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) {
         self.wrap_map
             .update(cx, |map, cx| map.set_font(font_id, font_size, cx));
@@ -115,6 +152,7 @@ pub struct DisplayMapSnapshot {
     folds_snapshot: fold_map::Snapshot,
     tabs_snapshot: tab_map::Snapshot,
     wraps_snapshot: wrap_map::Snapshot,
+    blocks_snapshot: block_map::BlockSnapshot,
 }
 
 impl DisplayMapSnapshot {
@@ -162,7 +200,7 @@ impl DisplayMapSnapshot {
     }
 
     pub fn max_point(&self) -> DisplayPoint {
-        DisplayPoint(self.wraps_snapshot.max_point())
+        DisplayPoint(self.blocks_snapshot.max_point())
     }
 
     pub fn chunks_at(&self, display_row: u32) -> wrap_map::Chunks {
@@ -172,8 +210,8 @@ impl DisplayMapSnapshot {
     pub fn highlighted_chunks_for_rows(
         &mut self,
         display_rows: Range<u32>,
-    ) -> wrap_map::HighlightedChunks {
-        self.wraps_snapshot
+    ) -> block_map::HighlightedChunks {
+        self.blocks_snapshot
             .highlighted_chunks_for_rows(display_rows)
     }
 
@@ -217,7 +255,7 @@ impl DisplayMapSnapshot {
     }
 
     pub fn clip_point(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
-        DisplayPoint(self.wraps_snapshot.clip_point(point.0, bias))
+        DisplayPoint(self.blocks_snapshot.clip_point(point.0, bias))
     }
 
     pub fn folds_in_range<'a, T>(
@@ -235,9 +273,10 @@ impl DisplayMapSnapshot {
     }
 
     pub fn is_line_folded(&self, display_row: u32) -> bool {
-        let wrap_point = DisplayPoint::new(display_row, 0).0;
-        let row = self.wraps_snapshot.to_tab_point(wrap_point).row();
-        self.folds_snapshot.is_line_folded(row)
+        let block_point = BlockPoint(Point::new(display_row, 0));
+        let wrap_point = self.blocks_snapshot.to_wrap_point(block_point);
+        let tab_point = self.wraps_snapshot.to_tab_point(wrap_point);
+        self.folds_snapshot.is_line_folded(tab_point.row())
     }
 
     pub fn soft_wrap_indent(&self, display_row: u32) -> Option<u32> {
@@ -295,11 +334,11 @@ impl DisplayMapSnapshot {
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct DisplayPoint(wrap_map::WrapPoint);
+pub struct DisplayPoint(BlockPoint);
 
 impl DisplayPoint {
     pub fn new(row: u32, column: u32) -> Self {
-        Self(wrap_map::WrapPoint::new(row, column))
+        Self(BlockPoint(Point::new(row, column)))
     }
 
     pub fn zero() -> Self {
@@ -312,29 +351,31 @@ impl DisplayPoint {
     }
 
     pub fn row(self) -> u32 {
-        self.0.row()
+        self.0.row
     }
 
     pub fn column(self) -> u32 {
-        self.0.column()
+        self.0.column
     }
 
     pub fn row_mut(&mut self) -> &mut u32 {
-        self.0.row_mut()
+        &mut self.0.row
     }
 
     pub fn column_mut(&mut self) -> &mut u32 {
-        self.0.column_mut()
+        &mut self.0.column
     }
 
     pub fn to_buffer_point(self, map: &DisplayMapSnapshot, bias: Bias) -> Point {
-        let unwrapped_point = map.wraps_snapshot.to_tab_point(self.0);
+        let unblocked_point = map.blocks_snapshot.to_wrap_point(self.0);
+        let unwrapped_point = map.wraps_snapshot.to_tab_point(unblocked_point);
         let unexpanded_point = map.tabs_snapshot.to_fold_point(unwrapped_point, bias).0;
         unexpanded_point.to_buffer_point(&map.folds_snapshot)
     }
 
     pub fn to_buffer_offset(self, map: &DisplayMapSnapshot, bias: Bias) -> usize {
-        let unwrapped_point = map.wraps_snapshot.to_tab_point(self.0);
+        let unblocked_point = map.blocks_snapshot.to_wrap_point(self.0);
+        let unwrapped_point = map.wraps_snapshot.to_tab_point(unblocked_point);
         let unexpanded_point = map.tabs_snapshot.to_fold_point(unwrapped_point, bias).0;
         unexpanded_point.to_buffer_offset(&map.folds_snapshot)
     }
@@ -345,7 +386,8 @@ impl ToDisplayPoint for Point {
         let fold_point = self.to_fold_point(&map.folds_snapshot, bias);
         let tab_point = map.tabs_snapshot.to_tab_point(fold_point);
         let wrap_point = map.wraps_snapshot.to_wrap_point(tab_point);
-        DisplayPoint(wrap_point)
+        let block_point = map.blocks_snapshot.to_block_point(wrap_point);
+        DisplayPoint(block_point)
     }
 }
 
