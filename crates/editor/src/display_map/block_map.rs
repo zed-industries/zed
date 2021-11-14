@@ -234,6 +234,12 @@ impl BlockMap {
     }
 }
 
+impl BlockPoint {
+    fn new(row: u32, column: u32) -> Self {
+        Self(Point::new(row, column))
+    }
+}
+
 impl std::ops::Deref for BlockPoint {
     type Target = Point;
 
@@ -323,9 +329,7 @@ impl BlockSnapshot {
         let (input_start, output_start) = cursor.start();
         let row_overshoot = rows.start - output_start.0;
         let input_start_row = input_start.0 + row_overshoot;
-        let input_end_row = self
-            .to_wrap_point(BlockPoint(Point::new(rows.end, 0)))
-            .row();
+        let input_end_row = self.to_wrap_point(BlockPoint::new(rows.end, 0)).row();
         let input_chunks = self
             .wrap_snapshot
             .highlighted_chunks_for_rows(input_start_row..input_end_row);
@@ -344,7 +348,42 @@ impl BlockSnapshot {
     }
 
     pub fn clip_point(&self, point: BlockPoint, bias: Bias) -> BlockPoint {
-        todo!()
+        let mut cursor = self.transforms.cursor::<(OutputRow, InputRow)>();
+        cursor.seek(&OutputRow(point.row), Bias::Right, &());
+        if let Some(transform) = cursor.item() {
+            if transform.is_isomorphic() {
+                let (output_start_row, input_start_row) = cursor.start();
+                let output_overshoot = point.row - output_start_row.0;
+                let input_point = self.wrap_snapshot.clip_point(
+                    WrapPoint::new(input_start_row.0 + output_overshoot, point.column),
+                    bias,
+                );
+                let input_overshoot = input_point.row() - input_start_row.0;
+                BlockPoint::new(output_start_row.0 + input_overshoot, input_point.column())
+            } else {
+                if bias == Bias::Left && cursor.start().1 .0 > 0
+                    || cursor.end(&()).1 .0 == self.wrap_snapshot.max_point().row()
+                {
+                    loop {
+                        cursor.prev(&());
+                        let transform = cursor.item().unwrap();
+                        if transform.is_isomorphic() {
+                            return BlockPoint::new(cursor.end(&()).0 .0 - 1, 0);
+                        }
+                    }
+                } else {
+                    loop {
+                        cursor.next(&());
+                        let transform = cursor.item().unwrap();
+                        if transform.is_isomorphic() {
+                            return BlockPoint::new(cursor.start().0 .0, 0);
+                        }
+                    }
+                }
+            }
+        } else {
+            self.max_point()
+        }
     }
 
     pub fn to_block_point(&self, wrap_point: WrapPoint) -> BlockPoint {
@@ -358,10 +397,7 @@ impl BlockSnapshot {
         }
         let (input_start, output_start) = cursor.start();
         let row_overshoot = wrap_point.row() - input_start.0;
-        BlockPoint(Point::new(
-            output_start.0 + row_overshoot,
-            wrap_point.column(),
-        ))
+        BlockPoint::new(output_start.0 + row_overshoot, wrap_point.column())
     }
 
     pub fn to_wrap_point(&self, block_point: BlockPoint) -> WrapPoint {
@@ -627,7 +663,7 @@ mod tests {
         );
         assert_eq!(
             snapshot.to_block_point(WrapPoint::new(1, 0)),
-            BlockPoint(Point::new(3, 0))
+            BlockPoint::new(3, 0)
         );
 
         // Insert a line break, separating two block decorations into separate
