@@ -138,7 +138,7 @@ impl BlockMap {
         BlockMapWriter(self)
     }
 
-    fn apply_edits(&self, wrap_snapshot: &WrapSnapshot, edits: Vec<WrapEdit>, cx: &AppContext) {
+    fn apply_edits(&self, _: &WrapSnapshot, edits: Vec<WrapEdit>, cx: &AppContext) {
         let buffer = self.buffer.read(cx);
         let mut transforms = self.transforms.lock();
         let mut new_transforms = SumTree::new();
@@ -325,7 +325,7 @@ impl<'a> BlockMapWriter<'a> {
 impl BlockSnapshot {
     #[cfg(test)]
     fn text(&mut self) -> String {
-        self.highlighted_chunks_for_rows(0..(self.max_point().0.row + 1))
+        self.highlighted_chunks_for_rows(0..self.max_point().0.row + 1)
             .map(|chunk| chunk.text)
             .collect()
     }
@@ -481,7 +481,19 @@ impl<'a> Iterator for HighlightedChunks<'a> {
         }
 
         if self.input_chunk.text.is_empty() {
-            self.input_chunk = self.input_chunks.next()?;
+            if let Some(input_chunk) = self.input_chunks.next() {
+                self.input_chunk = input_chunk;
+            } else {
+                self.output_row += 1;
+                self.transforms.next(&());
+                if self.output_row < self.max_output_row {
+                    let mut chunk = self.input_chunk.clone();
+                    chunk.text = "\n";
+                    return Some(chunk);
+                } else {
+                    return None;
+                }
+            }
         }
 
         let transform_end = self.transforms.end(&()).0 .0;
@@ -539,9 +551,9 @@ impl<'a> Iterator for BlockChunks<'a> {
 
         let chunk = self.chunk?;
         let mut chunk_len = chunk.len();
-        let mut highlight_style = None;
-        if let Some((run_len, style)) = self.runs.peek() {
-            highlight_style = Some(style.clone());
+        // let mut highlight_style = None;
+        if let Some((run_len, _)) = self.runs.peek() {
+            // highlight_style = Some(style.clone());
             let run_end_in_chunk = self.run_start + run_len - self.offset;
             if run_end_in_chunk <= chunk_len {
                 chunk_len = run_end_in_chunk;
@@ -772,11 +784,20 @@ mod tests {
                     });
                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits, cx);
                     let block_ids = block_map.insert(block_properties.clone(), cx);
-                    expected_blocks.extend(block_ids.into_iter().zip(block_properties));
+                    for (block_id, props) in block_ids.into_iter().zip(block_properties) {
+                        log::info!(
+                            "inserted block {:?} {:?} {:?} with text {:?}",
+                            block_id.0,
+                            props.disposition,
+                            props.position.to_point(buffer.read(cx)),
+                            props.text.to_string()
+                        );
+                        expected_blocks.push((block_id, props));
+                    }
                 }
-                40..=59 => {
+                40..=59 if !expected_blocks.is_empty() => {
                     let block_count = rng.gen_range(1..=4.min(expected_blocks.len()));
-                    let block_ids_to_remove = (0..block_count)
+                    let block_ids_to_remove = (0..=block_count)
                         .map(|_| {
                             expected_blocks
                                 .remove(rng.gen_range(0..expected_blocks.len()))
