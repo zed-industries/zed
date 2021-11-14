@@ -81,7 +81,7 @@ pub struct HighlightedChunks<'a> {
     input_chunks: wrap_map::HighlightedChunks<'a>,
     input_chunk: HighlightedChunk<'a>,
     block_chunks: Option<BlockChunks<'a>>,
-    output_row: u32,
+    output_position: Point,
     max_output_row: u32,
 }
 
@@ -100,7 +100,7 @@ impl BlockMap {
             next_block_id: AtomicUsize::new(0),
             blocks: Vec::new(),
             transforms: Mutex::new(SumTree::from_item(
-                Transform::isomorphic(wrap_snapshot.text_summary()),
+                Transform::isomorphic(wrap_snapshot.text_summary().lines),
                 &(),
             )),
             wrap_snapshot: Mutex::new(wrap_snapshot),
@@ -292,14 +292,12 @@ impl<'a> BlockMapWriter<'a> {
             {
                 Ok(ix) | Err(ix) => ix,
             };
-            let mut text = block.text.into();
-            text.push("\n");
             self.0.blocks.insert(
                 block_ix,
                 Arc::new(Block {
                     id,
                     position,
-                    text,
+                    text: block.text.into(),
                     runs: block.runs,
                     disposition: block.disposition,
                 }),
@@ -348,7 +346,7 @@ impl BlockSnapshot {
             input_chunk: Default::default(),
             block_chunks: None,
             transforms: cursor,
-            output_row: rows.start,
+            output_position: rows.start,
             max_output_row: rows.end,
         }
     }
@@ -449,13 +447,13 @@ impl<'a> Iterator for HighlightedChunks<'a> {
     type Item = HighlightedChunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.output_row >= self.max_output_row {
+        if self.output_position >= self.max_output_row {
             return None;
         }
 
         if let Some(block_chunks) = self.block_chunks.as_mut() {
             if let Some(block_chunk) = block_chunks.next() {
-                self.output_row += block_chunk.text.matches('\n').count() as u32;
+                self.output_position += block_chunk.text.matches('\n').count() as u32;
                 return Some(block_chunk);
             } else {
                 self.block_chunks.take();
@@ -466,12 +464,12 @@ impl<'a> Iterator for HighlightedChunks<'a> {
         if let Some(block) = transform.block.as_ref() {
             let block_start = self.transforms.start().0 .0;
             let block_end = self.transforms.end(&()).0 .0;
-            let start_row_in_block = self.output_row - block_start;
+            let start_row_in_block = self.output_position - block_start;
             let end_row_in_block = cmp::min(self.max_output_row, block_end) - block_start;
             self.transforms.next(&());
             let mut block_chunks = BlockChunks::new(block, start_row_in_block..end_row_in_block);
             if let Some(block_chunk) = block_chunks.next() {
-                self.output_row += block_chunk.text.matches('\n').count() as u32;
+                self.output_position += block_chunk.text.matches('\n').count() as u32;
                 return Some(block_chunk);
             }
         }
@@ -480,9 +478,9 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             if let Some(input_chunk) = self.input_chunks.next() {
                 self.input_chunk = input_chunk;
             } else {
-                self.output_row += 1;
+                self.output_position += 1;
                 self.transforms.next(&());
-                if self.output_row < self.max_output_row {
+                if self.output_position < self.max_output_row {
                     let mut chunk = self.input_chunk.clone();
                     chunk.text = "\n";
                     return Some(chunk);
@@ -494,11 +492,11 @@ impl<'a> Iterator for HighlightedChunks<'a> {
 
         let transform_end = self.transforms.end(&()).0 .0;
         let (prefix_rows, prefix_bytes) =
-            offset_for_row(self.input_chunk.text, transform_end - self.output_row);
-        self.output_row += prefix_rows;
+            offset_for_row(self.input_chunk.text, transform_end - self.output_position);
+        self.output_position += prefix_rows;
         let (prefix, suffix) = self.input_chunk.text.split_at(prefix_bytes);
         self.input_chunk.text = suffix;
-        if self.output_row == transform_end {
+        if self.output_position == transform_end {
             self.transforms.next(&());
         }
 
