@@ -944,11 +944,6 @@ impl WrapPoint {
         Self(super::Point::new(row, column))
     }
 
-    #[cfg(test)]
-    pub fn is_zero(&self) -> bool {
-        self.0.is_zero()
-    }
-
     pub fn row(self) -> u32 {
         self.0.row
     }

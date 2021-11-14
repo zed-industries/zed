@@ -351,7 +351,14 @@ impl BlockSnapshot {
     }
 
     pub fn max_point(&self) -> BlockPoint {
-        self.to_block_point(self.wrap_snapshot.max_point())
+        let last_transform = self.transforms.last().unwrap();
+        if let Some(block) = &last_transform.block {
+            let row = self.transforms.summary().output_rows - 1;
+            let column = block.text.summary().lines.column;
+            BlockPoint::new(row, column)
+        } else {
+            self.to_block_point(self.wrap_snapshot.max_point())
+        }
     }
 
     pub fn clip_point(&self, point: BlockPoint, bias: Bias) -> BlockPoint {
