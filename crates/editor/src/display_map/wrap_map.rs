@@ -1,7 +1,7 @@
 use super::{
     fold_map,
     patch::Patch,
-    tab_map::{self, Edit as TabEdit, Snapshot as TabSnapshot, TabPoint, TextSummary},
+    tab_map::{self, Edit as TabEdit, Snapshot as TabSnapshot, TabPoint},
 };
 use gpui::{
     fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, ModelHandle, MutableAppContext,
@@ -13,6 +13,7 @@ use smol::future::yield_now;
 use std::{collections::VecDeque, mem, ops::Range, time::Duration};
 use sum_tree::{Bias, Cursor, SumTree};
 
+pub use super::tab_map::TextSummary;
 pub type Edit = buffer::Edit<u32>;
 
 pub struct WrapMap {
@@ -49,7 +50,7 @@ struct TransformSummary {
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct WrapPoint(super::Point);
+pub struct WrapPoint(pub super::Point);
 
 pub struct Chunks<'a> {
     input_chunks: tab_map::Chunks<'a>,
@@ -589,8 +590,12 @@ impl Snapshot {
         }
     }
 
+    pub fn text_summary(&self) -> TextSummary {
+        self.transforms.summary().output
+    }
+
     pub fn max_point(&self) -> WrapPoint {
-        self.to_wrap_point(self.tab_snapshot.max_point())
+        WrapPoint(self.transforms.summary().output.lines)
     }
 
     pub fn line_len(&self, row: u32) -> u32 {

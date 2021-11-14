@@ -1,4 +1,4 @@
-use super::wrap_map::{self, Edit as WrapEdit, Snapshot as WrapSnapshot, WrapPoint};
+use super::wrap_map::{self, Edit as WrapEdit, Snapshot as WrapSnapshot, TextSummary, WrapPoint};
 use buffer::{rope, Anchor, Bias, Edit, Point, Rope, ToOffset, ToPoint as _};
 use gpui::{fonts::HighlightStyle, AppContext, ModelHandle};
 use language::{Buffer, HighlightedChunk};
@@ -70,14 +70,14 @@ struct Transform {
     block: Option<Arc<Block>>,
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct TransformSummary {
-    input_rows: u32,
-    output_rows: u32,
+    input: Point,
+    output: Point,
 }
 
 pub struct HighlightedChunks<'a> {
-    transforms: sum_tree::Cursor<'a, Transform, (OutputRow, InputRow)>,
+    transforms: sum_tree::Cursor<'a, Transform, (BlockPoint, WrapPoint)>,
     input_chunks: wrap_map::HighlightedChunks<'a>,
     input_chunk: HighlightedChunk<'a>,
     block_chunks: Option<BlockChunks<'a>>,
@@ -93,12 +93,6 @@ struct BlockChunks<'a> {
     offset: usize,
 }
 
-#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct InputRow(u32);
-
-#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct OutputRow(u32);
-
 impl BlockMap {
     pub fn new(buffer: ModelHandle<Buffer>, wrap_snapshot: WrapSnapshot) -> Self {
         Self {
@@ -106,7 +100,7 @@ impl BlockMap {
             next_block_id: AtomicUsize::new(0),
             blocks: Vec::new(),
             transforms: Mutex::new(SumTree::from_item(
-                Transform::isomorphic(wrap_snapshot.max_point().row() + 1),
+                Transform::isomorphic(wrap_snapshot.text_summary()),
                 &(),
             )),
             wrap_snapshot: Mutex::new(wrap_snapshot),
@@ -138,28 +132,28 @@ impl BlockMap {
         BlockMapWriter(self)
     }
 
-    fn apply_edits(&self, _: &WrapSnapshot, edits: Vec<WrapEdit>, cx: &AppContext) {
+    fn apply_edits(&self, wrap_snapshot: &WrapSnapshot, edits: Vec<WrapEdit>, cx: &AppContext) {
         let buffer = self.buffer.read(cx);
         let mut transforms = self.transforms.lock();
         let mut new_transforms = SumTree::new();
-        let mut cursor = transforms.cursor::<InputRow>();
+        let mut cursor = transforms.cursor::<WrapPoint>();
         let mut edits = edits.into_iter().peekable();
         let mut last_block_ix = 0;
         let mut blocks_in_edit = Vec::new();
 
         while let Some(mut edit) = edits.next() {
             new_transforms.push_tree(
-                cursor.slice(&InputRow(edit.old.start), Bias::Left, &()),
+                cursor.slice(&WrapPoint::new(edit.old.start, 0), Bias::Left, &()),
                 &(),
             );
 
             let transform_start = cursor.start().0;
-            edit.new.start -= edit.old.start - transform_start;
-            edit.old.start = transform_start;
+            edit.new.start -= edit.old.start - transform_start.row;
+            edit.old.start = transform_start.row;
 
             loop {
-                if edit.old.end > cursor.start().0 {
-                    cursor.seek(&InputRow(edit.old.end), Bias::Left, &());
+                if edit.old.end > cursor.start().0.row {
+                    cursor.seek(&WrapPoint::new(edit.old.end, 0), Bias::Left, &());
                     cursor.next(&());
                     while let Some(item) = cursor.item() {
                         if item.is_isomorphic() {
@@ -169,8 +163,8 @@ impl BlockMap {
                         }
                     }
                     let transform_end = cursor.start().0;
-                    edit.new.end += transform_end - edit.old.end;
-                    edit.old.end = transform_end;
+                    edit.new.end += transform_end.row - edit.old.end;
+                    edit.old.end = transform_end.row;
                 }
 
                 if let Some(next_edit) = edits.peek() {
@@ -188,7 +182,7 @@ impl BlockMap {
             }
 
             let start_anchor = buffer.anchor_before(Point::new(edit.new.start, 0));
-            let end_anchor = buffer.anchor_after(Point::new(edit.new.end, 0));
+            let end_anchor = buffer.anchor_before(Point::new(edit.new.end, 0));
             let start_block_ix = match self.blocks[last_block_ix..]
                 .binary_search_by(|probe| probe.position.cmp(&start_anchor, buffer).unwrap())
             {
@@ -209,28 +203,37 @@ impl BlockMap {
             );
             blocks_in_edit.sort_unstable_by_key(|(row, block)| (*row, block.disposition));
 
-            for (row, block) in blocks_in_edit.iter().copied() {
-                let insertion_row = if block.disposition.is_above() {
-                    row
+            for (block_row, block) in blocks_in_edit.iter().copied() {
+                let new_transforms_end = new_transforms.summary().input;
+                if block.disposition.is_above() {
+                    if block_row > new_transforms_end.row {
+                        new_transforms.push(
+                            Transform::isomorphic(Point::new(block_row, 0) - new_transforms_end),
+                            &(),
+                        );
+                    }
                 } else {
-                    row + 1
-                };
-
-                let new_transforms_end = new_transforms.summary().input_rows;
-                if new_transforms_end < insertion_row {
-                    new_transforms.push(
-                        Transform::isomorphic(insertion_row - new_transforms_end),
-                        &(),
-                    );
+                    if block_row >= new_transforms_end.row {
+                        new_transforms.push(
+                            Transform::isomorphic(
+                                Point::new(block_row, wrap_snapshot.line_len(block_row))
+                                    - new_transforms_end,
+                            ),
+                            &(),
+                        );
+                    }
                 }
 
                 new_transforms.push(Transform::block(block.clone()), &());
             }
 
-            let new_transforms_end = new_transforms.summary().input_rows;
-            if new_transforms_end < edit.new.end {
+            let new_transforms_end = new_transforms.summary().input;
+            if new_transforms_end.row < edit.new.end {
+                // TODO: Should we just report the wrap edits in 2d so we can skip this max point check?
+                let edit_new_end_point =
+                    cmp::min(Point::new(edit.new.end, 0), wrap_snapshot.max_point().0);
                 new_transforms.push(
-                    Transform::isomorphic(edit.new.end - new_transforms_end),
+                    Transform::isomorphic(edit_new_end_point - new_transforms_end),
                     &(),
                 );
             }
@@ -331,8 +334,8 @@ impl BlockSnapshot {
     }
 
     pub fn highlighted_chunks_for_rows(&mut self, rows: Range<u32>) -> HighlightedChunks {
-        let mut cursor = self.transforms.cursor::<(OutputRow, InputRow)>();
-        cursor.seek(&OutputRow(rows.start), Bias::Right, &());
+        let mut cursor = self.transforms.cursor::<(BlockPoint, WrapPoint)>();
+        cursor.seek(&BlockPoint::new(rows.start, 0), Bias::Right, &());
         let (input_start, output_start) = cursor.start();
         let row_overshoot = rows.start - output_start.0;
         let input_start_row = input_start.0 + row_overshoot;
@@ -351,14 +354,7 @@ impl BlockSnapshot {
     }
 
     pub fn max_point(&self) -> BlockPoint {
-        let last_transform = self.transforms.last().unwrap();
-        if let Some(block) = &last_transform.block {
-            let row = self.transforms.summary().output_rows - 1;
-            let column = block.text.summary().lines.column;
-            BlockPoint::new(row, column)
-        } else {
-            self.to_block_point(self.wrap_snapshot.max_point())
-        }
+        BlockPoint(self.transforms.summary().output)
     }
 
     pub fn clip_point(&self, point: BlockPoint, bias: Bias) -> BlockPoint {
@@ -424,11 +420,11 @@ impl BlockSnapshot {
 }
 
 impl Transform {
-    fn isomorphic(rows: u32) -> Self {
+    fn isomorphic(lines: Point) -> Self {
         Self {
             summary: TransformSummary {
-                input_rows: rows,
-                output_rows: rows,
+                input: lines,
+                output: lines,
             },
             block: None,
         }
@@ -437,8 +433,8 @@ impl Transform {
     fn block(block: Arc<Block>) -> Self {
         Self {
             summary: TransformSummary {
-                input_rows: 0,
-                output_rows: block.text.summary().lines.row,
+                input: Default::default(),
+                output: block.text.summary().lines,
             },
             block: Some(block),
         }
@@ -590,20 +586,20 @@ impl sum_tree::Summary for TransformSummary {
     type Context = ();
 
     fn add_summary(&mut self, summary: &Self, _: &()) {
-        self.input_rows += summary.input_rows;
-        self.output_rows += summary.output_rows;
+        self.input += summary.input;
+        self.output += summary.output;
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, TransformSummary> for InputRow {
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for WrapPoint {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
-        self.0 += summary.input_rows;
+        self.0 += summary.input.lines;
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, TransformSummary> for OutputRow {
+impl<'a> sum_tree::Dimension<'a, TransformSummary> for BlockPoint {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
-        self.0 += summary.output_rows;
+        self.0 += summary.output.lines;
     }
 }
 
@@ -825,8 +821,8 @@ mod tests {
             });
             let mut blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits, cx);
             assert_eq!(
-                blocks_snapshot.transforms.summary().input_rows,
-                wraps_snapshot.max_point().row() + 1
+                blocks_snapshot.transforms.summary().input,
+                wraps_snapshot.max_point().0
             );
 
             let buffer = buffer.read(cx);
