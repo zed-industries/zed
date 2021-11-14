@@ -161,6 +161,13 @@ impl BlockMap {
                 if edit.old.end > cursor.start().0 {
                     cursor.seek(&InputRow(edit.old.end), Bias::Left, &());
                     cursor.next(&());
+                    while let Some(item) = cursor.item() {
+                        if item.is_isomorphic() {
+                            break;
+                        } else {
+                            cursor.next(&());
+                        }
+                    }
                     let transform_end = cursor.start().0;
                     edit.new.end += transform_end - edit.old.end;
                     edit.old.end = transform_end;
