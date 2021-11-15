@@ -744,6 +744,50 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    fn test_blocks_on_wrapped_lines(cx: &mut gpui::MutableAppContext) {
+        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let font_id = cx
+            .font_cache()
+            .select_font(family_id, &Default::default())
+            .unwrap();
+
+        let text = "\none two three\nfour five six\nseven eight";
+
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+        let (fold_map, folds_snapshot) = FoldMap::new(buffer.clone(), cx);
+        let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), 1);
+        let (wrap_map, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, Some(60.), cx);
+        let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot.clone());
+
+        let mut writer = block_map.write(wraps_snapshot.clone(), vec![], cx);
+        writer.insert(
+            vec![
+                BlockProperties {
+                    position: Point::new(1, 8),
+                    text: "BLOCK 1",
+                    disposition: BlockDisposition::Above,
+                    runs: vec![],
+                },
+                BlockProperties {
+                    position: Point::new(2, 0),
+                    text: "BLOCK 2",
+                    disposition: BlockDisposition::Below,
+                    runs: vec![],
+                },
+            ],
+            cx,
+        );
+
+        // Blocks with an 'above' disposition go above their corresponding buffer line.
+        // Blocks with a 'below' disposition go below their corresponding buffer line.
+        let mut snapshot = block_map.read(wraps_snapshot, vec![], cx);
+        assert_eq!(
+            snapshot.text(),
+            "\nBLOCK 1\none two \nthree\nfour five \nsix\nBLOCK 2\nseven \neight"
+        );
+    }
+
     #[gpui::test(iterations = 100)]
     fn test_random_blocks(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
