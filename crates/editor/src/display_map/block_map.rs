@@ -137,139 +137,151 @@ impl BlockMap {
         let mut transforms = self.transforms.lock();
         let mut new_transforms = SumTree::new();
         let mut cursor = transforms.cursor::<WrapPoint>();
-        let mut edits = edits.into_iter().peekable();
         let mut last_block_ix = 0;
         let mut blocks_in_edit = Vec::new();
 
-        while let Some(mut edit) = edits.next() {
-            new_transforms.push_tree(
-                cursor.slice(&WrapPoint::new(edit.old.start, 0), Bias::Left, &()),
-                &(),
-            );
+        for edit in edits {
+            let old_start = WrapPoint::new(edit.old.start, 0);
+            new_transforms.push_tree(cursor.slice(&old_start, Bias::Left, &()), &());
 
-            let mut transform_start_row = cursor.start().row();
-            if cursor.prev_item().map_or(false, |t| {
-                t.block_disposition() == Some(BlockDisposition::Below)
-            }) {
-                transform_start_row += 1;
-            }
-            dbg!("collapsed edit", &edit);
-            edit.new.start -= edit.old.start - transform_start_row;
-            edit.old.start = transform_start_row;
-            let mut edit_follows_below_block = false;
-
-            loop {
-                if edit.old.end > cursor.start().0.row {
-                    cursor.seek(&WrapPoint::new(edit.old.end, 0), Bias::Left, &());
-                    // dbg!(cursor.start(), cursor.item());
-                    if cursor.item().map_or(false, |t| t.is_isomorphic()) {
-                        if let Some(prev_transform) = cursor.prev_item() {
-                            if prev_transform.block_disposition() == Some(BlockDisposition::Below)
-                                && edit.old.end == cursor.start().row() + 1
-                            {
-                                edit_follows_below_block = true;
-                            } else {
-                                edit_follows_below_block = false;
-                                cursor.next(&());
-                            }
-                        } else {
-                            edit_follows_below_block = false;
-                            cursor.next(&());
-                        }
-                    }
-
-                    let transform_end_row = cursor.start().row() + 1;
-                    cursor.seek(&WrapPoint::new(transform_end_row, 0), Bias::Left, &());
-                    edit.new.end += transform_end_row - edit.old.end;
-                    edit.old.end = transform_end_row;
-                }
-
-                if let Some(next_edit) = edits.peek() {
-                    if edit.old.end >= next_edit.old.start {
-                        let delta = next_edit.new.len() as i32 - next_edit.old.len() as i32;
-                        edit.old.end = cmp::max(next_edit.old.end, edit.old.end);
-                        edit.new.end = (edit.new.end as i32 + delta) as u32;
-                        edits.next();
-                    } else {
-                        break;
-                    }
-                } else {
-                    break;
-                }
+            let overshoot = old_start.0 - cursor.start().0;
+            if !overshoot.is_zero() {
+                new_transforms.push(Transform::isomorphic(overshoot), &());
             }
 
-            dbg!("expanded edit", &edit);
-            let start_anchor = buffer.anchor_before(Point::new(edit.new.start, 0));
-            let start_block_ix = match self.blocks[last_block_ix..].binary_search_by(|probe| {
-                probe
-                    .position
-                    .cmp(&start_anchor, buffer)
-                    .unwrap()
-                    .then(Ordering::Greater)
-            }) {
-                Ok(ix) | Err(ix) => last_block_ix + ix,
-            };
-            let end_block_ix = if edit.new.end > wrap_snapshot.max_point().row() {
-                self.blocks.len()
-            } else {
-                let end_anchor = buffer.anchor_before(Point::new(edit.new.end, 0));
-                match self.blocks[start_block_ix..].binary_search_by(|probe| {
-                    probe
-                        .position
-                        .cmp(&end_anchor, buffer)
-                        .unwrap()
-                        .then(Ordering::Greater)
-                }) {
-                    Ok(ix) | Err(ix) => start_block_ix + ix,
-                }
-            };
-            last_block_ix = end_block_ix;
-
-            blocks_in_edit.clear();
-            blocks_in_edit.extend(
-                self.blocks[start_block_ix..end_block_ix]
-                    .iter()
-                    .map(|block| (block.position.to_point(buffer).row, block)),
-            );
-            blocks_in_edit.sort_unstable_by_key(|(row, block)| (*row, block.disposition, block.id));
-            // dbg!(&blocks_in_edit);
-
-            for (block_row, block) in blocks_in_edit.iter().copied() {
-                let new_transforms_end = new_transforms.summary().input;
-                if block.disposition.is_above() {
-                    if block_row > new_transforms_end.row {
-                        new_transforms.push(
-                            Transform::isomorphic(Point::new(block_row, 0) - new_transforms_end),
-                            &(),
-                        );
-                    }
-                } else {
-                    if block_row >= new_transforms_end.row {
-                        new_transforms.push(
-                            Transform::isomorphic(
-                                Point::new(block_row, wrap_snapshot.line_len(block_row))
-                                    - new_transforms_end,
-                            ),
-                            &(),
-                        );
-                    }
-                }
-
-                new_transforms.push(Transform::block(block.clone()), &());
-            }
-
-            if !edit_follows_below_block {
-                let new_transforms_end = new_transforms.summary().input;
-                let edit_new_end_point =
-                    cmp::min(Point::new(edit.new.end, 0), wrap_snapshot.max_point().0);
-                if new_transforms_end < edit_new_end_point {
-                    new_transforms.push(
-                        Transform::isomorphic(edit_new_end_point - new_transforms_end),
-                        &(),
-                    );
-                }
-            }
+            let old_end = WrapPoint::new(edit.old.end, 0);
+            cursor.seek(&old_end, Bias::Left, &());
         }
+
+        // while let Some(mut edit) = edits.next() {
+        //     new_transforms.push_tree(
+        //         cursor.slice(&WrapPoint::new(edit.old.start, 0), Bias::Left, &()),
+        //         &(),
+        //     );
+
+        //     let mut transform_start_row = cursor.start().row();
+        //     if cursor.prev_item().map_or(false, |t| {
+        //         t.block_disposition() == Some(BlockDisposition::Below)
+        //     }) {
+        //         transform_start_row += 1;
+        //     }
+        //     dbg!("collapsed edit", &edit);
+        //     edit.new.start -= edit.old.start - transform_start_row;
+        //     edit.old.start = transform_start_row;
+        //     let mut edit_follows_below_block = false;
+
+        //     loop {
+        //         if edit.old.end > cursor.start().0.row {
+        //             cursor.seek(&WrapPoint::new(edit.old.end, 0), Bias::Left, &());
+        //             // dbg!(cursor.start(), cursor.item());
+        //             if cursor.item().map_or(false, |t| t.is_isomorphic()) {
+        //                 if let Some(prev_transform) = cursor.prev_item() {
+        //                     if prev_transform.block_disposition() == Some(BlockDisposition::Below)
+        //                         && edit.old.end == cursor.start().row() + 1
+        //                     {
+        //                         edit_follows_below_block = true;
+        //                     } else {
+        //                         edit_follows_below_block = false;
+        //                         cursor.next(&());
+        //                     }
+        //                 } else {
+        //                     edit_follows_below_block = false;
+        //                     cursor.next(&());
+        //                 }
+        //             }
+
+        //             let transform_end_row = cursor.start().row() + 1;
+        //             cursor.seek(&WrapPoint::new(transform_end_row, 0), Bias::Left, &());
+        //             edit.new.end += transform_end_row - edit.old.end;
+        //             edit.old.end = transform_end_row;
+        //         }
+
+        //         if let Some(next_edit) = edits.peek() {
+        //             if edit.old.end >= next_edit.old.start {
+        //                 let delta = next_edit.new.len() as i32 - next_edit.old.len() as i32;
+        //                 edit.old.end = cmp::max(next_edit.old.end, edit.old.end);
+        //                 edit.new.end = (edit.new.end as i32 + delta) as u32;
+        //                 edits.next();
+        //             } else {
+        //                 break;
+        //             }
+        //         } else {
+        //             break;
+        //         }
+        //     }
+
+        //     dbg!("expanded edit", &edit);
+        //     let start_anchor = buffer.anchor_before(Point::new(edit.new.start, 0));
+        //     let start_block_ix = match self.blocks[last_block_ix..].binary_search_by(|probe| {
+        //         probe
+        //             .position
+        //             .cmp(&start_anchor, buffer)
+        //             .unwrap()
+        //             .then(Ordering::Greater)
+        //     }) {
+        //         Ok(ix) | Err(ix) => last_block_ix + ix,
+        //     };
+        //     let end_block_ix = if edit.new.end > wrap_snapshot.max_point().row() {
+        //         self.blocks.len()
+        //     } else {
+        //         let end_anchor = buffer.anchor_before(Point::new(edit.new.end, 0));
+        //         match self.blocks[start_block_ix..].binary_search_by(|probe| {
+        //             probe
+        //                 .position
+        //                 .cmp(&end_anchor, buffer)
+        //                 .unwrap()
+        //                 .then(Ordering::Greater)
+        //         }) {
+        //             Ok(ix) | Err(ix) => start_block_ix + ix,
+        //         }
+        //     };
+        //     last_block_ix = end_block_ix;
+
+        //     blocks_in_edit.clear();
+        //     blocks_in_edit.extend(
+        //         self.blocks[start_block_ix..end_block_ix]
+        //             .iter()
+        //             .map(|block| (block.position.to_point(buffer).row, block)),
+        //     );
+        //     blocks_in_edit.sort_unstable_by_key(|(row, block)| (*row, block.disposition, block.id));
+        //     // dbg!(&blocks_in_edit);
+
+        //     for (block_row, block) in blocks_in_edit.iter().copied() {
+        //         let new_transforms_end = new_transforms.summary().input;
+        //         if block.disposition.is_above() {
+        //             if block_row > new_transforms_end.row {
+        //                 new_transforms.push(
+        //                     Transform::isomorphic(Point::new(block_row, 0) - new_transforms_end),
+        //                     &(),
+        //                 );
+        //             }
+        //         } else {
+        //             if block_row >= new_transforms_end.row {
+        //                 new_transforms.push(
+        //                     Transform::isomorphic(
+        //                         Point::new(block_row, wrap_snapshot.line_len(block_row))
+        //                             - new_transforms_end,
+        //                     ),
+        //                     &(),
+        //                 );
+        //             }
+        //         }
+
+        //         new_transforms.push(Transform::block(block.clone()), &());
+        //     }
+
+        //     if !edit_follows_below_block {
+        //         let new_transforms_end = new_transforms.summary().input;
+        //         let edit_new_end_point =
+        //             cmp::min(Point::new(edit.new.end, 0), wrap_snapshot.max_point().0);
+        //         if new_transforms_end < edit_new_end_point {
+        //             new_transforms.push(
+        //                 Transform::isomorphic(edit_new_end_point - new_transforms_end),
+        //                 &(),
+        //             );
+        //         }
+        //     }
+        // }
         new_transforms.push_tree(cursor.suffix(&()), &());
         drop(cursor);
         *transforms = new_transforms;
