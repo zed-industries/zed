@@ -189,20 +189,24 @@ impl BlockMap {
 
             dbg!("expanded edit", &edit);
             let start_anchor = buffer.anchor_before(Point::new(edit.new.start, 0));
-            let end_anchor = buffer.anchor_before(Point::new(edit.new.end, 0));
             let start_block_ix = match self.blocks[last_block_ix..]
                 .binary_search_by(|probe| probe.position.cmp(&start_anchor, buffer).unwrap())
             {
                 Ok(ix) | Err(ix) => last_block_ix + ix,
             };
-            let end_block_ix = match self.blocks[start_block_ix..].binary_search_by(|probe| {
-                probe
-                    .position
-                    .cmp(&end_anchor, buffer)
-                    .unwrap()
-                    .then(Ordering::Greater)
-            }) {
-                Ok(ix) | Err(ix) => start_block_ix + ix,
+            let end_block_ix = if edit.new.end > wrap_snapshot.max_point().row() {
+                self.blocks.len()
+            } else {
+                let end_anchor = buffer.anchor_before(Point::new(edit.new.end, 0));
+                match self.blocks[start_block_ix..].binary_search_by(|probe| {
+                    probe
+                        .position
+                        .cmp(&end_anchor, buffer)
+                        .unwrap()
+                        .then(Ordering::Greater)
+                }) {
+                    Ok(ix) | Err(ix) => start_block_ix + ix,
+                }
             };
             last_block_ix = end_block_ix;
 
@@ -240,10 +244,9 @@ impl BlockMap {
             }
 
             let new_transforms_end = new_transforms.summary().input;
-            if new_transforms_end.row < edit.new.end - 1 {
-                // TODO: Should we just report the wrap edits in 2d so we can skip this max point check?
-                let edit_new_end_point =
-                    cmp::min(Point::new(edit.new.end, 0), wrap_snapshot.max_point().0);
+            let edit_new_end_point =
+                cmp::min(Point::new(edit.new.end, 0), wrap_snapshot.max_point().0);
+            if new_transforms_end < edit_new_end_point {
                 new_transforms.push(
                     Transform::isomorphic(edit_new_end_point - new_transforms_end),
                     &(),
@@ -306,13 +309,9 @@ impl<'a> BlockMapWriter<'a> {
             };
             let mut text = block.text.into();
             if block.disposition.is_above() {
-                if !text.ends_with("\n") {
-                    text.push("\n");
-                }
+                text.push("\n");
             } else {
-                if !text.starts_with("\n") {
-                    text.push_front("\n");
-                }
+                text.push_front("\n");
             }
 
             self.0.blocks.insert(
@@ -745,6 +744,7 @@ mod tests {
         let buffer = cx.add_model(|cx| {
             let len = rng.gen_range(0..10);
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+            log::info!("initial buffer text: {:?}", text);
             Buffer::new(0, text, cx)
         });
         let (fold_map, folds_snapshot) = FoldMap::new(buffer.clone(), cx);

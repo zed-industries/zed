@@ -94,16 +94,6 @@ impl Rope {
         self.append(suffix);
     }
 
-    pub fn starts_with(&self, text: &str) -> bool {
-        self.chunks().flat_map(|c| c.bytes()).eq(text.bytes())
-    }
-
-    pub fn ends_with(&self, text: &str) -> bool {
-        self.reversed_chunks_in_range(0..self.len())
-            .flat_map(|c| c.bytes().rev())
-            .eq(text.bytes().rev())
-    }
-
     fn check_invariants(&self) {
         #[cfg(test)]
         {
