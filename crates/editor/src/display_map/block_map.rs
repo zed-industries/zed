@@ -31,7 +31,7 @@ pub struct BlockSnapshot {
     transforms: SumTree<Transform>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct BlockId(usize);
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
@@ -147,10 +147,15 @@ impl BlockMap {
                 &(),
             );
 
+            let mut transform_start_row = cursor.start().row();
+            if cursor.prev_item().map_or(false, |t| {
+                t.block_disposition() == Some(BlockDisposition::Below)
+            }) {
+                transform_start_row += 1;
+            }
             dbg!("collapsed edit", &edit);
-            let transform_start = cursor.start().0;
-            edit.new.start -= edit.old.start - transform_start.row;
-            edit.old.start = transform_start.row;
+            edit.new.start -= edit.old.start - transform_start_row;
+            edit.old.start = transform_start_row;
 
             loop {
                 if edit.old.end > cursor.start().0.row {
@@ -167,7 +172,7 @@ impl BlockMap {
                         }
                     }
 
-                    let transform_end_row = cursor.start().0.row + 1;
+                    let transform_end_row = cursor.start().row() + 1;
                     cursor.seek(&WrapPoint::new(transform_end_row, 0), Bias::Left, &());
                     edit.new.end += transform_end_row - edit.old.end;
                     edit.old.end = transform_end_row;
@@ -189,9 +194,13 @@ impl BlockMap {
 
             dbg!("expanded edit", &edit);
             let start_anchor = buffer.anchor_before(Point::new(edit.new.start, 0));
-            let start_block_ix = match self.blocks[last_block_ix..]
-                .binary_search_by(|probe| probe.position.cmp(&start_anchor, buffer).unwrap())
-            {
+            let start_block_ix = match self.blocks[last_block_ix..].binary_search_by(|probe| {
+                probe
+                    .position
+                    .cmp(&start_anchor, buffer)
+                    .unwrap()
+                    .then(Ordering::Greater)
+            }) {
                 Ok(ix) | Err(ix) => last_block_ix + ix,
             };
             let end_block_ix = if edit.new.end > wrap_snapshot.max_point().row() {
@@ -300,11 +309,13 @@ impl<'a> BlockMapWriter<'a> {
             let position = buffer.anchor_before(block.position);
             let row = position.to_point(buffer).row;
 
-            let block_ix = match self
-                .0
-                .blocks
-                .binary_search_by(|probe| probe.position.cmp(&position, buffer).unwrap())
-            {
+            let block_ix = match self.0.blocks.binary_search_by(|probe| {
+                probe
+                    .position
+                    .cmp(&position, buffer)
+                    .unwrap()
+                    .then_with(|| probe.id.cmp(&id))
+            }) {
                 Ok(ix) | Err(ix) => ix,
             };
             let mut text = block.text.into();
@@ -779,15 +790,22 @@ mod tests {
                                     .collect::<String>()
                                     .as_str(),
                             );
+                            let disposition = if rng.gen() {
+                                BlockDisposition::Above
+                            } else {
+                                BlockDisposition::Below
+                            };
+                            log::info!(
+                                "inserting block {:?} {:?} with text {:?}",
+                                disposition,
+                                position.to_point(buffer),
+                                text.to_string()
+                            );
                             BlockProperties {
                                 position,
                                 text,
                                 runs: Vec::<(usize, HighlightStyle)>::new(),
-                                disposition: if rng.gen() {
-                                    BlockDisposition::Above
-                                } else {
-                                    BlockDisposition::Below
-                                },
+                                disposition,
                             }
                         })
                         .collect::<Vec<_>>();
@@ -800,13 +818,6 @@ mod tests {
                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits, cx);
                     let block_ids = block_map.insert(block_properties.clone(), cx);
                     for (block_id, props) in block_ids.into_iter().zip(block_properties) {
-                        log::info!(
-                            "inserted block {:?} {:?} {:?} with text {:?}",
-                            block_id.0,
-                            props.disposition,
-                            props.position.to_point(buffer.read(cx)),
-                            props.text.to_string()
-                        );
                         expected_blocks.push((block_id, props));
                     }
                 }
@@ -829,7 +840,10 @@ mod tests {
                     block_map.remove(block_ids_to_remove, cx);
                 }
                 _ => {
-                    buffer.update(cx, |buffer, _| buffer.randomly_edit(&mut rng, 5));
+                    buffer.update(cx, |buffer, _| {
+                        buffer.randomly_edit(&mut rng, 1);
+                        log::info!("buffer text: {:?}", buffer.text());
+                    });
                 }
             }
 
@@ -839,6 +853,7 @@ mod tests {
                 wrap_map.sync(tabs_snapshot, tab_edits, cx)
             });
             let mut blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits, cx);
+            log::info!("blocks text: {:?}", blocks_snapshot.text());
             assert_eq!(
                 blocks_snapshot.transforms.summary().input,
                 wraps_snapshot.max_point().0
@@ -848,14 +863,20 @@ mod tests {
             let mut sorted_blocks = expected_blocks
                 .iter()
                 .cloned()
-                .map(|(_, block)| BlockProperties {
-                    position: block.position.to_point(buffer),
-                    text: block.text,
-                    runs: block.runs,
-                    disposition: block.disposition,
+                .map(|(id, block)| {
+                    (
+                        id,
+                        BlockProperties {
+                            position: block.position.to_point(buffer),
+                            text: block.text,
+                            runs: block.runs,
+                            disposition: block.disposition,
+                        },
+                    )
                 })
                 .collect::<Vec<_>>();
-            sorted_blocks.sort_unstable_by_key(|block| (block.position.row, block.disposition));
+            sorted_blocks
+                .sort_unstable_by_key(|(id, block)| (block.position.row, block.disposition, *id));
             let mut sorted_blocks = sorted_blocks.into_iter().peekable();
 
             let mut expected_text = String::new();
@@ -866,7 +887,7 @@ mod tests {
                     expected_text.push('\n');
                 }
 
-                while let Some(block) = sorted_blocks.peek() {
+                while let Some((_, block)) = sorted_blocks.peek() {
                     if block.position.row == row && block.disposition == BlockDisposition::Above {
                         expected_text.extend(block.text.chunks());
                         expected_text.push('\n');
@@ -878,7 +899,7 @@ mod tests {
 
                 expected_text.push_str(input_line);
 
-                while let Some(block) = sorted_blocks.peek() {
+                while let Some((_, block)) = sorted_blocks.peek() {
                     if block.position.row == row && block.disposition == BlockDisposition::Below {
                         expected_text.push('\n');
                         expected_text.extend(block.text.chunks());
