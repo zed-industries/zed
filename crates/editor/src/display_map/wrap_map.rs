@@ -657,7 +657,15 @@ impl Snapshot {
         TabPoint(tab_point)
     }
 
-    pub fn to_wrap_point(&self, point: TabPoint) -> WrapPoint {
+    pub fn to_point(&self, point: WrapPoint, bias: Bias) -> Point {
+        self.tab_snapshot.to_point(self.to_tab_point(point), bias)
+    }
+
+    pub fn from_point(&self, point: Point, bias: Bias) -> WrapPoint {
+        self.from_tab_point(self.tab_snapshot.from_point(point, bias))
+    }
+
+    pub fn from_tab_point(&self, point: TabPoint) -> WrapPoint {
         let mut cursor = self.transforms.cursor::<(TabPoint, WrapPoint)>();
         cursor.seek(&point, Bias::Right, &());
         WrapPoint(cursor.start().1 .0 + (point.0 - cursor.start().0 .0))
@@ -673,7 +681,7 @@ impl Snapshot {
             }
         }
 
-        self.to_wrap_point(self.tab_snapshot.clip_point(self.to_tab_point(point), bias))
+        self.from_tab_point(self.tab_snapshot.clip_point(self.to_tab_point(point), bias))
     }
 
     fn check_invariants(&self) {

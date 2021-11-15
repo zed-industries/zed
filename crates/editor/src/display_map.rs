@@ -210,7 +210,7 @@ impl DisplayMapSnapshot {
     fn point_to_display_point(&self, point: Point, bias: Bias) -> DisplayPoint {
         DisplayPoint(
             self.blocks_snapshot.to_block_point(
-                self.wraps_snapshot.to_wrap_point(
+                self.wraps_snapshot.from_tab_point(
                     self.tabs_snapshot
                         .to_tab_point(point.to_fold_point(&self.folds_snapshot, bias)),
                 ),

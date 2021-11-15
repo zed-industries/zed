@@ -179,9 +179,8 @@ impl BlockMap {
             }
 
             // Find the blocks within this edited region.
-            //
-            // TODO - convert these wrap map edits into buffer positions.
-            let start_anchor = buffer.anchor_before(Point::new(new_start.row(), 0));
+            let new_start = wrap_snapshot.to_point(new_start, Bias::Left);
+            let start_anchor = buffer.anchor_before(new_start);
             let start_block_ix = match self.blocks[last_block_ix..].binary_search_by(|probe| {
                 probe
                     .position
@@ -194,7 +193,8 @@ impl BlockMap {
             let end_block_ix = if new_end.row() > wrap_snapshot.max_point().row() {
                 self.blocks.len()
             } else {
-                let end_anchor = buffer.anchor_before(Point::new(new_end.row(), 0));
+                let new_end = wrap_snapshot.to_point(new_end, Bias::Left);
+                let end_anchor = buffer.anchor_before(new_end);
                 match self.blocks[start_block_ix..].binary_search_by(|probe| {
                     probe
                         .position
@@ -210,7 +210,17 @@ impl BlockMap {
             blocks_in_edit.extend(
                 self.blocks[start_block_ix..end_block_ix]
                     .iter()
-                    .map(|block| (block.position.to_point(buffer).row, block)),
+                    .map(|block| {
+                        let mut position = block.position.to_point(buffer);
+                        match block.disposition {
+                            BlockDisposition::Above => position.column = 0,
+                            BlockDisposition::Below => {
+                                position.column = buffer.line_len(position.row)
+                            }
+                        }
+                        let position = wrap_snapshot.from_point(position, Bias::Left);
+                        (position.row(), block)
+                    }),
             );
             blocks_in_edit.sort_unstable_by_key(|(row, block)| (*row, block.disposition, block.id));
 
@@ -312,13 +322,24 @@ impl<'a> BlockMapWriter<'a> {
         let buffer = self.0.buffer.read(cx);
         let mut ids = Vec::new();
         let mut edits = Vec::<Edit<u32>>::new();
+        let wrap_snapshot = &*self.0.wrap_snapshot.lock();
 
         for block in blocks {
             let id = BlockId(self.0.next_block_id.fetch_add(1, SeqCst));
             ids.push(id);
 
             let position = buffer.anchor_before(block.position);
-            let row = position.to_point(buffer).row;
+            let point = position.to_point(buffer);
+            let start_row = wrap_snapshot
+                .from_point(Point::new(point.row, 0), Bias::Left)
+                .row();
+            let end_row = if point.row == buffer.max_point().row {
+                wrap_snapshot.max_point().row() + 1
+            } else {
+                wrap_snapshot
+                    .from_point(Point::new(point.row + 1, 0), Bias::Left)
+                    .row()
+            };
 
             let block_ix = match self
                 .0
@@ -345,18 +366,18 @@ impl<'a> BlockMapWriter<'a> {
                 }),
             );
 
-            if let Err(edit_ix) = edits.binary_search_by_key(&row, |edit| edit.old.start) {
+            if let Err(edit_ix) = edits.binary_search_by_key(&start_row, |edit| edit.old.start) {
                 edits.insert(
                     edit_ix,
                     Edit {
-                        old: row..(row + 1),
-                        new: row..(row + 1),
+                        old: start_row..end_row,
+                        new: start_row..end_row,
                     },
                 );
             }
         }
 
-        self.0.sync(&*self.0.wrap_snapshot.lock(), edits, cx);
+        self.0.sync(wrap_snapshot, edits, cx);
         ids
     }
 
@@ -752,7 +773,7 @@ mod tests {
             .select_font(family_id, &Default::default())
             .unwrap();
 
-        let text = "\none two three\nfour five six\nseven eight";
+        let text = "one two three\nfour five six\nseven eight";
 
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
         let (fold_map, folds_snapshot) = FoldMap::new(buffer.clone(), cx);
@@ -764,13 +785,13 @@ mod tests {
         writer.insert(
             vec![
                 BlockProperties {
-                    position: Point::new(1, 8),
+                    position: Point::new(1, 12),
                     text: "BLOCK 1",
                     disposition: BlockDisposition::Above,
                     runs: vec![],
                 },
                 BlockProperties {
-                    position: Point::new(2, 0),
+                    position: Point::new(1, 1),
                     text: "BLOCK 2",
                     disposition: BlockDisposition::Below,
                     runs: vec![],
@@ -784,7 +805,7 @@ mod tests {
         let mut snapshot = block_map.read(wraps_snapshot, vec![], cx);
         assert_eq!(
             snapshot.text(),
-            "\nBLOCK 1\none two \nthree\nfour five \nsix\nBLOCK 2\nseven \neight"
+            "one two \nthree\nBLOCK 1\nfour five \nsix\nBLOCK 2\nseven \neight"
         );
     }
 
