@@ -505,10 +505,6 @@ impl Transform {
     fn is_isomorphic(&self) -> bool {
         self.block.is_none()
     }
-
-    fn block_disposition(&self) -> Option<BlockDisposition> {
-        self.block.as_ref().map(|b| b.disposition)
-    }
 }
 
 impl<'a> Iterator for HighlightedChunks<'a> {
@@ -815,7 +811,11 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let wrap_width = None;
+        let wrap_width = if rng.gen_bool(0.2) {
+            None
+        } else {
+            Some(rng.gen_range(0.0..=100.0))
+        };
         let tab_size = 1;
         let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
         let font_id = cx
@@ -841,15 +841,15 @@ mod tests {
 
         for _ in 0..operations {
             match rng.gen_range(0..=100) {
-                // 0..=19 => {
-                //     let wrap_width = if rng.gen_bool(0.2) {
-                //         None
-                //     } else {
-                //         Some(rng.gen_range(0.0..=1000.0))
-                //     };
-                //     log::info!("Setting wrap width to {:?}", wrap_width);
-                //     wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
-                // }
+                0..=19 => {
+                    let wrap_width = if rng.gen_bool(0.2) {
+                        None
+                    } else {
+                        Some(rng.gen_range(0.0..=100.0))
+                    };
+                    log::info!("Setting wrap width to {:?}", wrap_width);
+                    wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
+                }
                 20..=39 => {
                     let block_count = rng.gen_range(1..=1);
                     let block_properties = (0..block_count)
@@ -938,10 +938,20 @@ mod tests {
                 .iter()
                 .cloned()
                 .map(|(id, block)| {
+                    let mut position = block.position.to_point(buffer);
+                    match block.disposition {
+                        BlockDisposition::Above => {
+                            position.column = 0;
+                        }
+                        BlockDisposition::Below => {
+                            position.column = buffer.line_len(position.row);
+                        }
+                    };
+                    let row = wraps_snapshot.from_point(position, Bias::Left).row();
                     (
                         id,
                         BlockProperties {
-                            position: block.position.to_point(buffer),
+                            position: row,
                             text: block.text,
                             runs: block.runs,
                             disposition: block.disposition,
@@ -950,7 +960,7 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             sorted_blocks
-                .sort_unstable_by_key(|(id, block)| (block.position.row, block.disposition, *id));
+                .sort_unstable_by_key(|(id, block)| (block.position, block.disposition, *id));
             let mut sorted_blocks = sorted_blocks.into_iter().peekable();
 
             let mut expected_text = String::new();
@@ -962,7 +972,7 @@ mod tests {
                 }
 
                 while let Some((_, block)) = sorted_blocks.peek() {
-                    if block.position.row == row && block.disposition == BlockDisposition::Above {
+                    if block.position == row && block.disposition == BlockDisposition::Above {
                         expected_text.extend(block.text.chunks());
                         expected_text.push('\n');
                         sorted_blocks.next();
@@ -974,7 +984,7 @@ mod tests {
                 expected_text.push_str(input_line);
 
                 while let Some((_, block)) = sorted_blocks.peek() {
-                    if block.position.row == row && block.disposition == BlockDisposition::Below {
+                    if block.position == row && block.disposition == BlockDisposition::Below {
                         expected_text.push('\n');
                         expected_text.extend(block.text.chunks());
                         sorted_blocks.next();
