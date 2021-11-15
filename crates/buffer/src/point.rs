@@ -23,6 +23,15 @@ impl Point {
         Point::new(0, 0)
     }
 
+    pub fn from_str(s: &str) -> Self {
+        let mut point = Self::zero();
+        for (row, line) in s.split('\n').enumerate() {
+            point.row = row as u32;
+            point.column = line.len() as u32;
+        }
+        point
+    }
+
     pub fn is_zero(&self) -> bool {
         self.row == 0 && self.column == 0
     }

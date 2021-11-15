@@ -3,7 +3,7 @@ use crate::PointUtf16;
 use super::Point;
 use arrayvec::ArrayString;
 use smallvec::SmallVec;
-use std::{cmp, fmt, ops::Range, str};
+use std::{cmp, fmt, mem, ops::Range, str};
 use sum_tree::{Bias, Dimension, SumTree};
 
 #[cfg(test)]
@@ -87,6 +87,21 @@ impl Rope {
         self.chunks
             .extend(first_new_chunk.into_iter().chain(new_chunks), &());
         self.check_invariants();
+    }
+
+    pub fn push_front(&mut self, text: &str) {
+        let suffix = mem::replace(self, Rope::from(text));
+        self.append(suffix);
+    }
+
+    pub fn starts_with(&self, text: &str) -> bool {
+        self.chunks().flat_map(|c| c.bytes()).eq(text.bytes())
+    }
+
+    pub fn ends_with(&self, text: &str) -> bool {
+        self.reversed_chunks_in_range(0..self.len())
+            .flat_map(|c| c.bytes().rev())
+            .eq(text.bytes().rev())
     }
 
     fn check_invariants(&self) {
