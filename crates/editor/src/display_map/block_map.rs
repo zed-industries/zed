@@ -1,4 +1,4 @@
-use super::wrap_map::{self, Edit as WrapEdit, Snapshot as WrapSnapshot, TextSummary, WrapPoint};
+use super::wrap_map::{self, Edit as WrapEdit, Snapshot as WrapSnapshot, WrapPoint};
 use buffer::{rope, Anchor, Bias, Edit, Point, Rope, ToOffset, ToPoint as _};
 use gpui::{fonts::HighlightStyle, AppContext, ModelHandle};
 use language::{Buffer, HighlightedChunk};
@@ -136,28 +136,50 @@ impl BlockMap {
         let buffer = self.buffer.read(cx);
         let mut transforms = self.transforms.lock();
         let mut new_transforms = SumTree::new();
+        let old_max_point = WrapPoint(transforms.summary().input);
+        let new_max_point = wrap_snapshot.max_point();
         let mut cursor = transforms.cursor::<WrapPoint>();
         let mut last_block_ix = 0;
         let mut blocks_in_edit = Vec::new();
+        let mut edits = edits.into_iter().peekable();
 
-        for edit in edits {
+        while let Some(edit) = edits.next() {
+            // Preserve any old transforms that precede this edit.
             let old_start = WrapPoint::new(edit.old.start, 0);
-            if old_start > *cursor.start() {
-                new_transforms.push_tree(cursor.slice(&old_start, Bias::Left, &()), &());
+            let new_start = WrapPoint::new(edit.new.start, 0);
+            new_transforms.push_tree(cursor.slice(&old_start, Bias::Left, &()), &());
+
+            // Preserve any portion of an old transform that precedes this edit.
+            let extent_before_edit = old_start.0 - cursor.start().0;
+            if !extent_before_edit.is_zero() {
+                push_isomorphic(&mut new_transforms, extent_before_edit);
             }
 
-            let overshoot = Point::new(edit.new.start, 0) - new_transforms.summary().input;
-            if !overshoot.is_zero() {
-                new_transforms.push(Transform::isomorphic(overshoot), &());
-            }
+            // Skip over any old transforms that intersect this edit.
+            let mut old_end = WrapPoint::new(edit.old.end, 0);
+            let mut new_end = WrapPoint::new(edit.new.end, 0);
+            cursor.seek(&old_end, Bias::Left, &());
+            cursor.next(&());
 
-            let old_end = WrapPoint::new(edit.old.end, 0);
-            if old_end > *cursor.start() {
-                cursor.seek(&old_end, Bias::Left, &());
-                cursor.next(&());
+            // Combine this edit with any subsequent edits that intersect the same transform.
+            while let Some(next_edit) = edits.peek() {
+                if next_edit.old.start <= cursor.start().row() {
+                    old_end = WrapPoint::new(next_edit.old.end, 0);
+                    new_end = WrapPoint::new(next_edit.new.end, 0);
+                    cursor.seek(&old_end, Bias::Left, &());
+                    cursor.next(&());
+                    edits.next();
+                } else {
+                    break;
+                }
             }
+            old_end = old_end.min(old_max_point);
+            new_end = new_end.min(new_max_point);
 
-            let start_anchor = buffer.anchor_before(Point::new(edit.new.start, 0));
+            // Find the blocks within this edited region.
+            //
+            // TODO - convert these wrap map edits into buffer positions.
+            let start_anchor = buffer.anchor_before(Point::new(new_start.row(), 0));
             let start_block_ix = match self.blocks[last_block_ix..].binary_search_by(|probe| {
                 probe
                     .position
@@ -167,10 +189,10 @@ impl BlockMap {
             }) {
                 Ok(ix) | Err(ix) => last_block_ix + ix,
             };
-            let end_block_ix = if edit.new.end > wrap_snapshot.max_point().row() {
+            let end_block_ix = if new_end.row() > wrap_snapshot.max_point().row() {
                 self.blocks.len()
             } else {
-                let end_anchor = buffer.anchor_before(Point::new(edit.new.end, 0));
+                let end_anchor = buffer.anchor_before(Point::new(new_end.row() + 1, 0));
                 match self.blocks[start_block_ix..].binary_search_by(|probe| {
                     probe
                         .position
@@ -182,7 +204,6 @@ impl BlockMap {
                 }
             };
             last_block_ix = end_block_ix;
-
             blocks_in_edit.clear();
             blocks_in_edit.extend(
                 self.blocks[start_block_ix..end_block_ix]
@@ -191,38 +212,65 @@ impl BlockMap {
             );
             blocks_in_edit.sort_unstable_by_key(|(row, block)| (*row, block.disposition, block.id));
 
+            // For each of these blocks, insert a new isomorphic transform preceding the block,
+            // and then insert the block itself.
             for (block_row, block) in blocks_in_edit.iter().copied() {
                 let new_transforms_end = new_transforms.summary().input;
                 if block.disposition.is_above() {
                     if block_row > new_transforms_end.row {
-                        new_transforms.push(
-                            Transform::isomorphic(Point::new(block_row, 0) - new_transforms_end),
-                            &(),
-                        );
+                        push_isomorphic(
+                            &mut new_transforms,
+                            Point::new(block_row, 0) - new_transforms_end,
+                        )
                     }
                 } else {
                     if block_row >= new_transforms_end.row {
-                        new_transforms.push(
-                            Transform::isomorphic(
-                                Point::new(block_row, wrap_snapshot.line_len(block_row))
-                                    - new_transforms_end,
-                            ),
-                            &(),
+                        push_isomorphic(
+                            &mut new_transforms,
+                            Point::new(block_row, wrap_snapshot.line_len(block_row))
+                                - new_transforms_end,
                         );
                     }
                 }
 
                 new_transforms.push(Transform::block(block.clone()), &());
             }
+
+            // Insert an isomorphic transform after the final block.
+            let extent_after_last_block = new_end.0 - new_transforms.summary().input;
+            if !extent_after_last_block.is_zero() {
+                push_isomorphic(&mut new_transforms, extent_after_last_block);
+            }
+
+            // Preserve any portion of the old transform after this edit.
+            let extent_after_edit = cursor.start().0 - old_end.0;
+            if !extent_after_edit.is_zero() {
+                push_isomorphic(&mut new_transforms, extent_after_edit);
+            }
         }
 
-        if let Some(last_old_end) = last_old_end {
-            new_transforms.push(Transform::isomorphic(cursor.start() - last_old_end), &());
-        }
         new_transforms.push_tree(cursor.suffix(&()), &());
+        debug_assert_eq!(new_transforms.summary().input, wrap_snapshot.max_point().0);
 
         drop(cursor);
         *transforms = new_transforms;
+    }
+}
+
+fn push_isomorphic(tree: &mut SumTree<Transform>, extent: Point) {
+    let mut extent = Some(extent);
+    tree.update_last(
+        |last_transform| {
+            if last_transform.is_isomorphic() {
+                let extent = extent.take().unwrap();
+                last_transform.summary.input += &extent;
+                last_transform.summary.output += &extent;
+            }
+        },
+        &(),
+    );
+    if let Some(extent) = extent {
+        tree.push(Transform::isomorphic(extent), &());
     }
 }
 
