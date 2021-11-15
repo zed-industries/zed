@@ -133,6 +133,10 @@ impl BlockMap {
     }
 
     fn apply_edits(&self, wrap_snapshot: &WrapSnapshot, edits: Vec<WrapEdit>, cx: &AppContext) {
+        if edits.is_empty() {
+            return;
+        }
+
         let buffer = self.buffer.read(cx);
         let mut transforms = self.transforms.lock();
         let mut new_transforms = SumTree::new();
@@ -173,8 +177,6 @@ impl BlockMap {
                     break;
                 }
             }
-            old_end = old_end.min(old_max_point);
-            new_end = new_end.min(new_max_point);
 
             // Find the blocks within this edited region.
             //
@@ -192,7 +194,7 @@ impl BlockMap {
             let end_block_ix = if new_end.row() > wrap_snapshot.max_point().row() {
                 self.blocks.len()
             } else {
-                let end_anchor = buffer.anchor_before(Point::new(new_end.row() + 1, 0));
+                let end_anchor = buffer.anchor_before(Point::new(new_end.row(), 0));
                 match self.blocks[start_block_ix..].binary_search_by(|probe| {
                     probe
                         .position
@@ -235,6 +237,9 @@ impl BlockMap {
 
                 new_transforms.push(Transform::block(block.clone()), &());
             }
+
+            old_end = old_end.min(old_max_point);
+            new_end = new_end.min(new_max_point);
 
             // Insert an isomorphic transform after the final block.
             let extent_after_last_block = new_end.0 - new_transforms.summary().input;
