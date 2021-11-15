@@ -82,7 +82,7 @@ pub struct HighlightedChunks<'a> {
     input_chunk: HighlightedChunk<'a>,
     block_chunks: Option<BlockChunks<'a>>,
     output_position: BlockPoint,
-    max_output_row: u32,
+    max_output_position: BlockPoint,
 }
 
 struct BlockChunks<'a> {
@@ -374,6 +374,7 @@ impl BlockSnapshot {
     }
 
     pub fn highlighted_chunks_for_rows(&mut self, rows: Range<u32>) -> HighlightedChunks {
+        let max_output_position = self.max_point().min(BlockPoint::new(rows.end, 0));
         let mut cursor = self.transforms.cursor::<(BlockPoint, WrapPoint)>();
         let output_position = BlockPoint::new(rows.start, 0);
         cursor.seek(&output_position, Bias::Right, &());
@@ -390,7 +391,7 @@ impl BlockSnapshot {
             block_chunks: None,
             transforms: cursor,
             output_position,
-            max_output_row: rows.end,
+            max_output_position,
         }
     }
 
@@ -493,7 +494,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
     type Item = HighlightedChunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.output_position.row >= self.max_output_row {
+        if self.output_position >= self.max_output_position {
             return None;
         }
 
@@ -511,8 +512,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             let block_start = self.transforms.start().0 .0;
             let block_end = self.transforms.end(&()).0 .0;
             let start_in_block = self.output_position.0 - block_start;
-            let end_in_block =
-                cmp::min(Point::new(self.max_output_row, 0), block_end) - block_start;
+            let end_in_block = cmp::min(self.max_output_position.0, block_end) - block_start;
             self.transforms.next(&());
             let mut block_chunks = BlockChunks::new(block, start_in_block..end_in_block);
             if let Some(block_chunk) = block_chunks.next() {
