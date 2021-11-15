@@ -146,14 +146,16 @@ impl BlockMap {
                 new_transforms.push_tree(cursor.slice(&old_start, Bias::Left, &()), &());
             }
 
-            let overshoot = old_start.0 - cursor.start().0;
+            let overshoot = Point::new(edit.new.start, 0) - new_transforms.summary().input;
             if !overshoot.is_zero() {
                 new_transforms.push(Transform::isomorphic(overshoot), &());
             }
 
             let old_end = WrapPoint::new(edit.old.end, 0);
-            cursor.seek(&old_end, Bias::Left, &());
-            cursor.next(&());
+            if old_end > *cursor.start() {
+                cursor.seek(&old_end, Bias::Left, &());
+                cursor.next(&());
+            }
 
             let start_anchor = buffer.anchor_before(Point::new(edit.new.start, 0));
             let start_block_ix = match self.blocks[last_block_ix..].binary_search_by(|probe| {
@@ -214,6 +216,9 @@ impl BlockMap {
             }
         }
 
+        if let Some(last_old_end) = last_old_end {
+            new_transforms.push(Transform::isomorphic(cursor.start() - last_old_end), &());
+        }
         new_transforms.push_tree(cursor.suffix(&()), &());
 
         drop(cursor);
