@@ -113,7 +113,7 @@ impl BlockMap {
         edits: Vec<WrapEdit>,
         cx: &AppContext,
     ) -> BlockSnapshot {
-        self.apply_edits(&wrap_snapshot, edits, cx);
+        self.sync(&wrap_snapshot, edits, cx);
         *self.wrap_snapshot.lock() = wrap_snapshot.clone();
         BlockSnapshot {
             wrap_snapshot,
@@ -127,12 +127,12 @@ impl BlockMap {
         edits: Vec<WrapEdit>,
         cx: &AppContext,
     ) -> BlockMapWriter {
-        self.apply_edits(&wrap_snapshot, edits, cx);
+        self.sync(&wrap_snapshot, edits, cx);
         *self.wrap_snapshot.lock() = wrap_snapshot;
         BlockMapWriter(self)
     }
 
-    fn apply_edits(&self, wrap_snapshot: &WrapSnapshot, edits: Vec<WrapEdit>, cx: &AppContext) {
+    pub fn sync(&self, wrap_snapshot: &WrapSnapshot, edits: Vec<WrapEdit>, cx: &AppContext) {
         if edits.is_empty() {
             return;
         }
@@ -356,7 +356,7 @@ impl<'a> BlockMapWriter<'a> {
             }
         }
 
-        self.0.apply_edits(&*self.0.wrap_snapshot.lock(), edits, cx);
+        self.0.sync(&*self.0.wrap_snapshot.lock(), edits, cx);
         ids
     }
 
