@@ -483,7 +483,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     &Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'BB'".to_string(),
-                        group_id: 0,
+                        group_id: 1,
                     },
                 ),
                 (
@@ -491,7 +491,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     &Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'CCC'".to_string(),
-                        group_id: 0,
+                        group_id: 2,
                     }
                 )
             ]
@@ -548,7 +548,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     &Diagnostic {
                         severity: DiagnosticSeverity::WARNING,
                         message: "unreachable statement".to_string(),
-                        group_id: 0,
+                        group_id: 1,
                     }
                 ),
                 (
@@ -633,7 +633,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     &Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'BB'".to_string(),
-                        group_id: 0,
+                        group_id: 1,
                     },
                 )
             ]
