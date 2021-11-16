@@ -93,6 +93,13 @@ struct BlockChunks<'a> {
     offset: usize,
 }
 
+struct BufferRows<'a> {
+    transforms: sum_tree::Cursor<'a, Transform, (BlockPoint, WrapPoint)>,
+    input_buffer_rows: wrap_map::BufferRows<'a>,
+    input_buffer_row: (u32, bool),
+    output_row: u32,
+}
+
 impl BlockMap {
     pub fn new(buffer: ModelHandle<Buffer>, wrap_snapshot: WrapSnapshot) -> Self {
         Self {
@@ -445,6 +452,25 @@ impl BlockSnapshot {
         }
     }
 
+    pub fn buffer_rows(&mut self, start_row: u32) -> BufferRows {
+        let mut transforms = self.transforms.cursor::<(BlockPoint, WrapPoint)>();
+        transforms.seek(&BlockPoint::new(start_row, 0), Bias::Left, &());
+        let mut input_row = transforms.start().1.row();
+        if let Some(transform) = transforms.item() {
+            if transform.is_isomorphic() {
+                input_row += start_row - transforms.start().0.row;
+            }
+        }
+        let mut input_buffer_rows = self.wrap_snapshot.buffer_rows(input_row);
+        let input_buffer_row = input_buffer_rows.next().unwrap();
+        BufferRows {
+            transforms,
+            input_buffer_row,
+            input_buffer_rows,
+            output_row: start_row,
+        }
+    }
+
     pub fn max_point(&self) -> BlockPoint {
         BlockPoint(self.transforms.summary().output)
     }
@@ -661,6 +687,33 @@ impl<'a> Iterator for BlockChunks<'a> {
     }
 }
 
+impl<'a> Iterator for BufferRows<'a> {
+    type Item = (u32, bool);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let transform = self.transforms.item()?;
+        let block_disposition = transform.block.as_ref().map(|b| b.disposition);
+        let (buffer_row, is_wrapped) = self.input_buffer_row;
+
+        self.output_row += 1;
+        if BlockPoint::new(self.output_row, 0) >= self.transforms.end(&()).0 {
+            self.transforms.next(&());
+            if let Some(transform) = self.transforms.item() {
+                let next_block_disposition = transform.block.as_ref().map(|b| b.disposition);
+                if block_disposition != Some(BlockDisposition::Above)
+                    && next_block_disposition != Some(BlockDisposition::Below)
+                {
+                    self.input_buffer_row = self.input_buffer_rows.next().unwrap();
+                }
+            }
+        } else if block_disposition.is_none() {
+            self.input_buffer_row = self.input_buffer_rows.next().unwrap();
+        }
+
+        Some((buffer_row, !is_wrapped && block_disposition.is_none()))
+    }
+}
+
 impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
@@ -815,6 +868,19 @@ mod tests {
         assert_eq!(
             snapshot.clip_point(BlockPoint::new(6, 0), Bias::Right),
             BlockPoint::new(5, 3)
+        );
+
+        assert_eq!(
+            snapshot.buffer_rows(0).collect::<Vec<_>>(),
+            &[
+                (0, true),
+                (1, false),
+                (1, false),
+                (1, true),
+                (2, true),
+                (3, true),
+                (3, false),
+            ]
         );
 
         // Insert a line break, separating two block decorations into separate
