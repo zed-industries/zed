@@ -381,8 +381,37 @@ impl<'a> BlockMapWriter<'a> {
         ids
     }
 
-    pub fn remove(&mut self, _: HashSet<BlockId>, _: &AppContext) {
-        todo!()
+    pub fn remove(&mut self, block_ids: HashSet<BlockId>, cx: &AppContext) {
+        let buffer = self.0.buffer.read(cx);
+        let wrap_snapshot = &*self.0.wrap_snapshot.lock();
+        let mut edits = Vec::new();
+        let mut last_block_buffer_row = None;
+        self.0.blocks.retain(|block| {
+            if block_ids.contains(&block.id) {
+                let buffer_row = block.position.to_point(buffer).row;
+                if last_block_buffer_row != Some(buffer_row) {
+                    last_block_buffer_row = Some(buffer_row);
+                    let start_row = wrap_snapshot
+                        .from_point(Point::new(buffer_row, 0), Bias::Left)
+                        .row();
+                    let end_row = wrap_snapshot
+                        .from_point(
+                            Point::new(buffer_row, buffer.line_len(buffer_row)),
+                            Bias::Left,
+                        )
+                        .row()
+                        + 1;
+                    edits.push(Edit {
+                        old: start_row..end_row,
+                        new: start_row..end_row,
+                    })
+                }
+                false
+            } else {
+                true
+            }
+        });
+        self.0.sync(wrap_snapshot, edits, cx);
     }
 }
 
@@ -895,24 +924,24 @@ mod tests {
                         expected_blocks.push((block_id, props));
                     }
                 }
-                // 40..=59 if !expected_blocks.is_empty() => {
-                //     let block_count = rng.gen_range(1..=4.min(expected_blocks.len()));
-                //     let block_ids_to_remove = (0..block_count)
-                //         .map(|_| {
-                //             expected_blocks
-                //                 .remove(rng.gen_range(0..expected_blocks.len()))
-                //                 .0
-                //         })
-                //         .collect();
+                40..=59 if !expected_blocks.is_empty() => {
+                    let block_count = rng.gen_range(1..=4.min(expected_blocks.len()));
+                    let block_ids_to_remove = (0..block_count)
+                        .map(|_| {
+                            expected_blocks
+                                .remove(rng.gen_range(0..expected_blocks.len()))
+                                .0
+                        })
+                        .collect();
 
-                //     let (folds_snapshot, fold_edits) = fold_map.read(cx);
-                //     let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
-                //     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-                //         wrap_map.sync(tabs_snapshot, tab_edits, cx)
-                //     });
-                //     let mut block_map = block_map.write(wraps_snapshot, wrap_edits, cx);
-                //     block_map.remove(block_ids_to_remove, cx);
-                // }
+                    let (folds_snapshot, fold_edits) = fold_map.read(cx);
+                    let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+                    let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+                        wrap_map.sync(tabs_snapshot, tab_edits, cx)
+                    });
+                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits, cx);
+                    block_map.remove(block_ids_to_remove, cx);
+                }
                 _ => {
                     buffer.update(cx, |buffer, _| {
                         buffer.randomly_edit(&mut rng, 1);
