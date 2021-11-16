@@ -83,6 +83,7 @@ action!(AddSelectionBelow);
 action!(SelectLargerSyntaxNode);
 action!(SelectSmallerSyntaxNode);
 action!(MoveToEnclosingBracket);
+action!(ShowNextDiagnostic);
 action!(PageUp);
 action!(PageDown);
 action!(Fold);
@@ -184,6 +185,7 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("ctrl-w", SelectLargerSyntaxNode, Some("Editor")),
         Binding::new("alt-down", SelectSmallerSyntaxNode, Some("Editor")),
         Binding::new("ctrl-shift-W", SelectSmallerSyntaxNode, Some("Editor")),
+        Binding::new("ctrl-.", ShowNextDiagnostic, Some("Editor")),
         Binding::new("ctrl-m", MoveToEnclosingBracket, Some("Editor")),
         Binding::new("pageup", PageUp, Some("Editor")),
         Binding::new("pagedown", PageDown, Some("Editor")),
@@ -242,6 +244,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::select_larger_syntax_node);
     cx.add_action(Editor::select_smaller_syntax_node);
     cx.add_action(Editor::move_to_enclosing_bracket);
+    cx.add_action(Editor::show_next_diagnostic);
     cx.add_action(Editor::page_up);
     cx.add_action(Editor::page_down);
     cx.add_action(Editor::fold);
@@ -2197,6 +2200,39 @@ impl Editor {
         }
 
         self.update_selections(selections, true, cx);
+    }
+
+    pub fn show_next_diagnostic(&mut self, _: &ShowNextDiagnostic, cx: &mut ViewContext<Self>) {
+        let selection = self.selections::<usize>(cx).last().unwrap();
+        let buffer = self.buffer.read(cx.as_ref());
+        let diagnostic_group_id = dbg!(buffer
+            .diagnostics_in_range::<_, usize>(selection.head()..buffer.len())
+            .next())
+        .map(|(_, diagnostic)| diagnostic.group_id);
+
+        if let Some(group_id) = diagnostic_group_id {
+            self.display_map.update(cx, |display_map, cx| {
+                let buffer = self.buffer.read(cx);
+                let diagnostic_group = buffer
+                    .diagnostic_group::<Point>(group_id)
+                    .map(|(range, diagnostic)| (range, format!("{}\n", diagnostic.message)))
+                    .collect::<Vec<_>>();
+
+                dbg!(group_id, &diagnostic_group);
+
+                display_map.insert_blocks(
+                    diagnostic_group
+                        .iter()
+                        .map(|(range, message)| BlockProperties {
+                            position: range.start,
+                            text: message.as_str(),
+                            runs: vec![],
+                            disposition: BlockDisposition::Above,
+                        }),
+                    cx,
+                );
+            });
+        }
     }
 
     fn build_columnar_selection(
