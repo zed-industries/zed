@@ -100,6 +100,7 @@ pub struct BufferRows<'a> {
     input_row: u32,
     output_row: u32,
     max_output_row: u32,
+    in_block: bool,
 }
 
 impl BlockMap {
@@ -463,10 +464,13 @@ impl BlockSnapshot {
         let mut transforms = self.transforms.cursor::<(BlockPoint, WrapPoint)>();
         transforms.seek(&BlockPoint::new(start_row, 0), Bias::Left, &());
         let mut input_row = transforms.start().1.row();
-        if let Some(transform) = transforms.item() {
-            if transform.is_isomorphic() {
-                input_row += start_row - transforms.start().0.row;
-            }
+        let transform = transforms.item().unwrap();
+        let in_block;
+        if transform.is_isomorphic() {
+            input_row += start_row - transforms.start().0.row;
+            in_block = false;
+        } else {
+            in_block = true;
         }
         let mut input_buffer_rows = self.wrap_snapshot.buffer_rows(input_row);
         let input_buffer_row = input_buffer_rows.next().unwrap();
@@ -477,6 +481,7 @@ impl BlockSnapshot {
             input_row,
             output_row: start_row,
             max_output_row: self.max_point().row,
+            in_block,
         }
     }
 
@@ -705,22 +710,7 @@ impl<'a> Iterator for BufferRows<'a> {
         }
 
         let (buffer_row, is_wrapped) = self.input_buffer_row.unwrap();
-
-        let in_block = if let Some(transform) = self.transforms.item() {
-            if let Some(block) = transform.block.as_ref() {
-                if block.disposition.is_below()
-                    && self.transforms.start().0 == BlockPoint::new(self.output_row, 0)
-                {
-                    !self.transforms.prev_item().unwrap().is_isomorphic()
-                } else {
-                    true
-                }
-            } else {
-                false
-            }
-        } else {
-            self.transforms.prev_item().unwrap().block.is_some()
-        };
+        let in_block = self.in_block;
 
         log::info!(
             "============== Iterator next. Output row: {}, Input row: {}, Buffer row: {}, In block {} ===============",
@@ -741,6 +731,7 @@ impl<'a> Iterator for BufferRows<'a> {
                 log::info!("  Calling next twice");
                 self.transforms.next(&());
             }
+            self.in_block = self.transforms.item().map_or(false, |t| !t.is_isomorphic());
 
             log::info!(
                 "  Advanced to the next transform (block text: {:?}). Output row: {}, Transform starts at: {:?}",
