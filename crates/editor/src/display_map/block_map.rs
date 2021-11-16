@@ -96,20 +96,24 @@ struct BlockChunks<'a> {
 pub struct BufferRows<'a> {
     transforms: sum_tree::Cursor<'a, Transform, (BlockPoint, WrapPoint)>,
     input_buffer_rows: wrap_map::BufferRows<'a>,
-    input_buffer_row: (u32, bool),
+    input_buffer_row: Option<(u32, bool)>,
+    input_row: u32,
     output_row: u32,
+    max_output_row: u32,
 }
 
 impl BlockMap {
     pub fn new(buffer: ModelHandle<Buffer>, wrap_snapshot: WrapSnapshot) -> Self {
+        let mut transforms = SumTree::new();
+        let lines = wrap_snapshot.text_summary().lines;
+        if !lines.is_zero() {
+            transforms.push(Transform::isomorphic(lines), &());
+        }
         Self {
             buffer,
             next_block_id: AtomicUsize::new(0),
             blocks: Vec::new(),
-            transforms: Mutex::new(SumTree::from_item(
-                Transform::isomorphic(wrap_snapshot.text_summary().lines),
-                &(),
-            )),
+            transforms: Mutex::new(transforms),
             wrap_snapshot: Mutex::new(wrap_snapshot),
         }
     }
@@ -162,9 +166,7 @@ impl BlockMap {
 
             // Preserve any portion of an old transform that precedes this edit.
             let extent_before_edit = old_start.0 - cursor.start().0;
-            if !extent_before_edit.is_zero() {
-                push_isomorphic(&mut new_transforms, extent_before_edit);
-            }
+            push_isomorphic(&mut new_transforms, extent_before_edit);
 
             // Skip over any old transforms that intersect this edit.
             let mut old_end = WrapPoint::new(edit.old.end, 0);
@@ -234,24 +236,14 @@ impl BlockMap {
             // For each of these blocks, insert a new isomorphic transform preceding the block,
             // and then insert the block itself.
             for (block_row, block) in blocks_in_edit.iter().copied() {
-                let new_transforms_end = new_transforms.summary().input;
-                if block.disposition.is_above() {
-                    if block_row > new_transforms_end.row {
-                        push_isomorphic(
-                            &mut new_transforms,
-                            Point::new(block_row, 0) - new_transforms_end,
-                        )
+                let block_insertion_point = match block.disposition {
+                    BlockDisposition::Above => Point::new(block_row, 0),
+                    BlockDisposition::Below => {
+                        Point::new(block_row, wrap_snapshot.line_len(block_row))
                     }
-                } else {
-                    if block_row >= new_transforms_end.row {
-                        push_isomorphic(
-                            &mut new_transforms,
-                            Point::new(block_row, wrap_snapshot.line_len(block_row))
-                                - new_transforms_end,
-                        );
-                    }
-                }
-
+                };
+                let extent_before_block = block_insertion_point - new_transforms.summary().input;
+                push_isomorphic(&mut new_transforms, extent_before_block);
                 new_transforms.push(Transform::block(block.clone()), &());
             }
 
@@ -260,15 +252,11 @@ impl BlockMap {
 
             // Insert an isomorphic transform after the final block.
             let extent_after_last_block = new_end.0 - new_transforms.summary().input;
-            if !extent_after_last_block.is_zero() {
-                push_isomorphic(&mut new_transforms, extent_after_last_block);
-            }
+            push_isomorphic(&mut new_transforms, extent_after_last_block);
 
             // Preserve any portion of the old transform after this edit.
             let extent_after_edit = cursor.start().0 - old_end.0;
-            if !extent_after_edit.is_zero() {
-                push_isomorphic(&mut new_transforms, extent_after_edit);
-            }
+            push_isomorphic(&mut new_transforms, extent_after_edit);
         }
 
         new_transforms.push_tree(cursor.suffix(&()), &());
@@ -280,6 +268,10 @@ impl BlockMap {
 }
 
 fn push_isomorphic(tree: &mut SumTree<Transform>, extent: Point) {
+    if extent.is_zero() {
+        return;
+    }
+
     let mut extent = Some(extent);
     tree.update_last(
         |last_transform| {
@@ -465,9 +457,11 @@ impl BlockSnapshot {
         let input_buffer_row = input_buffer_rows.next().unwrap();
         BufferRows {
             transforms,
-            input_buffer_row,
+            input_buffer_row: Some(input_buffer_row),
             input_buffer_rows,
+            input_row,
             output_row: start_row,
+            max_output_row: self.max_point().row,
         }
     }
 
@@ -691,26 +685,56 @@ impl<'a> Iterator for BufferRows<'a> {
     type Item = (u32, bool);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let transform = self.transforms.item()?;
-        let block_disposition = transform.block.as_ref().map(|b| b.disposition);
-        let (buffer_row, is_wrapped) = self.input_buffer_row;
+        if self.output_row > self.max_output_row {
+            return None;
+        }
+
+        let (buffer_row, _) = self.input_buffer_row.unwrap();
+        log::info!(
+            "Called next. Output row: {}, Input row: {}, Buffer row: {}",
+            self.output_row,
+            self.input_row,
+            buffer_row
+        );
 
         self.output_row += 1;
         if BlockPoint::new(self.output_row, 0) >= self.transforms.end(&()).0 {
-            self.transforms.next(&());
-            if let Some(transform) = self.transforms.item() {
-                let next_block_disposition = transform.block.as_ref().map(|b| b.disposition);
-                if block_disposition != Some(BlockDisposition::Above)
-                    && next_block_disposition != Some(BlockDisposition::Below)
-                {
-                    self.input_buffer_row = self.input_buffer_rows.next().unwrap();
-                }
+            self.transforms
+                .seek_forward(&BlockPoint::new(self.output_row, 0), Bias::Right, &());
+            log::info!(
+                "  Advancing to the next transform (block text: {:?}). Output row: {}, Transform starts at: {:?}",
+                self.transforms.item().and_then(|t| t.block.as_ref()).map(|b| b.text.to_string()),
+                self.output_row,
+                self.transforms.start().1
+            );
+
+            let mut new_input_position = self.transforms.start().1 .0;
+            if self.transforms.item().map_or(false, |t| t.is_isomorphic()) {
+                new_input_position += Point::new(self.output_row, 0) - self.transforms.start().0 .0;
+                new_input_position = cmp::min(new_input_position, self.transforms.end(&()).1 .0);
             }
-        } else if block_disposition.is_none() {
-            self.input_buffer_row = self.input_buffer_rows.next().unwrap();
+
+            if new_input_position.row > self.input_row {
+                self.input_row = new_input_position.row;
+                self.input_buffer_row = self.input_buffer_rows.next();
+                log::info!(
+                    "    Advancing the input buffer row. Input row: {}, Input buffer row {:?}",
+                    self.input_row,
+                    self.input_buffer_row
+                )
+            }
+        } else if self.transforms.item().map_or(true, |t| t.is_isomorphic()) {
+            self.input_row += 1;
+            self.input_buffer_row = self.input_buffer_rows.next();
+            log::info!(
+                "  Advancing in isomorphic transform (off the end: {}). Input row: {}, Input buffer row {:?}",
+                self.transforms.item().is_none(),
+                self.input_row,
+                self.input_buffer_row
+            )
         }
 
-        Some((buffer_row, !is_wrapped && block_disposition.is_none()))
+        Some((buffer_row, false))
     }
 }
 
@@ -998,15 +1022,18 @@ mod tests {
                             let position = buffer.anchor_before(rng.gen_range(0..=buffer.len()));
 
                             let len = rng.gen_range(0..10);
-                            let text = Rope::from(
+                            let mut text = Rope::from(
                                 RandomCharIter::new(&mut rng)
                                     .take(len)
                                     .collect::<String>()
+                                    .to_uppercase()
                                     .as_str(),
                             );
                             let disposition = if rng.gen() {
+                                text.push_front("<");
                                 BlockDisposition::Above
                             } else {
+                                text.push_front(">");
                                 BlockDisposition::Below
                             };
                             log::info!(
@@ -1132,7 +1159,7 @@ mod tests {
 
                 let soft_wrapped =
                     wraps_snapshot.to_tab_point(WrapPoint::new(row, 0)).column() != 0;
-                expected_buffer_rows.push((buffer_row, !soft_wrapped));
+                expected_buffer_rows.push((buffer_row, false));
                 expected_text.push_str(input_line);
 
                 while let Some((_, block)) = sorted_blocks.peek() {
