@@ -93,7 +93,7 @@ struct BlockChunks<'a> {
     offset: usize,
 }
 
-struct BufferRows<'a> {
+pub struct BufferRows<'a> {
     transforms: sum_tree::Cursor<'a, Transform, (BlockPoint, WrapPoint)>,
     input_buffer_rows: wrap_map::BufferRows<'a>,
     input_buffer_row: (u32, bool),
@@ -452,7 +452,7 @@ impl BlockSnapshot {
         }
     }
 
-    pub fn buffer_rows(&mut self, start_row: u32) -> BufferRows {
+    pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
         let mut transforms = self.transforms.cursor::<(BlockPoint, WrapPoint)>();
         transforms.seek(&BlockPoint::new(start_row, 0), Bias::Left, &());
         let mut input_row = transforms.start().1.row();
@@ -912,9 +912,9 @@ mod tests {
         let text = "one two three\nfour five six\nseven eight";
 
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        let (fold_map, folds_snapshot) = FoldMap::new(buffer.clone(), cx);
-        let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), 1);
-        let (wrap_map, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, Some(60.), cx);
+        let (_, folds_snapshot) = FoldMap::new(buffer.clone(), cx);
+        let (_, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), 1);
+        let (_, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, Some(60.), cx);
         let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot.clone());
 
         let mut writer = block_map.write(wraps_snapshot.clone(), vec![], cx);
@@ -1103,6 +1103,7 @@ mod tests {
                 .sort_unstable_by_key(|(id, block)| (block.position, block.disposition, *id));
             let mut sorted_blocks = sorted_blocks.into_iter().peekable();
 
+            let mut expected_buffer_rows = Vec::new();
             let mut expected_text = String::new();
             let input_text = wraps_snapshot.text();
             for (row, input_line) in input_text.split('\n').enumerate() {
@@ -1111,22 +1112,37 @@ mod tests {
                     expected_text.push('\n');
                 }
 
+                let buffer_row = wraps_snapshot
+                    .to_point(WrapPoint::new(row, 0), Bias::Left)
+                    .row;
+
                 while let Some((_, block)) = sorted_blocks.peek() {
                     if block.position == row && block.disposition == BlockDisposition::Above {
-                        expected_text.extend(block.text.chunks());
+                        let text = block.text.to_string();
+                        expected_text.push_str(&text);
                         expected_text.push('\n');
+                        for _ in text.split('\n') {
+                            expected_buffer_rows.push((buffer_row, false));
+                        }
                         sorted_blocks.next();
                     } else {
                         break;
                     }
                 }
 
+                let soft_wrapped =
+                    wraps_snapshot.to_tab_point(WrapPoint::new(row, 0)).column() != 0;
+                expected_buffer_rows.push((buffer_row, !soft_wrapped));
                 expected_text.push_str(input_line);
 
                 while let Some((_, block)) = sorted_blocks.peek() {
                     if block.position == row && block.disposition == BlockDisposition::Below {
+                        let text = block.text.to_string();
                         expected_text.push('\n');
-                        expected_text.extend(block.text.chunks());
+                        expected_text.push_str(&text);
+                        for _ in text.split('\n') {
+                            expected_buffer_rows.push((buffer_row, false));
+                        }
                         sorted_blocks.next();
                     } else {
                         break;
@@ -1135,6 +1151,10 @@ mod tests {
             }
 
             assert_eq!(blocks_snapshot.text(), expected_text);
+            assert_eq!(
+                blocks_snapshot.buffer_rows(0).collect::<Vec<_>>(),
+                expected_buffer_rows
+            );
         }
     }
 }
