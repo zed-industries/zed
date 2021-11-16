@@ -704,21 +704,46 @@ impl<'a> Iterator for BufferRows<'a> {
             return None;
         }
 
-        let (buffer_row, _) = self.input_buffer_row.unwrap();
+        let (buffer_row, is_wrapped) = self.input_buffer_row.unwrap();
+
+        let in_block = if let Some(transform) = self.transforms.item() {
+            if let Some(block) = transform.block.as_ref() {
+                if block.disposition.is_below()
+                    && self.transforms.start().0 == BlockPoint::new(self.output_row, 0)
+                {
+                    !self.transforms.prev_item().unwrap().is_isomorphic()
+                } else {
+                    true
+                }
+            } else {
+                false
+            }
+        } else {
+            self.transforms.prev_item().unwrap().block.is_some()
+        };
 
         log::info!(
-            "Called next. Output row: {}, Input row: {}, Buffer row: {}",
+            "============== Iterator next. Output row: {}, Input row: {}, Buffer row: {}, In block {} ===============",
             self.output_row,
             self.input_row,
-            buffer_row
+            buffer_row,
+            in_block
         );
 
         self.output_row += 1;
-        if BlockPoint::new(self.output_row, 0) >= self.transforms.end(&()).0 {
-            self.transforms
-                .seek_forward(&BlockPoint::new(self.output_row, 0), Bias::Right, &());
+        let output_point = BlockPoint::new(self.output_row, 0);
+        let transform_end = self.transforms.end(&()).0;
+        // if output_point > transform_end || output_point == transform_end && in_block {
+        if output_point >= transform_end {
+            log::info!("  Calling next once");
+            self.transforms.next(&());
+            if self.transforms.end(&()).0 < output_point {
+                log::info!("  Calling next twice");
+                self.transforms.next(&());
+            }
+
             log::info!(
-                "  Advancing to the next transform (block text: {:?}). Output row: {}, Transform starts at: {:?}",
+                "  Advanced to the next transform (block text: {:?}). Output row: {}, Transform starts at: {:?}",
                 self.transforms.item().and_then(|t| t.block.as_ref()).map(|b| b.text.to_string()),
                 self.output_row,
                 self.transforms.start().1
@@ -734,7 +759,7 @@ impl<'a> Iterator for BufferRows<'a> {
                 self.input_row = new_input_position.row;
                 self.input_buffer_row = self.input_buffer_rows.next();
                 log::info!(
-                    "    Advancing the input buffer row. Input row: {}, Input buffer row {:?}",
+                    "    Advanced the input buffer row. Input row: {}, Input buffer row {:?}",
                     self.input_row,
                     self.input_buffer_row
                 )
@@ -750,7 +775,7 @@ impl<'a> Iterator for BufferRows<'a> {
             )
         }
 
-        Some((buffer_row, false))
+        Some((buffer_row, !is_wrapped && !in_block))
     }
 }
 
@@ -1178,7 +1203,7 @@ mod tests {
                 }
 
                 let soft_wrapped = wraps_snapshot.to_tab_point(WrapPoint::new(row, 0)).column() > 0;
-                expected_buffer_rows.push((buffer_row, false));
+                expected_buffer_rows.push((buffer_row, !soft_wrapped));
                 expected_text.push_str(input_line);
 
                 while let Some((_, block)) = sorted_blocks.peek() {
