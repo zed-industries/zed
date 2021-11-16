@@ -104,16 +104,14 @@ pub struct BufferRows<'a> {
 
 impl BlockMap {
     pub fn new(buffer: ModelHandle<Buffer>, wrap_snapshot: WrapSnapshot) -> Self {
-        let mut transforms = SumTree::new();
-        let lines = wrap_snapshot.text_summary().lines;
-        if !lines.is_zero() {
-            transforms.push(Transform::isomorphic(lines), &());
-        }
         Self {
             buffer,
             next_block_id: AtomicUsize::new(0),
             blocks: Vec::new(),
-            transforms: Mutex::new(transforms),
+            transforms: Mutex::new(SumTree::from_item(
+                Transform::isomorphic(wrap_snapshot.text_summary().lines),
+                &(),
+            )),
             wrap_snapshot: Mutex::new(wrap_snapshot),
         }
     }
@@ -242,8 +240,13 @@ impl BlockMap {
                         Point::new(block_row, wrap_snapshot.line_len(block_row))
                     }
                 };
+
                 let extent_before_block = block_insertion_point - new_transforms.summary().input;
                 push_isomorphic(&mut new_transforms, extent_before_block);
+                if block.disposition == BlockDisposition::Below {
+                    ensure_last_is_isomorphic_or_below_block(&mut new_transforms);
+                }
+
                 new_transforms.push(Transform::block(block.clone()), &());
             }
 
@@ -260,10 +263,22 @@ impl BlockMap {
         }
 
         new_transforms.push_tree(cursor.suffix(&()), &());
+        ensure_last_is_isomorphic_or_below_block(&mut new_transforms);
         debug_assert_eq!(new_transforms.summary().input, wrap_snapshot.max_point().0);
 
         drop(cursor);
         *transforms = new_transforms;
+    }
+}
+
+fn ensure_last_is_isomorphic_or_below_block(tree: &mut SumTree<Transform>) {
+    if tree.last().map_or(true, |transform| {
+        transform
+            .block
+            .as_ref()
+            .map_or(false, |block| block.disposition.is_above())
+    }) {
+        tree.push(Transform::isomorphic(Point::zero()), &())
     }
 }
 
@@ -690,6 +705,7 @@ impl<'a> Iterator for BufferRows<'a> {
         }
 
         let (buffer_row, _) = self.input_buffer_row.unwrap();
+
         log::info!(
             "Called next. Output row: {}, Input row: {}, Buffer row: {}",
             self.output_row,
@@ -770,6 +786,10 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for BlockPoint {
 impl BlockDisposition {
     fn is_above(&self) -> bool {
         matches!(self, BlockDisposition::Above)
+    }
+
+    fn is_below(&self) -> bool {
+        matches!(self, BlockDisposition::Below)
     }
 }
 
@@ -1157,8 +1177,7 @@ mod tests {
                     }
                 }
 
-                let soft_wrapped =
-                    wraps_snapshot.to_tab_point(WrapPoint::new(row, 0)).column() != 0;
+                let soft_wrapped = wraps_snapshot.to_tab_point(WrapPoint::new(row, 0)).column() > 0;
                 expected_buffer_rows.push((buffer_row, false));
                 expected_text.push_str(input_line);
 
@@ -1178,6 +1197,12 @@ mod tests {
             }
 
             assert_eq!(blocks_snapshot.text(), expected_text);
+            for row in 0..=blocks_snapshot.wrap_snapshot.max_point().row() {
+                let wrap_point = WrapPoint::new(row, 0);
+                let block_point = blocks_snapshot.to_block_point(wrap_point);
+                assert_eq!(blocks_snapshot.to_wrap_point(block_point), wrap_point);
+            }
+
             assert_eq!(
                 blocks_snapshot.buffer_rows(0).collect::<Vec<_>>(),
                 expected_buffer_rows
