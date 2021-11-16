@@ -4,7 +4,7 @@ mod patch;
 mod tab_map;
 mod wrap_map;
 
-use block_map::{BlockId, BlockMap, BlockPoint, BlockProperties};
+use block_map::{BlockId, BlockMap, BlockPoint};
 use buffer::Rope;
 use fold_map::{FoldMap, ToFoldPoint as _};
 use gpui::{fonts::FontId, Entity, ModelContext, ModelHandle};
@@ -14,7 +14,7 @@ use sum_tree::Bias;
 use tab_map::TabMap;
 use wrap_map::WrapMap;
 
-pub use block_map::{BufferRows, HighlightedChunks};
+pub use block_map::{BlockDisposition, BlockProperties, BufferRows, Chunks};
 
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint;
@@ -213,6 +213,7 @@ impl DisplayMapSnapshot {
                     self.tabs_snapshot
                         .to_tab_point(point.to_fold_point(&self.folds_snapshot, bias)),
                 ),
+                bias,
             ),
         )
     }
@@ -228,21 +229,19 @@ impl DisplayMapSnapshot {
         DisplayPoint(self.blocks_snapshot.max_point())
     }
 
-    pub fn chunks_at(&self, display_row: u32) -> wrap_map::Chunks {
-        self.wraps_snapshot.chunks_at(display_row)
+    pub fn text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
+        self.blocks_snapshot
+            .chunks(display_row..self.max_point().row() + 1, false)
+            .map(|h| h.text)
     }
 
-    pub fn highlighted_chunks_for_rows(
-        &mut self,
-        display_rows: Range<u32>,
-    ) -> block_map::HighlightedChunks {
-        self.blocks_snapshot
-            .highlighted_chunks_for_rows(display_rows)
+    pub fn chunks(&mut self, display_rows: Range<u32>) -> block_map::Chunks {
+        self.blocks_snapshot.chunks(display_rows, true)
     }
 
     pub fn chars_at<'a>(&'a self, point: DisplayPoint) -> impl Iterator<Item = char> + 'a {
         let mut column = 0;
-        let mut chars = self.chunks_at(point.row()).flat_map(str::chars);
+        let mut chars = self.text_chunks(point.row()).flat_map(str::chars);
         while column < point.column() {
             if let Some(c) = chars.next() {
                 column += c.len_utf8() as u32;
@@ -309,12 +308,12 @@ impl DisplayMapSnapshot {
     }
 
     pub fn text(&self) -> String {
-        self.chunks_at(0).collect()
+        self.text_chunks(0).collect()
     }
 
     pub fn line(&self, display_row: u32) -> String {
         let mut result = String::new();
-        for chunk in self.chunks_at(display_row) {
+        for chunk in self.text_chunks(display_row) {
             if let Some(ix) = chunk.find('\n') {
                 result.push_str(&chunk[0..ix]);
                 break;
@@ -610,7 +609,7 @@ mod tests {
 
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(
-            snapshot.chunks_at(0).collect::<String>(),
+            snapshot.text_chunks(0).collect::<String>(),
             "one two \nthree four \nfive\nsix seven \neight"
         );
         assert_eq!(
@@ -659,7 +658,7 @@ mod tests {
 
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(
-            snapshot.chunks_at(1).collect::<String>(),
+            snapshot.text_chunks(1).collect::<String>(),
             "three four \nfive\nsix and \nseven eight"
         );
 
@@ -668,13 +667,13 @@ mod tests {
 
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(
-            snapshot.chunks_at(1).collect::<String>(),
+            snapshot.text_chunks(1).collect::<String>(),
             "three \nfour five\nsix and \nseven \neight"
         )
     }
 
     #[gpui::test]
-    fn test_chunks_at(cx: &mut gpui::MutableAppContext) {
+    fn test_text_chunks(cx: &mut gpui::MutableAppContext) {
         let text = sample_text(6, 6);
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
         let tab_size = 4;
@@ -701,7 +700,7 @@ mod tests {
 
         assert_eq!(
             map.update(cx, |map, cx| map.snapshot(cx))
-                .chunks_at(1)
+                .text_chunks(1)
                 .collect::<String>()
                 .lines()
                 .next(),
@@ -709,7 +708,7 @@ mod tests {
         );
         assert_eq!(
             map.update(cx, |map, cx| map.snapshot(cx))
-                .chunks_at(2)
+                .text_chunks(2)
                 .collect::<String>()
                 .lines()
                 .next(),
@@ -718,7 +717,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_highlighted_chunks_at(mut cx: gpui::TestAppContext) {
+    async fn test_chunks(mut cx: gpui::TestAppContext) {
         use unindent::Unindent as _;
 
         let text = r#"
@@ -767,7 +766,7 @@ mod tests {
         let map =
             cx.add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, cx));
         assert_eq!(
-            cx.update(|cx| highlighted_chunks(0..5, &map, &theme, cx)),
+            cx.update(|cx| chunks(0..5, &map, &theme, cx)),
             vec![
                 ("fn ".to_string(), None),
                 ("outer".to_string(), Some("fn.name")),
@@ -778,7 +777,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            cx.update(|cx| highlighted_chunks(3..5, &map, &theme, cx)),
+            cx.update(|cx| chunks(3..5, &map, &theme, cx)),
             vec![
                 ("    fn ".to_string(), Some("mod.body")),
                 ("inner".to_string(), Some("fn.name")),
@@ -790,7 +789,7 @@ mod tests {
             map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx)
         });
         assert_eq!(
-            cx.update(|cx| highlighted_chunks(0..2, &map, &theme, cx)),
+            cx.update(|cx| chunks(0..2, &map, &theme, cx)),
             vec![
                 ("fn ".to_string(), None),
                 ("out".to_string(), Some("fn.name")),
@@ -803,7 +802,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_highlighted_chunks_with_soft_wrapping(mut cx: gpui::TestAppContext) {
+    async fn test_chunks_with_soft_wrapping(mut cx: gpui::TestAppContext) {
         use unindent::Unindent as _;
 
         cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
@@ -855,7 +854,7 @@ mod tests {
         let map = cx
             .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, Some(40.0), cx));
         assert_eq!(
-            cx.update(|cx| highlighted_chunks(0..5, &map, &theme, cx)),
+            cx.update(|cx| chunks(0..5, &map, &theme, cx)),
             [
                 ("fn \n".to_string(), None),
                 ("oute\nr".to_string(), Some("fn.name")),
@@ -863,7 +862,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            cx.update(|cx| highlighted_chunks(3..5, &map, &theme, cx)),
+            cx.update(|cx| chunks(3..5, &map, &theme, cx)),
             [("{}\n\n".to_string(), None)]
         );
 
@@ -871,7 +870,7 @@ mod tests {
             map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx)
         });
         assert_eq!(
-            cx.update(|cx| highlighted_chunks(1..4, &map, &theme, cx)),
+            cx.update(|cx| chunks(1..4, &map, &theme, cx)),
             [
                 ("out".to_string(), Some("fn.name")),
                 ("…\n".to_string(), None),
@@ -946,11 +945,11 @@ mod tests {
         let map = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(map.text(), "✅       α\nβ   \n🏀β      γ");
         assert_eq!(
-            map.chunks_at(0).collect::<String>(),
+            map.text_chunks(0).collect::<String>(),
             "✅       α\nβ   \n🏀β      γ"
         );
-        assert_eq!(map.chunks_at(1).collect::<String>(), "β   \n🏀β      γ");
-        assert_eq!(map.chunks_at(2).collect::<String>(), "🏀β      γ");
+        assert_eq!(map.text_chunks(1).collect::<String>(), "β   \n🏀β      γ");
+        assert_eq!(map.text_chunks(2).collect::<String>(), "🏀β      γ");
 
         let point = Point::new(0, "✅\t\t".len() as u32);
         let display_point = DisplayPoint::new(0, "✅       ".len() as u32);
@@ -1007,7 +1006,7 @@ mod tests {
         )
     }
 
-    fn highlighted_chunks<'a>(
+    fn chunks<'a>(
         rows: Range<u32>,
         map: &ModelHandle<DisplayMap>,
         theme: &'a SyntaxTheme,
@@ -1015,7 +1014,7 @@ mod tests {
     ) -> Vec<(String, Option<&'a str>)> {
         let mut snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<&str>)> = Vec::new();
-        for chunk in snapshot.highlighted_chunks_for_rows(rows) {
+        for chunk in snapshot.chunks(rows) {
             let style_name = chunk.highlight_id.name(theme);
             if let Some((last_chunk, last_style_name)) = chunks.last_mut() {
                 if style_name == *last_style_name {

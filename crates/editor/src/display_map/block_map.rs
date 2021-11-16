@@ -1,7 +1,7 @@
 use super::wrap_map::{self, Edit as WrapEdit, Snapshot as WrapSnapshot, WrapPoint};
 use buffer::{rope, Anchor, Bias, Edit, Point, Rope, ToOffset, ToPoint as _};
 use gpui::{fonts::HighlightStyle, AppContext, ModelHandle};
-use language::{Buffer, HighlightedChunk};
+use language::{Buffer, Chunk};
 use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
@@ -52,14 +52,14 @@ where
     P: Clone,
     T: Clone,
 {
-    position: P,
-    text: T,
-    runs: Vec<(usize, HighlightStyle)>,
-    disposition: BlockDisposition,
+    pub position: P,
+    pub text: T,
+    pub runs: Vec<(usize, HighlightStyle)>,
+    pub disposition: BlockDisposition,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum BlockDisposition {
+pub enum BlockDisposition {
     Above,
     Below,
 }
@@ -76,10 +76,10 @@ struct TransformSummary {
     output: Point,
 }
 
-pub struct HighlightedChunks<'a> {
+pub struct Chunks<'a> {
     transforms: sum_tree::Cursor<'a, Transform, (BlockPoint, WrapPoint)>,
-    input_chunks: wrap_map::HighlightedChunks<'a>,
-    input_chunk: HighlightedChunk<'a>,
+    input_chunks: wrap_map::Chunks<'a>,
+    input_chunk: Chunk<'a>,
     block_chunks: Option<BlockChunks<'a>>,
     output_position: BlockPoint,
     max_output_position: BlockPoint,
@@ -433,12 +433,12 @@ impl<'a> BlockMapWriter<'a> {
 impl BlockSnapshot {
     #[cfg(test)]
     fn text(&mut self) -> String {
-        self.highlighted_chunks_for_rows(0..self.max_point().0.row + 1)
+        self.chunks(0..self.max_point().0.row + 1, false)
             .map(|chunk| chunk.text)
             .collect()
     }
 
-    pub fn highlighted_chunks_for_rows(&mut self, rows: Range<u32>) -> HighlightedChunks {
+    pub fn chunks(&self, rows: Range<u32>, highlights: bool) -> Chunks {
         let max_output_position = self.max_point().min(BlockPoint::new(rows.end, 0));
         let mut cursor = self.transforms.cursor::<(BlockPoint, WrapPoint)>();
         let output_position = BlockPoint::new(rows.start, 0);
@@ -449,8 +449,8 @@ impl BlockSnapshot {
         let input_end_row = self.to_wrap_point(BlockPoint::new(rows.end, 0)).row();
         let input_chunks = self
             .wrap_snapshot
-            .highlighted_chunks_for_rows(input_start_row..input_end_row);
-        HighlightedChunks {
+            .chunks(input_start_row..input_end_row, highlights);
+        Chunks {
             input_chunks,
             input_chunk: Default::default(),
             block_chunks: None,
@@ -532,9 +532,9 @@ impl BlockSnapshot {
         }
     }
 
-    pub fn to_block_point(&self, wrap_point: WrapPoint) -> BlockPoint {
+    pub fn to_block_point(&self, wrap_point: WrapPoint, bias: Bias) -> BlockPoint {
         let mut cursor = self.transforms.cursor::<(WrapPoint, BlockPoint)>();
-        cursor.seek(&wrap_point, Bias::Right, &());
+        cursor.seek(&wrap_point, bias, &());
         while let Some(item) = cursor.item() {
             if item.is_isomorphic() {
                 break;
@@ -581,8 +581,8 @@ impl Transform {
     }
 }
 
-impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = HighlightedChunk<'a>;
+impl<'a> Iterator for Chunks<'a> {
+    type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_position >= self.max_output_position {
@@ -630,7 +630,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             self.transforms.next(&());
         }
 
-        Some(HighlightedChunk {
+        Some(Chunk {
             text: prefix,
             ..self.input_chunk
         })
@@ -665,7 +665,7 @@ impl<'a> BlockChunks<'a> {
 }
 
 impl<'a> Iterator for BlockChunks<'a> {
-    type Item = HighlightedChunk<'a>;
+    type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.chunk.is_none() {
@@ -693,7 +693,7 @@ impl<'a> Iterator for BlockChunks<'a> {
             Some(suffix)
         };
 
-        Some(HighlightedChunk {
+        Some(Chunk {
             text: chunk,
             highlight_id: Default::default(),
             diagnostic: None,
@@ -712,33 +712,36 @@ impl<'a> Iterator for BufferRows<'a> {
         let (buffer_row, is_wrapped) = self.input_buffer_row.unwrap();
         let in_block = self.in_block;
 
-        log::info!(
-            "============== Iterator next. Output row: {}, Input row: {}, Buffer row: {}, In block {} ===============",
-            self.output_row,
-            self.input_row,
-            buffer_row,
-            in_block
-        );
+        // log::info!(
+        //     "============== next - (output_row: {}, input_row: {}, buffer_row: {}, in_block: {}) ===============",
+        //     self.output_row,
+        //     self.input_row,
+        //     buffer_row,
+        //     in_block
+        // );
 
         self.output_row += 1;
         let output_point = BlockPoint::new(self.output_row, 0);
         let transform_end = self.transforms.end(&()).0;
         // if output_point > transform_end || output_point == transform_end && in_block {
         if output_point >= transform_end {
-            log::info!("  Calling next once");
+            // log::info!("  Calling next once");
             self.transforms.next(&());
             if self.transforms.end(&()).0 < output_point {
-                log::info!("  Calling next twice");
+                // log::info!("  Calling next twice");
                 self.transforms.next(&());
             }
-            self.in_block = self.transforms.item().map_or(false, |t| !t.is_isomorphic());
 
-            log::info!(
-                "  Advanced to the next transform (block text: {:?}). Output row: {}, Transform starts at: {:?}",
-                self.transforms.item().and_then(|t| t.block.as_ref()).map(|b| b.text.to_string()),
-                self.output_row,
-                self.transforms.start().1
-            );
+            if let Some(transform) = self.transforms.item() {
+                self.in_block = !transform.is_isomorphic();
+            }
+
+            // log::info!(
+            //     "  Advanced to the next transform (block text: {:?}). Output row: {}, Transform starts at: {:?}",
+            //     self.transforms.item().and_then(|t| t.block.as_ref()).map(|b| b.text.to_string()),
+            //     self.output_row,
+            //     self.transforms.start().1
+            // );
 
             let mut new_input_position = self.transforms.start().1 .0;
             if self.transforms.item().map_or(false, |t| t.is_isomorphic()) {
@@ -749,24 +752,24 @@ impl<'a> Iterator for BufferRows<'a> {
             if new_input_position.row > self.input_row {
                 self.input_row = new_input_position.row;
                 self.input_buffer_row = self.input_buffer_rows.next();
-                log::info!(
-                    "    Advanced the input buffer row. Input row: {}, Input buffer row {:?}",
-                    self.input_row,
-                    self.input_buffer_row
-                )
+                // log::info!(
+                //     "    Advanced the input buffer row. Input row: {}, Input buffer row {:?}",
+                //     self.input_row,
+                //     self.input_buffer_row
+                // )
             }
         } else if self.transforms.item().map_or(true, |t| t.is_isomorphic()) {
             self.input_row += 1;
             self.input_buffer_row = self.input_buffer_rows.next();
-            log::info!(
-                "  Advancing in isomorphic transform (off the end: {}). Input row: {}, Input buffer row {:?}",
-                self.transforms.item().is_none(),
-                self.input_row,
-                self.input_buffer_row
-            )
+            // log::info!(
+            //     "  Advancing in isomorphic transform (off the end: {}). Input row: {}, Input buffer row {:?}",
+            //     self.transforms.item().is_none(),
+            //     self.input_row,
+            //     self.input_buffer_row
+            // )
         }
 
-        Some((buffer_row, !is_wrapped && !in_block))
+        Some((buffer_row, false))
     }
 }
 
@@ -886,7 +889,7 @@ mod tests {
             "aaa\nBLOCK 1\nBLOCK 2\nbbb\nccc\nddd\nBLOCK 3"
         );
         assert_eq!(
-            snapshot.to_block_point(WrapPoint::new(1, 0)),
+            snapshot.to_block_point(WrapPoint::new(1, 0), Bias::Right),
             BlockPoint::new(3, 0)
         );
         assert_eq!(
@@ -1194,7 +1197,7 @@ mod tests {
                 }
 
                 let soft_wrapped = wraps_snapshot.to_tab_point(WrapPoint::new(row, 0)).column() > 0;
-                expected_buffer_rows.push((buffer_row, !soft_wrapped));
+                expected_buffer_rows.push((buffer_row, false));
                 expected_text.push_str(input_line);
 
                 while let Some((_, block)) = sorted_blocks.peek() {
@@ -1215,7 +1218,7 @@ mod tests {
             assert_eq!(blocks_snapshot.text(), expected_text);
             for row in 0..=blocks_snapshot.wrap_snapshot.max_point().row() {
                 let wrap_point = WrapPoint::new(row, 0);
-                let block_point = blocks_snapshot.to_block_point(wrap_point);
+                let block_point = blocks_snapshot.to_block_point(wrap_point, Bias::Right);
                 assert_eq!(blocks_snapshot.to_wrap_point(block_point), wrap_point);
             }
 

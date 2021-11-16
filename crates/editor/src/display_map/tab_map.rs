@@ -1,6 +1,6 @@
 use super::fold_map::{self, FoldEdit, FoldPoint, Snapshot as FoldSnapshot, ToFoldPoint};
 use buffer::Point;
-use language::{rope, HighlightedChunk};
+use language::{rope, Chunk};
 use parking_lot::Mutex;
 use std::{mem, ops::Range};
 use sum_tree::Bias;
@@ -22,6 +22,7 @@ impl TabMap {
         mut fold_edits: Vec<FoldEdit>,
     ) -> (Snapshot, Vec<Edit>) {
         let mut old_snapshot = self.0.lock();
+        let max_offset = old_snapshot.fold_snapshot.len();
         let new_snapshot = Snapshot {
             fold_snapshot,
             tab_size: old_snapshot.tab_size,
@@ -32,11 +33,11 @@ impl TabMap {
             let mut delta = 0;
             for chunk in old_snapshot
                 .fold_snapshot
-                .chunks_at(fold_edit.old_bytes.end)
+                .chunks(fold_edit.old_bytes.end..max_offset, false)
             {
                 let patterns: &[_] = &['\t', '\n'];
-                if let Some(ix) = chunk.find(patterns) {
-                    if &chunk[ix..ix + 1] == "\t" {
+                if let Some(ix) = chunk.text.find(patterns) {
+                    if &chunk.text[ix..ix + 1] == "\t" {
                         fold_edit.old_bytes.end.0 += delta + ix + 1;
                         fold_edit.new_bytes.end.0 += delta + ix + 1;
                     }
@@ -44,7 +45,7 @@ impl TabMap {
                     break;
                 }
 
-                delta += chunk.len();
+                delta += chunk.text.len();
             }
         }
 
@@ -110,7 +111,10 @@ impl Snapshot {
 
         let mut first_line_chars = 0;
         let mut first_line_bytes = 0;
-        for c in self.chunks_at(range.start).flat_map(|chunk| chunk.chars()) {
+        for c in self
+            .chunks(range.start..self.max_point(), false)
+            .flat_map(|chunk| chunk.text.chars())
+        {
             if c == '\n'
                 || (range.start.row() == range.end.row() && first_line_bytes == range.end.column())
             {
@@ -123,8 +127,11 @@ impl Snapshot {
         let mut last_line_chars = 0;
         let mut last_line_bytes = 0;
         for c in self
-            .chunks_at(TabPoint::new(range.end.row(), 0).max(range.start))
-            .flat_map(|chunk| chunk.chars())
+            .chunks(
+                TabPoint::new(range.end.row(), 0).max(range.start)..self.max_point(),
+                false,
+            )
+            .flat_map(|chunk| chunk.text.chars())
         {
             if last_line_bytes == range.end.column() {
                 break;
@@ -146,21 +153,7 @@ impl Snapshot {
         self.fold_snapshot.version
     }
 
-    pub fn chunks_at(&self, point: TabPoint) -> Chunks {
-        let (point, expanded_char_column, to_next_stop) = self.to_fold_point(point, Bias::Left);
-        let fold_chunks = self
-            .fold_snapshot
-            .chunks_at(point.to_offset(&self.fold_snapshot));
-        Chunks {
-            fold_chunks,
-            column: expanded_char_column,
-            tab_size: self.tab_size,
-            chunk: &SPACES[0..to_next_stop],
-            skip_leading_tab: to_next_stop > 0,
-        }
-    }
-
-    pub fn highlighted_chunks(&mut self, range: Range<TabPoint>) -> HighlightedChunks {
+    pub fn chunks(&self, range: Range<TabPoint>, highlights: bool) -> Chunks {
         let (input_start, expanded_char_column, to_next_stop) =
             self.to_fold_point(range.start, Bias::Left);
         let input_start = input_start.to_offset(&self.fold_snapshot);
@@ -168,13 +161,13 @@ impl Snapshot {
             .to_fold_point(range.end, Bias::Right)
             .0
             .to_offset(&self.fold_snapshot);
-        HighlightedChunks {
+        Chunks {
             fold_chunks: self
                 .fold_snapshot
-                .highlighted_chunks(input_start..input_end),
+                .chunks(input_start..input_end, highlights),
             column: expanded_char_column,
             tab_size: self.tab_size,
-            chunk: HighlightedChunk {
+            chunk: Chunk {
                 text: &SPACES[0..to_next_stop],
                 ..Default::default()
             },
@@ -188,7 +181,9 @@ impl Snapshot {
 
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks_at(Default::default()).collect()
+        self.chunks(TabPoint::zero()..self.max_point(), false)
+            .map(|chunk| chunk.text)
+            .collect()
     }
 
     pub fn max_point(&self) -> TabPoint {
@@ -379,63 +374,14 @@ const SPACES: &'static str = "                ";
 
 pub struct Chunks<'a> {
     fold_chunks: fold_map::Chunks<'a>,
-    chunk: &'a str,
+    chunk: Chunk<'a>,
     column: usize,
     tab_size: usize,
     skip_leading_tab: bool,
 }
 
 impl<'a> Iterator for Chunks<'a> {
-    type Item = &'a str;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.chunk.is_empty() {
-            if let Some(chunk) = self.fold_chunks.next() {
-                self.chunk = chunk;
-                if self.skip_leading_tab {
-                    self.chunk = &self.chunk[1..];
-                    self.skip_leading_tab = false;
-                }
-            } else {
-                return None;
-            }
-        }
-
-        for (ix, c) in self.chunk.char_indices() {
-            match c {
-                '\t' => {
-                    if ix > 0 {
-                        let (prefix, suffix) = self.chunk.split_at(ix);
-                        self.chunk = suffix;
-                        return Some(prefix);
-                    } else {
-                        self.chunk = &self.chunk[1..];
-                        let len = self.tab_size - self.column % self.tab_size;
-                        self.column += len;
-                        return Some(&SPACES[0..len]);
-                    }
-                }
-                '\n' => self.column = 0,
-                _ => self.column += 1,
-            }
-        }
-
-        let result = Some(self.chunk);
-        self.chunk = "";
-        result
-    }
-}
-
-pub struct HighlightedChunks<'a> {
-    fold_chunks: fold_map::HighlightedChunks<'a>,
-    chunk: HighlightedChunk<'a>,
-    column: usize,
-    tab_size: usize,
-    skip_leading_tab: bool,
-}
-
-impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = HighlightedChunk<'a>;
+    type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.chunk.text.is_empty() {
@@ -456,7 +402,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                     if ix > 0 {
                         let (prefix, suffix) = self.chunk.text.split_at(ix);
                         self.chunk.text = suffix;
-                        return Some(HighlightedChunk {
+                        return Some(Chunk {
                             text: prefix,
                             ..self.chunk
                         });
@@ -464,7 +410,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                         self.chunk.text = &self.chunk.text[1..];
                         let len = self.tab_size - self.column % self.tab_size;
                         self.column += len;
-                        return Some(HighlightedChunk {
+                        return Some(Chunk {
                             text: &SPACES[0..len],
                             ..self.chunk
                         });

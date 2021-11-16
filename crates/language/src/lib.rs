@@ -78,7 +78,6 @@ pub struct Snapshot {
     diagnostics: AnchorRangeMultimap<Diagnostic>,
     is_parsing: bool,
     language: Option<Arc<Language>>,
-    query_cursor: QueryCursorHandle,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -191,11 +190,12 @@ struct Highlights<'a> {
     next_capture: Option<(tree_sitter::QueryMatch<'a, 'a>, usize)>,
     stack: Vec<(usize, HighlightId)>,
     highlight_map: HighlightMap,
+    _query_cursor: QueryCursorHandle,
 }
 
-pub struct HighlightedChunks<'a> {
+pub struct Chunks<'a> {
     range: Range<usize>,
-    chunks: Chunks<'a>,
+    chunks: rope::Chunks<'a>,
     diagnostic_endpoints: Peekable<vec::IntoIter<DiagnosticEndpoint>>,
     error_depth: usize,
     warning_depth: usize,
@@ -205,7 +205,7 @@ pub struct HighlightedChunks<'a> {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct HighlightedChunk<'a> {
+pub struct Chunk<'a> {
     pub text: &'a str,
     pub highlight_id: HighlightId,
     pub diagnostic: Option<DiagnosticSeverity>,
@@ -342,7 +342,6 @@ impl Buffer {
             diagnostics: self.diagnostics.clone(),
             is_parsing: self.parsing_in_background,
             language: self.language.clone(),
-            query_cursor: QueryCursorHandle::new(),
         }
     }
 
@@ -1635,51 +1634,56 @@ impl Snapshot {
             .all(|chunk| chunk.matches(|c: char| !c.is_whitespace()).next().is_none())
     }
 
-    pub fn highlighted_text_for_range<T: ToOffset>(
-        &mut self,
-        range: Range<T>,
-    ) -> HighlightedChunks {
+    pub fn chunks<T: ToOffset>(&self, range: Range<T>, highlight: bool) -> Chunks {
         let range = range.start.to_offset(&*self)..range.end.to_offset(&*self);
 
+        let mut highlights = None;
         let mut diagnostic_endpoints = Vec::<DiagnosticEndpoint>::new();
-        for (_, range, diagnostic) in
-            self.diagnostics
-                .intersecting_ranges(range.clone(), self.content(), true)
-        {
-            diagnostic_endpoints.push(DiagnosticEndpoint {
-                offset: range.start,
-                is_start: true,
-                severity: diagnostic.severity,
-            });
-            diagnostic_endpoints.push(DiagnosticEndpoint {
-                offset: range.end,
-                is_start: false,
-                severity: diagnostic.severity,
-            });
-        }
-        diagnostic_endpoints.sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
-        let diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
+        if highlight {
+            for (_, range, diagnostic) in
+                self.diagnostics
+                    .intersecting_ranges(range.clone(), self.content(), true)
+            {
+                diagnostic_endpoints.push(DiagnosticEndpoint {
+                    offset: range.start,
+                    is_start: true,
+                    severity: diagnostic.severity,
+                });
+                diagnostic_endpoints.push(DiagnosticEndpoint {
+                    offset: range.end,
+                    is_start: false,
+                    severity: diagnostic.severity,
+                });
+            }
+            diagnostic_endpoints
+                .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
 
-        let chunks = self.text.as_rope().chunks_in_range(range.clone());
-        let highlights =
             if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
-                let captures = self.query_cursor.set_byte_range(range.clone()).captures(
+                let mut query_cursor = QueryCursorHandle::new();
+
+                // TODO - add a Tree-sitter API to remove the need for this.
+                let cursor = unsafe {
+                    std::mem::transmute::<_, &'static mut QueryCursor>(query_cursor.deref_mut())
+                };
+                let captures = cursor.set_byte_range(range.clone()).captures(
                     &language.highlights_query,
                     tree.root_node(),
                     TextProvider(self.text.as_rope()),
                 );
-
-                Some(Highlights {
+                highlights = Some(Highlights {
                     captures,
                     next_capture: None,
                     stack: Default::default(),
                     highlight_map: language.highlight_map(),
+                    _query_cursor: query_cursor,
                 })
-            } else {
-                None
-            };
+            }
+        }
 
-        HighlightedChunks {
+        let diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
+        let chunks = self.text.as_rope().chunks_in_range(range.clone());
+
+        Chunks {
             range,
             chunks,
             diagnostic_endpoints,
@@ -1700,7 +1704,6 @@ impl Clone for Snapshot {
             diagnostics: self.diagnostics.clone(),
             is_parsing: self.is_parsing,
             language: self.language.clone(),
-            query_cursor: QueryCursorHandle::new(),
         }
     }
 }
@@ -1731,7 +1734,9 @@ impl<'a> Iterator for ByteChunks<'a> {
     }
 }
 
-impl<'a> HighlightedChunks<'a> {
+unsafe impl<'a> Send for Chunks<'a> {}
+
+impl<'a> Chunks<'a> {
     pub fn seek(&mut self, offset: usize) {
         self.range.start = offset;
         self.chunks.seek(self.range.start);
@@ -1790,8 +1795,8 @@ impl<'a> HighlightedChunks<'a> {
     }
 }
 
-impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = HighlightedChunk<'a>;
+impl<'a> Iterator for Chunks<'a> {
+    type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut next_capture_start = usize::MAX;
@@ -1855,7 +1860,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                 self.chunks.next().unwrap();
             }
 
-            Some(HighlightedChunk {
+            Some(Chunk {
                 text: slice,
                 highlight_id,
                 diagnostic: self.current_diagnostic_severity(),

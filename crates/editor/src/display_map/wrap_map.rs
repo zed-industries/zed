@@ -7,7 +7,7 @@ use gpui::{
     fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
 };
-use language::{HighlightedChunk, Point};
+use language::{Chunk, Point};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
 use std::{collections::VecDeque, mem, ops::Range, time::Duration};
@@ -54,14 +54,7 @@ pub struct WrapPoint(pub super::Point);
 
 pub struct Chunks<'a> {
     input_chunks: tab_map::Chunks<'a>,
-    input_chunk: &'a str,
-    output_position: WrapPoint,
-    transforms: Cursor<'a, Transform, (WrapPoint, TabPoint)>,
-}
-
-pub struct HighlightedChunks<'a> {
-    input_chunks: tab_map::HighlightedChunks<'a>,
-    input_chunk: HighlightedChunk<'a>,
+    input_chunk: Chunk<'a>,
     output_position: WrapPoint,
     max_output_row: u32,
     transforms: Cursor<'a, Transform, (WrapPoint, TabPoint)>,
@@ -430,10 +423,15 @@ impl Snapshot {
 
                 let mut line = String::new();
                 let mut remaining = None;
-                let mut chunks = new_tab_snapshot.chunks_at(TabPoint::new(edit.new_rows.start, 0));
+                let mut chunks = new_tab_snapshot.chunks(
+                    TabPoint::new(edit.new_rows.start, 0)..new_tab_snapshot.max_point(),
+                    false,
+                );
                 let mut edit_transforms = Vec::<Transform>::new();
                 for _ in edit.new_rows.start..edit.new_rows.end {
-                    while let Some(chunk) = remaining.take().or_else(|| chunks.next()) {
+                    while let Some(chunk) =
+                        remaining.take().or_else(|| chunks.next().map(|c| c.text))
+                    {
                         if let Some(ix) = chunk.find('\n') {
                             line.push_str(&chunk[..ix + 1]);
                             remaining = Some(&chunk[ix + 1..]);
@@ -552,24 +550,12 @@ impl Snapshot {
         unsafe { Patch::new_unchecked(wrap_edits) }
     }
 
-    pub fn chunks_at(&self, wrap_row: u32) -> Chunks {
-        let point = WrapPoint::new(wrap_row, 0);
-        let mut transforms = self.transforms.cursor::<(WrapPoint, TabPoint)>();
-        transforms.seek(&point, Bias::Right, &());
-        let mut input_position = TabPoint(transforms.start().1 .0);
-        if transforms.item().map_or(false, |t| t.is_isomorphic()) {
-            input_position.0 += point.0 - transforms.start().0 .0;
-        }
-        let input_chunks = self.tab_snapshot.chunks_at(input_position);
-        Chunks {
-            input_chunks,
-            transforms,
-            output_position: point,
-            input_chunk: "",
-        }
+    pub fn text_chunks(&self, wrap_row: u32) -> impl Iterator<Item = &str> {
+        self.chunks(wrap_row..self.max_point().row() + 1, false)
+            .map(|h| h.text)
     }
 
-    pub fn highlighted_chunks_for_rows(&mut self, rows: Range<u32>) -> HighlightedChunks {
+    pub fn chunks(&self, rows: Range<u32>, highlights: bool) -> Chunks {
         let output_start = WrapPoint::new(rows.start, 0);
         let output_end = WrapPoint::new(rows.end, 0);
         let mut transforms = self.transforms.cursor::<(WrapPoint, TabPoint)>();
@@ -581,8 +567,8 @@ impl Snapshot {
         let input_end = self
             .to_tab_point(output_end)
             .min(self.tab_snapshot.max_point());
-        HighlightedChunks {
-            input_chunks: self.tab_snapshot.highlighted_chunks(input_start..input_end),
+        Chunks {
+            input_chunks: self.tab_snapshot.chunks(input_start..input_end, highlights),
             input_chunk: Default::default(),
             output_position: output_start,
             max_output_row: rows.end,
@@ -600,7 +586,7 @@ impl Snapshot {
 
     pub fn line_len(&self, row: u32) -> u32 {
         let mut len = 0;
-        for chunk in self.chunks_at(row) {
+        for chunk in self.text_chunks(row) {
             if let Some(newline_ix) = chunk.find('\n') {
                 len += newline_ix;
                 break;
@@ -733,52 +719,7 @@ impl Snapshot {
 }
 
 impl<'a> Iterator for Chunks<'a> {
-    type Item = &'a str;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let transform = self.transforms.item()?;
-        if let Some(display_text) = transform.display_text {
-            if self.output_position > self.transforms.start().0 {
-                self.output_position.0.column += transform.summary.output.lines.column;
-                self.transforms.next(&());
-                return Some(&display_text[1..]);
-            } else {
-                self.output_position.0 += transform.summary.output.lines;
-                self.transforms.next(&());
-                return Some(display_text);
-            }
-        }
-
-        if self.input_chunk.is_empty() {
-            self.input_chunk = self.input_chunks.next().unwrap();
-        }
-
-        let mut input_len = 0;
-        let transform_end = self.transforms.end(&()).0;
-        for c in self.input_chunk.chars() {
-            let char_len = c.len_utf8();
-            input_len += char_len;
-            if c == '\n' {
-                *self.output_position.row_mut() += 1;
-                *self.output_position.column_mut() = 0;
-            } else {
-                *self.output_position.column_mut() += char_len as u32;
-            }
-
-            if self.output_position >= transform_end {
-                self.transforms.next(&());
-                break;
-            }
-        }
-
-        let (prefix, suffix) = self.input_chunk.split_at(input_len);
-        self.input_chunk = suffix;
-        Some(prefix)
-    }
-}
-
-impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = HighlightedChunk<'a>;
+    type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_position.row() >= self.max_output_row {
@@ -803,7 +744,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
 
             self.output_position.0 += summary;
             self.transforms.next(&());
-            return Some(HighlightedChunk {
+            return Some(Chunk {
                 text: &display_text[start_ix..end_ix],
                 ..self.input_chunk
             });
@@ -833,7 +774,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
 
         let (prefix, suffix) = self.input_chunk.text.split_at(input_len);
         self.input_chunk.text = suffix;
-        Some(HighlightedChunk {
+        Some(Chunk {
             text: prefix,
             ..self.input_chunk
         })
@@ -1216,7 +1157,7 @@ mod tests {
 
     impl Snapshot {
         pub fn text(&self) -> String {
-            self.chunks_at(0).collect()
+            self.text_chunks(0).collect()
         }
 
         fn verify_chunks(&mut self, rng: &mut impl Rng) {
@@ -1225,7 +1166,7 @@ mod tests {
                 let start_row = rng.gen_range(0..=end_row);
                 end_row += 1;
 
-                let mut expected_text = self.chunks_at(start_row).collect::<String>();
+                let mut expected_text = self.text_chunks(start_row).collect::<String>();
                 if expected_text.ends_with("\n") {
                     expected_text.push('\n');
                 }
@@ -1239,7 +1180,7 @@ mod tests {
                 }
 
                 let actual_text = self
-                    .highlighted_chunks_for_rows(start_row..end_row)
+                    .chunks(start_row..end_row, false)
                     .map(|c| c.text)
                     .collect::<String>();
                 assert_eq!(

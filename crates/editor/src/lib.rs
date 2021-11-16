@@ -2663,12 +2663,8 @@ impl Snapshot {
         self.display_snapshot.buffer_rows(start_row)
     }
 
-    pub fn highlighted_chunks_for_rows(
-        &mut self,
-        display_rows: Range<u32>,
-    ) -> display_map::HighlightedChunks {
-        self.display_snapshot
-            .highlighted_chunks_for_rows(display_rows)
+    pub fn chunks(&mut self, display_rows: Range<u32>) -> display_map::Chunks {
+        self.display_snapshot.chunks(display_rows)
     }
 
     pub fn scroll_position(&self) -> Vector2F {

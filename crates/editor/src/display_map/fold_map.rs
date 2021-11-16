@@ -1,7 +1,6 @@
 use gpui::{AppContext, ModelHandle};
 use language::{
-    Anchor, AnchorRangeExt, Buffer, HighlightId, HighlightedChunk, Point, PointUtf16, TextSummary,
-    ToOffset,
+    Anchor, AnchorRangeExt, Buffer, Chunk, HighlightId, Point, PointUtf16, TextSummary, ToOffset,
 };
 use parking_lot::Mutex;
 use std::{
@@ -499,7 +498,9 @@ pub struct Snapshot {
 impl Snapshot {
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks_at(FoldOffset(0)).collect()
+        self.chunks(FoldOffset(0)..self.len(), false)
+            .map(|c| c.text)
+            .collect()
     }
 
     #[cfg(test)]
@@ -551,7 +552,6 @@ impl Snapshot {
         summary
     }
 
-    #[cfg(test)]
     pub fn len(&self) -> FoldOffset {
         FoldOffset(self.transforms.summary().output.bytes)
     }
@@ -628,21 +628,13 @@ impl Snapshot {
         false
     }
 
-    pub fn chunks_at(&self, offset: FoldOffset) -> Chunks {
-        let mut transform_cursor = self.transforms.cursor::<(FoldOffset, usize)>();
-        transform_cursor.seek(&offset, Bias::Right, &());
-        let overshoot = offset.0 - transform_cursor.start().0 .0;
-        let buffer_offset = transform_cursor.start().1 + overshoot;
-        Chunks {
-            transform_cursor,
-            buffer_offset,
-            buffer_chunks: self
-                .buffer_snapshot
-                .text_for_range(buffer_offset..self.buffer_snapshot.len()),
-        }
+    pub fn chars_at(&self, start: FoldPoint) -> impl '_ + Iterator<Item = char> {
+        let start = start.to_offset(self);
+        self.chunks(start..self.len(), false)
+            .flat_map(|chunk| chunk.text.chars())
     }
 
-    pub fn highlighted_chunks(&mut self, range: Range<FoldOffset>) -> HighlightedChunks {
+    pub fn chunks(&self, range: Range<FoldOffset>, enable_highlights: bool) -> Chunks {
         let mut transform_cursor = self.transforms.cursor::<(FoldOffset, usize)>();
 
         transform_cursor.seek(&range.end, Bias::Right, &());
@@ -653,19 +645,14 @@ impl Snapshot {
         let overshoot = range.start.0 - transform_cursor.start().0 .0;
         let buffer_start = transform_cursor.start().1 + overshoot;
 
-        HighlightedChunks {
+        Chunks {
             transform_cursor,
             buffer_offset: buffer_start,
             buffer_chunks: self
                 .buffer_snapshot
-                .highlighted_text_for_range(buffer_start..buffer_end),
+                .chunks(buffer_start..buffer_end, enable_highlights),
             buffer_chunk: None,
         }
-    }
-
-    pub fn chars_at<'a>(&'a self, point: FoldPoint) -> impl Iterator<Item = char> + 'a {
-        let offset = point.to_offset(self);
-        self.chunks_at(offset).flat_map(str::chars)
     }
 
     #[cfg(test)]
@@ -948,66 +935,13 @@ impl<'a> Iterator for BufferRows<'a> {
 
 pub struct Chunks<'a> {
     transform_cursor: Cursor<'a, Transform, (FoldOffset, usize)>,
-    buffer_chunks: buffer::Chunks<'a>,
+    buffer_chunks: language::Chunks<'a>,
+    buffer_chunk: Option<(usize, Chunk<'a>)>,
     buffer_offset: usize,
 }
 
 impl<'a> Iterator for Chunks<'a> {
-    type Item = &'a str;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let transform = if let Some(item) = self.transform_cursor.item() {
-            item
-        } else {
-            return None;
-        };
-
-        // If we're in a fold, then return the fold's display text and
-        // advance the transform and buffer cursors to the end of the fold.
-        if let Some(output_text) = transform.output_text {
-            self.buffer_offset += transform.summary.input.bytes;
-            self.buffer_chunks.seek(self.buffer_offset);
-
-            while self.buffer_offset >= self.transform_cursor.end(&()).1
-                && self.transform_cursor.item().is_some()
-            {
-                self.transform_cursor.next(&());
-            }
-
-            return Some(output_text);
-        }
-
-        // Otherwise, take a chunk from the buffer's text.
-        if let Some(mut chunk) = self.buffer_chunks.peek() {
-            let offset_in_chunk = self.buffer_offset - self.buffer_chunks.offset();
-            chunk = &chunk[offset_in_chunk..];
-
-            // Truncate the chunk so that it ends at the next fold.
-            let region_end = self.transform_cursor.end(&()).1 - self.buffer_offset;
-            if chunk.len() >= region_end {
-                chunk = &chunk[0..region_end];
-                self.transform_cursor.next(&());
-            } else {
-                self.buffer_chunks.next();
-            }
-
-            self.buffer_offset += chunk.len();
-            return Some(chunk);
-        }
-
-        None
-    }
-}
-
-pub struct HighlightedChunks<'a> {
-    transform_cursor: Cursor<'a, Transform, (FoldOffset, usize)>,
-    buffer_chunks: language::HighlightedChunks<'a>,
-    buffer_chunk: Option<(usize, HighlightedChunk<'a>)>,
-    buffer_offset: usize,
-}
-
-impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = HighlightedChunk<'a>;
+    type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let transform = if let Some(item) = self.transform_cursor.item() {
@@ -1029,7 +963,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                 self.transform_cursor.next(&());
             }
 
-            return Some(HighlightedChunk {
+            return Some(Chunk {
                 text: output_text,
                 highlight_id: HighlightId::default(),
                 diagnostic: None,
@@ -1428,11 +1362,14 @@ mod tests {
             }
 
             for _ in 0..5 {
-                let offset = snapshot
+                let start = snapshot
                     .clip_offset(FoldOffset(rng.gen_range(0..=snapshot.len().0)), Bias::Right);
                 assert_eq!(
-                    snapshot.chunks_at(offset).collect::<String>(),
-                    &expected_text[offset.0..],
+                    snapshot
+                        .chunks(start..snapshot.len(), false)
+                        .map(|c| c.text)
+                        .collect::<String>(),
+                    &expected_text[start.0..],
                 );
             }
 
