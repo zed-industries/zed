@@ -452,6 +452,11 @@ impl BlockSnapshot {
     pub fn clip_point(&self, point: BlockPoint, bias: Bias) -> BlockPoint {
         let mut cursor = self.transforms.cursor::<(BlockPoint, WrapPoint)>();
         cursor.seek(&point, Bias::Right, &());
+        if let Some(transform) = cursor.prev_item() {
+            if transform.is_isomorphic() && point == cursor.start().0 {
+                return point;
+            }
+        }
         if let Some(transform) = cursor.item() {
             if transform.is_isomorphic() {
                 let (output_start, input_start) = cursor.start();
@@ -770,6 +775,46 @@ mod tests {
         assert_eq!(
             snapshot.to_block_point(WrapPoint::new(1, 0)),
             BlockPoint::new(3, 0)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(1, 0), Bias::Left),
+            BlockPoint::new(1, 0)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(1, 0), Bias::Right),
+            BlockPoint::new(1, 0)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(1, 1), Bias::Left),
+            BlockPoint::new(1, 0)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(1, 1), Bias::Right),
+            BlockPoint::new(3, 0)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(3, 0), Bias::Left),
+            BlockPoint::new(3, 0)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(3, 0), Bias::Right),
+            BlockPoint::new(3, 0)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(5, 3), Bias::Left),
+            BlockPoint::new(5, 3)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(5, 3), Bias::Right),
+            BlockPoint::new(5, 3)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(6, 0), Bias::Left),
+            BlockPoint::new(5, 3)
+        );
+        assert_eq!(
+            snapshot.clip_point(BlockPoint::new(6, 0), Bias::Right),
+            BlockPoint::new(5, 3)
         );
 
         // Insert a line break, separating two block decorations into separate
