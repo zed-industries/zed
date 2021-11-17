@@ -902,10 +902,6 @@ impl WrapPoint {
         self.0.row
     }
 
-    pub fn column(self) -> u32 {
-        self.0.column
-    }
-
     pub fn row_mut(&mut self) -> &mut u32 {
         &mut self.0.row
     }

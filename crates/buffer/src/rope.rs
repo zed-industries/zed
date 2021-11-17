@@ -249,6 +249,11 @@ impl Rope {
             self.summary().lines_utf16
         }
     }
+
+    pub fn line_len(&self, row: u32) -> u32 {
+        self.clip_point(Point::new(row, u32::MAX), Bias::Left)
+            .column
+    }
 }
 
 impl<'a> From<&'a str> for Rope {

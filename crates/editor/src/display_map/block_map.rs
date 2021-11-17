@@ -336,7 +336,7 @@ fn push_isomorphic(tree: &mut SumTree<Transform>, rows: u32) {
 }
 
 impl BlockPoint {
-    fn new(row: u32, column: u32) -> Self {
+    pub fn new(row: u32, column: u32) -> Self {
         Self(Point::new(row, column))
     }
 }
@@ -520,7 +520,24 @@ impl BlockSnapshot {
     }
 
     pub fn max_point(&self) -> BlockPoint {
-        self.to_block_point(self.wrap_snapshot.max_point())
+        let row = self.transforms.summary().output_rows - 1;
+        BlockPoint::new(row, self.line_len(row))
+    }
+
+    pub fn line_len(&self, row: u32) -> u32 {
+        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
+        cursor.seek(&BlockRow(row), Bias::Right, &());
+        if let Some(transform) = cursor.item() {
+            let (output_start, input_start) = cursor.start();
+            let overshoot = row - output_start.0;
+            if let Some(block) = &transform.block {
+                block.text.line_len(overshoot)
+            } else {
+                self.wrap_snapshot.line_len(input_start.0 + overshoot)
+            }
+        } else {
+            panic!("row out of range");
+        }
     }
 
     pub fn clip_point(&self, point: BlockPoint, bias: Bias) -> BlockPoint {
@@ -819,10 +836,6 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for BlockRow {
 }
 
 impl BlockDisposition {
-    fn is_above(&self) -> bool {
-        matches!(self, BlockDisposition::Above)
-    }
-
     fn is_below(&self) -> bool {
         matches!(self, BlockDisposition::Below)
     }
@@ -1272,6 +1285,15 @@ mod tests {
                     actual_text, expected_text,
                     "incorrect text starting from row {}",
                     start_row
+                );
+            }
+
+            for (row, line) in expected_lines.iter().enumerate() {
+                assert_eq!(
+                    blocks_snapshot.line_len(row as u32),
+                    line.len() as u32,
+                    "invalid line len for row {}",
+                    row
                 );
             }
 
