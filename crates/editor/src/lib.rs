@@ -11,9 +11,11 @@ pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
 use gpui::{
-    action, geometry::vector::Vector2F, keymap::Binding, text_layout, AppContext, ClipboardItem,
-    Element, ElementBox, Entity, ModelHandle, MutableAppContext, RenderContext, View, ViewContext,
-    WeakViewHandle,
+    action,
+    geometry::vector::{vec2f, Vector2F},
+    keymap::Binding,
+    text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
+    MutableAppContext, RenderContext, View, ViewContext, WeakViewHandle,
 };
 use language::*;
 use serde::{Deserialize, Serialize};
@@ -469,7 +471,7 @@ impl Editor {
         cx.notify();
     }
 
-    fn set_scroll_position(&mut self, mut scroll_position: Vector2F, cx: &mut ViewContext<Self>) {
+    fn set_scroll_position(&mut self, scroll_position: Vector2F, cx: &mut ViewContext<Self>) {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let scroll_top_buffer_offset =
             DisplayPoint::new(scroll_position.y() as u32, 0).to_offset(&map, Bias::Right);
@@ -477,8 +479,16 @@ impl Editor {
             .buffer
             .read(cx)
             .anchor_at(scroll_top_buffer_offset, Bias::Right);
-        scroll_position.set_y(scroll_position.y().fract());
-        self.scroll_position = scroll_position;
+        self.scroll_position = vec2f(
+            scroll_position.x(),
+            scroll_position.y() - self.scroll_top_anchor.to_display_point(&map).row() as f32,
+        );
+
+        debug_assert_eq!(
+            compute_scroll_position(&map, self.scroll_position, &self.scroll_top_anchor),
+            scroll_position
+        );
+
         cx.notify();
     }
 
