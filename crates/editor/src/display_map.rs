@@ -214,7 +214,6 @@ impl DisplayMapSnapshot {
                     self.tabs_snapshot
                         .to_tab_point(point.to_fold_point(&self.folds_snapshot, bias)),
                 ),
-                bias,
             ),
         )
     }
