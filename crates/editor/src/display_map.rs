@@ -14,7 +14,8 @@ use sum_tree::Bias;
 use tab_map::TabMap;
 use wrap_map::WrapMap;
 
-pub use block_map::{BlockDisposition, BlockProperties, BufferRows, Chunks};
+pub use block_map::{BlockDisposition, BlockProperties, Chunks};
+pub use wrap_map::BufferRows;
 
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint;
@@ -173,7 +174,7 @@ impl DisplayMapSnapshot {
     }
 
     pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
-        self.blocks_snapshot.buffer_rows(start_row)
+        self.wraps_snapshot.buffer_rows(start_row)
     }
 
     pub fn buffer_row_count(&self) -> u32 {
