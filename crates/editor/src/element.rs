@@ -411,7 +411,7 @@ impl EditorElement {
         let style = &self.settings.style;
         let mut layouts = Vec::with_capacity(rows.len());
         let mut line_number = String::new();
-        for (ix, (buffer_row, soft_wrapped)) in snapshot
+        for (ix, buffer_row) in snapshot
             .buffer_rows(rows.start)
             .take((rows.end - rows.start) as usize)
             .enumerate()
@@ -422,9 +422,7 @@ impl EditorElement {
             } else {
                 style.line_number
             };
-            if soft_wrapped {
-                layouts.push(None);
-            } else {
+            if let Some(buffer_row) = buffer_row {
                 line_number.clear();
                 write!(&mut line_number, "{}", buffer_row + 1).unwrap();
                 layouts.push(Some(cx.text_layout_cache.layout_str(
@@ -439,6 +437,8 @@ impl EditorElement {
                         },
                     )],
                 )));
+            } else {
+                layouts.push(None);
             }
         }
 

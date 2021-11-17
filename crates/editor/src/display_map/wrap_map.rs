@@ -702,7 +702,7 @@ impl Snapshot {
                     prev_tab_row = tab_point.row();
                     soft_wrapped = false;
                 }
-                expected_buffer_rows.push((buffer_row, soft_wrapped));
+                expected_buffer_rows.push(if soft_wrapped { None } else { Some(buffer_row) });
             }
 
             for start_display_row in 0..expected_buffer_rows.len() {
@@ -782,7 +782,7 @@ impl<'a> Iterator for Chunks<'a> {
 }
 
 impl<'a> Iterator for BufferRows<'a> {
-    type Item = (u32, bool);
+    type Item = Option<u32>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_row > self.max_output_row {
@@ -802,7 +802,7 @@ impl<'a> Iterator for BufferRows<'a> {
             self.soft_wrapped = true;
         }
 
-        Some((buffer_row, soft_wrapped))
+        Some(if soft_wrapped { None } else { Some(buffer_row) })
     }
 }
 
