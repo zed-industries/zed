@@ -100,6 +100,13 @@ struct BlockChunks<'a> {
     offset: usize,
 }
 
+pub struct BufferRows<'a> {
+    transforms: sum_tree::Cursor<'a, Transform, (BlockRow, WrapRow)>,
+    input_buffer_rows: wrap_map::BufferRows<'a>,
+    output_row: u32,
+    started: bool,
+}
+
 impl BlockMap {
     pub fn new(buffer: ModelHandle<Buffer>, wrap_snapshot: WrapSnapshot) -> Self {
         Self {
@@ -487,6 +494,24 @@ impl BlockSnapshot {
         }
     }
 
+    pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
+        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
+        cursor.seek(&BlockRow(start_row), Bias::Right, &());
+        let (input_start, output_start) = cursor.start();
+        let overshoot = if cursor.item().map_or(false, |t| t.is_isomorphic()) {
+            start_row - output_start.0
+        } else {
+            0
+        };
+        let input_start_row = input_start.0 + overshoot;
+        BufferRows {
+            transforms: cursor,
+            input_buffer_rows: self.wrap_snapshot.buffer_rows(input_start_row),
+            output_row: start_row,
+            started: false,
+        }
+    }
+
     pub fn max_point(&self) -> BlockPoint {
         todo!()
     }
@@ -733,6 +758,29 @@ impl<'a> Iterator for BlockChunks<'a> {
     }
 }
 
+impl<'a> Iterator for BufferRows<'a> {
+    type Item = Option<u32>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.started {
+            self.output_row += 1;
+        } else {
+            self.started = true;
+        }
+
+        if self.output_row >= self.transforms.end(&()).0 .0 {
+            self.transforms.next(&());
+        }
+
+        let transform = self.transforms.item()?;
+        if transform.is_isomorphic() {
+            Some(self.input_buffer_rows.next().unwrap())
+        } else {
+            Some(None)
+        }
+    }
+}
+
 impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
@@ -904,10 +952,10 @@ mod tests {
         //     BlockPoint::new(5, 3)
         // );
 
-        // assert_eq!(
-        //     buffer_rows_from_chunks(snapshot.chunks(0..snapshot.max_point().row + 1, false)),
-        //     &[Some(0), None, None, Some(1), Some(2), Some(3), None]
-        // );
+        assert_eq!(
+            snapshot.buffer_rows(0).collect::<Vec<_>>(),
+            &[Some(0), None, None, Some(1), Some(2), Some(3), None]
+        );
 
         // Insert a line break, separating two block decorations into separate
         // lines.
@@ -1180,12 +1228,10 @@ mod tests {
             //     let block_point = blocks_snapshot.to_block_point(wrap_point, Bias::Right);
             //     assert_eq!(blocks_snapshot.to_wrap_point(block_point), wrap_point);
             // }
-            // assert_eq!(
-            //     buffer_rows_from_chunks(
-            //         blocks_snapshot.chunks(0..blocks_snapshot.max_point().row + 1, false)
-            //     ),
-            //     expected_buffer_rows
-            // );
+            assert_eq!(
+                blocks_snapshot.buffer_rows(0).collect::<Vec<_>>(),
+                expected_buffer_rows
+            );
         }
     }
 }
