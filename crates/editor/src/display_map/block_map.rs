@@ -80,6 +80,8 @@ struct Transform {
 struct TransformSummary {
     input_rows: u32,
     output_rows: u32,
+    longest_row_in_block: u32,
+    longest_row_in_block_chars: u32,
 }
 
 pub struct Chunks<'a> {
@@ -524,6 +526,24 @@ impl BlockSnapshot {
         BlockPoint::new(row, self.line_len(row))
     }
 
+    pub fn longest_row(&self) -> u32 {
+        let input_row = self.wrap_snapshot.longest_row();
+        let input_row_len = self.wrap_snapshot.line_len(input_row);
+        let TransformSummary {
+            longest_row_in_block: block_row,
+            longest_row_in_block_chars: block_row_len,
+            ..
+        } = &self.transforms.summary();
+
+        dbg!(block_row, block_row_len, input_row, input_row_len);
+
+        if *block_row_len > input_row_len {
+            *block_row
+        } else {
+            self.to_block_point(WrapPoint::new(input_row, 0)).row
+        }
+    }
+
     pub fn line_len(&self, row: u32) -> u32 {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
         cursor.seek(&BlockRow(row), Bias::Right, &());
@@ -628,16 +648,21 @@ impl Transform {
             summary: TransformSummary {
                 input_rows: rows,
                 output_rows: rows,
+                longest_row_in_block: 0,
+                longest_row_in_block_chars: 0,
             },
             block: None,
         }
     }
 
     fn block(block: Arc<Block>) -> Self {
+        let text_summary = block.text.summary();
         Self {
             summary: TransformSummary {
                 input_rows: 0,
-                output_rows: block.text.summary().lines.row + 1,
+                output_rows: text_summary.lines.row + 1,
+                longest_row_in_block: text_summary.longest_row,
+                longest_row_in_block_chars: text_summary.longest_row_chars,
             },
             block: Some(block),
         }
@@ -818,6 +843,11 @@ impl sum_tree::Summary for TransformSummary {
     type Context = ();
 
     fn add_summary(&mut self, summary: &Self, _: &()) {
+        if summary.longest_row_in_block_chars > self.longest_row_in_block_chars {
+            self.longest_row_in_block_chars = summary.longest_row_in_block_chars;
+            self.longest_row_in_block = self.output_rows + summary.longest_row_in_block;
+        }
+
         self.input_rows += summary.input_rows;
         self.output_rows += summary.output_rows;
     }
@@ -1288,14 +1318,36 @@ mod tests {
                 );
             }
 
+            let mut expected_longest_rows = Vec::new();
+            let mut longest_line_len = -1_isize;
             for (row, line) in expected_lines.iter().enumerate() {
+                let row = row as u32;
+
                 assert_eq!(
-                    blocks_snapshot.line_len(row as u32),
+                    blocks_snapshot.line_len(row),
                     line.len() as u32,
                     "invalid line len for row {}",
                     row
                 );
+
+                match (line.len() as isize).cmp(&longest_line_len) {
+                    Ordering::Less => {}
+                    Ordering::Equal => expected_longest_rows.push(row),
+                    Ordering::Greater => {
+                        longest_line_len = line.len() as isize;
+                        expected_longest_rows.clear();
+                        expected_longest_rows.push(row);
+                    }
+                }
             }
+
+            let longest_row = blocks_snapshot.longest_row();
+            assert!(
+                expected_longest_rows.contains(&longest_row),
+                "incorrect longest row {}. expected {:?}",
+                longest_row,
+                expected_longest_rows,
+            );
 
             for row in 0..=blocks_snapshot.wrap_snapshot.max_point().row() {
                 let wrap_point = WrapPoint::new(row, 0);

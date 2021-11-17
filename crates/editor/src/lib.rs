@@ -2225,7 +2225,7 @@ impl Editor {
                 let buffer = self.buffer.read(cx);
                 let diagnostic_group = buffer
                     .diagnostic_group::<Point>(group_id)
-                    .map(|(range, diagnostic)| (range, format!("{}\n", diagnostic.message)))
+                    .map(|(range, diagnostic)| (range, diagnostic.message.clone()))
                     .collect::<Vec<_>>();
 
                 dbg!(group_id, &diagnostic_group);
