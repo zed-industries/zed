@@ -89,7 +89,6 @@ pub struct Chunks<'a> {
     block_chunks: Option<BlockChunks<'a>>,
     output_row: u32,
     max_output_row: u32,
-    max_input_row: u32,
 }
 
 struct BlockChunks<'a> {
@@ -464,33 +463,41 @@ impl BlockSnapshot {
     }
 
     pub fn chunks(&self, rows: Range<u32>, highlights: bool) -> Chunks {
-        let max_input_row = self.transforms.summary().input_rows;
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
-        let output_row = rows.start;
-        cursor.seek(&BlockRow(output_row), Bias::Right, &());
-        let (input_start, output_start) = cursor.start();
-        let overshoot = rows.start - output_start.0;
-        let output_end_row = max_output_row.saturating_sub(1);
-        let input_start_row = input_start.0 + overshoot;
-        let input_end_row = self
-            .to_wrap_point(BlockPoint::new(
-                output_end_row,
-                self.wrap_snapshot.line_len(output_end_row),
-            ))
-            .row()
-            + 1;
-        let input_chunks = self
-            .wrap_snapshot
-            .chunks(input_start_row..input_end_row, highlights);
+        let input_end = {
+            cursor.seek(&BlockRow(rows.end), Bias::Right, &());
+            let overshoot = if cursor
+                .item()
+                .map_or(false, |transform| transform.is_isomorphic())
+            {
+                rows.end - cursor.start().0 .0
+            } else {
+                0
+            };
+            cursor.start().1 .0 + overshoot
+        };
+        let input_start = {
+            cursor.seek(&BlockRow(rows.start), Bias::Right, &());
+            let overshoot = if cursor
+                .item()
+                .map_or(false, |transform| transform.is_isomorphic())
+            {
+                rows.start - cursor.start().0 .0
+            } else {
+                0
+            };
+            cursor.start().1 .0 + overshoot
+        };
         Chunks {
-            input_chunks,
+            input_chunks: self
+                .wrap_snapshot
+                .chunks(input_start..input_end, highlights),
             input_chunk: Default::default(),
             block_chunks: None,
             transforms: cursor,
-            output_row,
+            output_row: rows.start,
             max_output_row,
-            max_input_row,
         }
     }
 
@@ -1253,7 +1260,21 @@ mod tests {
                 }
             }
 
-            assert_eq!(blocks_snapshot.text(), expected_text);
+            let expected_lines = expected_text.split('\n').collect::<Vec<_>>();
+            let expected_row_count = expected_lines.len();
+            for start_row in 0..expected_row_count {
+                let expected_text = expected_lines[start_row..].join("\n");
+                let actual_text = blocks_snapshot
+                    .chunks(start_row as u32..expected_row_count as u32, false)
+                    .map(|chunk| chunk.text)
+                    .collect::<String>();
+                assert_eq!(
+                    actual_text, expected_text,
+                    "incorrect text starting from row {}",
+                    start_row
+                );
+            }
+
             for row in 0..=blocks_snapshot.wrap_snapshot.max_point().row() {
                 let wrap_point = WrapPoint::new(row, 0);
                 let block_point = blocks_snapshot.to_block_point(wrap_point);
