@@ -1023,9 +1023,13 @@ mod tests {
     fn test_random_blocks(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-            .unwrap_or(1);
+            .unwrap_or(10);
 
-        let wrap_width = None;
+        let wrap_width = if rng.gen_bool(0.2) {
+            None
+        } else {
+            Some(rng.gen_range(0.0..=100.0))
+        };
         let tab_size = 1;
         let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
         let font_id = cx
@@ -1051,15 +1055,15 @@ mod tests {
 
         for _ in 0..operations {
             match rng.gen_range(0..=100) {
-                // 0..=19 => {
-                //     let wrap_width = if rng.gen_bool(0.2) {
-                //         None
-                //     } else {
-                //         Some(rng.gen_range(0.0..=100.0))
-                //     };
-                //     log::info!("Setting wrap width to {:?}", wrap_width);
-                //     wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
-                // }
+                0..=19 => {
+                    let wrap_width = if rng.gen_bool(0.2) {
+                        None
+                    } else {
+                        Some(rng.gen_range(0.0..=100.0))
+                    };
+                    log::info!("Setting wrap width to {:?}", wrap_width);
+                    wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
+                }
                 20..=39 => {
                     let block_count = rng.gen_range(1..=1);
                     let block_properties = (0..block_count)
