@@ -493,7 +493,7 @@ impl EditorElement {
         let mut styles = Vec::new();
         let mut row = rows.start;
         let mut line_exceeded_max_len = false;
-        let chunks = snapshot.chunks(rows.clone());
+        let chunks = snapshot.chunks(rows.clone(), Some(&style.syntax));
 
         let newline_chunk = Chunk {
             text: "\n",
@@ -517,10 +517,8 @@ impl EditorElement {
                 }
 
                 if !line_chunk.is_empty() && !line_exceeded_max_len {
-                    let highlight_style = chunk
-                        .highlight_id
-                        .style(&style.syntax)
-                        .unwrap_or(style.text.clone().into());
+                    let highlight_style =
+                        chunk.highlight_style.unwrap_or(style.text.clone().into());
                     // Avoid a lookup if the font properties match the previous ones.
                     let font_id = if highlight_style.font_properties == prev_font_properties {
                         prev_font_id

@@ -12,6 +12,7 @@ use language::{Anchor, Buffer, Point, ToOffset, ToPoint};
 use std::{collections::HashSet, ops::Range};
 use sum_tree::Bias;
 use tab_map::TabMap;
+use theme::SyntaxTheme;
 use wrap_map::WrapMap;
 
 pub use block_map::{BlockDisposition, BlockProperties, BufferRows, Chunks};
@@ -230,12 +231,16 @@ impl DisplayMapSnapshot {
 
     pub fn text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
         self.blocks_snapshot
-            .chunks(display_row..self.max_point().row() + 1, false)
+            .chunks(display_row..self.max_point().row() + 1, None)
             .map(|h| h.text)
     }
 
-    pub fn chunks(&mut self, display_rows: Range<u32>) -> block_map::Chunks {
-        self.blocks_snapshot.chunks(display_rows, true)
+    pub fn chunks<'a>(
+        &'a self,
+        display_rows: Range<u32>,
+        theme: Option<&'a SyntaxTheme>,
+    ) -> block_map::Chunks<'a> {
+        self.blocks_snapshot.chunks(display_rows, theme)
     }
 
     pub fn chars_at<'a>(&'a self, point: DisplayPoint) -> impl Iterator<Item = char> + 'a {
@@ -736,8 +741,8 @@ mod tests {
         .unindent();
 
         let theme = SyntaxTheme::new(vec![
-            ("mod.body".to_string(), Color::from_u32(0xff0000ff).into()),
-            ("fn.name".to_string(), Color::from_u32(0x00ff00ff).into()),
+            ("mod.body".to_string(), Color::red().into()),
+            ("fn.name".to_string(), Color::blue().into()),
         ]);
         let lang = Arc::new(
             Language::new(
@@ -776,19 +781,19 @@ mod tests {
             cx.update(|cx| chunks(0..5, &map, &theme, cx)),
             vec![
                 ("fn ".to_string(), None),
-                ("outer".to_string(), Some("fn.name")),
+                ("outer".to_string(), Some(Color::blue())),
                 ("() {}\n\nmod module ".to_string(), None),
-                ("{\n    fn ".to_string(), Some("mod.body")),
-                ("inner".to_string(), Some("fn.name")),
-                ("() {}\n}".to_string(), Some("mod.body")),
+                ("{\n    fn ".to_string(), Some(Color::red())),
+                ("inner".to_string(), Some(Color::blue())),
+                ("() {}\n}".to_string(), Some(Color::red())),
             ]
         );
         assert_eq!(
             cx.update(|cx| chunks(3..5, &map, &theme, cx)),
             vec![
-                ("    fn ".to_string(), Some("mod.body")),
-                ("inner".to_string(), Some("fn.name")),
-                ("() {}\n}".to_string(), Some("mod.body")),
+                ("    fn ".to_string(), Some(Color::red())),
+                ("inner".to_string(), Some(Color::blue())),
+                ("() {}\n}".to_string(), Some(Color::red())),
             ]
         );
 
@@ -799,11 +804,11 @@ mod tests {
             cx.update(|cx| chunks(0..2, &map, &theme, cx)),
             vec![
                 ("fn ".to_string(), None),
-                ("out".to_string(), Some("fn.name")),
+                ("out".to_string(), Some(Color::blue())),
                 ("…".to_string(), None),
-                ("  fn ".to_string(), Some("mod.body")),
-                ("inner".to_string(), Some("fn.name")),
-                ("() {}\n}".to_string(), Some("mod.body")),
+                ("  fn ".to_string(), Some(Color::red())),
+                ("inner".to_string(), Some(Color::blue())),
+                ("() {}\n}".to_string(), Some(Color::red())),
             ]
         );
     }
@@ -823,8 +828,8 @@ mod tests {
         .unindent();
 
         let theme = SyntaxTheme::new(vec![
-            ("mod.body".to_string(), Color::from_u32(0xff0000ff).into()),
-            ("fn.name".to_string(), Color::from_u32(0x00ff00ff).into()),
+            ("mod.body".to_string(), Color::red().into()),
+            ("fn.name".to_string(), Color::blue().into()),
         ]);
         let lang = Arc::new(
             Language::new(
@@ -864,7 +869,7 @@ mod tests {
             cx.update(|cx| chunks(0..5, &map, &theme, cx)),
             [
                 ("fn \n".to_string(), None),
-                ("oute\nr".to_string(), Some("fn.name")),
+                ("oute\nr".to_string(), Some(Color::blue())),
                 ("() \n{}\n\n".to_string(), None),
             ]
         );
@@ -879,10 +884,10 @@ mod tests {
         assert_eq!(
             cx.update(|cx| chunks(1..4, &map, &theme, cx)),
             [
-                ("out".to_string(), Some("fn.name")),
+                ("out".to_string(), Some(Color::blue())),
                 ("…\n".to_string(), None),
-                ("  \nfn ".to_string(), Some("mod.body")),
-                ("i\n".to_string(), Some("fn.name"))
+                ("  \nfn ".to_string(), Some(Color::red())),
+                ("i\n".to_string(), Some(Color::blue()))
             ]
         );
     }
@@ -1018,19 +1023,19 @@ mod tests {
         map: &ModelHandle<DisplayMap>,
         theme: &'a SyntaxTheme,
         cx: &mut MutableAppContext,
-    ) -> Vec<(String, Option<&'a str>)> {
-        let mut snapshot = map.update(cx, |map, cx| map.snapshot(cx));
-        let mut chunks: Vec<(String, Option<&str>)> = Vec::new();
-        for chunk in snapshot.chunks(rows) {
-            let style_name = chunk.highlight_id.name(theme);
-            if let Some((last_chunk, last_style_name)) = chunks.last_mut() {
-                if style_name == *last_style_name {
+    ) -> Vec<(String, Option<Color>)> {
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+        let mut chunks: Vec<(String, Option<Color>)> = Vec::new();
+        for chunk in snapshot.chunks(rows, Some(theme)) {
+            let color = chunk.highlight_style.map(|s| s.color);
+            if let Some((last_chunk, last_color)) = chunks.last_mut() {
+                if color == *last_color {
                     last_chunk.push_str(chunk.text);
                 } else {
-                    chunks.push((chunk.text.to_string(), style_name));
+                    chunks.push((chunk.text.to_string(), color));
                 }
             } else {
-                chunks.push((chunk.text.to_string(), style_name));
+                chunks.push((chunk.text.to_string(), color));
             }
         }
         chunks

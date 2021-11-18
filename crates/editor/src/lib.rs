@@ -31,7 +31,7 @@ use std::{
     time::Duration,
 };
 use sum_tree::Bias;
-use theme::EditorStyle;
+use theme::{EditorStyle, SyntaxTheme};
 use util::post_inc;
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -2709,8 +2709,12 @@ impl Snapshot {
         self.display_snapshot.buffer_rows(start_row)
     }
 
-    pub fn chunks(&mut self, display_rows: Range<u32>) -> display_map::Chunks {
-        self.display_snapshot.chunks(display_rows)
+    pub fn chunks<'a>(
+        &'a self,
+        display_rows: Range<u32>,
+        theme: Option<&'a SyntaxTheme>,
+    ) -> display_map::Chunks<'a> {
+        self.display_snapshot.chunks(display_rows, theme)
     }
 
     pub fn scroll_position(&self) -> Vector2F {

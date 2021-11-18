@@ -12,6 +12,7 @@ use lazy_static::lazy_static;
 use smol::future::yield_now;
 use std::{collections::VecDeque, mem, ops::Range, time::Duration};
 use sum_tree::{Bias, Cursor, SumTree};
+use theme::SyntaxTheme;
 
 pub use super::tab_map::TextSummary;
 pub type Edit = buffer::Edit<u32>;
@@ -427,7 +428,7 @@ impl Snapshot {
                 let mut remaining = None;
                 let mut chunks = new_tab_snapshot.chunks(
                     TabPoint::new(edit.new_rows.start, 0)..new_tab_snapshot.max_point(),
-                    false,
+                    None,
                 );
                 let mut edit_transforms = Vec::<Transform>::new();
                 for _ in edit.new_rows.start..edit.new_rows.end {
@@ -553,11 +554,11 @@ impl Snapshot {
     }
 
     pub fn text_chunks(&self, wrap_row: u32) -> impl Iterator<Item = &str> {
-        self.chunks(wrap_row..self.max_point().row() + 1, false)
+        self.chunks(wrap_row..self.max_point().row() + 1, None)
             .map(|h| h.text)
     }
 
-    pub fn chunks(&self, rows: Range<u32>, highlights: bool) -> Chunks {
+    pub fn chunks<'a>(&'a self, rows: Range<u32>, theme: Option<&'a SyntaxTheme>) -> Chunks<'a> {
         let output_start = WrapPoint::new(rows.start, 0);
         let output_end = WrapPoint::new(rows.end, 0);
         let mut transforms = self.transforms.cursor::<(WrapPoint, TabPoint)>();
@@ -570,7 +571,7 @@ impl Snapshot {
             .to_tab_point(output_end)
             .min(self.tab_snapshot.max_point());
         Chunks {
-            input_chunks: self.tab_snapshot.chunks(input_start..input_end, highlights),
+            input_chunks: self.tab_snapshot.chunks(input_start..input_end, theme),
             input_chunk: Default::default(),
             output_position: output_start,
             max_output_row: rows.end,
@@ -1233,7 +1234,7 @@ mod tests {
                 }
 
                 let actual_text = self
-                    .chunks(start_row..end_row, false)
+                    .chunks(start_row..end_row, None)
                     .map(|c| c.text)
                     .collect::<String>();
                 assert_eq!(

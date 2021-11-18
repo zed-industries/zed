@@ -12,7 +12,7 @@ use anyhow::{anyhow, Result};
 pub use buffer::{Buffer as TextBuffer, Operation as _, *};
 use clock::ReplicaId;
 use futures::FutureExt as _;
-use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
+use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
 use lsp::LanguageServer;
 use parking_lot::Mutex;
@@ -34,6 +34,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     vec,
 };
+use theme::SyntaxTheme;
 use tree_sitter::{InputEdit, Parser, QueryCursor, Tree};
 use util::{post_inc, TryFutureExt as _};
 
@@ -190,6 +191,7 @@ struct Highlights<'a> {
     next_capture: Option<(tree_sitter::QueryMatch<'a, 'a>, usize)>,
     stack: Vec<(usize, HighlightId)>,
     highlight_map: HighlightMap,
+    theme: &'a SyntaxTheme,
     _query_cursor: QueryCursorHandle,
 }
 
@@ -207,7 +209,7 @@ pub struct Chunks<'a> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Chunk<'a> {
     pub text: &'a str,
-    pub highlight_id: HighlightId,
+    pub highlight_style: Option<HighlightStyle>,
     pub diagnostic: Option<DiagnosticSeverity>,
 }
 
@@ -1634,12 +1636,16 @@ impl Snapshot {
             .all(|chunk| chunk.matches(|c: char| !c.is_whitespace()).next().is_none())
     }
 
-    pub fn chunks<T: ToOffset>(&self, range: Range<T>, highlight: bool) -> Chunks {
+    pub fn chunks<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+        theme: Option<&'a SyntaxTheme>,
+    ) -> Chunks<'a> {
         let range = range.start.to_offset(&*self)..range.end.to_offset(&*self);
 
         let mut highlights = None;
         let mut diagnostic_endpoints = Vec::<DiagnosticEndpoint>::new();
-        if highlight {
+        if let Some(theme) = theme {
             for (_, range, diagnostic) in
                 self.diagnostics
                     .intersecting_ranges(range.clone(), self.content(), true)
@@ -1676,6 +1682,7 @@ impl Snapshot {
                     stack: Default::default(),
                     highlight_map: language.highlight_map(),
                     _query_cursor: query_cursor,
+                    theme,
                 })
             }
         }
@@ -1845,12 +1852,12 @@ impl<'a> Iterator for Chunks<'a> {
             let mut chunk_end = (self.chunks.offset() + chunk.len())
                 .min(next_capture_start)
                 .min(next_diagnostic_endpoint);
-            let mut highlight_id = HighlightId::default();
-            if let Some((parent_capture_end, parent_highlight_id)) =
-                self.highlights.as_ref().and_then(|h| h.stack.last())
-            {
-                chunk_end = chunk_end.min(*parent_capture_end);
-                highlight_id = *parent_highlight_id;
+            let mut highlight_style = None;
+            if let Some(highlights) = self.highlights.as_ref() {
+                if let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last() {
+                    chunk_end = chunk_end.min(*parent_capture_end);
+                    highlight_style = parent_highlight_id.style(highlights.theme);
+                }
             }
 
             let slice =
@@ -1862,7 +1869,7 @@ impl<'a> Iterator for Chunks<'a> {
 
             Some(Chunk {
                 text: slice,
-                highlight_id,
+                highlight_style,
                 diagnostic: self.current_diagnostic_severity(),
             })
         } else {

@@ -15,6 +15,7 @@ use std::{
     },
 };
 use sum_tree::SumTree;
+use theme::SyntaxTheme;
 
 pub struct BlockMap {
     buffer: ModelHandle<Buffer>,
@@ -459,12 +460,12 @@ impl<'a> BlockMapWriter<'a> {
 impl BlockSnapshot {
     #[cfg(test)]
     fn text(&mut self) -> String {
-        self.chunks(0..self.transforms.summary().output_rows, false)
+        self.chunks(0..self.transforms.summary().output_rows, None)
             .map(|chunk| chunk.text)
             .collect()
     }
 
-    pub fn chunks(&self, rows: Range<u32>, highlights: bool) -> Chunks {
+    pub fn chunks<'a>(&'a self, rows: Range<u32>, theme: Option<&'a SyntaxTheme>) -> Chunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
         let input_end = {
@@ -492,9 +493,7 @@ impl BlockSnapshot {
             cursor.start().1 .0 + overshoot
         };
         Chunks {
-            input_chunks: self
-                .wrap_snapshot
-                .chunks(input_start..input_end, highlights),
+            input_chunks: self.wrap_snapshot.chunks(input_start..input_end, theme),
             input_chunk: Default::default(),
             block_chunks: None,
             transforms: cursor,
@@ -785,9 +784,9 @@ impl<'a> Iterator for BlockChunks<'a> {
 
         let chunk = self.chunk?;
         let mut chunk_len = chunk.len();
-        // let mut highlight_style = None;
-        if let Some((run_len, _)) = self.runs.peek() {
-            // highlight_style = Some(style.clone());
+        let mut highlight_style = None;
+        if let Some((run_len, style)) = self.runs.peek() {
+            highlight_style = Some(style.clone());
             let run_end_in_chunk = self.run_start + run_len - self.offset;
             if run_end_in_chunk <= chunk_len {
                 chunk_len = run_end_in_chunk;
@@ -806,7 +805,7 @@ impl<'a> Iterator for BlockChunks<'a> {
 
         Some(Chunk {
             text: chunk,
-            highlight_id: Default::default(),
+            highlight_style,
             diagnostic: None,
         })
     }
@@ -1314,7 +1313,7 @@ mod tests {
             for start_row in 0..expected_row_count {
                 let expected_text = expected_lines[start_row..].join("\n");
                 let actual_text = blocks_snapshot
-                    .chunks(start_row as u32..expected_row_count as u32, false)
+                    .chunks(start_row as u32..expected_row_count as u32, None)
                     .map(|chunk| chunk.text)
                     .collect::<String>();
                 assert_eq!(

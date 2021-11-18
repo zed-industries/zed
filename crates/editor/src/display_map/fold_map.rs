@@ -1,7 +1,5 @@
 use gpui::{AppContext, ModelHandle};
-use language::{
-    Anchor, AnchorRangeExt, Buffer, Chunk, HighlightId, Point, PointUtf16, TextSummary, ToOffset,
-};
+use language::{Anchor, AnchorRangeExt, Buffer, Chunk, Point, PointUtf16, TextSummary, ToOffset};
 use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
@@ -10,6 +8,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
 use sum_tree::{Bias, Cursor, FilterCursor, SumTree};
+use theme::SyntaxTheme;
 
 pub trait ToFoldPoint {
     fn to_fold_point(&self, snapshot: &Snapshot, bias: Bias) -> FoldPoint;
@@ -498,7 +497,7 @@ pub struct Snapshot {
 impl Snapshot {
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(FoldOffset(0)..self.len(), false)
+        self.chunks(FoldOffset(0)..self.len(), None)
             .map(|c| c.text)
             .collect()
     }
@@ -630,11 +629,15 @@ impl Snapshot {
 
     pub fn chars_at(&self, start: FoldPoint) -> impl '_ + Iterator<Item = char> {
         let start = start.to_offset(self);
-        self.chunks(start..self.len(), false)
+        self.chunks(start..self.len(), None)
             .flat_map(|chunk| chunk.text.chars())
     }
 
-    pub fn chunks(&self, range: Range<FoldOffset>, enable_highlights: bool) -> Chunks {
+    pub fn chunks<'a>(
+        &'a self,
+        range: Range<FoldOffset>,
+        theme: Option<&'a SyntaxTheme>,
+    ) -> Chunks<'a> {
         let mut transform_cursor = self.transforms.cursor::<(FoldOffset, usize)>();
 
         transform_cursor.seek(&range.end, Bias::Right, &());
@@ -647,9 +650,7 @@ impl Snapshot {
 
         Chunks {
             transform_cursor,
-            buffer_chunks: self
-                .buffer_snapshot
-                .chunks(buffer_start..buffer_end, enable_highlights),
+            buffer_chunks: self.buffer_snapshot.chunks(buffer_start..buffer_end, theme),
             buffer_chunk: None,
             buffer_offset: buffer_start,
             output_offset: range.start.0,
@@ -974,7 +975,7 @@ impl<'a> Iterator for Chunks<'a> {
             self.output_offset += output_text.len();
             return Some(Chunk {
                 text: output_text,
-                highlight_id: HighlightId::default(),
+                highlight_style: None,
                 diagnostic: None,
             });
         }
@@ -1384,7 +1385,7 @@ mod tests {
                 log::info!("slicing {:?}..{:?} (text: {:?})", start, end, text);
                 assert_eq!(
                     snapshot
-                        .chunks(start..end, false)
+                        .chunks(start..end, None)
                         .map(|c| c.text)
                         .collect::<String>(),
                     text,
