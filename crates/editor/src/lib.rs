@@ -2209,6 +2209,7 @@ impl Editor {
         let buffer = self.buffer.read(cx.as_ref());
         let diagnostic_group_id = dbg!(buffer
             .diagnostics_in_range::<_, usize>(selection.head()..buffer.len())
+            .filter(|(_, diagnostic)| diagnostic.is_primary)
             .next())
         .map(|(_, diagnostic)| diagnostic.group_id);
 
