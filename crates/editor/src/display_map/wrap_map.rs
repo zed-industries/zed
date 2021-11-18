@@ -1214,26 +1214,34 @@ mod tests {
                     log::info!("{} summary: {:?}", ix, item.summary.output,);
                 }
 
-                let mut expected_longest_rows = Vec::new();
-                let mut longest_line_len = -1;
-                for (row, line) in expected_text.split('\n').enumerate() {
-                    let line_char_count = line.chars().count() as isize;
-                    if line_char_count > longest_line_len {
-                        expected_longest_rows.clear();
-                        longest_line_len = line_char_count;
+                if tab_size == 1
+                    || !wrapped_snapshot
+                        .tab_snapshot
+                        .fold_snapshot
+                        .text()
+                        .contains('\t')
+                {
+                    let mut expected_longest_rows = Vec::new();
+                    let mut longest_line_len = -1;
+                    for (row, line) in expected_text.split('\n').enumerate() {
+                        let line_char_count = line.chars().count() as isize;
+                        if line_char_count > longest_line_len {
+                            expected_longest_rows.clear();
+                            longest_line_len = line_char_count;
+                        }
+                        if line_char_count >= longest_line_len {
+                            expected_longest_rows.push(row as u32);
+                        }
                     }
-                    if line_char_count >= longest_line_len {
-                        expected_longest_rows.push(row as u32);
-                    }
-                }
 
-                assert!(
-                    expected_longest_rows.contains(&actual_longest_row),
-                    "incorrect longest row {}. expected {:?} with length {}",
-                    actual_longest_row,
-                    expected_longest_rows,
-                    longest_line_len,
-                )
+                    assert!(
+                        expected_longest_rows.contains(&actual_longest_row),
+                        "incorrect longest row {}. expected {:?} with length {}",
+                        actual_longest_row,
+                        expected_longest_rows,
+                        longest_line_len,
+                    )
+                }
             }
         }
 

@@ -506,14 +506,14 @@ mod tests {
                     .map(|c| c.text)
                     .collect::<String>()
             );
-            assert_eq!(
-                TextSummary {
-                    longest_row: expected_summary.longest_row,
-                    longest_row_chars: expected_summary.longest_row_chars,
-                    ..tabs_snapshot.text_summary_for_range(start..end)
-                },
-                expected_summary,
-            );
+
+            let mut actual_summary = tabs_snapshot.text_summary_for_range(start..end);
+            if tab_size > 1 && folds_snapshot.text().contains('\t') {
+                actual_summary.longest_row = expected_summary.longest_row;
+                actual_summary.longest_row_chars = expected_summary.longest_row_chars;
+            }
+
+            assert_eq!(actual_summary, expected_summary,);
         }
     }
 }
