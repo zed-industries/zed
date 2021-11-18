@@ -816,7 +816,7 @@ impl Buffer {
 
     pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
-        range: Range<T>,
+        search_range: Range<T>,
     ) -> impl Iterator<Item = (Range<O>, &Diagnostic)> + 'a
     where
         T: 'a + ToOffset,
@@ -824,7 +824,7 @@ impl Buffer {
     {
         let content = self.content();
         self.diagnostics
-            .intersecting_ranges(range, content, true)
+            .intersecting_ranges(search_range, content, true)
             .map(move |(_, range, diagnostic)| (range, diagnostic))
     }
 

@@ -4,7 +4,8 @@ mod patch;
 mod tab_map;
 mod wrap_map;
 
-use block_map::{BlockId, BlockMap, BlockPoint};
+pub use block_map::{BlockDisposition, BlockId, BlockProperties, BufferRows, Chunks};
+use block_map::{BlockMap, BlockPoint};
 use buffer::Rope;
 use fold_map::{FoldMap, ToFoldPoint as _};
 use gpui::{fonts::FontId, Entity, ModelContext, ModelHandle};
@@ -14,8 +15,6 @@ use sum_tree::Bias;
 use tab_map::TabMap;
 use theme::SyntaxTheme;
 use wrap_map::WrapMap;
-
-pub use block_map::{BlockDisposition, BlockProperties, BufferRows, Chunks};
 
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint;

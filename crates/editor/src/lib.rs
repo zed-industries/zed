@@ -24,6 +24,7 @@ use smol::Timer;
 use std::{
     cell::RefCell,
     cmp::{self, Ordering},
+    collections::HashSet,
     iter, mem,
     ops::{Range, RangeInclusive},
     rc::Rc,
@@ -304,6 +305,7 @@ pub struct Editor {
     add_selections_state: Option<AddSelectionsState>,
     autoclose_stack: Vec<BracketPairState>,
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
+    active_diagnostics: Option<ActiveDiagnosticGroup>,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
     autoscroll_requested: bool,
@@ -334,6 +336,12 @@ struct AddSelectionsState {
 struct BracketPairState {
     ranges: AnchorRangeSet,
     pair: BracketPair,
+}
+
+#[derive(Debug)]
+struct ActiveDiagnosticGroup {
+    primary_range: Range<Anchor>,
+    block_ids: HashSet<BlockId>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -423,6 +431,7 @@ impl Editor {
             add_selections_state: None,
             autoclose_stack: Default::default(),
             select_larger_syntax_node_stack: Vec::new(),
+            active_diagnostics: None,
             build_settings,
             scroll_position: Vector2F::zero(),
             scroll_top_anchor: Anchor::min(),
@@ -2205,36 +2214,93 @@ impl Editor {
     }
 
     pub fn show_next_diagnostic(&mut self, _: &ShowNextDiagnostic, cx: &mut ViewContext<Self>) {
-        let selection = self.newest_selection(cx);
+        let selection = self.newest_selection::<usize>(cx);
         let buffer = self.buffer.read(cx.as_ref());
-        let diagnostic_group_id = dbg!(buffer
-            .diagnostics_in_range::<_, usize>(selection.head()..buffer.len())
-            .filter(|(_, diagnostic)| diagnostic.is_primary)
-            .next())
-        .map(|(_, diagnostic)| diagnostic.group_id);
+        let active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
+            active_diagnostics
+                .primary_range
+                .to_offset(buffer)
+                .to_inclusive()
+        });
+        let mut search_start = if let Some(active_primary_range) = active_primary_range.as_ref() {
+            if active_primary_range.contains(&selection.head()) {
+                *active_primary_range.end()
+            } else {
+                selection.head()
+            }
+        } else {
+            selection.head()
+        };
 
-        if let Some(group_id) = diagnostic_group_id {
-            self.display_map.update(cx, |display_map, cx| {
-                let buffer = self.buffer.read(cx);
-                let diagnostic_group = buffer
-                    .diagnostic_group::<Point>(group_id)
-                    .map(|(range, diagnostic)| (range, diagnostic.message.clone()))
-                    .collect::<Vec<_>>();
+        loop {
+            let next_group = buffer
+                .diagnostics_in_range::<_, usize>(search_start..buffer.len())
+                .filter(|(_, diagnostic)| diagnostic.is_primary)
+                .skip_while(|(range, _)| {
+                    Some(range.end) == active_primary_range.as_ref().map(|r| *r.end())
+                })
+                .next()
+                .map(|(range, diagnostic)| (range, diagnostic.group_id));
 
-                dbg!(group_id, &diagnostic_group);
+            if let Some((primary_range, group_id)) = next_group {
+                self.dismiss_diagnostics(cx);
+                self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
+                    let buffer = self.buffer.read(cx);
+                    let diagnostic_group = buffer
+                        .diagnostic_group::<Point>(group_id)
+                        .map(|(range, diagnostic)| (range, diagnostic.message.clone()))
+                        .collect::<Vec<_>>();
+                    let primary_range = buffer.anchor_after(primary_range.start)
+                        ..buffer.anchor_before(primary_range.end);
 
-                display_map.insert_blocks(
-                    diagnostic_group
-                        .iter()
-                        .map(|(range, message)| BlockProperties {
-                            position: range.start,
-                            text: message.as_str(),
-                            runs: vec![],
-                            disposition: BlockDisposition::Above,
-                        }),
+                    let block_ids = display_map
+                        .insert_blocks(
+                            diagnostic_group
+                                .iter()
+                                .map(|(range, message)| BlockProperties {
+                                    position: range.start,
+                                    text: message.as_str(),
+                                    runs: vec![],
+                                    disposition: BlockDisposition::Above,
+                                }),
+                            cx,
+                        )
+                        .into_iter()
+                        .collect();
+
+                    Some(ActiveDiagnosticGroup {
+                        primary_range,
+                        block_ids,
+                    })
+                });
+
+                self.update_selections(
+                    vec![Selection {
+                        id: selection.id,
+                        start: primary_range.start,
+                        end: primary_range.start,
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    }],
+                    true,
                     cx,
                 );
+                break;
+            } else if search_start == 0 {
+                break;
+            } else {
+                // Cycle around to the start of the buffer.
+                search_start = 0;
+            }
+        }
+    }
+
+    fn dismiss_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(active_diagnostic_group) = self.active_diagnostics.take() {
+            self.display_map.update(cx, |display_map, cx| {
+                display_map.remove_blocks(active_diagnostic_group.block_ids, cx);
             });
+            cx.notify();
         }
     }
 

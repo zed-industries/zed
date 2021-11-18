@@ -527,6 +527,7 @@ impl<'a> sum_tree::SeekTarget<'a, AnchorRangeMultimapSummary, FullOffsetRange> f
 
 pub trait AnchorRangeExt {
     fn cmp<'a>(&self, b: &Range<Anchor>, buffer: impl Into<Content<'a>>) -> Result<Ordering>;
+    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> Range<usize>;
 }
 
 impl AnchorRangeExt for Range<Anchor> {
@@ -536,5 +537,10 @@ impl AnchorRangeExt for Range<Anchor> {
             Ordering::Equal => other.end.cmp(&self.end, buffer)?,
             ord @ _ => ord,
         })
+    }
+
+    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> Range<usize> {
+        let content = content.into();
+        self.start.to_offset(&content)..self.end.to_offset(&content)
     }
 }
