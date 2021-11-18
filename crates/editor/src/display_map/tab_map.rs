@@ -2,7 +2,7 @@ use super::fold_map::{self, FoldEdit, FoldPoint, Snapshot as FoldSnapshot, ToFol
 use buffer::Point;
 use language::{rope, Chunk};
 use parking_lot::Mutex;
-use std::{mem, ops::Range};
+use std::{cmp, mem, ops::Range};
 use sum_tree::Bias;
 
 pub struct TabMap(Mutex<Snapshot>);
@@ -158,11 +158,19 @@ impl Snapshot {
             .to_fold_point(range.end, Bias::Right)
             .0
             .to_offset(&self.fold_snapshot);
+        let to_next_stop = if range.start.0 + Point::new(0, to_next_stop as u32) > range.end.0 {
+            (range.end.column() - range.start.column()) as usize
+        } else {
+            to_next_stop
+        };
+
         Chunks {
             fold_chunks: self
                 .fold_snapshot
                 .chunks(input_start..input_end, highlights),
             column: expanded_char_column,
+            output_position: range.start.0,
+            max_output_position: range.end.0,
             tab_size: self.tab_size,
             chunk: Chunk {
                 text: &SPACES[0..to_next_stop],
@@ -373,6 +381,8 @@ pub struct Chunks<'a> {
     fold_chunks: fold_map::Chunks<'a>,
     chunk: Chunk<'a>,
     column: usize,
+    output_position: Point,
+    max_output_position: Point,
     tab_size: usize,
     skip_leading_tab: bool,
 }
@@ -405,16 +415,28 @@ impl<'a> Iterator for Chunks<'a> {
                         });
                     } else {
                         self.chunk.text = &self.chunk.text[1..];
-                        let len = self.tab_size - self.column % self.tab_size;
+                        let mut len = self.tab_size - self.column % self.tab_size;
+                        let next_output_position = cmp::min(
+                            self.output_position + Point::new(0, len as u32),
+                            self.max_output_position,
+                        );
+                        len = (next_output_position.column - self.output_position.column) as usize;
                         self.column += len;
+                        self.output_position = next_output_position;
                         return Some(Chunk {
                             text: &SPACES[0..len],
                             ..self.chunk
                         });
                     }
                 }
-                '\n' => self.column = 0,
-                _ => self.column += 1,
+                '\n' => {
+                    self.column = 0;
+                    self.output_position += Point::new(1, 0);
+                }
+                _ => {
+                    self.column += 1;
+                    self.output_position.column += c.len_utf8() as u32;
+                }
             }
         }
 
@@ -424,13 +446,11 @@ impl<'a> Iterator for Chunks<'a> {
 
 #[cfg(test)]
 mod tests {
-    use buffer::RandomCharIter;
+    use super::*;
+    use crate::display_map::fold_map::FoldMap;
+    use buffer::{RandomCharIter, Rope};
     use language::Buffer;
     use rand::{prelude::StdRng, Rng};
-
-    use crate::display_map::fold_map::FoldMap;
-
-    use super::*;
 
     #[test]
     fn test_expand_tabs() {
@@ -440,7 +460,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_text_summary_for_range(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
+    fn test_random(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
         let tab_size = rng.gen_range(1..=4);
         let buffer = cx.add_model(|cx| {
             let len = rng.gen_range(0..30);
@@ -449,8 +469,43 @@ mod tests {
         });
         let (_, folds_snapshot) = FoldMap::new(buffer.clone(), cx);
         let (_, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
+        let text = Rope::from(tabs_snapshot.text().as_str());
+        log::info!("Tab size: {}", tab_size);
+        log::info!("Buffer text: {:?}", buffer.read(cx).text());
+        log::info!("FoldMap text: {:?}", folds_snapshot.text());
+        log::info!("TabMap text: {:?}", tabs_snapshot.text());
+        for _ in 0..1 {
+            let end_row = rng.gen_range(0..=text.max_point().row);
+            let end_column = rng.gen_range(0..=text.line_len(end_row));
+            let mut end = TabPoint(text.clip_point(Point::new(end_row, end_column), Bias::Right));
+            let start_row = rng.gen_range(0..=text.max_point().row);
+            let start_column = rng.gen_range(0..=text.line_len(start_row));
+            let mut start =
+                TabPoint(text.clip_point(Point::new(start_row, start_column), Bias::Left));
+            if start > end {
+                mem::swap(&mut start, &mut end);
+            }
 
-        println!("{:?}", tabs_snapshot.text());
-        // TODO: Test text_summary_for_range with random ranges
+            let expected_text = text
+                .chunks_in_range(text.point_to_offset(start.0)..text.point_to_offset(end.0))
+                .collect::<String>();
+            let expected_summary = TextSummary::from(expected_text.as_str());
+            log::info!("Slicing {:?}..{:?} (text: {:?})", start, end, text);
+            assert_eq!(
+                expected_text,
+                tabs_snapshot
+                    .chunks(start..end, false)
+                    .map(|c| c.text)
+                    .collect::<String>()
+            );
+            assert_eq!(
+                TextSummary {
+                    longest_row: expected_summary.longest_row,
+                    longest_row_chars: expected_summary.longest_row_chars,
+                    ..tabs_snapshot.text_summary_for_range(start..end)
+                },
+                expected_summary,
+            );
+        }
     }
 }
