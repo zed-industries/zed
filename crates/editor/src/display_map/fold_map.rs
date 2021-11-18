@@ -647,11 +647,13 @@ impl Snapshot {
 
         Chunks {
             transform_cursor,
-            buffer_offset: buffer_start,
             buffer_chunks: self
                 .buffer_snapshot
                 .chunks(buffer_start..buffer_end, enable_highlights),
             buffer_chunk: None,
+            buffer_offset: buffer_start,
+            output_offset: range.start.0,
+            max_output_offset: range.end.0,
         }
     }
 
@@ -938,12 +940,18 @@ pub struct Chunks<'a> {
     buffer_chunks: language::Chunks<'a>,
     buffer_chunk: Option<(usize, Chunk<'a>)>,
     buffer_offset: usize,
+    output_offset: usize,
+    max_output_offset: usize,
 }
 
 impl<'a> Iterator for Chunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if self.output_offset >= self.max_output_offset {
+            return None;
+        }
+
         let transform = if let Some(item) = self.transform_cursor.item() {
             item
         } else {
@@ -963,6 +971,7 @@ impl<'a> Iterator for Chunks<'a> {
                 self.transform_cursor.next(&());
             }
 
+            self.output_offset += output_text.len();
             return Some(Chunk {
                 text: output_text,
                 highlight_id: HighlightId::default(),
@@ -991,6 +1000,7 @@ impl<'a> Iterator for Chunks<'a> {
             }
 
             self.buffer_offset += chunk.text.len();
+            self.output_offset += chunk.text.len();
             return Some(chunk);
         }
 
@@ -1362,14 +1372,22 @@ mod tests {
             }
 
             for _ in 0..5 {
-                let start = snapshot
+                let mut start = snapshot
+                    .clip_offset(FoldOffset(rng.gen_range(0..=snapshot.len().0)), Bias::Left);
+                let mut end = snapshot
                     .clip_offset(FoldOffset(rng.gen_range(0..=snapshot.len().0)), Bias::Right);
+                if start > end {
+                    mem::swap(&mut start, &mut end);
+                }
+
+                let text = &expected_text[start.0..end.0];
+                log::info!("slicing {:?}..{:?} (text: {:?})", start, end, text);
                 assert_eq!(
                     snapshot
-                        .chunks(start..snapshot.len(), false)
+                        .chunks(start..end, false)
                         .map(|c| c.text)
                         .collect::<String>(),
-                    &expected_text[start.0..],
+                    text,
                 );
             }
 
