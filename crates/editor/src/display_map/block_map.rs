@@ -1146,7 +1146,9 @@ mod tests {
                     let block_properties = (0..block_count)
                         .map(|_| {
                             let buffer = buffer.read(cx);
-                            let position = buffer.anchor_before(rng.gen_range(0..=buffer.len()));
+                            let position = buffer.anchor_before(
+                                buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Left),
+                            );
 
                             let len = rng.gen_range(0..10);
                             let mut text = Rope::from(
