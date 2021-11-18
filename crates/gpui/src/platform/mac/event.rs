@@ -1,21 +1,10 @@
 use crate::{geometry::vector::vec2f, keymap::Keystroke, platform::Event};
-use cocoa::appkit::{
-    NSDeleteFunctionKey as DELETE_KEY, NSDownArrowFunctionKey as ARROW_DOWN_KEY,
-    NSLeftArrowFunctionKey as ARROW_LEFT_KEY, NSPageDownFunctionKey as PAGE_DOWN_KEY,
-    NSPageUpFunctionKey as PAGE_UP_KEY, NSRightArrowFunctionKey as ARROW_RIGHT_KEY,
-    NSUpArrowFunctionKey as ARROW_UP_KEY,
-};
 use cocoa::{
     appkit::{NSEvent, NSEventModifierFlags, NSEventType},
     base::{id, nil, YES},
     foundation::NSString as _,
 };
 use std::{ffi::CStr, os::raw::c_char};
-
-const BACKSPACE_KEY: u16 = 0x7f;
-const ENTER_KEY: u16 = 0x0d;
-const ESCAPE_KEY: u16 = 0x1b;
-const TAB_KEY: u16 = 0x09;
 
 impl Event {
     pub unsafe fn from_native(native_event: id, window_height: Option<f32>) -> Option<Self> {
@@ -39,18 +28,39 @@ impl Event {
                     .unwrap();
 
                 let unmodified_chars = if let Some(first_char) = unmodified_chars.chars().next() {
+                    use cocoa::appkit::*;
+                    const BACKSPACE_KEY: u16 = 0x7f;
+                    const ENTER_KEY: u16 = 0x0d;
+                    const ESCAPE_KEY: u16 = 0x1b;
+                    const TAB_KEY: u16 = 0x09;
+
+                    #[allow(non_upper_case_globals)]
                     match first_char as u16 {
-                        ARROW_UP_KEY => "up",
-                        ARROW_DOWN_KEY => "down",
-                        ARROW_LEFT_KEY => "left",
-                        ARROW_RIGHT_KEY => "right",
-                        PAGE_UP_KEY => "pageup",
-                        PAGE_DOWN_KEY => "pagedown",
                         BACKSPACE_KEY => "backspace",
                         ENTER_KEY => "enter",
-                        DELETE_KEY => "delete",
                         ESCAPE_KEY => "escape",
                         TAB_KEY => "tab",
+
+                        NSUpArrowFunctionKey => "up",
+                        NSDownArrowFunctionKey => "down",
+                        NSLeftArrowFunctionKey => "left",
+                        NSRightArrowFunctionKey => "right",
+                        NSPageUpFunctionKey => "pageup",
+                        NSPageDownFunctionKey => "pagedown",
+                        NSDeleteFunctionKey => "delete",
+                        NSF1FunctionKey => "f1",
+                        NSF2FunctionKey => "f2",
+                        NSF3FunctionKey => "f3",
+                        NSF4FunctionKey => "f4",
+                        NSF5FunctionKey => "f5",
+                        NSF6FunctionKey => "f6",
+                        NSF7FunctionKey => "f7",
+                        NSF8FunctionKey => "f8",
+                        NSF9FunctionKey => "f9",
+                        NSF10FunctionKey => "f10",
+                        NSF11FunctionKey => "f11",
+                        NSF12FunctionKey => "f12",
+
                         _ => unmodified_chars,
                     }
                 } else {
