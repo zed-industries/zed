@@ -703,7 +703,9 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        if let Some(pending_selection) = self.pending_selection.take() {
+        if self.active_diagnostics.is_some() {
+            self.dismiss_diagnostics(cx);
+        } else if let Some(pending_selection) = self.pending_selection.take() {
             let buffer = self.buffer.read(cx);
             let pending_selection = Selection {
                 id: pending_selection.id,
