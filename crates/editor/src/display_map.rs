@@ -302,6 +302,10 @@ impl DisplayMapSnapshot {
         self.folds_snapshot.is_line_folded(tab_point.row())
     }
 
+    pub fn is_block_line(&self, display_row: u32) -> bool {
+        self.blocks_snapshot.is_block_line(display_row)
+    }
+
     pub fn soft_wrap_indent(&self, display_row: u32) -> Option<u32> {
         let wrap_row = self
             .blocks_snapshot

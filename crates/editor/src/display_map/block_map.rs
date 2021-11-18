@@ -558,6 +558,12 @@ impl BlockSnapshot {
         }
     }
 
+    pub fn is_block_line(&self, row: u32) -> bool {
+        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
+        cursor.seek(&BlockRow(row), Bias::Right, &());
+        cursor.item().map_or(false, |t| t.block.is_some())
+    }
+
     pub fn clip_point(&self, point: BlockPoint, bias: Bias) -> BlockPoint {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
         cursor.seek(&BlockRow(point.row), Bias::Right, &());

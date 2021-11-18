@@ -33,11 +33,17 @@ pub fn up(
         map.column_to_chars(point.row(), point.column())
     };
 
-    if point.row() > 0 {
-        *point.row_mut() -= 1;
-        *point.column_mut() = map.column_from_chars(point.row(), goal_column);
-    } else {
-        point = DisplayPoint::new(0, 0);
+    loop {
+        if point.row() > 0 {
+            *point.row_mut() -= 1;
+            *point.column_mut() = map.column_from_chars(point.row(), goal_column);
+            if !map.is_block_line(point.row()) {
+                break;
+            }
+        } else {
+            point = DisplayPoint::new(0, 0);
+            break;
+        }
     }
 
     let clip_bias = if point.column() == map.line_len(point.row()) {
@@ -64,11 +70,17 @@ pub fn down(
         map.column_to_chars(point.row(), point.column())
     };
 
-    if point.row() < max_point.row() {
-        *point.row_mut() += 1;
-        *point.column_mut() = map.column_from_chars(point.row(), goal_column);
-    } else {
-        point = max_point;
+    loop {
+        if point.row() < max_point.row() {
+            *point.row_mut() += 1;
+            *point.column_mut() = map.column_from_chars(point.row(), goal_column);
+            if !map.is_block_line(point.row()) {
+                break;
+            }
+        } else {
+            point = max_point;
+            break;
+        }
     }
 
     let clip_bias = if point.column() == map.line_len(point.row()) {
