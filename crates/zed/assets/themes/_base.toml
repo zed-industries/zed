@@ -173,7 +173,7 @@ corner_radius = 6
 
 [project_panel]
 extends = "$panel"
-padding.top = 6    # ($workspace.tab.height - $project_panel.entry.height) / 2
+padding.top = 6 # ($workspace.tab.height - $project_panel.entry.height) / 2
 
 [project_panel.entry]
 text = "$text.1"
@@ -235,7 +235,7 @@ line_number = "$text.2.color"
 line_number_active = "$text.0.color"
 selection = "$selection.host"
 guest_selections = "$selection.guests"
-error_underline = "$status.bad"
-warning_underline = "$status.warn"
-info_underline = "$status.info"
-hint_underline = "$status.info"
+error_color = "$status.bad"
+warning_color = "$status.warn"
+info_color = "$status.info"
+hint_color = "$status.info"

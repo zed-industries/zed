@@ -12,6 +12,7 @@ use display_map::*;
 pub use element::*;
 use gpui::{
     action,
+    color::Color,
     geometry::vector::{vec2f, Vector2F},
     keymap::Binding,
     text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
@@ -2250,21 +2251,30 @@ impl Editor {
                     let buffer = self.buffer.read(cx);
                     let diagnostic_group = buffer
                         .diagnostic_group::<Point>(group_id)
-                        .map(|(range, diagnostic)| (range, diagnostic.message.clone()))
+                        .map(|(range, diagnostic)| (range, diagnostic.clone()))
                         .collect::<Vec<_>>();
                     let primary_range = buffer.anchor_after(primary_range.start)
                         ..buffer.anchor_before(primary_range.end);
 
                     let block_ids = display_map
                         .insert_blocks(
-                            diagnostic_group
-                                .iter()
-                                .map(|(range, message)| BlockProperties {
+                            diagnostic_group.iter().map(|(range, diagnostic)| {
+                                let build_settings = self.build_settings.clone();
+                                let message_len = diagnostic.message.len();
+                                let severity = diagnostic.severity;
+                                BlockProperties {
                                     position: range.start,
-                                    text: message.as_str(),
-                                    runs: vec![],
-                                    disposition: BlockDisposition::Above,
-                                }),
+                                    text: diagnostic.message.as_str(),
+                                    build_runs: Some(Arc::new(move |cx| {
+                                        let settings = build_settings.borrow()(cx);
+                                        vec![(
+                                            message_len,
+                                            diagnostic_color(severity, &settings.style).into(),
+                                        )]
+                                    })),
+                                    disposition: BlockDisposition::Below,
+                                }
+                            }),
                             cx,
                         )
                         .into_iter()
@@ -2813,8 +2823,9 @@ impl Snapshot {
         &'a self,
         display_rows: Range<u32>,
         theme: Option<&'a SyntaxTheme>,
+        cx: &'a AppContext,
     ) -> display_map::Chunks<'a> {
-        self.display_snapshot.chunks(display_rows, theme)
+        self.display_snapshot.chunks(display_rows, theme, cx)
     }
 
     pub fn scroll_position(&self) -> Vector2F {
@@ -2882,10 +2893,10 @@ impl EditorSettings {
                     selection: Default::default(),
                     guest_selections: Default::default(),
                     syntax: Default::default(),
-                    error_underline: Default::default(),
-                    warning_underline: Default::default(),
-                    information_underline: Default::default(),
-                    hint_underline: Default::default(),
+                    error_color: Default::default(),
+                    warning_color: Default::default(),
+                    information_color: Default::default(),
+                    hint_color: Default::default(),
                 }
             },
         }
@@ -3006,6 +3017,16 @@ impl SelectionExt for Selection<Point> {
             buffer_rows: buffer_start.row..buffer_end.row + 1,
             display_rows: display_start.row()..display_end.row() + 1,
         }
+    }
+}
+
+pub fn diagnostic_color(severity: DiagnosticSeverity, style: &EditorStyle) -> Color {
+    match severity {
+        DiagnosticSeverity::ERROR => style.error_color,
+        DiagnosticSeverity::WARNING => style.warning_color,
+        DiagnosticSeverity::INFORMATION => style.information_color,
+        DiagnosticSeverity::HINT => style.hint_color,
+        _ => style.text.color,
     }
 }
 

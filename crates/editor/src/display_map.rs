@@ -8,7 +8,7 @@ pub use block_map::{BlockDisposition, BlockId, BlockProperties, BufferRows, Chun
 use block_map::{BlockMap, BlockPoint};
 use buffer::Rope;
 use fold_map::{FoldMap, ToFoldPoint as _};
-use gpui::{fonts::FontId, Entity, ModelContext, ModelHandle};
+use gpui::{fonts::FontId, AppContext, Entity, ModelContext, ModelHandle};
 use language::{Anchor, Buffer, Point, ToOffset, ToPoint};
 use std::{collections::HashSet, ops::Range};
 use sum_tree::Bias;
@@ -230,7 +230,7 @@ impl DisplayMapSnapshot {
 
     pub fn text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
         self.blocks_snapshot
-            .chunks(display_row..self.max_point().row() + 1, None)
+            .chunks(display_row..self.max_point().row() + 1, None, None)
             .map(|h| h.text)
     }
 
@@ -238,8 +238,9 @@ impl DisplayMapSnapshot {
         &'a self,
         display_rows: Range<u32>,
         theme: Option<&'a SyntaxTheme>,
+        cx: &'a AppContext,
     ) -> block_map::Chunks<'a> {
-        self.blocks_snapshot.chunks(display_rows, theme)
+        self.blocks_snapshot.chunks(display_rows, theme, Some(cx))
     }
 
     pub fn chars_at<'a>(&'a self, point: DisplayPoint) -> impl Iterator<Item = char> + 'a {
@@ -1025,7 +1026,7 @@ mod tests {
     ) -> Vec<(String, Option<Color>)> {
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<Color>)> = Vec::new();
-        for chunk in snapshot.chunks(rows, Some(theme)) {
+        for chunk in snapshot.chunks(rows, Some(theme), cx) {
             let color = chunk.highlight_style.map(|s| s.color);
             if let Some((last_chunk, last_color)) = chunks.last_mut() {
                 if color == *last_color {

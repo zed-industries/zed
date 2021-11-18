@@ -6,13 +6,14 @@ use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
     collections::HashSet,
+    fmt::Debug,
     iter,
     ops::Range,
-    slice,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
+    vec,
 };
 use sum_tree::SumTree;
 use theme::SyntaxTheme;
@@ -44,12 +45,11 @@ struct BlockRow(u32);
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 struct WrapRow(u32);
 
-#[derive(Debug)]
 struct Block {
     id: BlockId,
     position: Anchor,
     text: Rope,
-    runs: Vec<(usize, HighlightStyle)>,
+    build_runs: Option<Arc<dyn Fn(&AppContext) -> Vec<(usize, HighlightStyle)>>>,
     disposition: BlockDisposition,
 }
 
@@ -61,7 +61,7 @@ where
 {
     pub position: P,
     pub text: T,
-    pub runs: Vec<(usize, HighlightStyle)>,
+    pub build_runs: Option<Arc<dyn Fn(&AppContext) -> Vec<(usize, HighlightStyle)>>>,
     pub disposition: BlockDisposition,
 }
 
@@ -92,11 +92,12 @@ pub struct Chunks<'a> {
     block_chunks: Option<BlockChunks<'a>>,
     output_row: u32,
     max_output_row: u32,
+    cx: Option<&'a AppContext>,
 }
 
 struct BlockChunks<'a> {
     chunks: rope::Chunks<'a>,
-    runs: iter::Peekable<slice::Iter<'a, (usize, HighlightStyle)>>,
+    runs: iter::Peekable<vec::IntoIter<(usize, HighlightStyle)>>,
     chunk: Option<&'a str>,
     run_start: usize,
     offset: usize,
@@ -403,7 +404,7 @@ impl<'a> BlockMapWriter<'a> {
                     id,
                     position,
                     text: block.text.into(),
-                    runs: block.runs,
+                    build_runs: block.build_runs,
                     disposition: block.disposition,
                 }),
             );
@@ -460,12 +461,17 @@ impl<'a> BlockMapWriter<'a> {
 impl BlockSnapshot {
     #[cfg(test)]
     fn text(&mut self) -> String {
-        self.chunks(0..self.transforms.summary().output_rows, None)
+        self.chunks(0..self.transforms.summary().output_rows, None, None)
             .map(|chunk| chunk.text)
             .collect()
     }
 
-    pub fn chunks<'a>(&'a self, rows: Range<u32>, theme: Option<&'a SyntaxTheme>) -> Chunks<'a> {
+    pub fn chunks<'a>(
+        &'a self,
+        rows: Range<u32>,
+        theme: Option<&'a SyntaxTheme>,
+        cx: Option<&'a AppContext>,
+    ) -> Chunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
         let input_end = {
@@ -499,6 +505,7 @@ impl BlockSnapshot {
             transforms: cursor,
             output_row: rows.start,
             max_output_row,
+            cx,
         }
     }
 
@@ -709,7 +716,11 @@ impl<'a> Iterator for Chunks<'a> {
             let start_in_block = self.output_row - block_start;
             let end_in_block = cmp::min(self.max_output_row, block_end) - block_start;
             self.transforms.next(&());
-            self.block_chunks = Some(BlockChunks::new(block, start_in_block..end_in_block));
+            self.block_chunks = Some(BlockChunks::new(
+                block,
+                start_in_block..end_in_block,
+                self.cx,
+            ));
             return self.next();
         }
 
@@ -748,11 +759,18 @@ impl<'a> Iterator for Chunks<'a> {
 }
 
 impl<'a> BlockChunks<'a> {
-    fn new(block: &'a Block, rows: Range<u32>) -> Self {
+    fn new(block: &'a Block, rows: Range<u32>, cx: Option<&'a AppContext>) -> Self {
         let offset_range = block.text.point_to_offset(Point::new(rows.start, 0))
             ..block.text.point_to_offset(Point::new(rows.end, 0));
 
-        let mut runs = block.runs.iter().peekable();
+        let mut runs = block
+            .build_runs
+            .as_ref()
+            .zip(cx)
+            .map(|(build_runs, cx)| build_runs(cx))
+            .unwrap_or_default()
+            .into_iter()
+            .peekable();
         let mut run_start = 0;
         while let Some((run_len, _)) = runs.peek() {
             let run_end = run_start + run_len;
@@ -874,6 +892,17 @@ impl BlockDisposition {
     }
 }
 
+impl Debug for Block {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Block")
+            .field("id", &self.id)
+            .field("position", &self.position)
+            .field("text", &self.text)
+            .field("disposition", &self.disposition)
+            .finish()
+    }
+}
+
 // Count the number of bytes prior to a target point. If the string doesn't contain the target
 // point, return its total extent. Otherwise return the target point itself.
 fn offset_for_row(s: &str, target: u32) -> (u32, usize) {
@@ -938,19 +967,19 @@ mod tests {
                     position: Point::new(1, 0),
                     text: "BLOCK 1",
                     disposition: BlockDisposition::Above,
-                    runs: vec![],
+                    build_runs: None,
                 },
                 BlockProperties {
                     position: Point::new(1, 2),
                     text: "BLOCK 2",
                     disposition: BlockDisposition::Above,
-                    runs: vec![],
+                    build_runs: None,
                 },
                 BlockProperties {
                     position: Point::new(3, 2),
                     text: "BLOCK 3",
                     disposition: BlockDisposition::Below,
-                    runs: vec![],
+                    build_runs: None,
                 },
             ],
             cx,
@@ -1078,13 +1107,13 @@ mod tests {
                     position: Point::new(1, 12),
                     text: "<BLOCK 1",
                     disposition: BlockDisposition::Above,
-                    runs: vec![],
+                    build_runs: None,
                 },
                 BlockProperties {
                     position: Point::new(1, 1),
                     text: ">BLOCK 2",
                     disposition: BlockDisposition::Below,
-                    runs: vec![],
+                    build_runs: None,
                 },
             ],
             cx,
@@ -1177,7 +1206,7 @@ mod tests {
                             BlockProperties {
                                 position,
                                 text,
-                                runs: Vec::<(usize, HighlightStyle)>::new(),
+                                build_runs: None,
                                 disposition,
                             }
                         })
@@ -1252,7 +1281,7 @@ mod tests {
                         BlockProperties {
                             position: row,
                             text: block.text,
-                            runs: block.runs,
+                            build_runs: block.build_runs.clone(),
                             disposition: block.disposition,
                         },
                     )
@@ -1313,7 +1342,7 @@ mod tests {
             for start_row in 0..expected_row_count {
                 let expected_text = expected_lines[start_row..].join("\n");
                 let actual_text = blocks_snapshot
-                    .chunks(start_row as u32..expected_row_count as u32, None)
+                    .chunks(start_row as u32..expected_row_count as u32, None, None)
                     .map(|chunk| chunk.text)
                     .collect::<String>();
                 assert_eq!(

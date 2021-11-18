@@ -227,12 +227,12 @@ pub struct EditorStyle {
     pub line_number_active: Color,
     pub guest_selections: Vec<SelectionStyle>,
     pub syntax: Arc<SyntaxTheme>,
-    pub error_underline: Color,
-    pub warning_underline: Color,
+    pub error_color: Color,
+    pub warning_color: Color,
     #[serde(default)]
-    pub information_underline: Color,
+    pub information_color: Color,
     #[serde(default)]
-    pub hint_underline: Color,
+    pub hint_color: Color,
 }
 
 #[derive(Clone, Copy, Default, Deserialize)]
@@ -273,10 +273,10 @@ impl InputEditorStyle {
             line_number_active: Default::default(),
             guest_selections: Default::default(),
             syntax: Default::default(),
-            error_underline: Default::default(),
-            warning_underline: Default::default(),
-            information_underline: Default::default(),
-            hint_underline: Default::default(),
+            error_color: Default::default(),
+            warning_color: Default::default(),
+            information_color: Default::default(),
+            hint_color: Default::default(),
         }
     }
 }

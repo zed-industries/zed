@@ -17,7 +17,7 @@ use gpui::{
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
-use language::{Chunk, DiagnosticSeverity};
+use language::Chunk;
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
@@ -493,7 +493,7 @@ impl EditorElement {
         let mut styles = Vec::new();
         let mut row = rows.start;
         let mut line_exceeded_max_len = false;
-        let chunks = snapshot.chunks(rows.clone(), Some(&style.syntax));
+        let chunks = snapshot.chunks(rows.clone(), Some(&style.syntax), cx);
 
         let newline_chunk = Chunk {
             text: "\n",
@@ -541,13 +541,7 @@ impl EditorElement {
                     }
 
                     let underline = if let Some(severity) = chunk.diagnostic {
-                        match severity {
-                            DiagnosticSeverity::ERROR => Some(style.error_underline),
-                            DiagnosticSeverity::WARNING => Some(style.warning_underline),
-                            DiagnosticSeverity::INFORMATION => Some(style.information_underline),
-                            DiagnosticSeverity::HINT => Some(style.hint_underline),
-                            _ => highlight_style.underline,
-                        }
+                        Some(super::diagnostic_color(severity, style))
                     } else {
                         highlight_style.underline
                     };
