@@ -299,11 +299,20 @@ impl Snapshot {
     }
 
     fn interpolate(&mut self, new_tab_snapshot: TabSnapshot, tab_edits: &[TabEdit]) -> Patch {
+        log::info!("INTERPOLATING");
+
+        log::info!("updating transforms... old transforms are:");
+        for transform in self.transforms.items(&()) {
+            log::info!("  - i {:?}", transform.summary.input);
+            log::info!("    o {:?}", transform.summary.output);
+        }
+
         let mut new_transforms;
         if tab_edits.is_empty() {
             new_transforms = self.transforms.clone();
         } else {
             let mut old_cursor = self.transforms.cursor::<TabPoint>();
+
             let mut tab_edits_iter = tab_edits.iter().peekable();
             new_transforms = old_cursor.slice(
                 &tab_edits_iter.peek().unwrap().old_lines.start,
@@ -311,18 +320,38 @@ impl Snapshot {
                 &(),
             );
 
+            log::info!("sliced, new_transforms are:");
+            for transform in new_transforms.items(&()) {
+                log::info!("  - i {:?}", transform.summary.input);
+                log::info!("    o {:?}", transform.summary.output);
+            }
+
             while let Some(edit) = tab_edits_iter.next() {
+                log::info!("processing edit {:?}", edit);
+
                 if edit.new_lines.start > TabPoint::from(new_transforms.summary().input.lines) {
                     let summary = new_tab_snapshot.text_summary_for_range(
                         TabPoint::from(new_transforms.summary().input.lines)..edit.new_lines.start,
                     );
+                    log::info!("pushing prefix before edit: {:?}", summary);
                     new_transforms.push_or_extend(Transform::isomorphic(summary));
+                    log::info!("new transforms are now:");
+                    for transform in new_transforms.items(&()) {
+                        log::info!("  - i {:?}", transform.summary.input);
+                        log::info!("    o {:?}", transform.summary.output);
+                    }
                 }
 
                 if !edit.new_lines.is_empty() {
                     new_transforms.push_or_extend(Transform::isomorphic(
                         new_tab_snapshot.text_summary_for_range(edit.new_lines.clone()),
                     ));
+                }
+
+                log::info!("pushed summary within edit new range; new transforms now:");
+                for transform in new_transforms.items(&()) {
+                    log::info!("  - i {:?}", transform.summary.input);
+                    log::info!("    o {:?}", transform.summary.output);
                 }
 
                 old_cursor.seek_forward(&edit.old_lines.end, Bias::Right, &());
@@ -334,21 +363,46 @@ impl Snapshot {
                                 .text_summary_for_range(edit.old_lines.end..old_cursor.end(&()));
                             new_transforms.push_or_extend(Transform::isomorphic(summary));
                         }
+
+                        log::info!("pushed transform suffix after edit; new transforms now:");
+                        for transform in new_transforms.items(&()) {
+                            log::info!("  - i {:?}", transform.summary.input);
+                            log::info!("    o {:?}", transform.summary.output);
+                        }
+
                         old_cursor.next(&());
                         new_transforms.push_tree(
                             old_cursor.slice(&next_edit.old_lines.start, Bias::Right, &()),
                             &(),
                         );
+
+                        log::info!("pushed tree suffix after edit; new transforms now:");
+                        for transform in new_transforms.items(&()) {
+                            log::info!("  - i {:?}", transform.summary.input);
+                            log::info!("    o {:?}", transform.summary.output);
+                        }
                     }
                 } else {
+                    log::info!("no more edits");
                     if old_cursor.end(&()) > edit.old_lines.end {
                         let summary = self
                             .tab_snapshot
                             .text_summary_for_range(edit.old_lines.end..old_cursor.end(&()));
                         new_transforms.push_or_extend(Transform::isomorphic(summary));
+
+                        log::info!("pushed transform suffix after edit; new transforms now:");
+                        for transform in new_transforms.items(&()) {
+                            log::info!("  - i {:?}", transform.summary.input);
+                            log::info!("    o {:?}", transform.summary.output);
+                        }
                     }
                     old_cursor.next(&());
                     new_transforms.push_tree(old_cursor.suffix(&()), &());
+                    log::info!("pushed suffix:");
+                    for transform in new_transforms.items(&()) {
+                        log::info!("  - i {:?}", transform.summary.input);
+                        log::info!("    o {:?}", transform.summary.output);
+                    }
                 }
             }
         }
@@ -378,6 +432,12 @@ impl Snapshot {
             new_rows: Range<u32>,
         }
 
+        log::info!("updating transforms... old transforms are:");
+        for transform in self.transforms.items(&()) {
+            log::info!("  - i {:?}", transform.summary.input);
+            log::info!("    o {:?}", transform.summary.output);
+        }
+
         let mut tab_edits_iter = tab_edits.into_iter().peekable();
         let mut row_edits = Vec::new();
         while let Some(edit) = tab_edits_iter.next() {
@@ -399,6 +459,11 @@ impl Snapshot {
             row_edits.push(row_edit);
         }
 
+        log::info!("row edits are:");
+        for edit in &row_edits {
+            log::info!("  {:?}", edit);
+        }
+
         let mut new_transforms;
         if row_edits.is_empty() {
             new_transforms = self.transforms.clone();
@@ -411,6 +476,12 @@ impl Snapshot {
                 Bias::Right,
                 &(),
             );
+
+            log::info!("sliced a prefix:");
+            for transform in new_transforms.items(&()) {
+                log::info!("  - i {:?}", transform.summary.input);
+                log::info!("    o {:?}", transform.summary.output);
+            }
 
             while let Some(edit) = row_edits.next() {
                 if edit.new_rows.start > new_transforms.summary().input.lines.row {
@@ -465,9 +536,15 @@ impl Snapshot {
                 }
 
                 let mut edit_transforms = edit_transforms.into_iter();
+                log::info!("extending tree with edit transforms");
                 if let Some(transform) = edit_transforms.next() {
+                    log::info!(
+                        "push or extend with first transform: {:?}",
+                        transform.summary.output
+                    );
                     new_transforms.push_or_extend(transform);
                 }
+                log::info!("extending with remaining transforms");
                 new_transforms.extend(edit_transforms, &());
 
                 old_cursor.seek_forward(&TabPoint::new(edit.old_rows.end, 0), Bias::Right, &());
@@ -859,10 +936,17 @@ impl sum_tree::Item for Transform {
 }
 
 fn push_isomorphic(transforms: &mut Vec<Transform>, summary: TextSummary) {
+    log::info!("push_isomorphic: {:?}", summary);
     if let Some(last_transform) = transforms.last_mut() {
         if last_transform.is_isomorphic() {
             last_transform.summary.input += &summary;
             last_transform.summary.output += &summary;
+
+            log::info!(
+                "  extended previous isomorphic: {:?}",
+                last_transform.summary.output
+            );
+
             return;
         }
     }
@@ -879,15 +963,28 @@ impl SumTreeExt for SumTree<Transform> {
         self.update_last(
             |last_transform| {
                 if last_transform.is_isomorphic() && transform.as_ref().unwrap().is_isomorphic() {
+                    // log::info!("extending last transform in tree");
+                    // log::info!(
+                    //     "  extending with: {:?}",
+                    //     transform.as_ref().map(|t| t.summary.output.clone()),
+                    // );
+                    // log::info!("  last transform was: {:?}", last_transform.summary.output);
+
                     let transform = transform.take().unwrap();
                     last_transform.summary.input += &transform.summary.input;
                     last_transform.summary.output += &transform.summary.output;
+
+                    // log::info!(
+                    //     "  last transform is now {:?}",
+                    //     last_transform.summary.output,
+                    // )
                 }
             },
             &(),
         );
 
         if let Some(transform) = transform {
+            log::info!("!!!!!!!!!!! push transform: {:?}", transform.summary.output,);
             self.push(transform, &());
         }
     }
@@ -1011,13 +1108,18 @@ mod tests {
         let unwrapped_text = tabs_snapshot.text();
         let expected_text = wrap_text(&unwrapped_text, wrap_width, &mut line_wrapper);
 
-        let (wrap_map, initial_snapshot) =
+        let (wrap_map, _) =
             cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font_id, font_size, wrap_width, cx));
         let (_observer, notifications) = Observer::new(&wrap_map, &mut cx);
 
         if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
             notifications.recv().await.unwrap();
         }
+
+        let (initial_snapshot, _) = wrap_map.update(&mut cx, |map, cx| {
+            assert!(!map.is_rewrapping());
+            map.sync(tabs_snapshot.clone(), Vec::new(), cx)
+        });
 
         let actual_text = initial_snapshot.text();
         assert_eq!(
@@ -1029,6 +1131,8 @@ mod tests {
 
         let mut edits = Vec::new();
         for _i in 0..operations {
+            log::info!("{} ==============================================", _i);
+
             match rng.gen_range(0..=100) {
                 0..=19 => {
                     wrap_width = if rng.gen_bool(0.2) {
@@ -1088,15 +1192,48 @@ mod tests {
                 let (mut wrapped_snapshot, wrap_edits) =
                     wrap_map.update(&mut cx, |map, cx| map.sync(tabs_snapshot, Vec::new(), cx));
                 let actual_text = wrapped_snapshot.text();
+                let actual_longest_row = wrapped_snapshot.longest_row();
                 log::info!("Wrapping finished: {:?}", actual_text);
                 wrapped_snapshot.check_invariants();
                 wrapped_snapshot.verify_chunks(&mut rng);
-                edits.push((wrapped_snapshot, wrap_edits));
+                edits.push((wrapped_snapshot.clone(), wrap_edits));
                 assert_eq!(
                     actual_text, expected_text,
                     "unwrapped text is: {:?}",
                     unwrapped_text
                 );
+
+                let mut summary = TextSummary::default();
+                for (ix, item) in wrapped_snapshot
+                    .transforms
+                    .items(&())
+                    .into_iter()
+                    .enumerate()
+                {
+                    summary += &item.summary.output;
+                    log::info!("{} summary: {:?}", ix, item.summary.output,);
+                }
+
+                let mut expected_longest_rows = Vec::new();
+                let mut longest_line_len = -1;
+                for (row, line) in expected_text.split('\n').enumerate() {
+                    let line_char_count = line.chars().count() as isize;
+                    if line_char_count > longest_line_len {
+                        expected_longest_rows.clear();
+                        longest_line_len = line_char_count;
+                    }
+                    if line_char_count >= longest_line_len {
+                        expected_longest_rows.push(row as u32);
+                    }
+                }
+
+                assert!(
+                    expected_longest_rows.contains(&actual_longest_row),
+                    "incorrect longest row {}. expected {:?} with length {}",
+                    actual_longest_row,
+                    expected_longest_rows,
+                    longest_line_len,
+                )
             }
         }
 

@@ -767,7 +767,7 @@ mod tests {
     use super::*;
     use crate::random_char_iter::RandomCharIter;
     use rand::prelude::*;
-    use std::env;
+    use std::{cmp::Ordering, env};
     use Bias::{Left, Right};
 
     #[test]
@@ -814,7 +814,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random(mut rng: StdRng) {
+    fn test_random_rope(mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
@@ -898,6 +898,38 @@ mod tests {
                     TextSummary::from(&expected[start_ix..end_ix])
                 );
             }
+
+            let mut expected_longest_rows = Vec::new();
+            let mut longest_line_len = -1_isize;
+            for (row, line) in expected.split('\n').enumerate() {
+                let row = row as u32;
+                assert_eq!(
+                    actual.line_len(row),
+                    line.len() as u32,
+                    "invalid line len for row {}",
+                    row
+                );
+
+                let line_char_count = line.chars().count() as isize;
+                match line_char_count.cmp(&longest_line_len) {
+                    Ordering::Less => {}
+                    Ordering::Equal => expected_longest_rows.push(row),
+                    Ordering::Greater => {
+                        longest_line_len = line_char_count;
+                        expected_longest_rows.clear();
+                        expected_longest_rows.push(row);
+                    }
+                }
+            }
+
+            let longest_row = actual.summary().longest_row;
+            assert!(
+                expected_longest_rows.contains(&longest_row),
+                "incorrect longest row {}. expected {:?} with length {}",
+                longest_row,
+                expected_longest_rows,
+                longest_line_len,
+            );
         }
     }
 

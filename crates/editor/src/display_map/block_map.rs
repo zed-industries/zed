@@ -1330,23 +1330,26 @@ mod tests {
                     row
                 );
 
-                match (line.len() as isize).cmp(&longest_line_len) {
+                let line_char_count = line.chars().count() as isize;
+                match line_char_count.cmp(&longest_line_len) {
                     Ordering::Less => {}
                     Ordering::Equal => expected_longest_rows.push(row),
                     Ordering::Greater => {
-                        longest_line_len = line.len() as isize;
+                        longest_line_len = line_char_count;
                         expected_longest_rows.clear();
                         expected_longest_rows.push(row);
                     }
                 }
             }
 
+            log::info!("getting longest row >>>>>>>>>>>>>>>>>>>>>>>>");
             let longest_row = blocks_snapshot.longest_row();
             assert!(
                 expected_longest_rows.contains(&longest_row),
-                "incorrect longest row {}. expected {:?}",
+                "incorrect longest row {}. expected {:?} with length {}",
                 longest_row,
                 expected_longest_rows,
+                longest_line_len,
             );
 
             for row in 0..=blocks_snapshot.wrap_snapshot.max_point().row() {

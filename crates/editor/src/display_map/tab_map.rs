@@ -110,34 +110,31 @@ impl Snapshot {
             .text_summary_for_range(input_start..input_end);
 
         let mut first_line_chars = 0;
-        let mut first_line_bytes = 0;
+        let line_end = if range.start.row() == range.end.row() {
+            range.end
+        } else {
+            self.max_point()
+        };
         for c in self
-            .chunks(range.start..self.max_point(), false)
+            .chunks(range.start..line_end, false)
             .flat_map(|chunk| chunk.text.chars())
         {
-            if c == '\n'
-                || (range.start.row() == range.end.row() && first_line_bytes == range.end.column())
-            {
+            if c == '\n' {
                 break;
             }
             first_line_chars += 1;
-            first_line_bytes += c.len_utf8() as u32;
         }
 
         let mut last_line_chars = 0;
-        let mut last_line_bytes = 0;
-        for c in self
-            .chunks(
-                TabPoint::new(range.end.row(), 0).max(range.start)..self.max_point(),
-                false,
-            )
-            .flat_map(|chunk| chunk.text.chars())
-        {
-            if last_line_bytes == range.end.column() {
-                break;
+        if range.start.row() == range.end.row() {
+            last_line_chars = first_line_chars;
+        } else {
+            for _ in self
+                .chunks(TabPoint::new(range.end.row(), 0)..self.max_point(), false)
+                .flat_map(|chunk| chunk.text.chars())
+            {
+                last_line_chars += 1;
             }
-            last_line_chars += 1;
-            last_line_bytes += c.len_utf8() as u32;
         }
 
         TextSummary {
@@ -427,6 +424,12 @@ impl<'a> Iterator for Chunks<'a> {
 
 #[cfg(test)]
 mod tests {
+    use buffer::RandomCharIter;
+    use language::Buffer;
+    use rand::{prelude::StdRng, Rng};
+
+    use crate::display_map::fold_map::FoldMap;
+
     use super::*;
 
     #[test]
@@ -434,5 +437,20 @@ mod tests {
         assert_eq!(Snapshot::expand_tabs("\t".chars(), 0, 4), 0);
         assert_eq!(Snapshot::expand_tabs("\t".chars(), 1, 4), 4);
         assert_eq!(Snapshot::expand_tabs("\ta".chars(), 2, 4), 5);
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_text_summary_for_range(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
+        let tab_size = rng.gen_range(1..=4);
+        let buffer = cx.add_model(|cx| {
+            let len = rng.gen_range(0..30);
+            let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+            Buffer::new(0, text, cx)
+        });
+        let (_, folds_snapshot) = FoldMap::new(buffer.clone(), cx);
+        let (_, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
+
+        println!("{:?}", tabs_snapshot.text());
+        // TODO: Test text_summary_for_range with random ranges
     }
 }
