@@ -346,7 +346,7 @@ impl DisplayMapSnapshot {
     }
 
     pub fn longest_row(&self) -> u32 {
-        self.wraps_snapshot.longest_row()
+        self.blocks_snapshot.longest_row()
     }
 }
 
