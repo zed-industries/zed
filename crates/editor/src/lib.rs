@@ -707,16 +707,8 @@ impl Editor {
                 self.update_selections(vec![pending_selection], true, cx);
             }
         } else {
-            let selections = self.selections::<Point>(cx);
-            let mut selection_count = 0;
-            let mut oldest_selection = selections
-                .min_by_key(|s| {
-                    selection_count += 1;
-                    s.id
-                })
-                .unwrap()
-                .clone();
-            if selection_count == 1 {
+            let mut oldest_selection = self.oldest_selection::<usize>(cx);
+            if self.selection_count(cx) == 1 {
                 oldest_selection.start = oldest_selection.head().clone();
                 oldest_selection.end = oldest_selection.head().clone();
             }
@@ -2294,9 +2286,8 @@ impl Editor {
     ) -> impl 'a + Iterator<Item = Range<DisplayPoint>> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
-        let selections = buffer
-            .selection_set(set_id)
-            .unwrap()
+        let selections = self
+            .selection_set(cx)
             .selections::<Point, _>(buffer)
             .collect::<Vec<_>>();
         let start = range.start.to_point(&display_map);
@@ -2343,18 +2334,8 @@ impl Editor {
         D: 'a + TextDimension<'a> + Ord,
     {
         let buffer = self.buffer.read(cx);
-        let mut selections = buffer
-            .selection_set(self.selection_set_id)
-            .unwrap()
-            .selections::<D, _>(buffer)
-            .peekable();
-        let mut pending_selection = self.pending_selection.clone().map(|selection| Selection {
-            id: selection.id,
-            start: selection.start.summary::<D, _>(buffer),
-            end: selection.end.summary::<D, _>(buffer),
-            reversed: selection.reversed,
-            goal: selection.goal,
-        });
+        let mut selections = self.selection_set(cx).selections::<D, _>(buffer).peekable();
+        let mut pending_selection = self.pending_selection(cx);
         iter::from_fn(move || {
             if let Some(pending) = pending_selection.as_mut() {
                 while let Some(next_selection) = selections.peek() {
@@ -2378,6 +2359,56 @@ impl Editor {
                 selections.next()
             }
         })
+    }
+
+    fn pending_selection<'a, D>(&self, cx: &'a AppContext) -> Option<Selection<D>>
+    where
+        D: 'a + TextDimension<'a>,
+    {
+        let buffer = self.buffer.read(cx);
+        self.pending_selection.as_ref().map(|selection| Selection {
+            id: selection.id,
+            start: selection.start.summary::<D, _>(buffer),
+            end: selection.end.summary::<D, _>(buffer),
+            reversed: selection.reversed,
+            goal: selection.goal,
+        })
+    }
+
+    fn selection_count<'a>(&self, cx: &'a AppContext) -> usize {
+        let mut selection_count = self.selection_set(cx).len();
+        if self.pending_selection.is_some() {
+            selection_count += 1;
+        }
+        selection_count
+    }
+
+    pub fn oldest_selection<'a, T>(&self, cx: &'a AppContext) -> Selection<T>
+    where
+        T: 'a + TextDimension<'a>,
+    {
+        let buffer = self.buffer.read(cx);
+        self.selection_set(cx)
+            .oldest_selection(buffer)
+            .or_else(|| self.pending_selection(cx))
+            .unwrap()
+    }
+
+    pub fn newest_selection<'a, T>(&self, cx: &'a AppContext) -> Selection<T>
+    where
+        T: 'a + TextDimension<'a>,
+    {
+        let buffer = self.buffer.read(cx);
+        self.pending_selection(cx)
+            .or_else(|| self.selection_set(cx).newest_selection(buffer))
+            .unwrap()
+    }
+
+    fn selection_set<'a>(&self, cx: &'a AppContext) -> &'a SelectionSet {
+        self.buffer
+            .read(cx)
+            .selection_set(self.selection_set_id)
+            .unwrap()
     }
 
     fn update_selections<T>(

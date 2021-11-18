@@ -116,4 +116,36 @@ impl SelectionSet {
                 goal: state.goal,
             })
     }
+
+    pub fn oldest_selection<'a, D, C>(&'a self, content: C) -> Option<Selection<D>>
+    where
+        D: 'a + TextDimension<'a>,
+        C: 'a + Into<Content<'a>>,
+    {
+        self.selections
+            .min_by_key(content, |selection| selection.id)
+            .map(|(range, state)| Selection {
+                id: state.id,
+                start: range.start,
+                end: range.end,
+                reversed: state.reversed,
+                goal: state.goal,
+            })
+    }
+
+    pub fn newest_selection<'a, D, C>(&'a self, content: C) -> Option<Selection<D>>
+    where
+        D: 'a + TextDimension<'a>,
+        C: 'a + Into<Content<'a>>,
+    {
+        self.selections
+            .max_by_key(content, |selection| selection.id)
+            .map(|(range, state)| Selection {
+                id: state.id,
+                start: range.start,
+                end: range.end,
+                reversed: state.reversed,
+                goal: state.goal,
+            })
+    }
 }

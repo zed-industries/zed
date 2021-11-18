@@ -194,6 +194,66 @@ impl<T> AnchorRangeMap<T> {
             .iter()
             .map(|(range, value)| (range.start.0..range.end.0, value))
     }
+
+    pub fn min_by_key<'a, C, D, F, K>(
+        &self,
+        content: C,
+        mut extract_key: F,
+    ) -> Option<(Range<D>, &T)>
+    where
+        C: Into<Content<'a>>,
+        D: 'a + TextDimension<'a>,
+        F: FnMut(&T) -> K,
+        K: Ord,
+    {
+        let content = content.into();
+        self.entries
+            .iter()
+            .min_by_key(|(_, value)| extract_key(value))
+            .map(|(range, value)| (self.resolve_range(range, &content), value))
+    }
+
+    pub fn max_by_key<'a, C, D, F, K>(
+        &self,
+        content: C,
+        mut extract_key: F,
+    ) -> Option<(Range<D>, &T)>
+    where
+        C: Into<Content<'a>>,
+        D: 'a + TextDimension<'a>,
+        F: FnMut(&T) -> K,
+        K: Ord,
+    {
+        let content = content.into();
+        self.entries
+            .iter()
+            .max_by_key(|(_, value)| extract_key(value))
+            .map(|(range, value)| (self.resolve_range(range, &content), value))
+    }
+
+    fn resolve_range<'a, D>(
+        &self,
+        range: &Range<(FullOffset, Bias)>,
+        content: &Content<'a>,
+    ) -> Range<D>
+    where
+        D: 'a + TextDimension<'a>,
+    {
+        let (start, start_bias) = range.start;
+        let mut anchor = Anchor {
+            full_offset: start,
+            bias: start_bias,
+            version: self.version.clone(),
+        };
+        let start = content.summary_for_anchor(&anchor);
+
+        let (end, end_bias) = range.end;
+        anchor.full_offset = end;
+        anchor.bias = end_bias;
+        let end = content.summary_for_anchor(&anchor);
+
+        start..end
+    }
 }
 
 impl<T: PartialEq> PartialEq for AnchorRangeMap<T> {

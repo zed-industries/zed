@@ -258,11 +258,7 @@ impl DiagnosticMessage {
 
     fn update(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
         let editor = editor.read(cx);
-        let cursor_position = editor
-            .selections::<usize>(cx)
-            .max_by_key(|selection| selection.id)
-            .unwrap()
-            .head();
+        let cursor_position = editor.newest_selection(cx).head();
         let new_diagnostic = editor
             .buffer()
             .read(cx)
