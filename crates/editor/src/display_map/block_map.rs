@@ -522,7 +522,7 @@ impl BlockSnapshot {
     pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
         cursor.seek(&BlockRow(start_row), Bias::Right, &());
-        let (input_start, output_start) = cursor.start();
+        let (output_start, input_start) = cursor.start();
         let overshoot = if cursor.item().map_or(false, |t| t.is_isomorphic()) {
             start_row - output_start.0
         } else {
@@ -1478,6 +1478,12 @@ mod tests {
                     "incorrect text starting from row {}",
                     start_row
                 );
+                assert_eq!(
+                    blocks_snapshot
+                        .buffer_rows(start_row as u32)
+                        .collect::<Vec<_>>(),
+                    &expected_buffer_rows[start_row..]
+                );
             }
 
             let mut expected_longest_rows = Vec::new();
@@ -1519,10 +1525,6 @@ mod tests {
                 let block_point = blocks_snapshot.to_block_point(wrap_point);
                 assert_eq!(blocks_snapshot.to_wrap_point(block_point), wrap_point);
             }
-            assert_eq!(
-                blocks_snapshot.buffer_rows(0).collect::<Vec<_>>(),
-                expected_buffer_rows
-            );
 
             let mut block_point = BlockPoint::new(0, 0);
             for c in expected_text.chars() {
