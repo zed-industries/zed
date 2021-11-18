@@ -467,14 +467,22 @@ mod tests {
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
             Buffer::new(0, text, cx)
         });
-        let (_, folds_snapshot) = FoldMap::new(buffer.clone(), cx);
+        log::info!("Buffer text: {:?}", buffer.read(cx).text());
+
+        let (mut fold_map, _) = FoldMap::new(buffer.clone(), cx);
+        fold_map.randomly_mutate(&mut rng, cx);
+        let (folds_snapshot, _) = fold_map.read(cx);
+        log::info!("FoldMap text: {:?}", folds_snapshot.text());
+
         let (_, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
         let text = Rope::from(tabs_snapshot.text().as_str());
-        log::info!("Tab size: {}", tab_size);
-        log::info!("Buffer text: {:?}", buffer.read(cx).text());
-        log::info!("FoldMap text: {:?}", folds_snapshot.text());
-        log::info!("TabMap text: {:?}", tabs_snapshot.text());
-        for _ in 0..1 {
+        log::info!(
+            "TabMap text (tab size: {}): {:?}",
+            tab_size,
+            tabs_snapshot.text(),
+        );
+
+        for _ in 0..5 {
             let end_row = rng.gen_range(0..=text.max_point().row);
             let end_column = rng.gen_range(0..=text.line_len(end_row));
             let mut end = TabPoint(text.clip_point(Point::new(end_row, end_column), Bias::Right));
@@ -490,7 +498,7 @@ mod tests {
                 .chunks_in_range(text.point_to_offset(start.0)..text.point_to_offset(end.0))
                 .collect::<String>();
             let expected_summary = TextSummary::from(expected_text.as_str());
-            log::info!("Slicing {:?}..{:?} (text: {:?})", start, end, text);
+            log::info!("slicing {:?}..{:?} (text: {:?})", start, end, text);
             assert_eq!(
                 expected_text,
                 tabs_snapshot
