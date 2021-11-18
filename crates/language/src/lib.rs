@@ -86,6 +86,7 @@ pub struct Diagnostic {
     pub severity: DiagnosticSeverity,
     pub message: String,
     pub group_id: usize,
+    pub is_primary: bool,
 }
 
 struct LanguageServerState {
@@ -717,68 +718,82 @@ impl Buffer {
                 .peekable();
             let mut last_edit_old_end = PointUtf16::zero();
             let mut last_edit_new_end = PointUtf16::zero();
-            let mut groups = HashMap::new();
+            let mut group_ids_by_diagnostic_range = HashMap::new();
+            let mut diagnostics_by_group_id = HashMap::new();
             let mut next_group_id = 0;
-
-            content.anchor_range_multimap(
-                Bias::Left,
-                Bias::Right,
-                diagnostics.iter().filter_map(|diagnostic| {
-                    let mut start = diagnostic.range.start.to_point_utf16();
-                    let mut end = diagnostic.range.end.to_point_utf16();
-                    let source = diagnostic.source.as_ref();
-                    let code = diagnostic.code.as_ref();
-                    let group_id = diagnostic_ranges(&diagnostic, abs_path.as_deref())
-                        .find_map(|range| groups.get(&(source, code, range)))
-                        .copied()
-                        .unwrap_or_else(|| {
-                            let group_id = post_inc(&mut next_group_id);
-                            for range in diagnostic_ranges(&diagnostic, abs_path.as_deref()) {
-                                groups.insert((source, code, range), group_id);
-                            }
-                            group_id
-                        });
-
-                    if diagnostic
-                        .source
-                        .as_ref()
-                        .map_or(false, |source| disk_based_sources.contains(source))
-                    {
-                        while let Some(edit) = edits_since_save.peek() {
-                            if edit.old.end <= start {
-                                last_edit_old_end = edit.old.end;
-                                last_edit_new_end = edit.new.end;
-                                edits_since_save.next();
-                            } else if edit.old.start <= end && edit.old.end >= start {
-                                return None;
-                            } else {
-                                break;
-                            }
+            'outer: for diagnostic in &diagnostics {
+                let mut start = diagnostic.range.start.to_point_utf16();
+                let mut end = diagnostic.range.end.to_point_utf16();
+                let source = diagnostic.source.as_ref();
+                let code = diagnostic.code.as_ref();
+                let group_id = diagnostic_ranges(&diagnostic, abs_path.as_deref())
+                    .find_map(|range| group_ids_by_diagnostic_range.get(&(source, code, range)))
+                    .copied()
+                    .unwrap_or_else(|| {
+                        let group_id = post_inc(&mut next_group_id);
+                        for range in diagnostic_ranges(&diagnostic, abs_path.as_deref()) {
+                            group_ids_by_diagnostic_range.insert((source, code, range), group_id);
                         }
+                        group_id
+                    });
 
-                        start = last_edit_new_end + (start - last_edit_old_end);
-                        end = last_edit_new_end + (end - last_edit_old_end);
-                    }
-
-                    let mut range = content.clip_point_utf16(start, Bias::Left)
-                        ..content.clip_point_utf16(end, Bias::Right);
-                    if range.start == range.end {
-                        range.end.column += 1;
-                        range.end = content.clip_point_utf16(range.end, Bias::Right);
-                        if range.start == range.end && range.end.column > 0 {
-                            range.start.column -= 1;
-                            range.start = content.clip_point_utf16(range.start, Bias::Left);
+                if diagnostic
+                    .source
+                    .as_ref()
+                    .map_or(false, |source| disk_based_sources.contains(source))
+                {
+                    while let Some(edit) = edits_since_save.peek() {
+                        if edit.old.end <= start {
+                            last_edit_old_end = edit.old.end;
+                            last_edit_new_end = edit.new.end;
+                            edits_since_save.next();
+                        } else if edit.old.start <= end && edit.old.end >= start {
+                            continue 'outer;
+                        } else {
+                            break;
                         }
                     }
-                    Some((
+
+                    start = last_edit_new_end + (start - last_edit_old_end);
+                    end = last_edit_new_end + (end - last_edit_old_end);
+                }
+
+                let mut range = content.clip_point_utf16(start, Bias::Left)
+                    ..content.clip_point_utf16(end, Bias::Right);
+                if range.start == range.end {
+                    range.end.column += 1;
+                    range.end = content.clip_point_utf16(range.end, Bias::Right);
+                    if range.start == range.end && range.end.column > 0 {
+                        range.start.column -= 1;
+                        range.start = content.clip_point_utf16(range.start, Bias::Left);
+                    }
+                }
+
+                diagnostics_by_group_id
+                    .entry(group_id)
+                    .or_insert(Vec::new())
+                    .push((
                         range,
                         Diagnostic {
                             severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
                             message: diagnostic.message.clone(),
                             group_id,
+                            is_primary: false,
                         },
-                    ))
-                }),
+                    ));
+            }
+
+            content.anchor_range_multimap(
+                Bias::Left,
+                Bias::Right,
+                diagnostics_by_group_id
+                    .into_values()
+                    .flat_map(|mut diagnostics| {
+                        let primary_diagnostic =
+                            diagnostics.iter_mut().min_by_key(|d| d.1.severity).unwrap();
+                        primary_diagnostic.1.is_primary = true;
+                        diagnostics
+                    }),
             )
         };
 

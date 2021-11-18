@@ -2205,7 +2205,7 @@ impl Editor {
     }
 
     pub fn show_next_diagnostic(&mut self, _: &ShowNextDiagnostic, cx: &mut ViewContext<Self>) {
-        let selection = self.selections::<usize>(cx).last().unwrap();
+        let selection = self.newest_selection(cx);
         let buffer = self.buffer.read(cx.as_ref());
         let diagnostic_group_id = dbg!(buffer
             .diagnostics_in_range::<_, usize>(selection.head()..buffer.len())

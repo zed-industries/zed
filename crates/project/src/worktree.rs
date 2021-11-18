@@ -3635,6 +3635,7 @@ mod tests {
                         severity: lsp::DiagnosticSeverity::ERROR,
                         message: "undefined variable 'A'".to_string(),
                         group_id: 0,
+                        is_primary: true
                     }
                 )]
             )

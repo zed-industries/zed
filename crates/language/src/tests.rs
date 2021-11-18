@@ -484,6 +484,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'BB'".to_string(),
                         group_id: 1,
+                        is_primary: true,
                     },
                 ),
                 (
@@ -492,6 +493,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'CCC'".to_string(),
                         group_id: 2,
+                        is_primary: true,
                     }
                 )
             ]
@@ -549,6 +551,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         severity: DiagnosticSeverity::WARNING,
                         message: "unreachable statement".to_string(),
                         group_id: 1,
+                        is_primary: true,
                     }
                 ),
                 (
@@ -557,6 +560,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'A'".to_string(),
                         group_id: 0,
+                        is_primary: true,
                     },
                 )
             ]
@@ -626,6 +630,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'A'".to_string(),
                         group_id: 0,
+                        is_primary: true,
                     }
                 ),
                 (
@@ -634,6 +639,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'BB'".to_string(),
                         group_id: 1,
+                        is_primary: true,
                     },
                 )
             ]
@@ -808,7 +814,8 @@ async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
                     &Diagnostic {
                         severity: DiagnosticSeverity::WARNING,
                         message: "error 1".to_string(),
-                        group_id: 0
+                        group_id: 0,
+                        is_primary: true,
                     }
                 ),
                 (
@@ -816,7 +823,8 @@ async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
                     &Diagnostic {
                         severity: DiagnosticSeverity::HINT,
                         message: "error 1 hint 1".to_string(),
-                        group_id: 0
+                        group_id: 0,
+                        is_primary: false,
                     }
                 ),
                 (
@@ -824,7 +832,8 @@ async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
                     &Diagnostic {
                         severity: DiagnosticSeverity::HINT,
                         message: "error 2 hint 1".to_string(),
-                        group_id: 1
+                        group_id: 1,
+                        is_primary: false,
                     }
                 ),
                 (
@@ -832,7 +841,8 @@ async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
                     &Diagnostic {
                         severity: DiagnosticSeverity::HINT,
                         message: "error 2 hint 2".to_string(),
-                        group_id: 1
+                        group_id: 1,
+                        is_primary: false,
                     }
                 ),
                 (
@@ -840,7 +850,8 @@ async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
                     &Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "error 2".to_string(),
-                        group_id: 1
+                        group_id: 1,
+                        is_primary: true,
                     }
                 )
             ]
@@ -854,7 +865,8 @@ async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
                     &Diagnostic {
                         severity: DiagnosticSeverity::WARNING,
                         message: "error 1".to_string(),
-                        group_id: 0
+                        group_id: 0,
+                        is_primary: true,
                     }
                 ),
                 (
@@ -862,7 +874,8 @@ async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
                     &Diagnostic {
                         severity: DiagnosticSeverity::HINT,
                         message: "error 1 hint 1".to_string(),
-                        group_id: 0
+                        group_id: 0,
+                        is_primary: false,
                     }
                 ),
             ]
@@ -875,7 +888,8 @@ async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
                     &Diagnostic {
                         severity: DiagnosticSeverity::HINT,
                         message: "error 2 hint 1".to_string(),
-                        group_id: 1
+                        group_id: 1,
+                        is_primary: false,
                     }
                 ),
                 (
@@ -883,7 +897,8 @@ async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
                     &Diagnostic {
                         severity: DiagnosticSeverity::HINT,
                         message: "error 2 hint 2".to_string(),
-                        group_id: 1
+                        group_id: 1,
+                        is_primary: false,
                     }
                 ),
                 (
@@ -891,7 +906,8 @@ async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
                     &Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "error 2".to_string(),
-                        group_id: 1
+                        group_id: 1,
+                        is_primary: true,
                     }
                 )
             ]

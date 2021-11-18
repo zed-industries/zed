@@ -1716,6 +1716,7 @@ mod tests {
                             group_id: 0,
                             message: "message 1".to_string(),
                             severity: lsp::DiagnosticSeverity::ERROR,
+                            is_primary: true
                         }
                     ),
                     (
@@ -1723,7 +1724,8 @@ mod tests {
                         &Diagnostic {
                             group_id: 1,
                             severity: lsp::DiagnosticSeverity::WARNING,
-                            message: "message 2".to_string()
+                            message: "message 2".to_string(),
+                            is_primary: true
                         }
                     )
                 ]

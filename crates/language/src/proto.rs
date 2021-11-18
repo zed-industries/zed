@@ -142,6 +142,7 @@ pub fn serialize_diagnostics(map: &AnchorRangeMultimap<Diagnostic>) -> proto::Di
                     _ => proto::diagnostic::Severity::None,
                 } as i32,
                 group_id: diagnostic.group_id as u64,
+                is_primary: diagnostic.is_primary,
             })
             .collect(),
     }
@@ -310,6 +311,7 @@ pub fn deserialize_diagnostics(message: proto::DiagnosticSet) -> AnchorRangeMult
                     },
                     message: diagnostic.message,
                     group_id: diagnostic.group_id as usize,
+                    is_primary: diagnostic.is_primary,
                 },
             ))
         }),
