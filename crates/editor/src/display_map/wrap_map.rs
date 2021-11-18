@@ -415,7 +415,7 @@ impl Snapshot {
             while let Some(edit) = row_edits.next() {
                 if edit.new_rows.start > new_transforms.summary().input.lines.row {
                     let summary = new_tab_snapshot.text_summary_for_range(
-                        TabPoint::new(new_transforms.summary().input.lines.row, 0)
+                        TabPoint(new_transforms.summary().input.lines)
                             ..TabPoint::new(edit.new_rows.start, 0),
                     );
                     new_transforms.push_or_extend(Transform::isomorphic(summary));
