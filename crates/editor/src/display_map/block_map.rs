@@ -528,16 +528,14 @@ impl BlockSnapshot {
 
     pub fn longest_row(&self) -> u32 {
         let input_row = self.wrap_snapshot.longest_row();
-        let input_row_len = self.wrap_snapshot.line_len(input_row);
+        let input_row_chars = self.wrap_snapshot.line_char_count(input_row);
         let TransformSummary {
             longest_row_in_block: block_row,
-            longest_row_in_block_chars: block_row_len,
+            longest_row_in_block_chars: block_row_chars,
             ..
         } = &self.transforms.summary();
 
-        dbg!(block_row, block_row_len, input_row, input_row_len);
-
-        if *block_row_len > input_row_len {
+        if *block_row_chars > input_row_chars {
             *block_row
         } else {
             self.to_block_point(WrapPoint::new(input_row, 0)).row

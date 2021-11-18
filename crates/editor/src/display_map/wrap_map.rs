@@ -674,6 +674,13 @@ impl Snapshot {
         len as u32
     }
 
+    pub fn line_char_count(&self, row: u32) -> u32 {
+        self.text_chunks(row)
+            .flat_map(|c| c.chars())
+            .take_while(|c| *c != '\n')
+            .count() as u32
+    }
+
     pub fn soft_wrap_indent(&self, row: u32) -> Option<u32> {
         let mut cursor = self.transforms.cursor::<WrapPoint>();
         cursor.seek(&WrapPoint::new(row + 1, 0), Bias::Right, &());
