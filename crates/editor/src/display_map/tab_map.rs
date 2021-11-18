@@ -130,7 +130,7 @@ impl Snapshot {
             last_line_chars = first_line_chars;
         } else {
             for _ in self
-                .chunks(TabPoint::new(range.end.row(), 0)..self.max_point(), false)
+                .chunks(TabPoint::new(range.end.row(), 0)..range.end, false)
                 .flat_map(|chunk| chunk.text.chars())
             {
                 last_line_chars += 1;
