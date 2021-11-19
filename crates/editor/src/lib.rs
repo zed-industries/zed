@@ -344,7 +344,6 @@ struct ActiveDiagnosticGroup {
     primary_message: String,
     blocks: HashMap<BlockId, Diagnostic>,
     is_valid: bool,
-    update_count: usize,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -2277,52 +2276,49 @@ impl Editor {
     fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Editor>) {
         if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
             let buffer = self.buffer.read(cx);
-            let update_count = buffer.diagnostics_update_count();
-            if update_count > active_diagnostics.update_count {
-                active_diagnostics.update_count = update_count;
-                let primary_range_start = active_diagnostics.primary_range.start.to_offset(buffer);
-                let is_valid = buffer
-                    .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone())
-                    .any(|(range, diagnostic)| {
-                        diagnostic.is_primary
-                            && range.start == primary_range_start
-                            && diagnostic.message == active_diagnostics.primary_message
-                    });
+            let primary_range_start = active_diagnostics.primary_range.start.to_offset(buffer);
+            let is_valid = buffer
+                .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone())
+                .any(|(range, diagnostic)| {
+                    diagnostic.is_primary
+                        && !range.is_empty()
+                        && range.start == primary_range_start
+                        && diagnostic.message == active_diagnostics.primary_message
+                });
 
-                if is_valid != active_diagnostics.is_valid {
-                    active_diagnostics.is_valid = is_valid;
-                    let mut new_styles = HashMap::new();
-                    for (block_id, diagnostic) in &active_diagnostics.blocks {
-                        let severity = diagnostic.severity;
-                        let message_len = diagnostic.message.len();
-                        new_styles.insert(
-                            *block_id,
-                            (
-                                Some({
-                                    let build_settings = self.build_settings.clone();
-                                    move |cx: &AppContext| {
-                                        let settings = build_settings.borrow()(cx);
-                                        vec![(
-                                            message_len,
-                                            diagnostic_style(severity, is_valid, &settings.style)
-                                                .text
-                                                .into(),
-                                        )]
-                                    }
-                                }),
-                                Some({
-                                    let build_settings = self.build_settings.clone();
-                                    move |cx: &AppContext| {
-                                        let settings = build_settings.borrow()(cx);
-                                        diagnostic_style(severity, is_valid, &settings.style).block
-                                    }
-                                }),
-                            ),
-                        );
-                    }
-                    self.display_map
-                        .update(cx, |display_map, _| display_map.restyle_blocks(new_styles));
+            if is_valid != active_diagnostics.is_valid {
+                active_diagnostics.is_valid = is_valid;
+                let mut new_styles = HashMap::new();
+                for (block_id, diagnostic) in &active_diagnostics.blocks {
+                    let severity = diagnostic.severity;
+                    let message_len = diagnostic.message.len();
+                    new_styles.insert(
+                        *block_id,
+                        (
+                            Some({
+                                let build_settings = self.build_settings.clone();
+                                move |cx: &AppContext| {
+                                    let settings = build_settings.borrow()(cx);
+                                    vec![(
+                                        message_len,
+                                        diagnostic_style(severity, is_valid, &settings.style)
+                                            .text
+                                            .into(),
+                                    )]
+                                }
+                            }),
+                            Some({
+                                let build_settings = self.build_settings.clone();
+                                move |cx: &AppContext| {
+                                    let settings = build_settings.borrow()(cx);
+                                    diagnostic_style(severity, is_valid, &settings.style).block
+                                }
+                            }),
+                        ),
+                    );
                 }
+                self.display_map
+                    .update(cx, |display_map, _| display_map.restyle_blocks(new_styles));
             }
         }
     }
@@ -2332,7 +2328,6 @@ impl Editor {
         self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
             let buffer = self.buffer.read(cx);
 
-            let update_count = buffer.diagnostics_update_count();
             let mut primary_range = None;
             let mut primary_message = None;
             let mut group_end = Point::zero();
@@ -2400,7 +2395,6 @@ impl Editor {
                 primary_message,
                 blocks,
                 is_valid: true,
-                update_count,
             })
         });
     }
