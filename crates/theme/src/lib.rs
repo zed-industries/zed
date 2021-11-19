@@ -227,12 +227,19 @@ pub struct EditorStyle {
     pub line_number_active: Color,
     pub guest_selections: Vec<SelectionStyle>,
     pub syntax: Arc<SyntaxTheme>,
-    pub error_color: Color,
-    pub warning_color: Color,
+    pub diagnostic_error: DiagnosticStyle,
+    pub diagnostic_warning: DiagnosticStyle,
     #[serde(default)]
-    pub information_color: Color,
+    pub diagnostic_information: DiagnosticStyle,
     #[serde(default)]
-    pub hint_color: Color,
+    pub diagnostic_hint: DiagnosticStyle,
+}
+
+#[derive(Copy, Clone, Deserialize, Default)]
+pub struct DiagnosticStyle {
+    pub text: Color,
+    #[serde(flatten)]
+    pub block: BlockStyle,
 }
 
 #[derive(Clone, Copy, Default, Deserialize)]
@@ -249,6 +256,12 @@ pub struct InputEditorStyle {
     #[serde(default)]
     pub placeholder_text: Option<TextStyle>,
     pub selection: SelectionStyle,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+pub struct BlockStyle {
+    pub background: Option<Color>,
+    pub border: Option<Color>,
 }
 
 impl EditorStyle {
@@ -273,10 +286,10 @@ impl InputEditorStyle {
             line_number_active: Default::default(),
             guest_selections: Default::default(),
             syntax: Default::default(),
-            error_color: Default::default(),
-            warning_color: Default::default(),
-            information_color: Default::default(),
-            hint_color: Default::default(),
+            diagnostic_error: Default::default(),
+            diagnostic_warning: Default::default(),
+            diagnostic_information: Default::default(),
+            diagnostic_hint: Default::default(),
         }
     }
 }

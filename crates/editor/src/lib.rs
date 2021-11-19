@@ -7,12 +7,11 @@ mod test;
 
 use buffer::rope::TextDimension;
 use clock::ReplicaId;
-pub use display_map::DisplayPoint;
 use display_map::*;
+pub use display_map::{DisplayPoint, DisplayRow};
 pub use element::*;
 use gpui::{
     action,
-    color::Color,
     geometry::vector::{vec2f, Vector2F},
     keymap::Binding,
     text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
@@ -33,7 +32,7 @@ use std::{
     time::Duration,
 };
 use sum_tree::Bias;
-use theme::{EditorStyle, SyntaxTheme};
+use theme::{DiagnosticStyle, EditorStyle, SyntaxTheme};
 use util::post_inc;
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -342,6 +341,7 @@ struct BracketPairState {
 #[derive(Debug)]
 struct ActiveDiagnosticGroup {
     primary_range: Range<Anchor>,
+    group_range: Range<Anchor>,
     block_ids: HashSet<BlockId>,
 }
 
@@ -2238,21 +2238,34 @@ impl Editor {
         loop {
             let next_group = buffer
                 .diagnostics_in_range::<_, usize>(search_start..buffer.len())
-                .filter(|(_, diagnostic)| diagnostic.is_primary)
-                .skip_while(|(range, _)| {
-                    Some(range.end) == active_primary_range.as_ref().map(|r| *r.end())
-                })
-                .next()
-                .map(|(range, diagnostic)| (range, diagnostic.group_id));
+                .find_map(|(range, diagnostic)| {
+                    if diagnostic.is_primary
+                        && Some(range.end) != active_primary_range.as_ref().map(|r| *r.end())
+                    {
+                        Some((range, diagnostic.group_id))
+                    } else {
+                        None
+                    }
+                });
 
             if let Some((primary_range, group_id)) = next_group {
                 self.dismiss_diagnostics(cx);
                 self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
                     let buffer = self.buffer.read(cx);
+
+                    let mut group_end = Point::zero();
                     let diagnostic_group = buffer
                         .diagnostic_group::<Point>(group_id)
-                        .map(|(range, diagnostic)| (range, diagnostic.clone()))
+                        .map(|(range, diagnostic)| {
+                            if range.end > group_end {
+                                group_end = range.end;
+                            }
+                            (range, diagnostic.clone())
+                        })
                         .collect::<Vec<_>>();
+
+                    let group_range = buffer.anchor_after(diagnostic_group[0].0.start)
+                        ..buffer.anchor_before(group_end);
                     let primary_range = buffer.anchor_after(primary_range.start)
                         ..buffer.anchor_before(primary_range.end);
 
@@ -2265,12 +2278,24 @@ impl Editor {
                                 BlockProperties {
                                     position: range.start,
                                     text: diagnostic.message.as_str(),
-                                    build_runs: Some(Arc::new(move |cx| {
-                                        let settings = build_settings.borrow()(cx);
-                                        vec![(
-                                            message_len,
-                                            diagnostic_color(severity, &settings.style).into(),
-                                        )]
+                                    build_runs: Some(Arc::new({
+                                        let build_settings = build_settings.clone();
+                                        move |cx| {
+                                            let settings = build_settings.borrow()(cx);
+                                            vec![(
+                                                message_len,
+                                                diagnostic_style(severity, &settings.style)
+                                                    .text
+                                                    .into(),
+                                            )]
+                                        }
+                                    })),
+                                    build_style: Some(Arc::new({
+                                        let build_settings = build_settings.clone();
+                                        move |cx| {
+                                            let settings = build_settings.borrow()(cx);
+                                            diagnostic_style(severity, &settings.style).block
+                                        }
                                     })),
                                     disposition: BlockDisposition::Below,
                                 }
@@ -2282,6 +2307,7 @@ impl Editor {
 
                     Some(ActiveDiagnosticGroup {
                         primary_range,
+                        group_range,
                         block_ids,
                     })
                 });
@@ -2815,8 +2841,8 @@ impl Snapshot {
         self.display_snapshot.buffer_row_count()
     }
 
-    pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
-        self.display_snapshot.buffer_rows(start_row)
+    pub fn buffer_rows<'a>(&'a self, start_row: u32, cx: &'a AppContext) -> BufferRows<'a> {
+        self.display_snapshot.buffer_rows(start_row, Some(cx))
     }
 
     pub fn chunks<'a>(
@@ -2893,10 +2919,10 @@ impl EditorSettings {
                     selection: Default::default(),
                     guest_selections: Default::default(),
                     syntax: Default::default(),
-                    error_color: Default::default(),
-                    warning_color: Default::default(),
-                    information_color: Default::default(),
-                    hint_color: Default::default(),
+                    diagnostic_error: Default::default(),
+                    diagnostic_warning: Default::default(),
+                    diagnostic_information: Default::default(),
+                    diagnostic_hint: Default::default(),
                 }
             },
         }
@@ -3020,13 +3046,13 @@ impl SelectionExt for Selection<Point> {
     }
 }
 
-pub fn diagnostic_color(severity: DiagnosticSeverity, style: &EditorStyle) -> Color {
+pub fn diagnostic_style(severity: DiagnosticSeverity, style: &EditorStyle) -> DiagnosticStyle {
     match severity {
-        DiagnosticSeverity::ERROR => style.error_color,
-        DiagnosticSeverity::WARNING => style.warning_color,
-        DiagnosticSeverity::INFORMATION => style.information_color,
-        DiagnosticSeverity::HINT => style.hint_color,
-        _ => style.text.color,
+        DiagnosticSeverity::ERROR => style.diagnostic_error,
+        DiagnosticSeverity::WARNING => style.diagnostic_warning,
+        DiagnosticSeverity::INFORMATION => style.diagnostic_information,
+        DiagnosticSeverity::HINT => style.diagnostic_hint,
+        _ => Default::default(),
     }
 }
 

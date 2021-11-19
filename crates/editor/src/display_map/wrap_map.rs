@@ -2,6 +2,7 @@ use super::{
     fold_map,
     patch::Patch,
     tab_map::{self, Edit as TabEdit, Snapshot as TabSnapshot, TabPoint},
+    DisplayRow,
 };
 use gpui::{
     fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, ModelHandle, MutableAppContext,
@@ -712,7 +713,11 @@ impl Snapshot {
                     prev_tab_row = tab_point.row();
                     soft_wrapped = false;
                 }
-                expected_buffer_rows.push(if soft_wrapped { None } else { Some(buffer_row) });
+                expected_buffer_rows.push(if soft_wrapped {
+                    DisplayRow::Wrap
+                } else {
+                    DisplayRow::Buffer(buffer_row)
+                });
             }
 
             for start_display_row in 0..expected_buffer_rows.len() {
@@ -792,7 +797,7 @@ impl<'a> Iterator for Chunks<'a> {
 }
 
 impl<'a> Iterator for BufferRows<'a> {
-    type Item = Option<u32>;
+    type Item = DisplayRow;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_row > self.max_output_row {
@@ -812,7 +817,11 @@ impl<'a> Iterator for BufferRows<'a> {
             self.soft_wrapped = true;
         }
 
-        Some(if soft_wrapped { None } else { Some(buffer_row) })
+        Some(if soft_wrapped {
+            DisplayRow::Wrap
+        } else {
+            DisplayRow::Buffer(buffer_row)
+        })
     }
 }
 

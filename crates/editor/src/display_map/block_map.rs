@@ -1,4 +1,7 @@
-use super::wrap_map::{self, Edit as WrapEdit, Snapshot as WrapSnapshot, WrapPoint};
+use super::{
+    wrap_map::{self, Edit as WrapEdit, Snapshot as WrapSnapshot, WrapPoint},
+    BlockStyle, DisplayRow,
+};
 use buffer::{rope, Anchor, Bias, Edit, Point, Rope, ToOffset, ToPoint as _};
 use gpui::{fonts::HighlightStyle, AppContext, ModelHandle};
 use language::{Buffer, Chunk};
@@ -45,11 +48,12 @@ struct BlockRow(u32);
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 struct WrapRow(u32);
 
-struct Block {
+pub struct Block {
     id: BlockId,
     position: Anchor,
     text: Rope,
     build_runs: Option<Arc<dyn Fn(&AppContext) -> Vec<(usize, HighlightStyle)>>>,
+    build_style: Option<Arc<dyn Fn(&AppContext) -> BlockStyle>>,
     disposition: BlockDisposition,
 }
 
@@ -62,6 +66,7 @@ where
     pub position: P,
     pub text: T,
     pub build_runs: Option<Arc<dyn Fn(&AppContext) -> Vec<(usize, HighlightStyle)>>>,
+    pub build_style: Option<Arc<dyn Fn(&AppContext) -> BlockStyle>>,
     pub disposition: BlockDisposition,
 }
 
@@ -115,6 +120,7 @@ pub struct BufferRows<'a> {
     transforms: sum_tree::Cursor<'a, Transform, (BlockRow, WrapRow)>,
     input_buffer_rows: wrap_map::BufferRows<'a>,
     output_row: u32,
+    cx: Option<&'a AppContext>,
     started: bool,
 }
 
@@ -415,6 +421,7 @@ impl<'a> BlockMapWriter<'a> {
                     position,
                     text: block.text.into(),
                     build_runs: block.build_runs,
+                    build_style: block.build_style,
                     disposition: block.disposition,
                 }),
             );
@@ -519,7 +526,7 @@ impl BlockSnapshot {
         }
     }
 
-    pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
+    pub fn buffer_rows<'a>(&'a self, start_row: u32, cx: Option<&'a AppContext>) -> BufferRows<'a> {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
         cursor.seek(&BlockRow(start_row), Bias::Right, &());
         let (output_start, input_start) = cursor.start();
@@ -530,6 +537,7 @@ impl BlockSnapshot {
         };
         let input_start_row = input_start.0 + overshoot;
         BufferRows {
+            cx,
             transforms: cursor,
             input_buffer_rows: self.wrap_snapshot.buffer_rows(input_start_row),
             output_row: start_row,
@@ -871,7 +879,7 @@ impl<'a> Iterator for BlockChunks<'a> {
 }
 
 impl<'a> Iterator for BufferRows<'a> {
-    type Item = Option<u32>;
+    type Item = DisplayRow;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.started {
@@ -885,10 +893,13 @@ impl<'a> Iterator for BufferRows<'a> {
         }
 
         let transform = self.transforms.item()?;
-        if transform.is_isomorphic() {
-            Some(self.input_buffer_rows.next().unwrap())
+        if let Some(block) = &transform.block {
+            let style = self
+                .cx
+                .and_then(|cx| block.build_style.as_ref().map(|f| f(cx)));
+            Some(DisplayRow::Block(block.id, style))
         } else {
-            Some(None)
+            Some(self.input_buffer_rows.next().unwrap())
         }
     }
 }
@@ -1006,6 +1017,7 @@ mod tests {
                 id: BlockId(0),
                 position: Anchor::min(),
                 text: "one!\ntwo three\nfour".into(),
+                build_style: None,
                 build_runs: Some(Arc::new(move |_| {
                     vec![(3, red.into()), (6, Default::default()), (5, blue.into())]
                 })),
@@ -1080,25 +1092,28 @@ mod tests {
         let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot.clone());
 
         let mut writer = block_map.write(wraps_snapshot.clone(), vec![], cx);
-        writer.insert(
+        let block_ids = writer.insert(
             vec![
                 BlockProperties {
                     position: Point::new(1, 0),
                     text: "BLOCK 1",
                     disposition: BlockDisposition::Above,
                     build_runs: None,
+                    build_style: None,
                 },
                 BlockProperties {
                     position: Point::new(1, 2),
                     text: "BLOCK 2",
                     disposition: BlockDisposition::Above,
                     build_runs: None,
+                    build_style: None,
                 },
                 BlockProperties {
                     position: Point::new(3, 2),
                     text: "BLOCK 3",
                     disposition: BlockDisposition::Below,
                     build_runs: None,
+                    build_style: None,
                 },
             ],
             cx,
@@ -1181,8 +1196,16 @@ mod tests {
         );
 
         assert_eq!(
-            snapshot.buffer_rows(0).collect::<Vec<_>>(),
-            &[Some(0), None, None, Some(1), Some(2), Some(3), None]
+            snapshot.buffer_rows(0, None).collect::<Vec<_>>(),
+            &[
+                DisplayRow::Buffer(0),
+                DisplayRow::Block(block_ids[0], None),
+                DisplayRow::Block(block_ids[1], None),
+                DisplayRow::Buffer(1),
+                DisplayRow::Buffer(2),
+                DisplayRow::Buffer(3),
+                DisplayRow::Block(block_ids[2], None)
+            ]
         );
 
         // Insert a line break, separating two block decorations into separate
@@ -1227,12 +1250,14 @@ mod tests {
                     text: "<BLOCK 1",
                     disposition: BlockDisposition::Above,
                     build_runs: None,
+                    build_style: None,
                 },
                 BlockProperties {
                     position: Point::new(1, 1),
                     text: ">BLOCK 2",
                     disposition: BlockDisposition::Below,
                     build_runs: None,
+                    build_style: None,
                 },
             ],
             cx,
@@ -1325,8 +1350,9 @@ mod tests {
                             BlockProperties {
                                 position,
                                 text,
-                                build_runs: None,
                                 disposition,
+                                build_runs: None,
+                                build_style: None,
                             }
                         })
                         .collect::<Vec<_>>();
@@ -1402,6 +1428,7 @@ mod tests {
                             position: BlockPoint::new(row, column),
                             text: block.text,
                             build_runs: block.build_runs.clone(),
+                            build_style: None,
                             disposition: block.disposition,
                         },
                     )
@@ -1424,7 +1451,7 @@ mod tests {
                     .to_point(WrapPoint::new(row, 0), Bias::Left)
                     .row;
 
-                while let Some((_, block)) = sorted_blocks.peek() {
+                while let Some((block_id, block)) = sorted_blocks.peek() {
                     if block.position.row == row && block.disposition == BlockDisposition::Above {
                         let text = block.text.to_string();
                         let padding = " ".repeat(block.position.column as usize);
@@ -1434,7 +1461,7 @@ mod tests {
                                 expected_text.push_str(line);
                             }
                             expected_text.push('\n');
-                            expected_buffer_rows.push(None);
+                            expected_buffer_rows.push(DisplayRow::Block(*block_id, None));
                         }
                         sorted_blocks.next();
                     } else {
@@ -1443,10 +1470,14 @@ mod tests {
                 }
 
                 let soft_wrapped = wraps_snapshot.to_tab_point(WrapPoint::new(row, 0)).column() > 0;
-                expected_buffer_rows.push(if soft_wrapped { None } else { Some(buffer_row) });
+                expected_buffer_rows.push(if soft_wrapped {
+                    DisplayRow::Wrap
+                } else {
+                    DisplayRow::Buffer(buffer_row)
+                });
                 expected_text.push_str(input_line);
 
-                while let Some((_, block)) = sorted_blocks.peek() {
+                while let Some((block_id, block)) = sorted_blocks.peek() {
                     if block.position.row == row && block.disposition == BlockDisposition::Below {
                         let text = block.text.to_string();
                         let padding = " ".repeat(block.position.column as usize);
@@ -1456,7 +1487,7 @@ mod tests {
                                 expected_text.push_str(&padding);
                                 expected_text.push_str(line);
                             }
-                            expected_buffer_rows.push(None);
+                            expected_buffer_rows.push(DisplayRow::Block(*block_id, None));
                         }
                         sorted_blocks.next();
                     } else {
@@ -1480,7 +1511,7 @@ mod tests {
                 );
                 assert_eq!(
                     blocks_snapshot
-                        .buffer_rows(start_row as u32)
+                        .buffer_rows(start_row as u32, None)
                         .collect::<Vec<_>>(),
                     &expected_buffer_rows[start_row..]
                 );

@@ -13,7 +13,7 @@ use language::{Anchor, Buffer, Point, ToOffset, ToPoint};
 use std::{collections::HashSet, ops::Range};
 use sum_tree::Bias;
 use tab_map::TabMap;
-use theme::SyntaxTheme;
+use theme::{BlockStyle, SyntaxTheme};
 use wrap_map::WrapMap;
 
 pub trait ToDisplayPoint {
@@ -172,8 +172,8 @@ impl DisplayMapSnapshot {
         self.buffer_snapshot.len() == 0
     }
 
-    pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
-        self.blocks_snapshot.buffer_rows(start_row)
+    pub fn buffer_rows<'a>(&'a self, start_row: u32, cx: Option<&'a AppContext>) -> BufferRows<'a> {
+        self.blocks_snapshot.buffer_rows(start_row, cx)
     }
 
     pub fn buffer_row_count(&self) -> u32 {
@@ -414,6 +414,13 @@ impl ToDisplayPoint for Anchor {
     fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint {
         self.to_point(&map.buffer_snapshot).to_display_point(map)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisplayRow {
+    Buffer(u32),
+    Block(BlockId, Option<BlockStyle>),
+    Wrap,
 }
 
 #[cfg(test)]

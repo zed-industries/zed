@@ -1,6 +1,6 @@
 use super::{
-    DisplayPoint, Editor, EditorMode, EditorSettings, EditorStyle, Input, Scroll, Select,
-    SelectPhase, Snapshot, MAX_LINE_LEN,
+    DisplayPoint, DisplayRow, Editor, EditorMode, EditorSettings, EditorStyle, Input, Scroll,
+    Select, SelectPhase, Snapshot, MAX_LINE_LEN,
 };
 use clock::ReplicaId;
 use gpui::{
@@ -25,6 +25,7 @@ use std::{
     fmt::Write,
     ops::Range,
 };
+use theme::BlockStyle;
 
 pub struct EditorElement {
     view: WeakViewHandle<Editor>,
@@ -359,6 +360,30 @@ impl EditorElement {
         }
 
         if let Some(visible_text_bounds) = bounds.intersection(visible_bounds) {
+            // Draw blocks
+            for (ixs, block_style) in &layout.block_layouts {
+                let row = start_row + ixs.start;
+                let origin = content_origin
+                    + vec2f(-scroll_left, row as f32 * layout.line_height - scroll_top);
+                let height = ixs.len() as f32 * layout.line_height;
+                cx.scene.push_quad(Quad {
+                    bounds: RectF::new(origin, vec2f(visible_text_bounds.width(), height)),
+                    background: block_style.background,
+                    border: block_style
+                        .border
+                        .map_or(Default::default(), |color| Border {
+                            width: 1.,
+                            color,
+                            overlay: true,
+                            top: true,
+                            right: false,
+                            bottom: true,
+                            left: false,
+                        }),
+                    corner_radius: 0.,
+                });
+            }
+
             // Draw glyphs
             for (ix, line) in layout.line_layouts.iter().enumerate() {
                 let row = start_row + ix as u32;
@@ -401,18 +426,24 @@ impl EditorElement {
             .width()
     }
 
-    fn layout_line_numbers(
+    fn layout_rows(
         &self,
         rows: Range<u32>,
         active_rows: &BTreeMap<u32, bool>,
         snapshot: &Snapshot,
         cx: &LayoutContext,
-    ) -> Vec<Option<text_layout::Line>> {
+    ) -> (
+        Vec<Option<text_layout::Line>>,
+        Vec<(Range<u32>, BlockStyle)>,
+    ) {
         let style = &self.settings.style;
-        let mut layouts = Vec::with_capacity(rows.len());
+        let include_line_numbers = snapshot.mode == EditorMode::Full;
+        let mut last_block_id = None;
+        let mut blocks = Vec::<(Range<u32>, BlockStyle)>::new();
+        let mut line_number_layouts = Vec::with_capacity(rows.len());
         let mut line_number = String::new();
-        for (ix, buffer_row) in snapshot
-            .buffer_rows(rows.start)
+        for (ix, row) in snapshot
+            .buffer_rows(rows.start, cx)
             .take((rows.end - rows.start) as usize)
             .enumerate()
         {
@@ -422,27 +453,46 @@ impl EditorElement {
             } else {
                 style.line_number
             };
-            if let Some(buffer_row) = buffer_row {
-                line_number.clear();
-                write!(&mut line_number, "{}", buffer_row + 1).unwrap();
-                layouts.push(Some(cx.text_layout_cache.layout_str(
-                    &line_number,
-                    style.text.font_size,
-                    &[(
-                        line_number.len(),
-                        RunStyle {
-                            font_id: style.text.font_id,
-                            color,
-                            underline: None,
-                        },
-                    )],
-                )));
-            } else {
-                layouts.push(None);
+            match row {
+                DisplayRow::Buffer(buffer_row) => {
+                    if include_line_numbers {
+                        line_number.clear();
+                        write!(&mut line_number, "{}", buffer_row + 1).unwrap();
+                        line_number_layouts.push(Some(cx.text_layout_cache.layout_str(
+                            &line_number,
+                            style.text.font_size,
+                            &[(
+                                line_number.len(),
+                                RunStyle {
+                                    font_id: style.text.font_id,
+                                    color,
+                                    underline: None,
+                                },
+                            )],
+                        )));
+                    }
+                    last_block_id = None;
+                }
+                DisplayRow::Block(block_id, style) => {
+                    let ix = ix as u32;
+                    if last_block_id == Some(block_id) {
+                        if let Some((row_range, _)) = blocks.last_mut() {
+                            row_range.end += 1;
+                        }
+                    } else if let Some(style) = style {
+                        blocks.push((ix..ix + 1, style));
+                    }
+                    line_number_layouts.push(None);
+                    last_block_id = Some(block_id);
+                }
+                DisplayRow::Wrap => {
+                    line_number_layouts.push(None);
+                    last_block_id = None;
+                }
             }
         }
 
-        layouts
+        (line_number_layouts, blocks)
     }
 
     fn layout_lines(
@@ -541,7 +591,7 @@ impl EditorElement {
                     }
 
                     let underline = if let Some(severity) = chunk.diagnostic {
-                        Some(super::diagnostic_color(severity, style))
+                        Some(super::diagnostic_style(severity, style).text)
                     } else {
                         highlight_style.underline
                     };
@@ -669,11 +719,8 @@ impl Element for EditorElement {
             }
         });
 
-        let line_number_layouts = if snapshot.mode == EditorMode::Full {
-            self.layout_line_numbers(start_row..end_row, &active_rows, &snapshot, cx)
-        } else {
-            Vec::new()
-        };
+        let (line_number_layouts, block_layouts) =
+            self.layout_rows(start_row..end_row, &active_rows, &snapshot, cx);
 
         let mut max_visible_line_width = 0.0;
         let line_layouts = self.layout_lines(start_row..end_row, &mut snapshot, cx);
@@ -695,6 +742,7 @@ impl Element for EditorElement {
             active_rows,
             line_layouts,
             line_number_layouts,
+            block_layouts,
             line_height,
             em_width,
             selections,
@@ -817,6 +865,7 @@ pub struct LayoutState {
     active_rows: BTreeMap<u32, bool>,
     line_layouts: Vec<text_layout::Line>,
     line_number_layouts: Vec<Option<text_layout::Line>>,
+    block_layouts: Vec<(Range<u32>, BlockStyle)>,
     line_height: f32,
     em_width: f32,
     selections: HashMap<ReplicaId, Vec<Range<DisplayPoint>>>,
@@ -1071,11 +1120,11 @@ mod tests {
         });
         let element = EditorElement::new(editor.downgrade(), settings);
 
-        let layouts = editor.update(cx, |editor, cx| {
+        let (layouts, _) = editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             let mut presenter = cx.build_presenter(window_id, 30.);
             let mut layout_cx = presenter.build_layout_context(false, cx);
-            element.layout_line_numbers(0..6, &Default::default(), &snapshot, &mut layout_cx)
+            element.layout_rows(0..6, &Default::default(), &snapshot, &mut layout_cx)
         });
         assert_eq!(layouts.len(), 6);
     }
