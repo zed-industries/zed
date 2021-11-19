@@ -173,7 +173,7 @@ corner_radius = 6
 
 [project_panel]
 extends = "$panel"
-padding.top = 6    # ($workspace.tab.height - $project_panel.entry.height) / 2
+padding.top = 6 # ($workspace.tab.height - $project_panel.entry.height) / 2
 
 [project_panel.entry]
 text = "$text.1"
@@ -236,7 +236,11 @@ line_number_active = "$text.0.color"
 selection = "$selection.host"
 guest_selections = "$selection.guests"
 error_color = "$status.bad"
-diagnostic_error = { text = "$status.bad", border = "#ff0000", background = "#ffdddd" }
-diagnostic_warning = { text = "$status.warn", border = "#ffff00", background = "#ffffdd" }
-diagnostic_info = { text = "$status.info" }
-diagnostic_hint = { text = "$status.info" }
+error_diagnostic = { text = "$status.bad" }
+invalid_error_diagnostic = { text = "$text.3.color" }
+warning_diagnostic = { text = "$status.warn" }
+invalid_warning_diagnostic = { text = "$text.3.color" }
+information_diagnostic = { text = "$status.info" }
+invalid_information_diagnostic = { text = "$text.3.color" }
+hint_diagnostic = { text = "$status.info" }
+invalid_hint_diagnostic = { text = "$text.3.color" }

@@ -136,6 +136,7 @@ impl LanguageServer {
                         buffer.resize(message_len, 0);
                         stdout.read_exact(&mut buffer).await?;
 
+                        println!("{}", std::str::from_utf8(&buffer).unwrap());
                         if let Ok(AnyNotification { method, params }) =
                             serde_json::from_slice(&buffer)
                         {

@@ -394,7 +394,7 @@ impl<'a> BlockMapWriter<'a> {
             let id = BlockId(self.0.next_block_id.fetch_add(1, SeqCst));
             ids.push(id);
 
-            let position = buffer.anchor_before(block.position);
+            let position = buffer.anchor_after(block.position);
             let point = position.to_point(buffer);
             let start_row = wrap_snapshot
                 .from_point(Point::new(point.row, 0), Bias::Left)

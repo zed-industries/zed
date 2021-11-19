@@ -2284,7 +2284,7 @@ impl Editor {
                                             let settings = build_settings.borrow()(cx);
                                             vec![(
                                                 message_len,
-                                                diagnostic_style(severity, &settings.style)
+                                                diagnostic_style(severity, false, &settings.style)
                                                     .text
                                                     .into(),
                                             )]
@@ -2294,7 +2294,7 @@ impl Editor {
                                         let build_settings = build_settings.clone();
                                         move |cx| {
                                             let settings = build_settings.borrow()(cx);
-                                            diagnostic_style(severity, &settings.style).block
+                                            diagnostic_style(severity, false, &settings.style).block
                                         }
                                     })),
                                     disposition: BlockDisposition::Below,
@@ -2919,10 +2919,14 @@ impl EditorSettings {
                     selection: Default::default(),
                     guest_selections: Default::default(),
                     syntax: Default::default(),
-                    diagnostic_error: Default::default(),
-                    diagnostic_warning: Default::default(),
-                    diagnostic_information: Default::default(),
-                    diagnostic_hint: Default::default(),
+                    error_diagnostic: Default::default(),
+                    invalid_error_diagnostic: Default::default(),
+                    warning_diagnostic: Default::default(),
+                    invalid_warning_diagnostic: Default::default(),
+                    information_diagnostic: Default::default(),
+                    invalid_information_diagnostic: Default::default(),
+                    hint_diagnostic: Default::default(),
+                    invalid_hint_diagnostic: Default::default(),
                 }
             },
         }
@@ -3046,12 +3050,20 @@ impl SelectionExt for Selection<Point> {
     }
 }
 
-pub fn diagnostic_style(severity: DiagnosticSeverity, style: &EditorStyle) -> DiagnosticStyle {
-    match severity {
-        DiagnosticSeverity::ERROR => style.diagnostic_error,
-        DiagnosticSeverity::WARNING => style.diagnostic_warning,
-        DiagnosticSeverity::INFORMATION => style.diagnostic_information,
-        DiagnosticSeverity::HINT => style.diagnostic_hint,
+pub fn diagnostic_style(
+    severity: DiagnosticSeverity,
+    valid: bool,
+    style: &EditorStyle,
+) -> DiagnosticStyle {
+    match (severity, valid) {
+        (DiagnosticSeverity::ERROR, true) => style.error_diagnostic,
+        (DiagnosticSeverity::ERROR, false) => style.invalid_error_diagnostic,
+        (DiagnosticSeverity::WARNING, true) => style.warning_diagnostic,
+        (DiagnosticSeverity::WARNING, false) => style.invalid_warning_diagnostic,
+        (DiagnosticSeverity::INFORMATION, true) => style.information_diagnostic,
+        (DiagnosticSeverity::INFORMATION, false) => style.invalid_information_diagnostic,
+        (DiagnosticSeverity::HINT, true) => style.hint_diagnostic,
+        (DiagnosticSeverity::HINT, false) => style.invalid_hint_diagnostic,
         _ => Default::default(),
     }
 }
