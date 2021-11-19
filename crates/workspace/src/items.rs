@@ -263,6 +263,7 @@ impl DiagnosticMessage {
             .buffer()
             .read(cx)
             .diagnostics_in_range::<usize, usize>(cursor_position..cursor_position)
+            .filter(|(range, _)| !range.is_empty())
             .min_by_key(|(range, diagnostic)| (diagnostic.severity, range.len()))
             .map(|(_, diagnostic)| diagnostic.clone());
         if new_diagnostic != self.diagnostic {

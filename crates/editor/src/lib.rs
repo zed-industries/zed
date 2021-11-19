@@ -2242,6 +2242,7 @@ impl Editor {
                 .diagnostics_in_range::<_, usize>(search_start..buffer.len())
                 .find_map(|(range, diagnostic)| {
                     if diagnostic.is_primary
+                        && !range.is_empty()
                         && Some(range.end) != active_primary_range.as_ref().map(|r| *r.end())
                     {
                         Some((range, diagnostic.group_id))
