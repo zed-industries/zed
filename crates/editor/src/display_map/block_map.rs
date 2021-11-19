@@ -52,7 +52,7 @@ pub struct Block {
     id: BlockId,
     position: Anchor,
     text: Rope,
-    build_runs: Option<Arc<dyn Fn(&AppContext) -> Vec<(usize, HighlightStyle)>>>,
+    build_runs: Mutex<Option<Arc<dyn Fn(&AppContext) -> Vec<(usize, HighlightStyle)>>>>,
     build_style: Mutex<Option<Arc<dyn Fn(&AppContext) -> BlockStyle>>>,
     disposition: BlockDisposition,
 }
@@ -333,12 +333,16 @@ impl BlockMap {
         *transforms = new_transforms;
     }
 
-    pub fn restyle<F>(&mut self, mut styles: HashMap<BlockId, Option<F>>)
+    pub fn restyle<F1, F2>(&mut self, mut styles: HashMap<BlockId, (Option<F1>, Option<F2>)>)
     where
-        F: 'static + Fn(&AppContext) -> BlockStyle,
+        F1: 'static + Fn(&AppContext) -> Vec<(usize, HighlightStyle)>,
+        F2: 'static + Fn(&AppContext) -> BlockStyle,
     {
         for block in &self.blocks {
-            if let Some(build_style) = styles.remove(&block.id) {
+            if let Some((build_runs, build_style)) = styles.remove(&block.id) {
+                *block.build_runs.lock() = build_runs.map(|build_runs| {
+                    Arc::new(build_runs) as Arc<dyn Fn(&AppContext) -> Vec<(usize, HighlightStyle)>>
+                });
                 *block.build_style.lock() = build_style.map(|build_style| {
                     Arc::new(build_style) as Arc<dyn Fn(&AppContext) -> BlockStyle>
                 });
@@ -433,7 +437,7 @@ impl<'a> BlockMapWriter<'a> {
                     id,
                     position,
                     text: block.text.into(),
-                    build_runs: block.build_runs,
+                    build_runs: Mutex::new(block.build_runs),
                     build_style: Mutex::new(block.build_style),
                     disposition: block.disposition,
                 }),
@@ -800,6 +804,7 @@ impl<'a> BlockChunks<'a> {
 
         let mut runs = block
             .build_runs
+            .lock()
             .as_ref()
             .zip(cx)
             .map(|(build_runs, cx)| build_runs(cx))
@@ -1031,9 +1036,9 @@ mod tests {
                 position: Anchor::min(),
                 text: "one!\ntwo three\nfour".into(),
                 build_style: Mutex::new(None),
-                build_runs: Some(Arc::new(move |_| {
+                build_runs: Mutex::new(Some(Arc::new(move |_| {
                     vec![(3, red.into()), (6, Default::default()), (5, blue.into())]
-                })),
+                }))),
                 disposition: BlockDisposition::Above,
             }),
         };

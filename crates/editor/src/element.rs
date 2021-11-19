@@ -613,7 +613,7 @@ impl EditorElement {
                     }
 
                     let underline = if let Some(severity) = chunk.diagnostic {
-                        Some(super::diagnostic_style(severity, false, style).text)
+                        Some(super::diagnostic_style(severity, true, style).text)
                     } else {
                         highlight_style.underline
                     };

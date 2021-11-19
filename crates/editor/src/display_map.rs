@@ -8,7 +8,10 @@ pub use block_map::{BlockDisposition, BlockId, BlockProperties, BufferRows, Chun
 use block_map::{BlockMap, BlockPoint};
 use buffer::Rope;
 use fold_map::{FoldMap, ToFoldPoint as _};
-use gpui::{fonts::FontId, AppContext, Entity, ModelContext, ModelHandle};
+use gpui::{
+    fonts::{FontId, HighlightStyle},
+    AppContext, Entity, ModelContext, ModelHandle,
+};
 use language::{Anchor, Buffer, Point, ToOffset, ToPoint};
 use std::{
     collections::{HashMap, HashSet},
@@ -131,9 +134,10 @@ impl DisplayMap {
         block_map.insert(blocks, cx)
     }
 
-    pub fn restyle_blocks<F>(&mut self, styles: HashMap<BlockId, Option<F>>)
+    pub fn restyle_blocks<F1, F2>(&mut self, styles: HashMap<BlockId, (Option<F1>, Option<F2>)>)
     where
-        F: 'static + Fn(&AppContext) -> BlockStyle,
+        F1: 'static + Fn(&AppContext) -> Vec<(usize, HighlightStyle)>,
+        F2: 'static + Fn(&AppContext) -> BlockStyle,
     {
         self.block_map.restyle(styles);
     }

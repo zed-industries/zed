@@ -345,6 +345,7 @@ struct ActiveDiagnosticGroup {
     blocks: HashMap<BlockId, Diagnostic>,
     group_range: Range<Anchor>,
     is_valid: bool,
+    update_count: usize,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -2251,80 +2252,7 @@ impl Editor {
                 });
 
             if let Some((primary_range, group_id)) = next_group {
-                self.dismiss_diagnostics(cx);
-                self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
-                    let buffer = self.buffer.read(cx);
-
-                    let mut group_end = Point::zero();
-                    let diagnostic_group = buffer
-                        .diagnostic_group::<Point>(group_id)
-                        .map(|(range, diagnostic)| {
-                            if range.end > group_end {
-                                group_end = range.end;
-                            }
-                            (range, diagnostic.clone())
-                        })
-                        .collect::<Vec<_>>();
-
-                    let group_range = buffer.anchor_after(diagnostic_group[0].0.start)
-                        ..buffer.anchor_before(group_end);
-                    let primary_range = buffer.anchor_after(primary_range.start)
-                        ..buffer.anchor_before(primary_range.end);
-                    let mut primary_message = None;
-
-                    let blocks = display_map
-                        .insert_blocks(
-                            diagnostic_group.iter().map(|(range, diagnostic)| {
-                                let build_settings = self.build_settings.clone();
-                                let message_len = diagnostic.message.len();
-                                let severity = diagnostic.severity;
-                                if diagnostic.is_primary {
-                                    primary_message = Some(diagnostic.message.clone());
-                                }
-                                BlockProperties {
-                                    position: range.start,
-                                    text: diagnostic.message.as_str(),
-                                    build_runs: Some(Arc::new({
-                                        let build_settings = build_settings.clone();
-                                        move |cx| {
-                                            let settings = build_settings.borrow()(cx);
-                                            vec![(
-                                                message_len,
-                                                diagnostic_style(severity, false, &settings.style)
-                                                    .text
-                                                    .into(),
-                                            )]
-                                        }
-                                    })),
-                                    build_style: Some(Arc::new({
-                                        let build_settings = build_settings.clone();
-                                        move |cx| {
-                                            let settings = build_settings.borrow()(cx);
-                                            diagnostic_style(severity, false, &settings.style).block
-                                        }
-                                    })),
-                                    disposition: BlockDisposition::Below,
-                                }
-                            }),
-                            cx,
-                        )
-                        .into_iter()
-                        .zip(
-                            diagnostic_group
-                                .into_iter()
-                                .map(|(_, diagnostic)| diagnostic),
-                        )
-                        .collect();
-
-                    Some(ActiveDiagnosticGroup {
-                        primary_range,
-                        primary_message: primary_message.unwrap(),
-                        group_range,
-                        blocks,
-                        is_valid: true,
-                    })
-                });
-
+                self.activate_diagnostics(group_id, cx);
                 self.update_selections(
                     vec![Selection {
                         id: selection.id,
@@ -2349,37 +2277,136 @@ impl Editor {
     fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Editor>) {
         if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
             let buffer = self.buffer.read(cx);
-            let primary_range_start = active_diagnostics.primary_range.start.to_offset(buffer);
-            let matching_diagnostic = buffer
-                .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone())
-                .find_map(|(range, diagnostic)| {
-                    if diagnostic.is_primary
-                        && range.start == primary_range_start
-                        && diagnostic.message == active_diagnostics.primary_message
-                    {
-                        Some(diagnostic.group_id)
-                    } else {
-                        None
+            let update_count = buffer.diagnostics_update_count();
+            if update_count > active_diagnostics.update_count {
+                active_diagnostics.update_count = update_count;
+                let primary_range_start = active_diagnostics.primary_range.start.to_offset(buffer);
+                let is_valid = buffer
+                    .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone())
+                    .any(|(range, diagnostic)| {
+                        diagnostic.is_primary
+                            && range.start == primary_range_start
+                            && diagnostic.message == active_diagnostics.primary_message
+                    });
+
+                if is_valid != active_diagnostics.is_valid {
+                    active_diagnostics.is_valid = is_valid;
+                    let mut new_styles = HashMap::new();
+                    for (block_id, diagnostic) in &active_diagnostics.blocks {
+                        let severity = diagnostic.severity;
+                        let message_len = diagnostic.message.len();
+                        new_styles.insert(
+                            *block_id,
+                            (
+                                Some({
+                                    let build_settings = self.build_settings.clone();
+                                    move |cx: &AppContext| {
+                                        let settings = build_settings.borrow()(cx);
+                                        vec![(
+                                            message_len,
+                                            diagnostic_style(severity, is_valid, &settings.style)
+                                                .text
+                                                .into(),
+                                        )]
+                                    }
+                                }),
+                                Some({
+                                    let build_settings = self.build_settings.clone();
+                                    move |cx: &AppContext| {
+                                        let settings = build_settings.borrow()(cx);
+                                        diagnostic_style(severity, is_valid, &settings.style).block
+                                    }
+                                }),
+                            ),
+                        );
                     }
-                });
-            if let Some(matching_diagnostic) = matching_diagnostic {
-            } else if active_diagnostics.is_valid {
-                let mut new_styles = HashMap::new();
-                for (block_id, diagnostic) in &active_diagnostics.blocks {
-                    let build_settings = self.build_settings.clone();
-                    let severity = diagnostic.severity;
-                    new_styles.insert(
-                        *block_id,
-                        Some(move |cx: &AppContext| {
-                            let settings = build_settings.borrow()(cx);
-                            diagnostic_style(severity, false, &settings.style).block
-                        }),
-                    );
+                    self.display_map
+                        .update(cx, |display_map, _| display_map.restyle_blocks(new_styles));
                 }
-                self.display_map
-                    .update(cx, |display_map, _| display_map.restyle_blocks(new_styles));
             }
         }
+    }
+
+    fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) {
+        self.dismiss_diagnostics(cx);
+        self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
+            let buffer = self.buffer.read(cx);
+
+            let update_count = buffer.diagnostics_update_count();
+            let mut primary_range = None;
+            let mut primary_message = None;
+            let mut group_end = Point::zero();
+            let diagnostic_group = buffer
+                .diagnostic_group::<Point>(group_id)
+                .map(|(range, diagnostic)| {
+                    if range.end > group_end {
+                        group_end = range.end;
+                    }
+                    if diagnostic.is_primary {
+                        primary_range = Some(range.clone());
+                        primary_message = Some(diagnostic.message.clone());
+                    }
+                    (range, diagnostic.clone())
+                })
+                .collect::<Vec<_>>();
+            let primary_range = primary_range.unwrap();
+            let primary_message = primary_message.unwrap();
+
+            let group_range =
+                buffer.anchor_after(diagnostic_group[0].0.start)..buffer.anchor_before(group_end);
+            let primary_range =
+                buffer.anchor_after(primary_range.start)..buffer.anchor_before(primary_range.end);
+
+            let blocks = display_map
+                .insert_blocks(
+                    diagnostic_group.iter().map(|(range, diagnostic)| {
+                        let build_settings = self.build_settings.clone();
+                        let message_len = diagnostic.message.len();
+                        let severity = diagnostic.severity;
+                        BlockProperties {
+                            position: range.start,
+                            text: diagnostic.message.as_str(),
+                            build_runs: Some(Arc::new({
+                                let build_settings = build_settings.clone();
+                                move |cx| {
+                                    let settings = build_settings.borrow()(cx);
+                                    vec![(
+                                        message_len,
+                                        diagnostic_style(severity, true, &settings.style)
+                                            .text
+                                            .into(),
+                                    )]
+                                }
+                            })),
+                            build_style: Some(Arc::new({
+                                let build_settings = build_settings.clone();
+                                move |cx| {
+                                    let settings = build_settings.borrow()(cx);
+                                    diagnostic_style(severity, true, &settings.style).block
+                                }
+                            })),
+                            disposition: BlockDisposition::Below,
+                        }
+                    }),
+                    cx,
+                )
+                .into_iter()
+                .zip(
+                    diagnostic_group
+                        .into_iter()
+                        .map(|(_, diagnostic)| diagnostic),
+                )
+                .collect();
+
+            Some(ActiveDiagnosticGroup {
+                primary_range,
+                primary_message,
+                group_range,
+                blocks,
+                is_valid: true,
+                update_count,
+            })
+        });
     }
 
     fn dismiss_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
