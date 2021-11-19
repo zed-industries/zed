@@ -343,7 +343,6 @@ struct ActiveDiagnosticGroup {
     primary_range: Range<Anchor>,
     primary_message: String,
     blocks: HashMap<BlockId, Diagnostic>,
-    group_range: Range<Anchor>,
     is_valid: bool,
     update_count: usize,
 }
@@ -2351,9 +2350,6 @@ impl Editor {
                 .collect::<Vec<_>>();
             let primary_range = primary_range.unwrap();
             let primary_message = primary_message.unwrap();
-
-            let group_range =
-                buffer.anchor_after(diagnostic_group[0].0.start)..buffer.anchor_before(group_end);
             let primary_range =
                 buffer.anchor_after(primary_range.start)..buffer.anchor_before(primary_range.end);
 
@@ -2401,7 +2397,6 @@ impl Editor {
             Some(ActiveDiagnosticGroup {
                 primary_range,
                 primary_message,
-                group_range,
                 blocks,
                 is_valid: true,
                 update_count,
