@@ -1340,7 +1340,7 @@ mod tests {
                     let block_properties = (0..block_count)
                         .map(|_| {
                             let buffer = buffer.read(cx);
-                            let position = buffer.anchor_before(
+                            let position = buffer.anchor_after(
                                 buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Left),
                             );
 
