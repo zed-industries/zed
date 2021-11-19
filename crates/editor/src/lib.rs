@@ -7,13 +7,15 @@ mod test;
 
 use buffer::rope::TextDimension;
 use clock::ReplicaId;
-pub use display_map::DisplayPoint;
 use display_map::*;
+pub use display_map::{DisplayPoint, DisplayRow};
 pub use element::*;
 use gpui::{
-    action, geometry::vector::Vector2F, keymap::Binding, text_layout, AppContext, ClipboardItem,
-    Element, ElementBox, Entity, ModelHandle, MutableAppContext, RenderContext, View, ViewContext,
-    WeakViewHandle,
+    action,
+    geometry::vector::{vec2f, Vector2F},
+    keymap::Binding,
+    text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
+    MutableAppContext, RenderContext, View, ViewContext, WeakViewHandle,
 };
 use language::*;
 use serde::{Deserialize, Serialize};
@@ -22,6 +24,7 @@ use smol::Timer;
 use std::{
     cell::RefCell,
     cmp::{self, Ordering},
+    collections::HashMap,
     iter, mem,
     ops::{Range, RangeInclusive},
     rc::Rc,
@@ -29,7 +32,7 @@ use std::{
     time::Duration,
 };
 use sum_tree::Bias;
-use theme::EditorStyle;
+use theme::{DiagnosticStyle, EditorStyle, SyntaxTheme};
 use util::post_inc;
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -83,6 +86,7 @@ action!(AddSelectionBelow);
 action!(SelectLargerSyntaxNode);
 action!(SelectSmallerSyntaxNode);
 action!(MoveToEnclosingBracket);
+action!(ShowNextDiagnostic);
 action!(PageUp);
 action!(PageDown);
 action!(Fold);
@@ -184,6 +188,7 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("ctrl-w", SelectLargerSyntaxNode, Some("Editor")),
         Binding::new("alt-down", SelectSmallerSyntaxNode, Some("Editor")),
         Binding::new("ctrl-shift-W", SelectSmallerSyntaxNode, Some("Editor")),
+        Binding::new("f8", ShowNextDiagnostic, Some("Editor")),
         Binding::new("ctrl-m", MoveToEnclosingBracket, Some("Editor")),
         Binding::new("pageup", PageUp, Some("Editor")),
         Binding::new("pagedown", PageDown, Some("Editor")),
@@ -242,6 +247,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::select_larger_syntax_node);
     cx.add_action(Editor::select_smaller_syntax_node);
     cx.add_action(Editor::move_to_enclosing_bracket);
+    cx.add_action(Editor::show_next_diagnostic);
     cx.add_action(Editor::page_up);
     cx.add_action(Editor::page_down);
     cx.add_action(Editor::fold);
@@ -299,6 +305,7 @@ pub struct Editor {
     add_selections_state: Option<AddSelectionsState>,
     autoclose_stack: Vec<BracketPairState>,
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
+    active_diagnostics: Option<ActiveDiagnosticGroup>,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
     autoscroll_requested: bool,
@@ -329,6 +336,14 @@ struct AddSelectionsState {
 struct BracketPairState {
     ranges: AnchorRangeSet,
     pair: BracketPair,
+}
+
+#[derive(Debug)]
+struct ActiveDiagnosticGroup {
+    primary_range: Range<Anchor>,
+    primary_message: String,
+    blocks: HashMap<BlockId, Diagnostic>,
+    is_valid: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -418,6 +433,7 @@ impl Editor {
             add_selections_state: None,
             autoclose_stack: Default::default(),
             select_larger_syntax_node_stack: Vec::new(),
+            active_diagnostics: None,
             build_settings,
             scroll_position: Vector2F::zero(),
             scroll_top_anchor: Anchor::min(),
@@ -466,16 +482,24 @@ impl Editor {
         cx.notify();
     }
 
-    fn set_scroll_position(&mut self, mut scroll_position: Vector2F, cx: &mut ViewContext<Self>) {
+    fn set_scroll_position(&mut self, scroll_position: Vector2F, cx: &mut ViewContext<Self>) {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let scroll_top_buffer_offset =
-            DisplayPoint::new(scroll_position.y() as u32, 0).to_buffer_offset(&map, Bias::Right);
+            DisplayPoint::new(scroll_position.y() as u32, 0).to_offset(&map, Bias::Right);
         self.scroll_top_anchor = self
             .buffer
             .read(cx)
             .anchor_at(scroll_top_buffer_offset, Bias::Right);
-        scroll_position.set_y(scroll_position.y().fract());
-        self.scroll_position = scroll_position;
+        self.scroll_position = vec2f(
+            scroll_position.x(),
+            scroll_position.y() - self.scroll_top_anchor.to_display_point(&map).row() as f32,
+        );
+
+        debug_assert_eq!(
+            compute_scroll_position(&map, self.scroll_position, &self.scroll_top_anchor),
+            scroll_position
+        );
+
         cx.notify();
     }
 
@@ -519,13 +543,13 @@ impl Editor {
             .peek()
             .unwrap()
             .head()
-            .to_display_point(&display_map, Bias::Left)
+            .to_display_point(&display_map)
             .row() as f32;
         let last_cursor_bottom = selections
             .last()
             .unwrap()
             .head()
-            .to_display_point(&display_map, Bias::Right)
+            .to_display_point(&display_map)
             .row() as f32
             + 1.0;
 
@@ -570,7 +594,7 @@ impl Editor {
         let mut target_left = std::f32::INFINITY;
         let mut target_right = 0.0_f32;
         for selection in selections {
-            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let head = selection.head().to_display_point(&display_map);
             let start_column = head.column().saturating_sub(3);
             let end_column = cmp::min(display_map.line_len(head.row()), head.column() + 3);
             target_left = target_left
@@ -620,7 +644,7 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
-        let cursor = buffer.anchor_before(position.to_buffer_point(&display_map, Bias::Left));
+        let cursor = buffer.anchor_before(position.to_point(&display_map));
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
             start: cursor.clone(),
@@ -646,7 +670,7 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         if let Some(pending_selection) = self.pending_selection.as_mut() {
             let buffer = self.buffer.read(cx);
-            let cursor = buffer.anchor_before(position.to_buffer_point(&display_map, Bias::Left));
+            let cursor = buffer.anchor_before(position.to_point(&display_map));
             if cursor.cmp(&pending_selection.tail(), buffer).unwrap() < Ordering::Equal {
                 if !pending_selection.reversed {
                     pending_selection.end = pending_selection.start.clone();
@@ -681,7 +705,9 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        if let Some(pending_selection) = self.pending_selection.take() {
+        if self.active_diagnostics.is_some() {
+            self.dismiss_diagnostics(cx);
+        } else if let Some(pending_selection) = self.pending_selection.take() {
             let buffer = self.buffer.read(cx);
             let pending_selection = Selection {
                 id: pending_selection.id,
@@ -694,16 +720,8 @@ impl Editor {
                 self.update_selections(vec![pending_selection], true, cx);
             }
         } else {
-            let selections = self.selections::<Point>(cx);
-            let mut selection_count = 0;
-            let mut oldest_selection = selections
-                .min_by_key(|s| {
-                    selection_count += 1;
-                    s.id
-                })
-                .unwrap()
-                .clone();
-            if selection_count == 1 {
+            let mut oldest_selection = self.oldest_selection::<usize>(cx);
+            if self.selection_count(cx) == 1 {
                 oldest_selection.start = oldest_selection.head().clone();
                 oldest_selection.end = oldest_selection.head().clone();
             }
@@ -763,8 +781,8 @@ impl Editor {
                 };
                 Selection {
                     id: post_inc(&mut self.next_selection_id),
-                    start: start.to_buffer_point(&display_map, Bias::Left),
-                    end: end.to_buffer_point(&display_map, Bias::Left),
+                    start: start.to_point(&display_map),
+                    end: end.to_point(&display_map),
                     reversed,
                     goal: SelectionGoal::None,
                 }
@@ -1052,10 +1070,10 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         for selection in &mut selections {
             if selection.is_empty() {
-                let head = selection.head().to_display_point(&display_map, Bias::Left);
+                let head = selection.head().to_display_point(&display_map);
                 let cursor = movement::left(&display_map, head)
                     .unwrap()
-                    .to_buffer_point(&display_map, Bias::Left);
+                    .to_point(&display_map);
                 selection.set_head(cursor);
                 selection.goal = SelectionGoal::None;
             }
@@ -1071,10 +1089,10 @@ impl Editor {
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
             if selection.is_empty() {
-                let head = selection.head().to_display_point(&display_map, Bias::Left);
+                let head = selection.head().to_display_point(&display_map);
                 let cursor = movement::right(&display_map, head)
                     .unwrap()
-                    .to_buffer_point(&display_map, Bias::Right);
+                    .to_point(&display_map);
                 selection.set_head(cursor);
                 selection.goal = SelectionGoal::None;
             }
@@ -1138,10 +1156,7 @@ impl Editor {
         let mut selections = selections.iter().peekable();
         while let Some(selection) = selections.next() {
             let mut rows = selection.spanned_rows(false, &display_map).buffer_rows;
-            let goal_display_column = selection
-                .head()
-                .to_display_point(&display_map, Bias::Left)
-                .column();
+            let goal_display_column = selection.head().to_display_point(&display_map).column();
 
             // Accumulate contiguous regions of rows that we want to delete.
             while let Some(next_selection) = selections.peek() {
@@ -1170,16 +1185,13 @@ impl Editor {
                 cursor_buffer_row = rows.start.saturating_sub(1);
             }
 
-            let mut cursor = Point::new(cursor_buffer_row - row_delta, 0)
-                .to_display_point(&display_map, Bias::Left);
+            let mut cursor =
+                Point::new(cursor_buffer_row - row_delta, 0).to_display_point(&display_map);
             *cursor.column_mut() =
                 cmp::min(goal_display_column, display_map.line_len(cursor.row()));
             row_delta += rows.len() as u32;
 
-            new_cursors.push((
-                selection.id,
-                cursor.to_buffer_point(&display_map, Bias::Left),
-            ));
+            new_cursors.push((selection.id, cursor.to_point(&display_map)));
             edit_ranges.push(edit_start..edit_end);
         }
 
@@ -1566,15 +1578,15 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
-            let start = selection.start.to_display_point(&display_map, Bias::Left);
-            let end = selection.end.to_display_point(&display_map, Bias::Left);
+            let start = selection.start.to_display_point(&display_map);
+            let end = selection.end.to_display_point(&display_map);
 
             if start != end {
                 selection.end = selection.start.clone();
             } else {
                 let cursor = movement::left(&display_map, start)
                     .unwrap()
-                    .to_buffer_point(&display_map, Bias::Left);
+                    .to_point(&display_map);
                 selection.start = cursor.clone();
                 selection.end = cursor;
             }
@@ -1588,10 +1600,10 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let head = selection.head().to_display_point(&display_map);
             let cursor = movement::left(&display_map, head)
                 .unwrap()
-                .to_buffer_point(&display_map, Bias::Left);
+                .to_point(&display_map);
             selection.set_head(cursor);
             selection.goal = SelectionGoal::None;
         }
@@ -1602,15 +1614,15 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
-            let start = selection.start.to_display_point(&display_map, Bias::Left);
-            let end = selection.end.to_display_point(&display_map, Bias::Left);
+            let start = selection.start.to_display_point(&display_map);
+            let end = selection.end.to_display_point(&display_map);
 
             if start != end {
                 selection.start = selection.end.clone();
             } else {
                 let cursor = movement::right(&display_map, end)
                     .unwrap()
-                    .to_buffer_point(&display_map, Bias::Right);
+                    .to_point(&display_map);
                 selection.start = cursor;
                 selection.end = cursor;
             }
@@ -1624,10 +1636,10 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let head = selection.head().to_display_point(&display_map);
             let cursor = movement::right(&display_map, head)
                 .unwrap()
-                .to_buffer_point(&display_map, Bias::Right);
+                .to_point(&display_map);
             selection.set_head(cursor);
             selection.goal = SelectionGoal::None;
         }
@@ -1643,14 +1655,14 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
-            let start = selection.start.to_display_point(&display_map, Bias::Left);
-            let end = selection.end.to_display_point(&display_map, Bias::Left);
+            let start = selection.start.to_display_point(&display_map);
+            let end = selection.end.to_display_point(&display_map);
             if start != end {
                 selection.goal = SelectionGoal::None;
             }
 
             let (start, goal) = movement::up(&display_map, start, selection.goal).unwrap();
-            let cursor = start.to_buffer_point(&display_map, Bias::Left);
+            let cursor = start.to_point(&display_map);
             selection.start = cursor;
             selection.end = cursor;
             selection.goal = goal;
@@ -1663,9 +1675,9 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let head = selection.head().to_display_point(&display_map);
             let (head, goal) = movement::up(&display_map, head, selection.goal).unwrap();
-            let cursor = head.to_buffer_point(&display_map, Bias::Left);
+            let cursor = head.to_point(&display_map);
             selection.set_head(cursor);
             selection.goal = goal;
         }
@@ -1681,14 +1693,14 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
-            let start = selection.start.to_display_point(&display_map, Bias::Left);
-            let end = selection.end.to_display_point(&display_map, Bias::Left);
+            let start = selection.start.to_display_point(&display_map);
+            let end = selection.end.to_display_point(&display_map);
             if start != end {
                 selection.goal = SelectionGoal::None;
             }
 
             let (start, goal) = movement::down(&display_map, end, selection.goal).unwrap();
-            let cursor = start.to_buffer_point(&display_map, Bias::Right);
+            let cursor = start.to_point(&display_map);
             selection.start = cursor;
             selection.end = cursor;
             selection.goal = goal;
@@ -1701,9 +1713,9 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let head = selection.head().to_display_point(&display_map);
             let (head, goal) = movement::down(&display_map, head, selection.goal).unwrap();
-            let cursor = head.to_buffer_point(&display_map, Bias::Right);
+            let cursor = head.to_point(&display_map);
             selection.set_head(cursor);
             selection.goal = goal;
         }
@@ -1718,9 +1730,9 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let head = selection.head().to_display_point(&display_map);
             let new_head = movement::prev_word_boundary(&display_map, head).unwrap();
-            let cursor = new_head.to_buffer_point(&display_map, Bias::Left);
+            let cursor = new_head.to_point(&display_map);
             selection.start = cursor.clone();
             selection.end = cursor;
             selection.reversed = false;
@@ -1737,9 +1749,9 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let head = selection.head().to_display_point(&display_map);
             let new_head = movement::prev_word_boundary(&display_map, head).unwrap();
-            let cursor = new_head.to_buffer_point(&display_map, Bias::Left);
+            let cursor = new_head.to_point(&display_map);
             selection.set_head(cursor);
             selection.goal = SelectionGoal::None;
         }
@@ -1756,9 +1768,9 @@ impl Editor {
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
             if selection.is_empty() {
-                let head = selection.head().to_display_point(&display_map, Bias::Left);
+                let head = selection.head().to_display_point(&display_map);
                 let new_head = movement::prev_word_boundary(&display_map, head).unwrap();
-                let cursor = new_head.to_buffer_point(&display_map, Bias::Right);
+                let cursor = new_head.to_point(&display_map);
                 selection.set_head(cursor);
                 selection.goal = SelectionGoal::None;
             }
@@ -1776,9 +1788,9 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let head = selection.head().to_display_point(&display_map);
             let new_head = movement::next_word_boundary(&display_map, head).unwrap();
-            let cursor = new_head.to_buffer_point(&display_map, Bias::Left);
+            let cursor = new_head.to_point(&display_map);
             selection.start = cursor;
             selection.end = cursor;
             selection.reversed = false;
@@ -1795,9 +1807,9 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let head = selection.head().to_display_point(&display_map);
             let new_head = movement::next_word_boundary(&display_map, head).unwrap();
-            let cursor = new_head.to_buffer_point(&display_map, Bias::Left);
+            let cursor = new_head.to_point(&display_map);
             selection.set_head(cursor);
             selection.goal = SelectionGoal::None;
         }
@@ -1814,9 +1826,9 @@ impl Editor {
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
             if selection.is_empty() {
-                let head = selection.head().to_display_point(&display_map, Bias::Left);
+                let head = selection.head().to_display_point(&display_map);
                 let new_head = movement::next_word_boundary(&display_map, head).unwrap();
-                let cursor = new_head.to_buffer_point(&display_map, Bias::Right);
+                let cursor = new_head.to_point(&display_map);
                 selection.set_head(cursor);
                 selection.goal = SelectionGoal::None;
             }
@@ -1834,9 +1846,9 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let head = selection.head().to_display_point(&display_map);
             let new_head = movement::line_beginning(&display_map, head, true).unwrap();
-            let cursor = new_head.to_buffer_point(&display_map, Bias::Left);
+            let cursor = new_head.to_point(&display_map);
             selection.start = cursor;
             selection.end = cursor;
             selection.reversed = false;
@@ -1853,9 +1865,9 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let head = selection.head().to_display_point(&display_map);
             let new_head = movement::line_beginning(&display_map, head, *toggle_indent).unwrap();
-            selection.set_head(new_head.to_buffer_point(&display_map, Bias::Left));
+            selection.set_head(new_head.to_point(&display_map));
             selection.goal = SelectionGoal::None;
         }
         self.update_selections(selections, true, cx);
@@ -1877,9 +1889,9 @@ impl Editor {
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         {
             for selection in &mut selections {
-                let head = selection.head().to_display_point(&display_map, Bias::Left);
+                let head = selection.head().to_display_point(&display_map);
                 let new_head = movement::line_end(&display_map, head).unwrap();
-                let anchor = new_head.to_buffer_point(&display_map, Bias::Left);
+                let anchor = new_head.to_point(&display_map);
                 selection.start = anchor.clone();
                 selection.end = anchor;
                 selection.reversed = false;
@@ -1893,9 +1905,9 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
-            let head = selection.head().to_display_point(&display_map, Bias::Left);
+            let head = selection.head().to_display_point(&display_map);
             let new_head = movement::line_end(&display_map, head).unwrap();
-            selection.set_head(new_head.to_buffer_point(&display_map, Bias::Left));
+            selection.set_head(new_head.to_point(&display_map));
             selection.goal = SelectionGoal::None;
         }
         self.update_selections(selections, true, cx);
@@ -2205,6 +2217,197 @@ impl Editor {
         self.update_selections(selections, true, cx);
     }
 
+    pub fn show_next_diagnostic(&mut self, _: &ShowNextDiagnostic, cx: &mut ViewContext<Self>) {
+        let selection = self.newest_selection::<usize>(cx);
+        let buffer = self.buffer.read(cx.as_ref());
+        let active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
+            active_diagnostics
+                .primary_range
+                .to_offset(buffer)
+                .to_inclusive()
+        });
+        let mut search_start = if let Some(active_primary_range) = active_primary_range.as_ref() {
+            if active_primary_range.contains(&selection.head()) {
+                *active_primary_range.end()
+            } else {
+                selection.head()
+            }
+        } else {
+            selection.head()
+        };
+
+        loop {
+            let next_group = buffer
+                .diagnostics_in_range::<_, usize>(search_start..buffer.len())
+                .find_map(|(range, diagnostic)| {
+                    if diagnostic.is_primary
+                        && !range.is_empty()
+                        && Some(range.end) != active_primary_range.as_ref().map(|r| *r.end())
+                    {
+                        Some((range, diagnostic.group_id))
+                    } else {
+                        None
+                    }
+                });
+
+            if let Some((primary_range, group_id)) = next_group {
+                self.activate_diagnostics(group_id, cx);
+                self.update_selections(
+                    vec![Selection {
+                        id: selection.id,
+                        start: primary_range.start,
+                        end: primary_range.start,
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    }],
+                    true,
+                    cx,
+                );
+                break;
+            } else if search_start == 0 {
+                break;
+            } else {
+                // Cycle around to the start of the buffer.
+                search_start = 0;
+            }
+        }
+    }
+
+    fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Editor>) {
+        if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
+            let buffer = self.buffer.read(cx);
+            let primary_range_start = active_diagnostics.primary_range.start.to_offset(buffer);
+            let is_valid = buffer
+                .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone())
+                .any(|(range, diagnostic)| {
+                    diagnostic.is_primary
+                        && !range.is_empty()
+                        && range.start == primary_range_start
+                        && diagnostic.message == active_diagnostics.primary_message
+                });
+
+            if is_valid != active_diagnostics.is_valid {
+                active_diagnostics.is_valid = is_valid;
+                let mut new_styles = HashMap::new();
+                for (block_id, diagnostic) in &active_diagnostics.blocks {
+                    let severity = diagnostic.severity;
+                    let message_len = diagnostic.message.len();
+                    new_styles.insert(
+                        *block_id,
+                        (
+                            Some({
+                                let build_settings = self.build_settings.clone();
+                                move |cx: &AppContext| {
+                                    let settings = build_settings.borrow()(cx);
+                                    vec![(
+                                        message_len,
+                                        diagnostic_style(severity, is_valid, &settings.style)
+                                            .text
+                                            .into(),
+                                    )]
+                                }
+                            }),
+                            Some({
+                                let build_settings = self.build_settings.clone();
+                                move |cx: &AppContext| {
+                                    let settings = build_settings.borrow()(cx);
+                                    diagnostic_style(severity, is_valid, &settings.style).block
+                                }
+                            }),
+                        ),
+                    );
+                }
+                self.display_map
+                    .update(cx, |display_map, _| display_map.restyle_blocks(new_styles));
+            }
+        }
+    }
+
+    fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) {
+        self.dismiss_diagnostics(cx);
+        self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
+            let buffer = self.buffer.read(cx);
+
+            let mut primary_range = None;
+            let mut primary_message = None;
+            let mut group_end = Point::zero();
+            let diagnostic_group = buffer
+                .diagnostic_group::<Point>(group_id)
+                .map(|(range, diagnostic)| {
+                    if range.end > group_end {
+                        group_end = range.end;
+                    }
+                    if diagnostic.is_primary {
+                        primary_range = Some(range.clone());
+                        primary_message = Some(diagnostic.message.clone());
+                    }
+                    (range, diagnostic.clone())
+                })
+                .collect::<Vec<_>>();
+            let primary_range = primary_range.unwrap();
+            let primary_message = primary_message.unwrap();
+            let primary_range =
+                buffer.anchor_after(primary_range.start)..buffer.anchor_before(primary_range.end);
+
+            let blocks = display_map
+                .insert_blocks(
+                    diagnostic_group.iter().map(|(range, diagnostic)| {
+                        let build_settings = self.build_settings.clone();
+                        let message_len = diagnostic.message.len();
+                        let severity = diagnostic.severity;
+                        BlockProperties {
+                            position: range.start,
+                            text: diagnostic.message.as_str(),
+                            build_runs: Some(Arc::new({
+                                let build_settings = build_settings.clone();
+                                move |cx| {
+                                    let settings = build_settings.borrow()(cx);
+                                    vec![(
+                                        message_len,
+                                        diagnostic_style(severity, true, &settings.style)
+                                            .text
+                                            .into(),
+                                    )]
+                                }
+                            })),
+                            build_style: Some(Arc::new({
+                                let build_settings = build_settings.clone();
+                                move |cx| {
+                                    let settings = build_settings.borrow()(cx);
+                                    diagnostic_style(severity, true, &settings.style).block
+                                }
+                            })),
+                            disposition: BlockDisposition::Below,
+                        }
+                    }),
+                    cx,
+                )
+                .into_iter()
+                .zip(
+                    diagnostic_group
+                        .into_iter()
+                        .map(|(_, diagnostic)| diagnostic),
+                )
+                .collect();
+
+            Some(ActiveDiagnosticGroup {
+                primary_range,
+                primary_message,
+                blocks,
+                is_valid: true,
+            })
+        });
+    }
+
+    fn dismiss_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(active_diagnostic_group) = self.active_diagnostics.take() {
+            self.display_map.update(cx, |display_map, cx| {
+                display_map.remove_blocks(active_diagnostic_group.blocks.into_keys().collect(), cx);
+            });
+            cx.notify();
+        }
+    }
+
     fn build_columnar_selection(
         &mut self,
         display_map: &DisplayMapSnapshot,
@@ -2219,8 +2422,8 @@ impl Editor {
             let end = DisplayPoint::new(row, cmp::min(columns.end, line_len));
             Some(Selection {
                 id: post_inc(&mut self.next_selection_id),
-                start: start.to_buffer_point(display_map, Bias::Left),
-                end: end.to_buffer_point(display_map, Bias::Left),
+                start: start.to_point(display_map),
+                end: end.to_point(display_map),
                 reversed,
                 goal: SelectionGoal::ColumnRange {
                     start: columns.start,
@@ -2254,17 +2457,16 @@ impl Editor {
     ) -> impl 'a + Iterator<Item = Range<DisplayPoint>> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
-        let selections = buffer
-            .selection_set(set_id)
-            .unwrap()
+        let selections = self
+            .selection_set(cx)
             .selections::<Point, _>(buffer)
             .collect::<Vec<_>>();
-        let start = range.start.to_buffer_point(&display_map, Bias::Left);
+        let start = range.start.to_point(&display_map);
         let start_index = self.selection_insertion_index(&selections, start);
         let pending_selection = if set_id.replica_id == self.buffer.read(cx).replica_id() {
             self.pending_selection.as_ref().and_then(|pending| {
-                let mut selection_start = pending.start.to_display_point(&display_map, Bias::Left);
-                let mut selection_end = pending.end.to_display_point(&display_map, Bias::Left);
+                let mut selection_start = pending.start.to_display_point(&display_map);
+                let mut selection_end = pending.end.to_display_point(&display_map);
                 if pending.reversed {
                     mem::swap(&mut selection_start, &mut selection_end);
                 }
@@ -2303,18 +2505,8 @@ impl Editor {
         D: 'a + TextDimension<'a> + Ord,
     {
         let buffer = self.buffer.read(cx);
-        let mut selections = buffer
-            .selection_set(self.selection_set_id)
-            .unwrap()
-            .selections::<D, _>(buffer)
-            .peekable();
-        let mut pending_selection = self.pending_selection.clone().map(|selection| Selection {
-            id: selection.id,
-            start: selection.start.summary::<D, _>(buffer),
-            end: selection.end.summary::<D, _>(buffer),
-            reversed: selection.reversed,
-            goal: selection.goal,
-        });
+        let mut selections = self.selection_set(cx).selections::<D, _>(buffer).peekable();
+        let mut pending_selection = self.pending_selection(cx);
         iter::from_fn(move || {
             if let Some(pending) = pending_selection.as_mut() {
                 while let Some(next_selection) = selections.peek() {
@@ -2338,6 +2530,56 @@ impl Editor {
                 selections.next()
             }
         })
+    }
+
+    fn pending_selection<'a, D>(&self, cx: &'a AppContext) -> Option<Selection<D>>
+    where
+        D: 'a + TextDimension<'a>,
+    {
+        let buffer = self.buffer.read(cx);
+        self.pending_selection.as_ref().map(|selection| Selection {
+            id: selection.id,
+            start: selection.start.summary::<D, _>(buffer),
+            end: selection.end.summary::<D, _>(buffer),
+            reversed: selection.reversed,
+            goal: selection.goal,
+        })
+    }
+
+    fn selection_count<'a>(&self, cx: &'a AppContext) -> usize {
+        let mut selection_count = self.selection_set(cx).len();
+        if self.pending_selection.is_some() {
+            selection_count += 1;
+        }
+        selection_count
+    }
+
+    pub fn oldest_selection<'a, T>(&self, cx: &'a AppContext) -> Selection<T>
+    where
+        T: 'a + TextDimension<'a>,
+    {
+        let buffer = self.buffer.read(cx);
+        self.selection_set(cx)
+            .oldest_selection(buffer)
+            .or_else(|| self.pending_selection(cx))
+            .unwrap()
+    }
+
+    pub fn newest_selection<'a, T>(&self, cx: &'a AppContext) -> Selection<T>
+    where
+        T: 'a + TextDimension<'a>,
+    {
+        let buffer = self.buffer.read(cx);
+        self.pending_selection(cx)
+            .or_else(|| self.selection_set(cx).newest_selection(buffer))
+            .unwrap()
+    }
+
+    fn selection_set<'a>(&self, cx: &'a AppContext) -> &'a SelectionSet {
+        self.buffer
+            .read(cx)
+            .selection_set(self.selection_set_id)
+            .unwrap()
     }
 
     fn update_selections<T>(
@@ -2438,7 +2680,7 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         for selection in selections {
             let range = selection.display_range(&display_map).sorted();
-            let buffer_start_row = range.start.to_buffer_point(&display_map, Bias::Left).row;
+            let buffer_start_row = range.start.to_point(&display_map).row;
 
             for row in (0..=range.end.row()).rev() {
                 if self.is_line_foldable(&display_map, row) && !display_map.is_line_folded(row) {
@@ -2464,8 +2706,8 @@ impl Editor {
             .iter()
             .map(|s| {
                 let range = s.display_range(&display_map).sorted();
-                let mut start = range.start.to_buffer_point(&display_map, Bias::Left);
-                let mut end = range.end.to_buffer_point(&display_map, Bias::Left);
+                let mut start = range.start.to_point(&display_map);
+                let mut end = range.end.to_point(&display_map);
                 start.column = 0;
                 end.column = buffer.line_len(end.row);
                 start..end
@@ -2513,8 +2755,7 @@ impl Editor {
         }
 
         let end = end.unwrap_or(max_point);
-        return start.to_buffer_point(display_map, Bias::Left)
-            ..end.to_buffer_point(display_map, Bias::Left);
+        return start.to_point(display_map)..end.to_point(display_map);
     }
 
     pub fn fold_selected_ranges(&mut self, _: &FoldSelectedRanges, cx: &mut ViewContext<Self>) {
@@ -2624,6 +2865,7 @@ impl Editor {
     }
 
     fn on_buffer_changed(&mut self, _: ModelHandle<Buffer>, cx: &mut ViewContext<Self>) {
+        self.refresh_active_diagnostics(cx);
         cx.notify();
     }
 
@@ -2666,16 +2908,17 @@ impl Snapshot {
         self.display_snapshot.buffer_row_count()
     }
 
-    pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
-        self.display_snapshot.buffer_rows(start_row)
+    pub fn buffer_rows<'a>(&'a self, start_row: u32, cx: &'a AppContext) -> BufferRows<'a> {
+        self.display_snapshot.buffer_rows(start_row, Some(cx))
     }
 
-    pub fn highlighted_chunks_for_rows(
-        &mut self,
+    pub fn chunks<'a>(
+        &'a self,
         display_rows: Range<u32>,
-    ) -> display_map::HighlightedChunks {
-        self.display_snapshot
-            .highlighted_chunks_for_rows(display_rows)
+        theme: Option<&'a SyntaxTheme>,
+        cx: &'a AppContext,
+    ) -> display_map::Chunks<'a> {
+        self.display_snapshot.chunks(display_rows, theme, cx)
     }
 
     pub fn scroll_position(&self) -> Vector2F {
@@ -2743,10 +2986,14 @@ impl EditorSettings {
                     selection: Default::default(),
                     guest_selections: Default::default(),
                     syntax: Default::default(),
-                    error_underline: Default::default(),
-                    warning_underline: Default::default(),
-                    information_underline: Default::default(),
-                    hint_underline: Default::default(),
+                    error_diagnostic: Default::default(),
+                    invalid_error_diagnostic: Default::default(),
+                    warning_diagnostic: Default::default(),
+                    invalid_warning_diagnostic: Default::default(),
+                    information_diagnostic: Default::default(),
+                    invalid_information_diagnostic: Default::default(),
+                    hint_diagnostic: Default::default(),
+                    invalid_hint_diagnostic: Default::default(),
                 }
             },
         }
@@ -2758,9 +3005,7 @@ fn compute_scroll_position(
     mut scroll_position: Vector2F,
     scroll_top_anchor: &Anchor,
 ) -> Vector2F {
-    let scroll_top = scroll_top_anchor
-        .to_display_point(snapshot, Bias::Left)
-        .row() as f32;
+    let scroll_top = scroll_top_anchor.to_display_point(snapshot).row() as f32;
     scroll_position.set_y(scroll_top + scroll_position.y());
     scroll_position
 }
@@ -2838,8 +3083,8 @@ impl View for Editor {
 
 impl SelectionExt for Selection<Point> {
     fn display_range(&self, map: &DisplayMapSnapshot) -> Range<DisplayPoint> {
-        let start = self.start.to_display_point(map, Bias::Left);
-        let end = self.end.to_display_point(map, Bias::Left);
+        let start = self.start.to_display_point(map);
+        let end = self.end.to_display_point(map);
         if self.reversed {
             end..start
         } else {
@@ -2852,8 +3097,8 @@ impl SelectionExt for Selection<Point> {
         include_end_if_at_line_start: bool,
         map: &DisplayMapSnapshot,
     ) -> SpannedRows {
-        let display_start = self.start.to_display_point(map, Bias::Left);
-        let mut display_end = self.end.to_display_point(map, Bias::Right);
+        let display_start = self.start.to_display_point(map);
+        let mut display_end = self.end.to_display_point(map);
         if !include_end_if_at_line_start
             && display_end.row() != map.max_point().row()
             && display_start.row() != display_end.row()
@@ -2869,6 +3114,24 @@ impl SelectionExt for Selection<Point> {
             buffer_rows: buffer_start.row..buffer_end.row + 1,
             display_rows: display_start.row()..display_end.row() + 1,
         }
+    }
+}
+
+pub fn diagnostic_style(
+    severity: DiagnosticSeverity,
+    valid: bool,
+    style: &EditorStyle,
+) -> DiagnosticStyle {
+    match (severity, valid) {
+        (DiagnosticSeverity::ERROR, true) => style.error_diagnostic,
+        (DiagnosticSeverity::ERROR, false) => style.invalid_error_diagnostic,
+        (DiagnosticSeverity::WARNING, true) => style.warning_diagnostic,
+        (DiagnosticSeverity::WARNING, false) => style.invalid_warning_diagnostic,
+        (DiagnosticSeverity::INFORMATION, true) => style.information_diagnostic,
+        (DiagnosticSeverity::INFORMATION, false) => style.invalid_information_diagnostic,
+        (DiagnosticSeverity::HINT, true) => style.hint_diagnostic,
+        (DiagnosticSeverity::HINT, false) => style.invalid_hint_diagnostic,
+        _ => Default::default(),
     }
 }
 

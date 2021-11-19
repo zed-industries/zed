@@ -12,7 +12,7 @@ use anyhow::{anyhow, Result};
 pub use buffer::{Buffer as TextBuffer, Operation as _, *};
 use clock::ReplicaId;
 use futures::FutureExt as _;
-use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
+use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
 use lsp::LanguageServer;
 use parking_lot::Mutex;
@@ -34,6 +34,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     vec,
 };
+use theme::SyntaxTheme;
 use tree_sitter::{InputEdit, Parser, QueryCursor, Tree};
 use util::{post_inc, TryFutureExt as _};
 
@@ -78,13 +79,14 @@ pub struct Snapshot {
     diagnostics: AnchorRangeMultimap<Diagnostic>,
     is_parsing: bool,
     language: Option<Arc<Language>>,
-    query_cursor: QueryCursorHandle,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diagnostic {
     pub severity: DiagnosticSeverity,
     pub message: String,
+    pub group_id: usize,
+    pub is_primary: bool,
 }
 
 struct LanguageServerState {
@@ -190,11 +192,13 @@ struct Highlights<'a> {
     next_capture: Option<(tree_sitter::QueryMatch<'a, 'a>, usize)>,
     stack: Vec<(usize, HighlightId)>,
     highlight_map: HighlightMap,
+    theme: &'a SyntaxTheme,
+    _query_cursor: QueryCursorHandle,
 }
 
-pub struct HighlightedChunks<'a> {
+pub struct Chunks<'a> {
     range: Range<usize>,
-    chunks: Chunks<'a>,
+    chunks: rope::Chunks<'a>,
     diagnostic_endpoints: Peekable<vec::IntoIter<DiagnosticEndpoint>>,
     error_depth: usize,
     warning_depth: usize,
@@ -204,9 +208,9 @@ pub struct HighlightedChunks<'a> {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub struct HighlightedChunk<'a> {
+pub struct Chunk<'a> {
     pub text: &'a str,
-    pub highlight_id: HighlightId,
+    pub highlight_style: Option<HighlightStyle>,
     pub diagnostic: Option<DiagnosticSeverity>,
 }
 
@@ -341,7 +345,6 @@ impl Buffer {
             diagnostics: self.diagnostics.clone(),
             is_parsing: self.parsing_in_background,
             language: self.language.clone(),
-            query_cursor: QueryCursorHandle::new(),
         }
     }
 
@@ -438,7 +441,7 @@ impl Buffer {
                                                     uri,
                                                     Default::default(),
                                                     snapshot.version as i32,
-                                                    snapshot.buffer_snapshot.text().into(),
+                                                    snapshot.buffer_snapshot.text().to_string(),
                                                 ),
                                             },
                                         )
@@ -699,6 +702,7 @@ impl Buffer {
         } else {
             self.content()
         };
+        let abs_path = self.file.as_ref().and_then(|f| f.abs_path());
 
         let empty_set = HashSet::new();
         let disk_based_sources = self
@@ -714,56 +718,82 @@ impl Buffer {
                 .peekable();
             let mut last_edit_old_end = PointUtf16::zero();
             let mut last_edit_new_end = PointUtf16::zero();
+            let mut group_ids_by_diagnostic_range = HashMap::new();
+            let mut diagnostics_by_group_id = HashMap::new();
+            let mut next_group_id = 0;
+            'outer: for diagnostic in &diagnostics {
+                let mut start = diagnostic.range.start.to_point_utf16();
+                let mut end = diagnostic.range.end.to_point_utf16();
+                let source = diagnostic.source.as_ref();
+                let code = diagnostic.code.as_ref();
+                let group_id = diagnostic_ranges(&diagnostic, abs_path.as_deref())
+                    .find_map(|range| group_ids_by_diagnostic_range.get(&(source, code, range)))
+                    .copied()
+                    .unwrap_or_else(|| {
+                        let group_id = post_inc(&mut next_group_id);
+                        for range in diagnostic_ranges(&diagnostic, abs_path.as_deref()) {
+                            group_ids_by_diagnostic_range.insert((source, code, range), group_id);
+                        }
+                        group_id
+                    });
+
+                if diagnostic
+                    .source
+                    .as_ref()
+                    .map_or(false, |source| disk_based_sources.contains(source))
+                {
+                    while let Some(edit) = edits_since_save.peek() {
+                        if edit.old.end <= start {
+                            last_edit_old_end = edit.old.end;
+                            last_edit_new_end = edit.new.end;
+                            edits_since_save.next();
+                        } else if edit.old.start <= end && edit.old.end >= start {
+                            continue 'outer;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    start = last_edit_new_end + (start - last_edit_old_end);
+                    end = last_edit_new_end + (end - last_edit_old_end);
+                }
+
+                let mut range = content.clip_point_utf16(start, Bias::Left)
+                    ..content.clip_point_utf16(end, Bias::Right);
+                if range.start == range.end {
+                    range.end.column += 1;
+                    range.end = content.clip_point_utf16(range.end, Bias::Right);
+                    if range.start == range.end && range.end.column > 0 {
+                        range.start.column -= 1;
+                        range.start = content.clip_point_utf16(range.start, Bias::Left);
+                    }
+                }
+
+                diagnostics_by_group_id
+                    .entry(group_id)
+                    .or_insert(Vec::new())
+                    .push((
+                        range,
+                        Diagnostic {
+                            severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
+                            message: diagnostic.message.clone(),
+                            group_id,
+                            is_primary: false,
+                        },
+                    ));
+            }
 
             content.anchor_range_multimap(
                 Bias::Left,
                 Bias::Right,
-                diagnostics.into_iter().filter_map(|diagnostic| {
-                    let mut start = PointUtf16::new(
-                        diagnostic.range.start.line,
-                        diagnostic.range.start.character,
-                    );
-                    let mut end =
-                        PointUtf16::new(diagnostic.range.end.line, diagnostic.range.end.character);
-                    if diagnostic
-                        .source
-                        .as_ref()
-                        .map_or(false, |source| disk_based_sources.contains(source))
-                    {
-                        while let Some(edit) = edits_since_save.peek() {
-                            if edit.old.end <= start {
-                                last_edit_old_end = edit.old.end;
-                                last_edit_new_end = edit.new.end;
-                                edits_since_save.next();
-                            } else if edit.old.start <= end && edit.old.end >= start {
-                                return None;
-                            } else {
-                                break;
-                            }
-                        }
-
-                        start = last_edit_new_end + (start - last_edit_old_end);
-                        end = last_edit_new_end + (end - last_edit_old_end);
-                    }
-
-                    let mut range = content.clip_point_utf16(start, Bias::Left)
-                        ..content.clip_point_utf16(end, Bias::Right);
-                    if range.start == range.end {
-                        range.end.column += 1;
-                        range.end = content.clip_point_utf16(range.end, Bias::Right);
-                        if range.start == range.end && range.end.column > 0 {
-                            range.start.column -= 1;
-                            range.start = content.clip_point_utf16(range.start, Bias::Left);
-                        }
-                    }
-                    Some((
-                        range,
-                        Diagnostic {
-                            severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
-                            message: diagnostic.message,
-                        },
-                    ))
-                }),
+                diagnostics_by_group_id
+                    .into_values()
+                    .flat_map(|mut diagnostics| {
+                        let primary_diagnostic =
+                            diagnostics.iter_mut().min_by_key(|d| d.1.severity).unwrap();
+                        primary_diagnostic.1.is_primary = true;
+                        diagnostics
+                    }),
             )
         };
 
@@ -786,7 +816,7 @@ impl Buffer {
 
     pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
-        range: Range<T>,
+        search_range: Range<T>,
     ) -> impl Iterator<Item = (Range<O>, &Diagnostic)> + 'a
     where
         T: 'a + ToOffset,
@@ -794,7 +824,20 @@ impl Buffer {
     {
         let content = self.content();
         self.diagnostics
-            .intersecting_ranges(range, content, true)
+            .intersecting_ranges(search_range, content, true)
+            .map(move |(_, range, diagnostic)| (range, diagnostic))
+    }
+
+    pub fn diagnostic_group<'a, O>(
+        &'a self,
+        group_id: usize,
+    ) -> impl Iterator<Item = (Range<O>, &Diagnostic)> + 'a
+    where
+        O: 'a + FromAnchor,
+    {
+        let content = self.content();
+        self.diagnostics
+            .filter(content, move |diagnostic| diagnostic.group_id == group_id)
             .map(move |(_, range, diagnostic)| (range, diagnostic))
     }
 
@@ -1608,51 +1651,61 @@ impl Snapshot {
             .all(|chunk| chunk.matches(|c: char| !c.is_whitespace()).next().is_none())
     }
 
-    pub fn highlighted_text_for_range<T: ToOffset>(
-        &mut self,
+    pub fn chunks<'a, T: ToOffset>(
+        &'a self,
         range: Range<T>,
-    ) -> HighlightedChunks {
+        theme: Option<&'a SyntaxTheme>,
+    ) -> Chunks<'a> {
         let range = range.start.to_offset(&*self)..range.end.to_offset(&*self);
 
+        let mut highlights = None;
         let mut diagnostic_endpoints = Vec::<DiagnosticEndpoint>::new();
-        for (_, range, diagnostic) in
-            self.diagnostics
-                .intersecting_ranges(range.clone(), self.content(), true)
-        {
-            diagnostic_endpoints.push(DiagnosticEndpoint {
-                offset: range.start,
-                is_start: true,
-                severity: diagnostic.severity,
-            });
-            diagnostic_endpoints.push(DiagnosticEndpoint {
-                offset: range.end,
-                is_start: false,
-                severity: diagnostic.severity,
-            });
-        }
-        diagnostic_endpoints.sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
-        let diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
+        if let Some(theme) = theme {
+            for (_, range, diagnostic) in
+                self.diagnostics
+                    .intersecting_ranges(range.clone(), self.content(), true)
+            {
+                diagnostic_endpoints.push(DiagnosticEndpoint {
+                    offset: range.start,
+                    is_start: true,
+                    severity: diagnostic.severity,
+                });
+                diagnostic_endpoints.push(DiagnosticEndpoint {
+                    offset: range.end,
+                    is_start: false,
+                    severity: diagnostic.severity,
+                });
+            }
+            diagnostic_endpoints
+                .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
 
-        let chunks = self.text.as_rope().chunks_in_range(range.clone());
-        let highlights =
             if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
-                let captures = self.query_cursor.set_byte_range(range.clone()).captures(
+                let mut query_cursor = QueryCursorHandle::new();
+
+                // TODO - add a Tree-sitter API to remove the need for this.
+                let cursor = unsafe {
+                    std::mem::transmute::<_, &'static mut QueryCursor>(query_cursor.deref_mut())
+                };
+                let captures = cursor.set_byte_range(range.clone()).captures(
                     &language.highlights_query,
                     tree.root_node(),
                     TextProvider(self.text.as_rope()),
                 );
-
-                Some(Highlights {
+                highlights = Some(Highlights {
                     captures,
                     next_capture: None,
                     stack: Default::default(),
                     highlight_map: language.highlight_map(),
+                    _query_cursor: query_cursor,
+                    theme,
                 })
-            } else {
-                None
-            };
+            }
+        }
 
-        HighlightedChunks {
+        let diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
+        let chunks = self.text.as_rope().chunks_in_range(range.clone());
+
+        Chunks {
             range,
             chunks,
             diagnostic_endpoints,
@@ -1673,7 +1726,6 @@ impl Clone for Snapshot {
             diagnostics: self.diagnostics.clone(),
             is_parsing: self.is_parsing,
             language: self.language.clone(),
-            query_cursor: QueryCursorHandle::new(),
         }
     }
 }
@@ -1704,7 +1756,9 @@ impl<'a> Iterator for ByteChunks<'a> {
     }
 }
 
-impl<'a> HighlightedChunks<'a> {
+unsafe impl<'a> Send for Chunks<'a> {}
+
+impl<'a> Chunks<'a> {
     pub fn seek(&mut self, offset: usize) {
         self.range.start = offset;
         self.chunks.seek(self.range.start);
@@ -1763,8 +1817,8 @@ impl<'a> HighlightedChunks<'a> {
     }
 }
 
-impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = HighlightedChunk<'a>;
+impl<'a> Iterator for Chunks<'a> {
+    type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut next_capture_start = usize::MAX;
@@ -1813,12 +1867,12 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             let mut chunk_end = (self.chunks.offset() + chunk.len())
                 .min(next_capture_start)
                 .min(next_diagnostic_endpoint);
-            let mut highlight_id = HighlightId::default();
-            if let Some((parent_capture_end, parent_highlight_id)) =
-                self.highlights.as_ref().and_then(|h| h.stack.last())
-            {
-                chunk_end = chunk_end.min(*parent_capture_end);
-                highlight_id = *parent_highlight_id;
+            let mut highlight_style = None;
+            if let Some(highlights) = self.highlights.as_ref() {
+                if let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last() {
+                    chunk_end = chunk_end.min(*parent_capture_end);
+                    highlight_style = parent_highlight_id.style(highlights.theme);
+                }
             }
 
             let slice =
@@ -1828,9 +1882,9 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                 self.chunks.next().unwrap();
             }
 
-            Some(HighlightedChunk {
+            Some(Chunk {
                 text: slice,
-                highlight_id,
+                highlight_style,
                 diagnostic: self.current_diagnostic_severity(),
             })
         } else {
@@ -1886,6 +1940,44 @@ impl ToTreeSitterPoint for Point {
     fn from_ts_point(point: tree_sitter::Point) -> Self {
         Point::new(point.row as u32, point.column as u32)
     }
+}
+
+trait ToPointUtf16 {
+    fn to_point_utf16(self) -> PointUtf16;
+}
+
+impl ToPointUtf16 for lsp::Position {
+    fn to_point_utf16(self) -> PointUtf16 {
+        PointUtf16::new(self.line, self.character)
+    }
+}
+
+fn diagnostic_ranges<'a>(
+    diagnostic: &'a lsp::Diagnostic,
+    abs_path: Option<&'a Path>,
+) -> impl 'a + Iterator<Item = Range<PointUtf16>> {
+    diagnostic
+        .related_information
+        .iter()
+        .flatten()
+        .filter_map(move |info| {
+            if info.location.uri.to_file_path().ok()? == abs_path? {
+                let info_start = PointUtf16::new(
+                    info.location.range.start.line,
+                    info.location.range.start.character,
+                );
+                let info_end = PointUtf16::new(
+                    info.location.range.end.line,
+                    info.location.range.end.character,
+                );
+                Some(info_start..info_end)
+            } else {
+                None
+            }
+        })
+        .chain(Some(
+            diagnostic.range.start.to_point_utf16()..diagnostic.range.end.to_point_utf16(),
+        ))
 }
 
 fn contiguous_ranges(

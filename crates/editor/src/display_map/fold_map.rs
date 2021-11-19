@@ -1,8 +1,5 @@
 use gpui::{AppContext, ModelHandle};
-use language::{
-    Anchor, AnchorRangeExt, Buffer, HighlightId, HighlightedChunk, Point, PointUtf16, TextSummary,
-    ToOffset,
-};
+use language::{Anchor, AnchorRangeExt, Buffer, Chunk, Point, PointUtf16, TextSummary, ToOffset};
 use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
@@ -11,6 +8,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
 use sum_tree::{Bias, Cursor, FilterCursor, SumTree};
+use theme::SyntaxTheme;
 
 pub trait ToFoldPoint {
     fn to_fold_point(&self, snapshot: &Snapshot, bias: Bias) -> FoldPoint;
@@ -499,7 +497,9 @@ pub struct Snapshot {
 impl Snapshot {
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks_at(FoldOffset(0)).collect()
+        self.chunks(FoldOffset(0)..self.len(), None)
+            .map(|c| c.text)
+            .collect()
     }
 
     #[cfg(test)]
@@ -551,7 +551,6 @@ impl Snapshot {
         summary
     }
 
-    #[cfg(test)]
     pub fn len(&self) -> FoldOffset {
         FoldOffset(self.transforms.summary().output.bytes)
     }
@@ -628,21 +627,17 @@ impl Snapshot {
         false
     }
 
-    pub fn chunks_at(&self, offset: FoldOffset) -> Chunks {
-        let mut transform_cursor = self.transforms.cursor::<(FoldOffset, usize)>();
-        transform_cursor.seek(&offset, Bias::Right, &());
-        let overshoot = offset.0 - transform_cursor.start().0 .0;
-        let buffer_offset = transform_cursor.start().1 + overshoot;
-        Chunks {
-            transform_cursor,
-            buffer_offset,
-            buffer_chunks: self
-                .buffer_snapshot
-                .text_for_range(buffer_offset..self.buffer_snapshot.len()),
-        }
+    pub fn chars_at(&self, start: FoldPoint) -> impl '_ + Iterator<Item = char> {
+        let start = start.to_offset(self);
+        self.chunks(start..self.len(), None)
+            .flat_map(|chunk| chunk.text.chars())
     }
 
-    pub fn highlighted_chunks(&mut self, range: Range<FoldOffset>) -> HighlightedChunks {
+    pub fn chunks<'a>(
+        &'a self,
+        range: Range<FoldOffset>,
+        theme: Option<&'a SyntaxTheme>,
+    ) -> Chunks<'a> {
         let mut transform_cursor = self.transforms.cursor::<(FoldOffset, usize)>();
 
         transform_cursor.seek(&range.end, Bias::Right, &());
@@ -653,19 +648,14 @@ impl Snapshot {
         let overshoot = range.start.0 - transform_cursor.start().0 .0;
         let buffer_start = transform_cursor.start().1 + overshoot;
 
-        HighlightedChunks {
+        Chunks {
             transform_cursor,
-            buffer_offset: buffer_start,
-            buffer_chunks: self
-                .buffer_snapshot
-                .highlighted_text_for_range(buffer_start..buffer_end),
+            buffer_chunks: self.buffer_snapshot.chunks(buffer_start..buffer_end, theme),
             buffer_chunk: None,
+            buffer_offset: buffer_start,
+            output_offset: range.start.0,
+            max_output_offset: range.end.0,
         }
-    }
-
-    pub fn chars_at<'a>(&'a self, point: FoldPoint) -> impl Iterator<Item = char> + 'a {
-        let offset = point.to_offset(self);
-        self.chunks_at(offset).flat_map(str::chars)
     }
 
     #[cfg(test)]
@@ -948,68 +938,21 @@ impl<'a> Iterator for BufferRows<'a> {
 
 pub struct Chunks<'a> {
     transform_cursor: Cursor<'a, Transform, (FoldOffset, usize)>,
-    buffer_chunks: buffer::Chunks<'a>,
+    buffer_chunks: language::Chunks<'a>,
+    buffer_chunk: Option<(usize, Chunk<'a>)>,
     buffer_offset: usize,
+    output_offset: usize,
+    max_output_offset: usize,
 }
 
 impl<'a> Iterator for Chunks<'a> {
-    type Item = &'a str;
+    type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let transform = if let Some(item) = self.transform_cursor.item() {
-            item
-        } else {
+        if self.output_offset >= self.max_output_offset {
             return None;
-        };
-
-        // If we're in a fold, then return the fold's display text and
-        // advance the transform and buffer cursors to the end of the fold.
-        if let Some(output_text) = transform.output_text {
-            self.buffer_offset += transform.summary.input.bytes;
-            self.buffer_chunks.seek(self.buffer_offset);
-
-            while self.buffer_offset >= self.transform_cursor.end(&()).1
-                && self.transform_cursor.item().is_some()
-            {
-                self.transform_cursor.next(&());
-            }
-
-            return Some(output_text);
         }
 
-        // Otherwise, take a chunk from the buffer's text.
-        if let Some(mut chunk) = self.buffer_chunks.peek() {
-            let offset_in_chunk = self.buffer_offset - self.buffer_chunks.offset();
-            chunk = &chunk[offset_in_chunk..];
-
-            // Truncate the chunk so that it ends at the next fold.
-            let region_end = self.transform_cursor.end(&()).1 - self.buffer_offset;
-            if chunk.len() >= region_end {
-                chunk = &chunk[0..region_end];
-                self.transform_cursor.next(&());
-            } else {
-                self.buffer_chunks.next();
-            }
-
-            self.buffer_offset += chunk.len();
-            return Some(chunk);
-        }
-
-        None
-    }
-}
-
-pub struct HighlightedChunks<'a> {
-    transform_cursor: Cursor<'a, Transform, (FoldOffset, usize)>,
-    buffer_chunks: language::HighlightedChunks<'a>,
-    buffer_chunk: Option<(usize, HighlightedChunk<'a>)>,
-    buffer_offset: usize,
-}
-
-impl<'a> Iterator for HighlightedChunks<'a> {
-    type Item = HighlightedChunk<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
         let transform = if let Some(item) = self.transform_cursor.item() {
             item
         } else {
@@ -1029,9 +972,10 @@ impl<'a> Iterator for HighlightedChunks<'a> {
                 self.transform_cursor.next(&());
             }
 
-            return Some(HighlightedChunk {
+            self.output_offset += output_text.len();
+            return Some(Chunk {
                 text: output_text,
-                highlight_id: HighlightId::default(),
+                highlight_style: None,
                 diagnostic: None,
             });
         }
@@ -1057,6 +1001,7 @@ impl<'a> Iterator for HighlightedChunks<'a> {
             }
 
             self.buffer_offset += chunk.text.len();
+            self.output_offset += chunk.text.len();
             return Some(chunk);
         }
 
@@ -1352,7 +1297,7 @@ mod tests {
             }
 
             let buffer = map.buffer.read(cx).snapshot();
-            let mut expected_text: String = buffer.text().into();
+            let mut expected_text: String = buffer.text().to_string();
             let mut expected_buffer_rows = Vec::new();
             let mut next_row = buffer.max_point().row;
             for fold_range in map.merged_fold_ranges(cx.as_ref()).into_iter().rev() {
@@ -1428,11 +1373,22 @@ mod tests {
             }
 
             for _ in 0..5 {
-                let offset = snapshot
+                let mut start = snapshot
+                    .clip_offset(FoldOffset(rng.gen_range(0..=snapshot.len().0)), Bias::Left);
+                let mut end = snapshot
                     .clip_offset(FoldOffset(rng.gen_range(0..=snapshot.len().0)), Bias::Right);
+                if start > end {
+                    mem::swap(&mut start, &mut end);
+                }
+
+                let text = &expected_text[start.0..end.0];
+                log::info!("slicing {:?}..{:?} (text: {:?})", start, end, text);
                 assert_eq!(
-                    snapshot.chunks_at(offset).collect::<String>(),
-                    &expected_text[offset.0..],
+                    snapshot
+                        .chunks(start..end, None)
+                        .map(|c| c.text)
+                        .collect::<String>(),
+                    text,
                 );
             }
 

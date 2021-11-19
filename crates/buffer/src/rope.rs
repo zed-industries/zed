@@ -3,7 +3,7 @@ use crate::PointUtf16;
 use super::Point;
 use arrayvec::ArrayString;
 use smallvec::SmallVec;
-use std::{cmp, ops::Range, str};
+use std::{cmp, fmt, mem, ops::Range, str};
 use sum_tree::{Bias, Dimension, SumTree};
 
 #[cfg(test)]
@@ -36,6 +36,16 @@ impl Rope {
 
         self.chunks.push_tree(chunks.suffix(&()), &());
         self.check_invariants();
+    }
+
+    pub fn replace(&mut self, range: Range<usize>, text: &str) {
+        let mut new_rope = Rope::new();
+        let mut cursor = self.cursor(0);
+        new_rope.append(cursor.slice(range.start));
+        cursor.seek_forward(range.end);
+        new_rope.push(text);
+        new_rope.append(cursor.suffix());
+        *self = new_rope;
     }
 
     pub fn push(&mut self, text: &str) {
@@ -77,6 +87,11 @@ impl Rope {
         self.chunks
             .extend(first_new_chunk.into_iter().chain(new_chunks), &());
         self.check_invariants();
+    }
+
+    pub fn push_front(&mut self, text: &str) {
+        let suffix = mem::replace(self, Rope::from(text));
+        self.append(suffix);
     }
 
     fn check_invariants(&self) {
@@ -139,7 +154,9 @@ impl Rope {
     }
 
     pub fn offset_to_point(&self, offset: usize) -> Point {
-        assert!(offset <= self.summary().bytes);
+        if offset >= self.summary().bytes {
+            return self.summary().lines;
+        }
         let mut cursor = self.chunks.cursor::<(usize, Point)>();
         cursor.seek(&offset, Bias::Left, &());
         let overshoot = offset - cursor.start().0;
@@ -150,7 +167,9 @@ impl Rope {
     }
 
     pub fn offset_to_point_utf16(&self, offset: usize) -> PointUtf16 {
-        assert!(offset <= self.summary().bytes);
+        if offset >= self.summary().bytes {
+            return self.summary().lines_utf16;
+        }
         let mut cursor = self.chunks.cursor::<(usize, PointUtf16)>();
         cursor.seek(&offset, Bias::Left, &());
         let overshoot = offset - cursor.start().0;
@@ -161,7 +180,9 @@ impl Rope {
     }
 
     pub fn point_to_offset(&self, point: Point) -> usize {
-        assert!(point <= self.summary().lines);
+        if point >= self.summary().lines {
+            return self.summary().bytes;
+        }
         let mut cursor = self.chunks.cursor::<(Point, usize)>();
         cursor.seek(&point, Bias::Left, &());
         let overshoot = point - cursor.start().0;
@@ -172,7 +193,9 @@ impl Rope {
     }
 
     pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
-        assert!(point <= self.summary().lines_utf16);
+        if point >= self.summary().lines_utf16 {
+            return self.summary().bytes;
+        }
         let mut cursor = self.chunks.cursor::<(PointUtf16, usize)>();
         cursor.seek(&point, Bias::Left, &());
         let overshoot = point - cursor.start().0;
@@ -226,6 +249,11 @@ impl Rope {
             self.summary().lines_utf16
         }
     }
+
+    pub fn line_len(&self, row: u32) -> u32 {
+        self.clip_point(Point::new(row, u32::MAX), Bias::Left)
+            .column
+    }
 }
 
 impl<'a> From<&'a str> for Rope {
@@ -236,9 +264,12 @@ impl<'a> From<&'a str> for Rope {
     }
 }
 
-impl Into<String> for Rope {
-    fn into(self) -> String {
-        self.chunks().collect()
+impl fmt::Display for Rope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for chunk in self.chunks() {
+            write!(f, "{}", chunk)?;
+        }
+        Ok(())
     }
 }
 
@@ -303,7 +334,7 @@ impl<'a> Cursor<'a> {
         if let Some(start_chunk) = self.chunks.item() {
             let start_ix = self.offset - self.chunks.start();
             let end_ix = cmp::min(end_offset, self.chunks.end(&())) - self.chunks.start();
-            summary.add_assign(&D::from_summary(&TextSummary::from(
+            summary.add_assign(&D::from_text_summary(&TextSummary::from(
                 &start_chunk.0[start_ix..end_ix],
             )));
         }
@@ -313,7 +344,9 @@ impl<'a> Cursor<'a> {
             summary.add_assign(&self.chunks.summary(&end_offset, Bias::Right, &()));
             if let Some(end_chunk) = self.chunks.item() {
                 let end_ix = end_offset - self.chunks.start();
-                summary.add_assign(&D::from_summary(&TextSummary::from(&end_chunk.0[..end_ix])));
+                summary.add_assign(&D::from_text_summary(&TextSummary::from(
+                    &end_chunk.0[..end_ix],
+                )));
             }
         }
 
@@ -634,13 +667,16 @@ impl std::ops::AddAssign<Self> for TextSummary {
 }
 
 pub trait TextDimension<'a>: Dimension<'a, TextSummary> {
-    fn from_summary(summary: &TextSummary) -> Self;
+    fn from_text_summary(summary: &TextSummary) -> Self;
     fn add_assign(&mut self, other: &Self);
 }
 
 impl<'a, D1: TextDimension<'a>, D2: TextDimension<'a>> TextDimension<'a> for (D1, D2) {
-    fn from_summary(summary: &TextSummary) -> Self {
-        (D1::from_summary(summary), D2::from_summary(summary))
+    fn from_text_summary(summary: &TextSummary) -> Self {
+        (
+            D1::from_text_summary(summary),
+            D2::from_text_summary(summary),
+        )
     }
 
     fn add_assign(&mut self, other: &Self) {
@@ -650,7 +686,7 @@ impl<'a, D1: TextDimension<'a>, D2: TextDimension<'a>> TextDimension<'a> for (D1
 }
 
 impl<'a> TextDimension<'a> for TextSummary {
-    fn from_summary(summary: &TextSummary) -> Self {
+    fn from_text_summary(summary: &TextSummary) -> Self {
         summary.clone()
     }
 
@@ -666,7 +702,7 @@ impl<'a> sum_tree::Dimension<'a, TextSummary> for usize {
 }
 
 impl<'a> TextDimension<'a> for usize {
-    fn from_summary(summary: &TextSummary) -> Self {
+    fn from_text_summary(summary: &TextSummary) -> Self {
         summary.bytes
     }
 
@@ -682,7 +718,7 @@ impl<'a> sum_tree::Dimension<'a, TextSummary> for Point {
 }
 
 impl<'a> TextDimension<'a> for Point {
-    fn from_summary(summary: &TextSummary) -> Self {
+    fn from_text_summary(summary: &TextSummary) -> Self {
         summary.lines
     }
 
@@ -698,7 +734,7 @@ impl<'a> sum_tree::Dimension<'a, TextSummary> for PointUtf16 {
 }
 
 impl<'a> TextDimension<'a> for PointUtf16 {
-    fn from_summary(summary: &TextSummary) -> Self {
+    fn from_text_summary(summary: &TextSummary) -> Self {
         summary.lines_utf16
     }
 
@@ -731,7 +767,7 @@ mod tests {
     use super::*;
     use crate::random_char_iter::RandomCharIter;
     use rand::prelude::*;
-    use std::env;
+    use std::{cmp::Ordering, env};
     use Bias::{Left, Right};
 
     #[test]
@@ -778,7 +814,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random(mut rng: StdRng) {
+    fn test_random_rope(mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
@@ -862,6 +898,38 @@ mod tests {
                     TextSummary::from(&expected[start_ix..end_ix])
                 );
             }
+
+            let mut expected_longest_rows = Vec::new();
+            let mut longest_line_len = -1_isize;
+            for (row, line) in expected.split('\n').enumerate() {
+                let row = row as u32;
+                assert_eq!(
+                    actual.line_len(row),
+                    line.len() as u32,
+                    "invalid line len for row {}",
+                    row
+                );
+
+                let line_char_count = line.chars().count() as isize;
+                match line_char_count.cmp(&longest_line_len) {
+                    Ordering::Less => {}
+                    Ordering::Equal => expected_longest_rows.push(row),
+                    Ordering::Greater => {
+                        longest_line_len = line_char_count;
+                        expected_longest_rows.clear();
+                        expected_longest_rows.push(row);
+                    }
+                }
+            }
+
+            let longest_row = actual.summary().longest_row;
+            assert!(
+                expected_longest_rows.contains(&longest_row),
+                "incorrect longest row {}. expected {:?} with length {}",
+                longest_row,
+                expected_longest_rows,
+                longest_line_len,
+            );
         }
     }
 

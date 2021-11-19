@@ -194,6 +194,66 @@ impl<T> AnchorRangeMap<T> {
             .iter()
             .map(|(range, value)| (range.start.0..range.end.0, value))
     }
+
+    pub fn min_by_key<'a, C, D, F, K>(
+        &self,
+        content: C,
+        mut extract_key: F,
+    ) -> Option<(Range<D>, &T)>
+    where
+        C: Into<Content<'a>>,
+        D: 'a + TextDimension<'a>,
+        F: FnMut(&T) -> K,
+        K: Ord,
+    {
+        let content = content.into();
+        self.entries
+            .iter()
+            .min_by_key(|(_, value)| extract_key(value))
+            .map(|(range, value)| (self.resolve_range(range, &content), value))
+    }
+
+    pub fn max_by_key<'a, C, D, F, K>(
+        &self,
+        content: C,
+        mut extract_key: F,
+    ) -> Option<(Range<D>, &T)>
+    where
+        C: Into<Content<'a>>,
+        D: 'a + TextDimension<'a>,
+        F: FnMut(&T) -> K,
+        K: Ord,
+    {
+        let content = content.into();
+        self.entries
+            .iter()
+            .max_by_key(|(_, value)| extract_key(value))
+            .map(|(range, value)| (self.resolve_range(range, &content), value))
+    }
+
+    fn resolve_range<'a, D>(
+        &self,
+        range: &Range<(FullOffset, Bias)>,
+        content: &Content<'a>,
+    ) -> Range<D>
+    where
+        D: 'a + TextDimension<'a>,
+    {
+        let (start, start_bias) = range.start;
+        let mut anchor = Anchor {
+            full_offset: start,
+            bias: start_bias,
+            version: self.version.clone(),
+        };
+        let start = content.summary_for_anchor(&anchor);
+
+        let (end, end_bias) = range.end;
+        anchor.full_offset = end;
+        anchor.bias = end_bias;
+        let end = content.summary_for_anchor(&anchor);
+
+        start..end
+    }
 }
 
 impl<T: PartialEq> PartialEq for AnchorRangeMap<T> {
@@ -354,6 +414,38 @@ impl<T: Clone> AnchorRangeMultimap<T> {
             .cursor::<()>()
             .map(|entry| (entry.range.start..entry.range.end, &entry.value))
     }
+
+    pub fn filter<'a, O, F>(
+        &'a self,
+        content: Content<'a>,
+        mut f: F,
+    ) -> impl 'a + Iterator<Item = (usize, Range<O>, &T)>
+    where
+        O: FromAnchor,
+        F: 'a + FnMut(&'a T) -> bool,
+    {
+        let mut endpoint = Anchor {
+            full_offset: FullOffset(0),
+            bias: Bias::Left,
+            version: self.version.clone(),
+        };
+        self.entries
+            .cursor::<()>()
+            .enumerate()
+            .filter_map(move |(ix, entry)| {
+                if f(&entry.value) {
+                    endpoint.full_offset = entry.range.start;
+                    endpoint.bias = self.start_bias;
+                    let start = O::from_anchor(&endpoint, &content);
+                    endpoint.full_offset = entry.range.end;
+                    endpoint.bias = self.end_bias;
+                    let end = O::from_anchor(&endpoint, &content);
+                    Some((ix, start..end, &entry.value))
+                } else {
+                    None
+                }
+            })
+    }
 }
 
 impl<T: Clone> sum_tree::Item for AnchorRangeMultimapEntry<T> {
@@ -435,6 +527,7 @@ impl<'a> sum_tree::SeekTarget<'a, AnchorRangeMultimapSummary, FullOffsetRange> f
 
 pub trait AnchorRangeExt {
     fn cmp<'a>(&self, b: &Range<Anchor>, buffer: impl Into<Content<'a>>) -> Result<Ordering>;
+    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> Range<usize>;
 }
 
 impl AnchorRangeExt for Range<Anchor> {
@@ -444,5 +537,10 @@ impl AnchorRangeExt for Range<Anchor> {
             Ordering::Equal => other.end.cmp(&self.end, buffer)?,
             ord @ _ => ord,
         })
+    }
+
+    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> Range<usize> {
+        let content = content.into();
+        self.start.to_offset(&content)..self.end.to_offset(&content)
     }
 }

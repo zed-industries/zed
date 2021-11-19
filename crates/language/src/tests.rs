@@ -482,14 +482,18 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     Point::new(3, 9)..Point::new(3, 11),
                     &Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
-                        message: "undefined variable 'BB'".to_string()
+                        message: "undefined variable 'BB'".to_string(),
+                        group_id: 1,
+                        is_primary: true,
                     },
                 ),
                 (
                     Point::new(4, 9)..Point::new(4, 12),
                     &Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
-                        message: "undefined variable 'CCC'".to_string()
+                        message: "undefined variable 'CCC'".to_string(),
+                        group_id: 2,
+                        is_primary: true,
                     }
                 )
             ]
@@ -545,14 +549,18 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     Point::new(2, 9)..Point::new(2, 12),
                     &Diagnostic {
                         severity: DiagnosticSeverity::WARNING,
-                        message: "unreachable statement".to_string()
+                        message: "unreachable statement".to_string(),
+                        group_id: 1,
+                        is_primary: true,
                     }
                 ),
                 (
                     Point::new(2, 9)..Point::new(2, 10),
                     &Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
-                        message: "undefined variable 'A'".to_string()
+                        message: "undefined variable 'A'".to_string(),
+                        group_id: 0,
+                        is_primary: true,
                     },
                 )
             ]
@@ -620,14 +628,18 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     Point::new(2, 21)..Point::new(2, 22),
                     &Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
-                        message: "undefined variable 'A'".to_string()
+                        message: "undefined variable 'A'".to_string(),
+                        group_id: 0,
+                        is_primary: true,
                     }
                 ),
                 (
                     Point::new(3, 9)..Point::new(3, 11),
                     &Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
-                        message: "undefined variable 'BB'".to_string()
+                        message: "undefined variable 'BB'".to_string(),
+                        group_id: 1,
+                        is_primary: true,
                     },
                 )
             ]
@@ -694,12 +706,223 @@ async fn test_empty_diagnostic_ranges(mut cx: gpui::TestAppContext) {
     });
 }
 
-fn chunks_with_diagnostics<T: ToOffset>(
+#[gpui::test]
+async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
+    cx.add_model(|cx| {
+        let text = "
+            fn foo(mut v: Vec<usize>) {
+                for x in &v {
+                    v.push(1);
+                }
+            }
+        "
+        .unindent();
+
+        let file = FakeFile::new("/example.rs");
+        let mut buffer = Buffer::from_file(0, text, Box::new(file.clone()), cx);
+        buffer.set_language(Some(Arc::new(rust_lang())), None, cx);
+        let diagnostics = vec![
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
+                severity: Some(DiagnosticSeverity::WARNING),
+                message: "error 1".to_string(),
+                related_information: Some(vec![lsp::DiagnosticRelatedInformation {
+                    location: lsp::Location {
+                        uri: lsp::Url::from_file_path(&file.abs_path).unwrap(),
+                        range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
+                    },
+                    message: "error 1 hint 1".to_string(),
+                }]),
+                ..Default::default()
+            },
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
+                severity: Some(DiagnosticSeverity::HINT),
+                message: "error 1 hint 1".to_string(),
+                related_information: Some(vec![lsp::DiagnosticRelatedInformation {
+                    location: lsp::Location {
+                        uri: lsp::Url::from_file_path(&file.abs_path).unwrap(),
+                        range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
+                    },
+                    message: "original diagnostic".to_string(),
+                }]),
+                ..Default::default()
+            },
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 17)),
+                severity: Some(DiagnosticSeverity::ERROR),
+                message: "error 2".to_string(),
+                related_information: Some(vec![
+                    lsp::DiagnosticRelatedInformation {
+                        location: lsp::Location {
+                            uri: lsp::Url::from_file_path(&file.abs_path).unwrap(),
+                            range: lsp::Range::new(
+                                lsp::Position::new(1, 13),
+                                lsp::Position::new(1, 15),
+                            ),
+                        },
+                        message: "error 2 hint 1".to_string(),
+                    },
+                    lsp::DiagnosticRelatedInformation {
+                        location: lsp::Location {
+                            uri: lsp::Url::from_file_path(&file.abs_path).unwrap(),
+                            range: lsp::Range::new(
+                                lsp::Position::new(1, 13),
+                                lsp::Position::new(1, 15),
+                            ),
+                        },
+                        message: "error 2 hint 2".to_string(),
+                    },
+                ]),
+                ..Default::default()
+            },
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(1, 13), lsp::Position::new(1, 15)),
+                severity: Some(DiagnosticSeverity::HINT),
+                message: "error 2 hint 1".to_string(),
+                related_information: Some(vec![lsp::DiagnosticRelatedInformation {
+                    location: lsp::Location {
+                        uri: lsp::Url::from_file_path(&file.abs_path).unwrap(),
+                        range: lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 17)),
+                    },
+                    message: "original diagnostic".to_string(),
+                }]),
+                ..Default::default()
+            },
+            lsp::Diagnostic {
+                range: lsp::Range::new(lsp::Position::new(1, 13), lsp::Position::new(1, 15)),
+                severity: Some(DiagnosticSeverity::HINT),
+                message: "error 2 hint 2".to_string(),
+                related_information: Some(vec![lsp::DiagnosticRelatedInformation {
+                    location: lsp::Location {
+                        uri: lsp::Url::from_file_path(&file.abs_path).unwrap(),
+                        range: lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 17)),
+                    },
+                    message: "original diagnostic".to_string(),
+                }]),
+                ..Default::default()
+            },
+        ];
+        buffer.update_diagnostics(None, diagnostics, cx).unwrap();
+        assert_eq!(
+            buffer
+                .diagnostics_in_range::<_, Point>(0..buffer.len())
+                .collect::<Vec<_>>(),
+            &[
+                (
+                    Point::new(1, 8)..Point::new(1, 9),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::WARNING,
+                        message: "error 1".to_string(),
+                        group_id: 0,
+                        is_primary: true,
+                    }
+                ),
+                (
+                    Point::new(1, 8)..Point::new(1, 9),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 1 hint 1".to_string(),
+                        group_id: 0,
+                        is_primary: false,
+                    }
+                ),
+                (
+                    Point::new(1, 13)..Point::new(1, 15),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 2 hint 1".to_string(),
+                        group_id: 1,
+                        is_primary: false,
+                    }
+                ),
+                (
+                    Point::new(1, 13)..Point::new(1, 15),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 2 hint 2".to_string(),
+                        group_id: 1,
+                        is_primary: false,
+                    }
+                ),
+                (
+                    Point::new(2, 8)..Point::new(2, 17),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "error 2".to_string(),
+                        group_id: 1,
+                        is_primary: true,
+                    }
+                )
+            ]
+        );
+
+        assert_eq!(
+            buffer.diagnostic_group(0).collect::<Vec<_>>(),
+            &[
+                (
+                    Point::new(1, 8)..Point::new(1, 9),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::WARNING,
+                        message: "error 1".to_string(),
+                        group_id: 0,
+                        is_primary: true,
+                    }
+                ),
+                (
+                    Point::new(1, 8)..Point::new(1, 9),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 1 hint 1".to_string(),
+                        group_id: 0,
+                        is_primary: false,
+                    }
+                ),
+            ]
+        );
+        assert_eq!(
+            buffer.diagnostic_group(1).collect::<Vec<_>>(),
+            &[
+                (
+                    Point::new(1, 13)..Point::new(1, 15),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 2 hint 1".to_string(),
+                        group_id: 1,
+                        is_primary: false,
+                    }
+                ),
+                (
+                    Point::new(1, 13)..Point::new(1, 15),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 2 hint 2".to_string(),
+                        group_id: 1,
+                        is_primary: false,
+                    }
+                ),
+                (
+                    Point::new(2, 8)..Point::new(2, 17),
+                    &Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "error 2".to_string(),
+                        group_id: 1,
+                        is_primary: true,
+                    }
+                )
+            ]
+        );
+
+        buffer
+    });
+}
+
+fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
     buffer: &Buffer,
     range: Range<T>,
 ) -> Vec<(String, Option<DiagnosticSeverity>)> {
     let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
-    for chunk in buffer.snapshot().highlighted_text_for_range(range) {
+    for chunk in buffer.snapshot().chunks(range, Some(&Default::default())) {
         if chunks
             .last()
             .map_or(false, |prev_chunk| prev_chunk.1 == chunk.diagnostic)
@@ -764,4 +987,81 @@ fn rust_lang() -> Language {
 
 fn empty(point: Point) -> Range<Point> {
     point..point
+}
+
+#[derive(Clone)]
+struct FakeFile {
+    abs_path: PathBuf,
+}
+
+impl FakeFile {
+    fn new(abs_path: impl Into<PathBuf>) -> Self {
+        Self {
+            abs_path: abs_path.into(),
+        }
+    }
+}
+
+impl File for FakeFile {
+    fn worktree_id(&self) -> usize {
+        todo!()
+    }
+
+    fn entry_id(&self) -> Option<usize> {
+        todo!()
+    }
+
+    fn mtime(&self) -> SystemTime {
+        SystemTime::now()
+    }
+
+    fn path(&self) -> &Arc<Path> {
+        todo!()
+    }
+
+    fn abs_path(&self) -> Option<PathBuf> {
+        Some(self.abs_path.clone())
+    }
+
+    fn full_path(&self) -> PathBuf {
+        todo!()
+    }
+
+    fn file_name(&self) -> Option<OsString> {
+        todo!()
+    }
+
+    fn is_deleted(&self) -> bool {
+        todo!()
+    }
+
+    fn save(
+        &self,
+        _: u64,
+        _: Rope,
+        _: clock::Global,
+        _: &mut MutableAppContext,
+    ) -> Task<Result<(clock::Global, SystemTime)>> {
+        todo!()
+    }
+
+    fn load_local(&self, _: &AppContext) -> Option<Task<Result<String>>> {
+        todo!()
+    }
+
+    fn buffer_updated(&self, _: u64, _: super::Operation, _: &mut MutableAppContext) {
+        todo!()
+    }
+
+    fn buffer_removed(&self, _: u64, _: &mut MutableAppContext) {
+        todo!()
+    }
+
+    fn boxed_clone(&self) -> Box<dyn File> {
+        todo!()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        todo!()
+    }
 }

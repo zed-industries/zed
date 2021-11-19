@@ -227,12 +227,21 @@ pub struct EditorStyle {
     pub line_number_active: Color,
     pub guest_selections: Vec<SelectionStyle>,
     pub syntax: Arc<SyntaxTheme>,
-    pub error_underline: Color,
-    pub warning_underline: Color,
-    #[serde(default)]
-    pub information_underline: Color,
-    #[serde(default)]
-    pub hint_underline: Color,
+    pub error_diagnostic: DiagnosticStyle,
+    pub invalid_error_diagnostic: DiagnosticStyle,
+    pub warning_diagnostic: DiagnosticStyle,
+    pub invalid_warning_diagnostic: DiagnosticStyle,
+    pub information_diagnostic: DiagnosticStyle,
+    pub invalid_information_diagnostic: DiagnosticStyle,
+    pub hint_diagnostic: DiagnosticStyle,
+    pub invalid_hint_diagnostic: DiagnosticStyle,
+}
+
+#[derive(Copy, Clone, Deserialize, Default)]
+pub struct DiagnosticStyle {
+    pub text: Color,
+    #[serde(flatten)]
+    pub block: BlockStyle,
 }
 
 #[derive(Clone, Copy, Default, Deserialize)]
@@ -249,6 +258,14 @@ pub struct InputEditorStyle {
     #[serde(default)]
     pub placeholder_text: Option<TextStyle>,
     pub selection: SelectionStyle,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+pub struct BlockStyle {
+    pub background: Option<Color>,
+    pub border: Option<Color>,
+    pub gutter_background: Option<Color>,
+    pub gutter_border: Option<Color>,
 }
 
 impl EditorStyle {
@@ -273,10 +290,14 @@ impl InputEditorStyle {
             line_number_active: Default::default(),
             guest_selections: Default::default(),
             syntax: Default::default(),
-            error_underline: Default::default(),
-            warning_underline: Default::default(),
-            information_underline: Default::default(),
-            hint_underline: Default::default(),
+            error_diagnostic: Default::default(),
+            invalid_error_diagnostic: Default::default(),
+            warning_diagnostic: Default::default(),
+            invalid_warning_diagnostic: Default::default(),
+            information_diagnostic: Default::default(),
+            invalid_information_diagnostic: Default::default(),
+            hint_diagnostic: Default::default(),
+            invalid_hint_diagnostic: Default::default(),
         }
     }
 }

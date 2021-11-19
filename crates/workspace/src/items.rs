@@ -258,15 +258,12 @@ impl DiagnosticMessage {
 
     fn update(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
         let editor = editor.read(cx);
-        let cursor_position = editor
-            .selections::<usize>(cx)
-            .max_by_key(|selection| selection.id)
-            .unwrap()
-            .head();
+        let cursor_position = editor.newest_selection(cx).head();
         let new_diagnostic = editor
             .buffer()
             .read(cx)
             .diagnostics_in_range::<usize, usize>(cursor_position..cursor_position)
+            .filter(|(range, _)| !range.is_empty())
             .min_by_key(|(range, diagnostic)| (diagnostic.severity, range.len()))
             .map(|(_, diagnostic)| diagnostic.clone());
         if new_diagnostic != self.diagnostic {

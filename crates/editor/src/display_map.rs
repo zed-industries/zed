@@ -1,18 +1,29 @@
+mod block_map;
 mod fold_map;
+mod patch;
 mod tab_map;
 mod wrap_map;
 
+pub use block_map::{BlockDisposition, BlockId, BlockProperties, BufferRows, Chunks};
+use block_map::{BlockMap, BlockPoint};
+use buffer::Rope;
 use fold_map::{FoldMap, ToFoldPoint as _};
-use gpui::{fonts::FontId, Entity, ModelContext, ModelHandle};
+use gpui::{
+    fonts::{FontId, HighlightStyle},
+    AppContext, Entity, ModelContext, ModelHandle,
+};
 use language::{Anchor, Buffer, Point, ToOffset, ToPoint};
-use std::ops::Range;
+use std::{
+    collections::{HashMap, HashSet},
+    ops::Range,
+};
 use sum_tree::Bias;
 use tab_map::TabMap;
+use theme::{BlockStyle, SyntaxTheme};
 use wrap_map::WrapMap;
-pub use wrap_map::{BufferRows, HighlightedChunks};
 
 pub trait ToDisplayPoint {
-    fn to_display_point(&self, map: &DisplayMapSnapshot, bias: Bias) -> DisplayPoint;
+    fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint;
 }
 
 pub struct DisplayMap {
@@ -20,6 +31,7 @@ pub struct DisplayMap {
     fold_map: FoldMap,
     tab_map: TabMap,
     wrap_map: ModelHandle<WrapMap>,
+    block_map: BlockMap,
 }
 
 impl Entity for DisplayMap {
@@ -37,28 +49,32 @@ impl DisplayMap {
     ) -> Self {
         let (fold_map, snapshot) = FoldMap::new(buffer.clone(), cx);
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
-        let wrap_map =
-            cx.add_model(|cx| WrapMap::new(snapshot, font_id, font_size, wrap_width, cx));
+        let (wrap_map, snapshot) = WrapMap::new(snapshot, font_id, font_size, wrap_width, cx);
+        let block_map = BlockMap::new(buffer.clone(), snapshot);
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
         DisplayMap {
             buffer,
             fold_map,
             tab_map,
             wrap_map,
+            block_map,
         }
     }
 
     pub fn snapshot(&self, cx: &mut ModelContext<Self>) -> DisplayMapSnapshot {
         let (folds_snapshot, edits) = self.fold_map.read(cx);
         let (tabs_snapshot, edits) = self.tab_map.sync(folds_snapshot.clone(), edits);
-        let wraps_snapshot = self
+        let (wraps_snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(tabs_snapshot.clone(), edits, cx));
+        let blocks_snapshot = self.block_map.read(wraps_snapshot.clone(), edits, cx);
+
         DisplayMapSnapshot {
             buffer_snapshot: self.buffer.read(cx).snapshot(),
             folds_snapshot,
             tabs_snapshot,
             wraps_snapshot,
+            blocks_snapshot,
         }
     }
 
@@ -69,12 +85,16 @@ impl DisplayMap {
     ) {
         let (mut fold_map, snapshot, edits) = self.fold_map.write(cx);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
-        self.wrap_map
+        let (snapshot, edits) = self
+            .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits, cx);
         let (snapshot, edits) = fold_map.fold(ranges, cx);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
-        self.wrap_map
+        let (snapshot, edits) = self
+            .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits, cx);
     }
 
     pub fn unfold<T: ToOffset>(
@@ -84,12 +104,52 @@ impl DisplayMap {
     ) {
         let (mut fold_map, snapshot, edits) = self.fold_map.write(cx);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
-        self.wrap_map
+        let (snapshot, edits) = self
+            .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits, cx);
         let (snapshot, edits) = fold_map.unfold(ranges, cx);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
-        self.wrap_map
+        let (snapshot, edits) = self
+            .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        self.block_map.read(snapshot, edits, cx);
+    }
+
+    pub fn insert_blocks<P, T>(
+        &mut self,
+        blocks: impl IntoIterator<Item = BlockProperties<P, T>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Vec<BlockId>
+    where
+        P: ToOffset + Clone,
+        T: Into<Rope> + Clone,
+    {
+        let (snapshot, edits) = self.fold_map.read(cx);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        let mut block_map = self.block_map.write(snapshot, edits, cx);
+        block_map.insert(blocks, cx)
+    }
+
+    pub fn restyle_blocks<F1, F2>(&mut self, styles: HashMap<BlockId, (Option<F1>, Option<F2>)>)
+    where
+        F1: 'static + Fn(&AppContext) -> Vec<(usize, HighlightStyle)>,
+        F2: 'static + Fn(&AppContext) -> BlockStyle,
+    {
+        self.block_map.restyle(styles);
+    }
+
+    pub fn remove_blocks(&mut self, ids: HashSet<BlockId>, cx: &mut ModelContext<Self>) {
+        let (snapshot, edits) = self.fold_map.read(cx);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        let mut block_map = self.block_map.write(snapshot, edits, cx);
+        block_map.remove(ids, cx);
     }
 
     pub fn set_font(&self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) {
@@ -113,6 +173,7 @@ pub struct DisplayMapSnapshot {
     folds_snapshot: fold_map::Snapshot,
     tabs_snapshot: tab_map::Snapshot,
     wraps_snapshot: wrap_map::Snapshot,
+    blocks_snapshot: block_map::BlockSnapshot,
 }
 
 impl DisplayMapSnapshot {
@@ -125,8 +186,8 @@ impl DisplayMapSnapshot {
         self.buffer_snapshot.len() == 0
     }
 
-    pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
-        self.wraps_snapshot.buffer_rows(start_row)
+    pub fn buffer_rows<'a>(&'a self, start_row: u32, cx: Option<&'a AppContext>) -> BufferRows<'a> {
+        self.blocks_snapshot.buffer_rows(start_row, cx)
     }
 
     pub fn buffer_row_count(&self) -> u32 {
@@ -136,9 +197,9 @@ impl DisplayMapSnapshot {
     pub fn prev_row_boundary(&self, mut display_point: DisplayPoint) -> (DisplayPoint, Point) {
         loop {
             *display_point.column_mut() = 0;
-            let mut point = display_point.to_buffer_point(self, Bias::Left);
+            let mut point = display_point.to_point(self);
             point.column = 0;
-            let next_display_point = point.to_display_point(self, Bias::Left);
+            let next_display_point = self.point_to_display_point(point, Bias::Left);
             if next_display_point == display_point {
                 return (display_point, point);
             }
@@ -149,9 +210,9 @@ impl DisplayMapSnapshot {
     pub fn next_row_boundary(&self, mut display_point: DisplayPoint) -> (DisplayPoint, Point) {
         loop {
             *display_point.column_mut() = self.line_len(display_point.row());
-            let mut point = display_point.to_buffer_point(self, Bias::Right);
+            let mut point = display_point.to_point(self);
             point.column = self.buffer_snapshot.line_len(point.row);
-            let next_display_point = point.to_display_point(self, Bias::Right);
+            let next_display_point = self.point_to_display_point(point, Bias::Right);
             if next_display_point == display_point {
                 return (display_point, point);
             }
@@ -159,25 +220,46 @@ impl DisplayMapSnapshot {
         }
     }
 
+    fn point_to_display_point(&self, point: Point, bias: Bias) -> DisplayPoint {
+        DisplayPoint(
+            self.blocks_snapshot.to_block_point(
+                self.wraps_snapshot.from_tab_point(
+                    self.tabs_snapshot
+                        .to_tab_point(point.to_fold_point(&self.folds_snapshot, bias)),
+                ),
+            ),
+        )
+    }
+
+    fn display_point_to_point(&self, point: DisplayPoint, bias: Bias) -> Point {
+        let unblocked_point = self.blocks_snapshot.to_wrap_point(point.0);
+        let unwrapped_point = self.wraps_snapshot.to_tab_point(unblocked_point);
+        let unexpanded_point = self.tabs_snapshot.to_fold_point(unwrapped_point, bias).0;
+        unexpanded_point.to_buffer_point(&self.folds_snapshot)
+    }
+
     pub fn max_point(&self) -> DisplayPoint {
-        DisplayPoint(self.wraps_snapshot.max_point())
+        DisplayPoint(self.blocks_snapshot.max_point())
     }
 
-    pub fn chunks_at(&self, display_row: u32) -> wrap_map::Chunks {
-        self.wraps_snapshot.chunks_at(display_row)
+    pub fn text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
+        self.blocks_snapshot
+            .chunks(display_row..self.max_point().row() + 1, None, None)
+            .map(|h| h.text)
     }
 
-    pub fn highlighted_chunks_for_rows(
-        &mut self,
+    pub fn chunks<'a>(
+        &'a self,
         display_rows: Range<u32>,
-    ) -> wrap_map::HighlightedChunks {
-        self.wraps_snapshot
-            .highlighted_chunks_for_rows(display_rows)
+        theme: Option<&'a SyntaxTheme>,
+        cx: &'a AppContext,
+    ) -> block_map::Chunks<'a> {
+        self.blocks_snapshot.chunks(display_rows, theme, Some(cx))
     }
 
     pub fn chars_at<'a>(&'a self, point: DisplayPoint) -> impl Iterator<Item = char> + 'a {
         let mut column = 0;
-        let mut chars = self.chunks_at(point.row()).flat_map(str::chars);
+        let mut chars = self.text_chunks(point.row()).flat_map(str::chars);
         while column < point.column() {
             if let Some(c) = chars.next() {
                 column += c.len_utf8() as u32;
@@ -215,7 +297,7 @@ impl DisplayMapSnapshot {
     }
 
     pub fn clip_point(&self, point: DisplayPoint, bias: Bias) -> DisplayPoint {
-        DisplayPoint(self.wraps_snapshot.clip_point(point.0, bias))
+        DisplayPoint(self.blocks_snapshot.clip_point(point.0, bias))
     }
 
     pub fn folds_in_range<'a, T>(
@@ -233,22 +315,31 @@ impl DisplayMapSnapshot {
     }
 
     pub fn is_line_folded(&self, display_row: u32) -> bool {
-        let wrap_point = DisplayPoint::new(display_row, 0).0;
-        let row = self.wraps_snapshot.to_tab_point(wrap_point).row();
-        self.folds_snapshot.is_line_folded(row)
+        let block_point = BlockPoint(Point::new(display_row, 0));
+        let wrap_point = self.blocks_snapshot.to_wrap_point(block_point);
+        let tab_point = self.wraps_snapshot.to_tab_point(wrap_point);
+        self.folds_snapshot.is_line_folded(tab_point.row())
+    }
+
+    pub fn is_block_line(&self, display_row: u32) -> bool {
+        self.blocks_snapshot.is_block_line(display_row)
     }
 
     pub fn soft_wrap_indent(&self, display_row: u32) -> Option<u32> {
-        self.wraps_snapshot.soft_wrap_indent(display_row)
+        let wrap_row = self
+            .blocks_snapshot
+            .to_wrap_point(BlockPoint::new(display_row, 0))
+            .row();
+        self.wraps_snapshot.soft_wrap_indent(wrap_row)
     }
 
     pub fn text(&self) -> String {
-        self.chunks_at(0).collect()
+        self.text_chunks(0).collect()
     }
 
     pub fn line(&self, display_row: u32) -> String {
         let mut result = String::new();
-        for chunk in self.chunks_at(display_row) {
+        for chunk in self.text_chunks(display_row) {
             if let Some(ix) = chunk.find('\n') {
                 result.push_str(&chunk[0..ix]);
                 break;
@@ -274,30 +365,20 @@ impl DisplayMapSnapshot {
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
-        self.wraps_snapshot.line_len(row)
+        self.blocks_snapshot.line_len(row)
     }
 
     pub fn longest_row(&self) -> u32 {
-        self.wraps_snapshot.longest_row()
-    }
-
-    pub fn anchor_before(&self, point: DisplayPoint, bias: Bias) -> Anchor {
-        self.buffer_snapshot
-            .anchor_before(point.to_buffer_point(self, bias))
-    }
-
-    pub fn anchor_after(&self, point: DisplayPoint, bias: Bias) -> Anchor {
-        self.buffer_snapshot
-            .anchor_after(point.to_buffer_point(self, bias))
+        self.blocks_snapshot.longest_row()
     }
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct DisplayPoint(wrap_map::WrapPoint);
+pub struct DisplayPoint(BlockPoint);
 
 impl DisplayPoint {
     pub fn new(row: u32, column: u32) -> Self {
-        Self(wrap_map::WrapPoint::new(row, column))
+        Self(BlockPoint(Point::new(row, column)))
     }
 
     pub fn zero() -> Self {
@@ -310,48 +391,50 @@ impl DisplayPoint {
     }
 
     pub fn row(self) -> u32 {
-        self.0.row()
+        self.0.row
     }
 
     pub fn column(self) -> u32 {
-        self.0.column()
+        self.0.column
     }
 
     pub fn row_mut(&mut self) -> &mut u32 {
-        self.0.row_mut()
+        &mut self.0.row
     }
 
     pub fn column_mut(&mut self) -> &mut u32 {
-        self.0.column_mut()
+        &mut self.0.column
     }
 
-    pub fn to_buffer_point(self, map: &DisplayMapSnapshot, bias: Bias) -> Point {
-        let unwrapped_point = map.wraps_snapshot.to_tab_point(self.0);
-        let unexpanded_point = map.tabs_snapshot.to_fold_point(unwrapped_point, bias).0;
-        unexpanded_point.to_buffer_point(&map.folds_snapshot)
+    pub fn to_point(self, map: &DisplayMapSnapshot) -> Point {
+        map.display_point_to_point(self, Bias::Left)
     }
 
-    pub fn to_buffer_offset(self, map: &DisplayMapSnapshot, bias: Bias) -> usize {
-        let unwrapped_point = map.wraps_snapshot.to_tab_point(self.0);
+    pub fn to_offset(self, map: &DisplayMapSnapshot, bias: Bias) -> usize {
+        let unblocked_point = map.blocks_snapshot.to_wrap_point(self.0);
+        let unwrapped_point = map.wraps_snapshot.to_tab_point(unblocked_point);
         let unexpanded_point = map.tabs_snapshot.to_fold_point(unwrapped_point, bias).0;
         unexpanded_point.to_buffer_offset(&map.folds_snapshot)
     }
 }
 
 impl ToDisplayPoint for Point {
-    fn to_display_point(&self, map: &DisplayMapSnapshot, bias: Bias) -> DisplayPoint {
-        let fold_point = self.to_fold_point(&map.folds_snapshot, bias);
-        let tab_point = map.tabs_snapshot.to_tab_point(fold_point);
-        let wrap_point = map.wraps_snapshot.to_wrap_point(tab_point);
-        DisplayPoint(wrap_point)
+    fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint {
+        map.point_to_display_point(*self, Bias::Left)
     }
 }
 
 impl ToDisplayPoint for Anchor {
-    fn to_display_point(&self, map: &DisplayMapSnapshot, bias: Bias) -> DisplayPoint {
-        self.to_point(&map.buffer_snapshot)
-            .to_display_point(map, bias)
+    fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint {
+        self.to_point(&map.buffer_snapshot).to_display_point(map)
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisplayRow {
+    Buffer(u32),
+    Block(BlockId, Option<BlockStyle>),
+    Wrap,
 }
 
 #[cfg(test)]
@@ -472,28 +555,28 @@ mod tests {
 
                 assert_eq!(
                     prev_display_bound,
-                    prev_buffer_bound.to_display_point(&snapshot, Left),
+                    prev_buffer_bound.to_display_point(&snapshot),
                     "row boundary before {:?}. reported buffer row boundary: {:?}",
                     point,
                     prev_buffer_bound
                 );
                 assert_eq!(
                     next_display_bound,
-                    next_buffer_bound.to_display_point(&snapshot, Right),
+                    next_buffer_bound.to_display_point(&snapshot),
                     "display row boundary after {:?}. reported buffer row boundary: {:?}",
                     point,
                     next_buffer_bound
                 );
                 assert_eq!(
                     prev_buffer_bound,
-                    prev_display_bound.to_buffer_point(&snapshot, Left),
+                    prev_display_bound.to_point(&snapshot),
                     "row boundary before {:?}. reported display row boundary: {:?}",
                     point,
                     prev_display_bound
                 );
                 assert_eq!(
                     next_buffer_bound,
-                    next_display_bound.to_buffer_point(&snapshot, Right),
+                    next_display_bound.to_point(&snapshot),
                     "row boundary after {:?}. reported display row boundary: {:?}",
                     point,
                     next_display_bound
@@ -559,7 +642,7 @@ mod tests {
 
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(
-            snapshot.chunks_at(0).collect::<String>(),
+            snapshot.text_chunks(0).collect::<String>(),
             "one two \nthree four \nfive\nsix seven \neight"
         );
         assert_eq!(
@@ -608,7 +691,7 @@ mod tests {
 
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(
-            snapshot.chunks_at(1).collect::<String>(),
+            snapshot.text_chunks(1).collect::<String>(),
             "three four \nfive\nsix and \nseven eight"
         );
 
@@ -617,13 +700,13 @@ mod tests {
 
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(
-            snapshot.chunks_at(1).collect::<String>(),
+            snapshot.text_chunks(1).collect::<String>(),
             "three \nfour five\nsix and \nseven \neight"
         )
     }
 
     #[gpui::test]
-    fn test_chunks_at(cx: &mut gpui::MutableAppContext) {
+    fn test_text_chunks(cx: &mut gpui::MutableAppContext) {
         let text = sample_text(6, 6);
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
         let tab_size = 4;
@@ -650,7 +733,7 @@ mod tests {
 
         assert_eq!(
             map.update(cx, |map, cx| map.snapshot(cx))
-                .chunks_at(1)
+                .text_chunks(1)
                 .collect::<String>()
                 .lines()
                 .next(),
@@ -658,7 +741,7 @@ mod tests {
         );
         assert_eq!(
             map.update(cx, |map, cx| map.snapshot(cx))
-                .chunks_at(2)
+                .text_chunks(2)
                 .collect::<String>()
                 .lines()
                 .next(),
@@ -667,7 +750,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_highlighted_chunks_at(mut cx: gpui::TestAppContext) {
+    async fn test_chunks(mut cx: gpui::TestAppContext) {
         use unindent::Unindent as _;
 
         let text = r#"
@@ -679,8 +762,8 @@ mod tests {
         .unindent();
 
         let theme = SyntaxTheme::new(vec![
-            ("mod.body".to_string(), Color::from_u32(0xff0000ff).into()),
-            ("fn.name".to_string(), Color::from_u32(0x00ff00ff).into()),
+            ("mod.body".to_string(), Color::red().into()),
+            ("fn.name".to_string(), Color::blue().into()),
         ]);
         let lang = Arc::new(
             Language::new(
@@ -716,22 +799,22 @@ mod tests {
         let map =
             cx.add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, cx));
         assert_eq!(
-            cx.update(|cx| highlighted_chunks(0..5, &map, &theme, cx)),
+            cx.update(|cx| chunks(0..5, &map, &theme, cx)),
             vec![
                 ("fn ".to_string(), None),
-                ("outer".to_string(), Some("fn.name")),
+                ("outer".to_string(), Some(Color::blue())),
                 ("() {}\n\nmod module ".to_string(), None),
-                ("{\n    fn ".to_string(), Some("mod.body")),
-                ("inner".to_string(), Some("fn.name")),
-                ("() {}\n}".to_string(), Some("mod.body")),
+                ("{\n    fn ".to_string(), Some(Color::red())),
+                ("inner".to_string(), Some(Color::blue())),
+                ("() {}\n}".to_string(), Some(Color::red())),
             ]
         );
         assert_eq!(
-            cx.update(|cx| highlighted_chunks(3..5, &map, &theme, cx)),
+            cx.update(|cx| chunks(3..5, &map, &theme, cx)),
             vec![
-                ("    fn ".to_string(), Some("mod.body")),
-                ("inner".to_string(), Some("fn.name")),
-                ("() {}\n}".to_string(), Some("mod.body")),
+                ("    fn ".to_string(), Some(Color::red())),
+                ("inner".to_string(), Some(Color::blue())),
+                ("() {}\n}".to_string(), Some(Color::red())),
             ]
         );
 
@@ -739,20 +822,20 @@ mod tests {
             map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx)
         });
         assert_eq!(
-            cx.update(|cx| highlighted_chunks(0..2, &map, &theme, cx)),
+            cx.update(|cx| chunks(0..2, &map, &theme, cx)),
             vec![
                 ("fn ".to_string(), None),
-                ("out".to_string(), Some("fn.name")),
+                ("out".to_string(), Some(Color::blue())),
                 ("…".to_string(), None),
-                ("  fn ".to_string(), Some("mod.body")),
-                ("inner".to_string(), Some("fn.name")),
-                ("() {}\n}".to_string(), Some("mod.body")),
+                ("  fn ".to_string(), Some(Color::red())),
+                ("inner".to_string(), Some(Color::blue())),
+                ("() {}\n}".to_string(), Some(Color::red())),
             ]
         );
     }
 
     #[gpui::test]
-    async fn test_highlighted_chunks_with_soft_wrapping(mut cx: gpui::TestAppContext) {
+    async fn test_chunks_with_soft_wrapping(mut cx: gpui::TestAppContext) {
         use unindent::Unindent as _;
 
         cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
@@ -766,8 +849,8 @@ mod tests {
         .unindent();
 
         let theme = SyntaxTheme::new(vec![
-            ("mod.body".to_string(), Color::from_u32(0xff0000ff).into()),
-            ("fn.name".to_string(), Color::from_u32(0x00ff00ff).into()),
+            ("mod.body".to_string(), Color::red().into()),
+            ("fn.name".to_string(), Color::blue().into()),
         ]);
         let lang = Arc::new(
             Language::new(
@@ -804,15 +887,15 @@ mod tests {
         let map = cx
             .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, Some(40.0), cx));
         assert_eq!(
-            cx.update(|cx| highlighted_chunks(0..5, &map, &theme, cx)),
+            cx.update(|cx| chunks(0..5, &map, &theme, cx)),
             [
                 ("fn \n".to_string(), None),
-                ("oute\nr".to_string(), Some("fn.name")),
+                ("oute\nr".to_string(), Some(Color::blue())),
                 ("() \n{}\n\n".to_string(), None),
             ]
         );
         assert_eq!(
-            cx.update(|cx| highlighted_chunks(3..5, &map, &theme, cx)),
+            cx.update(|cx| chunks(3..5, &map, &theme, cx)),
             [("{}\n\n".to_string(), None)]
         );
 
@@ -820,12 +903,12 @@ mod tests {
             map.fold(vec![Point::new(0, 6)..Point::new(3, 2)], cx)
         });
         assert_eq!(
-            cx.update(|cx| highlighted_chunks(1..4, &map, &theme, cx)),
+            cx.update(|cx| chunks(1..4, &map, &theme, cx)),
             [
-                ("out".to_string(), Some("fn.name")),
+                ("out".to_string(), Some(Color::blue())),
                 ("…\n".to_string(), None),
-                ("  \nfn ".to_string(), Some("mod.body")),
-                ("i\n".to_string(), Some("fn.name"))
+                ("  \nfn ".to_string(), Some(Color::red())),
+                ("i\n".to_string(), Some(Color::blue()))
             ]
         );
     }
@@ -895,42 +978,34 @@ mod tests {
         let map = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(map.text(), "✅       α\nβ   \n🏀β      γ");
         assert_eq!(
-            map.chunks_at(0).collect::<String>(),
+            map.text_chunks(0).collect::<String>(),
             "✅       α\nβ   \n🏀β      γ"
         );
-        assert_eq!(map.chunks_at(1).collect::<String>(), "β   \n🏀β      γ");
-        assert_eq!(map.chunks_at(2).collect::<String>(), "🏀β      γ");
+        assert_eq!(map.text_chunks(1).collect::<String>(), "β   \n🏀β      γ");
+        assert_eq!(map.text_chunks(2).collect::<String>(), "🏀β      γ");
 
         let point = Point::new(0, "✅\t\t".len() as u32);
         let display_point = DisplayPoint::new(0, "✅       ".len() as u32);
-        assert_eq!(point.to_display_point(&map, Left), display_point);
-        assert_eq!(display_point.to_buffer_point(&map, Left), point,);
+        assert_eq!(point.to_display_point(&map), display_point);
+        assert_eq!(display_point.to_point(&map), point);
 
         let point = Point::new(1, "β\t".len() as u32);
         let display_point = DisplayPoint::new(1, "β   ".len() as u32);
-        assert_eq!(point.to_display_point(&map, Left), display_point);
-        assert_eq!(display_point.to_buffer_point(&map, Left), point,);
+        assert_eq!(point.to_display_point(&map), display_point);
+        assert_eq!(display_point.to_point(&map), point,);
 
         let point = Point::new(2, "🏀β\t\t".len() as u32);
         let display_point = DisplayPoint::new(2, "🏀β      ".len() as u32);
-        assert_eq!(point.to_display_point(&map, Left), display_point);
-        assert_eq!(display_point.to_buffer_point(&map, Left), point,);
+        assert_eq!(point.to_display_point(&map), display_point);
+        assert_eq!(display_point.to_point(&map), point,);
 
         // Display points inside of expanded tabs
         assert_eq!(
-            DisplayPoint::new(0, "✅      ".len() as u32).to_buffer_point(&map, Right),
-            Point::new(0, "✅\t\t".len() as u32),
-        );
-        assert_eq!(
-            DisplayPoint::new(0, "✅      ".len() as u32).to_buffer_point(&map, Left),
+            DisplayPoint::new(0, "✅      ".len() as u32).to_point(&map),
             Point::new(0, "✅\t".len() as u32),
         );
         assert_eq!(
-            DisplayPoint::new(0, "✅ ".len() as u32).to_buffer_point(&map, Right),
-            Point::new(0, "✅\t".len() as u32),
-        );
-        assert_eq!(
-            DisplayPoint::new(0, "✅ ".len() as u32).to_buffer_point(&map, Left),
+            DisplayPoint::new(0, "✅ ".len() as u32).to_point(&map),
             Point::new(0, "✅".len() as u32),
         );
 
@@ -964,24 +1039,24 @@ mod tests {
         )
     }
 
-    fn highlighted_chunks<'a>(
+    fn chunks<'a>(
         rows: Range<u32>,
         map: &ModelHandle<DisplayMap>,
         theme: &'a SyntaxTheme,
         cx: &mut MutableAppContext,
-    ) -> Vec<(String, Option<&'a str>)> {
-        let mut snapshot = map.update(cx, |map, cx| map.snapshot(cx));
-        let mut chunks: Vec<(String, Option<&str>)> = Vec::new();
-        for chunk in snapshot.highlighted_chunks_for_rows(rows) {
-            let style_name = chunk.highlight_id.name(theme);
-            if let Some((last_chunk, last_style_name)) = chunks.last_mut() {
-                if style_name == *last_style_name {
+    ) -> Vec<(String, Option<Color>)> {
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+        let mut chunks: Vec<(String, Option<Color>)> = Vec::new();
+        for chunk in snapshot.chunks(rows, Some(theme), cx) {
+            let color = chunk.highlight_style.map(|s| s.color);
+            if let Some((last_chunk, last_color)) = chunks.last_mut() {
+                if color == *last_color {
                     last_chunk.push_str(chunk.text);
                 } else {
-                    chunks.push((chunk.text.to_string(), style_name));
+                    chunks.push((chunk.text.to_string(), color));
                 }
             } else {
-                chunks.push((chunk.text.to_string(), style_name));
+                chunks.push((chunk.text.to_string(), color));
             }
         }
         chunks
