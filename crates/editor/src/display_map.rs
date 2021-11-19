@@ -85,13 +85,13 @@ impl DisplayMap {
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.sync(&snapshot, edits, cx);
+        self.block_map.read(snapshot, edits, cx);
         let (snapshot, edits) = fold_map.fold(ranges, cx);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.sync(&snapshot, edits, cx);
+        self.block_map.read(snapshot, edits, cx);
     }
 
     pub fn unfold<T: ToOffset>(
@@ -104,13 +104,13 @@ impl DisplayMap {
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.sync(&snapshot, edits, cx);
+        self.block_map.read(snapshot, edits, cx);
         let (snapshot, edits) = fold_map.unfold(ranges, cx);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.sync(&snapshot, edits, cx);
+        self.block_map.read(snapshot, edits, cx);
     }
 
     pub fn insert_blocks<P, T>(

@@ -163,7 +163,7 @@ impl BlockMap {
         BlockMapWriter(self)
     }
 
-    pub fn sync(&self, wrap_snapshot: &WrapSnapshot, edits: Vec<WrapEdit>, cx: &AppContext) {
+    fn sync(&self, wrap_snapshot: &WrapSnapshot, edits: Vec<WrapEdit>, cx: &AppContext) {
         if edits.is_empty() {
             return;
         }

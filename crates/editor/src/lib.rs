@@ -24,7 +24,7 @@ use smol::Timer;
 use std::{
     cell::RefCell,
     cmp::{self, Ordering},
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     iter, mem,
     ops::{Range, RangeInclusive},
     rc::Rc,
