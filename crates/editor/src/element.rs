@@ -196,6 +196,7 @@ impl EditorElement {
     ) {
         let bounds = gutter_bounds.union_rect(text_bounds);
         let scroll_top = layout.snapshot.scroll_position().y() * layout.line_height;
+        let start_row = layout.snapshot.scroll_position().y() as u32;
         let editor = self.view(cx.app);
         let style = &self.settings.style;
         cx.scene.push_quad(Quad {
@@ -239,6 +240,51 @@ impl EditorElement {
                     });
                 }
             }
+        }
+
+        // Draw block backgrounds
+        for (ixs, block_style) in &layout.block_layouts {
+            let row = start_row + ixs.start;
+            let offset = vec2f(0., row as f32 * layout.line_height - scroll_top);
+            let height = ixs.len() as f32 * layout.line_height;
+            cx.scene.push_quad(Quad {
+                bounds: RectF::new(
+                    text_bounds.origin() + offset,
+                    vec2f(text_bounds.width(), height),
+                ),
+                background: block_style.background,
+                border: block_style
+                    .border
+                    .map_or(Default::default(), |color| Border {
+                        width: 1.,
+                        color,
+                        overlay: true,
+                        top: true,
+                        right: false,
+                        bottom: true,
+                        left: false,
+                    }),
+                corner_radius: 0.,
+            });
+            cx.scene.push_quad(Quad {
+                bounds: RectF::new(
+                    gutter_bounds.origin() + offset,
+                    vec2f(gutter_bounds.width(), height),
+                ),
+                background: block_style.gutter_background,
+                border: block_style
+                    .gutter_border
+                    .map_or(Default::default(), |color| Border {
+                        width: 1.,
+                        color,
+                        overlay: true,
+                        top: true,
+                        right: false,
+                        bottom: true,
+                        left: false,
+                    }),
+                corner_radius: 0.,
+            });
         }
     }
 
@@ -360,30 +406,6 @@ impl EditorElement {
         }
 
         if let Some(visible_text_bounds) = bounds.intersection(visible_bounds) {
-            // Draw blocks
-            for (ixs, block_style) in &layout.block_layouts {
-                let row = start_row + ixs.start;
-                let origin = content_origin
-                    + vec2f(-scroll_left, row as f32 * layout.line_height - scroll_top);
-                let height = ixs.len() as f32 * layout.line_height;
-                cx.scene.push_quad(Quad {
-                    bounds: RectF::new(origin, vec2f(visible_text_bounds.width(), height)),
-                    background: block_style.background,
-                    border: block_style
-                        .border
-                        .map_or(Default::default(), |color| Border {
-                            width: 1.,
-                            color,
-                            overlay: true,
-                            top: true,
-                            right: false,
-                            bottom: true,
-                            left: false,
-                        }),
-                    corner_radius: 0.,
-                });
-            }
-
             // Draw glyphs
             for (ix, line) in layout.line_layouts.iter().enumerate() {
                 let row = start_row + ix as u32;

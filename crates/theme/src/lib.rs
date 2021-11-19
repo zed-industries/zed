@@ -262,6 +262,8 @@ pub struct InputEditorStyle {
 pub struct BlockStyle {
     pub background: Option<Color>,
     pub border: Option<Color>,
+    pub gutter_background: Option<Color>,
+    pub gutter_border: Option<Color>,
 }
 
 impl EditorStyle {
