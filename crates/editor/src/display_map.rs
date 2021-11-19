@@ -10,7 +10,10 @@ use buffer::Rope;
 use fold_map::{FoldMap, ToFoldPoint as _};
 use gpui::{fonts::FontId, AppContext, Entity, ModelContext, ModelHandle};
 use language::{Anchor, Buffer, Point, ToOffset, ToPoint};
-use std::{collections::HashSet, ops::Range};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::Range,
+};
 use sum_tree::Bias;
 use tab_map::TabMap;
 use theme::{BlockStyle, SyntaxTheme};
@@ -126,6 +129,13 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits, cx);
         block_map.insert(blocks, cx)
+    }
+
+    pub fn restyle_blocks<F>(&mut self, styles: HashMap<BlockId, Option<F>>)
+    where
+        F: 'static + Fn(&AppContext) -> BlockStyle,
+    {
+        self.block_map.restyle(styles);
     }
 
     pub fn remove_blocks(&mut self, ids: HashSet<BlockId>, cx: &mut ModelContext<Self>) {

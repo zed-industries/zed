@@ -8,7 +8,7 @@ use language::{Buffer, Chunk};
 use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fmt::Debug,
     iter,
     ops::{Deref, Range},
@@ -53,7 +53,7 @@ pub struct Block {
     position: Anchor,
     text: Rope,
     build_runs: Option<Arc<dyn Fn(&AppContext) -> Vec<(usize, HighlightStyle)>>>,
-    build_style: Option<Arc<dyn Fn(&AppContext) -> BlockStyle>>,
+    build_style: Mutex<Option<Arc<dyn Fn(&AppContext) -> BlockStyle>>>,
     disposition: BlockDisposition,
 }
 
@@ -332,6 +332,19 @@ impl BlockMap {
         drop(cursor);
         *transforms = new_transforms;
     }
+
+    pub fn restyle<F>(&mut self, mut styles: HashMap<BlockId, Option<F>>)
+    where
+        F: 'static + Fn(&AppContext) -> BlockStyle,
+    {
+        for block in &self.blocks {
+            if let Some(build_style) = styles.remove(&block.id) {
+                *block.build_style.lock() = build_style.map(|build_style| {
+                    Arc::new(build_style) as Arc<dyn Fn(&AppContext) -> BlockStyle>
+                });
+            }
+        }
+    }
 }
 
 fn push_isomorphic(tree: &mut SumTree<Transform>, rows: u32) {
@@ -421,7 +434,7 @@ impl<'a> BlockMapWriter<'a> {
                     position,
                     text: block.text.into(),
                     build_runs: block.build_runs,
-                    build_style: block.build_style,
+                    build_style: Mutex::new(block.build_style),
                     disposition: block.disposition,
                 }),
             );
@@ -896,7 +909,7 @@ impl<'a> Iterator for BufferRows<'a> {
         if let Some(block) = &transform.block {
             let style = self
                 .cx
-                .and_then(|cx| block.build_style.as_ref().map(|f| f(cx)));
+                .and_then(|cx| block.build_style.lock().as_ref().map(|f| f(cx)));
             Some(DisplayRow::Block(block.id, style))
         } else {
             Some(self.input_buffer_rows.next().unwrap())
@@ -1017,7 +1030,7 @@ mod tests {
                 id: BlockId(0),
                 position: Anchor::min(),
                 text: "one!\ntwo three\nfour".into(),
-                build_style: None,
+                build_style: Mutex::new(None),
                 build_runs: Some(Arc::new(move |_| {
                     vec![(3, red.into()), (6, Default::default()), (5, blue.into())]
                 })),

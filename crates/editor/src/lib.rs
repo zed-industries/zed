@@ -24,7 +24,7 @@ use smol::Timer;
 use std::{
     cell::RefCell,
     cmp::{self, Ordering},
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     iter, mem,
     ops::{Range, RangeInclusive},
     rc::Rc,
@@ -341,8 +341,10 @@ struct BracketPairState {
 #[derive(Debug)]
 struct ActiveDiagnosticGroup {
     primary_range: Range<Anchor>,
+    primary_message: String,
+    blocks: HashMap<BlockId, Diagnostic>,
     group_range: Range<Anchor>,
-    block_ids: HashSet<BlockId>,
+    is_valid: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -2268,13 +2270,17 @@ impl Editor {
                         ..buffer.anchor_before(group_end);
                     let primary_range = buffer.anchor_after(primary_range.start)
                         ..buffer.anchor_before(primary_range.end);
+                    let mut primary_message = None;
 
-                    let block_ids = display_map
+                    let blocks = display_map
                         .insert_blocks(
                             diagnostic_group.iter().map(|(range, diagnostic)| {
                                 let build_settings = self.build_settings.clone();
                                 let message_len = diagnostic.message.len();
                                 let severity = diagnostic.severity;
+                                if diagnostic.is_primary {
+                                    primary_message = Some(diagnostic.message.clone());
+                                }
                                 BlockProperties {
                                     position: range.start,
                                     text: diagnostic.message.as_str(),
@@ -2303,12 +2309,19 @@ impl Editor {
                             cx,
                         )
                         .into_iter()
+                        .zip(
+                            diagnostic_group
+                                .into_iter()
+                                .map(|(_, diagnostic)| diagnostic),
+                        )
                         .collect();
 
                     Some(ActiveDiagnosticGroup {
                         primary_range,
+                        primary_message: primary_message.unwrap(),
                         group_range,
-                        block_ids,
+                        blocks,
+                        is_valid: true,
                     })
                 });
 
@@ -2333,10 +2346,46 @@ impl Editor {
         }
     }
 
+    fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Editor>) {
+        if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
+            let buffer = self.buffer.read(cx);
+            let primary_range_start = active_diagnostics.primary_range.start.to_offset(buffer);
+            let matching_diagnostic = buffer
+                .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone())
+                .find_map(|(range, diagnostic)| {
+                    if diagnostic.is_primary
+                        && range.start == primary_range_start
+                        && diagnostic.message == active_diagnostics.primary_message
+                    {
+                        Some(diagnostic.group_id)
+                    } else {
+                        None
+                    }
+                });
+            if let Some(matching_diagnostic) = matching_diagnostic {
+            } else if active_diagnostics.is_valid {
+                let mut new_styles = HashMap::new();
+                for (block_id, diagnostic) in &active_diagnostics.blocks {
+                    let build_settings = self.build_settings.clone();
+                    let severity = diagnostic.severity;
+                    new_styles.insert(
+                        *block_id,
+                        Some(move |cx: &AppContext| {
+                            let settings = build_settings.borrow()(cx);
+                            diagnostic_style(severity, false, &settings.style).block
+                        }),
+                    );
+                }
+                self.display_map
+                    .update(cx, |display_map, _| display_map.restyle_blocks(new_styles));
+            }
+        }
+    }
+
     fn dismiss_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(active_diagnostic_group) = self.active_diagnostics.take() {
             self.display_map.update(cx, |display_map, cx| {
-                display_map.remove_blocks(active_diagnostic_group.block_ids, cx);
+                display_map.remove_blocks(active_diagnostic_group.blocks.into_keys().collect(), cx);
             });
             cx.notify();
         }
@@ -2799,6 +2848,7 @@ impl Editor {
     }
 
     fn on_buffer_changed(&mut self, _: ModelHandle<Buffer>, cx: &mut ViewContext<Self>) {
+        self.refresh_active_diagnostics(cx);
         cx.notify();
     }
 
