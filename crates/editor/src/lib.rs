@@ -999,11 +999,15 @@ impl Editor {
                 if pair.end.len() == 1 {
                     let mut delta = 0;
                     Some(BracketPairState {
-                        ranges: buffer.anchor_range_set(selections.iter().map(move |selection| {
-                            let offset = selection.start + delta;
-                            delta += 1;
-                            (offset, Bias::Left)..(offset, Bias::Right)
-                        })),
+                        ranges: buffer.anchor_range_set(
+                            Bias::Left,
+                            Bias::Right,
+                            selections.iter().map(move |selection| {
+                                let offset = selection.start + delta;
+                                delta += 1;
+                                offset..offset
+                            }),
+                        ),
                         pair,
                     })
                 } else {

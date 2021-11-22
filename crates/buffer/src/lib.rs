@@ -519,11 +519,17 @@ impl Buffer {
         self.content().anchor_at(position, bias)
     }
 
-    pub fn anchor_range_set<E>(&self, entries: E) -> AnchorRangeSet
+    pub fn anchor_range_set<E>(
+        &self,
+        start_bias: Bias,
+        end_bias: Bias,
+        entries: E,
+    ) -> AnchorRangeSet
     where
-        E: IntoIterator<Item = Range<(usize, Bias)>>,
+        E: IntoIterator<Item = Range<usize>>,
     {
-        self.content().anchor_range_set(entries)
+        self.content()
+            .anchor_range_set(start_bias, end_bias, entries)
     }
 
     pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
@@ -1251,20 +1257,21 @@ impl Buffer {
         &self,
         selections: &[Selection<T>],
     ) -> Arc<AnchorRangeMap<SelectionState>> {
-        Arc::new(
-            self.content()
-                .anchor_range_map(selections.iter().map(|selection| {
-                    let start = selection.start.to_offset(self);
-                    let end = selection.end.to_offset(self);
-                    let range = (start, Bias::Left)..(end, Bias::Left);
-                    let state = SelectionState {
-                        id: selection.id,
-                        reversed: selection.reversed,
-                        goal: selection.goal,
-                    };
-                    (range, state)
-                })),
-        )
+        Arc::new(self.content().anchor_range_map(
+            Bias::Left,
+            Bias::Left,
+            selections.iter().map(|selection| {
+                let start = selection.start.to_offset(self);
+                let end = selection.end.to_offset(self);
+                let range = start..end;
+                let state = SelectionState {
+                    id: selection.id,
+                    reversed: selection.reversed,
+                    goal: selection.goal,
+                };
+                (range, state)
+            }),
+        ))
     }
 
     pub fn update_selection_set<T: ToOffset>(
@@ -1764,8 +1771,8 @@ impl<'a> Content<'a> {
         let mut summary = D::default();
         let mut rope_cursor = self.visible_text.cursor(0);
         let mut cursor = self.fragments.cursor::<(VersionedFullOffset, usize)>();
-        map.entries.iter().map(move |((offset, bias), value)| {
-            cursor.seek_forward(&VersionedFullOffset::Offset(*offset), *bias, &cx);
+        map.entries.iter().map(move |(offset, value)| {
+            cursor.seek_forward(&VersionedFullOffset::Offset(*offset), map.bias, &cx);
             let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
                 *offset - cursor.start().0.full_offset()
             } else {
@@ -1827,27 +1834,36 @@ impl<'a> Content<'a> {
         }
     }
 
-    pub fn anchor_map<T, E>(&self, entries: E) -> AnchorMap<T>
+    pub fn anchor_map<T, E>(&self, bias: Bias, entries: E) -> AnchorMap<T>
     where
-        E: IntoIterator<Item = ((usize, Bias), T)>,
+        E: IntoIterator<Item = (usize, T)>,
     {
         let version = self.version.clone();
         let mut cursor = self.fragments.cursor::<FragmentTextSummary>();
         let entries = entries
             .into_iter()
-            .map(|((offset, bias), value)| {
+            .map(|(offset, value)| {
                 cursor.seek_forward(&offset, bias, &None);
                 let full_offset = FullOffset(cursor.start().deleted + offset);
-                ((full_offset, bias), value)
+                (full_offset, value)
             })
             .collect();
 
-        AnchorMap { version, entries }
+        AnchorMap {
+            version,
+            bias,
+            entries,
+        }
     }
 
-    pub fn anchor_range_map<T, E>(&self, entries: E) -> AnchorRangeMap<T>
+    pub fn anchor_range_map<T, E>(
+        &self,
+        start_bias: Bias,
+        end_bias: Bias,
+        entries: E,
+    ) -> AnchorRangeMap<T>
     where
-        E: IntoIterator<Item = (Range<(usize, Bias)>, T)>,
+        E: IntoIterator<Item = (Range<usize>, T)>,
     {
         let version = self.version.clone();
         let mut cursor = self.fragments.cursor::<FragmentTextSummary>();
@@ -1855,8 +1871,8 @@ impl<'a> Content<'a> {
             .into_iter()
             .map(|(range, value)| {
                 let Range {
-                    start: (start_offset, start_bias),
-                    end: (end_offset, end_bias),
+                    start: start_offset,
+                    end: end_offset,
                 } = range;
                 cursor.seek_forward(&start_offset, start_bias, &None);
                 let full_start_offset = FullOffset(cursor.start().deleted + start_offset);
@@ -1872,18 +1888,27 @@ impl<'a> Content<'a> {
         AnchorRangeMap { version, entries }
     }
 
-    pub fn anchor_set<E>(&self, entries: E) -> AnchorSet
+    pub fn anchor_set<E>(&self, bias: Bias, entries: E) -> AnchorSet
     where
-        E: IntoIterator<Item = (usize, Bias)>,
+        E: IntoIterator<Item = usize>,
     {
-        AnchorSet(self.anchor_map(entries.into_iter().map(|range| (range, ()))))
+        AnchorSet(self.anchor_map(bias, entries.into_iter().map(|range| (range, ()))))
     }
 
-    pub fn anchor_range_set<E>(&self, entries: E) -> AnchorRangeSet
+    pub fn anchor_range_set<E>(
+        &self,
+        start_bias: Bias,
+        end_bias: Bias,
+        entries: E,
+    ) -> AnchorRangeSet
     where
-        E: IntoIterator<Item = Range<(usize, Bias)>>,
+        E: IntoIterator<Item = Range<usize>>,
     {
-        AnchorRangeSet(self.anchor_range_map(entries.into_iter().map(|range| (range, ()))))
+        AnchorRangeSet(self.anchor_range_map(
+            start_bias,
+            end_bias,
+            entries.into_iter().map(|range| (range, ())),
+        ))
     }
 
     pub fn anchor_range_multimap<T, E, O>(
