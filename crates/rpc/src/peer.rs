@@ -7,6 +7,7 @@ use postage::{
     mpsc,
     prelude::{Sink as _, Stream as _},
 };
+use smol_timeout::TimeoutExt as _;
 use std::{
     collections::HashMap,
     fmt,
@@ -16,6 +17,7 @@ use std::{
         atomic::{self, AtomicU32},
         Arc,
     },
+    time::Duration,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -90,6 +92,8 @@ struct ConnectionState {
     response_channels: Arc<Mutex<Option<HashMap<u32, mpsc::Sender<proto::Envelope>>>>>,
 }
 
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+
 impl Peer {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
@@ -155,8 +159,10 @@ impl Peer {
                         },
                         outgoing = outgoing_rx.recv().fuse() => match outgoing {
                             Some(outgoing) => {
-                                if let Err(result) = writer.write_message(&outgoing).await {
-                                    break 'outer Err(result).context("failed to write RPC message")
+                                match writer.write_message(&outgoing).timeout(WRITE_TIMEOUT).await {
+                                    None => break 'outer Err(anyhow!("timed out writing RPC message")),
+                                    Some(Err(result)) => break 'outer Err(result).context("failed to write RPC message"),
+                                    _ => {}
                                 }
                             }
                             None => break 'outer Ok(()),
