@@ -19,7 +19,8 @@ pub struct Anchor {
 #[derive(Clone)]
 pub struct AnchorMap<T> {
     pub(crate) version: clock::Global,
-    pub(crate) entries: Vec<((FullOffset, Bias), T)>,
+    pub(crate) bias: Bias,
+    pub(crate) entries: Vec<(FullOffset, T)>,
 }
 
 #[derive(Clone)]

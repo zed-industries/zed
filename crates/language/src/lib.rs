@@ -1266,14 +1266,17 @@ impl Buffer {
         self.pending_autoindent.take();
         let autoindent_request = if autoindent && self.language.is_some() {
             let before_edit = self.snapshot();
-            let edited = self.content().anchor_set(ranges.iter().filter_map(|range| {
-                let start = range.start.to_point(&*self);
-                if new_text.starts_with('\n') && start.column == self.line_len(start.row) {
-                    None
-                } else {
-                    Some((range.start, Bias::Left))
-                }
-            }));
+            let edited = self.content().anchor_set(
+                Bias::Left,
+                ranges.iter().filter_map(|range| {
+                    let start = range.start.to_point(&*self);
+                    if new_text.starts_with('\n') && start.column == self.line_len(start.row) {
+                        None
+                    } else {
+                        Some(range.start)
+                    }
+                }),
+            );
             Some((before_edit, edited))
         } else {
             None
@@ -1288,12 +1291,17 @@ impl Buffer {
             let mut inserted = None;
             if let Some(first_newline_ix) = first_newline_ix {
                 let mut delta = 0isize;
-                inserted = Some(self.content().anchor_range_set(ranges.iter().map(|range| {
-                    let start = (delta + range.start as isize) as usize + first_newline_ix + 1;
-                    let end = (delta + range.start as isize) as usize + new_text_len;
-                    delta += (range.end as isize - range.start as isize) + new_text_len as isize;
-                    (start, Bias::Left)..(end, Bias::Right)
-                })));
+                inserted = Some(self.content().anchor_range_set(
+                    Bias::Left,
+                    Bias::Right,
+                    ranges.iter().map(|range| {
+                        let start = (delta + range.start as isize) as usize + first_newline_ix + 1;
+                        let end = (delta + range.start as isize) as usize + new_text_len;
+                        delta +=
+                            (range.end as isize - range.start as isize) + new_text_len as isize;
+                        start..end
+                    }),
+                ));
             }
 
             let selection_set_ids = self
