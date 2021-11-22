@@ -438,11 +438,22 @@ impl Buffer {
     pub fn new(replica_id: u16, remote_id: u64, history: History) -> Buffer {
         let mut fragments = SumTree::new();
 
+        let mut local_clock = clock::Local::new(replica_id);
+        let mut lamport_clock = clock::Lamport::new(replica_id);
+        let mut version = clock::Global::new();
         let visible_text = Rope::from(history.base_text.as_ref());
         if visible_text.len() > 0 {
+            let timestamp = InsertionTimestamp {
+                replica_id: 0,
+                local: 1,
+                lamport: 1,
+            };
+            local_clock.observe(timestamp.local());
+            lamport_clock.observe(timestamp.lamport());
+            version.observe(timestamp.local());
             fragments.push(
                 Fragment {
-                    timestamp: Default::default(),
+                    timestamp,
                     len: visible_text.len(),
                     visible: true,
                     deletions: Default::default(),
@@ -456,7 +467,7 @@ impl Buffer {
             visible_text,
             deleted_text: Rope::new(),
             fragments,
-            version: clock::Global::new(),
+            version,
             last_edit: clock::Local::default(),
             undo_map: Default::default(),
             history,
@@ -465,8 +476,8 @@ impl Buffer {
             deferred_replicas: HashSet::default(),
             replica_id,
             remote_id,
-            local_clock: clock::Local::new(replica_id),
-            lamport_clock: clock::Lamport::new(replica_id),
+            local_clock,
+            lamport_clock,
         }
     }
 
@@ -1093,10 +1104,10 @@ impl Buffer {
             false
         } else {
             match op {
-                Operation::Edit(edit) => self.version >= edit.version,
-                Operation::Undo { undo, .. } => self.version >= undo.version,
+                Operation::Edit(edit) => self.version.ge(&edit.version),
+                Operation::Undo { undo, .. } => self.version.ge(&undo.version),
                 Operation::UpdateSelections { selections, .. } => {
-                    self.version >= *selections.version()
+                    self.version.ge(selections.version())
                 }
                 Operation::RemoveSelections { .. } => true,
                 Operation::SetActiveSelections { set_id, .. } => {
@@ -1947,10 +1958,10 @@ impl<'a> Content<'a> {
         let fragments_cursor = if since == self.version {
             None
         } else {
-            Some(self.fragments.filter(
-                move |summary| summary.max_version.changed_since(since),
-                &None,
-            ))
+            Some(
+                self.fragments
+                    .filter(move |summary| !since.ge(&summary.max_version), &None),
+            )
         };
 
         Edits {
@@ -2233,13 +2244,9 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for VersionedFullOffset {
     fn add_summary(&mut self, summary: &'a FragmentSummary, cx: &Option<clock::Global>) {
         if let Self::Offset(offset) = self {
             let version = cx.as_ref().unwrap();
-            if *version >= summary.max_insertion_version {
+            if version.ge(&summary.max_insertion_version) {
                 *offset += summary.text.visible + summary.text.deleted;
-            } else if !summary
-                .min_insertion_version
-                .iter()
-                .all(|t| !version.observed(*t))
-            {
+            } else if version.observed_any(&summary.min_insertion_version) {
                 *self = Self::Invalid;
             }
         }

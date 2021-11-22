@@ -1,9 +1,8 @@
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
-    fmt,
+    fmt, iter,
     ops::{Add, AddAssign},
-    slice,
 };
 
 pub type ReplicaId = u16;
@@ -59,7 +58,7 @@ impl<'a> AddAssign<&'a Local> for Local {
 }
 
 #[derive(Clone, Default, Hash, Eq, PartialEq)]
-pub struct Global(SmallVec<[Local; 3]>);
+pub struct Global(SmallVec<[u32; 8]>);
 
 impl From<Vec<rpc::proto::VectorClockEntry>> for Global {
     fn from(message: Vec<rpc::proto::VectorClockEntry>) -> Self {
@@ -98,75 +97,119 @@ impl Global {
     }
 
     pub fn get(&self, replica_id: ReplicaId) -> Seq {
-        self.0
-            .iter()
-            .find(|t| t.replica_id == replica_id)
-            .map_or(0, |t| t.value)
+        self.0.get(replica_id as usize).copied().unwrap_or(0) as Seq
     }
 
     pub fn observe(&mut self, timestamp: Local) {
-        if let Some(entry) = self
-            .0
-            .iter_mut()
-            .find(|t| t.replica_id == timestamp.replica_id)
-        {
-            entry.value = cmp::max(entry.value, timestamp.value);
-        } else {
-            self.0.push(timestamp);
+        if timestamp.value > 0 {
+            let new_len = timestamp.replica_id as usize + 1;
+            if new_len > self.0.len() {
+                self.0.resize(new_len, 0);
+            }
+
+            let entry = &mut self.0[timestamp.replica_id as usize];
+            *entry = cmp::max(*entry, timestamp.value);
         }
     }
 
     pub fn join(&mut self, other: &Self) {
-        for timestamp in other.0.iter() {
-            self.observe(*timestamp);
+        if other.0.len() > self.0.len() {
+            self.0.resize(other.0.len(), 0);
+        }
+
+        for (left, right) in self.0.iter_mut().zip(&other.0) {
+            *left = cmp::max(*left, *right);
         }
     }
 
     pub fn meet(&mut self, other: &Self) {
-        for timestamp in other.0.iter() {
-            if let Some(entry) = self
-                .0
-                .iter_mut()
-                .find(|t| t.replica_id == timestamp.replica_id)
-            {
-                entry.value = cmp::min(entry.value, timestamp.value);
-            } else {
-                self.0.push(*timestamp);
+        if other.0.len() > self.0.len() {
+            self.0.resize(other.0.len(), 0);
+        }
+
+        let mut new_len = 0;
+        for (ix, (left, right)) in self
+            .0
+            .iter_mut()
+            .zip(other.0.iter().chain(iter::repeat(&0)))
+            .enumerate()
+        {
+            if *left == 0 {
+                *left = *right;
+            } else if *right > 0 {
+                *left = cmp::min(*left, *right);
+            }
+
+            if *left != 0 {
+                new_len = ix + 1;
             }
         }
+        self.0.resize(new_len, 0);
     }
 
     pub fn observed(&self, timestamp: Local) -> bool {
         self.get(timestamp.replica_id) >= timestamp.value
     }
 
-    pub fn changed_since(&self, other: &Self) -> bool {
-        self.0.iter().any(|t| t.value > other.get(t.replica_id))
-    }
-
-    pub fn iter(&self) -> slice::Iter<Local> {
-        self.0.iter()
-    }
-}
-
-impl PartialOrd for Global {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        let mut global_ordering = Ordering::Equal;
-
-        for timestamp in self.0.iter().chain(other.0.iter()) {
-            let ordering = self
-                .get(timestamp.replica_id)
-                .cmp(&other.get(timestamp.replica_id));
-            if ordering != Ordering::Equal {
-                if global_ordering == Ordering::Equal {
-                    global_ordering = ordering;
-                } else if ordering != global_ordering {
-                    return None;
+    pub fn observed_any(&self, other: &Self) -> bool {
+        let mut lhs = self.0.iter();
+        let mut rhs = other.0.iter();
+        loop {
+            if let Some(left) = lhs.next() {
+                if let Some(right) = rhs.next() {
+                    if *right > 0 && left >= right {
+                        return true;
+                    }
+                } else {
+                    return false;
                 }
+            } else {
+                return false;
             }
         }
+    }
 
-        Some(global_ordering)
+    pub fn ge(&self, other: &Self) -> bool {
+        let mut lhs = self.0.iter();
+        let mut rhs = other.0.iter();
+        loop {
+            if let Some(left) = lhs.next() {
+                if let Some(right) = rhs.next() {
+                    if left < right {
+                        return false;
+                    }
+                } else {
+                    return true;
+                }
+            } else {
+                return rhs.next().is_none();
+            }
+        }
+    }
+
+    pub fn gt(&self, other: &Self) -> bool {
+        let mut lhs = self.0.iter();
+        let mut rhs = other.0.iter();
+        loop {
+            if let Some(left) = lhs.next() {
+                if let Some(right) = rhs.next() {
+                    if left <= right {
+                        return false;
+                    }
+                } else {
+                    return true;
+                }
+            } else {
+                return rhs.next().is_none();
+            }
+        }
+    }
+
+    pub fn iter<'a>(&'a self) -> impl 'a + Iterator<Item = Local> {
+        self.0.iter().enumerate().map(|(replica_id, seq)| Local {
+            replica_id: replica_id as ReplicaId,
+            value: *seq,
+        })
     }
 }
 
@@ -219,11 +262,11 @@ impl fmt::Debug for Lamport {
 impl fmt::Debug for Global {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Global {{")?;
-        for (i, element) in self.0.iter().enumerate() {
-            if i > 0 {
+        for timestamp in self.iter() {
+            if timestamp.replica_id > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}: {}", element.replica_id, element.value)?;
+            write!(f, "{}: {}", timestamp.replica_id, timestamp.value)?;
         }
         write!(f, "}}")
     }
