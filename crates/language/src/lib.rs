@@ -319,9 +319,9 @@ impl Buffer {
         }
 
         Self {
-            text: buffer,
             saved_mtime,
-            saved_version: clock::Global::new(),
+            saved_version: buffer.version(),
+            text: buffer,
             file,
             syntax_tree: Mutex::new(None),
             parsing_in_background: false,
@@ -620,7 +620,7 @@ impl Buffer {
                                 this.language.as_ref().map_or(true, |curr_language| {
                                     !Arc::ptr_eq(curr_language, &language)
                                 });
-                            let parse_again = this.version > parsed_version || language_changed;
+                            let parse_again = this.version.gt(&parsed_version) || language_changed;
                             this.parsing_in_background = false;
                             this.did_finish_parsing(new_tree, parsed_version, cx);
 
@@ -1132,12 +1132,12 @@ impl Buffer {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.version > self.saved_version
+        !self.saved_version.ge(&self.version)
             || self.file.as_ref().map_or(false, |file| file.is_deleted())
     }
 
     pub fn has_conflict(&self) -> bool {
-        self.version > self.saved_version
+        !self.saved_version.ge(&self.version)
             && self
                 .file
                 .as_ref()
