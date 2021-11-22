@@ -280,7 +280,7 @@ pub fn deserialize_selection_set(set: proto::SelectionSet) -> SelectionSet {
                 .into_iter()
                 .map(|selection| {
                     let range = (FullOffset(selection.start as usize), Bias::Left)
-                        ..(FullOffset(selection.end as usize), Bias::Right);
+                        ..(FullOffset(selection.end as usize), Bias::Left);
                     let state = SelectionState {
                         id: selection.id as usize,
                         reversed: selection.reversed,
