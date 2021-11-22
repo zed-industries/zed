@@ -2458,12 +2458,15 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
         let selections = self
-            .selection_set(cx)
+            .buffer
+            .read(cx)
+            .selection_set(set_id)
+            .unwrap()
             .selections::<Point, _>(buffer)
             .collect::<Vec<_>>();
         let start = range.start.to_point(&display_map);
         let start_index = self.selection_insertion_index(&selections, start);
-        let pending_selection = if set_id.replica_id == self.buffer.read(cx).replica_id() {
+        let pending_selection = if set_id == self.selection_set_id {
             self.pending_selection.as_ref().and_then(|pending| {
                 let mut selection_start = pending.start.to_display_point(&display_map);
                 let mut selection_end = pending.end.to_display_point(&display_map);
