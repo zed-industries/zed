@@ -20,6 +20,7 @@ prost = "0.8"
 rand = "0.8"
 rsa = "0.4"
 serde = { version = "1", features = ["derive"] }
+smol-timeout = "0.6"
 zstd = "0.9"
 
 [build-dependencies]
