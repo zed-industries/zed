@@ -619,7 +619,7 @@ mod tests {
         }
     }
 
-    #[gpui::test]
+    #[gpui::test(retries = 5)]
     fn test_soft_wraps(cx: &mut MutableAppContext) {
         cx.foreground().set_block_on_ticks(usize::MAX..=usize::MAX);
         cx.foreground().forbid_parking();
