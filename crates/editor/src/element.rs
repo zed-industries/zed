@@ -1,5 +1,3 @@
-use crate::BeginSelectionMode;
-
 use super::{
     DisplayPoint, DisplayRow, Editor, EditorMode, EditorSettings, EditorStyle, Input, Scroll,
     Select, SelectPhase, Snapshot, MAX_LINE_LEN,
@@ -59,40 +57,34 @@ impl EditorElement {
         position: Vector2F,
         shift: bool,
         cmd: bool,
-        click_count: usize,
+        mut click_count: usize,
         layout: &mut LayoutState,
         paint: &mut PaintState,
         cx: &mut EventContext,
     ) -> bool {
-        let mode = if cmd {
-            BeginSelectionMode::Add
-        } else if shift {
-            BeginSelectionMode::Extend
-        } else {
-            BeginSelectionMode::Update
-        };
+        if paint.gutter_bounds.contains_point(position) {
+            click_count = 3; // Simulate triple-click when clicking the gutter to select lines
+        } else if !paint.text_bounds.contains_point(position) {
+            return false;
+        }
 
-        if paint.text_bounds.contains_point(position) {
-            let snapshot = self.snapshot(cx.app);
-            let position = paint.point_for_position(&snapshot, layout, position);
-            cx.dispatch_action(Select(SelectPhase::Begin {
+        let snapshot = self.snapshot(cx.app);
+        let position = paint.point_for_position(&snapshot, layout, position);
+
+        if shift {
+            cx.dispatch_action(Select(SelectPhase::Extend {
                 position,
-                mode,
                 click_count,
             }));
-            true
-        } else if paint.gutter_bounds.contains_point(position) {
-            let snapshot = self.snapshot(cx.app);
-            let position = paint.point_for_position(&snapshot, layout, position);
+        } else {
             cx.dispatch_action(Select(SelectPhase::Begin {
                 position,
-                mode,
-                click_count: 3,
+                add: cmd,
+                click_count,
             }));
-            true
-        } else {
-            false
         }
+
+        true
     }
 
     fn mouse_up(&self, _position: Vector2F, cx: &mut EventContext) -> bool {
