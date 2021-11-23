@@ -2003,16 +2003,7 @@ impl Editor {
         let mut to_unfold = Vec::new();
         let mut new_selections = Vec::new();
         for selection in selections.iter() {
-            if selection.start.row != selection.end.row {
-                new_selections.push(Selection {
-                    id: post_inc(&mut self.next_selection_id),
-                    start: selection.start,
-                    end: selection.start,
-                    reversed: false,
-                    goal: SelectionGoal::None,
-                });
-            }
-            for row in selection.start.row + 1..selection.end.row {
+            for row in selection.start.row..selection.end.row {
                 let cursor = Point::new(row, buffer.line_len(row));
                 new_selections.push(Selection {
                     id: post_inc(&mut self.next_selection_id),
@@ -4460,7 +4451,7 @@ mod tests {
             assert_eq!(
                 view.selection_ranges(cx),
                 [
-                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(0, 5)..DisplayPoint::new(0, 5),
                     DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
                     DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
                     DisplayPoint::new(3, 5)..DisplayPoint::new(3, 5),
