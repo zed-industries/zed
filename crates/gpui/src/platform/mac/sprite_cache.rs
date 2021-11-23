@@ -12,7 +12,6 @@ use std::{borrow::Cow, collections::HashMap, sync::Arc};
 struct GlyphDescriptor {
     font_id: FontId,
     font_size: OrderedFloat<f32>,
-    scale_factor: OrderedFloat<f32>,
     glyph_id: GlyphId,
     subpixel_variant: (u8, u8),
 }
@@ -44,12 +43,14 @@ pub struct SpriteCache {
     atlases: AtlasAllocator,
     glyphs: HashMap<GlyphDescriptor, Option<GlyphSprite>>,
     icons: HashMap<IconDescriptor, IconSprite>,
+    scale_factor: f32,
 }
 
 impl SpriteCache {
     pub fn new(
         device: metal::Device,
         size: Vector2I,
+        scale_factor: f32,
         fonts: Arc<dyn platform::FontSystem>,
     ) -> Self {
         let descriptor = TextureDescriptor::new();
@@ -61,7 +62,17 @@ impl SpriteCache {
             atlases: AtlasAllocator::new(device, descriptor),
             glyphs: Default::default(),
             icons: Default::default(),
+            scale_factor,
         }
+    }
+
+    pub fn set_scale_factor(&mut self, scale_factor: f32) {
+        if scale_factor != self.scale_factor {
+            self.icons.clear();
+            self.glyphs.clear();
+            self.atlases.clear();
+        }
+        self.scale_factor = scale_factor;
     }
 
     pub fn render_glyph(
@@ -70,10 +81,10 @@ impl SpriteCache {
         font_size: f32,
         glyph_id: GlyphId,
         target_position: Vector2F,
-        scale_factor: f32,
     ) -> Option<GlyphSprite> {
         const SUBPIXEL_VARIANTS: u8 = 4;
 
+        let scale_factor = self.scale_factor;
         let target_position = target_position * scale_factor;
         let fonts = &self.fonts;
         let atlases = &mut self.atlases;
@@ -87,7 +98,6 @@ impl SpriteCache {
             .entry(GlyphDescriptor {
                 font_id,
                 font_size: OrderedFloat(font_size),
-                scale_factor: OrderedFloat(scale_factor),
                 glyph_id,
                 subpixel_variant,
             })
