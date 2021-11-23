@@ -564,6 +564,10 @@ impl Buffer {
         self.content().line_len(row)
     }
 
+    pub fn is_line_blank(&self, row: u32) -> bool {
+        self.content().is_line_blank(row)
+    }
+
     pub fn max_point(&self) -> Point {
         self.visible_text.max_point()
     }
@@ -1557,6 +1561,10 @@ impl Snapshot {
         self.content().line_len(row)
     }
 
+    pub fn is_line_blank(&self, row: u32) -> bool {
+        self.content().is_line_blank(row)
+    }
+
     pub fn indent_column_for_line(&self, row: u32) -> u32 {
         self.content().indent_column_for_line(row)
     }
@@ -1574,8 +1582,7 @@ impl Snapshot {
     }
 
     pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> Chunks {
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
-        self.visible_text.chunks_in_range(range)
+        self.content().text_for_range(range)
     }
 
     pub fn text_summary_for_range<T>(&self, range: Range<T>) -> TextSummary
@@ -1723,6 +1730,11 @@ impl<'a> Content<'a> {
             Point::new(row + 1, 0).to_offset(self) - 1
         };
         (row_end_offset - row_start_offset) as u32
+    }
+
+    fn is_line_blank(&self, row: u32) -> bool {
+        self.text_for_range(Point::new(row, 0)..Point::new(row, self.line_len(row)))
+            .all(|chunk| chunk.matches(|c: char| !c.is_whitespace()).next().is_none())
     }
 
     pub fn indent_column_for_line(&self, row: u32) -> u32 {

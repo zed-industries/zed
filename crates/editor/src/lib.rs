@@ -83,6 +83,7 @@ action!(SelectLine);
 action!(SplitSelectionIntoLines);
 action!(AddSelectionAbove);
 action!(AddSelectionBelow);
+action!(ToggleComments);
 action!(SelectLargerSyntaxNode);
 action!(SelectSmallerSyntaxNode);
 action!(MoveToEnclosingBracket);
@@ -184,6 +185,7 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("cmd-ctrl-p", AddSelectionAbove, Some("Editor")),
         Binding::new("cmd-alt-down", AddSelectionBelow, Some("Editor")),
         Binding::new("cmd-ctrl-n", AddSelectionBelow, Some("Editor")),
+        Binding::new("cmd-/", ToggleComments, Some("Editor")),
         Binding::new("alt-up", SelectLargerSyntaxNode, Some("Editor")),
         Binding::new("ctrl-w", SelectLargerSyntaxNode, Some("Editor")),
         Binding::new("alt-down", SelectSmallerSyntaxNode, Some("Editor")),
@@ -244,6 +246,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::split_selection_into_lines);
     cx.add_action(Editor::add_selection_above);
     cx.add_action(Editor::add_selection_below);
+    cx.add_action(Editor::toggle_comments);
     cx.add_action(Editor::select_larger_syntax_node);
     cx.add_action(Editor::select_smaller_syntax_node);
     cx.add_action(Editor::move_to_enclosing_bracket);
@@ -2125,6 +2128,96 @@ impl Editor {
         if state.stack.len() > 1 {
             self.add_selections_state = Some(state);
         }
+    }
+
+    pub fn toggle_comments(&mut self, _: &ToggleComments, cx: &mut ViewContext<Self>) {
+        // Get the line comment prefix. Split its trailing whitespace into a separate string,
+        // as that portion won't be used for detecting if a line is a comment.
+        let full_comment_prefix =
+            if let Some(prefix) = self.language(cx).and_then(|l| l.line_comment_prefix()) {
+                prefix.to_string()
+            } else {
+                return;
+            };
+        let comment_prefix = full_comment_prefix.trim_end_matches(' ');
+        let comment_prefix_whitespace = &full_comment_prefix[comment_prefix.len()..];
+
+        self.start_transaction(cx);
+        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut all_selection_lines_are_comments = true;
+        let mut edit_ranges = Vec::new();
+        let mut last_toggled_row = None;
+        self.buffer.update(cx, |buffer, cx| {
+            for selection in &mut selections {
+                edit_ranges.clear();
+
+                let end_row =
+                    if selection.end.row > selection.start.row && selection.end.column == 0 {
+                        selection.end.row
+                    } else {
+                        selection.end.row + 1
+                    };
+
+                for row in selection.start.row..end_row {
+                    // If multiple selections contain a given row, avoid processing that
+                    // row more than once.
+                    if last_toggled_row == Some(row) {
+                        continue;
+                    } else {
+                        last_toggled_row = Some(row);
+                    }
+
+                    if buffer.is_line_blank(row) {
+                        continue;
+                    }
+
+                    let start = Point::new(row, buffer.indent_column_for_line(row));
+                    let mut line_bytes = buffer.bytes_at(start);
+
+                    // If this line currently begins with the line comment prefix, then record
+                    // the range containing the prefix.
+                    if all_selection_lines_are_comments
+                        && line_bytes
+                            .by_ref()
+                            .take(comment_prefix.len())
+                            .eq(comment_prefix.bytes())
+                    {
+                        // Include any whitespace that matches the comment prefix.
+                        let matching_whitespace_len = line_bytes
+                            .zip(comment_prefix_whitespace.bytes())
+                            .take_while(|(a, b)| a == b)
+                            .count() as u32;
+                        let end = Point::new(
+                            row,
+                            start.column + comment_prefix.len() as u32 + matching_whitespace_len,
+                        );
+                        edit_ranges.push(start..end);
+                    }
+                    // If this line does not begin with the line comment prefix, then record
+                    // the position where the prefix should be inserted.
+                    else {
+                        all_selection_lines_are_comments = false;
+                        edit_ranges.push(start..start);
+                    }
+                }
+
+                if !edit_ranges.is_empty() {
+                    if all_selection_lines_are_comments {
+                        buffer.edit(edit_ranges.iter().cloned(), "", cx);
+                    } else {
+                        let min_column = edit_ranges.iter().map(|r| r.start.column).min().unwrap();
+                        let edit_ranges = edit_ranges.iter().map(|range| {
+                            let position = Point::new(range.start.row, min_column);
+                            position..position
+                        });
+                        buffer.edit(edit_ranges, &full_comment_prefix, cx);
+                    }
+                }
+            }
+        });
+
+        self.update_selections(self.selections::<usize>(cx).collect(), true, cx);
+        self.end_transaction(cx);
     }
 
     pub fn select_larger_syntax_node(
@@ -4885,6 +4978,91 @@ mod tests {
                 /*
                 *
                 "
+                .unindent()
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_comment(mut cx: gpui::TestAppContext) {
+        let settings = cx.read(EditorSettings::test);
+        let language = Some(Arc::new(Language::new(
+            LanguageConfig {
+                line_comment: Some("// ".to_string()),
+                ..Default::default()
+            },
+            tree_sitter_rust::language(),
+        )));
+
+        let text = "
+            fn a() {
+                //b();
+                // c();
+                //  d();
+            }
+        "
+        .unindent();
+
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
+
+        view.update(&mut cx, |editor, cx| {
+            // If multiple selections intersect a line, the line is only
+            // toggled once.
+            editor
+                .select_display_ranges(
+                    &[
+                        DisplayPoint::new(1, 3)..DisplayPoint::new(2, 3),
+                        DisplayPoint::new(3, 5)..DisplayPoint::new(3, 6),
+                    ],
+                    cx,
+                )
+                .unwrap();
+            editor.toggle_comments(&ToggleComments, cx);
+            assert_eq!(
+                editor.text(cx),
+                "
+                    fn a() {
+                        b();
+                        c();
+                         d();
+                    }
+                "
+                .unindent()
+            );
+
+            // The comment prefix is inserted at the same column for every line
+            // in a selection.
+            editor
+                .select_display_ranges(&[DisplayPoint::new(1, 3)..DisplayPoint::new(3, 6)], cx)
+                .unwrap();
+            editor.toggle_comments(&ToggleComments, cx);
+            assert_eq!(
+                editor.text(cx),
+                "
+                    fn a() {
+                        // b();
+                        // c();
+                        //  d();
+                    }
+                "
+                .unindent()
+            );
+
+            // If a selection ends at the beginning of a line, that line is not toggled.
+            editor
+                .select_display_ranges(&[DisplayPoint::new(2, 0)..DisplayPoint::new(3, 0)], cx)
+                .unwrap();
+            editor.toggle_comments(&ToggleComments, cx);
+            assert_eq!(
+                editor.text(cx),
+                "
+                        fn a() {
+                            // b();
+                            c();
+                            //  d();
+                        }
+                    "
                 .unindent()
             );
         });

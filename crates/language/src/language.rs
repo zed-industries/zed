@@ -14,6 +14,7 @@ pub struct LanguageConfig {
     pub name: String,
     pub path_suffixes: Vec<String>,
     pub brackets: Vec<BracketPair>,
+    pub line_comment: Option<String>,
     pub language_server: Option<LanguageServerConfig>,
 }
 
@@ -113,6 +114,10 @@ impl Language {
 
     pub fn name(&self) -> &str {
         self.config.name.as_str()
+    }
+
+    pub fn line_comment_prefix(&self) -> Option<&str> {
+        self.config.line_comment.as_deref()
     }
 
     pub fn start_server(
