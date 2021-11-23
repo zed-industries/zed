@@ -205,7 +205,12 @@ impl Window {
                 synthetic_drag_counter: 0,
                 executor,
                 scene_to_render: Default::default(),
-                renderer: Renderer::new(device.clone(), PIXEL_FORMAT, fonts),
+                renderer: Renderer::new(
+                    device.clone(),
+                    PIXEL_FORMAT,
+                    get_scale_factor(native_window),
+                    fonts,
+                ),
                 command_queue: device.new_command_queue(),
                 last_fresh_keydown: None,
                 layer,
@@ -405,10 +410,7 @@ impl platform::WindowContext for WindowState {
     }
 
     fn scale_factor(&self) -> f32 {
-        unsafe {
-            let screen: id = msg_send![self.native_window, screen];
-            NSScreen::backingScaleFactor(screen) as f32
-        }
+        get_scale_factor(self.native_window)
     }
 
     fn titlebar_height(&self) -> f32 {
@@ -424,6 +426,13 @@ impl platform::WindowContext for WindowState {
         unsafe {
             let _: () = msg_send![self.native_window.contentView(), setNeedsDisplay: YES];
         }
+    }
+}
+
+fn get_scale_factor(native_window: id) -> f32 {
+    unsafe {
+        let screen: id = msg_send![native_window, screen];
+        NSScreen::backingScaleFactor(screen) as f32
     }
 }
 

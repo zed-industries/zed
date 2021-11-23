@@ -40,6 +40,7 @@ impl Renderer {
     pub fn new(
         device: metal::Device,
         pixel_format: metal::MTLPixelFormat,
+        scale_factor: f32,
         fonts: Arc<dyn platform::FontSystem>,
     ) -> Self {
         let library = device
@@ -64,7 +65,7 @@ impl Renderer {
             MTLResourceOptions::StorageModeManaged,
         );
 
-        let sprite_cache = SpriteCache::new(device.clone(), vec2i(1024, 768), fonts);
+        let sprite_cache = SpriteCache::new(device.clone(), vec2i(1024, 768), scale_factor, fonts);
         let image_cache = ImageCache::new(device.clone(), vec2i(1024, 768));
         let path_atlases =
             AtlasAllocator::new(device.clone(), build_path_atlas_texture_descriptor());
@@ -522,6 +523,8 @@ impl Renderer {
             return;
         }
 
+        self.sprite_cache.set_scale_factor(scale_factor);
+
         let mut sprites_by_atlas = HashMap::new();
 
         for glyph in glyphs {
@@ -530,7 +533,6 @@ impl Renderer {
                 glyph.font_size,
                 glyph.id,
                 glyph.origin,
-                scale_factor,
             ) {
                 // Snap sprite to pixel grid.
                 let origin = (glyph.origin * scale_factor).floor() + sprite.offset.to_f32();
