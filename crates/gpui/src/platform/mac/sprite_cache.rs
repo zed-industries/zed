@@ -12,6 +12,7 @@ use std::{borrow::Cow, collections::HashMap, sync::Arc};
 struct GlyphDescriptor {
     font_id: FontId,
     font_size: OrderedFloat<f32>,
+    scale_factor: OrderedFloat<f32>,
     glyph_id: GlyphId,
     subpixel_variant: (u8, u8),
 }
@@ -86,6 +87,7 @@ impl SpriteCache {
             .entry(GlyphDescriptor {
                 font_id,
                 font_size: OrderedFloat(font_size),
+                scale_factor: OrderedFloat(scale_factor),
                 glyph_id,
                 subpixel_variant,
             })
