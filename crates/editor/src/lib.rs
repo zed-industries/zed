@@ -23,7 +23,7 @@ use smallvec::SmallVec;
 use smol::Timer;
 use std::{
     cell::RefCell,
-    cmp::{self, Ordering},
+    cmp,
     collections::HashMap,
     iter, mem,
     ops::{Range, RangeInclusive},
@@ -683,7 +683,18 @@ impl Editor {
                 end = buffer.anchor_before(range.end.to_point(&display_map));
                 mode = SelectMode::Word(start.clone()..end.clone());
             }
-            3 => todo!(),
+            3 => {
+                let position = display_map.clip_point(position, Bias::Left);
+                let line_start = movement::line_beginning(&display_map, position, false);
+                let mut next_line_start = line_start.clone();
+                *next_line_start.row_mut() += 1;
+                *next_line_start.column_mut() = 0;
+                next_line_start = display_map.clip_point(next_line_start, Bias::Right);
+
+                start = buffer.anchor_before(line_start.to_point(&display_map));
+                end = buffer.anchor_before(next_line_start.to_point(&display_map));
+                mode = SelectMode::Line(start.clone()..end.clone());
+            }
             _ => {
                 start = buffer.anchor_before(0);
                 end = buffer.anchor_before(buffer.len());
@@ -746,7 +757,29 @@ impl Editor {
                         tail = original_buffer_range.start;
                     }
                 }
-                SelectMode::Line(_) => todo!(),
+                SelectMode::Line(original_range) => {
+                    let original_display_range = original_range.start.to_display_point(&display_map)
+                        ..original_range.end.to_display_point(&display_map);
+                    let original_buffer_range = original_display_range.start.to_point(&display_map)
+                        ..original_display_range.end.to_point(&display_map);
+                    let line_start = movement::line_beginning(&display_map, position, false);
+                    let mut next_line_start = line_start.clone();
+                    *next_line_start.row_mut() += 1;
+                    *next_line_start.column_mut() = 0;
+                    next_line_start = display_map.clip_point(next_line_start, Bias::Right);
+
+                    if line_start < original_display_range.start {
+                        head = line_start.to_point(&display_map);
+                    } else {
+                        head = next_line_start.to_point(&display_map);
+                    }
+
+                    if head <= original_buffer_range.start {
+                        tail = original_buffer_range.end;
+                    } else {
+                        tail = original_buffer_range.start;
+                    }
+                }
                 SelectMode::All => {
                     return;
                 }
@@ -1924,7 +1957,7 @@ impl Editor {
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
-            let new_head = movement::line_beginning(&display_map, head, true).unwrap();
+            let new_head = movement::line_beginning(&display_map, head, true);
             let cursor = new_head.to_point(&display_map);
             selection.start = cursor;
             selection.end = cursor;
@@ -1943,7 +1976,7 @@ impl Editor {
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
-            let new_head = movement::line_beginning(&display_map, head, *toggle_indent).unwrap();
+            let new_head = movement::line_beginning(&display_map, head, *toggle_indent);
             selection.set_head(new_head.to_point(&display_map));
             selection.goal = SelectionGoal::None;
         }
@@ -1967,7 +2000,7 @@ impl Editor {
         {
             for selection in &mut selections {
                 let head = selection.head().to_display_point(&display_map);
-                let new_head = movement::line_end(&display_map, head).unwrap();
+                let new_head = movement::line_end(&display_map, head);
                 let anchor = new_head.to_point(&display_map);
                 selection.start = anchor.clone();
                 selection.end = anchor;
@@ -1983,7 +2016,7 @@ impl Editor {
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
-            let new_head = movement::line_end(&display_map, head).unwrap();
+            let new_head = movement::line_end(&display_map, head);
             selection.set_head(new_head.to_point(&display_map));
             selection.goal = SelectionGoal::None;
         }

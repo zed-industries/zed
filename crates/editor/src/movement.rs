@@ -101,18 +101,18 @@ pub fn line_beginning(
     map: &DisplayMapSnapshot,
     point: DisplayPoint,
     toggle_indent: bool,
-) -> Result<DisplayPoint> {
+) -> DisplayPoint {
     let (indent, is_blank) = map.line_indent(point.row());
     if toggle_indent && !is_blank && point.column() != indent {
-        Ok(DisplayPoint::new(point.row(), indent))
+        DisplayPoint::new(point.row(), indent)
     } else {
-        Ok(DisplayPoint::new(point.row(), 0))
+        DisplayPoint::new(point.row(), 0)
     }
 }
 
-pub fn line_end(map: &DisplayMapSnapshot, point: DisplayPoint) -> Result<DisplayPoint> {
+pub fn line_end(map: &DisplayMapSnapshot, point: DisplayPoint) -> DisplayPoint {
     let line_end = DisplayPoint::new(point.row(), map.line_len(point.row()));
-    Ok(map.clip_point(line_end, Bias::Left))
+    map.clip_point(line_end, Bias::Left)
 }
 
 pub fn prev_word_boundary(map: &DisplayMapSnapshot, mut point: DisplayPoint) -> DisplayPoint {
