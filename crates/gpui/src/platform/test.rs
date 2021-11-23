@@ -1,8 +1,10 @@
-use super::CursorStyle;
-use crate::{AnyAction, ClipboardItem};
+use super::{CursorStyle, WindowBounds};
+use crate::{
+    geometry::vector::{vec2f, Vector2F},
+    AnyAction, ClipboardItem,
+};
 use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
-use pathfinder_geometry::vector::Vector2F;
 use std::{
     any::Any,
     cell::RefCell,
@@ -112,7 +114,10 @@ impl super::Platform for Platform {
         options: super::WindowOptions,
         _executor: Rc<super::executor::Foreground>,
     ) -> Box<dyn super::Window> {
-        Box::new(Window::new(options.bounds.size()))
+        Box::new(Window::new(match options.bounds {
+            WindowBounds::Maximized => vec2f(1024., 768.),
+            WindowBounds::Fixed(rect) => rect.size(),
+        }))
     }
 
     fn key_window_id(&self) -> Option<usize> {
