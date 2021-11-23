@@ -70,6 +70,15 @@ impl EditorElement {
                 click_count,
             }));
             true
+        } else if paint.gutter_bounds.contains_point(position) {
+            let snapshot = self.snapshot(cx.app);
+            let position = paint.point_for_position(&snapshot, layout, position);
+            cx.dispatch_action(Select(SelectPhase::Begin {
+                position,
+                add: cmd,
+                click_count: 3,
+            }));
+            true
         } else {
             false
         }
@@ -829,6 +838,7 @@ impl Element for EditorElement {
 
             Some(PaintState {
                 bounds,
+                gutter_bounds,
                 text_bounds,
             })
         } else {
@@ -955,6 +965,7 @@ impl LayoutState {
 
 pub struct PaintState {
     bounds: RectF,
+    gutter_bounds: RectF,
     text_bounds: RectF,
 }
 
