@@ -274,12 +274,21 @@ pub enum SelectPhase {
     Begin {
         position: DisplayPoint,
         add: bool,
+        mode: SelectMode,
     },
     Update {
         position: DisplayPoint,
         scroll_position: Vector2F,
     },
     End,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum SelectMode {
+    Character,
+    Word,
+    Line,
+    All,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -300,7 +309,7 @@ pub struct Editor {
     buffer: ModelHandle<Buffer>,
     display_map: ModelHandle<DisplayMap>,
     selection_set_id: SelectionSetId,
-    pending_selection: Option<Selection<Anchor>>,
+    pending_selection: Option<PendingSelection>,
     next_selection_id: usize,
     add_selections_state: Option<AddSelectionsState>,
     autoclose_stack: Vec<BracketPairState>,
@@ -325,6 +334,11 @@ pub struct Snapshot {
     is_focused: bool,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
+}
+
+struct PendingSelection {
+    selection: Selection<Anchor>,
+    mode: SelectMode,
 }
 
 struct AddSelectionsState {
@@ -627,7 +641,11 @@ impl Editor {
 
     fn select(&mut self, Select(phase): &Select, cx: &mut ViewContext<Self>) {
         match phase {
-            SelectPhase::Begin { position, add } => self.begin_selection(*position, *add, cx),
+            SelectPhase::Begin {
+                position,
+                add,
+                mode,
+            } => self.begin_selection(*position, *add, *mode, cx),
             SelectPhase::Update {
                 position,
                 scroll_position,
@@ -636,7 +654,13 @@ impl Editor {
         }
     }
 
-    fn begin_selection(&mut self, position: DisplayPoint, add: bool, cx: &mut ViewContext<Self>) {
+    fn begin_selection(
+        &mut self,
+        position: DisplayPoint,
+        add: bool,
+        mode: SelectMode,
+        cx: &mut ViewContext<Self>,
+    ) {
         if !self.focused {
             cx.focus_self();
             cx.emit(Event::Activate);
@@ -644,11 +668,28 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
-        let cursor = buffer.anchor_before(position.to_point(&display_map));
+        let start;
+        let end;
+        match mode {
+            SelectMode::Character => {
+                start = buffer.anchor_before(position.to_point(&display_map));
+                end = start.clone();
+            }
+            SelectMode::Word => {
+                let range = movement::surrounding_word(&display_map, position);
+                start = buffer.anchor_before(range.start.to_point(&display_map));
+                end = buffer.anchor_before(range.end.to_point(&display_map));
+            }
+            SelectMode::Line => todo!(),
+            SelectMode::All => {
+                start = buffer.anchor_before(0);
+                end = buffer.anchor_before(buffer.len());
+            }
+        }
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
-            start: cursor.clone(),
-            end: cursor,
+            start,
+            end,
             reversed: false,
             goal: SelectionGoal::None,
         };
@@ -656,7 +697,7 @@ impl Editor {
         if !add {
             self.update_selections::<usize>(Vec::new(), false, cx);
         }
-        self.pending_selection = Some(selection);
+        self.pending_selection = Some(PendingSelection { selection, mode });
 
         cx.notify();
     }
@@ -668,21 +709,34 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        if let Some(pending_selection) = self.pending_selection.as_mut() {
+        if let Some(PendingSelection { selection, mode }) = self.pending_selection.as_mut() {
             let buffer = self.buffer.read(cx);
-            let cursor = buffer.anchor_before(position.to_point(&display_map));
-            if cursor.cmp(&pending_selection.tail(), buffer).unwrap() < Ordering::Equal {
-                if !pending_selection.reversed {
-                    pending_selection.end = pending_selection.start.clone();
-                    pending_selection.reversed = true;
+            let cursor = match mode {
+                SelectMode::Character => buffer.anchor_before(position.to_point(&display_map)),
+                SelectMode::Word => {
+                    let word_range = movement::surrounding_word(&display_map, position);
+                    if word_range.start < selection.start.to_display_point(&display_map) {
+                        buffer.anchor_before(word_range.start.to_point(&display_map))
+                    } else {
+                        buffer.anchor_before(word_range.end.to_point(&display_map))
+                    }
                 }
-                pending_selection.start = cursor;
+                SelectMode::Line => todo!(),
+                SelectMode::All => selection.head(),
+            };
+
+            if cursor.cmp(&selection.tail(), buffer).unwrap() < Ordering::Equal {
+                if !selection.reversed {
+                    selection.end = selection.start.clone();
+                    selection.reversed = true;
+                }
+                selection.start = cursor;
             } else {
-                if pending_selection.reversed {
-                    pending_selection.start = pending_selection.end.clone();
-                    pending_selection.reversed = false;
+                if selection.reversed {
+                    selection.start = selection.end.clone();
+                    selection.reversed = false;
                 }
-                pending_selection.end = cursor;
+                selection.end = cursor;
             }
         } else {
             log::error!("update_selection dispatched with no pending selection");
@@ -707,17 +761,17 @@ impl Editor {
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
         if self.active_diagnostics.is_some() {
             self.dismiss_diagnostics(cx);
-        } else if let Some(pending_selection) = self.pending_selection.take() {
+        } else if let Some(PendingSelection { selection, .. }) = self.pending_selection.take() {
             let buffer = self.buffer.read(cx);
-            let pending_selection = Selection {
-                id: pending_selection.id,
-                start: pending_selection.start.to_point(buffer),
-                end: pending_selection.end.to_point(buffer),
-                reversed: pending_selection.reversed,
-                goal: pending_selection.goal,
+            let selection = Selection {
+                id: selection.id,
+                start: selection.start.to_point(buffer),
+                end: selection.end.to_point(buffer),
+                reversed: selection.reversed,
+                goal: selection.goal,
             };
             if self.selections::<Point>(cx).next().is_none() {
-                self.update_selections(vec![pending_selection], true, cx);
+                self.update_selections(vec![selection], true, cx);
             }
         } else {
             let mut oldest_selection = self.oldest_selection::<usize>(cx);
@@ -1735,8 +1789,7 @@ impl Editor {
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
-            let new_head = movement::prev_word_boundary(&display_map, head).unwrap();
-            let cursor = new_head.to_point(&display_map);
+            let cursor = movement::prev_word_boundary(&display_map, head).to_point(&display_map);
             selection.start = cursor.clone();
             selection.end = cursor;
             selection.reversed = false;
@@ -1754,8 +1807,7 @@ impl Editor {
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
-            let new_head = movement::prev_word_boundary(&display_map, head).unwrap();
-            let cursor = new_head.to_point(&display_map);
+            let cursor = movement::prev_word_boundary(&display_map, head).to_point(&display_map);
             selection.set_head(cursor);
             selection.goal = SelectionGoal::None;
         }
@@ -1773,8 +1825,8 @@ impl Editor {
         for selection in &mut selections {
             if selection.is_empty() {
                 let head = selection.head().to_display_point(&display_map);
-                let new_head = movement::prev_word_boundary(&display_map, head).unwrap();
-                let cursor = new_head.to_point(&display_map);
+                let cursor =
+                    movement::prev_word_boundary(&display_map, head).to_point(&display_map);
                 selection.set_head(cursor);
                 selection.goal = SelectionGoal::None;
             }
@@ -1793,8 +1845,7 @@ impl Editor {
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
-            let new_head = movement::next_word_boundary(&display_map, head).unwrap();
-            let cursor = new_head.to_point(&display_map);
+            let cursor = movement::next_word_boundary(&display_map, head).to_point(&display_map);
             selection.start = cursor;
             selection.end = cursor;
             selection.reversed = false;
@@ -1812,8 +1863,7 @@ impl Editor {
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
-            let new_head = movement::next_word_boundary(&display_map, head).unwrap();
-            let cursor = new_head.to_point(&display_map);
+            let cursor = movement::next_word_boundary(&display_map, head).to_point(&display_map);
             selection.set_head(cursor);
             selection.goal = SelectionGoal::None;
         }
@@ -1831,8 +1881,8 @@ impl Editor {
         for selection in &mut selections {
             if selection.is_empty() {
                 let head = selection.head().to_display_point(&display_map);
-                let new_head = movement::next_word_boundary(&display_map, head).unwrap();
-                let cursor = new_head.to_point(&display_map);
+                let cursor =
+                    movement::next_word_boundary(&display_map, head).to_point(&display_map);
                 selection.set_head(cursor);
                 selection.goal = SelectionGoal::None;
             }
@@ -2463,9 +2513,9 @@ impl Editor {
         let start_index = self.selection_insertion_index(&selections, start);
         let pending_selection = if set_id == self.selection_set_id {
             self.pending_selection.as_ref().and_then(|pending| {
-                let mut selection_start = pending.start.to_display_point(&display_map);
-                let mut selection_end = pending.end.to_display_point(&display_map);
-                if pending.reversed {
+                let mut selection_start = pending.selection.start.to_display_point(&display_map);
+                let mut selection_end = pending.selection.end.to_display_point(&display_map);
+                if pending.selection.reversed {
                     mem::swap(&mut selection_start, &mut selection_end);
                 }
                 if selection_start <= range.end || selection_end <= range.end {
@@ -2535,12 +2585,12 @@ impl Editor {
         D: 'a + TextDimension<'a>,
     {
         let buffer = self.buffer.read(cx);
-        self.pending_selection.as_ref().map(|selection| Selection {
-            id: selection.id,
-            start: selection.start.summary::<D, _>(buffer),
-            end: selection.end.summary::<D, _>(buffer),
-            reversed: selection.reversed,
-            goal: selection.goal,
+        self.pending_selection.as_ref().map(|pending| Selection {
+            id: pending.selection.id,
+            start: pending.selection.start.summary::<D, _>(buffer),
+            end: pending.selection.end.summary::<D, _>(buffer),
+            reversed: pending.selection.reversed,
+            goal: pending.selection.goal,
         })
     }
 
@@ -3148,7 +3198,7 @@ mod tests {
             cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
         editor.update(cx, |view, cx| {
-            view.begin_selection(DisplayPoint::new(2, 2), false, cx);
+            view.begin_selection(DisplayPoint::new(2, 2), false, SelectMode::Character, cx);
         });
 
         assert_eq!(
@@ -3185,7 +3235,7 @@ mod tests {
         );
 
         editor.update(cx, |view, cx| {
-            view.begin_selection(DisplayPoint::new(3, 3), true, cx);
+            view.begin_selection(DisplayPoint::new(3, 3), true, SelectMode::Character, cx);
             view.update_selection(DisplayPoint::new(0, 0), Vector2F::zero(), cx);
         });
 
@@ -3214,7 +3264,7 @@ mod tests {
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
         view.update(cx, |view, cx| {
-            view.begin_selection(DisplayPoint::new(2, 2), false, cx);
+            view.begin_selection(DisplayPoint::new(2, 2), false, SelectMode::Character, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
@@ -3246,11 +3296,11 @@ mod tests {
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
         view.update(cx, |view, cx| {
-            view.begin_selection(DisplayPoint::new(3, 4), false, cx);
+            view.begin_selection(DisplayPoint::new(3, 4), false, SelectMode::Character, cx);
             view.update_selection(DisplayPoint::new(1, 1), Vector2F::zero(), cx);
             view.end_selection(cx);
 
-            view.begin_selection(DisplayPoint::new(0, 1), true, cx);
+            view.begin_selection(DisplayPoint::new(0, 1), true, SelectMode::Character, cx);
             view.update_selection(DisplayPoint::new(0, 3), Vector2F::zero(), cx);
             view.end_selection(cx);
             assert_eq!(
