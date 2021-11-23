@@ -14,8 +14,10 @@ pub enum Event {
     },
     LeftMouseDown {
         position: Vector2F,
-        cmd: bool,
+        ctrl: bool,
+        alt: bool,
         shift: bool,
+        cmd: bool,
         click_count: usize,
     },
     LeftMouseUp {

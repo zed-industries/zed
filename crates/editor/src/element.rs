@@ -55,8 +55,8 @@ impl EditorElement {
     fn mouse_down(
         &self,
         position: Vector2F,
+        alt: bool,
         shift: bool,
-        cmd: bool,
         mut click_count: usize,
         layout: &mut LayoutState,
         paint: &mut PaintState,
@@ -79,7 +79,7 @@ impl EditorElement {
         } else {
             cx.dispatch_action(Select(SelectPhase::Begin {
                 position,
-                add: cmd,
+                add: alt,
                 click_count,
             }));
         }
@@ -861,10 +861,11 @@ impl Element for EditorElement {
             match event {
                 Event::LeftMouseDown {
                     position,
+                    alt,
                     shift,
-                    cmd,
                     click_count,
-                } => self.mouse_down(*position, *shift, *cmd, *click_count, layout, paint, cx),
+                    ..
+                } => self.mouse_down(*position, *alt, *shift, *click_count, layout, paint, cx),
                 Event::LeftMouseUp { position } => self.mouse_up(*position, cx),
                 Event::LeftMouseDragged { position } => {
                     self.mouse_dragged(*position, layout, paint, cx)
