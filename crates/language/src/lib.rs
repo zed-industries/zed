@@ -1654,11 +1654,6 @@ impl Snapshot {
         None
     }
 
-    fn is_line_blank(&self, row: u32) -> bool {
-        self.text_for_range(Point::new(row, 0)..Point::new(row, self.line_len(row)))
-            .all(|chunk| chunk.matches(|c: char| !c.is_whitespace()).next().is_none())
-    }
-
     pub fn chunks<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
