@@ -4447,7 +4447,7 @@ mod tests {
             assert_eq!(
                 view.selection_ranges(cx),
                 [
-                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(0, 5)..DisplayPoint::new(0, 5),
                     DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
                     DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
                     DisplayPoint::new(3, 5)..DisplayPoint::new(3, 5),
