@@ -751,6 +751,16 @@ impl Editor {
 
         if !add {
             self.update_selections::<usize>(Vec::new(), false, cx);
+        } else if click_count > 1 {
+            // Remove the newest selection since it was only added as part of this multi-click.
+            let newest_selection = self.newest_selection::<usize>(cx);
+            self.update_selections::<usize>(
+                self.selections(cx)
+                    .filter(|selection| selection.id != newest_selection.id)
+                    .collect(),
+                false,
+                cx,
+            )
         }
 
         self.pending_selection = Some(PendingSelection { selection, mode });
