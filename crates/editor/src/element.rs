@@ -1,3 +1,5 @@
+use crate::BeginSelectionMode;
+
 use super::{
     DisplayPoint, DisplayRow, Editor, EditorMode, EditorSettings, EditorStyle, Input, Scroll,
     Select, SelectPhase, Snapshot, MAX_LINE_LEN,
@@ -55,18 +57,27 @@ impl EditorElement {
     fn mouse_down(
         &self,
         position: Vector2F,
+        shift: bool,
         cmd: bool,
         click_count: usize,
         layout: &mut LayoutState,
         paint: &mut PaintState,
         cx: &mut EventContext,
     ) -> bool {
+        let mode = if cmd {
+            BeginSelectionMode::Add
+        } else if shift {
+            BeginSelectionMode::Extend
+        } else {
+            BeginSelectionMode::Update
+        };
+
         if paint.text_bounds.contains_point(position) {
             let snapshot = self.snapshot(cx.app);
             let position = paint.point_for_position(&snapshot, layout, position);
             cx.dispatch_action(Select(SelectPhase::Begin {
                 position,
-                add: cmd,
+                mode,
                 click_count,
             }));
             true
@@ -75,7 +86,7 @@ impl EditorElement {
             let position = paint.point_for_position(&snapshot, layout, position);
             cx.dispatch_action(Select(SelectPhase::Begin {
                 position,
-                add: cmd,
+                mode,
                 click_count: 3,
             }));
             true
@@ -858,9 +869,10 @@ impl Element for EditorElement {
             match event {
                 Event::LeftMouseDown {
                     position,
+                    shift,
                     cmd,
                     click_count,
-                } => self.mouse_down(*position, *cmd, *click_count, layout, paint, cx),
+                } => self.mouse_down(*position, *shift, *cmd, *click_count, layout, paint, cx),
                 Event::LeftMouseUp { position } => self.mouse_up(*position, cx),
                 Event::LeftMouseDragged { position } => {
                     self.mouse_dragged(*position, layout, paint, cx)

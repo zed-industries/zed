@@ -15,6 +15,7 @@ pub enum Event {
     LeftMouseDown {
         position: Vector2F,
         cmd: bool,
+        shift: bool,
         click_count: usize,
     },
     LeftMouseUp {

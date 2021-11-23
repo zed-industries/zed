@@ -3650,6 +3650,7 @@ mod tests {
         presenter.borrow_mut().dispatch_event(
             Event::LeftMouseDown {
                 position: Default::default(),
+                shift: false,
                 cmd: false,
                 click_count: 1,
             },
