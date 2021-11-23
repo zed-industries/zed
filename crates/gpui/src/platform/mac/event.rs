@@ -94,6 +94,7 @@ impl Event {
                     cmd: native_event
                         .modifierFlags()
                         .contains(NSEventModifierFlags::NSCommandKeyMask),
+                    count: native_event.clickCount() as usize,
                 })
             }
             NSEventType::NSLeftMouseUp => window_height.map(|window_height| Self::LeftMouseUp {
