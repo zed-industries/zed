@@ -1,8 +1,11 @@
 use crate::{
     executor,
-    geometry::vector::Vector2F,
+    geometry::{
+        rect::RectF,
+        vector::{vec2f, Vector2F},
+    },
     keymap::Keystroke,
-    platform::{self, Event, WindowContext},
+    platform::{self, Event, WindowBounds, WindowContext},
     Scene,
 };
 use block::ConcreteBlock;
@@ -25,7 +28,6 @@ use objc::{
     runtime::{Class, Object, Protocol, Sel, BOOL, NO, YES},
     sel, sel_impl,
 };
-use pathfinder_geometry::vector::vec2f;
 use smol::Timer;
 use std::{
     any::Any,
@@ -158,7 +160,11 @@ impl Window {
         unsafe {
             let pool = NSAutoreleasePool::new(nil);
 
-            let frame = options.bounds.to_ns_rect();
+            let frame = match options.bounds {
+                WindowBounds::Maximized => RectF::new(Default::default(), vec2f(1024., 768.)),
+                WindowBounds::Fixed(rect) => rect,
+            }
+            .to_ns_rect();
             let mut style_mask = NSWindowStyleMask::NSClosableWindowMask
                 | NSWindowStyleMask::NSMiniaturizableWindowMask
                 | NSWindowStyleMask::NSResizableWindowMask
@@ -176,6 +182,11 @@ impl Window {
                 NO,
             );
             assert!(!native_window.is_null());
+
+            if matches!(options.bounds, WindowBounds::Maximized) {
+                let screen = native_window.screen();
+                native_window.setFrame_display_(screen.visibleFrame(), YES);
+            }
 
             let device =
                 metal::Device::system_default().expect("could not find default metal device");

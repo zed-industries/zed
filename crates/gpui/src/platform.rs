@@ -12,7 +12,7 @@ use crate::{
     fonts::{FontId, GlyphId, Metrics as FontMetrics, Properties as FontProperties},
     geometry::{
         rect::{RectF, RectI},
-        vector::{vec2f, Vector2F},
+        vector::Vector2F,
     },
     text_layout::{LineLayout, RunStyle},
     AnyAction, ClipboardItem, Menu, Scene,
@@ -105,11 +105,18 @@ pub trait WindowContext {
     fn present_scene(&mut self, scene: Scene);
 }
 
+#[derive(Debug)]
 pub struct WindowOptions<'a> {
-    pub bounds: RectF,
+    pub bounds: WindowBounds,
     pub title: Option<&'a str>,
     pub titlebar_appears_transparent: bool,
     pub traffic_light_position: Option<Vector2F>,
+}
+
+#[derive(Debug)]
+pub enum WindowBounds {
+    Maximized,
+    Fixed(RectF),
 }
 
 pub struct PathPromptOptions {
@@ -157,7 +164,7 @@ pub trait FontSystem: Send + Sync {
 impl<'a> Default for WindowOptions<'a> {
     fn default() -> Self {
         Self {
-            bounds: RectF::new(Default::default(), vec2f(1024.0, 768.0)),
+            bounds: WindowBounds::Maximized,
             title: Default::default(),
             titlebar_appears_transparent: Default::default(),
             traffic_light_position: Default::default(),

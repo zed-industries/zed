@@ -10,9 +10,9 @@ pub use client;
 pub use editor;
 use gpui::{
     action,
-    geometry::{rect::RectF, vector::vec2f},
+    geometry::vector::vec2f,
     keymap::Binding,
-    platform::WindowOptions,
+    platform::{WindowBounds, WindowOptions},
     ModelHandle, MutableAppContext, PathPromptOptions, Task, ViewContext,
 };
 pub use lsp;
@@ -122,6 +122,7 @@ fn open_paths(action: &OpenPaths, cx: &mut MutableAppContext) -> Task<()> {
     let (_, workspace) = cx.add_window(window_options(), |cx| {
         build_workspace(&WorkspaceParams::from(app_state.as_ref()), cx)
     });
+    // cx.resize_window(window_id);
     workspace.update(cx, |workspace, cx| {
         workspace.open_paths(&action.0.paths, cx)
     })
@@ -164,7 +165,7 @@ fn build_workspace(params: &WorkspaceParams, cx: &mut ViewContext<Workspace>) ->
 
 fn window_options() -> WindowOptions<'static> {
     WindowOptions {
-        bounds: RectF::new(vec2f(0., 0.), vec2f(1024., 768.)),
+        bounds: WindowBounds::Maximized,
         title: None,
         titlebar_appears_transparent: true,
         traffic_light_position: Some(vec2f(8., 8.)),
