@@ -1,6 +1,6 @@
 use super::{
     DisplayPoint, DisplayRow, Editor, EditorMode, EditorSettings, EditorStyle, Input, Scroll,
-    Select, SelectMode, SelectPhase, Snapshot, MAX_LINE_LEN,
+    Select, SelectPhase, Snapshot, MAX_LINE_LEN,
 };
 use clock::ReplicaId;
 use gpui::{
@@ -56,7 +56,7 @@ impl EditorElement {
         &self,
         position: Vector2F,
         cmd: bool,
-        count: usize,
+        click_count: usize,
         layout: &mut LayoutState,
         paint: &mut PaintState,
         cx: &mut EventContext,
@@ -64,16 +64,10 @@ impl EditorElement {
         if paint.text_bounds.contains_point(position) {
             let snapshot = self.snapshot(cx.app);
             let position = paint.point_for_position(&snapshot, layout, position);
-            let mode = match count {
-                1 => SelectMode::Character,
-                2 => SelectMode::Word,
-                3 => SelectMode::Line,
-                _ => SelectMode::All,
-            };
             cx.dispatch_action(Select(SelectPhase::Begin {
                 position,
                 add: cmd,
-                mode,
+                click_count,
             }));
             true
         } else {
@@ -855,8 +849,8 @@ impl Element for EditorElement {
                 Event::LeftMouseDown {
                     position,
                     cmd,
-                    count,
-                } => self.mouse_down(*position, *cmd, *count, layout, paint, cx),
+                    click_count,
+                } => self.mouse_down(*position, *cmd, *click_count, layout, paint, cx),
                 Event::LeftMouseUp { position } => self.mouse_up(*position, cx),
                 Event::LeftMouseDragged { position } => {
                     self.mouse_dragged(*position, layout, paint, cx)

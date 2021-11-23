@@ -274,7 +274,7 @@ pub enum SelectPhase {
     Begin {
         position: DisplayPoint,
         add: bool,
-        mode: SelectMode,
+        click_count: usize,
     },
     Update {
         position: DisplayPoint,
@@ -283,11 +283,11 @@ pub enum SelectPhase {
     End,
 }
 
-#[derive(Copy, Clone, Debug)]
-pub enum SelectMode {
+#[derive(Clone, Debug)]
+enum SelectMode {
     Character,
-    Word,
-    Line,
+    Word(Range<Anchor>),
+    Line(Range<Anchor>),
     All,
 }
 
@@ -644,8 +644,8 @@ impl Editor {
             SelectPhase::Begin {
                 position,
                 add,
-                mode,
-            } => self.begin_selection(*position, *add, *mode, cx),
+                click_count,
+            } => self.begin_selection(*position, *add, *click_count, cx),
             SelectPhase::Update {
                 position,
                 scroll_position,
@@ -658,7 +658,7 @@ impl Editor {
         &mut self,
         position: DisplayPoint,
         add: bool,
-        mode: SelectMode,
+        click_count: usize,
         cx: &mut ViewContext<Self>,
     ) {
         if !self.focused {
@@ -670,20 +670,24 @@ impl Editor {
         let buffer = self.buffer.read(cx);
         let start;
         let end;
-        match mode {
-            SelectMode::Character => {
+        let mode;
+        match click_count {
+            1 => {
                 start = buffer.anchor_before(position.to_point(&display_map));
                 end = start.clone();
+                mode = SelectMode::Character;
             }
-            SelectMode::Word => {
+            2 => {
                 let range = movement::surrounding_word(&display_map, position);
                 start = buffer.anchor_before(range.start.to_point(&display_map));
                 end = buffer.anchor_before(range.end.to_point(&display_map));
+                mode = SelectMode::Word(start.clone()..end.clone());
             }
-            SelectMode::Line => todo!(),
-            SelectMode::All => {
+            3 => todo!(),
+            _ => {
                 start = buffer.anchor_before(0);
                 end = buffer.anchor_before(buffer.len());
+                mode = SelectMode::All;
             }
         }
         let selection = Selection {
@@ -711,32 +715,51 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         if let Some(PendingSelection { selection, mode }) = self.pending_selection.as_mut() {
             let buffer = self.buffer.read(cx);
-            let cursor = match mode {
-                SelectMode::Character => buffer.anchor_before(position.to_point(&display_map)),
-                SelectMode::Word => {
-                    let word_range = movement::surrounding_word(&display_map, position);
-                    if word_range.start < selection.start.to_display_point(&display_map) {
-                        buffer.anchor_before(word_range.start.to_point(&display_map))
+            let head;
+            let tail;
+            match mode {
+                SelectMode::Character => {
+                    head = position.to_point(&display_map);
+                    tail = selection.tail().to_point(buffer);
+                }
+                SelectMode::Word(original_range) => {
+                    let original_display_range = original_range.start.to_display_point(&display_map)
+                        ..original_range.end.to_display_point(&display_map);
+                    let original_buffer_range = original_display_range.start.to_point(&display_map)
+                        ..original_display_range.end.to_point(&display_map);
+                    if movement::is_inside_word(&display_map, position)
+                        || original_display_range.contains(&position)
+                    {
+                        let word_range = movement::surrounding_word(&display_map, position);
+                        if word_range.start < original_display_range.start {
+                            head = word_range.start.to_point(&display_map);
+                        } else {
+                            head = word_range.end.to_point(&display_map);
+                        }
                     } else {
-                        buffer.anchor_before(word_range.end.to_point(&display_map))
+                        head = position.to_point(&display_map);
+                    }
+
+                    if head <= original_buffer_range.start {
+                        tail = original_buffer_range.end;
+                    } else {
+                        tail = original_buffer_range.start;
                     }
                 }
-                SelectMode::Line => todo!(),
-                SelectMode::All => selection.head(),
+                SelectMode::Line(_) => todo!(),
+                SelectMode::All => {
+                    return;
+                }
             };
 
-            if cursor.cmp(&selection.tail(), buffer).unwrap() < Ordering::Equal {
-                if !selection.reversed {
-                    selection.end = selection.start.clone();
-                    selection.reversed = true;
-                }
-                selection.start = cursor;
+            if head < tail {
+                selection.start = buffer.anchor_before(head);
+                selection.end = buffer.anchor_before(tail);
+                selection.reversed = true;
             } else {
-                if selection.reversed {
-                    selection.start = selection.end.clone();
-                    selection.reversed = false;
-                }
-                selection.end = cursor;
+                selection.start = buffer.anchor_before(tail);
+                selection.end = buffer.anchor_before(head);
+                selection.reversed = false;
             }
         } else {
             log::error!("update_selection dispatched with no pending selection");
@@ -3198,7 +3221,7 @@ mod tests {
             cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
         editor.update(cx, |view, cx| {
-            view.begin_selection(DisplayPoint::new(2, 2), false, SelectMode::Character, cx);
+            view.begin_selection(DisplayPoint::new(2, 2), false, 1, cx);
         });
 
         assert_eq!(
@@ -3235,7 +3258,7 @@ mod tests {
         );
 
         editor.update(cx, |view, cx| {
-            view.begin_selection(DisplayPoint::new(3, 3), true, SelectMode::Character, cx);
+            view.begin_selection(DisplayPoint::new(3, 3), true, 1, cx);
             view.update_selection(DisplayPoint::new(0, 0), Vector2F::zero(), cx);
         });
 
@@ -3264,7 +3287,7 @@ mod tests {
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
         view.update(cx, |view, cx| {
-            view.begin_selection(DisplayPoint::new(2, 2), false, SelectMode::Character, cx);
+            view.begin_selection(DisplayPoint::new(2, 2), false, 1, cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
@@ -3296,11 +3319,11 @@ mod tests {
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
         view.update(cx, |view, cx| {
-            view.begin_selection(DisplayPoint::new(3, 4), false, SelectMode::Character, cx);
+            view.begin_selection(DisplayPoint::new(3, 4), false, 1, cx);
             view.update_selection(DisplayPoint::new(1, 1), Vector2F::zero(), cx);
             view.end_selection(cx);
 
-            view.begin_selection(DisplayPoint::new(0, 1), true, SelectMode::Character, cx);
+            view.begin_selection(DisplayPoint::new(0, 1), true, 1, cx);
             view.update_selection(DisplayPoint::new(0, 3), Vector2F::zero(), cx);
             view.end_selection(cx);
             assert_eq!(

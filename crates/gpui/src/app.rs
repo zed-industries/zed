@@ -3651,6 +3651,7 @@ mod tests {
             Event::LeftMouseDown {
                 position: Default::default(),
                 cmd: false,
+                click_count: 1,
             },
             cx,
         );
