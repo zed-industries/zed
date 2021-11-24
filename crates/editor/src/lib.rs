@@ -534,7 +534,7 @@ impl Editor {
         cx.notify();
     }
 
-    fn set_scroll_position(&mut self, scroll_position: Vector2F, cx: &mut ViewContext<Self>) {
+    pub fn set_scroll_position(&mut self, scroll_position: Vector2F, cx: &mut ViewContext<Self>) {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let scroll_top_buffer_offset =
             DisplayPoint::new(scroll_position.y() as u32, 0).to_offset(&map, Bias::Right);
@@ -553,6 +553,11 @@ impl Editor {
         );
 
         cx.notify();
+    }
+
+    pub fn scroll_position(&self, cx: &mut ViewContext<Self>) -> Vector2F {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        compute_scroll_position(&display_map, self.scroll_position, &self.scroll_top_anchor)
     }
 
     pub fn clamp_scroll_left(&mut self, max: f32) -> bool {
@@ -3029,7 +3034,7 @@ impl Editor {
             .unwrap()
     }
 
-    fn update_selections<T>(
+    pub fn update_selections<T>(
         &mut self,
         mut selections: Vec<Selection<T>>,
         autoscroll: Option<Autoscroll>,

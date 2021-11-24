@@ -1,26 +1,35 @@
-use buffer::{Bias, Point};
+use buffer::{Bias, Point, Selection};
 use editor::{Autoscroll, Editor, EditorSettings};
 use gpui::{
-    action, elements::*, keymap::Binding, Entity, MutableAppContext, RenderContext, View,
-    ViewContext, ViewHandle,
+    action, elements::*, geometry::vector::Vector2F, keymap::Binding, Entity, MutableAppContext,
+    RenderContext, View, ViewContext, ViewHandle,
 };
 use postage::watch;
 use workspace::{Settings, Workspace};
 
 action!(Toggle);
+action!(Confirm);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([
         Binding::new("ctrl-g", Toggle, Some("Editor")),
         Binding::new("escape", Toggle, Some("GoToLine")),
+        Binding::new("enter", Confirm, Some("GoToLine")),
     ]);
     cx.add_action(GoToLine::toggle);
+    cx.add_action(GoToLine::confirm);
 }
 
 pub struct GoToLine {
     settings: watch::Receiver<Settings>,
     line_editor: ViewHandle<Editor>,
     active_editor: ViewHandle<Editor>,
+    restore_state: Option<RestoreState>,
+}
+
+struct RestoreState {
+    scroll_position: Vector2F,
+    selections: Vec<Selection<usize>>,
 }
 
 pub enum Event {
@@ -50,10 +59,19 @@ impl GoToLine {
         });
         cx.subscribe(&line_editor, Self::on_line_editor_event)
             .detach();
+
+        let restore_state = active_editor.update(cx, |editor, cx| {
+            Some(RestoreState {
+                scroll_position: editor.scroll_position(cx),
+                selections: editor.selections::<usize>(cx).collect(),
+            })
+        });
+
         Self {
             settings: settings.clone(),
             line_editor,
             active_editor,
+            restore_state,
         }
     }
 
@@ -69,6 +87,11 @@ impl GoToLine {
             cx.subscribe(&view, Self::on_event).detach();
             view
         });
+    }
+
+    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
+        self.restore_state.take();
+        cx.emit(Event::Dismissed);
     }
 
     fn on_event(
@@ -119,8 +142,13 @@ impl Entity for GoToLine {
     type Event = Event;
 
     fn release(&mut self, cx: &mut MutableAppContext) {
-        self.active_editor.update(cx, |editor, _| {
+        let restore_state = self.restore_state.take();
+        self.active_editor.update(cx, |editor, cx| {
             editor.set_highlighted_row(None);
+            if let Some(restore_state) = restore_state {
+                editor.set_scroll_position(restore_state.scroll_position, cx);
+                editor.update_selections(restore_state.selections, None, cx);
+            }
         })
     }
 }
