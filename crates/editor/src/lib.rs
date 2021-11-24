@@ -351,6 +351,7 @@ pub struct Editor {
     blinking_paused: bool,
     mode: EditorMode,
     placeholder_text: Option<Arc<str>>,
+    highlighted_row: Option<u32>,
 }
 
 pub struct Snapshot {
@@ -485,6 +486,7 @@ impl Editor {
             blinking_paused: false,
             mode: EditorMode::Full,
             placeholder_text: None,
+            highlighted_row: None,
         }
     }
 
@@ -3248,13 +3250,17 @@ impl Editor {
             .text()
     }
 
-    // pub fn font_size(&self) -> f32 {
-    //     self.settings.font_size
-    // }
-
     pub fn set_wrap_width(&self, width: f32, cx: &mut MutableAppContext) -> bool {
         self.display_map
             .update(cx, |map, cx| map.set_wrap_width(Some(width), cx))
+    }
+
+    pub fn set_highlighted_row(&mut self, row: Option<u32>) {
+        self.highlighted_row = row;
+    }
+
+    pub fn highlighted_row(&mut self) -> Option<u32> {
+        self.highlighted_row
     }
 
     fn next_blink_epoch(&mut self) -> usize {
@@ -3426,6 +3432,7 @@ impl EditorSettings {
                     background: Default::default(),
                     gutter_background: Default::default(),
                     active_line_background: Default::default(),
+                    highlighted_line_background: Default::default(),
                     line_number: Default::default(),
                     line_number_active: Default::default(),
                     selection: Default::default(),

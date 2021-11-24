@@ -263,6 +263,20 @@ impl EditorElement {
                     });
                 }
             }
+
+            if let Some(highlighted_row) = layout.highlighted_row {
+                let origin = vec2f(
+                    bounds.origin_x(),
+                    bounds.origin_y() + (layout.line_height * highlighted_row as f32) - scroll_top,
+                );
+                let size = vec2f(bounds.width(), layout.line_height);
+                cx.scene.push_quad(Quad {
+                    bounds: RectF::new(origin, size),
+                    background: Some(style.highlighted_line_background),
+                    border: Border::default(),
+                    corner_radius: 0.,
+                });
+            }
         }
 
         // Draw block backgrounds
@@ -729,7 +743,9 @@ impl Element for EditorElement {
 
         let mut selections = HashMap::new();
         let mut active_rows = BTreeMap::new();
+        let mut highlighted_row = None;
         self.update_view(cx.app, |view, cx| {
+            highlighted_row = view.highlighted_row();
             for selection_set_id in view.active_selection_sets(cx).collect::<Vec<_>>() {
                 let mut set = Vec::new();
                 for selection in view.selections_in_range(
@@ -786,6 +802,7 @@ impl Element for EditorElement {
             snapshot,
             style: self.settings.style.clone(),
             active_rows,
+            highlighted_row,
             line_layouts,
             line_number_layouts,
             block_layouts,
@@ -915,6 +932,7 @@ pub struct LayoutState {
     style: EditorStyle,
     snapshot: Snapshot,
     active_rows: BTreeMap<u32, bool>,
+    highlighted_row: Option<u32>,
     line_layouts: Vec<text_layout::Line>,
     line_number_layouts: Vec<Option<text_layout::Line>>,
     block_layouts: Vec<(Range<u32>, BlockStyle)>,

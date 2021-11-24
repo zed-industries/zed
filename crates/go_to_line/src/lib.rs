@@ -95,11 +95,17 @@ impl GoToLine {
                 let mut components = line_editor.trim().split(':');
                 let row = components.next().and_then(|row| row.parse::<u32>().ok());
                 let column = components.next().and_then(|row| row.parse::<u32>().ok());
-                if let Some(point) = row.map(|row| Point::new(row, column.unwrap_or(0))) {
+                if let Some(point) = row.map(|row| {
+                    Point::new(
+                        row.saturating_sub(1),
+                        column.map(|column| column.saturating_sub(1)).unwrap_or(0),
+                    )
+                }) {
                     self.active_editor.update(cx, |active_editor, cx| {
                         let buffer = active_editor.buffer().read(cx);
                         let point = buffer.clip_point(point, Bias::Left);
                         active_editor.select_ranges([point..point], Some(Autoscroll::Center), cx);
+                        active_editor.set_highlighted_row(Some(point.row));
                     });
                     cx.notify();
                 }
@@ -111,6 +117,12 @@ impl GoToLine {
 
 impl Entity for GoToLine {
     type Event = Event;
+
+    fn release(&mut self, cx: &mut MutableAppContext) {
+        self.active_editor.update(cx, |editor, cx| {
+            editor.set_highlighted_row(None);
+        })
+    }
 }
 
 impl View for GoToLine {
