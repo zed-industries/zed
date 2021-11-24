@@ -1,4 +1,4 @@
-mod items;
+pub mod items;
 pub mod pane;
 pub mod pane_group;
 pub mod settings;
@@ -20,14 +20,13 @@ use postage::{prelude::Stream, watch};
 use project::{Fs, Project, ProjectPath, Worktree};
 pub use settings::Settings;
 use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus};
+use status_bar::StatusBar;
 use std::{
     collections::{hash_map::Entry, HashMap},
     future::Future,
     path::{Path, PathBuf},
     sync::Arc,
 };
-
-use crate::status_bar::StatusBar;
 
 action!(OpenNew, WorkspaceParams);
 action!(Save);
@@ -382,15 +381,7 @@ impl Workspace {
         .detach();
         cx.focus(&pane);
 
-        let cursor_position = cx.add_view(|_| items::CursorPosition::new(params.settings.clone()));
-        let diagnostic = cx.add_view(|_| items::DiagnosticMessage::new(params.settings.clone()));
-        let status_bar = cx.add_view(|cx| {
-            let mut status_bar = StatusBar::new(&pane, params.settings.clone(), cx);
-            status_bar.add_left_item(diagnostic, cx);
-            status_bar.add_right_item(cursor_position, cx);
-            status_bar
-        });
-
+        let status_bar = cx.add_view(|cx| StatusBar::new(&pane, params.settings.clone(), cx));
         let mut current_user = params.user_store.read(cx).watch_current_user().clone();
         let mut connection_status = params.client.status().clone();
         let _observe_current_user = cx.spawn_weak(|this, mut cx| async move {
@@ -434,6 +425,10 @@ impl Workspace {
 
     pub fn right_sidebar_mut(&mut self) -> &mut Sidebar {
         &mut self.right_sidebar
+    }
+
+    pub fn status_bar(&self) -> &ViewHandle<StatusBar> {
+        &self.status_bar
     }
 
     pub fn project(&self) -> &ModelHandle<Project> {

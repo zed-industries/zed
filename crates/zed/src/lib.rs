@@ -161,6 +161,16 @@ fn build_workspace(params: &WorkspaceParams, cx: &mut ViewContext<Workspace>) ->
         })
         .into(),
     );
+
+    let diagnostic =
+        cx.add_view(|_| workspace::items::DiagnosticMessage::new(params.settings.clone()));
+    let cursor_position =
+        cx.add_view(|_| workspace::items::CursorPosition::new(params.settings.clone()));
+    workspace.status_bar().update(cx, |status_bar, cx| {
+        status_bar.add_left_item(diagnostic, cx);
+        status_bar.add_right_item(cursor_position, cx);
+    });
+
     workspace
 }
 
