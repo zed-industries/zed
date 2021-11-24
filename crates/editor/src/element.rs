@@ -71,7 +71,9 @@ impl EditorElement {
         let snapshot = self.snapshot(cx.app);
         let position = paint.point_for_position(&snapshot, layout, position);
 
-        if shift {
+        if shift && alt {
+            cx.dispatch_action(Select(SelectPhase::BeginColumnar { position }));
+        } else if shift {
             cx.dispatch_action(Select(SelectPhase::Extend {
                 position,
                 click_count,

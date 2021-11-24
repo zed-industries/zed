@@ -282,6 +282,9 @@ pub enum SelectPhase {
         add: bool,
         click_count: usize,
     },
+    BeginColumnar {
+        position: DisplayPoint,
+    },
     Extend {
         position: DisplayPoint,
         click_count: usize,
@@ -320,6 +323,7 @@ pub struct Editor {
     display_map: ModelHandle<DisplayMap>,
     selection_set_id: SelectionSetId,
     pending_selection: Option<PendingSelection>,
+    columnar_selection_tail: Option<Anchor>,
     next_selection_id: usize,
     add_selections_state: Option<AddSelectionsState>,
     autoclose_stack: Vec<BracketPairState>,
@@ -453,6 +457,7 @@ impl Editor {
             display_map,
             selection_set_id,
             pending_selection: None,
+            columnar_selection_tail: None,
             next_selection_id,
             add_selections_state: None,
             autoclose_stack: Default::default(),
@@ -656,6 +661,7 @@ impl Editor {
                 add,
                 click_count,
             } => self.begin_selection(*position, *add, *click_count, cx),
+            SelectPhase::BeginColumnar { position } => self.begin_columnar_selection(*position, cx),
             SelectPhase::Extend {
                 position,
                 click_count,
@@ -774,14 +780,40 @@ impl Editor {
         cx.notify();
     }
 
+    fn begin_columnar_selection(&mut self, position: DisplayPoint, cx: &mut ViewContext<Self>) {
+        if !self.focused {
+            cx.focus_self();
+            cx.emit(Event::Activate);
+        }
+
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = self.buffer.read(cx);
+
+        let tail = self.newest_selection::<Point>(cx).tail();
+        self.columnar_selection_tail = Some(buffer.anchor_before(tail));
+
+        self.select_columns(
+            tail.to_display_point(&display_map),
+            position,
+            &display_map,
+            cx,
+        );
+    }
+
     fn update_selection(
         &mut self,
         position: DisplayPoint,
         scroll_position: Vector2F,
         cx: &mut ViewContext<Self>,
     ) {
+        log::info!("update selection");
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        if let Some(PendingSelection { selection, mode }) = self.pending_selection.as_mut() {
+
+        if let Some(tail) = self.columnar_selection_tail.as_ref() {
+            let tail = tail.to_display_point(&display_map);
+            log::info!("columnar tail {:?}", tail);
+            self.select_columns(tail, position, &display_map, cx);
+        } else if let Some(PendingSelection { selection, mode }) = self.pending_selection.as_mut() {
             let buffer = self.buffer.read(cx);
             let head;
             let tail;
@@ -861,14 +893,53 @@ impl Editor {
     }
 
     fn end_selection(&mut self, cx: &mut ViewContext<Self>) {
+        self.columnar_selection_tail.take();
         if self.pending_selection.is_some() {
             let selections = self.selections::<usize>(cx).collect::<Vec<_>>();
             self.update_selections(selections, false, cx);
         }
     }
 
+    fn select_columns(
+        &mut self,
+        tail: DisplayPoint,
+        head: DisplayPoint,
+        display_map: &DisplayMapSnapshot,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let start_row = cmp::min(tail.row(), head.row());
+        let end_row = cmp::max(tail.row(), head.row());
+        let start_column = cmp::min(tail.column(), head.column());
+        let end_column = cmp::max(tail.column(), head.column());
+
+        let selections = (start_row..=end_row)
+            .filter_map(|row| {
+                if start_column <= display_map.line_len(row) {
+                    let start = display_map
+                        .clip_point(DisplayPoint::new(row, start_column), Bias::Left)
+                        .to_point(&display_map);
+                    let end = display_map
+                        .clip_point(DisplayPoint::new(row, end_column), Bias::Right)
+                        .to_point(&display_map);
+                    Some(Selection {
+                        id: post_inc(&mut self.next_selection_id),
+                        start,
+                        end,
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        self.update_selections(selections, false, cx);
+        cx.notify();
+    }
+
     pub fn is_selecting(&self) -> bool {
-        self.pending_selection.is_some()
+        self.pending_selection.is_some() || self.columnar_selection_tail.is_some()
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
