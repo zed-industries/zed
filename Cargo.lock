@@ -1532,6 +1532,7 @@ dependencies = [
  "log",
  "parking_lot",
  "postage",
+ "project",
  "rand 0.8.3",
  "serde",
  "smallvec",
@@ -1542,6 +1543,7 @@ dependencies = [
  "tree-sitter-rust",
  "unindent",
  "util",
+ "workspace",
 ]
 
 [[package]]
@@ -5611,9 +5613,7 @@ name = "workspace"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "buffer",
  "client",
- "editor",
  "gpui",
  "language",
  "log",

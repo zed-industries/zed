@@ -429,7 +429,14 @@ mod tests {
 
     #[gpui::test]
     async fn test_matching_paths(mut cx: gpui::TestAppContext) {
-        let params = cx.update(WorkspaceParams::test);
+        let mut entry_openers = Vec::new();
+        cx.update(|cx| {
+            super::init(cx);
+            editor::init(cx, &mut entry_openers);
+        });
+
+        let mut params = cx.update(WorkspaceParams::test);
+        params.entry_openers = Arc::from(entry_openers);
         params
             .fs
             .as_fake()
@@ -443,10 +450,6 @@ mod tests {
                 }),
             )
             .await;
-        cx.update(|cx| {
-            super::init(cx);
-            editor::init(cx);
-        });
 
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         workspace

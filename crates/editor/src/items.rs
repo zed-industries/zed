@@ -1,63 +1,107 @@
-use super::{Item, ItemView};
-use crate::{status_bar::StatusItemView, Settings};
+use crate::{Editor, EditorSettings, Event};
 use anyhow::Result;
 use buffer::{Point, Selection, ToPoint};
-use editor::{Editor, EditorSettings, Event};
 use gpui::{
-    elements::*, fonts::TextStyle, AppContext, Entity, ModelHandle, RenderContext, Subscription,
-    Task, View, ViewContext, ViewHandle,
+    elements::*, fonts::TextStyle, AppContext, Entity, ModelContext, ModelHandle,
+    MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
+    WeakModelHandle,
 };
 use language::{Buffer, Diagnostic, File as _};
 use postage::watch;
 use project::{ProjectPath, Worktree};
 use std::fmt::Write;
 use std::path::Path;
+use workspace::{
+    EntryOpener, ItemHandle, ItemView, ItemViewHandle, Settings, StatusItemView, WeakItemHandle,
+};
 
-impl Item for Buffer {
-    type View = Editor;
+pub struct BufferOpener;
 
-    fn build_view(
-        handle: ModelHandle<Self>,
+#[derive(Clone)]
+pub struct BufferItemHandle(pub ModelHandle<Buffer>);
+
+#[derive(Clone)]
+struct WeakBufferItemHandle(WeakModelHandle<Buffer>);
+
+impl EntryOpener for BufferOpener {
+    fn open(
+        &self,
+        worktree: &mut Worktree,
+        project_path: ProjectPath,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Option<Task<Result<Box<dyn ItemHandle>>>> {
+        let buffer = worktree.open_buffer(project_path.path, cx);
+        let task = cx.spawn(|_, _| async move {
+            buffer
+                .await
+                .map(|buffer| Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)
+        });
+        Some(task)
+    }
+}
+
+impl ItemHandle for BufferItemHandle {
+    fn add_view(
+        &self,
+        window_id: usize,
         settings: watch::Receiver<Settings>,
-        cx: &mut ViewContext<Self::View>,
-    ) -> Self::View {
-        Editor::for_buffer(
-            handle,
-            move |cx| {
-                let settings = settings.borrow();
-                let font_cache = cx.font_cache();
-                let font_family_id = settings.buffer_font_family;
-                let font_family_name = cx.font_cache().family_name(font_family_id).unwrap();
-                let font_properties = Default::default();
-                let font_id = font_cache
-                    .select_font(font_family_id, &font_properties)
-                    .unwrap();
-                let font_size = settings.buffer_font_size;
+        cx: &mut MutableAppContext,
+    ) -> Box<dyn ItemViewHandle> {
+        Box::new(cx.add_view(window_id, |cx| {
+            Editor::for_buffer(
+                self.0.clone(),
+                move |cx| {
+                    let settings = settings.borrow();
+                    let font_cache = cx.font_cache();
+                    let font_family_id = settings.buffer_font_family;
+                    let font_family_name = cx.font_cache().family_name(font_family_id).unwrap();
+                    let font_properties = Default::default();
+                    let font_id = font_cache
+                        .select_font(font_family_id, &font_properties)
+                        .unwrap();
+                    let font_size = settings.buffer_font_size;
 
-                let mut theme = settings.theme.editor.clone();
-                theme.text = TextStyle {
-                    color: theme.text.color,
-                    font_family_name,
-                    font_family_id,
-                    font_id,
-                    font_size,
-                    font_properties,
-                    underline: None,
-                };
-                EditorSettings {
-                    tab_size: settings.tab_size,
-                    style: theme,
-                }
-            },
-            cx,
-        )
+                    let mut theme = settings.theme.editor.clone();
+                    theme.text = TextStyle {
+                        color: theme.text.color,
+                        font_family_name,
+                        font_family_id,
+                        font_id,
+                        font_size,
+                        font_properties,
+                        underline: None,
+                    };
+                    EditorSettings {
+                        tab_size: settings.tab_size,
+                        style: theme,
+                    }
+                },
+                cx,
+            )
+        }))
     }
 
-    fn project_path(&self) -> Option<ProjectPath> {
-        self.file().map(|f| ProjectPath {
+    fn boxed_clone(&self) -> Box<dyn ItemHandle> {
+        Box::new(self.clone())
+    }
+
+    fn downgrade(&self) -> Box<dyn workspace::WeakItemHandle> {
+        Box::new(WeakBufferItemHandle(self.0.downgrade()))
+    }
+
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
+        self.0.read(cx).file().map(|f| ProjectPath {
             worktree_id: f.worktree_id(),
             path: f.path().clone(),
         })
+    }
+}
+
+impl WeakItemHandle for WeakBufferItemHandle {
+    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
+        self.0
+            .upgrade(cx)
+            .map(|buffer| Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)
     }
 }
 
@@ -226,7 +270,7 @@ impl View for CursorPosition {
 impl StatusItemView for CursorPosition {
     fn set_active_pane_item(
         &mut self,
-        active_pane_item: Option<&dyn crate::ItemViewHandle>,
+        active_pane_item: Option<&dyn ItemViewHandle>,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.to_any().downcast::<Editor>()) {
@@ -312,7 +356,7 @@ impl View for DiagnosticMessage {
 impl StatusItemView for DiagnosticMessage {
     fn set_active_pane_item(
         &mut self,
-        active_pane_item: Option<&dyn crate::ItemViewHandle>,
+        active_pane_item: Option<&dyn ItemViewHandle>,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.to_any().downcast::<Editor>()) {

@@ -95,7 +95,6 @@ impl Pane {
         item_idx
     }
 
-    #[cfg(test)]
     pub fn items(&self) -> &[Box<dyn ItemViewHandle>] {
         &self.items
     }
