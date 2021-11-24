@@ -927,7 +927,7 @@ impl Editor {
 
         let selections = (start_row..=end_row)
             .filter_map(|row| {
-                if start_column <= display_map.line_len(row) {
+                if start_column <= display_map.line_len(row) && !display_map.is_block_line(row) {
                     let start = display_map
                         .clip_point(DisplayPoint::new(row, start_column), Bias::Left)
                         .to_point(&display_map);
