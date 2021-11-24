@@ -38,6 +38,7 @@ fn main() {
         client::init(client.clone(), cx);
         workspace::init(cx);
         editor::init(cx, &mut entry_openers);
+        go_to_line::init(cx);
         file_finder::init(cx);
         people_panel::init(cx);
         chat_panel::init(cx);

@@ -2085,6 +2085,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "go_to_line"
+version = "0.1.0"
+dependencies = [
+ "buffer",
+ "editor",
+ "gpui",
+ "postage",
+ "workspace",
+]
+
+[[package]]
 name = "gpui"
 version = "0.1.0"
 dependencies = [
@@ -5671,6 +5682,7 @@ dependencies = [
  "fsevent",
  "futures",
  "fuzzy",
+ "go_to_line",
  "gpui",
  "http-auth-basic",
  "ignore",

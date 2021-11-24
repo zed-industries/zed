@@ -994,7 +994,7 @@ impl Editor {
         }
     }
 
-    fn select_ranges<I, T>(&mut self, ranges: I, autoscroll: bool, cx: &mut ViewContext<Self>)
+    pub fn select_ranges<I, T>(&mut self, ranges: I, autoscroll: bool, cx: &mut ViewContext<Self>)
     where
         I: IntoIterator<Item = Range<T>>,
         T: ToOffset,
@@ -1013,8 +1013,8 @@ impl Editor {
                 };
                 Selection {
                     id: post_inc(&mut self.next_selection_id),
-                    start: start,
-                    end: end,
+                    start,
+                    end,
                     reversed,
                     goal: SelectionGoal::None,
                 }

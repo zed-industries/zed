@@ -1,0 +1,11 @@
+[package]
+name = "go_to_line"
+version = "0.1.0"
+edition = "2018"
+
+[dependencies]
+buffer = { path = "../buffer" }
+editor = { path = "../editor" }
+gpui = { path = "../gpui" }
+workspace = { path = "../workspace" }
+postage = { version = "0.4", features = ["futures-traits"] }
