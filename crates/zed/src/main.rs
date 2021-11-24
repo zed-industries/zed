@@ -36,8 +36,8 @@ fn main() {
         let mut entry_openers = Vec::new();
 
         client::init(client.clone(), cx);
-        workspace::init(cx, &mut entry_openers);
-        editor::init(cx);
+        workspace::init(cx);
+        editor::init(cx, &mut entry_openers);
         file_finder::init(cx);
         people_panel::init(cx);
         chat_panel::init(cx);

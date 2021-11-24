@@ -1543,6 +1543,7 @@ dependencies = [
  "tree-sitter-rust",
  "unindent",
  "util",
+ "workspace",
 ]
 
 [[package]]
@@ -5612,9 +5613,7 @@ name = "workspace"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "buffer",
  "client",
- "editor",
  "gpui",
  "language",
  "log",

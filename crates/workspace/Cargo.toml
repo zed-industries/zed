@@ -12,9 +12,7 @@ test-support = [
 ]
 
 [dependencies]
-buffer = { path = "../buffer" }
 client = { path = "../client" }
-editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 project = { path = "../project" }

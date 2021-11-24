@@ -130,11 +130,9 @@ fn open_paths(action: &OpenPaths, cx: &mut MutableAppContext) -> Task<()> {
 }
 
 fn open_new(action: &workspace::OpenNew, cx: &mut MutableAppContext) {
-    cx.add_window(window_options(), |cx| {
-        let mut workspace = build_workspace(&action.0, cx);
-        workspace.open_new_file(&action, cx);
-        workspace
-    });
+    let (window_id, workspace) =
+        cx.add_window(window_options(), |cx| build_workspace(&action.0, cx));
+    cx.dispatch_action(window_id, vec![workspace.id()], action);
 }
 
 fn build_workspace(params: &WorkspaceParams, cx: &mut ViewContext<Workspace>) -> Workspace {
@@ -163,9 +161,9 @@ fn build_workspace(params: &WorkspaceParams, cx: &mut ViewContext<Workspace>) ->
     );
 
     let diagnostic =
-        cx.add_view(|_| workspace::items::DiagnosticMessage::new(params.settings.clone()));
+        cx.add_view(|_| editor::items::DiagnosticMessage::new(params.settings.clone()));
     let cursor_position =
-        cx.add_view(|_| workspace::items::CursorPosition::new(params.settings.clone()));
+        cx.add_view(|_| editor::items::CursorPosition::new(params.settings.clone()));
     workspace.status_bar().update(cx, |status_bar, cx| {
         status_bar.add_left_item(diagnostic, cx);
         status_bar.add_right_item(cursor_position, cx);

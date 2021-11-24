@@ -1,5 +1,6 @@
 pub mod display_map;
 mod element;
+pub mod items;
 pub mod movement;
 
 #[cfg(test)]
@@ -17,6 +18,7 @@ use gpui::{
     text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
     MutableAppContext, RenderContext, View, ViewContext, WeakViewHandle,
 };
+use items::BufferItemHandle;
 use language::*;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -34,6 +36,7 @@ use std::{
 use sum_tree::Bias;
 use theme::{DiagnosticStyle, EditorStyle, SyntaxTheme};
 use util::post_inc;
+use workspace::{EntryOpener, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -97,7 +100,8 @@ action!(FoldSelectedRanges);
 action!(Scroll, Vector2F);
 action!(Select, SelectPhase);
 
-pub fn init(cx: &mut MutableAppContext) {
+pub fn init(cx: &mut MutableAppContext, entry_openers: &mut Vec<Box<dyn EntryOpener>>) {
+    entry_openers.push(Box::new(items::BufferOpener));
     cx.add_bindings(vec![
         Binding::new("escape", Cancel, Some("Editor")),
         Binding::new("backspace", Backspace, Some("Editor")),
@@ -201,6 +205,7 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("alt-cmd-f", FoldSelectedRanges, Some("Editor")),
     ]);
 
+    cx.add_action(Editor::open_new);
     cx.add_action(|this: &mut Editor, action: &Scroll, cx| this.set_scroll_position(action.0, cx));
     cx.add_action(Editor::select);
     cx.add_action(Editor::cancel);
@@ -476,6 +481,15 @@ impl Editor {
             mode: EditorMode::Full,
             placeholder_text: None,
         }
+    }
+
+    pub fn open_new(
+        workspace: &mut Workspace,
+        _: &workspace::OpenNew,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "", cx));
+        workspace.add_item(BufferItemHandle(buffer), cx);
     }
 
     pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {
