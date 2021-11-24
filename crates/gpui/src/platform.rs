@@ -148,6 +148,7 @@ pub trait FontSystem: Send + Sync {
     ) -> anyhow::Result<FontId>;
     fn font_metrics(&self, font_id: FontId) -> FontMetrics;
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<RectF>;
+    fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<Vector2F>;
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId>;
     fn rasterize_glyph(
         &self,

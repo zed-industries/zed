@@ -157,6 +157,17 @@ impl FontCache {
         bounds.width() * self.em_scale(font_id, font_size)
     }
 
+    pub fn em_advance(&self, font_id: FontId, font_size: f32) -> f32 {
+        let glyph_id;
+        let advance;
+        {
+            let state = self.0.read();
+            glyph_id = state.fonts.glyph_for_char(font_id, 'm').unwrap();
+            advance = state.fonts.advance(font_id, glyph_id).unwrap();
+        }
+        advance.x() * self.em_scale(font_id, font_size)
+    }
+
     pub fn line_height(&self, font_id: FontId, font_size: f32) -> f32 {
         let height = self.metric(font_id, |m| m.bounding_box.height());
         (height * self.em_scale(font_id, font_size)).ceil()

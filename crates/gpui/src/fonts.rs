@@ -151,6 +151,10 @@ impl TextStyle {
         font_cache.em_width(self.font_id, self.font_size)
     }
 
+    pub fn em_advance(&self, font_cache: &FontCache) -> f32 {
+        font_cache.em_advance(self.font_id, self.font_size)
+    }
+
     pub fn descent(&self, font_cache: &FontCache) -> f32 {
         font_cache.metric(self.font_id, |m| m.descent) * self.em_scale(font_cache)
     }

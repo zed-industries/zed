@@ -69,9 +69,14 @@ impl EditorElement {
         }
 
         let snapshot = self.snapshot(cx.app);
-        let position = paint.point_for_position(&snapshot, layout, position);
+        let (position, overshoot) = paint.point_for_position(&snapshot, layout, position);
 
-        if shift {
+        if shift && alt {
+            cx.dispatch_action(Select(SelectPhase::BeginColumnar {
+                position,
+                overshoot,
+            }));
+        } else if shift {
             cx.dispatch_action(Select(SelectPhase::Extend {
                 position,
                 click_count,
@@ -136,10 +141,11 @@ impl EditorElement {
             let font_cache = cx.font_cache.clone();
             let text_layout_cache = cx.text_layout_cache.clone();
             let snapshot = self.snapshot(cx.app);
-            let position = paint.point_for_position(&snapshot, layout, position);
+            let (position, overshoot) = paint.point_for_position(&snapshot, layout, position);
 
             cx.dispatch_action(Select(SelectPhase::Update {
                 position,
+                overshoot,
                 scroll_position: (snapshot.scroll_position() + scroll_delta).clamp(
                     Vector2F::zero(),
                     layout.scroll_max(&font_cache, &text_layout_cache),
@@ -685,6 +691,7 @@ impl Element for EditorElement {
         let text_width = size.x() - gutter_width;
         let text_offset = vec2f(-style.text.descent(cx.font_cache), 0.);
         let em_width = style.text.em_width(cx.font_cache);
+        let em_advance = style.text.em_advance(cx.font_cache);
         let overscroll = vec2f(em_width, 0.);
         let wrap_width = text_width - text_offset.x() - overscroll.x() - em_width;
         let snapshot = self.update_view(cx.app, |view, cx| {
@@ -784,6 +791,7 @@ impl Element for EditorElement {
             block_layouts,
             line_height,
             em_width,
+            em_advance,
             selections,
             max_visible_line_width,
         };
@@ -912,6 +920,7 @@ pub struct LayoutState {
     block_layouts: Vec<(Range<u32>, BlockStyle)>,
     line_height: f32,
     em_width: f32,
+    em_advance: f32,
     selections: HashMap<ReplicaId, Vec<Range<DisplayPoint>>>,
     overscroll: Vector2F,
     text_offset: Vector2F,
@@ -980,7 +989,7 @@ impl PaintState {
         snapshot: &Snapshot,
         layout: &LayoutState,
         position: Vector2F,
-    ) -> DisplayPoint {
+    ) -> (DisplayPoint, u32) {
         let scroll_position = snapshot.scroll_position();
         let position = position - self.text_bounds.origin();
         let y = position.y().max(0.0).min(layout.size.y());
@@ -992,12 +1001,13 @@ impl PaintState {
         let column = if x >= 0.0 {
             line.index_for_x(x)
                 .map(|ix| ix as u32)
-                .unwrap_or(snapshot.line_len(row))
+                .unwrap_or_else(|| snapshot.line_len(row))
         } else {
             0
         };
+        let overshoot = (0f32.max(x - line.width()) / layout.em_advance) as u32;
 
-        DisplayPoint::new(row, column)
+        (DisplayPoint::new(row, column), overshoot)
     }
 }
 

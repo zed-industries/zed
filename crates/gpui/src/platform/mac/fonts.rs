@@ -69,6 +69,10 @@ impl platform::FontSystem for FontSystem {
         self.0.read().typographic_bounds(font_id, glyph_id)
     }
 
+    fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<Vector2F> {
+        self.0.read().advance(font_id, glyph_id)
+    }
+
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
         self.0.read().glyph_for_char(font_id, ch)
     }
@@ -135,6 +139,10 @@ impl FontSystemState {
 
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<RectF> {
         Ok(self.fonts[font_id.0].typographic_bounds(glyph_id)?)
+    }
+
+    fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<Vector2F> {
+        Ok(self.fonts[font_id.0].advance(glyph_id)?)
     }
 
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
