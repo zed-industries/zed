@@ -33,6 +33,16 @@ fn main() {
         let client = client::Client::new();
         let http = http::client();
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
+        let mut entry_openers = Vec::new();
+
+        client::init(client.clone(), cx);
+        workspace::init(cx, &mut entry_openers);
+        editor::init(cx);
+        file_finder::init(cx);
+        people_panel::init(cx);
+        chat_panel::init(cx);
+        project_panel::init(cx);
+
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
             settings_tx: Arc::new(Mutex::new(settings_tx)),
@@ -43,16 +53,9 @@ fn main() {
             client,
             user_store,
             fs: Arc::new(RealFs),
+            entry_openers: Arc::from(entry_openers),
         });
-
         zed::init(&app_state, cx);
-        client::init(app_state.client.clone(), cx);
-        workspace::init(cx);
-        editor::init(cx);
-        file_finder::init(cx);
-        people_panel::init(cx);
-        chat_panel::init(cx);
-        project_panel::init(cx);
         theme_selector::init(app_state.as_ref().into(), cx);
 
         cx.set_menus(menus::menus(&app_state.clone()));

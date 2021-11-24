@@ -45,6 +45,7 @@ pub struct AppState {
     pub user_store: ModelHandle<client::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub channel_list: ModelHandle<client::ChannelList>,
+    pub entry_openers: Arc<[Box<dyn workspace::EntryOpener>]>,
 }
 
 #[derive(Clone)]
@@ -185,6 +186,7 @@ impl<'a> From<&'a AppState> for WorkspaceParams {
             settings: state.settings.clone(),
             user_store: state.user_store.clone(),
             channel_list: state.channel_list.clone(),
+            entry_openers: state.entry_openers.clone(),
         }
     }
 }

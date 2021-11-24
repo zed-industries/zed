@@ -15,6 +15,7 @@ buffer = { path = "../buffer" }
 clock = { path = "../clock" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
+project = { path = "../project" }
 sum_tree = { path = "../sum_tree" }
 theme = { path = "../theme" }
 util = { path = "../util" }

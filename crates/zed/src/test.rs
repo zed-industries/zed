@@ -30,6 +30,7 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
         client,
         user_store,
         fs: Arc::new(FakeFs::new()),
+        entry_openers: Arc::from([]),
     })
 }
 

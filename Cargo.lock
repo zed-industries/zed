@@ -1532,6 +1532,7 @@ dependencies = [
  "log",
  "parking_lot",
  "postage",
+ "project",
  "rand 0.8.3",
  "serde",
  "smallvec",

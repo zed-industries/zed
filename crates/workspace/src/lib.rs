@@ -5,12 +5,12 @@ pub mod settings;
 pub mod sidebar;
 mod status_bar;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use client::{Authenticate, ChannelList, Client, UserStore};
 use gpui::{
     action, elements::*, json::to_string_pretty, keymap::Binding, platform::CursorStyle,
-    AnyViewHandle, AppContext, ClipboardItem, Entity, ModelHandle, MutableAppContext, PromptLevel,
-    RenderContext, Task, View, ViewContext, ViewHandle, WeakModelHandle,
+    AnyViewHandle, AppContext, ClipboardItem, Entity, ModelContext, ModelHandle, MutableAppContext,
+    PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle, WeakModelHandle,
 };
 use language::{Buffer, LanguageRegistry};
 use log::error;
@@ -33,7 +33,28 @@ action!(OpenNew, WorkspaceParams);
 action!(Save);
 action!(DebugElements);
 
-pub fn init(cx: &mut MutableAppContext) {
+struct BufferOpener;
+
+impl EntryOpener for BufferOpener {
+    fn open(
+        &self,
+        worktree: &mut Worktree,
+        project_path: ProjectPath,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Option<Task<Result<Box<dyn ItemHandle>>>> {
+        let buffer = worktree.open_buffer(project_path.path, cx);
+        let task = cx.spawn(|_, _| async move {
+            buffer
+                .await
+                .map(|buffer| Box::new(buffer) as Box<dyn ItemHandle>)
+        });
+        Some(task)
+    }
+}
+
+pub fn init(cx: &mut MutableAppContext, entry_openers: &mut Vec<Box<dyn EntryOpener>>) {
+    entry_openers.push(Box::new(BufferOpener));
+
     cx.add_action(Workspace::save_active_item);
     cx.add_action(Workspace::debug_elements);
     cx.add_action(Workspace::open_new_file);
@@ -60,6 +81,15 @@ pub fn init(cx: &mut MutableAppContext) {
         ),
     ]);
     pane::init(cx);
+}
+
+pub trait EntryOpener {
+    fn open(
+        &self,
+        worktree: &mut Worktree,
+        path: ProjectPath,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Option<Task<Result<Box<dyn ItemHandle>>>>;
 }
 
 pub trait Item: Entity + Sized {
@@ -268,6 +298,7 @@ pub struct WorkspaceParams {
     pub settings: watch::Receiver<Settings>,
     pub user_store: ModelHandle<UserStore>,
     pub channel_list: ModelHandle<ChannelList>,
+    pub entry_openers: Arc<[Box<dyn EntryOpener>]>,
 }
 
 impl WorkspaceParams {
@@ -299,6 +330,7 @@ impl WorkspaceParams {
             languages: Arc::new(languages),
             settings: watch::channel_with(settings).1,
             user_store,
+            entry_openers: Arc::from([]),
         }
     }
 }
@@ -316,6 +348,7 @@ pub struct Workspace {
     active_pane: ViewHandle<Pane>,
     status_bar: ViewHandle<StatusBar>,
     project: ModelHandle<Project>,
+    entry_openers: Arc<[Box<dyn EntryOpener>]>,
     items: Vec<Box<dyn WeakItemHandle>>,
     loading_items: HashMap<
         ProjectPath,
@@ -388,6 +421,7 @@ impl Workspace {
             left_sidebar: Sidebar::new(Side::Left),
             right_sidebar: Sidebar::new(Side::Right),
             project,
+            entry_openers: params.entry_openers.clone(),
             items: Default::default(),
             loading_items: Default::default(),
             _observe_current_user,
@@ -600,18 +634,21 @@ impl Workspace {
             entry.insert(rx);
 
             let project_path = project_path.clone();
+            let entry_openers = self.entry_openers.clone();
             cx.as_mut()
                 .spawn(|mut cx| async move {
-                    let buffer = worktree
-                        .update(&mut cx, |worktree, cx| {
-                            worktree.open_buffer(project_path.path.as_ref(), cx)
+                    let item = worktree.update(&mut cx, move |worktree, cx| {
+                        for opener in entry_openers.iter() {
+                            if let Some(task) = opener.open(worktree, project_path.clone(), cx) {
+                                return task;
+                            }
+                        }
+
+                        cx.spawn(|_, _| async move {
+                            Err(anyhow!("no opener for path {:?} found", project_path))
                         })
-                        .await;
-                    *tx.borrow_mut() = Some(
-                        buffer
-                            .map(|buffer| Box::new(buffer) as Box<dyn ItemHandle>)
-                            .map_err(Arc::new),
-                    );
+                    });
+                    *tx.borrow_mut() = Some(item.await.map_err(Arc::new));
                 })
                 .detach();
         }

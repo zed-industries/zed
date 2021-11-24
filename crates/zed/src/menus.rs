@@ -11,6 +11,7 @@ pub fn menus(state: &Arc<AppState>) -> Vec<Menu<'static>> {
         settings: state.settings.clone(),
         user_store: state.user_store.clone(),
         channel_list: state.channel_list.clone(),
+        entry_openers: state.entry_openers.clone(),
     };
 
     vec![
