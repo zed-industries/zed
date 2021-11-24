@@ -33,6 +33,7 @@ impl Event {
                     const ENTER_KEY: u16 = 0x0d;
                     const ESCAPE_KEY: u16 = 0x1b;
                     const TAB_KEY: u16 = 0x09;
+                    const SHIFT_TAB_KEY: u16 = 0x19;
 
                     #[allow(non_upper_case_globals)]
                     match first_char as u16 {
@@ -40,6 +41,7 @@ impl Event {
                         ENTER_KEY => "enter",
                         ESCAPE_KEY => "escape",
                         TAB_KEY => "tab",
+                        SHIFT_TAB_KEY => "tab",
 
                         NSUpArrowFunctionKey => "up",
                         NSDownArrowFunctionKey => "down",

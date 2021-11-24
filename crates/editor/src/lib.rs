@@ -44,6 +44,7 @@ action!(Delete);
 action!(Input, String);
 action!(Newline);
 action!(Tab);
+action!(Outdent);
 action!(DeleteLine);
 action!(DeleteToPreviousWordBoundary);
 action!(DeleteToNextWordBoundary);
@@ -110,6 +111,7 @@ pub fn init(cx: &mut MutableAppContext) {
             Some("Editor && mode == auto_height"),
         ),
         Binding::new("tab", Tab, Some("Editor")),
+        Binding::new("shift-tab", Outdent, Some("Editor")),
         Binding::new("ctrl-shift-K", DeleteLine, Some("Editor")),
         Binding::new(
             "alt-backspace",
@@ -207,6 +209,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(Editor::backspace);
     cx.add_action(Editor::delete);
     cx.add_action(Editor::tab);
+    cx.add_action(Editor::outdent);
     cx.add_action(Editor::delete_line);
     cx.add_action(Editor::delete_to_previous_word_boundary);
     cx.add_action(Editor::delete_to_next_word_boundary);
@@ -1113,8 +1116,8 @@ impl Editor {
         self.start_transaction(cx);
         let tab_size = self.build_settings.borrow()(cx).tab_size;
         let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut last_indent = None;
         self.buffer.update(cx, |buffer, cx| {
-            let mut last_indented_row = None;
             for selection in &mut selections {
                 if selection.is_empty() {
                     let char_column = buffer
@@ -1129,24 +1132,97 @@ impl Editor {
                     selection.start.column += chars_to_next_tab_stop as u32;
                     selection.end = selection.start;
                 } else {
-                    for row in selection.start.row..=selection.end.row {
-                        if last_indented_row != Some(row) {
-                            let char_column = buffer.indent_column_for_line(row) as usize;
-                            let chars_to_next_tab_stop = tab_size - (char_column % tab_size);
-                            let row_start = Point::new(row, 0);
-                            buffer.edit(
-                                [row_start..row_start],
-                                " ".repeat(chars_to_next_tab_stop),
-                                cx,
-                            );
-                            last_indented_row = Some(row);
+                    let mut start_row = selection.start.row;
+                    let mut end_row = selection.end.row + 1;
+
+                    // If a selection ends at the beginning of a line, don't indent
+                    // that last line.
+                    if selection.end.column == 0 {
+                        end_row -= 1;
+                    }
+
+                    // Avoid re-indenting a row that has already been indented by a
+                    // previous selection, but still update this selection's column
+                    // to reflect that indentation.
+                    if let Some((last_indent_row, last_indent_len)) = last_indent {
+                        if last_indent_row == selection.start.row {
+                            selection.start.column += last_indent_len;
+                            start_row += 1;
                         }
+                        if last_indent_row == selection.end.row {
+                            selection.end.column += last_indent_len;
+                        }
+                    }
+
+                    for row in start_row..end_row {
+                        let indent_column = buffer.indent_column_for_line(row) as usize;
+                        let columns_to_next_tab_stop = tab_size - (indent_column % tab_size);
+                        let row_start = Point::new(row, 0);
+                        buffer.edit(
+                            [row_start..row_start],
+                            " ".repeat(columns_to_next_tab_stop),
+                            cx,
+                        );
+
+                        // Update this selection's endpoints to reflect the indentation.
+                        if row == selection.start.row {
+                            selection.start.column += columns_to_next_tab_stop as u32;
+                        }
+                        if row == selection.end.row {
+                            selection.end.column += columns_to_next_tab_stop as u32;
+                        }
+
+                        last_indent = Some((row, columns_to_next_tab_stop as u32));
                     }
                 }
             }
         });
 
         self.update_selections(selections, true, cx);
+        self.end_transaction(cx);
+    }
+
+    pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
+        self.start_transaction(cx);
+        let tab_size = self.build_settings.borrow()(cx).tab_size;
+        let selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut deletion_ranges = Vec::new();
+        let mut last_outdent = None;
+        self.buffer.update(cx, |buffer, cx| {
+            for selection in &selections {
+                let mut start_row = selection.start.row;
+                let mut end_row = selection.end.row + 1;
+
+                // If a selection ends at the beginning of a line, don't indent
+                // that last line.
+                if selection.end.column == 0 {
+                    end_row -= 1;
+                }
+
+                // Avoid re-outdenting a row that has already been outdented by a
+                // previous selection.
+                if let Some(last_row) = last_outdent {
+                    if last_row == selection.start.row {
+                        start_row += 1;
+                    }
+                }
+
+                for row in start_row..end_row {
+                    let column = buffer.indent_column_for_line(row) as usize;
+                    if column > 0 {
+                        let mut deletion_len = (column % tab_size) as u32;
+                        if deletion_len == 0 {
+                            deletion_len = tab_size as u32;
+                        }
+                        deletion_ranges.push(Point::new(row, 0)..Point::new(row, deletion_len));
+                        last_outdent = Some(row);
+                    }
+                }
+            }
+            buffer.edit(deletion_ranges, "", cx);
+        });
+
+        self.update_selections(self.selections::<usize>(cx).collect(), true, cx);
         self.end_transaction(cx);
     }
 
@@ -4028,6 +4104,67 @@ mod tests {
 
             view.newline(&Newline, cx);
             assert_eq!(view.text(cx), "aa\naa\n  \n    bb\n    bb\n");
+        });
+    }
+
+    #[gpui::test]
+    fn test_indent_outdent(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "  one two\nthree\n four", cx));
+        let settings = EditorSettings::test(&cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            build_editor(buffer.clone(), settings, cx)
+        });
+
+        view.update(cx, |view, cx| {
+            // two selections on the same line
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 5),
+                    DisplayPoint::new(0, 6)..DisplayPoint::new(0, 9),
+                ],
+                cx,
+            )
+            .unwrap();
+
+            // indent from mid-tabstop to full tabstop
+            view.tab(&Tab, cx);
+            assert_eq!(view.text(cx), "    one two\nthree\n four");
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 4)..DisplayPoint::new(0, 7),
+                    DisplayPoint::new(0, 8)..DisplayPoint::new(0, 11),
+                ]
+            );
+
+            // outdent from 1 tabstop to 0 tabstops
+            view.outdent(&Outdent, cx);
+            assert_eq!(view.text(cx), "one two\nthree\n four");
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(0, 4)..DisplayPoint::new(0, 7),
+                ]
+            );
+
+            // select across line ending
+            view.select_display_ranges(&[DisplayPoint::new(1, 1)..DisplayPoint::new(2, 0)], cx)
+                .unwrap();
+
+            // indent and outdent affect only the preceding line
+            view.tab(&Tab, cx);
+            assert_eq!(view.text(cx), "one two\n    three\n four");
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(1, 5)..DisplayPoint::new(2, 0)]
+            );
+            view.outdent(&Outdent, cx);
+            assert_eq!(view.text(cx), "one two\nthree\n four");
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(1, 1)..DisplayPoint::new(2, 0)]
+            );
         });
     }
 
