@@ -284,6 +284,7 @@ pub enum SelectPhase {
     },
     BeginColumnar {
         position: DisplayPoint,
+        overshoot: u32,
     },
     Extend {
         position: DisplayPoint,
@@ -291,6 +292,7 @@ pub enum SelectPhase {
     },
     Update {
         position: DisplayPoint,
+        overshoot: u32,
         scroll_position: Vector2F,
     },
     End,
@@ -661,15 +663,19 @@ impl Editor {
                 add,
                 click_count,
             } => self.begin_selection(*position, *add, *click_count, cx),
-            SelectPhase::BeginColumnar { position } => self.begin_columnar_selection(*position, cx),
+            SelectPhase::BeginColumnar {
+                position,
+                overshoot,
+            } => self.begin_columnar_selection(*position, *overshoot, cx),
             SelectPhase::Extend {
                 position,
                 click_count,
             } => self.extend_selection(*position, *click_count, cx),
             SelectPhase::Update {
                 position,
+                overshoot,
                 scroll_position,
-            } => self.update_selection(*position, *scroll_position, cx),
+            } => self.update_selection(*position, *overshoot, *scroll_position, cx),
             SelectPhase::End => self.end_selection(cx),
         }
     }
@@ -780,7 +786,12 @@ impl Editor {
         cx.notify();
     }
 
-    fn begin_columnar_selection(&mut self, position: DisplayPoint, cx: &mut ViewContext<Self>) {
+    fn begin_columnar_selection(
+        &mut self,
+        position: DisplayPoint,
+        overshoot: u32,
+        cx: &mut ViewContext<Self>,
+    ) {
         if !self.focused {
             cx.focus_self();
             cx.emit(Event::Activate);
@@ -795,6 +806,7 @@ impl Editor {
         self.select_columns(
             tail.to_display_point(&display_map),
             position,
+            overshoot,
             &display_map,
             cx,
         );
@@ -803,16 +815,15 @@ impl Editor {
     fn update_selection(
         &mut self,
         position: DisplayPoint,
+        overshoot: u32,
         scroll_position: Vector2F,
         cx: &mut ViewContext<Self>,
     ) {
-        log::info!("update selection");
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         if let Some(tail) = self.columnar_selection_tail.as_ref() {
             let tail = tail.to_display_point(&display_map);
-            log::info!("columnar tail {:?}", tail);
-            self.select_columns(tail, position, &display_map, cx);
+            self.select_columns(tail, position, overshoot, &display_map, cx);
         } else if let Some(PendingSelection { selection, mode }) = self.pending_selection.as_mut() {
             let buffer = self.buffer.read(cx);
             let head;
@@ -904,13 +915,14 @@ impl Editor {
         &mut self,
         tail: DisplayPoint,
         head: DisplayPoint,
+        overshoot: u32,
         display_map: &DisplayMapSnapshot,
         cx: &mut ViewContext<Self>,
     ) {
         let start_row = cmp::min(tail.row(), head.row());
         let end_row = cmp::max(tail.row(), head.row());
-        let start_column = cmp::min(tail.column(), head.column());
-        let end_column = cmp::max(tail.column(), head.column());
+        let start_column = cmp::min(tail.column(), head.column() + overshoot);
+        let end_column = cmp::max(tail.column(), head.column() + overshoot);
 
         let selections = (start_row..=end_row)
             .filter_map(|row| {
@@ -3554,7 +3566,7 @@ mod tests {
         );
 
         editor.update(cx, |view, cx| {
-            view.update_selection(DisplayPoint::new(3, 3), Vector2F::zero(), cx);
+            view.update_selection(DisplayPoint::new(3, 3), 0, Vector2F::zero(), cx);
         });
 
         assert_eq!(
@@ -3563,7 +3575,7 @@ mod tests {
         );
 
         editor.update(cx, |view, cx| {
-            view.update_selection(DisplayPoint::new(1, 1), Vector2F::zero(), cx);
+            view.update_selection(DisplayPoint::new(1, 1), 0, Vector2F::zero(), cx);
         });
 
         assert_eq!(
@@ -3573,7 +3585,7 @@ mod tests {
 
         editor.update(cx, |view, cx| {
             view.end_selection(cx);
-            view.update_selection(DisplayPoint::new(3, 3), Vector2F::zero(), cx);
+            view.update_selection(DisplayPoint::new(3, 3), 0, Vector2F::zero(), cx);
         });
 
         assert_eq!(
@@ -3583,7 +3595,7 @@ mod tests {
 
         editor.update(cx, |view, cx| {
             view.begin_selection(DisplayPoint::new(3, 3), true, 1, cx);
-            view.update_selection(DisplayPoint::new(0, 0), Vector2F::zero(), cx);
+            view.update_selection(DisplayPoint::new(0, 0), 0, Vector2F::zero(), cx);
         });
 
         assert_eq!(
@@ -3619,7 +3631,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.update_selection(DisplayPoint::new(3, 3), Vector2F::zero(), cx);
+            view.update_selection(DisplayPoint::new(3, 3), 0, Vector2F::zero(), cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
@@ -3628,7 +3640,7 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.cancel(&Cancel, cx);
-            view.update_selection(DisplayPoint::new(1, 1), Vector2F::zero(), cx);
+            view.update_selection(DisplayPoint::new(1, 1), 0, Vector2F::zero(), cx);
             assert_eq!(
                 view.selection_ranges(cx),
                 [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
@@ -3644,11 +3656,11 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.begin_selection(DisplayPoint::new(3, 4), false, 1, cx);
-            view.update_selection(DisplayPoint::new(1, 1), Vector2F::zero(), cx);
+            view.update_selection(DisplayPoint::new(1, 1), 0, Vector2F::zero(), cx);
             view.end_selection(cx);
 
             view.begin_selection(DisplayPoint::new(0, 1), true, 1, cx);
-            view.update_selection(DisplayPoint::new(0, 3), Vector2F::zero(), cx);
+            view.update_selection(DisplayPoint::new(0, 3), 0, Vector2F::zero(), cx);
             view.end_selection(cx);
             assert_eq!(
                 view.selection_ranges(cx),
