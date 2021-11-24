@@ -16,21 +16,32 @@ fn init_logger() {
 }
 
 pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
+    let mut entry_openers = Vec::new();
+    editor::init(cx, &mut entry_openers);
     let (settings_tx, settings) = watch::channel_with(build_settings(cx));
     let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
     let client = Client::new();
     let http = FakeHttpClient::new(|_| async move { Ok(ServerResponse::new(404)) });
     let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
+    let mut languages = LanguageRegistry::new();
+    languages.add(Arc::new(language::Language::new(
+        language::LanguageConfig {
+            name: "Rust".to_string(),
+            path_suffixes: vec!["rs".to_string()],
+            ..Default::default()
+        },
+        tree_sitter_rust::language(),
+    )));
     Arc::new(AppState {
         settings_tx: Arc::new(Mutex::new(settings_tx)),
         settings,
         themes,
-        languages: Arc::new(LanguageRegistry::new()),
+        languages: Arc::new(languages),
         channel_list: cx.add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx)),
         client,
         user_store,
         fs: Arc::new(FakeFs::new()),
-        entry_openers: Arc::from([]),
+        entry_openers: Arc::from(entry_openers),
     })
 }
 

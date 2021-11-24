@@ -948,7 +948,8 @@ mod tests {
         lsp,
         people_panel::JoinWorktree,
         project::{ProjectPath, Worktree},
-        workspace::{Workspace, WorkspaceParams},
+        test::test_app_state,
+        workspace::Workspace,
     };
 
     #[gpui::test]
@@ -1059,15 +1060,17 @@ mod tests {
     #[gpui::test]
     async fn test_unshare_worktree(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_b.update(zed::people_panel::init);
-        let lang_registry = Arc::new(LanguageRegistry::new());
+        let mut app_state_a = cx_a.update(test_app_state);
+        let mut app_state_b = cx_b.update(test_app_state);
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
-        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_a, user_store_a) = server.create_client(&mut cx_a, "user_a").await;
         let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
-        let mut workspace_b_params = cx_b.update(WorkspaceParams::test);
-        workspace_b_params.client = client_b;
-        workspace_b_params.user_store = user_store_b;
+        Arc::get_mut(&mut app_state_a).unwrap().client = client_a;
+        Arc::get_mut(&mut app_state_a).unwrap().user_store = user_store_a;
+        Arc::get_mut(&mut app_state_b).unwrap().client = client_b;
+        Arc::get_mut(&mut app_state_b).unwrap().user_store = user_store_b;
 
         cx_a.foreground().forbid_parking();
 
@@ -1083,10 +1086,10 @@ mod tests {
         )
         .await;
         let worktree_a = Worktree::open_local(
-            client_a.clone(),
+            app_state_a.client.clone(),
             "/a".as_ref(),
             fs,
-            lang_registry.clone(),
+            app_state_a.languages.clone(),
             &mut cx_a.to_async(),
         )
         .await
@@ -1100,7 +1103,8 @@ mod tests {
             .await
             .unwrap();
 
-        let (window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&workspace_b_params, cx));
+        let (window_b, workspace_b) =
+            cx_b.add_window(|cx| Workspace::new(&app_state_b.as_ref().into(), cx));
         cx_b.update(|cx| {
             cx.dispatch_action(
                 window_b,
