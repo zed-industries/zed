@@ -119,7 +119,7 @@ impl Entity for GoToLine {
     type Event = Event;
 
     fn release(&mut self, cx: &mut MutableAppContext) {
-        self.active_editor.update(cx, |editor, cx| {
+        self.active_editor.update(cx, |editor, _| {
             editor.set_highlighted_row(None);
         })
     }
@@ -130,7 +130,7 @@ impl View for GoToLine {
         "GoToLine"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
         Align::new(
             ConstrainedBox::new(
                 Container::new(ChildView::new(self.line_editor.id()).boxed()).boxed(),
