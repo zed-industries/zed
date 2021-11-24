@@ -55,19 +55,36 @@ impl EditorElement {
     fn mouse_down(
         &self,
         position: Vector2F,
-        cmd: bool,
+        alt: bool,
+        shift: bool,
+        mut click_count: usize,
         layout: &mut LayoutState,
         paint: &mut PaintState,
         cx: &mut EventContext,
     ) -> bool {
-        if paint.text_bounds.contains_point(position) {
-            let snapshot = self.snapshot(cx.app);
-            let position = paint.point_for_position(&snapshot, layout, position);
-            cx.dispatch_action(Select(SelectPhase::Begin { position, add: cmd }));
-            true
-        } else {
-            false
+        if paint.gutter_bounds.contains_point(position) {
+            click_count = 3; // Simulate triple-click when clicking the gutter to select lines
+        } else if !paint.text_bounds.contains_point(position) {
+            return false;
         }
+
+        let snapshot = self.snapshot(cx.app);
+        let position = paint.point_for_position(&snapshot, layout, position);
+
+        if shift {
+            cx.dispatch_action(Select(SelectPhase::Extend {
+                position,
+                click_count,
+            }));
+        } else {
+            cx.dispatch_action(Select(SelectPhase::Begin {
+                position,
+                add: alt,
+                click_count,
+            }));
+        }
+
+        true
     }
 
     fn mouse_up(&self, _position: Vector2F, cx: &mut EventContext) -> bool {
@@ -824,6 +841,7 @@ impl Element for EditorElement {
 
             Some(PaintState {
                 bounds,
+                gutter_bounds,
                 text_bounds,
             })
         } else {
@@ -841,9 +859,13 @@ impl Element for EditorElement {
     ) -> bool {
         if let (Some(layout), Some(paint)) = (layout, paint) {
             match event {
-                Event::LeftMouseDown { position, cmd } => {
-                    self.mouse_down(*position, *cmd, layout, paint, cx)
-                }
+                Event::LeftMouseDown {
+                    position,
+                    alt,
+                    shift,
+                    click_count,
+                    ..
+                } => self.mouse_down(*position, *alt, *shift, *click_count, layout, paint, cx),
                 Event::LeftMouseUp { position } => self.mouse_up(*position, cx),
                 Event::LeftMouseDragged { position } => {
                     self.mouse_dragged(*position, layout, paint, cx)
@@ -948,6 +970,7 @@ impl LayoutState {
 
 pub struct PaintState {
     bounds: RectF,
+    gutter_bounds: RectF,
     text_bounds: RectF,
 }
 

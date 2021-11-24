@@ -88,14 +88,17 @@ impl Event {
                 })
             }
             NSEventType::NSLeftMouseDown => {
+                let modifiers = native_event.modifierFlags();
                 window_height.map(|window_height| Self::LeftMouseDown {
                     position: vec2f(
                         native_event.locationInWindow().x as f32,
                         window_height - native_event.locationInWindow().y as f32,
                     ),
-                    cmd: native_event
-                        .modifierFlags()
-                        .contains(NSEventModifierFlags::NSCommandKeyMask),
+                    ctrl: modifiers.contains(NSEventModifierFlags::NSControlKeyMask),
+                    alt: modifiers.contains(NSEventModifierFlags::NSAlternateKeyMask),
+                    shift: modifiers.contains(NSEventModifierFlags::NSShiftKeyMask),
+                    cmd: modifiers.contains(NSEventModifierFlags::NSCommandKeyMask),
+                    click_count: native_event.clickCount() as usize,
                 })
             }
             NSEventType::NSLeftMouseUp => window_height.map(|window_height| Self::LeftMouseUp {

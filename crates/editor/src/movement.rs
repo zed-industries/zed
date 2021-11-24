@@ -1,5 +1,7 @@
-use super::{Bias, DisplayMapSnapshot, DisplayPoint, SelectionGoal};
+use super::{Bias, DisplayMapSnapshot, DisplayPoint, SelectionGoal, ToDisplayPoint};
 use anyhow::Result;
+use buffer::ToPoint;
+use std::{cmp, ops::Range};
 
 pub fn left(map: &DisplayMapSnapshot, mut point: DisplayPoint) -> Result<DisplayPoint> {
     if point.column() > 0 {
@@ -99,24 +101,21 @@ pub fn line_beginning(
     map: &DisplayMapSnapshot,
     point: DisplayPoint,
     toggle_indent: bool,
-) -> Result<DisplayPoint> {
+) -> DisplayPoint {
     let (indent, is_blank) = map.line_indent(point.row());
     if toggle_indent && !is_blank && point.column() != indent {
-        Ok(DisplayPoint::new(point.row(), indent))
+        DisplayPoint::new(point.row(), indent)
     } else {
-        Ok(DisplayPoint::new(point.row(), 0))
+        DisplayPoint::new(point.row(), 0)
     }
 }
 
-pub fn line_end(map: &DisplayMapSnapshot, point: DisplayPoint) -> Result<DisplayPoint> {
+pub fn line_end(map: &DisplayMapSnapshot, point: DisplayPoint) -> DisplayPoint {
     let line_end = DisplayPoint::new(point.row(), map.line_len(point.row()));
-    Ok(map.clip_point(line_end, Bias::Left))
+    map.clip_point(line_end, Bias::Left)
 }
 
-pub fn prev_word_boundary(
-    map: &DisplayMapSnapshot,
-    mut point: DisplayPoint,
-) -> Result<DisplayPoint> {
+pub fn prev_word_boundary(map: &DisplayMapSnapshot, mut point: DisplayPoint) -> DisplayPoint {
     let mut line_start = 0;
     if point.row() > 0 {
         if let Some(indent) = map.soft_wrap_indent(point.row() - 1) {
@@ -126,7 +125,7 @@ pub fn prev_word_boundary(
 
     if point.column() == line_start {
         if point.row() == 0 {
-            return Ok(DisplayPoint::new(0, 0));
+            return DisplayPoint::new(0, 0);
         } else {
             let row = point.row() - 1;
             point = map.clip_point(DisplayPoint::new(row, map.line_len(row)), Bias::Left);
@@ -152,13 +151,10 @@ pub fn prev_word_boundary(
         prev_char_kind = char_kind;
         column += c.len_utf8() as u32;
     }
-    Ok(boundary)
+    boundary
 }
 
-pub fn next_word_boundary(
-    map: &DisplayMapSnapshot,
-    mut point: DisplayPoint,
-) -> Result<DisplayPoint> {
+pub fn next_word_boundary(map: &DisplayMapSnapshot, mut point: DisplayPoint) -> DisplayPoint {
     let mut prev_char_kind = None;
     for c in map.chars_at(point) {
         let char_kind = char_kind(c);
@@ -182,14 +178,54 @@ pub fn next_word_boundary(
         }
         prev_char_kind = Some(char_kind);
     }
-    Ok(point)
+    point
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+pub fn is_inside_word(map: &DisplayMapSnapshot, point: DisplayPoint) -> bool {
+    let ix = map.clip_point(point, Bias::Left).to_offset(map, Bias::Left);
+    let text = map.buffer_snapshot.text();
+    let next_char_kind = text.chars_at(ix).next().map(char_kind);
+    let prev_char_kind = text.reversed_chars_at(ix).next().map(char_kind);
+    prev_char_kind.zip(next_char_kind) == Some((CharKind::Word, CharKind::Word))
+}
+
+pub fn surrounding_word(map: &DisplayMapSnapshot, point: DisplayPoint) -> Range<DisplayPoint> {
+    let mut start = map.clip_point(point, Bias::Left).to_offset(map, Bias::Left);
+    let mut end = start;
+
+    let text = map.buffer_snapshot.text();
+    let mut next_chars = text.chars_at(start).peekable();
+    let mut prev_chars = text.reversed_chars_at(start).peekable();
+    let word_kind = cmp::max(
+        prev_chars.peek().copied().map(char_kind),
+        next_chars.peek().copied().map(char_kind),
+    );
+
+    for ch in prev_chars {
+        if Some(char_kind(ch)) == word_kind {
+            start -= ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    for ch in next_chars {
+        if Some(char_kind(ch)) == word_kind {
+            end += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    start.to_point(&map.buffer_snapshot).to_display_point(map)
+        ..end.to_point(&map.buffer_snapshot).to_display_point(map)
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
 enum CharKind {
     Newline,
-    Whitespace,
     Punctuation,
+    Whitespace,
     Word,
 }
 
@@ -225,45 +261,117 @@ mod tests {
             cx.add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, cx));
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 12)).unwrap(),
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 12)),
             DisplayPoint::new(0, 7)
         );
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 7)).unwrap(),
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 7)),
             DisplayPoint::new(0, 2)
         );
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 6)).unwrap(),
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 6)),
             DisplayPoint::new(0, 2)
         );
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 2)).unwrap(),
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 2)),
             DisplayPoint::new(0, 0)
         );
         assert_eq!(
-            prev_word_boundary(&snapshot, DisplayPoint::new(0, 1)).unwrap(),
+            prev_word_boundary(&snapshot, DisplayPoint::new(0, 1)),
             DisplayPoint::new(0, 0)
         );
 
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 0)).unwrap(),
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 0)),
             DisplayPoint::new(0, 1)
         );
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 1)).unwrap(),
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 1)),
             DisplayPoint::new(0, 6)
         );
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 2)).unwrap(),
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 2)),
             DisplayPoint::new(0, 6)
         );
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 6)).unwrap(),
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 6)),
             DisplayPoint::new(0, 12)
         );
         assert_eq!(
-            next_word_boundary(&snapshot, DisplayPoint::new(0, 7)).unwrap(),
+            next_word_boundary(&snapshot, DisplayPoint::new(0, 7)),
             DisplayPoint::new(0, 12)
+        );
+    }
+
+    #[gpui::test]
+    fn test_surrounding_word(cx: &mut gpui::MutableAppContext) {
+        let tab_size = 4;
+        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let font_id = cx
+            .font_cache()
+            .select_font(family_id, &Default::default())
+            .unwrap();
+        let font_size = 14.0;
+        let buffer = cx.add_model(|cx| Buffer::new(0, "lorem ipsum   dolor\n    sit", cx));
+        let display_map =
+            cx.add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, cx));
+        let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
+
+        assert_eq!(
+            surrounding_word(&snapshot, DisplayPoint::new(0, 0)),
+            DisplayPoint::new(0, 0)..DisplayPoint::new(0, 5)
+        );
+        assert_eq!(
+            surrounding_word(&snapshot, DisplayPoint::new(0, 2)),
+            DisplayPoint::new(0, 0)..DisplayPoint::new(0, 5)
+        );
+        assert_eq!(
+            surrounding_word(&snapshot, DisplayPoint::new(0, 5)),
+            DisplayPoint::new(0, 0)..DisplayPoint::new(0, 5)
+        );
+        assert_eq!(
+            surrounding_word(&snapshot, DisplayPoint::new(0, 6)),
+            DisplayPoint::new(0, 6)..DisplayPoint::new(0, 11)
+        );
+        assert_eq!(
+            surrounding_word(&snapshot, DisplayPoint::new(0, 7)),
+            DisplayPoint::new(0, 6)..DisplayPoint::new(0, 11)
+        );
+        assert_eq!(
+            surrounding_word(&snapshot, DisplayPoint::new(0, 11)),
+            DisplayPoint::new(0, 6)..DisplayPoint::new(0, 11)
+        );
+        assert_eq!(
+            surrounding_word(&snapshot, DisplayPoint::new(0, 13)),
+            DisplayPoint::new(0, 11)..DisplayPoint::new(0, 14)
+        );
+        assert_eq!(
+            surrounding_word(&snapshot, DisplayPoint::new(0, 14)),
+            DisplayPoint::new(0, 14)..DisplayPoint::new(0, 19)
+        );
+        assert_eq!(
+            surrounding_word(&snapshot, DisplayPoint::new(0, 17)),
+            DisplayPoint::new(0, 14)..DisplayPoint::new(0, 19)
+        );
+        assert_eq!(
+            surrounding_word(&snapshot, DisplayPoint::new(0, 19)),
+            DisplayPoint::new(0, 14)..DisplayPoint::new(0, 19)
+        );
+        assert_eq!(
+            surrounding_word(&snapshot, DisplayPoint::new(1, 0)),
+            DisplayPoint::new(1, 0)..DisplayPoint::new(1, 4)
+        );
+        assert_eq!(
+            surrounding_word(&snapshot, DisplayPoint::new(1, 1)),
+            DisplayPoint::new(1, 0)..DisplayPoint::new(1, 4)
+        );
+        assert_eq!(
+            surrounding_word(&snapshot, DisplayPoint::new(1, 6)),
+            DisplayPoint::new(1, 4)..DisplayPoint::new(1, 7)
+        );
+        assert_eq!(
+            surrounding_word(&snapshot, DisplayPoint::new(1, 7)),
+            DisplayPoint::new(1, 4)..DisplayPoint::new(1, 7)
         );
     }
 }

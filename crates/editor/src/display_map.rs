@@ -169,7 +169,7 @@ impl DisplayMap {
 }
 
 pub struct DisplayMapSnapshot {
-    buffer_snapshot: language::Snapshot,
+    pub buffer_snapshot: language::Snapshot,
     folds_snapshot: fold_map::Snapshot,
     tabs_snapshot: tab_map::Snapshot,
     wraps_snapshot: wrap_map::Snapshot,
