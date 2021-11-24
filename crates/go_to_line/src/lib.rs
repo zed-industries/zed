@@ -25,6 +25,8 @@ pub struct GoToLine {
     line_editor: ViewHandle<Editor>,
     active_editor: ViewHandle<Editor>,
     restore_state: Option<RestoreState>,
+    cursor_point: Point,
+    max_point: Point,
 }
 
 struct RestoreState {
@@ -60,11 +62,17 @@ impl GoToLine {
         cx.subscribe(&line_editor, Self::on_line_editor_event)
             .detach();
 
-        let restore_state = active_editor.update(cx, |editor, cx| {
-            Some(RestoreState {
+        let (restore_state, cursor_point, max_point) = active_editor.update(cx, |editor, cx| {
+            let restore_state = Some(RestoreState {
                 scroll_position: editor.scroll_position(cx),
                 selections: editor.selections::<usize>(cx).collect(),
-            })
+            });
+
+            (
+                restore_state,
+                editor.newest_selection(cx).head(),
+                editor.buffer().read(cx).max_point(),
+            )
         });
 
         Self {
@@ -72,6 +80,8 @@ impl GoToLine {
             line_editor,
             active_editor,
             restore_state,
+            cursor_point,
+            max_point,
         }
     }
 
@@ -115,7 +125,7 @@ impl GoToLine {
             editor::Event::Blurred => cx.emit(Event::Dismissed),
             editor::Event::Edited => {
                 let line_editor = self.line_editor.read(cx).buffer().read(cx).text();
-                let mut components = line_editor.trim().split(':');
+                let mut components = line_editor.trim().split(&[',', ':'][..]);
                 let row = components.next().and_then(|row| row.parse::<u32>().ok());
                 let column = components.next().and_then(|row| row.parse::<u32>().ok());
                 if let Some(point) = row.map(|row| {
@@ -161,15 +171,31 @@ impl View for GoToLine {
     fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme.selector;
 
+        let label = format!(
+            "{},{} of {} lines",
+            self.cursor_point.row + 1,
+            self.cursor_point.column + 1,
+            self.max_point.row + 1
+        );
+
         Align::new(
             ConstrainedBox::new(
-                Flex::new(Axis::Vertical)
-                    .with_child(
-                        Container::new(ChildView::new(self.line_editor.id()).boxed())
-                            .with_style(theme.container)
-                            .boxed(),
-                    )
-                    .boxed(),
+                Container::new(
+                    Flex::new(Axis::Vertical)
+                        .with_child(
+                            Container::new(ChildView::new(self.line_editor.id()).boxed())
+                                .with_style(theme.input_editor.container)
+                                .boxed(),
+                        )
+                        .with_child(
+                            Container::new(Label::new(label, theme.empty.label.clone()).boxed())
+                                .with_style(theme.empty.container)
+                                .boxed(),
+                        )
+                        .boxed(),
+                )
+                .with_style(theme.container)
+                .boxed(),
             )
             .with_max_width(500.0)
             .boxed(),
