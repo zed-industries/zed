@@ -1,5 +1,5 @@
 use buffer::{Bias, Point};
-use editor::{Editor, EditorSettings};
+use editor::{Autoscroll, Editor, EditorSettings};
 use gpui::{
     action, elements::*, keymap::Binding, Entity, MutableAppContext, RenderContext, View,
     ViewContext, ViewHandle,
@@ -97,11 +97,9 @@ impl GoToLine {
                 let column = components.next().and_then(|row| row.parse::<u32>().ok());
                 if let Some(point) = row.map(|row| Point::new(row, column.unwrap_or(0))) {
                     self.active_editor.update(cx, |active_editor, cx| {
-                        let point = active_editor
-                            .buffer()
-                            .read(cx)
-                            .clip_point(point, Bias::Left);
-                        active_editor.select_ranges([point..point], true, cx);
+                        let buffer = active_editor.buffer().read(cx);
+                        let point = buffer.clip_point(point, Bias::Left);
+                        active_editor.select_ranges([point..point], Some(Autoscroll::Center), cx);
                     });
                     cx.notify();
                 }
