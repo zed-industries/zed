@@ -1,8 +1,8 @@
 use buffer::{Bias, Point, Selection};
 use editor::{Autoscroll, Editor, EditorSettings};
 use gpui::{
-    action, elements::*, geometry::vector::Vector2F, keymap::Binding, Entity, MutableAppContext,
-    RenderContext, View, ViewContext, ViewHandle,
+    action, elements::*, geometry::vector::Vector2F, keymap::Binding, Axis, Entity,
+    MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
 };
 use postage::watch;
 use workspace::{Settings, Workspace};
@@ -50,7 +50,7 @@ impl GoToLine {
                         let settings = settings.borrow();
                         EditorSettings {
                             tab_size: settings.tab_size,
-                            style: settings.theme.editor.clone(),
+                            style: settings.theme.selector.input_editor.as_editor(),
                         }
                     }
                 },
@@ -159,12 +159,19 @@ impl View for GoToLine {
     }
 
     fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+        let theme = &self.settings.borrow().theme.selector;
+
         Align::new(
             ConstrainedBox::new(
-                Container::new(ChildView::new(self.line_editor.id()).boxed()).boxed(),
+                Flex::new(Axis::Vertical)
+                    .with_child(
+                        Container::new(ChildView::new(self.line_editor.id()).boxed())
+                            .with_style(theme.container)
+                            .boxed(),
+                    )
+                    .boxed(),
             )
             .with_max_width(500.0)
-            .with_max_height(420.0)
             .boxed(),
         )
         .top()
