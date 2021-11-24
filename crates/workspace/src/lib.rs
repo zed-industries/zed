@@ -610,8 +610,6 @@ impl Workspace {
             return None;
         }
 
-        // let (worktree_id, path) = project_path.clone();
-
         let worktree = match self
             .project
             .read(cx)
