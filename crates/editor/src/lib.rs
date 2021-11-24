@@ -923,6 +923,7 @@ impl Editor {
         let end_row = cmp::max(tail.row(), head.row());
         let start_column = cmp::min(tail.column(), head.column() + overshoot);
         let end_column = cmp::max(tail.column(), head.column() + overshoot);
+        let reversed = start_column < tail.column();
 
         let selections = (start_row..=end_row)
             .filter_map(|row| {
@@ -937,7 +938,7 @@ impl Editor {
                         id: post_inc(&mut self.next_selection_id),
                         start,
                         end,
-                        reversed: false,
+                        reversed,
                         goal: SelectionGoal::None,
                     })
                 } else {
