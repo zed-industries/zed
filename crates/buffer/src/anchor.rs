@@ -210,6 +210,31 @@ impl<T> AnchorRangeMap<T> {
             .zip(self.entries.iter().map(|e| &e.1))
     }
 
+    pub fn intersecting_ranges<'a, D, T>(
+        &'a self,
+        range: Range<(T, Bias)>,
+        content: impl Into<Content<'a>> + 'a,
+    ) -> impl Iterator<Item = (Range<D>, &'a T)> + 'a
+    where
+        D: 'a + TextDimension<'a>,
+        T: ToOffset,
+    {
+        let content = content.into();
+        let range = content.anchor_at(range.start.0, range.start.1)
+            ..content.anchor_at(range.end.0, range.end.1);
+
+        let mut probe_anchor = Anchor {
+            full_offset: Default::default(),
+            bias: self.start_bias,
+            version: self.version.clone(),
+        };
+        let start_ix = self.entries.binary_search_by(|probe| {
+            probe_anchor.full_offset = probe.0.start;
+            probe_anchor.cmp(&range.start, &content).unwrap()
+        });
+        std::iter::empty()
+    }
+
     pub fn full_offset_ranges(&self) -> impl Iterator<Item = &(Range<FullOffset>, T)> {
         self.entries.iter()
     }
