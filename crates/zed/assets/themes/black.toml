@@ -37,6 +37,7 @@ bad = "#b7372e"
 
 [state]
 active_line = "#00000033"
+highlighted_line = "#faca5033"
 hover = "#00000033"
 
 [editor.syntax]
