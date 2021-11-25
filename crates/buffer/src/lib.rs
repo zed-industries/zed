@@ -606,9 +606,8 @@ impl Buffer {
         self.text_for_range(range).flat_map(str::chars)
     }
 
-    pub fn bytes_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = u8> + '_ {
-        let offset = position.to_offset(self);
-        self.visible_text.bytes_at(offset)
+    pub fn bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> rope::Bytes {
+        self.content().bytes_in_range(range)
     }
 
     pub fn contains_str_at<T>(&self, position: T, needle: &str) -> bool
@@ -618,7 +617,9 @@ impl Buffer {
         let position = position.to_offset(self);
         position == self.clip_offset(position, Bias::Left)
             && self
-                .bytes_at(position)
+                .bytes_in_range(position..self.len())
+                .flatten()
+                .copied()
                 .take(needle.len())
                 .eq(needle.bytes())
     }
@@ -1581,6 +1582,10 @@ impl Snapshot {
         self.visible_text.max_point()
     }
 
+    pub fn bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> rope::Bytes {
+        self.content().bytes_in_range(range)
+    }
+
     pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> Chunks {
         self.content().text_for_range(range)
     }
@@ -1716,6 +1721,12 @@ impl<'a> Content<'a> {
         self.visible_text.reversed_chars_at(offset)
     }
 
+    pub fn bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> rope::Bytes<'a> {
+        let start = range.start.to_offset(self);
+        let end = range.end.to_offset(self);
+        self.visible_text.bytes_in_range(start..end)
+    }
+
     pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> Chunks<'a> {
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);
@@ -1775,66 +1786,67 @@ impl<'a> Content<'a> {
         self.visible_text.cursor(range.start).summary(range.end)
     }
 
-    fn summaries_for_anchors<D, T>(&self, map: &'a AnchorMap<T>) -> impl Iterator<Item = (D, &'a T)>
+    fn summaries_for_anchors<D, I>(
+        &self,
+        version: clock::Global,
+        bias: Bias,
+        ranges: I,
+    ) -> impl 'a + Iterator<Item = D>
     where
-        D: TextDimension<'a>,
+        D: 'a + TextDimension<'a>,
+        I: 'a + IntoIterator<Item = &'a FullOffset>,
     {
-        let cx = Some(map.version.clone());
+        let cx = Some(version.clone());
         let mut summary = D::default();
         let mut rope_cursor = self.visible_text.cursor(0);
         let mut cursor = self.fragments.cursor::<(VersionedFullOffset, usize)>();
-        map.entries.iter().map(move |(offset, value)| {
-            cursor.seek_forward(&VersionedFullOffset::Offset(*offset), map.bias, &cx);
+        ranges.into_iter().map(move |offset| {
+            cursor.seek_forward(&VersionedFullOffset::Offset(*offset), bias, &cx);
             let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
                 *offset - cursor.start().0.full_offset()
             } else {
                 0
             };
             summary.add_assign(&rope_cursor.summary(cursor.start().1 + overshoot));
-            (summary.clone(), value)
+            summary.clone()
         })
     }
 
-    fn summaries_for_anchor_ranges<D, T>(
+    fn summaries_for_anchor_ranges<D, I>(
         &self,
-        map: &'a AnchorRangeMap<T>,
-    ) -> impl Iterator<Item = (Range<D>, &'a T)>
+        version: clock::Global,
+        start_bias: Bias,
+        end_bias: Bias,
+        ranges: I,
+    ) -> impl 'a + Iterator<Item = Range<D>>
     where
-        D: TextDimension<'a>,
+        D: 'a + TextDimension<'a>,
+        I: 'a + IntoIterator<Item = &'a Range<FullOffset>>,
     {
-        let cx = Some(map.version.clone());
+        let cx = Some(version);
         let mut summary = D::default();
         let mut rope_cursor = self.visible_text.cursor(0);
         let mut cursor = self.fragments.cursor::<(VersionedFullOffset, usize)>();
-        map.entries.iter().map(move |(range, value)| {
-            let Range {
-                start: (start_offset, start_bias),
-                end: (end_offset, end_bias),
-            } = range;
-
-            cursor.seek_forward(
-                &VersionedFullOffset::Offset(*start_offset),
-                *start_bias,
-                &cx,
-            );
+        ranges.into_iter().map(move |range| {
+            cursor.seek_forward(&VersionedFullOffset::Offset(range.start), start_bias, &cx);
             let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
-                *start_offset - cursor.start().0.full_offset()
+                range.start - cursor.start().0.full_offset()
             } else {
                 0
             };
             summary.add_assign(&rope_cursor.summary::<D>(cursor.start().1 + overshoot));
             let start_summary = summary.clone();
 
-            cursor.seek_forward(&VersionedFullOffset::Offset(*end_offset), *end_bias, &cx);
+            cursor.seek_forward(&VersionedFullOffset::Offset(range.end), end_bias, &cx);
             let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
-                *end_offset - cursor.start().0.full_offset()
+                range.end - cursor.start().0.full_offset()
             } else {
                 0
             };
             summary.add_assign(&rope_cursor.summary::<D>(cursor.start().1 + overshoot));
             let end_summary = summary.clone();
 
-            (start_summary..end_summary, value)
+            start_summary..end_summary
         })
     }
 
@@ -1890,14 +1902,16 @@ impl<'a> Content<'a> {
                 let full_start_offset = FullOffset(cursor.start().deleted + start_offset);
                 cursor.seek_forward(&end_offset, end_bias, &None);
                 let full_end_offset = FullOffset(cursor.start().deleted + end_offset);
-                (
-                    (full_start_offset, start_bias)..(full_end_offset, end_bias),
-                    value,
-                )
+                (full_start_offset..full_end_offset, value)
             })
             .collect();
 
-        AnchorRangeMap { version, entries }
+        AnchorRangeMap {
+            version,
+            start_bias,
+            end_bias,
+            entries,
+        }
     }
 
     pub fn anchor_set<E>(&self, bias: Bias, entries: E) -> AnchorSet

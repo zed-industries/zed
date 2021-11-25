@@ -1,3 +1,5 @@
+use sum_tree::Bias;
+
 use crate::rope::TextDimension;
 
 use super::{AnchorRangeMap, Buffer, Content, Point, ToOffset, ToPoint};
@@ -108,6 +110,27 @@ impl SelectionSet {
     {
         self.selections
             .ranges(content)
+            .map(|(range, state)| Selection {
+                id: state.id,
+                start: range.start,
+                end: range.end,
+                reversed: state.reversed,
+                goal: state.goal,
+            })
+    }
+
+    pub fn intersecting_selections<'a, D, I, C>(
+        &'a self,
+        range: Range<(I, Bias)>,
+        content: C,
+    ) -> impl 'a + Iterator<Item = Selection<D>>
+    where
+        D: 'a + TextDimension<'a>,
+        I: 'a + ToOffset,
+        C: 'a + Into<Content<'a>>,
+    {
+        self.selections
+            .intersecting_ranges(range, content)
             .map(|(range, state)| Selection {
                 id: state.id,
                 start: range.start,

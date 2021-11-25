@@ -380,13 +380,12 @@ impl EditorElement {
 
             for selection in selections {
                 if selection.start != selection.end {
-                    let range_start = cmp::min(selection.start, selection.end);
-                    let range_end = cmp::max(selection.start, selection.end);
-                    let row_range = if range_end.column() == 0 {
-                        cmp::max(range_start.row(), start_row)..cmp::min(range_end.row(), end_row)
+                    let row_range = if selection.end.column() == 0 {
+                        cmp::max(selection.start.row(), start_row)
+                            ..cmp::min(selection.end.row(), end_row)
                     } else {
-                        cmp::max(range_start.row(), start_row)
-                            ..cmp::min(range_end.row() + 1, end_row)
+                        cmp::max(selection.start.row(), start_row)
+                            ..cmp::min(selection.end.row() + 1, end_row)
                     };
 
                     let selection = Selection {
@@ -399,16 +398,18 @@ impl EditorElement {
                             .map(|row| {
                                 let line_layout = &layout.line_layouts[(row - start_row) as usize];
                                 SelectionLine {
-                                    start_x: if row == range_start.row() {
+                                    start_x: if row == selection.start.row() {
                                         content_origin.x()
-                                            + line_layout.x_for_index(range_start.column() as usize)
+                                            + line_layout
+                                                .x_for_index(selection.start.column() as usize)
                                             - scroll_left
                                     } else {
                                         content_origin.x() - scroll_left
                                     },
-                                    end_x: if row == range_end.row() {
+                                    end_x: if row == selection.end.row() {
                                         content_origin.x()
-                                            + line_layout.x_for_index(range_end.column() as usize)
+                                            + line_layout
+                                                .x_for_index(selection.end.column() as usize)
                                             - scroll_left
                                     } else {
                                         content_origin.x()
@@ -425,13 +426,13 @@ impl EditorElement {
                 }
 
                 if view.show_local_cursors() || *replica_id != local_replica_id {
-                    let cursor_position = selection.end;
+                    let cursor_position = selection.head();
                     if (start_row..end_row).contains(&cursor_position.row()) {
                         let cursor_row_layout =
-                            &layout.line_layouts[(selection.end.row() - start_row) as usize];
-                        let x = cursor_row_layout.x_for_index(selection.end.column() as usize)
+                            &layout.line_layouts[(cursor_position.row() - start_row) as usize];
+                        let x = cursor_row_layout.x_for_index(cursor_position.column() as usize)
                             - scroll_left;
-                        let y = selection.end.row() as f32 * layout.line_height - scroll_top;
+                        let y = cursor_position.row() as f32 * layout.line_height - scroll_top;
                         cursors.push(Cursor {
                             color: style.cursor,
                             origin: content_origin + vec2f(x, y),
@@ -747,26 +748,18 @@ impl Element for EditorElement {
         self.update_view(cx.app, |view, cx| {
             highlighted_row = view.highlighted_row();
             for selection_set_id in view.active_selection_sets(cx).collect::<Vec<_>>() {
-                let mut set = Vec::new();
-                for selection in view.selections_in_range(
-                    selection_set_id,
-                    DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
-                    cx,
-                ) {
-                    set.push(selection.clone());
+                let replica_selections = view
+                    .intersecting_selections(
+                        selection_set_id,
+                        DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
+                        cx,
+                    )
+                    .collect::<Vec<_>>();
+                for selection in &replica_selections {
                     if selection_set_id == view.selection_set_id {
                         let is_empty = selection.start == selection.end;
-                        let mut selection_start;
-                        let mut selection_end;
-                        if selection.start < selection.end {
-                            selection_start = selection.start;
-                            selection_end = selection.end;
-                        } else {
-                            selection_start = selection.end;
-                            selection_end = selection.start;
-                        };
-                        selection_start = snapshot.prev_row_boundary(selection_start).0;
-                        selection_end = snapshot.next_row_boundary(selection_end).0;
+                        let selection_start = snapshot.prev_row_boundary(selection.start).0;
+                        let selection_end = snapshot.next_row_boundary(selection.end).0;
                         for row in cmp::max(selection_start.row(), start_row)
                             ..=cmp::min(selection_end.row(), end_row)
                         {
@@ -777,7 +770,7 @@ impl Element for EditorElement {
                     }
                 }
 
-                selections.insert(selection_set_id.replica_id, set);
+                selections.insert(selection_set_id.replica_id, replica_selections);
             }
         });
 
@@ -939,7 +932,7 @@ pub struct LayoutState {
     line_height: f32,
     em_width: f32,
     em_advance: f32,
-    selections: HashMap<ReplicaId, Vec<Range<DisplayPoint>>>,
+    selections: HashMap<ReplicaId, Vec<buffer::Selection<DisplayPoint>>>,
     overscroll: Vector2F,
     text_offset: Vector2F,
     max_visible_line_width: f32,
