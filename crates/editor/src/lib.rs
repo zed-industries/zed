@@ -3017,23 +3017,15 @@ impl Editor {
             .map(|(set_id, _)| *set_id)
     }
 
-    pub fn selections_in_range<'a>(
+    pub fn intersecting_selections<'a>(
         &'a self,
         set_id: SelectionSetId,
         range: Range<DisplayPoint>,
         cx: &'a mut MutableAppContext,
-    ) -> Vec<Selection<DisplayPoint>> {
+    ) -> impl 'a + Iterator<Item = Selection<DisplayPoint>> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
-        let selections = self
-            .buffer
-            .read(cx)
-            .selection_set(set_id)
-            .unwrap()
-            .selections::<Point, _>(buffer)
-            .collect::<Vec<_>>();
-        let start = range.start.to_point(&display_map);
-        let start_index = self.selection_insertion_index(&selections, start);
+
         let pending_selection = if set_id == self.selection_set_id {
             self.pending_selection.as_ref().and_then(|pending| {
                 let selection_start = pending.selection.start.to_display_point(&display_map);
@@ -3053,9 +3045,17 @@ impl Editor {
         } else {
             None
         };
+
+        let range = (range.start.to_offset(&display_map, Bias::Left), Bias::Left)
+            ..(range.end.to_offset(&display_map, Bias::Left), Bias::Right);
+        let selections = self
+            .buffer
+            .read(cx)
+            .selection_set(set_id)
+            .unwrap()
+            .intersecting_selections::<Point, _, _>(range, buffer);
+
         selections
-            .into_iter()
-            .skip(start_index)
             .map(move |s| Selection {
                 id: s.id,
                 start: s.start.to_display_point(&display_map),
@@ -3063,22 +3063,7 @@ impl Editor {
                 reversed: s.reversed,
                 goal: s.goal,
             })
-            .take_while(move |r| r.start <= range.end || r.end <= range.end)
             .chain(pending_selection)
-            .collect()
-    }
-
-    fn selection_insertion_index(&self, selections: &[Selection<Point>], start: Point) -> usize {
-        match selections.binary_search_by_key(&start, |probe| probe.start) {
-            Ok(index) => index,
-            Err(index) => {
-                if index > 0 && selections[index - 1].end > start {
-                    index - 1
-                } else {
-                    index
-                }
-            }
-        }
     }
 
     pub fn selections<'a, D>(&self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Selection<D>>
@@ -5694,7 +5679,7 @@ mod tests {
 
     impl Editor {
         fn selection_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
-            self.selections_in_range(
+            self.intersecting_selections(
                 self.selection_set_id,
                 DisplayPoint::zero()..self.max_point(cx),
                 cx,

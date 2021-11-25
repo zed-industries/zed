@@ -748,11 +748,13 @@ impl Element for EditorElement {
         self.update_view(cx.app, |view, cx| {
             highlighted_row = view.highlighted_row();
             for selection_set_id in view.active_selection_sets(cx).collect::<Vec<_>>() {
-                let replica_selections = view.selections_in_range(
-                    selection_set_id,
-                    DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
-                    cx,
-                );
+                let replica_selections = view
+                    .intersecting_selections(
+                        selection_set_id,
+                        DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
+                        cx,
+                    )
+                    .collect::<Vec<_>>();
                 for selection in &replica_selections {
                     if selection_set_id == view.selection_set_id {
                         let is_empty = selection.start == selection.end;
