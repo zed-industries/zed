@@ -88,7 +88,7 @@ action!(SelectLine);
 action!(SplitSelectionIntoLines);
 action!(AddSelectionAbove);
 action!(AddSelectionBelow);
-action!(SelectNext);
+action!(SelectNext, bool);
 action!(ToggleComments);
 action!(SelectLargerSyntaxNode);
 action!(SelectSmallerSyntaxNode);
@@ -193,7 +193,8 @@ pub fn init(cx: &mut MutableAppContext, entry_openers: &mut Vec<Box<dyn EntryOpe
         Binding::new("cmd-ctrl-p", AddSelectionAbove, Some("Editor")),
         Binding::new("cmd-alt-down", AddSelectionBelow, Some("Editor")),
         Binding::new("cmd-ctrl-n", AddSelectionBelow, Some("Editor")),
-        Binding::new("cmd-d", SelectNext, Some("Editor")),
+        Binding::new("cmd-d", SelectNext(false), Some("Editor")),
+        Binding::new("cmd-k cmd-d", SelectNext(true), Some("Editor")),
         Binding::new("cmd-/", ToggleComments, Some("Editor")),
         Binding::new("alt-up", SelectLargerSyntaxNode, Some("Editor")),
         Binding::new("ctrl-w", SelectLargerSyntaxNode, Some("Editor")),
@@ -2513,7 +2514,8 @@ impl Editor {
         }
     }
 
-    pub fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
+    pub fn select_next(&mut self, action: &SelectNext, cx: &mut ViewContext<Self>) {
+        let replace_newest = action.0;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
         let mut selections = self.selections::<usize>(cx).collect::<Vec<_>>();
@@ -2552,6 +2554,13 @@ impl Editor {
                 }
 
                 if let Some(next_selected_range) = next_selected_range {
+                    if replace_newest {
+                        if let Some(newest_id) =
+                            selections.iter().max_by_key(|s| s.id).map(|s| s.id)
+                        {
+                            selections.retain(|s| s.id != newest_id);
+                        }
+                    }
                     selections.push(Selection {
                         id: post_inc(&mut self.next_selection_id),
                         start: next_selected_range.start,
@@ -2598,7 +2607,7 @@ impl Editor {
                     wordwise: false,
                     done: false,
                 });
-                self.select_next(&SelectNext, cx);
+                self.select_next(action, cx);
             }
         }
     }
