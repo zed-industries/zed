@@ -17,7 +17,7 @@ outdated_warning = { extends = "$text.2", size = 13 }
 extends = "$text.2"
 size = 13
 underline = true
-padding = { right = 12 }
+padding = { right = 8 }
 
 [workspace.titlebar.hovered_sign_in_prompt]
 extends = "$workspace.titlebar.sign_in_prompt"
