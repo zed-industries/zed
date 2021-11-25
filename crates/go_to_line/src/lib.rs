@@ -25,6 +25,7 @@ pub struct GoToLine {
     line_editor: ViewHandle<Editor>,
     active_editor: ViewHandle<Editor>,
     restore_state: Option<RestoreState>,
+    line_selection: Option<Selection<usize>>,
     cursor_point: Point,
     max_point: Point,
 }
@@ -80,6 +81,7 @@ impl GoToLine {
             line_editor,
             active_editor,
             restore_state,
+            line_selection: None,
             cursor_point,
             max_point,
         }
@@ -134,11 +136,12 @@ impl GoToLine {
                         column.map(|column| column.saturating_sub(1)).unwrap_or(0),
                     )
                 }) {
-                    self.active_editor.update(cx, |active_editor, cx| {
+                    self.line_selection = self.active_editor.update(cx, |active_editor, cx| {
                         let buffer = active_editor.buffer().read(cx);
                         let point = buffer.clip_point(point, Bias::Left);
                         active_editor.select_ranges([point..point], Some(Autoscroll::Center), cx);
                         active_editor.set_highlighted_row(Some(point.row));
+                        Some(active_editor.newest_selection(cx))
                     });
                     cx.notify();
                 }
@@ -152,12 +155,15 @@ impl Entity for GoToLine {
     type Event = Event;
 
     fn release(&mut self, cx: &mut MutableAppContext) {
+        let line_selection = self.line_selection.take();
         let restore_state = self.restore_state.take();
         self.active_editor.update(cx, |editor, cx| {
             editor.set_highlighted_row(None);
-            if let Some(restore_state) = restore_state {
-                editor.set_scroll_position(restore_state.scroll_position, cx);
-                editor.update_selections(restore_state.selections, None, cx);
+            if let Some((line_selection, restore_state)) = line_selection.zip(restore_state) {
+                if line_selection.id == editor.newest_selection::<usize>(cx).id {
+                    editor.set_scroll_position(restore_state.scroll_position, cx);
+                    editor.update_selections(restore_state.selections, None, cx);
+                }
             }
         })
     }
