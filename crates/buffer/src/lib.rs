@@ -1786,43 +1786,49 @@ impl<'a> Content<'a> {
         self.visible_text.cursor(range.start).summary(range.end)
     }
 
-    fn summaries_for_anchors<D, T>(&self, map: &'a AnchorMap<T>) -> impl Iterator<Item = (D, &'a T)>
+    fn summaries_for_anchors<D, I>(
+        &self,
+        version: clock::Global,
+        bias: Bias,
+        ranges: I,
+    ) -> impl 'a + Iterator<Item = D>
     where
-        D: TextDimension<'a>,
+        D: 'a + TextDimension<'a>,
+        I: 'a + IntoIterator<Item = &'a FullOffset>,
     {
-        let cx = Some(map.version.clone());
+        let cx = Some(version.clone());
         let mut summary = D::default();
         let mut rope_cursor = self.visible_text.cursor(0);
         let mut cursor = self.fragments.cursor::<(VersionedFullOffset, usize)>();
-        map.entries.iter().map(move |(offset, value)| {
-            cursor.seek_forward(&VersionedFullOffset::Offset(*offset), map.bias, &cx);
+        ranges.into_iter().map(move |offset| {
+            cursor.seek_forward(&VersionedFullOffset::Offset(*offset), bias, &cx);
             let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
                 *offset - cursor.start().0.full_offset()
             } else {
                 0
             };
             summary.add_assign(&rope_cursor.summary(cursor.start().1 + overshoot));
-            (summary.clone(), value)
+            summary.clone()
         })
     }
 
-    fn summaries_for_anchor_ranges<D, T>(
+    fn summaries_for_anchor_ranges<D, I>(
         &self,
-        map: &'a AnchorRangeMap<T>,
-    ) -> impl Iterator<Item = (Range<D>, &'a T)>
+        version: clock::Global,
+        start_bias: Bias,
+        end_bias: Bias,
+        ranges: I,
+    ) -> impl 'a + Iterator<Item = Range<D>>
     where
-        D: TextDimension<'a>,
+        D: 'a + TextDimension<'a>,
+        I: 'a + IntoIterator<Item = &'a Range<FullOffset>>,
     {
-        let cx = Some(map.version.clone());
+        let cx = Some(version);
         let mut summary = D::default();
         let mut rope_cursor = self.visible_text.cursor(0);
         let mut cursor = self.fragments.cursor::<(VersionedFullOffset, usize)>();
-        map.entries.iter().map(move |(range, value)| {
-            cursor.seek_forward(
-                &VersionedFullOffset::Offset(range.start),
-                map.start_bias,
-                &cx,
-            );
+        ranges.into_iter().map(move |range| {
+            cursor.seek_forward(&VersionedFullOffset::Offset(range.start), start_bias, &cx);
             let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
                 range.start - cursor.start().0.full_offset()
             } else {
@@ -1831,7 +1837,7 @@ impl<'a> Content<'a> {
             summary.add_assign(&rope_cursor.summary::<D>(cursor.start().1 + overshoot));
             let start_summary = summary.clone();
 
-            cursor.seek_forward(&VersionedFullOffset::Offset(range.end), map.end_bias, &cx);
+            cursor.seek_forward(&VersionedFullOffset::Offset(range.end), end_bias, &cx);
             let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
                 range.end - cursor.start().0.full_offset()
             } else {
@@ -1840,7 +1846,7 @@ impl<'a> Content<'a> {
             summary.add_assign(&rope_cursor.summary::<D>(cursor.start().1 + overshoot));
             let end_summary = summary.clone();
 
-            (start_summary..end_summary, value)
+            start_summary..end_summary
         })
     }
 

@@ -142,8 +142,12 @@ impl<T> AnchorMap<T> {
     {
         let content = content.into();
         content
-            .summaries_for_anchors(self)
-            .map(move |(sum, value)| (sum, value))
+            .summaries_for_anchors(
+                self.version.clone(),
+                self.bias,
+                self.entries.iter().map(|e| &e.0),
+            )
+            .zip(self.entries.iter().map(|e| &e.1))
     }
 }
 
@@ -196,7 +200,14 @@ impl<T> AnchorRangeMap<T> {
         D: 'a + TextDimension<'a>,
     {
         let content = content.into();
-        content.summaries_for_anchor_ranges(self)
+        content
+            .summaries_for_anchor_ranges(
+                self.version.clone(),
+                self.start_bias,
+                self.end_bias,
+                self.entries.iter().map(|e| &e.0),
+            )
+            .zip(self.entries.iter().map(|e| &e.1))
     }
 
     pub fn full_offset_ranges(&self) -> impl Iterator<Item = &(Range<FullOffset>, T)> {
