@@ -953,36 +953,43 @@ impl Workspace {
 
     fn render_avatar(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme;
-        let avatar = if let Some(avatar) = self
+        if let Some(avatar) = self
             .user_store
             .read(cx)
             .current_user()
             .and_then(|user| user.avatar.clone())
         {
-            Image::new(avatar)
-                .with_style(theme.workspace.titlebar.avatar)
-                .boxed()
+            ConstrainedBox::new(
+                Align::new(
+                    ConstrainedBox::new(
+                        Image::new(avatar)
+                            .with_style(theme.workspace.titlebar.avatar)
+                            .boxed(),
+                    )
+                    .with_width(theme.workspace.titlebar.avatar_width)
+                    .boxed(),
+                )
+                .boxed(),
+            )
+            .with_width(theme.workspace.right_sidebar.width)
+            .boxed()
         } else {
-            MouseEventHandler::new::<Authenticate, _, _, _>(0, cx, |_, _| {
-                Svg::new("icons/signed-out-12.svg")
-                    .with_color(theme.workspace.titlebar.icon_color)
+            MouseEventHandler::new::<Authenticate, _, _, _>(0, cx, |state, _| {
+                let style = if state.hovered {
+                    &theme.workspace.titlebar.hovered_sign_in_prompt
+                } else {
+                    &theme.workspace.titlebar.sign_in_prompt
+                };
+                Label::new("Sign in".to_string(), style.text.clone())
+                    .contained()
+                    .with_style(style.container)
                     .boxed()
             })
             .on_click(|cx| cx.dispatch_action(Authenticate))
             .with_cursor_style(CursorStyle::PointingHand)
+            .aligned()
             .boxed()
-        };
-
-        ConstrainedBox::new(
-            Align::new(
-                ConstrainedBox::new(avatar)
-                    .with_width(theme.workspace.titlebar.avatar_width)
-                    .boxed(),
-            )
-            .boxed(),
-        )
-        .with_width(theme.workspace.right_sidebar.width)
-        .boxed()
+        }
     }
 }
 
