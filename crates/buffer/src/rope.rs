@@ -3,7 +3,7 @@ use crate::PointUtf16;
 use super::Point;
 use arrayvec::ArrayString;
 use smallvec::SmallVec;
-use std::{cmp, fmt, mem, ops::Range, str};
+use std::{cmp, fmt, io, mem, ops::Range, str};
 use sum_tree::{Bias, Dimension, SumTree};
 
 #[cfg(test)]
@@ -137,8 +137,8 @@ impl Rope {
             .flat_map(|chunk| chunk.chars().rev())
     }
 
-    pub fn bytes_at(&self, start: usize) -> impl Iterator<Item = u8> + '_ {
-        self.chunks_in_range(start..self.len()).flat_map(str::bytes)
+    pub fn bytes_in_range(&self, range: Range<usize>) -> Bytes {
+        Bytes::new(self, range)
     }
 
     pub fn chunks<'a>(&'a self) -> Chunks<'a> {
@@ -441,6 +441,59 @@ impl<'a> Iterator for Chunks<'a> {
             }
         }
         result
+    }
+}
+
+pub struct Bytes<'a> {
+    chunks: sum_tree::Cursor<'a, Chunk, usize>,
+    range: Range<usize>,
+}
+
+impl<'a> Bytes<'a> {
+    pub fn new(rope: &'a Rope, range: Range<usize>) -> Self {
+        let mut chunks = rope.chunks.cursor();
+        chunks.seek(&range.start, Bias::Right, &());
+        Self { chunks, range }
+    }
+
+    pub fn peek(&self) -> Option<&'a [u8]> {
+        let chunk = self.chunks.item()?;
+        let chunk_start = *self.chunks.start();
+        if self.range.end <= chunk_start {
+            return None;
+        }
+
+        let start = self.range.start.saturating_sub(chunk_start);
+        let end = self.range.end - chunk_start;
+        Some(&chunk.0.as_bytes()[start..chunk.0.len().min(end)])
+    }
+}
+
+impl<'a> Iterator for Bytes<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let result = self.peek();
+        if result.is_some() {
+            self.chunks.next(&());
+        }
+        result
+    }
+}
+
+impl<'a> io::Read for Bytes<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if let Some(chunk) = self.peek() {
+            let len = cmp::min(buf.len(), chunk.len());
+            buf[..len].copy_from_slice(&chunk[..len]);
+            self.range.start += len;
+            if len == chunk.len() {
+                self.chunks.next(&());
+            }
+            Ok(len)
+        } else {
+            Ok(0)
+        }
     }
 }
 
@@ -767,7 +820,7 @@ mod tests {
     use super::*;
     use crate::random_char_iter::RandomCharIter;
     use rand::prelude::*;
-    use std::{cmp::Ordering, env};
+    use std::{cmp::Ordering, env, io::Read};
     use Bias::{Left, Right};
 
     #[test]
@@ -843,10 +896,16 @@ mod tests {
             for _ in 0..5 {
                 let end_ix = clip_offset(&expected, rng.gen_range(0..=expected.len()), Right);
                 let start_ix = clip_offset(&expected, rng.gen_range(0..=end_ix), Left);
-                assert_eq!(
-                    actual.chunks_in_range(start_ix..end_ix).collect::<String>(),
-                    &expected[start_ix..end_ix]
-                );
+
+                let actual_text = actual.chunks_in_range(start_ix..end_ix).collect::<String>();
+                assert_eq!(actual_text, &expected[start_ix..end_ix]);
+
+                let mut actual_text = String::new();
+                actual
+                    .bytes_in_range(start_ix..end_ix)
+                    .read_to_string(&mut actual_text)
+                    .unwrap();
+                assert_eq!(actual_text, &expected[start_ix..end_ix]);
 
                 assert_eq!(
                     actual

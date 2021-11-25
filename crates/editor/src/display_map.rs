@@ -418,6 +418,12 @@ impl DisplayPoint {
     }
 }
 
+impl ToDisplayPoint for usize {
+    fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint {
+        map.point_to_display_point(self.to_point(&map.buffer_snapshot), Bias::Left)
+    }
+}
+
 impl ToDisplayPoint for Point {
     fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint {
         map.point_to_display_point(*self, Bias::Left)

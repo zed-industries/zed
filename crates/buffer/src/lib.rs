@@ -606,9 +606,8 @@ impl Buffer {
         self.text_for_range(range).flat_map(str::chars)
     }
 
-    pub fn bytes_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = u8> + '_ {
-        let offset = position.to_offset(self);
-        self.visible_text.bytes_at(offset)
+    pub fn bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> rope::Bytes {
+        self.content().bytes_in_range(range)
     }
 
     pub fn contains_str_at<T>(&self, position: T, needle: &str) -> bool
@@ -618,7 +617,9 @@ impl Buffer {
         let position = position.to_offset(self);
         position == self.clip_offset(position, Bias::Left)
             && self
-                .bytes_at(position)
+                .bytes_in_range(position..self.len())
+                .flatten()
+                .copied()
                 .take(needle.len())
                 .eq(needle.bytes())
     }
@@ -1581,6 +1582,10 @@ impl Snapshot {
         self.visible_text.max_point()
     }
 
+    pub fn bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> rope::Bytes {
+        self.content().bytes_in_range(range)
+    }
+
     pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> Chunks {
         self.content().text_for_range(range)
     }
@@ -1714,6 +1719,12 @@ impl<'a> Content<'a> {
     pub fn reversed_chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + 'a {
         let offset = position.to_offset(self);
         self.visible_text.reversed_chars_at(offset)
+    }
+
+    pub fn bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> rope::Bytes<'a> {
+        let start = range.start.to_offset(self);
+        let end = range.end.to_offset(self);
+        self.visible_text.bytes_in_range(start..end)
     }
 
     pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> Chunks<'a> {
