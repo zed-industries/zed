@@ -47,6 +47,8 @@ pub struct Titlebar {
     pub offline_icon: OfflineIcon,
     pub icon_color: Color,
     pub avatar: ImageStyle,
+    pub sign_in_prompt: ContainedText,
+    pub hovered_sign_in_prompt: ContainedText,
     pub outdated_warning: ContainedText,
 }
 

@@ -13,6 +13,16 @@ icon_color = "$text.2.color"
 avatar = { corner_radius = 10, border = { width = 1, color = "#00000088" } }
 outdated_warning = { extends = "$text.2", size = 13 }
 
+[workspace.titlebar.sign_in_prompt]
+extends = "$text.2"
+size = 13
+underline = true
+padding = { right = 12 }
+
+[workspace.titlebar.hovered_sign_in_prompt]
+extends = "$workspace.titlebar.sign_in_prompt"
+color = "$text.1.color"
+
 [workspace.titlebar.offline_icon]
 padding = { right = 4 }
 width = 16
