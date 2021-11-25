@@ -315,9 +315,11 @@ enum SelectMode {
     All,
 }
 
+#[derive(PartialEq, Eq)]
 pub enum Autoscroll {
     Fit,
     Center,
+    Newest,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -607,20 +609,29 @@ impl Editor {
             return false;
         };
 
-        let mut selections = self.selections::<Point>(cx).peekable();
-        let first_cursor_top = selections
-            .peek()
-            .unwrap()
-            .head()
-            .to_display_point(&display_map)
-            .row() as f32;
-        let last_cursor_bottom = selections
-            .last()
-            .unwrap()
-            .head()
-            .to_display_point(&display_map)
-            .row() as f32
-            + 1.0;
+        let first_cursor_top;
+        let last_cursor_bottom;
+        if autoscroll == Autoscroll::Newest {
+            let newest_selection = self.newest_selection::<Point>(cx);
+            first_cursor_top = newest_selection.head().to_display_point(&display_map).row() as f32;
+            last_cursor_bottom = first_cursor_top + 1.;
+        } else {
+            let mut selections = self.selections::<Point>(cx).peekable();
+            first_cursor_top = selections
+                .peek()
+                .unwrap()
+                .head()
+                .to_display_point(&display_map)
+                .row() as f32;
+            last_cursor_bottom = selections
+                .last()
+                .unwrap()
+                .head()
+                .to_display_point(&display_map)
+                .row() as f32
+                + 1.0;
+        }
+
         let margin = if matches!(self.mode, EditorMode::AutoHeight { .. }) {
             0.
         } else {
@@ -631,7 +642,7 @@ impl Editor {
         }
 
         match autoscroll {
-            Autoscroll::Fit => {
+            Autoscroll::Fit | Autoscroll::Newest => {
                 let margin = margin.min(3.0);
                 let target_top = (first_cursor_top - margin).max(0.0);
                 let target_bottom = last_cursor_bottom + margin;
@@ -670,14 +681,17 @@ impl Editor {
         let mut target_right = 0.0_f32;
         for selection in selections {
             let head = selection.head().to_display_point(&display_map);
-            let start_column = head.column().saturating_sub(3);
-            let end_column = cmp::min(display_map.line_len(head.row()), head.column() + 3);
-            target_left = target_left
-                .min(layouts[(head.row() - start_row) as usize].x_for_index(start_column as usize));
-            target_right = target_right.max(
-                layouts[(head.row() - start_row) as usize].x_for_index(end_column as usize)
-                    + max_glyph_width,
-            );
+            if head.row() >= start_row && head.row() < start_row + layouts.len() as u32 {
+                let start_column = head.column().saturating_sub(3);
+                let end_column = cmp::min(display_map.line_len(head.row()), head.column() + 3);
+                target_left = target_left.min(
+                    layouts[(head.row() - start_row) as usize].x_for_index(start_column as usize),
+                );
+                target_right = target_right.max(
+                    layouts[(head.row() - start_row) as usize].x_for_index(end_column as usize)
+                        + max_glyph_width,
+                );
+            }
         }
         target_right = target_right.min(scroll_width);
 
@@ -2546,7 +2560,7 @@ impl Editor {
                         goal: SelectionGoal::None,
                     });
                     selections.sort_unstable_by_key(|s| s.start);
-                    self.update_selections(selections, Some(Autoscroll::Fit), cx);
+                    self.update_selections(selections, Some(Autoscroll::Newest), cx);
                 } else {
                     select_next_state.done = true;
                 }
@@ -2573,7 +2587,7 @@ impl Editor {
                     wordwise: true,
                     done: false,
                 };
-                self.update_selections(selections, Some(Autoscroll::Fit), cx);
+                self.update_selections(selections, Some(Autoscroll::Newest), cx);
                 self.select_next_state = Some(select_state);
             } else {
                 let query = buffer
