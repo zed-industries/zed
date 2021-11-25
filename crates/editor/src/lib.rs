@@ -3022,7 +3022,7 @@ impl Editor {
         set_id: SelectionSetId,
         range: Range<DisplayPoint>,
         cx: &'a mut MutableAppContext,
-    ) -> impl 'a + Iterator<Item = Range<DisplayPoint>> {
+    ) -> Vec<Selection<DisplayPoint>> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx);
         let selections = self
@@ -3036,13 +3036,16 @@ impl Editor {
         let start_index = self.selection_insertion_index(&selections, start);
         let pending_selection = if set_id == self.selection_set_id {
             self.pending_selection.as_ref().and_then(|pending| {
-                let mut selection_start = pending.selection.start.to_display_point(&display_map);
-                let mut selection_end = pending.selection.end.to_display_point(&display_map);
-                if pending.selection.reversed {
-                    mem::swap(&mut selection_start, &mut selection_end);
-                }
+                let selection_start = pending.selection.start.to_display_point(&display_map);
+                let selection_end = pending.selection.end.to_display_point(&display_map);
                 if selection_start <= range.end || selection_end <= range.end {
-                    Some(selection_start..selection_end)
+                    Some(Selection {
+                        id: pending.selection.id,
+                        start: selection_start,
+                        end: selection_end,
+                        reversed: pending.selection.reversed,
+                        goal: pending.selection.goal,
+                    })
                 } else {
                     None
                 }
@@ -3053,9 +3056,16 @@ impl Editor {
         selections
             .into_iter()
             .skip(start_index)
-            .map(move |s| s.display_range(&display_map))
+            .map(move |s| Selection {
+                id: s.id,
+                start: s.start.to_display_point(&display_map),
+                end: s.end.to_display_point(&display_map),
+                reversed: s.reversed,
+                goal: s.goal,
+            })
             .take_while(move |r| r.start <= range.end || r.end <= range.end)
             .chain(pending_selection)
+            .collect()
     }
 
     fn selection_insertion_index(&self, selections: &[Selection<Point>], start: Point) -> usize {
@@ -5689,7 +5699,15 @@ mod tests {
                 DisplayPoint::zero()..self.max_point(cx),
                 cx,
             )
-            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|s| {
+                if s.reversed {
+                    s.end..s.start
+                } else {
+                    s.start..s.end
+                }
+            })
+            .collect()
         }
     }
 
