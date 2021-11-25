@@ -1818,27 +1818,22 @@ impl<'a> Content<'a> {
         let mut rope_cursor = self.visible_text.cursor(0);
         let mut cursor = self.fragments.cursor::<(VersionedFullOffset, usize)>();
         map.entries.iter().map(move |(range, value)| {
-            let Range {
-                start: (start_offset, start_bias),
-                end: (end_offset, end_bias),
-            } = range;
-
             cursor.seek_forward(
-                &VersionedFullOffset::Offset(*start_offset),
-                *start_bias,
+                &VersionedFullOffset::Offset(range.start),
+                map.start_bias,
                 &cx,
             );
             let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
-                *start_offset - cursor.start().0.full_offset()
+                range.start - cursor.start().0.full_offset()
             } else {
                 0
             };
             summary.add_assign(&rope_cursor.summary::<D>(cursor.start().1 + overshoot));
             let start_summary = summary.clone();
 
-            cursor.seek_forward(&VersionedFullOffset::Offset(*end_offset), *end_bias, &cx);
+            cursor.seek_forward(&VersionedFullOffset::Offset(range.end), map.end_bias, &cx);
             let overshoot = if cursor.item().map_or(false, |fragment| fragment.visible) {
-                *end_offset - cursor.start().0.full_offset()
+                range.end - cursor.start().0.full_offset()
             } else {
                 0
             };
@@ -1901,14 +1896,16 @@ impl<'a> Content<'a> {
                 let full_start_offset = FullOffset(cursor.start().deleted + start_offset);
                 cursor.seek_forward(&end_offset, end_bias, &None);
                 let full_end_offset = FullOffset(cursor.start().deleted + end_offset);
-                (
-                    (full_start_offset, start_bias)..(full_end_offset, end_bias),
-                    value,
-                )
+                (full_start_offset..full_end_offset, value)
             })
             .collect();
 
-        AnchorRangeMap { version, entries }
+        AnchorRangeMap {
+            version,
+            start_bias,
+            end_bias,
+            entries,
+        }
     }
 
     pub fn anchor_set<E>(&self, bias: Bias, entries: E) -> AnchorSet

@@ -29,7 +29,9 @@ pub struct AnchorSet(pub(crate) AnchorMap<()>);
 #[derive(Clone)]
 pub struct AnchorRangeMap<T> {
     pub(crate) version: clock::Global,
-    pub(crate) entries: Vec<(Range<(FullOffset, Bias)>, T)>,
+    pub(crate) entries: Vec<(Range<FullOffset>, T)>,
+    pub(crate) start_bias: Bias,
+    pub(crate) end_bias: Bias,
 }
 
 #[derive(Clone)]
@@ -174,9 +176,16 @@ impl<T> AnchorRangeMap<T> {
 
     pub fn from_full_offset_ranges(
         version: clock::Global,
-        entries: Vec<(Range<(FullOffset, Bias)>, T)>,
+        start_bias: Bias,
+        end_bias: Bias,
+        entries: Vec<(Range<FullOffset>, T)>,
     ) -> Self {
-        Self { version, entries }
+        Self {
+            version,
+            start_bias,
+            end_bias,
+            entries,
+        }
     }
 
     pub fn ranges<'a, D>(
@@ -190,10 +199,8 @@ impl<T> AnchorRangeMap<T> {
         content.summaries_for_anchor_ranges(self)
     }
 
-    pub fn full_offset_ranges(&self) -> impl Iterator<Item = (Range<FullOffset>, &T)> {
-        self.entries
-            .iter()
-            .map(|(range, value)| (range.start.0..range.end.0, value))
+    pub fn full_offset_ranges(&self) -> impl Iterator<Item = &(Range<FullOffset>, T)> {
+        self.entries.iter()
     }
 
     pub fn min_by_key<'a, C, D, F, K>(
@@ -232,25 +239,19 @@ impl<T> AnchorRangeMap<T> {
             .map(|(range, value)| (self.resolve_range(range, &content), value))
     }
 
-    fn resolve_range<'a, D>(
-        &self,
-        range: &Range<(FullOffset, Bias)>,
-        content: &Content<'a>,
-    ) -> Range<D>
+    fn resolve_range<'a, D>(&self, range: &Range<FullOffset>, content: &Content<'a>) -> Range<D>
     where
         D: 'a + TextDimension<'a>,
     {
-        let (start, start_bias) = range.start;
         let mut anchor = Anchor {
-            full_offset: start,
-            bias: start_bias,
+            full_offset: range.start,
+            bias: self.start_bias,
             version: self.version.clone(),
         };
         let start = content.summary_for_anchor(&anchor);
 
-        let (end, end_bias) = range.end;
-        anchor.full_offset = end;
-        anchor.bias = end_bias;
+        anchor.full_offset = range.end;
+        anchor.bias = self.end_bias;
         let end = content.summary_for_anchor(&anchor);
 
         start..end

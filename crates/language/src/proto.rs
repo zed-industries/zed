@@ -194,8 +194,8 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                     .selections
                     .iter()
                     .map(|selection| {
-                        let range = (FullOffset(selection.start as usize), Bias::Left)
-                            ..(FullOffset(selection.end as usize), Bias::Right);
+                        let range = FullOffset(selection.start as usize)
+                            ..FullOffset(selection.end as usize);
                         let state = SelectionState {
                             id: selection.id as usize,
                             reversed: selection.reversed,
@@ -204,7 +204,12 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                         (range, state)
                     })
                     .collect();
-                let selections = AnchorRangeMap::from_full_offset_ranges(version, entries);
+                let selections = AnchorRangeMap::from_full_offset_ranges(
+                    version,
+                    Bias::Left,
+                    Bias::Left,
+                    entries,
+                );
 
                 Operation::Buffer(buffer::Operation::UpdateSelections {
                     set_id: clock::Lamport {
@@ -276,11 +281,13 @@ pub fn deserialize_selection_set(set: proto::SelectionSet) -> SelectionSet {
         active: set.is_active,
         selections: Arc::new(AnchorRangeMap::from_full_offset_ranges(
             set.version.into(),
+            Bias::Left,
+            Bias::Left,
             set.selections
                 .into_iter()
                 .map(|selection| {
-                    let range = (FullOffset(selection.start as usize), Bias::Left)
-                        ..(FullOffset(selection.end as usize), Bias::Left);
+                    let range =
+                        FullOffset(selection.start as usize)..FullOffset(selection.end as usize);
                     let state = SelectionState {
                         id: selection.id as usize,
                         reversed: selection.reversed,
