@@ -63,6 +63,12 @@ pub enum Event {
     Closed,
 }
 
+pub struct Collaborator {
+    pub user_id: u64,
+    pub peer_id: PeerId,
+    pub replica_id: ReplicaId,
+}
+
 impl Entity for Worktree {
     type Event = Event;
 
@@ -259,9 +265,19 @@ impl Worktree {
                     updates_tx,
                     client: rpc.clone(),
                     open_buffers: Default::default(),
-                    peers: peers
+                    collaborators: peers
                         .into_iter()
-                        .map(|p| (PeerId(p.peer_id), p.replica_id as ReplicaId))
+                        .map(|p| {
+                            let peer_id = PeerId(p.peer_id);
+                            (
+                                peer_id,
+                                Collaborator {
+                                    peer_id,
+                                    user_id: p.user_id,
+                                    replica_id: p.replica_id as ReplicaId,
+                                },
+                            )
+                        })
                         .collect(),
                     queued_operations: Default::default(),
                     languages,
@@ -390,10 +406,10 @@ impl Worktree {
             .close_remote_buffer(envelope, cx)
     }
 
-    pub fn peers(&self) -> &HashMap<PeerId, ReplicaId> {
+    pub fn collaborators(&self) -> &HashMap<PeerId, Collaborator> {
         match self {
-            Worktree::Local(worktree) => &worktree.peers,
-            Worktree::Remote(worktree) => &worktree.peers,
+            Worktree::Local(worktree) => &worktree.collaborators,
+            Worktree::Remote(worktree) => &worktree.collaborators,
         }
     }
 
@@ -772,7 +788,7 @@ pub struct LocalWorktree {
     open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
     diagnostics: HashMap<PathBuf, Vec<lsp::Diagnostic>>,
-    peers: HashMap<PeerId, ReplicaId>,
+    collaborators: HashMap<PeerId, Collaborator>,
     queued_operations: Vec<(u64, Operation)>,
     languages: Arc<LanguageRegistry>,
     rpc: Arc<Client>,
@@ -887,7 +903,7 @@ impl LocalWorktree {
                 shared_buffers: Default::default(),
                 diagnostics: Default::default(),
                 queued_operations: Default::default(),
-                peers: Default::default(),
+                collaborators: Default::default(),
                 languages,
                 rpc,
                 fs,
@@ -1085,8 +1101,15 @@ impl LocalWorktree {
             .peer
             .as_ref()
             .ok_or_else(|| anyhow!("empty peer"))?;
-        self.peers
-            .insert(PeerId(peer.peer_id), peer.replica_id as ReplicaId);
+        let peer_id = PeerId(peer.peer_id);
+        self.collaborators.insert(
+            peer_id,
+            Collaborator {
+                peer_id,
+                user_id: peer.user_id,
+                replica_id: peer.replica_id as ReplicaId,
+            },
+        );
         cx.notify();
 
         Ok(())
@@ -1099,9 +1122,10 @@ impl LocalWorktree {
     ) -> Result<()> {
         let peer_id = PeerId(envelope.payload.peer_id);
         let replica_id = self
-            .peers
+            .collaborators
             .remove(&peer_id)
-            .ok_or_else(|| anyhow!("unknown peer {:?}", peer_id))?;
+            .ok_or_else(|| anyhow!("unknown peer {:?}", peer_id))?
+            .replica_id;
         self.shared_buffers.remove(&peer_id);
         for (_, buffer) in &self.open_buffers {
             if let Some(buffer) = buffer.upgrade(cx) {
@@ -1373,7 +1397,7 @@ pub struct RemoteWorktree {
     updates_tx: postage::mpsc::Sender<proto::UpdateWorktree>,
     replica_id: ReplicaId,
     open_buffers: HashMap<usize, RemoteBuffer>,
-    peers: HashMap<PeerId, ReplicaId>,
+    collaborators: HashMap<PeerId, Collaborator>,
     languages: Arc<LanguageRegistry>,
     queued_operations: Vec<(u64, Operation)>,
     _subscriptions: Vec<client::Subscription>,
@@ -1501,8 +1525,15 @@ impl RemoteWorktree {
             .peer
             .as_ref()
             .ok_or_else(|| anyhow!("empty peer"))?;
-        self.peers
-            .insert(PeerId(peer.peer_id), peer.replica_id as ReplicaId);
+        let peer_id = PeerId(peer.peer_id);
+        self.collaborators.insert(
+            peer_id,
+            Collaborator {
+                peer_id,
+                user_id: peer.user_id,
+                replica_id: peer.replica_id as ReplicaId,
+            },
+        );
         cx.notify();
         Ok(())
     }
@@ -1514,9 +1545,10 @@ impl RemoteWorktree {
     ) -> Result<()> {
         let peer_id = PeerId(envelope.payload.peer_id);
         let replica_id = self
-            .peers
+            .collaborators
             .remove(&peer_id)
-            .ok_or_else(|| anyhow!("unknown peer {:?}", peer_id))?;
+            .ok_or_else(|| anyhow!("unknown peer {:?}", peer_id))?
+            .replica_id;
         for (_, buffer) in &self.open_buffers {
             if let Some(buffer) = buffer.upgrade(cx) {
                 buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));

@@ -1005,9 +1005,9 @@ mod tests {
         let replica_id_b = worktree_b.read_with(&cx_b, |tree, _| tree.replica_id());
         worktree_a
             .condition(&cx_a, |tree, _| {
-                tree.peers()
+                tree.collaborators()
                     .values()
-                    .any(|replica_id| *replica_id == replica_id_b)
+                    .any(|collaborator| collaborator.replica_id == replica_id_b)
             })
             .await;
 
@@ -1054,7 +1054,7 @@ mod tests {
         // Dropping the worktree removes client B from client A's peers.
         cx_b.update(move |_| drop(worktree_b));
         worktree_a
-            .condition(&cx_a, |tree, _| tree.peers().is_empty())
+            .condition(&cx_a, |tree, _| tree.collaborators().is_empty())
             .await;
     }
 
@@ -1492,7 +1492,7 @@ mod tests {
         .await
         .unwrap();
         worktree_a
-            .condition(&cx_a, |tree, _| tree.peers().len() == 1)
+            .condition(&cx_a, |tree, _| tree.collaborators().len() == 1)
             .await;
 
         let buffer_b = cx_b
@@ -1501,7 +1501,7 @@ mod tests {
         cx_b.update(|_| drop(worktree_b));
         drop(buffer_b);
         worktree_a
-            .condition(&cx_a, |tree, _| tree.peers().len() == 0)
+            .condition(&cx_a, |tree, _| tree.collaborators().len() == 0)
             .await;
     }
 
@@ -1553,13 +1553,13 @@ mod tests {
         .await
         .unwrap();
         worktree_a
-            .condition(&cx_a, |tree, _| tree.peers().len() == 1)
+            .condition(&cx_a, |tree, _| tree.collaborators().len() == 1)
             .await;
 
         // Drop client B's connection and ensure client A observes client B leaving the worktree.
         client_b.disconnect(&cx_b.to_async()).await.unwrap();
         worktree_a
-            .condition(&cx_a, |tree, _| tree.peers().len() == 0)
+            .condition(&cx_a, |tree, _| tree.collaborators().len() == 0)
             .await;
     }
 
