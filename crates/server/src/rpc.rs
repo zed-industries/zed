@@ -216,7 +216,7 @@ impl Server {
 
         let mut contact_user_ids = HashSet::new();
         contact_user_ids.insert(host_user_id);
-        for github_login in request.payload.collaborator_logins {
+        for github_login in request.payload.authorized_logins {
             match self.app_state.db.create_user(&github_login, false).await {
                 Ok(contact_user_id) => {
                     contact_user_ids.insert(contact_user_id);
@@ -235,7 +235,7 @@ impl Server {
         let worktree_id = self.state_mut().add_worktree(Worktree {
             host_connection_id: request.sender_id,
             host_user_id,
-            contact_user_ids: contact_user_ids.clone(),
+            authorized_user_ids: contact_user_ids.clone(),
             root_name: request.payload.root_name,
             share: None,
         });
@@ -268,7 +268,7 @@ impl Server {
             )
             .await?;
         }
-        self.update_contacts_for_users(&worktree.contact_user_ids)
+        self.update_contacts_for_users(&worktree.authorized_user_ids)
             .await?;
         Ok(())
     }
@@ -322,7 +322,7 @@ impl Server {
                 .send(conn_id, proto::UnshareWorktree { worktree_id })
         })
         .await?;
-        self.update_contacts_for_users(&worktree.contact_ids)
+        self.update_contacts_for_users(&worktree.authorized_user_ids)
             .await?;
 
         Ok(())
@@ -366,7 +366,7 @@ impl Server {
                     peers,
                 };
                 let connection_ids = joined.worktree.connection_ids();
-                let contact_user_ids = joined.worktree.contact_user_ids.clone();
+                let contact_user_ids = joined.worktree.authorized_user_ids.clone();
                 Ok((response, connection_ids, contact_user_ids))
             });
 
@@ -422,7 +422,7 @@ impl Server {
                 )
             })
             .await?;
-            self.update_contacts_for_users(&worktree.contact_ids)
+            self.update_contacts_for_users(&worktree.authorized_user_ids)
                 .await?;
         }
         Ok(())

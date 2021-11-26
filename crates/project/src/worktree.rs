@@ -848,13 +848,13 @@ impl LocalWorktree {
                         while let Some(status) = status.recv().await {
                             if let Some(this) = this.upgrade(&cx) {
                                 let remote_id = if let client::Status::Connected { .. } = status {
-                                    let collaborator_logins = this.read_with(&cx, |this, _| {
+                                    let authorized_logins = this.read_with(&cx, |this, _| {
                                         this.as_local().unwrap().config.collaborators.clone()
                                     });
                                     let response = rpc
                                         .request(proto::OpenWorktree {
                                             root_name: root_name.clone(),
-                                            collaborator_logins,
+                                            authorized_logins,
                                         })
                                         .await?;
 
@@ -3316,7 +3316,7 @@ mod tests {
             open_worktree.payload,
             proto::OpenWorktree {
                 root_name: "the-dir".to_string(),
-                collaborator_logins: vec!["friend-1".to_string(), "friend-2".to_string()],
+                authorized_logins: vec!["friend-1".to_string(), "friend-2".to_string()],
             }
         );
 

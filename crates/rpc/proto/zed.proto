@@ -55,7 +55,7 @@ message Error {
 
 message OpenWorktree {
     string root_name = 1;
-    repeated string collaborator_logins = 2;
+    repeated string authorized_logins = 2;
 }
 
 message OpenWorktreeResponse {
