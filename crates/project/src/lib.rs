@@ -19,6 +19,7 @@ pub use worktree::*;
 
 pub struct Project {
     worktrees: Vec<ModelHandle<Worktree>>,
+    active_worktree: Option<usize>,
     active_entry: Option<ProjectEntry>,
     languages: Arc<LanguageRegistry>,
     client: Arc<client::Client>,
@@ -46,6 +47,7 @@ impl Project {
     pub fn new(languages: Arc<LanguageRegistry>, rpc: Arc<Client>, fs: Arc<dyn Fs>) -> Self {
         Self {
             worktrees: Default::default(),
+            active_worktree: None,
             active_entry: None,
             languages,
             client: rpc,
@@ -109,8 +111,23 @@ impl Project {
 
     fn add_worktree(&mut self, worktree: ModelHandle<Worktree>, cx: &mut ModelContext<Self>) {
         cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
+        if self.active_worktree.is_none() {
+            self.set_active_worktree(Some(worktree.id()), cx);
+        }
         self.worktrees.push(worktree);
         cx.notify();
+    }
+
+    fn set_active_worktree(&mut self, worktree_id: Option<usize>, cx: &mut ModelContext<Self>) {
+        if self.active_worktree != worktree_id {
+            self.active_worktree = worktree_id;
+            cx.notify();
+        }
+    }
+
+    pub fn active_worktree(&self) -> Option<ModelHandle<Worktree>> {
+        self.active_worktree
+            .and_then(|worktree_id| self.worktree_for_id(worktree_id))
     }
 
     pub fn set_active_path(&mut self, entry: Option<ProjectPath>, cx: &mut ModelContext<Self>) {
@@ -123,6 +140,9 @@ impl Project {
             })
         });
         if new_active_entry != self.active_entry {
+            if let Some(worktree_id) = new_active_entry.map(|e| e.worktree_id) {
+                self.set_active_worktree(Some(worktree_id), cx);
+            }
             self.active_entry = new_active_entry;
             cx.emit(Event::ActiveEntryChanged(new_active_entry));
         }
@@ -184,6 +204,7 @@ impl Project {
     }
 
     pub fn close_remote_worktree(&mut self, id: u64, cx: &mut ModelContext<Self>) {
+        let mut reset_active = None;
         self.worktrees.retain(|worktree| {
             let keep = worktree.update(cx, |worktree, cx| {
                 if let Some(worktree) = worktree.as_remote_mut() {
@@ -196,9 +217,15 @@ impl Project {
             });
             if !keep {
                 cx.emit(Event::WorktreeRemoved(worktree.id()));
+                reset_active = Some(worktree.id());
             }
             keep
         });
+
+        if self.active_worktree == reset_active {
+            self.active_worktree = self.worktrees.first().map(|w| w.id());
+            cx.notify();
+        }
     }
 
     pub fn match_paths<'a>(
