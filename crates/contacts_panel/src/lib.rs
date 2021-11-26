@@ -17,20 +17,20 @@ action!(ShareWorktree, u64);
 action!(UnshareWorktree, u64);
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(PeoplePanel::share_worktree);
-    cx.add_action(PeoplePanel::unshare_worktree);
-    cx.add_action(PeoplePanel::join_worktree);
-    cx.add_action(PeoplePanel::leave_worktree);
+    cx.add_action(ContactsPanel::share_worktree);
+    cx.add_action(ContactsPanel::unshare_worktree);
+    cx.add_action(ContactsPanel::join_worktree);
+    cx.add_action(ContactsPanel::leave_worktree);
 }
 
-pub struct PeoplePanel {
+pub struct ContactsPanel {
     contacts: ListState,
     user_store: ModelHandle<UserStore>,
     settings: watch::Receiver<Settings>,
     _maintain_contacts: Subscription,
 }
 
-impl PeoplePanel {
+impl ContactsPanel {
     pub fn new(
         user_store: ModelHandle<UserStore>,
         settings: watch::Receiver<Settings>,
@@ -115,7 +115,7 @@ impl PeoplePanel {
         theme: &Theme,
         cx: &mut LayoutContext,
     ) -> ElementBox {
-        let theme = &theme.people_panel;
+        let theme = &theme.contacts_panel;
         let worktree_count = collaborator.worktrees.len();
         let font_cache = cx.font_cache();
         let line_height = theme.unshared_worktree.name.text.line_height(font_cache);
@@ -216,7 +216,7 @@ impl PeoplePanel {
                                         .any(|guest| Some(guest.id) == current_user_id);
                                 let is_shared = worktree.is_shared;
 
-                                MouseEventHandler::new::<PeoplePanel, _, _, _>(
+                                MouseEventHandler::new::<ContactsPanel, _, _, _>(
                                     worktree_id as usize,
                                     cx,
                                     |mouse_state, _| {
@@ -294,17 +294,17 @@ impl PeoplePanel {
 
 pub enum Event {}
 
-impl Entity for PeoplePanel {
+impl Entity for ContactsPanel {
     type Event = Event;
 }
 
-impl View for PeoplePanel {
+impl View for ContactsPanel {
     fn ui_name() -> &'static str {
-        "PeoplePanel"
+        "ContactsPanel"
     }
 
     fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &self.settings.borrow().theme.people_panel;
+        let theme = &self.settings.borrow().theme.contacts_panel;
         Container::new(List::new(self.contacts.clone()).boxed())
             .with_style(theme.container)
             .boxed()

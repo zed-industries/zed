@@ -146,7 +146,7 @@ underline = true
 extends = "$chat_panel.sign_in_prompt"
 color = "$text.1.color"
 
-[people_panel]
+[contacts_panel]
 extends = "$panel"
 host_row_height = 28
 host_avatar = { corner_radius = 10, width = 20 }
@@ -154,30 +154,30 @@ host_username = { extends = "$text.0", padding.left = 8 }
 tree_branch_width = 1
 tree_branch_color = "$surface.2"
 
-[people_panel.worktree]
+[contacts_panel.worktree]
 height = 24
 padding = { left = 8 }
 guest_avatar = { corner_radius = 8, width = 16 }
 guest_avatar_spacing = 4
 
-[people_panel.worktree.name]
+[contacts_panel.worktree.name]
 extends = "$text.1"
 margin = { right = 6 }
 
-[people_panel.unshared_worktree]
-extends = "$people_panel.worktree"
+[contacts_panel.unshared_worktree]
+extends = "$contacts_panel.worktree"
 
-[people_panel.hovered_unshared_worktree]
-extends = "$people_panel.unshared_worktree"
+[contacts_panel.hovered_unshared_worktree]
+extends = "$contacts_panel.unshared_worktree"
 background = "$state.hover"
 corner_radius = 6
 
-[people_panel.shared_worktree]
-extends = "$people_panel.worktree"
+[contacts_panel.shared_worktree]
+extends = "$contacts_panel.worktree"
 name.color = "$text.0.color"
 
-[people_panel.hovered_shared_worktree]
-extends = "$people_panel.shared_worktree"
+[contacts_panel.hovered_shared_worktree]
+extends = "$contacts_panel.shared_worktree"
 background = "$state.hover"
 corner_radius = 6
 

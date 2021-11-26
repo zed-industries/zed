@@ -940,6 +940,7 @@ mod tests {
             self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Credentials,
             EstablishConnectionError, UserStore,
         },
+        contacts_panel::JoinWorktree,
         editor::{Editor, EditorSettings, Input},
         fs::{FakeFs, Fs as _},
         language::{
@@ -947,7 +948,6 @@ mod tests {
             LanguageServerConfig, Point,
         },
         lsp,
-        people_panel::JoinWorktree,
         project::{ProjectPath, Worktree},
         test::test_app_state,
         workspace::Workspace,
@@ -1060,7 +1060,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_unshare_worktree(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
-        cx_b.update(zed::people_panel::init);
+        cx_b.update(zed::contacts_panel::init);
         let mut app_state_a = cx_a.update(test_app_state);
         let mut app_state_b = cx_b.update(test_app_state);
 

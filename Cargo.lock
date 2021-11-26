@@ -1110,6 +1110,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "245097e9a4535ee1e3e3931fcfcd55a796a44c643e8596ff6566d68f09b87bbc"
 
 [[package]]
+name = "contacts_panel"
+version = "0.1.0"
+dependencies = [
+ "client",
+ "gpui",
+ "postage",
+ "theme",
+ "workspace",
+]
+
+[[package]]
 name = "cookie"
 version = "0.14.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3195,17 +3206,6 @@ dependencies = [
  "base64 0.13.0",
  "once_cell",
  "regex",
-]
-
-[[package]]
-name = "people_panel"
-version = "0.1.0"
-dependencies = [
- "client",
- "gpui",
- "postage",
- "theme",
- "workspace",
 ]
 
 [[package]]
@@ -5673,6 +5673,7 @@ dependencies = [
  "chat_panel",
  "client",
  "clock",
+ "contacts_panel",
  "crossbeam-channel",
  "ctor",
  "dirs",
@@ -5697,7 +5698,6 @@ dependencies = [
  "lsp",
  "num_cpus",
  "parking_lot",
- "people_panel",
  "postage",
  "project",
  "project_panel",

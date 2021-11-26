@@ -20,7 +20,7 @@ pub struct Theme {
     pub name: String,
     pub workspace: Workspace,
     pub chat_panel: ChatPanel,
-    pub people_panel: PeoplePanel,
+    pub contacts_panel: ContactsPanel,
     pub project_panel: ProjectPanel,
     pub selector: Selector,
     pub editor: EditorStyle,
@@ -137,7 +137,7 @@ pub struct ProjectPanelEntry {
 }
 
 #[derive(Deserialize, Default)]
-pub struct PeoplePanel {
+pub struct ContactsPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub host_row_height: f32,
