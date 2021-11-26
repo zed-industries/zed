@@ -199,6 +199,7 @@ message UpdateCollaborators {
 message Peer {
     uint32 peer_id = 1;
     uint32 replica_id = 2;
+    uint64 user_id = 3;
 }
 
 message User {

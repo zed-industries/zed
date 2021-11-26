@@ -173,7 +173,7 @@ impl Server {
             if let Some(share) = worktree.share {
                 broadcast(
                     connection_id,
-                    share.guest_connection_ids.keys().copied().collect(),
+                    share.guests.keys().copied().collect(),
                     |conn_id| {
                         self.peer
                             .send(conn_id, proto::UnshareWorktree { worktree_id })
@@ -234,6 +234,7 @@ impl Server {
         let collaborator_user_ids = collaborator_user_ids.into_iter().collect::<Vec<_>>();
         let worktree_id = self.state_mut().add_worktree(Worktree {
             host_connection_id: request.sender_id,
+            host_user_id,
             collaborator_user_ids: collaborator_user_ids.clone(),
             root_name: request.payload.root_name,
             share: None,
@@ -260,7 +261,7 @@ impl Server {
         if let Some(share) = worktree.share {
             broadcast(
                 request.sender_id,
-                share.guest_connection_ids.keys().copied().collect(),
+                share.guests.keys().copied().collect(),
                 |conn_id| {
                     self.peer
                         .send(conn_id, proto::UnshareWorktree { worktree_id })
@@ -341,17 +342,19 @@ impl Server {
             .join_worktree(request.sender_id, user_id, worktree_id)
             .and_then(|joined| {
                 let share = joined.worktree.share()?;
-                let peer_count = share.guest_connection_ids.len();
+                let peer_count = share.guests.len();
                 let mut peers = Vec::with_capacity(peer_count);
                 peers.push(proto::Peer {
                     peer_id: joined.worktree.host_connection_id.0,
                     replica_id: 0,
+                    user_id: joined.worktree.host_user_id.to_proto(),
                 });
-                for (peer_conn_id, peer_replica_id) in &share.guest_connection_ids {
+                for (peer_conn_id, (peer_replica_id, peer_user_id)) in &share.guests {
                     if *peer_conn_id != request.sender_id {
                         peers.push(proto::Peer {
                             peer_id: peer_conn_id.0,
                             replica_id: *peer_replica_id as u32,
+                            user_id: peer_user_id.to_proto(),
                         });
                     }
                 }
@@ -379,6 +382,7 @@ impl Server {
                             peer: Some(proto::Peer {
                                 peer_id: request.sender_id.0,
                                 replica_id: response.replica_id,
+                                user_id: user_id.to_proto(),
                             }),
                         },
                     )
