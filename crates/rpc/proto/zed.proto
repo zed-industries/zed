@@ -38,7 +38,7 @@ message Envelope {
         OpenWorktree open_worktree = 33;
         OpenWorktreeResponse open_worktree_response = 34;
         UnshareWorktree unshare_worktree = 35;
-        UpdateCollaborators update_collaborators = 36;
+        UpdateContacts update_contacts = 36;
         LeaveWorktree leave_worktree = 37;
     }
 }
@@ -190,8 +190,8 @@ message GetChannelMessagesResponse {
     bool done = 2;
 }
 
-message UpdateCollaborators {
-    repeated Collaborator collaborators = 1;
+message UpdateContacts {
+    repeated Contact contacts = 1;
 }
 
 // Entities
@@ -358,7 +358,7 @@ message ChannelMessage {
     Nonce nonce = 5;
 }
 
-message Collaborator {
+message Contact {
     uint64 user_id = 1;
     repeated WorktreeMetadata worktrees = 2;
 }

@@ -118,8 +118,8 @@ impl Server {
             let (connection_id, handle_io, mut incoming_rx) =
                 this.peer.add_connection(connection).await;
             this.state_mut().add_connection(connection_id, user_id);
-            if let Err(err) = this.update_collaborators_for_users(&[user_id]).await {
-                log::error!("error updating collaborators for {:?}: {}", user_id, err);
+            if let Err(err) = this.update_contacts_for_users(&[user_id]).await {
+                log::error!("error updating contacts for {:?}: {}", user_id, err);
             }
 
             let handle_io = handle_io.fuse();
@@ -196,7 +196,7 @@ impl Server {
             .await?;
         }
 
-        self.update_collaborators_for_users(removed_connection.collaborator_ids.iter())
+        self.update_contacts_for_users(removed_connection.contact_ids.iter())
             .await?;
 
         Ok(())
@@ -214,12 +214,12 @@ impl Server {
         let receipt = request.receipt();
         let host_user_id = self.state().user_id_for_connection(request.sender_id)?;
 
-        let mut collaborator_user_ids = HashSet::new();
-        collaborator_user_ids.insert(host_user_id);
+        let mut contact_user_ids = HashSet::new();
+        contact_user_ids.insert(host_user_id);
         for github_login in request.payload.collaborator_logins {
             match self.app_state.db.create_user(&github_login, false).await {
-                Ok(collaborator_user_id) => {
-                    collaborator_user_ids.insert(collaborator_user_id);
+                Ok(contact_user_id) => {
+                    contact_user_ids.insert(contact_user_id);
                 }
                 Err(err) => {
                     let message = err.to_string();
@@ -231,11 +231,11 @@ impl Server {
             }
         }
 
-        let collaborator_user_ids = collaborator_user_ids.into_iter().collect::<Vec<_>>();
+        let contact_user_ids = contact_user_ids.into_iter().collect::<Vec<_>>();
         let worktree_id = self.state_mut().add_worktree(Worktree {
             host_connection_id: request.sender_id,
             host_user_id,
-            collaborator_user_ids: collaborator_user_ids.clone(),
+            contact_user_ids: contact_user_ids.clone(),
             root_name: request.payload.root_name,
             share: None,
         });
@@ -243,8 +243,7 @@ impl Server {
         self.peer
             .respond(receipt, proto::OpenWorktreeResponse { worktree_id })
             .await?;
-        self.update_collaborators_for_users(&collaborator_user_ids)
-            .await?;
+        self.update_contacts_for_users(&contact_user_ids).await?;
 
         Ok(())
     }
@@ -269,7 +268,7 @@ impl Server {
             )
             .await?;
         }
-        self.update_collaborators_for_users(&worktree.collaborator_user_ids)
+        self.update_contacts_for_users(&worktree.contact_user_ids)
             .await?;
         Ok(())
     }
@@ -288,15 +287,14 @@ impl Server {
             .map(|entry| (entry.id, entry))
             .collect();
 
-        let collaborator_user_ids =
+        let contact_user_ids =
             self.state_mut()
                 .share_worktree(worktree.id, request.sender_id, entries);
-        if let Some(collaborator_user_ids) = collaborator_user_ids {
+        if let Some(contact_user_ids) = contact_user_ids {
             self.peer
                 .respond(request.receipt(), proto::ShareWorktreeResponse {})
                 .await?;
-            self.update_collaborators_for_users(&collaborator_user_ids)
-                .await?;
+            self.update_contacts_for_users(&contact_user_ids).await?;
         } else {
             self.peer
                 .respond_with_error(
@@ -324,7 +322,7 @@ impl Server {
                 .send(conn_id, proto::UnshareWorktree { worktree_id })
         })
         .await?;
-        self.update_collaborators_for_users(&worktree.collaborator_ids)
+        self.update_contacts_for_users(&worktree.contact_ids)
             .await?;
 
         Ok(())
@@ -368,12 +366,12 @@ impl Server {
                     peers,
                 };
                 let connection_ids = joined.worktree.connection_ids();
-                let collaborator_user_ids = joined.worktree.collaborator_user_ids.clone();
-                Ok((response, connection_ids, collaborator_user_ids))
+                let contact_user_ids = joined.worktree.contact_user_ids.clone();
+                Ok((response, connection_ids, contact_user_ids))
             });
 
         match response_data {
-            Ok((response, connection_ids, collaborator_user_ids)) => {
+            Ok((response, connection_ids, contact_user_ids)) => {
                 broadcast(request.sender_id, connection_ids, |conn_id| {
                     self.peer.send(
                         conn_id,
@@ -389,8 +387,7 @@ impl Server {
                 })
                 .await?;
                 self.peer.respond(request.receipt(), response).await?;
-                self.update_collaborators_for_users(&collaborator_user_ids)
-                    .await?;
+                self.update_contacts_for_users(&contact_user_ids).await?;
             }
             Err(error) => {
                 self.peer
@@ -425,7 +422,7 @@ impl Server {
                 )
             })
             .await?;
-            self.update_collaborators_for_users(&worktree.collaborator_ids)
+            self.update_contacts_for_users(&worktree.contact_ids)
                 .await?;
         }
         Ok(())
@@ -595,7 +592,7 @@ impl Server {
         Ok(())
     }
 
-    async fn update_collaborators_for_users<'a>(
+    async fn update_contacts_for_users<'a>(
         self: &Arc<Server>,
         user_ids: impl IntoIterator<Item = &'a UserId>,
     ) -> tide::Result<()> {
@@ -604,12 +601,12 @@ impl Server {
         {
             let state = self.state();
             for user_id in user_ids {
-                let collaborators = state.collaborators_for_user(*user_id);
+                let contacts = state.contacts_for_user(*user_id);
                 for connection_id in state.connection_ids_for_user(*user_id) {
                     send_futures.push(self.peer.send(
                         connection_id,
-                        proto::UpdateCollaborators {
-                            collaborators: collaborators.clone(),
+                        proto::UpdateContacts {
+                            contacts: contacts.clone(),
                         },
                     ));
                 }
@@ -2108,7 +2105,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_collaborators(
+    async fn test_contacts(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
         mut cx_c: TestAppContext,
@@ -2145,17 +2142,17 @@ mod tests {
 
         user_store_a
             .condition(&cx_a, |user_store, _| {
-                collaborators(user_store) == vec![("user_a", vec![("a", vec![])])]
+                contacts(user_store) == vec![("user_a", vec![("a", vec![])])]
             })
             .await;
         user_store_b
             .condition(&cx_b, |user_store, _| {
-                collaborators(user_store) == vec![("user_a", vec![("a", vec![])])]
+                contacts(user_store) == vec![("user_a", vec![("a", vec![])])]
             })
             .await;
         user_store_c
             .condition(&cx_c, |user_store, _| {
-                collaborators(user_store) == vec![("user_a", vec![("a", vec![])])]
+                contacts(user_store) == vec![("user_a", vec![("a", vec![])])]
             })
             .await;
 
@@ -2175,37 +2172,37 @@ mod tests {
 
         user_store_a
             .condition(&cx_a, |user_store, _| {
-                collaborators(user_store) == vec![("user_a", vec![("a", vec!["user_b"])])]
+                contacts(user_store) == vec![("user_a", vec![("a", vec!["user_b"])])]
             })
             .await;
         user_store_b
             .condition(&cx_b, |user_store, _| {
-                collaborators(user_store) == vec![("user_a", vec![("a", vec!["user_b"])])]
+                contacts(user_store) == vec![("user_a", vec![("a", vec!["user_b"])])]
             })
             .await;
         user_store_c
             .condition(&cx_c, |user_store, _| {
-                collaborators(user_store) == vec![("user_a", vec![("a", vec!["user_b"])])]
+                contacts(user_store) == vec![("user_a", vec![("a", vec!["user_b"])])]
             })
             .await;
 
         cx_a.update(move |_| drop(worktree_a));
         user_store_a
-            .condition(&cx_a, |user_store, _| collaborators(user_store) == vec![])
+            .condition(&cx_a, |user_store, _| contacts(user_store) == vec![])
             .await;
         user_store_b
-            .condition(&cx_b, |user_store, _| collaborators(user_store) == vec![])
+            .condition(&cx_b, |user_store, _| contacts(user_store) == vec![])
             .await;
         user_store_c
-            .condition(&cx_c, |user_store, _| collaborators(user_store) == vec![])
+            .condition(&cx_c, |user_store, _| contacts(user_store) == vec![])
             .await;
 
-        fn collaborators(user_store: &UserStore) -> Vec<(&str, Vec<(&str, Vec<&str>)>)> {
+        fn contacts(user_store: &UserStore) -> Vec<(&str, Vec<(&str, Vec<&str>)>)> {
             user_store
-                .collaborators()
+                .contacts()
                 .iter()
-                .map(|collaborator| {
-                    let worktrees = collaborator
+                .map(|contact| {
+                    let worktrees = contact
                         .worktrees
                         .iter()
                         .map(|w| {
@@ -2215,7 +2212,7 @@ mod tests {
                             )
                         })
                         .collect();
-                    (collaborator.user.github_login.as_str(), worktrees)
+                    (contact.user.github_login.as_str(), worktrees)
                 })
                 .collect()
         }

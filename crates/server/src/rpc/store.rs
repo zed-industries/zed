@@ -22,7 +22,7 @@ struct ConnectionState {
 pub struct Worktree {
     pub host_connection_id: ConnectionId,
     pub host_user_id: UserId,
-    pub collaborator_user_ids: Vec<UserId>,
+    pub contact_user_ids: Vec<UserId>,
     pub root_name: String,
     pub share: Option<WorktreeShare>,
 }
@@ -44,7 +44,7 @@ pub type ReplicaId = u16;
 pub struct RemovedConnectionState {
     pub hosted_worktrees: HashMap<u64, Worktree>,
     pub guest_worktree_ids: HashMap<u64, Vec<ConnectionId>>,
-    pub collaborator_ids: HashSet<UserId>,
+    pub contact_ids: HashSet<UserId>,
 }
 
 pub struct JoinedWorktree<'a> {
@@ -54,12 +54,12 @@ pub struct JoinedWorktree<'a> {
 
 pub struct UnsharedWorktree {
     pub connection_ids: Vec<ConnectionId>,
-    pub collaborator_ids: Vec<UserId>,
+    pub contact_ids: Vec<UserId>,
 }
 
 pub struct LeftWorktree {
     pub connection_ids: Vec<ConnectionId>,
-    pub collaborator_ids: Vec<UserId>,
+    pub contact_ids: Vec<UserId>,
 }
 
 impl Store {
@@ -107,14 +107,14 @@ impl Store {
         for worktree_id in connection.worktrees.clone() {
             if let Ok(worktree) = self.remove_worktree(worktree_id, connection_id) {
                 result
-                    .collaborator_ids
-                    .extend(worktree.collaborator_user_ids.iter().copied());
+                    .contact_ids
+                    .extend(worktree.contact_user_ids.iter().copied());
                 result.hosted_worktrees.insert(worktree_id, worktree);
             } else if let Some(worktree) = self.leave_worktree(connection_id, worktree_id) {
                 result
                     .guest_worktree_ids
                     .insert(worktree_id, worktree.connection_ids);
-                result.collaborator_ids.extend(worktree.collaborator_ids);
+                result.contact_ids.extend(worktree.contact_ids);
             }
         }
 
@@ -171,8 +171,8 @@ impl Store {
             .copied()
     }
 
-    pub fn collaborators_for_user(&self, user_id: UserId) -> Vec<proto::Collaborator> {
-        let mut collaborators = HashMap::new();
+    pub fn contacts_for_user(&self, user_id: UserId) -> Vec<proto::Contact> {
+        let mut contacts = HashMap::new();
         for worktree_id in self
             .visible_worktrees_by_user_id
             .get(&user_id)
@@ -190,9 +190,9 @@ impl Store {
             }
 
             if let Ok(host_user_id) = self.user_id_for_connection(worktree.host_connection_id) {
-                collaborators
+                contacts
                     .entry(host_user_id)
-                    .or_insert_with(|| proto::Collaborator {
+                    .or_insert_with(|| proto::Contact {
                         user_id: host_user_id.to_proto(),
                         worktrees: Vec::new(),
                     })
@@ -206,14 +206,14 @@ impl Store {
             }
         }
 
-        collaborators.into_values().collect()
+        contacts.into_values().collect()
     }
 
     pub fn add_worktree(&mut self, worktree: Worktree) -> u64 {
         let worktree_id = self.next_worktree_id;
-        for collaborator_user_id in &worktree.collaborator_user_ids {
+        for contact_user_id in &worktree.contact_user_ids {
             self.visible_worktrees_by_user_id
-                .entry(*collaborator_user_id)
+                .entry(*contact_user_id)
                 .or_default()
                 .insert(worktree_id);
         }
@@ -255,10 +255,9 @@ impl Store {
             }
         }
 
-        for collaborator_user_id in &worktree.collaborator_user_ids {
-            if let Some(visible_worktrees) = self
-                .visible_worktrees_by_user_id
-                .get_mut(&collaborator_user_id)
+        for contact_user_id in &worktree.contact_user_ids {
+            if let Some(visible_worktrees) =
+                self.visible_worktrees_by_user_id.get_mut(&contact_user_id)
             {
                 visible_worktrees.remove(&worktree_id);
             }
@@ -283,7 +282,7 @@ impl Store {
                     active_replica_ids: Default::default(),
                     entries,
                 });
-                return Some(worktree.collaborator_user_ids.clone());
+                return Some(worktree.contact_user_ids.clone());
             }
         }
         None
@@ -305,7 +304,7 @@ impl Store {
         }
 
         let connection_ids = worktree.connection_ids();
-        let collaborator_ids = worktree.collaborator_user_ids.clone();
+        let contact_ids = worktree.contact_user_ids.clone();
         if let Some(share) = worktree.share.take() {
             for connection_id in share.guests.into_keys() {
                 if let Some(connection) = self.connections.get_mut(&connection_id) {
@@ -318,7 +317,7 @@ impl Store {
 
             Ok(UnsharedWorktree {
                 connection_ids,
-                collaborator_ids,
+                contact_ids,
             })
         } else {
             Err(anyhow!("worktree is not shared"))?
@@ -339,7 +338,7 @@ impl Store {
             .worktrees
             .get_mut(&worktree_id)
             .and_then(|worktree| {
-                if worktree.collaborator_user_ids.contains(&user_id) {
+                if worktree.contact_user_ids.contains(&user_id) {
                     Some(worktree)
                 } else {
                     None
@@ -381,14 +380,14 @@ impl Store {
         }
 
         let connection_ids = worktree.connection_ids();
-        let collaborator_ids = worktree.collaborator_user_ids.clone();
+        let contact_ids = worktree.contact_user_ids.clone();
 
         #[cfg(test)]
         self.check_invariants();
 
         Some(LeftWorktree {
             connection_ids,
-            collaborator_ids,
+            contact_ids,
         })
     }
 
@@ -530,11 +529,9 @@ impl Store {
             let host_connection = self.connections.get(&worktree.host_connection_id).unwrap();
             assert!(host_connection.worktrees.contains(worktree_id));
 
-            for collaborator_id in &worktree.collaborator_user_ids {
-                let visible_worktree_ids = self
-                    .visible_worktrees_by_user_id
-                    .get(collaborator_id)
-                    .unwrap();
+            for contact_id in &worktree.contact_user_ids {
+                let visible_worktree_ids =
+                    self.visible_worktrees_by_user_id.get(contact_id).unwrap();
                 assert!(visible_worktree_ids.contains(worktree_id));
             }
 
@@ -558,7 +555,7 @@ impl Store {
         for (user_id, visible_worktree_ids) in &self.visible_worktrees_by_user_id {
             for worktree_id in visible_worktree_ids {
                 let worktree = self.worktrees.get(worktree_id).unwrap();
-                assert!(worktree.collaborator_user_ids.contains(user_id));
+                assert!(worktree.contact_user_ids.contains(user_id));
             }
         }
 

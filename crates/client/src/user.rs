@@ -20,7 +20,7 @@ pub struct User {
 }
 
 #[derive(Debug)]
-pub struct Collaborator {
+pub struct Contact {
     pub user: Arc<User>,
     pub worktrees: Vec<WorktreeMetadata>,
 }
@@ -36,10 +36,10 @@ pub struct WorktreeMetadata {
 pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
     current_user: watch::Receiver<Option<Arc<User>>>,
-    collaborators: Arc<[Collaborator]>,
+    contacts: Arc<[Contact]>,
     rpc: Arc<Client>,
     http: Arc<dyn HttpClient>,
-    _maintain_collaborators: Task<()>,
+    _maintain_contacts: Task<()>,
     _maintain_current_user: Task<()>,
 }
 
@@ -52,26 +52,26 @@ impl Entity for UserStore {
 impl UserStore {
     pub fn new(rpc: Arc<Client>, http: Arc<dyn HttpClient>, cx: &mut ModelContext<Self>) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
-        let (mut update_collaborators_tx, mut update_collaborators_rx) =
-            watch::channel::<Option<proto::UpdateCollaborators>>();
-        let update_collaborators_subscription = rpc.subscribe(
+        let (mut update_contacts_tx, mut update_contacts_rx) =
+            watch::channel::<Option<proto::UpdateContacts>>();
+        let update_contacts_subscription = rpc.subscribe(
             cx,
-            move |_: &mut Self, msg: TypedEnvelope<proto::UpdateCollaborators>, _, _| {
-                let _ = update_collaborators_tx.blocking_send(Some(msg.payload));
+            move |_: &mut Self, msg: TypedEnvelope<proto::UpdateContacts>, _, _| {
+                let _ = update_contacts_tx.blocking_send(Some(msg.payload));
                 Ok(())
             },
         );
         Self {
             users: Default::default(),
             current_user: current_user_rx,
-            collaborators: Arc::from([]),
+            contacts: Arc::from([]),
             rpc: rpc.clone(),
             http,
-            _maintain_collaborators: cx.spawn_weak(|this, mut cx| async move {
-                let _subscription = update_collaborators_subscription;
-                while let Some(message) = update_collaborators_rx.recv().await {
+            _maintain_contacts: cx.spawn_weak(|this, mut cx| async move {
+                let _subscription = update_contacts_subscription;
+                while let Some(message) = update_contacts_rx.recv().await {
                     if let Some((message, this)) = message.zip(this.upgrade(&cx)) {
-                        this.update(&mut cx, |this, cx| this.update_collaborators(message, cx))
+                        this.update(&mut cx, |this, cx| this.update_contacts(message, cx))
                             .log_err()
                             .await;
                     }
@@ -100,35 +100,29 @@ impl UserStore {
         }
     }
 
-    fn update_collaborators(
+    fn update_contacts(
         &mut self,
-        message: proto::UpdateCollaborators,
+        message: proto::UpdateContacts,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let mut user_ids = HashSet::new();
-        for collaborator in &message.collaborators {
-            user_ids.insert(collaborator.user_id);
-            user_ids.extend(
-                collaborator
-                    .worktrees
-                    .iter()
-                    .flat_map(|w| &w.guests)
-                    .copied(),
-            );
+        for contact in &message.contacts {
+            user_ids.insert(contact.user_id);
+            user_ids.extend(contact.worktrees.iter().flat_map(|w| &w.guests).copied());
         }
 
         let load_users = self.load_users(user_ids.into_iter().collect(), cx);
         cx.spawn(|this, mut cx| async move {
             load_users.await?;
 
-            let mut collaborators = Vec::new();
-            for collaborator in message.collaborators {
-                collaborators.push(Collaborator::from_proto(collaborator, &this, &mut cx).await?);
+            let mut contacts = Vec::new();
+            for contact in message.contacts {
+                contacts.push(Contact::from_proto(contact, &this, &mut cx).await?);
             }
 
             this.update(&mut cx, |this, cx| {
-                collaborators.sort_by(|a, b| a.user.github_login.cmp(&b.user.github_login));
-                this.collaborators = collaborators.into();
+                contacts.sort_by(|a, b| a.user.github_login.cmp(&b.user.github_login));
+                this.contacts = contacts.into();
                 cx.notify();
             });
 
@@ -136,8 +130,8 @@ impl UserStore {
         })
     }
 
-    pub fn collaborators(&self) -> &Arc<[Collaborator]> {
-        &self.collaborators
+    pub fn contacts(&self) -> &Arc<[Contact]> {
+        &self.contacts
     }
 
     pub fn load_users(
@@ -212,19 +206,19 @@ impl User {
     }
 }
 
-impl Collaborator {
+impl Contact {
     async fn from_proto(
-        collaborator: proto::Collaborator,
+        contact: proto::Contact,
         user_store: &ModelHandle<UserStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Self> {
         let user = user_store
             .update(cx, |user_store, cx| {
-                user_store.fetch_user(collaborator.user_id, cx)
+                user_store.fetch_user(contact.user_id, cx)
             })
             .await?;
         let mut worktrees = Vec::new();
-        for worktree in collaborator.worktrees {
+        for worktree in contact.worktrees {
             let mut guests = Vec::new();
             for participant_id in worktree.guests {
                 guests.push(

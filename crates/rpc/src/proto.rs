@@ -131,7 +131,7 @@ messages!(
     GetChannelMessagesResponse,
     GetChannels,
     GetChannelsResponse,
-    UpdateCollaborators,
+    UpdateContacts,
     GetUsers,
     GetUsersResponse,
     JoinChannel,

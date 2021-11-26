@@ -1,4 +1,4 @@
-use client::{Collaborator, UserStore};
+use client::{Contact, UserStore};
 use gpui::{
     action,
     elements::*,
@@ -24,10 +24,10 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 pub struct PeoplePanel {
-    collaborators: ListState,
+    contacts: ListState,
     user_store: ModelHandle<UserStore>,
     settings: watch::Receiver<Settings>,
-    _maintain_collaborators: Subscription,
+    _maintain_contacts: Subscription,
 }
 
 impl PeoplePanel {
@@ -37,8 +37,8 @@ impl PeoplePanel {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         Self {
-            collaborators: ListState::new(
-                user_store.read(cx).collaborators().len(),
+            contacts: ListState::new(
+                user_store.read(cx).contacts().len(),
                 Orientation::Top,
                 1000.,
                 {
@@ -46,10 +46,10 @@ impl PeoplePanel {
                     let settings = settings.clone();
                     move |ix, cx| {
                         let user_store = user_store.read(cx);
-                        let collaborators = user_store.collaborators().clone();
+                        let contacts = user_store.contacts().clone();
                         let current_user_id = user_store.current_user().map(|user| user.id);
                         Self::render_collaborator(
-                            &collaborators[ix],
+                            &contacts[ix],
                             current_user_id,
                             &settings.borrow().theme,
                             cx,
@@ -57,7 +57,7 @@ impl PeoplePanel {
                     }
                 },
             ),
-            _maintain_collaborators: cx.observe(&user_store, Self::update_collaborators),
+            _maintain_contacts: cx.observe(&user_store, Self::update_contacts),
             user_store,
             settings,
         }
@@ -103,14 +103,14 @@ impl PeoplePanel {
             .update(cx, |p, cx| p.close_remote_worktree(action.0, cx));
     }
 
-    fn update_collaborators(&mut self, _: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) {
-        self.collaborators
-            .reset(self.user_store.read(cx).collaborators().len());
+    fn update_contacts(&mut self, _: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) {
+        self.contacts
+            .reset(self.user_store.read(cx).contacts().len());
         cx.notify();
     }
 
     fn render_collaborator(
-        collaborator: &Collaborator,
+        collaborator: &Contact,
         current_user_id: Option<u64>,
         theme: &Theme,
         cx: &mut LayoutContext,
@@ -305,7 +305,7 @@ impl View for PeoplePanel {
 
     fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme.people_panel;
-        Container::new(List::new(self.collaborators.clone()).boxed())
+        Container::new(List::new(self.contacts.clone()).boxed())
             .with_style(theme.container)
             .boxed()
     }
