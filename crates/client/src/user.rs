@@ -37,7 +37,7 @@ pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     contacts: Arc<[Contact]>,
-    rpc: Arc<Client>,
+    client: Arc<Client>,
     http: Arc<dyn HttpClient>,
     _maintain_contacts: Task<()>,
     _maintain_current_user: Task<()>,
@@ -50,11 +50,15 @@ impl Entity for UserStore {
 }
 
 impl UserStore {
-    pub fn new(rpc: Arc<Client>, http: Arc<dyn HttpClient>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(
+        client: Arc<Client>,
+        http: Arc<dyn HttpClient>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
         let (mut update_contacts_tx, mut update_contacts_rx) =
             watch::channel::<Option<proto::UpdateContacts>>();
-        let update_contacts_subscription = rpc.subscribe(
+        let update_contacts_subscription = client.subscribe(
             cx,
             move |_: &mut Self, msg: TypedEnvelope<proto::UpdateContacts>, _, _| {
                 let _ = update_contacts_tx.blocking_send(Some(msg.payload));
@@ -65,7 +69,7 @@ impl UserStore {
             users: Default::default(),
             current_user: current_user_rx,
             contacts: Arc::from([]),
-            rpc: rpc.clone(),
+            client: client.clone(),
             http,
             _maintain_contacts: cx.spawn_weak(|this, mut cx| async move {
                 let _subscription = update_contacts_subscription;
@@ -78,11 +82,11 @@ impl UserStore {
                 }
             }),
             _maintain_current_user: cx.spawn_weak(|this, mut cx| async move {
-                let mut status = rpc.status();
+                let mut status = client.status();
                 while let Some(status) = status.recv().await {
                     match status {
                         Status::Connected { .. } => {
-                            if let Some((this, user_id)) = this.upgrade(&cx).zip(rpc.user_id()) {
+                            if let Some((this, user_id)) = this.upgrade(&cx).zip(client.user_id()) {
                                 let user = this
                                     .update(&mut cx, |this, cx| this.fetch_user(user_id, cx))
                                     .log_err()
@@ -139,7 +143,7 @@ impl UserStore {
         mut user_ids: Vec<u64>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let rpc = self.rpc.clone();
+        let rpc = self.client.clone();
         let http = self.http.clone();
         user_ids.retain(|id| !self.users.contains_key(id));
         cx.spawn_weak(|this, mut cx| async move {

@@ -961,7 +961,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
         let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
-        let (client_b, _) = server.create_client(&mut cx_b, "user_b").await;
+        let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
 
         cx_a.foreground().forbid_parking();
 
@@ -998,6 +998,7 @@ mod tests {
             client_b.clone(),
             worktree_id,
             lang_registry.clone(),
+            user_store_b,
             &mut cx_b.to_async(),
         )
         .await
@@ -1163,8 +1164,8 @@ mod tests {
         // Connect to a server as 3 clients.
         let mut server = TestServer::start().await;
         let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
-        let (client_b, _) = server.create_client(&mut cx_b, "user_b").await;
-        let (client_c, _) = server.create_client(&mut cx_c, "user_c").await;
+        let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
+        let (client_c, user_store_c) = server.create_client(&mut cx_c, "user_c").await;
 
         let fs = Arc::new(FakeFs::new());
 
@@ -1201,6 +1202,7 @@ mod tests {
             client_b.clone(),
             worktree_id,
             lang_registry.clone(),
+            user_store_b,
             &mut cx_b.to_async(),
         )
         .await
@@ -1209,6 +1211,7 @@ mod tests {
             client_c.clone(),
             worktree_id,
             lang_registry.clone(),
+            user_store_c,
             &mut cx_c.to_async(),
         )
         .await
@@ -1302,7 +1305,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
         let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
-        let (client_b, _) = server.create_client(&mut cx_b, "user_b").await;
+        let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
 
         // Share a local worktree as client A
         let fs = Arc::new(FakeFs::new());
@@ -1337,6 +1340,7 @@ mod tests {
             client_b.clone(),
             worktree_id,
             lang_registry.clone(),
+            user_store_b,
             &mut cx_b.to_async(),
         )
         .await
@@ -1387,7 +1391,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
         let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
-        let (client_b, _) = server.create_client(&mut cx_b, "user_b").await;
+        let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
 
         // Share a local worktree as client A
         let fs = Arc::new(FakeFs::new());
@@ -1421,6 +1425,7 @@ mod tests {
             client_b.clone(),
             worktree_id,
             lang_registry.clone(),
+            user_store_b,
             &mut cx_b.to_async(),
         )
         .await
@@ -1453,7 +1458,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
         let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
-        let (client_b, _) = server.create_client(&mut cx_b, "user_b").await;
+        let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
 
         // Share a local worktree as client A
         let fs = Arc::new(FakeFs::new());
@@ -1487,6 +1492,7 @@ mod tests {
             client_b.clone(),
             worktree_id,
             lang_registry.clone(),
+            user_store_b,
             &mut cx_b.to_async(),
         )
         .await
@@ -1513,7 +1519,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
         let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
-        let (client_b, _) = server.create_client(&mut cx_a, "user_b").await;
+        let (client_b, user_store_b) = server.create_client(&mut cx_a, "user_b").await;
 
         // Share a local worktree as client A
         let fs = Arc::new(FakeFs::new());
@@ -1548,6 +1554,7 @@ mod tests {
             client_b.clone(),
             worktree_id,
             lang_registry.clone(),
+            user_store_b,
             &mut cx_b.to_async(),
         )
         .await
@@ -1587,7 +1594,7 @@ mod tests {
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
         let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
-        let (client_b, _) = server.create_client(&mut cx_a, "user_b").await;
+        let (client_b, user_store_b) = server.create_client(&mut cx_a, "user_b").await;
 
         // Share a local worktree as client A
         let fs = Arc::new(FakeFs::new());
@@ -1656,6 +1663,7 @@ mod tests {
             client_b.clone(),
             worktree_id,
             lang_registry.clone(),
+            user_store_b,
             &mut cx_b.to_async(),
         )
         .await
@@ -2165,6 +2173,7 @@ mod tests {
             client_b.clone(),
             worktree_id,
             lang_registry.clone(),
+            user_store_b.clone(),
             &mut cx_b.to_async(),
         )
         .await

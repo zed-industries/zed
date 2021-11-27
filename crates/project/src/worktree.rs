@@ -4,7 +4,7 @@ use super::{
 };
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context, Result};
-use client::{proto, Client, PeerId, TypedEnvelope};
+use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
 use futures::{Stream, StreamExt};
 use fuzzy::CharBag;
@@ -64,7 +64,7 @@ pub enum Event {
 }
 
 pub struct Collaborator {
-    pub user_id: u64,
+    pub user: Arc<User>,
     pub peer_id: PeerId,
     pub replica_id: ReplicaId,
 }
@@ -76,7 +76,7 @@ impl Entity for Worktree {
         match self {
             Self::Local(tree) => {
                 if let Some(worktree_id) = *tree.remote_id.borrow() {
-                    let rpc = tree.rpc.clone();
+                    let rpc = tree.client.clone();
                     cx.spawn(|_| async move {
                         if let Err(err) = rpc.send(proto::CloseWorktree { worktree_id }).await {
                             log::error!("error closing worktree: {}", err);
@@ -124,14 +124,15 @@ impl Entity for Worktree {
 
 impl Worktree {
     pub async fn open_local(
-        rpc: Arc<Client>,
+        client: Arc<Client>,
+        user_store: ModelHandle<UserStore>,
         path: impl Into<Arc<Path>>,
         fs: Arc<dyn Fs>,
         languages: Arc<LanguageRegistry>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
         let (tree, scan_states_tx) =
-            LocalWorktree::new(rpc, path, fs.clone(), languages, cx).await?;
+            LocalWorktree::new(client, user_store, path, fs.clone(), languages, cx).await?;
         tree.update(cx, |tree, cx| {
             let tree = tree.as_local_mut().unwrap();
             let abs_path = tree.snapshot.abs_path.clone();
@@ -148,18 +149,22 @@ impl Worktree {
     }
 
     pub async fn open_remote(
-        rpc: Arc<Client>,
+        client: Arc<Client>,
         id: u64,
         languages: Arc<LanguageRegistry>,
+        user_store: ModelHandle<UserStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
-        let response = rpc.request(proto::JoinWorktree { worktree_id: id }).await?;
-        Worktree::remote(response, rpc, languages, cx).await
+        let response = client
+            .request(proto::JoinWorktree { worktree_id: id })
+            .await?;
+        Worktree::remote(response, client, user_store, languages, cx).await
     }
 
     async fn remote(
         join_response: proto::JoinWorktreeResponse,
-        rpc: Arc<Client>,
+        client: Arc<Client>,
+        user_store: ModelHandle<UserStore>,
         languages: Arc<LanguageRegistry>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
@@ -203,6 +208,26 @@ impl Worktree {
                 (entries_by_path, entries_by_id)
             })
             .await;
+
+        let user_ids = peers.iter().map(|peer| peer.user_id).collect();
+        user_store
+            .update(cx, |user_store, cx| user_store.load_users(user_ids, cx))
+            .await?;
+        let mut collaborators = HashMap::with_capacity(peers.len());
+        for peer in &peers {
+            let peer_id = PeerId(peer.peer_id);
+            let user = user_store
+                .update(cx, |user_store, cx| user_store.fetch_user(peer.user_id, cx))
+                .await?;
+            collaborators.insert(
+                peer_id,
+                Collaborator {
+                    peer_id,
+                    user,
+                    replica_id: peer.replica_id as ReplicaId,
+                },
+            );
+        }
 
         let worktree = cx.update(|cx| {
             cx.add_model(|cx: &mut ModelContext<Worktree>| {
@@ -249,12 +274,12 @@ impl Worktree {
                 }
 
                 let _subscriptions = vec![
-                    rpc.subscribe_to_entity(remote_id, cx, Self::handle_add_peer),
-                    rpc.subscribe_to_entity(remote_id, cx, Self::handle_remove_peer),
-                    rpc.subscribe_to_entity(remote_id, cx, Self::handle_update),
-                    rpc.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
-                    rpc.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
-                    rpc.subscribe_to_entity(remote_id, cx, Self::handle_unshare),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_add_peer),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_remove_peer),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_update),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_unshare),
                 ];
 
                 Worktree::Remote(RemoteWorktree {
@@ -263,24 +288,12 @@ impl Worktree {
                     snapshot,
                     snapshot_rx,
                     updates_tx,
-                    client: rpc.clone(),
+                    client: client.clone(),
                     open_buffers: Default::default(),
-                    collaborators: peers
-                        .into_iter()
-                        .map(|p| {
-                            let peer_id = PeerId(p.peer_id);
-                            (
-                                peer_id,
-                                Collaborator {
-                                    peer_id,
-                                    user_id: p.user_id,
-                                    replica_id: p.replica_id as ReplicaId,
-                                },
-                            )
-                        })
-                        .collect(),
+                    collaborators,
                     queued_operations: Default::default(),
                     languages,
+                    user_store,
                     _subscriptions,
                 })
             })
@@ -737,7 +750,7 @@ impl Worktree {
             Worktree::Local(worktree) => worktree
                 .remote_id
                 .borrow()
-                .map(|id| (worktree.rpc.clone(), id)),
+                .map(|id| (worktree.client.clone(), id)),
             Worktree::Remote(worktree) => Some((worktree.client.clone(), worktree.remote_id)),
         } {
             cx.spawn(|worktree, mut cx| async move {
@@ -791,7 +804,8 @@ pub struct LocalWorktree {
     collaborators: HashMap<PeerId, Collaborator>,
     queued_operations: Vec<(u64, Operation)>,
     languages: Arc<LanguageRegistry>,
-    rpc: Arc<Client>,
+    client: Arc<Client>,
+    user_store: ModelHandle<UserStore>,
     fs: Arc<dyn Fs>,
     language_servers: HashMap<String, Arc<LanguageServer>>,
 }
@@ -803,7 +817,8 @@ struct WorktreeConfig {
 
 impl LocalWorktree {
     async fn new(
-        rpc: Arc<Client>,
+        client: Arc<Client>,
+        user_store: ModelHandle<UserStore>,
         path: impl Into<Arc<Path>>,
         fs: Arc<dyn Fs>,
         languages: Arc<LanguageRegistry>,
@@ -857,7 +872,7 @@ impl LocalWorktree {
 
             let (mut remote_id_tx, remote_id_rx) = watch::channel();
             let _maintain_remote_id_task = cx.spawn_weak({
-                let rpc = rpc.clone();
+                let rpc = client.clone();
                 move |this, cx| {
                     async move {
                         let mut status = rpc.status();
@@ -905,7 +920,8 @@ impl LocalWorktree {
                 queued_operations: Default::default(),
                 collaborators: Default::default(),
                 languages,
-                rpc,
+                client,
+                user_store,
                 fs,
                 language_servers: Default::default(),
             };
@@ -1106,7 +1122,7 @@ impl LocalWorktree {
             peer_id,
             Collaborator {
                 peer_id,
-                user_id: peer.user_id,
+                user: todo!(),
                 replica_id: peer.replica_id as ReplicaId,
             },
         );
@@ -1267,7 +1283,7 @@ impl LocalWorktree {
     pub fn share(&mut self, cx: &mut ModelContext<Worktree>) -> Task<anyhow::Result<u64>> {
         let snapshot = self.snapshot();
         let share_request = self.share_request(cx);
-        let rpc = self.rpc.clone();
+        let rpc = self.client.clone();
         cx.spawn(|this, mut cx| async move {
             let share_request = if let Some(request) = share_request.await {
                 request
@@ -1321,7 +1337,7 @@ impl LocalWorktree {
 
     pub fn unshare(&mut self, cx: &mut ModelContext<Worktree>) {
         self.share.take();
-        let rpc = self.rpc.clone();
+        let rpc = self.client.clone();
         let remote_id = self.remote_id();
         cx.foreground()
             .spawn(
@@ -1399,6 +1415,7 @@ pub struct RemoteWorktree {
     open_buffers: HashMap<usize, RemoteBuffer>,
     collaborators: HashMap<PeerId, Collaborator>,
     languages: Arc<LanguageRegistry>,
+    user_store: ModelHandle<UserStore>,
     queued_operations: Vec<(u64, Operation)>,
     _subscriptions: Vec<client::Subscription>,
 }
@@ -1530,7 +1547,7 @@ impl RemoteWorktree {
             peer_id,
             Collaborator {
                 peer_id,
-                user_id: peer.user_id,
+                user: todo!(),
                 replica_id: peer.replica_id as ReplicaId,
             },
         );
@@ -2009,7 +2026,7 @@ impl language::File for File {
     ) -> Task<Result<(clock::Global, SystemTime)>> {
         self.worktree.update(cx, |worktree, cx| match worktree {
             Worktree::Local(worktree) => {
-                let rpc = worktree.rpc.clone();
+                let rpc = worktree.client.clone();
                 let worktree_id = *worktree.remote_id.borrow();
                 let save = worktree.save(self.path.clone(), text, cx);
                 cx.background().spawn(async move {
@@ -2976,7 +2993,7 @@ mod tests {
     use crate::fs::FakeFs;
     use anyhow::Result;
     use buffer::Point;
-    use client::test::FakeServer;
+    use client::test::{FakeHttpClient, FakeServer};
     use fs::RealFs;
     use language::{tree_sitter_rust, LanguageServerConfig};
     use language::{Diagnostic, LanguageConfig};
@@ -2992,7 +3009,7 @@ mod tests {
     use util::test::temp_tree;
 
     #[gpui::test]
-    async fn test_traversal(cx: gpui::TestAppContext) {
+    async fn test_traversal(mut cx: gpui::TestAppContext) {
         let fs = FakeFs::new();
         fs.insert_tree(
             "/root",
@@ -3006,8 +3023,13 @@ mod tests {
         )
         .await;
 
+        let client = Client::new();
+        let http_client = FakeHttpClient::with_404_response();
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+
         let tree = Worktree::open_local(
-            Client::new(),
+            client,
+            user_store,
             Arc::from(Path::new("/root")),
             Arc::new(fs),
             Default::default(),
@@ -3038,8 +3060,14 @@ mod tests {
         let dir = temp_tree(json!({
             "file1": "the old contents",
         }));
+
+        let client = Client::new();
+        let http_client = FakeHttpClient::with_404_response();
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+
         let tree = Worktree::open_local(
-            Client::new(),
+            client,
+            user_store,
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
@@ -3068,8 +3096,13 @@ mod tests {
         }));
         let file_path = dir.path().join("file1");
 
+        let client = Client::new();
+        let http_client = FakeHttpClient::with_404_response();
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+
         let tree = Worktree::open_local(
-            Client::new(),
+            client,
+            user_store,
             file_path.clone(),
             Arc::new(RealFs),
             Default::default(),
@@ -3113,9 +3146,12 @@ mod tests {
 
         let user_id = 5;
         let mut client = Client::new();
+        let http_client = FakeHttpClient::with_404_response();
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
         let tree = Worktree::open_local(
             client,
+            user_store.clone(),
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
@@ -3170,6 +3206,7 @@ mod tests {
                 peers: Vec::new(),
             },
             Client::new(),
+            user_store,
             Default::default(),
             &mut cx.to_async(),
         )
@@ -3262,7 +3299,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_rescan_with_gitignore(cx: gpui::TestAppContext) {
+    async fn test_rescan_with_gitignore(mut cx: gpui::TestAppContext) {
         let dir = temp_tree(json!({
             ".git": {},
             ".gitignore": "ignored-dir\n",
@@ -3274,8 +3311,13 @@ mod tests {
             }
         }));
 
+        let client = Client::new();
+        let http_client = FakeHttpClient::with_404_response();
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+
         let tree = Worktree::open_local(
-            Client::new(),
+            client,
+            user_store,
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
@@ -3313,6 +3355,8 @@ mod tests {
         let user_id = 100;
         let mut client = Client::new();
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
+        let http_client = FakeHttpClient::with_404_response();
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
 
         let fs = Arc::new(FakeFs::new());
         fs.insert_tree(
@@ -3330,6 +3374,7 @@ mod tests {
 
         let worktree = Worktree::open_local(
             client.clone(),
+            user_store,
             "/path/to/the-dir".as_ref(),
             fs,
             Default::default(),
@@ -3376,8 +3421,13 @@ mod tests {
             "file2": "def",
             "file3": "ghi",
         }));
+        let client = Client::new();
+        let http_client = FakeHttpClient::with_404_response();
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+
         let tree = Worktree::open_local(
-            Client::new(),
+            client,
+            user_store,
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
@@ -3509,8 +3559,13 @@ mod tests {
 
         let initial_contents = "aaa\nbbbbb\nc\n";
         let dir = temp_tree(json!({ "the-file": initial_contents }));
+        let client = Client::new();
+        let http_client = FakeHttpClient::with_404_response();
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+
         let tree = Worktree::open_local(
-            Client::new(),
+            client,
+            user_store,
             dir.path(),
             Arc::new(RealFs),
             Default::default(),
@@ -3619,8 +3674,13 @@ mod tests {
             "b.rs": "const y: i32 = 1",
         }));
 
+        let client = Client::new();
+        let http_client = FakeHttpClient::with_404_response();
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+
         let tree = Worktree::open_local(
-            Client::new(),
+            client,
+            user_store,
             dir.path(),
             Arc::new(RealFs),
             Arc::new(languages),

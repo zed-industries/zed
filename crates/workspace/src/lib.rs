@@ -348,6 +348,7 @@ impl Workspace {
             Project::new(
                 params.languages.clone(),
                 params.client.clone(),
+                params.user_store.clone(),
                 params.fs.clone(),
             )
         });

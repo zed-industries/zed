@@ -172,6 +172,10 @@ impl FakeHttpClient {
             handler: Box::new(move |req| Box::pin(handler(req))),
         })
     }
+
+    pub fn with_404_response() -> Arc<dyn HttpClient> {
+        Self::new(|_| async move { Ok(ServerResponse::new(404)) })
+    }
 }
 
 impl fmt::Debug for FakeHttpClient {
