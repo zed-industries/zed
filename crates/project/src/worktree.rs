@@ -69,6 +69,26 @@ pub struct Collaborator {
     pub replica_id: ReplicaId,
 }
 
+impl Collaborator {
+    fn from_proto(
+        message: proto::Collaborator,
+        user_store: &ModelHandle<UserStore>,
+        cx: &mut AsyncAppContext,
+    ) -> impl Future<Output = Result<Self>> {
+        let user = user_store.update(cx, |user_store, cx| {
+            user_store.fetch_user(message.user_id, cx)
+        });
+
+        async move {
+            Ok(Self {
+                peer_id: PeerId(message.peer_id),
+                user: user.await?,
+                replica_id: message.replica_id as ReplicaId,
+            })
+        }
+    }
+}
+
 impl Entity for Worktree {
     type Event = Event;
 
@@ -174,7 +194,6 @@ impl Worktree {
 
         let remote_id = worktree.id;
         let replica_id = join_response.replica_id as ReplicaId;
-        let peers = join_response.peers;
         let root_char_bag: CharBag = worktree
             .root_name
             .chars()
@@ -209,24 +228,18 @@ impl Worktree {
             })
             .await;
 
-        let user_ids = peers.iter().map(|peer| peer.user_id).collect();
+        let user_ids = join_response
+            .collaborators
+            .iter()
+            .map(|peer| peer.user_id)
+            .collect();
         user_store
             .update(cx, |user_store, cx| user_store.load_users(user_ids, cx))
             .await?;
-        let mut collaborators = HashMap::with_capacity(peers.len());
-        for peer in &peers {
-            let peer_id = PeerId(peer.peer_id);
-            let user = user_store
-                .update(cx, |user_store, cx| user_store.fetch_user(peer.user_id, cx))
-                .await?;
-            collaborators.insert(
-                peer_id,
-                Collaborator {
-                    peer_id,
-                    user,
-                    replica_id: peer.replica_id as ReplicaId,
-                },
-            );
+        let mut collaborators = HashMap::with_capacity(join_response.collaborators.len());
+        for message in join_response.collaborators {
+            let collaborator = Collaborator::from_proto(message, &user_store, cx).await?;
+            collaborators.insert(collaborator.peer_id, collaborator);
         }
 
         let worktree = cx.update(|cx| {
@@ -274,8 +287,8 @@ impl Worktree {
                 }
 
                 let _subscriptions = vec![
-                    client.subscribe_to_entity(remote_id, cx, Self::handle_add_peer),
-                    client.subscribe_to_entity(remote_id, cx, Self::handle_remove_peer),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_add_collaborator),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_remove_collaborator),
                     client.subscribe_to_entity(remote_id, cx, Self::handle_update),
                     client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
                     client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
@@ -347,27 +360,52 @@ impl Worktree {
         }
     }
 
-    pub fn handle_add_peer(
-        &mut self,
-        envelope: TypedEnvelope<proto::AddPeer>,
-        _: Arc<Client>,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
+    pub fn user_store(&self) -> &ModelHandle<UserStore> {
         match self {
-            Worktree::Local(worktree) => worktree.add_peer(envelope, cx),
-            Worktree::Remote(worktree) => worktree.add_peer(envelope, cx),
+            Worktree::Local(worktree) => &worktree.user_store,
+            Worktree::Remote(worktree) => &worktree.user_store,
         }
     }
 
-    pub fn handle_remove_peer(
+    pub fn handle_add_collaborator(
         &mut self,
-        envelope: TypedEnvelope<proto::RemovePeer>,
+        mut envelope: TypedEnvelope<proto::AddCollaborator>,
+        _: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let user_store = self.user_store().clone();
+        let collaborator = envelope
+            .payload
+            .collaborator
+            .take()
+            .ok_or_else(|| anyhow!("empty collaborator"))?;
+
+        cx.spawn(|this, mut cx| {
+            async move {
+                let collaborator =
+                    Collaborator::from_proto(collaborator, &user_store, &mut cx).await?;
+                this.update(&mut cx, |this, cx| match this {
+                    Worktree::Local(worktree) => worktree.add_collaborator(collaborator, cx),
+                    Worktree::Remote(worktree) => worktree.add_collaborator(collaborator, cx),
+                });
+                Ok(())
+            }
+            .log_err()
+        })
+        .detach();
+
+        Ok(())
+    }
+
+    pub fn handle_remove_collaborator(
+        &mut self,
+        envelope: TypedEnvelope<proto::RemoveCollaborator>,
         _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         match self {
-            Worktree::Local(worktree) => worktree.remove_peer(envelope, cx),
-            Worktree::Remote(worktree) => worktree.remove_peer(envelope, cx),
+            Worktree::Local(worktree) => worktree.remove_collaborator(envelope, cx),
+            Worktree::Remote(worktree) => worktree.remove_collaborator(envelope, cx),
         }
     }
 
@@ -1107,33 +1145,19 @@ impl LocalWorktree {
         Ok(())
     }
 
-    pub fn add_peer(
+    pub fn add_collaborator(
         &mut self,
-        envelope: TypedEnvelope<proto::AddPeer>,
+        collaborator: Collaborator,
         cx: &mut ModelContext<Worktree>,
-    ) -> Result<()> {
-        let peer = envelope
-            .payload
-            .peer
-            .as_ref()
-            .ok_or_else(|| anyhow!("empty peer"))?;
-        let peer_id = PeerId(peer.peer_id);
-        self.collaborators.insert(
-            peer_id,
-            Collaborator {
-                peer_id,
-                user: todo!(),
-                replica_id: peer.replica_id as ReplicaId,
-            },
-        );
+    ) {
+        self.collaborators
+            .insert(collaborator.peer_id, collaborator);
         cx.notify();
-
-        Ok(())
     }
 
-    pub fn remove_peer(
+    pub fn remove_collaborator(
         &mut self,
-        envelope: TypedEnvelope<proto::RemovePeer>,
+        envelope: TypedEnvelope<proto::RemoveCollaborator>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
         let peer_id = PeerId(envelope.payload.peer_id);
@@ -1316,8 +1340,8 @@ impl LocalWorktree {
 
             this.update(&mut cx, |worktree, cx| {
                 let _subscriptions = vec![
-                    rpc.subscribe_to_entity(remote_id, cx, Worktree::handle_add_peer),
-                    rpc.subscribe_to_entity(remote_id, cx, Worktree::handle_remove_peer),
+                    rpc.subscribe_to_entity(remote_id, cx, Worktree::handle_add_collaborator),
+                    rpc.subscribe_to_entity(remote_id, cx, Worktree::handle_remove_collaborator),
                     rpc.subscribe_to_entity(remote_id, cx, Worktree::handle_open_buffer),
                     rpc.subscribe_to_entity(remote_id, cx, Worktree::handle_close_buffer),
                     rpc.subscribe_to_entity(remote_id, cx, Worktree::handle_update_buffer),
@@ -1532,32 +1556,19 @@ impl RemoteWorktree {
         Ok(())
     }
 
-    pub fn add_peer(
+    pub fn add_collaborator(
         &mut self,
-        envelope: TypedEnvelope<proto::AddPeer>,
+        collaborator: Collaborator,
         cx: &mut ModelContext<Worktree>,
-    ) -> Result<()> {
-        let peer = envelope
-            .payload
-            .peer
-            .as_ref()
-            .ok_or_else(|| anyhow!("empty peer"))?;
-        let peer_id = PeerId(peer.peer_id);
-        self.collaborators.insert(
-            peer_id,
-            Collaborator {
-                peer_id,
-                user: todo!(),
-                replica_id: peer.replica_id as ReplicaId,
-            },
-        );
+    ) {
+        self.collaborators
+            .insert(collaborator.peer_id, collaborator);
         cx.notify();
-        Ok(())
     }
 
-    pub fn remove_peer(
+    pub fn remove_collaborator(
         &mut self,
-        envelope: TypedEnvelope<proto::RemovePeer>,
+        envelope: TypedEnvelope<proto::RemoveCollaborator>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
         let peer_id = PeerId(envelope.payload.peer_id);
@@ -3146,9 +3157,8 @@ mod tests {
 
         let user_id = 5;
         let mut client = Client::new();
-        let http_client = FakeHttpClient::with_404_response();
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
+        let user_store = server.build_user_store(client.clone(), &mut cx).await;
         let tree = Worktree::open_local(
             client,
             user_store.clone(),
@@ -3203,7 +3213,7 @@ mod tests {
             proto::JoinWorktreeResponse {
                 worktree: share_request.await.unwrap().worktree,
                 replica_id: 1,
-                peers: Vec::new(),
+                collaborators: Vec::new(),
             },
             Client::new(),
             user_store,
@@ -3355,8 +3365,7 @@ mod tests {
         let user_id = 100;
         let mut client = Client::new();
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
-        let http_client = FakeHttpClient::with_404_response();
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+        let user_store = server.build_user_store(client.clone(), &mut cx).await;
 
         let fs = Arc::new(FakeFs::new());
         fs.insert_tree(
@@ -3382,11 +3391,6 @@ mod tests {
         )
         .await
         .unwrap();
-
-        {
-            let cx = cx.to_async();
-            client.authenticate_and_connect(&cx).await.unwrap();
-        }
 
         let open_worktree = server.receive::<proto::OpenWorktree>().await.unwrap();
         assert_eq!(

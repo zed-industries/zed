@@ -187,7 +187,7 @@ impl Server {
             broadcast(connection_id, peer_ids, |conn_id| {
                 self.peer.send(
                     conn_id,
-                    proto::RemovePeer {
+                    proto::RemoveCollaborator {
                         worktree_id,
                         peer_id: connection_id.0,
                     },
@@ -341,15 +341,15 @@ impl Server {
             .and_then(|joined| {
                 let share = joined.worktree.share()?;
                 let peer_count = share.guests.len();
-                let mut peers = Vec::with_capacity(peer_count);
-                peers.push(proto::Peer {
+                let mut collaborators = Vec::with_capacity(peer_count);
+                collaborators.push(proto::Collaborator {
                     peer_id: joined.worktree.host_connection_id.0,
                     replica_id: 0,
                     user_id: joined.worktree.host_user_id.to_proto(),
                 });
                 for (peer_conn_id, (peer_replica_id, peer_user_id)) in &share.guests {
                     if *peer_conn_id != request.sender_id {
-                        peers.push(proto::Peer {
+                        collaborators.push(proto::Collaborator {
                             peer_id: peer_conn_id.0,
                             replica_id: *peer_replica_id as u32,
                             user_id: peer_user_id.to_proto(),
@@ -363,7 +363,7 @@ impl Server {
                         entries: share.entries.values().cloned().collect(),
                     }),
                     replica_id: joined.replica_id as u32,
-                    peers,
+                    collaborators,
                 };
                 let connection_ids = joined.worktree.connection_ids();
                 let contact_user_ids = joined.worktree.authorized_user_ids.clone();
@@ -375,9 +375,9 @@ impl Server {
                 broadcast(request.sender_id, connection_ids, |conn_id| {
                     self.peer.send(
                         conn_id,
-                        proto::AddPeer {
+                        proto::AddCollaborator {
                             worktree_id,
-                            peer: Some(proto::Peer {
+                            collaborator: Some(proto::Collaborator {
                                 peer_id: request.sender_id.0,
                                 replica_id: response.replica_id,
                                 user_id: user_id.to_proto(),
@@ -415,7 +415,7 @@ impl Server {
             broadcast(sender_id, worktree.connection_ids, |conn_id| {
                 self.peer.send(
                     conn_id,
-                    proto::RemovePeer {
+                    proto::RemoveCollaborator {
                         worktree_id,
                         peer_id: sender_id.0,
                     },
@@ -960,7 +960,7 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
-        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_a, user_store_a) = server.create_client(&mut cx_a, "user_a").await;
         let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
 
         cx_a.foreground().forbid_parking();
@@ -978,6 +978,7 @@ mod tests {
         .await;
         let worktree_a = Worktree::open_local(
             client_a.clone(),
+            user_store_a,
             "/a".as_ref(),
             fs,
             lang_registry.clone(),
@@ -1052,7 +1053,7 @@ mod tests {
             .condition(&cx_a, |tree, cx| !tree.has_open_buffer("b.txt", cx))
             .await;
 
-        // Dropping the worktree removes client B from client A's peers.
+        // Dropping the worktree removes client B from client A's collaborators.
         cx_b.update(move |_| drop(worktree_b));
         worktree_a
             .condition(&cx_a, |tree, _| tree.collaborators().is_empty())
@@ -1089,6 +1090,7 @@ mod tests {
         .await;
         let worktree_a = Worktree::open_local(
             app_state_a.client.clone(),
+            app_state_a.user_store.clone(),
             "/a".as_ref(),
             fs,
             app_state_a.languages.clone(),
@@ -1163,7 +1165,7 @@ mod tests {
 
         // Connect to a server as 3 clients.
         let mut server = TestServer::start().await;
-        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_a, user_store_a) = server.create_client(&mut cx_a, "user_a").await;
         let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
         let (client_c, user_store_c) = server.create_client(&mut cx_c, "user_c").await;
 
@@ -1182,6 +1184,7 @@ mod tests {
 
         let worktree_a = Worktree::open_local(
             client_a.clone(),
+            user_store_a,
             "/a".as_ref(),
             fs.clone(),
             lang_registry.clone(),
@@ -1304,7 +1307,7 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
-        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_a, user_store_a) = server.create_client(&mut cx_a, "user_a").await;
         let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
 
         // Share a local worktree as client A
@@ -1320,6 +1323,7 @@ mod tests {
 
         let worktree_a = Worktree::open_local(
             client_a.clone(),
+            user_store_a,
             "/dir".as_ref(),
             fs,
             lang_registry.clone(),
@@ -1390,7 +1394,7 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
-        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_a, user_store_a) = server.create_client(&mut cx_a, "user_a").await;
         let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
 
         // Share a local worktree as client A
@@ -1405,6 +1409,7 @@ mod tests {
         .await;
         let worktree_a = Worktree::open_local(
             client_a.clone(),
+            user_store_a,
             "/dir".as_ref(),
             fs,
             lang_registry.clone(),
@@ -1457,7 +1462,7 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
-        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_a, user_store_a) = server.create_client(&mut cx_a, "user_a").await;
         let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
 
         // Share a local worktree as client A
@@ -1472,6 +1477,7 @@ mod tests {
         .await;
         let worktree_a = Worktree::open_local(
             client_a.clone(),
+            user_store_a,
             "/dir".as_ref(),
             fs,
             lang_registry.clone(),
@@ -1512,14 +1518,14 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_peer_disconnection(mut cx_a: TestAppContext, cx_b: TestAppContext) {
+    async fn test_peer_disconnection(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
-        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
-        let (client_b, user_store_b) = server.create_client(&mut cx_a, "user_b").await;
+        let (client_a, user_store_a) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
 
         // Share a local worktree as client A
         let fs = Arc::new(FakeFs::new());
@@ -1534,6 +1540,7 @@ mod tests {
         .await;
         let worktree_a = Worktree::open_local(
             client_a.clone(),
+            user_store_a,
             "/a".as_ref(),
             fs,
             lang_registry.clone(),
@@ -1593,8 +1600,8 @@ mod tests {
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
-        let (client_a, _) = server.create_client(&mut cx_a, "user_a").await;
-        let (client_b, user_store_b) = server.create_client(&mut cx_a, "user_b").await;
+        let (client_a, user_store_a) = server.create_client(&mut cx_a, "user_a").await;
+        let (client_b, user_store_b) = server.create_client(&mut cx_b, "user_b").await;
 
         // Share a local worktree as client A
         let fs = Arc::new(FakeFs::new());
@@ -1609,6 +1616,7 @@ mod tests {
         .await;
         let worktree_a = Worktree::open_local(
             client_a.clone(),
+            user_store_a,
             "/a".as_ref(),
             fs,
             lang_registry.clone(),
@@ -2140,6 +2148,7 @@ mod tests {
 
         let worktree_a = Worktree::open_local(
             client_a.clone(),
+            user_store_a.clone(),
             "/a".as_ref(),
             fs.clone(),
             lang_registry.clone(),
