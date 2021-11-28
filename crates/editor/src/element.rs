@@ -371,12 +371,7 @@ impl EditorElement {
         let content_origin = bounds.origin() + layout.text_offset;
 
         for (replica_id, selections) in &layout.selections {
-            let style_ix = *replica_id as usize % (style.guest_selections.len() + 1);
-            let style = if style_ix == 0 {
-                &style.selection
-            } else {
-                &style.guest_selections[style_ix - 1]
-            };
+            let style = style.replica_selection_style(*replica_id);
 
             for selection in selections {
                 if selection.start != selection.end {

@@ -45,12 +45,21 @@ pub struct Titlebar {
     pub height: f32,
     pub title: TextStyle,
     pub avatar_width: f32,
+    pub avatar_ribbon: AvatarRibbon,
     pub offline_icon: OfflineIcon,
     pub icon_color: Color,
     pub avatar: ImageStyle,
     pub sign_in_prompt: ContainedText,
     pub hovered_sign_in_prompt: ContainedText,
     pub outdated_warning: ContainedText,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct AvatarRibbon {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub width: f32,
+    pub height: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -275,6 +284,15 @@ pub struct BlockStyle {
 impl EditorStyle {
     pub fn placeholder_text(&self) -> &TextStyle {
         self.placeholder_text.as_ref().unwrap_or(&self.text)
+    }
+
+    pub fn replica_selection_style(&self, replica_id: u16) -> &SelectionStyle {
+        let style_ix = replica_id as usize % (self.guest_selections.len() + 1);
+        if style_ix == 0 {
+            &self.selection
+        } else {
+            &self.guest_selections[style_ix - 1]
+        }
     }
 }
 

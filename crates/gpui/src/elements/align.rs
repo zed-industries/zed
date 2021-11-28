@@ -25,6 +25,11 @@ impl Align {
         self
     }
 
+    pub fn bottom(mut self) -> Self {
+        self.alignment.set_y(1.0);
+        self
+    }
+
     pub fn left(mut self) -> Self {
         self.alignment.set_x(-1.0);
         self

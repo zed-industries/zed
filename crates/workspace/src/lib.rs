@@ -968,11 +968,17 @@ impl Workspace {
                         Align::new(
                             Flex::row()
                                 .with_children(self.render_collaborators(theme, cx))
-                                .with_child(self.render_avatar(
-                                    self.user_store.read(cx).current_user().as_ref(),
-                                    theme,
-                                    cx,
-                                ))
+                                .with_child(
+                                    self.render_avatar(
+                                        self.user_store.read(cx).current_user().as_ref(),
+                                        self.project
+                                            .read(cx)
+                                            .active_worktree()
+                                            .map(|worktree| worktree.read(cx).replica_id()),
+                                        theme,
+                                        cx,
+                                    ),
+                                )
                                 .with_children(self.render_connection_status())
                                 .boxed(),
                         )
@@ -991,14 +997,19 @@ impl Workspace {
     fn render_collaborators(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> Vec<ElementBox> {
         let mut elements = Vec::new();
         if let Some(active_worktree) = self.project.read(cx).active_worktree() {
-            let users = active_worktree
+            let collaborators = active_worktree
                 .read(cx)
                 .collaborators()
                 .values()
-                .map(|c| c.user.clone())
+                .cloned()
                 .collect::<Vec<_>>();
-            for user in users {
-                elements.push(self.render_avatar(Some(&user), theme, cx));
+            for collaborator in collaborators {
+                elements.push(self.render_avatar(
+                    Some(&collaborator.user),
+                    Some(collaborator.replica_id),
+                    theme,
+                    cx,
+                ));
             }
         }
         elements
@@ -1007,21 +1018,37 @@ impl Workspace {
     fn render_avatar(
         &self,
         user: Option<&Arc<User>>,
+        replica_id: Option<u16>,
         theme: &Theme,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         if let Some(avatar) = user.and_then(|user| user.avatar.clone()) {
             ConstrainedBox::new(
-                Align::new(
-                    ConstrainedBox::new(
-                        Image::new(avatar)
-                            .with_style(theme.workspace.titlebar.avatar)
+                Stack::new()
+                    .with_child(
+                        ConstrainedBox::new(
+                            Image::new(avatar)
+                                .with_style(theme.workspace.titlebar.avatar)
+                                .boxed(),
+                        )
+                        .with_width(theme.workspace.titlebar.avatar_width)
+                        .aligned()
+                        .boxed(),
+                    )
+                    .with_child(
+                        Container::new(Empty::new().boxed())
+                            .with_style(theme.workspace.titlebar.avatar_ribbon.container)
+                            .with_background_color(replica_id.map_or(Default::default(), |id| {
+                                theme.editor.replica_selection_style(id).cursor
+                            }))
+                            .constrained()
+                            .with_width(theme.workspace.titlebar.avatar_ribbon.width)
+                            .with_height(theme.workspace.titlebar.avatar_ribbon.height)
+                            .aligned()
+                            .bottom()
                             .boxed(),
                     )
-                    .with_width(theme.workspace.titlebar.avatar_width)
                     .boxed(),
-                )
-                .boxed(),
             )
             .with_width(theme.workspace.right_sidebar.width)
             .boxed()

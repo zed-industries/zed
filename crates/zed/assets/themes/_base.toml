@@ -10,8 +10,9 @@ height = 32
 border = { width = 1, bottom = true, color = "$border.0" }
 title = "$text.0"
 avatar_width = 18
-icon_color = "$text.2.color"
 avatar = { corner_radius = 10, border = { width = 1, color = "#00000088" } }
+avatar_ribbon = { background = "#ff0000", height = 3, width = 12 }
+icon_color = "$text.2.color"
 outdated_warning = { extends = "$text.2", size = 13 }
 
 [workspace.titlebar.sign_in_prompt]

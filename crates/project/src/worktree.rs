@@ -63,7 +63,7 @@ pub enum Event {
     Closed,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Collaborator {
     pub user: Arc<User>,
     pub peer_id: PeerId,
