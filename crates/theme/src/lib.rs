@@ -42,6 +42,7 @@ pub struct Workspace {
 pub struct Titlebar {
     #[serde(flatten)]
     pub container: ContainerStyle,
+    pub height: f32,
     pub title: TextStyle,
     pub avatar_width: f32,
     pub offline_icon: OfflineIcon,

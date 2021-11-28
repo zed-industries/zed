@@ -984,7 +984,7 @@ impl Workspace {
             .with_style(theme.workspace.titlebar.container)
             .boxed(),
         )
-        .with_height(32.)
+        .with_height(theme.workspace.titlebar.height)
         .named("titlebar")
     }
 
