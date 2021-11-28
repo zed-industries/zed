@@ -7,7 +7,13 @@ mod status_bar;
 use anyhow::{anyhow, Result};
 use client::{Authenticate, ChannelList, Client, User, UserStore};
 use gpui::{
-    action, elements::*, json::to_string_pretty, keymap::Binding, platform::CursorStyle,
+    action,
+    color::Color,
+    elements::*,
+    geometry::{vector::vec2f, PathBuilder},
+    json::{self, to_string_pretty, ToJson},
+    keymap::Binding,
+    platform::CursorStyle,
     AnyViewHandle, AppContext, ClipboardItem, Entity, ModelContext, ModelHandle, MutableAppContext,
     PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle, WeakModelHandle,
 };
@@ -1036,17 +1042,15 @@ impl Workspace {
                         .boxed(),
                     )
                     .with_child(
-                        Container::new(Empty::new().boxed())
-                            .with_style(theme.workspace.titlebar.avatar_ribbon.container)
-                            .with_background_color(replica_id.map_or(Default::default(), |id| {
-                                theme.editor.replica_selection_style(id).cursor
-                            }))
-                            .constrained()
-                            .with_width(theme.workspace.titlebar.avatar_ribbon.width)
-                            .with_height(theme.workspace.titlebar.avatar_ribbon.height)
-                            .aligned()
-                            .bottom()
-                            .boxed(),
+                        AvatarRibbon::new(replica_id.map_or(Default::default(), |id| {
+                            theme.editor.replica_selection_style(id).cursor
+                        }))
+                        .constrained()
+                        .with_width(theme.workspace.titlebar.avatar_ribbon.width)
+                        .with_height(theme.workspace.titlebar.avatar_ribbon.height)
+                        .aligned()
+                        .bottom()
+                        .boxed(),
                     )
                     .boxed(),
             )
@@ -1152,5 +1156,73 @@ impl WorkspaceHandle for ViewHandle<Workspace> {
                 })
             })
             .collect::<Vec<_>>()
+    }
+}
+
+pub struct AvatarRibbon {
+    color: Color,
+}
+
+impl AvatarRibbon {
+    pub fn new(color: Color) -> AvatarRibbon {
+        AvatarRibbon { color }
+    }
+}
+
+impl Element for AvatarRibbon {
+    type LayoutState = ();
+
+    type PaintState = ();
+
+    fn layout(
+        &mut self,
+        constraint: gpui::SizeConstraint,
+        _: &mut gpui::LayoutContext,
+    ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
+        (constraint.max, ())
+    }
+
+    fn paint(
+        &mut self,
+        bounds: gpui::geometry::rect::RectF,
+        _: gpui::geometry::rect::RectF,
+        _: &mut Self::LayoutState,
+        cx: &mut gpui::PaintContext,
+    ) -> Self::PaintState {
+        let mut path = PathBuilder::new();
+        path.reset(bounds.lower_left());
+        path.curve_to(
+            bounds.origin() + vec2f(bounds.height(), 0.),
+            bounds.origin(),
+        );
+        path.line_to(bounds.upper_right() - vec2f(bounds.height(), 0.));
+        path.curve_to(bounds.lower_right(), bounds.upper_right());
+        path.line_to(bounds.lower_left());
+        cx.scene.push_path(path.build(self.color, None));
+    }
+
+    fn dispatch_event(
+        &mut self,
+        _: &gpui::Event,
+        _: gpui::geometry::rect::RectF,
+        _: &mut Self::LayoutState,
+        _: &mut Self::PaintState,
+        _: &mut gpui::EventContext,
+    ) -> bool {
+        false
+    }
+
+    fn debug(
+        &self,
+        bounds: gpui::geometry::rect::RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &gpui::DebugContext,
+    ) -> gpui::json::Value {
+        json::json!({
+            "type": "AvatarRibbon",
+            "bounds": bounds.to_json(),
+            "color": self.color.to_json(),
+        })
     }
 }
