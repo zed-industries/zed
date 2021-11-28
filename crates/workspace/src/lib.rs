@@ -5,7 +5,7 @@ pub mod sidebar;
 mod status_bar;
 
 use anyhow::{anyhow, Result};
-use client::{Authenticate, ChannelList, Client, UserStore};
+use client::{Authenticate, ChannelList, Client, User, UserStore};
 use gpui::{
     action, elements::*, json::to_string_pretty, keymap::Binding, platform::CursorStyle,
     AnyViewHandle, AppContext, ClipboardItem, Entity, ModelContext, ModelHandle, MutableAppContext,
@@ -27,6 +27,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use theme::Theme;
 
 action!(OpenNew, WorkspaceParams);
 action!(Save);
@@ -952,14 +953,64 @@ impl Workspace {
         }
     }
 
-    fn render_avatar(&self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &self.settings.borrow().theme;
-        if let Some(avatar) = self
-            .user_store
-            .read(cx)
-            .current_user()
-            .and_then(|user| user.avatar.clone())
-        {
+    fn render_titlebar(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
+        ConstrainedBox::new(
+            Container::new(
+                Stack::new()
+                    .with_child(
+                        Align::new(
+                            Label::new("zed".into(), theme.workspace.titlebar.title.clone())
+                                .boxed(),
+                        )
+                        .boxed(),
+                    )
+                    .with_child(
+                        Align::new(
+                            Flex::row()
+                                .with_children(self.render_collaborators(theme, cx))
+                                .with_child(self.render_avatar(
+                                    self.user_store.read(cx).current_user().as_ref(),
+                                    theme,
+                                    cx,
+                                ))
+                                .with_children(self.render_connection_status())
+                                .boxed(),
+                        )
+                        .right()
+                        .boxed(),
+                    )
+                    .boxed(),
+            )
+            .with_style(theme.workspace.titlebar.container)
+            .boxed(),
+        )
+        .with_height(32.)
+        .named("titlebar")
+    }
+
+    fn render_collaborators(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> Vec<ElementBox> {
+        let mut elements = Vec::new();
+        if let Some(active_worktree) = self.project.read(cx).active_worktree() {
+            let users = active_worktree
+                .read(cx)
+                .collaborators()
+                .values()
+                .map(|c| c.user.clone())
+                .collect::<Vec<_>>();
+            for user in users {
+                elements.push(self.render_avatar(Some(&user), theme, cx));
+            }
+        }
+        elements
+    }
+
+    fn render_avatar(
+        &self,
+        user: Option<&Arc<User>>,
+        theme: &Theme,
+        cx: &mut RenderContext<Self>,
+    ) -> ElementBox {
+        if let Some(avatar) = user.and_then(|user| user.avatar.clone()) {
             ConstrainedBox::new(
                 Align::new(
                     ConstrainedBox::new(
@@ -1008,38 +1059,7 @@ impl View for Workspace {
         let theme = &settings.theme;
         Container::new(
             Flex::column()
-                .with_child(
-                    ConstrainedBox::new(
-                        Container::new(
-                            Stack::new()
-                                .with_child(
-                                    Align::new(
-                                        Label::new(
-                                            "zed".into(),
-                                            theme.workspace.titlebar.title.clone(),
-                                        )
-                                        .boxed(),
-                                    )
-                                    .boxed(),
-                                )
-                                .with_child(
-                                    Align::new(
-                                        Flex::row()
-                                            .with_children(self.render_connection_status())
-                                            .with_child(self.render_avatar(cx))
-                                            .boxed(),
-                                    )
-                                    .right()
-                                    .boxed(),
-                                )
-                                .boxed(),
-                        )
-                        .with_style(theme.workspace.titlebar.container)
-                        .boxed(),
-                    )
-                    .with_height(32.)
-                    .named("titlebar"),
-                )
+                .with_child(self.render_titlebar(&theme, cx))
                 .with_child(
                     Expanded::new(
                         1.0,
