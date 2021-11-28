@@ -1,4 +1,4 @@
-use client::{Collaborator, UserStore};
+use client::{Contact, UserStore};
 use gpui::{
     action,
     elements::*,
@@ -17,28 +17,28 @@ action!(ShareWorktree, u64);
 action!(UnshareWorktree, u64);
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(PeoplePanel::share_worktree);
-    cx.add_action(PeoplePanel::unshare_worktree);
-    cx.add_action(PeoplePanel::join_worktree);
-    cx.add_action(PeoplePanel::leave_worktree);
+    cx.add_action(ContactsPanel::share_worktree);
+    cx.add_action(ContactsPanel::unshare_worktree);
+    cx.add_action(ContactsPanel::join_worktree);
+    cx.add_action(ContactsPanel::leave_worktree);
 }
 
-pub struct PeoplePanel {
-    collaborators: ListState,
+pub struct ContactsPanel {
+    contacts: ListState,
     user_store: ModelHandle<UserStore>,
     settings: watch::Receiver<Settings>,
-    _maintain_collaborators: Subscription,
+    _maintain_contacts: Subscription,
 }
 
-impl PeoplePanel {
+impl ContactsPanel {
     pub fn new(
         user_store: ModelHandle<UserStore>,
         settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         Self {
-            collaborators: ListState::new(
-                user_store.read(cx).collaborators().len(),
+            contacts: ListState::new(
+                user_store.read(cx).contacts().len(),
                 Orientation::Top,
                 1000.,
                 {
@@ -46,10 +46,10 @@ impl PeoplePanel {
                     let settings = settings.clone();
                     move |ix, cx| {
                         let user_store = user_store.read(cx);
-                        let collaborators = user_store.collaborators().clone();
+                        let contacts = user_store.contacts().clone();
                         let current_user_id = user_store.current_user().map(|user| user.id);
                         Self::render_collaborator(
-                            &collaborators[ix],
+                            &contacts[ix],
                             current_user_id,
                             &settings.borrow().theme,
                             cx,
@@ -57,7 +57,7 @@ impl PeoplePanel {
                     }
                 },
             ),
-            _maintain_collaborators: cx.observe(&user_store, Self::update_collaborators),
+            _maintain_contacts: cx.observe(&user_store, Self::update_contacts),
             user_store,
             settings,
         }
@@ -103,19 +103,19 @@ impl PeoplePanel {
             .update(cx, |p, cx| p.close_remote_worktree(action.0, cx));
     }
 
-    fn update_collaborators(&mut self, _: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) {
-        self.collaborators
-            .reset(self.user_store.read(cx).collaborators().len());
+    fn update_contacts(&mut self, _: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) {
+        self.contacts
+            .reset(self.user_store.read(cx).contacts().len());
         cx.notify();
     }
 
     fn render_collaborator(
-        collaborator: &Collaborator,
+        collaborator: &Contact,
         current_user_id: Option<u64>,
         theme: &Theme,
         cx: &mut LayoutContext,
     ) -> ElementBox {
-        let theme = &theme.people_panel;
+        let theme = &theme.contacts_panel;
         let worktree_count = collaborator.worktrees.len();
         let font_cache = cx.font_cache();
         let line_height = theme.unshared_worktree.name.text.line_height(font_cache);
@@ -216,7 +216,7 @@ impl PeoplePanel {
                                         .any(|guest| Some(guest.id) == current_user_id);
                                 let is_shared = worktree.is_shared;
 
-                                MouseEventHandler::new::<PeoplePanel, _, _, _>(
+                                MouseEventHandler::new::<ContactsPanel, _, _, _>(
                                     worktree_id as usize,
                                     cx,
                                     |mouse_state, _| {
@@ -294,18 +294,18 @@ impl PeoplePanel {
 
 pub enum Event {}
 
-impl Entity for PeoplePanel {
+impl Entity for ContactsPanel {
     type Event = Event;
 }
 
-impl View for PeoplePanel {
+impl View for ContactsPanel {
     fn ui_name() -> &'static str {
-        "PeoplePanel"
+        "ContactsPanel"
     }
 
     fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &self.settings.borrow().theme.people_panel;
-        Container::new(List::new(self.collaborators.clone()).boxed())
+        let theme = &self.settings.borrow().theme.contacts_panel;
+        Container::new(List::new(self.contacts.clone()).boxed())
             .with_style(theme.container)
             .boxed()
     }

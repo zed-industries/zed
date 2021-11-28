@@ -40,7 +40,7 @@ go_to_line = { path = "../go_to_line" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
-people_panel = { path = "../people_panel" }
+contacts_panel = { path = "../contacts_panel" }
 project = { path = "../project" }
 project_panel = { path = "../project_panel" }
 rpc = { path = "../rpc" }

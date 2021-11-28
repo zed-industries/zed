@@ -1,7 +1,7 @@
 use crate::db::{ChannelId, UserId};
 use anyhow::anyhow;
-use std::collections::{hash_map, HashMap, HashSet};
 use rpc::{proto, ConnectionId};
+use std::collections::{hash_map, HashMap, HashSet};
 
 #[derive(Default)]
 pub struct Store {
@@ -21,13 +21,14 @@ struct ConnectionState {
 
 pub struct Worktree {
     pub host_connection_id: ConnectionId,
-    pub collaborator_user_ids: Vec<UserId>,
+    pub host_user_id: UserId,
+    pub authorized_user_ids: Vec<UserId>,
     pub root_name: String,
     pub share: Option<WorktreeShare>,
 }
 
 pub struct WorktreeShare {
-    pub guest_connection_ids: HashMap<ConnectionId, ReplicaId>,
+    pub guests: HashMap<ConnectionId, (ReplicaId, UserId)>,
     pub active_replica_ids: HashSet<ReplicaId>,
     pub entries: HashMap<u64, proto::Entry>,
 }
@@ -43,7 +44,7 @@ pub type ReplicaId = u16;
 pub struct RemovedConnectionState {
     pub hosted_worktrees: HashMap<u64, Worktree>,
     pub guest_worktree_ids: HashMap<u64, Vec<ConnectionId>>,
-    pub collaborator_ids: HashSet<UserId>,
+    pub contact_ids: HashSet<UserId>,
 }
 
 pub struct JoinedWorktree<'a> {
@@ -53,12 +54,12 @@ pub struct JoinedWorktree<'a> {
 
 pub struct UnsharedWorktree {
     pub connection_ids: Vec<ConnectionId>,
-    pub collaborator_ids: Vec<UserId>,
+    pub authorized_user_ids: Vec<UserId>,
 }
 
 pub struct LeftWorktree {
     pub connection_ids: Vec<ConnectionId>,
-    pub collaborator_ids: Vec<UserId>,
+    pub authorized_user_ids: Vec<UserId>,
 }
 
 impl Store {
@@ -106,14 +107,14 @@ impl Store {
         for worktree_id in connection.worktrees.clone() {
             if let Ok(worktree) = self.remove_worktree(worktree_id, connection_id) {
                 result
-                    .collaborator_ids
-                    .extend(worktree.collaborator_user_ids.iter().copied());
+                    .contact_ids
+                    .extend(worktree.authorized_user_ids.iter().copied());
                 result.hosted_worktrees.insert(worktree_id, worktree);
             } else if let Some(worktree) = self.leave_worktree(connection_id, worktree_id) {
                 result
                     .guest_worktree_ids
                     .insert(worktree_id, worktree.connection_ids);
-                result.collaborator_ids.extend(worktree.collaborator_ids);
+                result.contact_ids.extend(worktree.authorized_user_ids);
             }
         }
 
@@ -170,8 +171,8 @@ impl Store {
             .copied()
     }
 
-    pub fn collaborators_for_user(&self, user_id: UserId) -> Vec<proto::Collaborator> {
-        let mut collaborators = HashMap::new();
+    pub fn contacts_for_user(&self, user_id: UserId) -> Vec<proto::Contact> {
+        let mut contacts = HashMap::new();
         for worktree_id in self
             .visible_worktrees_by_user_id
             .get(&user_id)
@@ -181,7 +182,7 @@ impl Store {
 
             let mut guests = HashSet::new();
             if let Ok(share) = worktree.share() {
-                for guest_connection_id in share.guest_connection_ids.keys() {
+                for guest_connection_id in share.guests.keys() {
                     if let Ok(user_id) = self.user_id_for_connection(*guest_connection_id) {
                         guests.insert(user_id.to_proto());
                     }
@@ -189,9 +190,9 @@ impl Store {
             }
 
             if let Ok(host_user_id) = self.user_id_for_connection(worktree.host_connection_id) {
-                collaborators
+                contacts
                     .entry(host_user_id)
-                    .or_insert_with(|| proto::Collaborator {
+                    .or_insert_with(|| proto::Contact {
                         user_id: host_user_id.to_proto(),
                         worktrees: Vec::new(),
                     })
@@ -205,14 +206,14 @@ impl Store {
             }
         }
 
-        collaborators.into_values().collect()
+        contacts.into_values().collect()
     }
 
     pub fn add_worktree(&mut self, worktree: Worktree) -> u64 {
         let worktree_id = self.next_worktree_id;
-        for collaborator_user_id in &worktree.collaborator_user_ids {
+        for authorized_user_id in &worktree.authorized_user_ids {
             self.visible_worktrees_by_user_id
-                .entry(*collaborator_user_id)
+                .entry(*authorized_user_id)
                 .or_default()
                 .insert(worktree_id);
         }
@@ -247,17 +248,17 @@ impl Store {
         }
 
         if let Some(share) = &worktree.share {
-            for connection_id in share.guest_connection_ids.keys() {
+            for connection_id in share.guests.keys() {
                 if let Some(connection) = self.connections.get_mut(connection_id) {
                     connection.worktrees.remove(&worktree_id);
                 }
             }
         }
 
-        for collaborator_user_id in &worktree.collaborator_user_ids {
+        for authorized_user_id in &worktree.authorized_user_ids {
             if let Some(visible_worktrees) = self
                 .visible_worktrees_by_user_id
-                .get_mut(&collaborator_user_id)
+                .get_mut(&authorized_user_id)
             {
                 visible_worktrees.remove(&worktree_id);
             }
@@ -278,11 +279,11 @@ impl Store {
         if let Some(worktree) = self.worktrees.get_mut(&worktree_id) {
             if worktree.host_connection_id == connection_id {
                 worktree.share = Some(WorktreeShare {
-                    guest_connection_ids: Default::default(),
+                    guests: Default::default(),
                     active_replica_ids: Default::default(),
                     entries,
                 });
-                return Some(worktree.collaborator_user_ids.clone());
+                return Some(worktree.authorized_user_ids.clone());
             }
         }
         None
@@ -304,9 +305,9 @@ impl Store {
         }
 
         let connection_ids = worktree.connection_ids();
-        let collaborator_ids = worktree.collaborator_user_ids.clone();
+        let authorized_user_ids = worktree.authorized_user_ids.clone();
         if let Some(share) = worktree.share.take() {
-            for connection_id in share.guest_connection_ids.into_keys() {
+            for connection_id in share.guests.into_keys() {
                 if let Some(connection) = self.connections.get_mut(&connection_id) {
                     connection.worktrees.remove(&worktree_id);
                 }
@@ -317,7 +318,7 @@ impl Store {
 
             Ok(UnsharedWorktree {
                 connection_ids,
-                collaborator_ids,
+                authorized_user_ids,
             })
         } else {
             Err(anyhow!("worktree is not shared"))?
@@ -338,7 +339,7 @@ impl Store {
             .worktrees
             .get_mut(&worktree_id)
             .and_then(|worktree| {
-                if worktree.collaborator_user_ids.contains(&user_id) {
+                if worktree.authorized_user_ids.contains(&user_id) {
                     Some(worktree)
                 } else {
                     None
@@ -354,7 +355,7 @@ impl Store {
             replica_id += 1;
         }
         share.active_replica_ids.insert(replica_id);
-        share.guest_connection_ids.insert(connection_id, replica_id);
+        share.guests.insert(connection_id, (replica_id, user_id));
 
         #[cfg(test)]
         self.check_invariants();
@@ -372,7 +373,7 @@ impl Store {
     ) -> Option<LeftWorktree> {
         let worktree = self.worktrees.get_mut(&worktree_id)?;
         let share = worktree.share.as_mut()?;
-        let replica_id = share.guest_connection_ids.remove(&connection_id)?;
+        let (replica_id, _) = share.guests.remove(&connection_id)?;
         share.active_replica_ids.remove(&replica_id);
 
         if let Some(connection) = self.connections.get_mut(&connection_id) {
@@ -380,14 +381,14 @@ impl Store {
         }
 
         let connection_ids = worktree.connection_ids();
-        let collaborator_ids = worktree.collaborator_user_ids.clone();
+        let authorized_user_ids = worktree.authorized_user_ids.clone();
 
         #[cfg(test)]
         self.check_invariants();
 
         Some(LeftWorktree {
             connection_ids,
-            collaborator_ids,
+            authorized_user_ids,
         })
     }
 
@@ -427,7 +428,7 @@ impl Store {
         Ok(self
             .read_worktree(worktree_id, connection_id)?
             .share()?
-            .guest_connection_ids
+            .guests
             .keys()
             .copied()
             .collect())
@@ -458,10 +459,7 @@ impl Store {
             .ok_or_else(|| anyhow!("worktree not found"))?;
 
         if worktree.host_connection_id == connection_id
-            || worktree
-                .share()?
-                .guest_connection_ids
-                .contains_key(&connection_id)
+            || worktree.share()?.guests.contains_key(&connection_id)
         {
             Ok(worktree)
         } else {
@@ -484,9 +482,10 @@ impl Store {
             .ok_or_else(|| anyhow!("worktree not found"))?;
 
         if worktree.host_connection_id == connection_id
-            || worktree.share.as_ref().map_or(false, |share| {
-                share.guest_connection_ids.contains_key(&connection_id)
-            })
+            || worktree
+                .share
+                .as_ref()
+                .map_or(false, |share| share.guests.contains_key(&connection_id))
         {
             Ok(worktree)
         } else {
@@ -504,11 +503,7 @@ impl Store {
             for worktree_id in &connection.worktrees {
                 let worktree = &self.worktrees.get(&worktree_id).unwrap();
                 if worktree.host_connection_id != *connection_id {
-                    assert!(worktree
-                        .share()
-                        .unwrap()
-                        .guest_connection_ids
-                        .contains_key(connection_id));
+                    assert!(worktree.share().unwrap().guests.contains_key(connection_id));
                 }
             }
             for channel_id in &connection.channels {
@@ -535,29 +530,26 @@ impl Store {
             let host_connection = self.connections.get(&worktree.host_connection_id).unwrap();
             assert!(host_connection.worktrees.contains(worktree_id));
 
-            for collaborator_id in &worktree.collaborator_user_ids {
+            for authorized_user_ids in &worktree.authorized_user_ids {
                 let visible_worktree_ids = self
                     .visible_worktrees_by_user_id
-                    .get(collaborator_id)
+                    .get(authorized_user_ids)
                     .unwrap();
                 assert!(visible_worktree_ids.contains(worktree_id));
             }
 
             if let Some(share) = &worktree.share {
-                for guest_connection_id in share.guest_connection_ids.keys() {
+                for guest_connection_id in share.guests.keys() {
                     let guest_connection = self.connections.get(guest_connection_id).unwrap();
                     assert!(guest_connection.worktrees.contains(worktree_id));
                 }
-                assert_eq!(
-                    share.active_replica_ids.len(),
-                    share.guest_connection_ids.len(),
-                );
+                assert_eq!(share.active_replica_ids.len(), share.guests.len(),);
                 assert_eq!(
                     share.active_replica_ids,
                     share
-                        .guest_connection_ids
+                        .guests
                         .values()
-                        .copied()
+                        .map(|(replica_id, _)| *replica_id)
                         .collect::<HashSet<_>>(),
                 );
             }
@@ -566,7 +558,7 @@ impl Store {
         for (user_id, visible_worktree_ids) in &self.visible_worktrees_by_user_id {
             for worktree_id in visible_worktree_ids {
                 let worktree = self.worktrees.get(worktree_id).unwrap();
-                assert!(worktree.collaborator_user_ids.contains(user_id));
+                assert!(worktree.authorized_user_ids.contains(user_id));
             }
         }
 
@@ -583,7 +575,7 @@ impl Worktree {
     pub fn connection_ids(&self) -> Vec<ConnectionId> {
         if let Some(share) = &self.share {
             share
-                .guest_connection_ids
+                .guests
                 .keys()
                 .copied()
                 .chain(Some(self.host_connection_id))

@@ -7,6 +7,8 @@ pub mod test;
 use self::language::LanguageRegistry;
 use chat_panel::ChatPanel;
 pub use client;
+pub use contacts_panel;
+use contacts_panel::ContactsPanel;
 pub use editor;
 use gpui::{
     action,
@@ -17,8 +19,6 @@ use gpui::{
 };
 pub use lsp;
 use parking_lot::Mutex;
-pub use people_panel;
-use people_panel::PeoplePanel;
 use postage::watch;
 pub use project::{self, fs};
 use project_panel::ProjectPanel;
@@ -144,8 +144,10 @@ fn build_workspace(params: &WorkspaceParams, cx: &mut ViewContext<Workspace>) ->
     );
     workspace.right_sidebar_mut().add_item(
         "icons/user-16.svg",
-        cx.add_view(|cx| PeoplePanel::new(params.user_store.clone(), params.settings.clone(), cx))
-            .into(),
+        cx.add_view(|cx| {
+            ContactsPanel::new(params.user_store.clone(), params.settings.clone(), cx)
+        })
+        .into(),
     );
     workspace.right_sidebar_mut().add_item(
         "icons/comment-16.svg",

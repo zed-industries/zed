@@ -2,7 +2,7 @@ use super::Client;
 use super::*;
 use crate::http::{HttpClient, Request, Response, ServerResponse};
 use futures::{future::BoxFuture, Future};
-use gpui::TestAppContext;
+use gpui::{ModelHandle, TestAppContext};
 use parking_lot::Mutex;
 use postage::{mpsc, prelude::Stream};
 use rpc::{proto, ConnectionId, Peer, Receipt, TypedEnvelope};
@@ -155,6 +155,24 @@ impl FakeServer {
     fn connection_id(&self) -> ConnectionId {
         self.connection_id.lock().expect("not connected")
     }
+
+    pub async fn build_user_store(
+        &self,
+        client: Arc<Client>,
+        cx: &mut TestAppContext,
+    ) -> ModelHandle<UserStore> {
+        let http_client = FakeHttpClient::with_404_response();
+        let user_store = cx.add_model(|cx| UserStore::new(client, http_client, cx));
+        assert_eq!(
+            self.receive::<proto::GetUsers>()
+                .await
+                .unwrap()
+                .payload
+                .user_ids,
+            &[self.user_id]
+        );
+        user_store
+    }
 }
 
 pub struct FakeHttpClient {
@@ -171,6 +189,10 @@ impl FakeHttpClient {
         Arc::new(Self {
             handler: Box::new(move |req| Box::pin(handler(req))),
         })
+    }
+
+    pub fn with_404_response() -> Arc<dyn HttpClient> {
+        Self::new(|_| async move { Ok(ServerResponse::new(404)) })
     }
 }
 

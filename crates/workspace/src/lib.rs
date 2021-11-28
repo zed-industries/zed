@@ -5,9 +5,15 @@ pub mod sidebar;
 mod status_bar;
 
 use anyhow::{anyhow, Result};
-use client::{Authenticate, ChannelList, Client, UserStore};
+use client::{Authenticate, ChannelList, Client, User, UserStore};
 use gpui::{
-    action, elements::*, json::to_string_pretty, keymap::Binding, platform::CursorStyle,
+    action,
+    color::Color,
+    elements::*,
+    geometry::{vector::vec2f, PathBuilder},
+    json::{self, to_string_pretty, ToJson},
+    keymap::Binding,
+    platform::CursorStyle,
     AnyViewHandle, AppContext, ClipboardItem, Entity, ModelContext, ModelHandle, MutableAppContext,
     PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle, WeakModelHandle,
 };
@@ -27,6 +33,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use theme::Theme;
 
 action!(OpenNew, WorkspaceParams);
 action!(Save);
@@ -348,6 +355,7 @@ impl Workspace {
             Project::new(
                 params.languages.clone(),
                 params.client.clone(),
+                params.user_store.clone(),
                 params.fs.clone(),
             )
         });
@@ -951,25 +959,100 @@ impl Workspace {
         }
     }
 
-    fn render_avatar(&self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &self.settings.borrow().theme;
-        if let Some(avatar) = self
-            .user_store
-            .read(cx)
-            .current_user()
-            .and_then(|user| user.avatar.clone())
-        {
-            ConstrainedBox::new(
-                Align::new(
-                    ConstrainedBox::new(
-                        Image::new(avatar)
-                            .with_style(theme.workspace.titlebar.avatar)
-                            .boxed(),
+    fn render_titlebar(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> ElementBox {
+        ConstrainedBox::new(
+            Container::new(
+                Stack::new()
+                    .with_child(
+                        Align::new(
+                            Label::new("zed".into(), theme.workspace.titlebar.title.clone())
+                                .boxed(),
+                        )
+                        .boxed(),
                     )
-                    .with_width(theme.workspace.titlebar.avatar_width)
+                    .with_child(
+                        Align::new(
+                            Flex::row()
+                                .with_children(self.render_collaborators(theme, cx))
+                                .with_child(
+                                    self.render_avatar(
+                                        self.user_store.read(cx).current_user().as_ref(),
+                                        self.project
+                                            .read(cx)
+                                            .active_worktree()
+                                            .map(|worktree| worktree.read(cx).replica_id()),
+                                        theme,
+                                        cx,
+                                    ),
+                                )
+                                .with_children(self.render_connection_status())
+                                .boxed(),
+                        )
+                        .right()
+                        .boxed(),
+                    )
                     .boxed(),
-                )
-                .boxed(),
+            )
+            .with_style(theme.workspace.titlebar.container)
+            .boxed(),
+        )
+        .with_height(theme.workspace.titlebar.height)
+        .named("titlebar")
+    }
+
+    fn render_collaborators(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> Vec<ElementBox> {
+        let mut elements = Vec::new();
+        if let Some(active_worktree) = self.project.read(cx).active_worktree() {
+            let collaborators = active_worktree
+                .read(cx)
+                .collaborators()
+                .values()
+                .cloned()
+                .collect::<Vec<_>>();
+            for collaborator in collaborators {
+                elements.push(self.render_avatar(
+                    Some(&collaborator.user),
+                    Some(collaborator.replica_id),
+                    theme,
+                    cx,
+                ));
+            }
+        }
+        elements
+    }
+
+    fn render_avatar(
+        &self,
+        user: Option<&Arc<User>>,
+        replica_id: Option<u16>,
+        theme: &Theme,
+        cx: &mut RenderContext<Self>,
+    ) -> ElementBox {
+        if let Some(avatar) = user.and_then(|user| user.avatar.clone()) {
+            ConstrainedBox::new(
+                Stack::new()
+                    .with_child(
+                        ConstrainedBox::new(
+                            Image::new(avatar)
+                                .with_style(theme.workspace.titlebar.avatar)
+                                .boxed(),
+                        )
+                        .with_width(theme.workspace.titlebar.avatar_width)
+                        .aligned()
+                        .boxed(),
+                    )
+                    .with_child(
+                        AvatarRibbon::new(replica_id.map_or(Default::default(), |id| {
+                            theme.editor.replica_selection_style(id).cursor
+                        }))
+                        .constrained()
+                        .with_width(theme.workspace.titlebar.avatar_ribbon.width)
+                        .with_height(theme.workspace.titlebar.avatar_ribbon.height)
+                        .aligned()
+                        .bottom()
+                        .boxed(),
+                    )
+                    .boxed(),
             )
             .with_width(theme.workspace.right_sidebar.width)
             .boxed()
@@ -1007,38 +1090,7 @@ impl View for Workspace {
         let theme = &settings.theme;
         Container::new(
             Flex::column()
-                .with_child(
-                    ConstrainedBox::new(
-                        Container::new(
-                            Stack::new()
-                                .with_child(
-                                    Align::new(
-                                        Label::new(
-                                            "zed".into(),
-                                            theme.workspace.titlebar.title.clone(),
-                                        )
-                                        .boxed(),
-                                    )
-                                    .boxed(),
-                                )
-                                .with_child(
-                                    Align::new(
-                                        Flex::row()
-                                            .with_children(self.render_connection_status())
-                                            .with_child(self.render_avatar(cx))
-                                            .boxed(),
-                                    )
-                                    .right()
-                                    .boxed(),
-                                )
-                                .boxed(),
-                        )
-                        .with_style(theme.workspace.titlebar.container)
-                        .boxed(),
-                    )
-                    .with_height(32.)
-                    .named("titlebar"),
-                )
+                .with_child(self.render_titlebar(&theme, cx))
                 .with_child(
                     Expanded::new(
                         1.0,
@@ -1104,5 +1156,73 @@ impl WorkspaceHandle for ViewHandle<Workspace> {
                 })
             })
             .collect::<Vec<_>>()
+    }
+}
+
+pub struct AvatarRibbon {
+    color: Color,
+}
+
+impl AvatarRibbon {
+    pub fn new(color: Color) -> AvatarRibbon {
+        AvatarRibbon { color }
+    }
+}
+
+impl Element for AvatarRibbon {
+    type LayoutState = ();
+
+    type PaintState = ();
+
+    fn layout(
+        &mut self,
+        constraint: gpui::SizeConstraint,
+        _: &mut gpui::LayoutContext,
+    ) -> (gpui::geometry::vector::Vector2F, Self::LayoutState) {
+        (constraint.max, ())
+    }
+
+    fn paint(
+        &mut self,
+        bounds: gpui::geometry::rect::RectF,
+        _: gpui::geometry::rect::RectF,
+        _: &mut Self::LayoutState,
+        cx: &mut gpui::PaintContext,
+    ) -> Self::PaintState {
+        let mut path = PathBuilder::new();
+        path.reset(bounds.lower_left());
+        path.curve_to(
+            bounds.origin() + vec2f(bounds.height(), 0.),
+            bounds.origin(),
+        );
+        path.line_to(bounds.upper_right() - vec2f(bounds.height(), 0.));
+        path.curve_to(bounds.lower_right(), bounds.upper_right());
+        path.line_to(bounds.lower_left());
+        cx.scene.push_path(path.build(self.color, None));
+    }
+
+    fn dispatch_event(
+        &mut self,
+        _: &gpui::Event,
+        _: gpui::geometry::rect::RectF,
+        _: &mut Self::LayoutState,
+        _: &mut Self::PaintState,
+        _: &mut gpui::EventContext,
+    ) -> bool {
+        false
+    }
+
+    fn debug(
+        &self,
+        bounds: gpui::geometry::rect::RectF,
+        _: &Self::LayoutState,
+        _: &Self::PaintState,
+        _: &gpui::DebugContext,
+    ) -> gpui::json::Value {
+        json::json!({
+            "type": "AvatarRibbon",
+            "bounds": bounds.to_json(),
+            "color": self.color.to_json(),
+        })
     }
 }

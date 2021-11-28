@@ -8,6 +8,7 @@ use postage::{
     prelude::{Sink as _, Stream as _},
 };
 use smol_timeout::TimeoutExt as _;
+use std::sync::atomic::Ordering::SeqCst;
 use std::{
     collections::HashMap,
     fmt,
@@ -81,12 +82,12 @@ impl<T: RequestMessage> TypedEnvelope<T> {
 }
 
 pub struct Peer {
-    connections: RwLock<HashMap<ConnectionId, ConnectionState>>,
+    pub connections: RwLock<HashMap<ConnectionId, ConnectionState>>,
     next_connection_id: AtomicU32,
 }
 
 #[derive(Clone)]
-struct ConnectionState {
+pub struct ConnectionState {
     outgoing_tx: mpsc::Sender<proto::Envelope>,
     next_message_id: Arc<AtomicU32>,
     response_channels: Arc<Mutex<Option<HashMap<u32, mpsc::Sender<proto::Envelope>>>>>,
@@ -110,10 +111,7 @@ impl Peer {
         impl Future<Output = anyhow::Result<()>> + Send,
         mpsc::Receiver<Box<dyn AnyTypedEnvelope>>,
     ) {
-        let connection_id = ConnectionId(
-            self.next_connection_id
-                .fetch_add(1, atomic::Ordering::SeqCst),
-        );
+        let connection_id = ConnectionId(self.next_connection_id.fetch_add(1, SeqCst));
         let (mut incoming_tx, incoming_rx) = mpsc::channel(64);
         let (outgoing_tx, mut outgoing_rx) = mpsc::channel(64);
         let connection_state = ConnectionState {
@@ -219,9 +217,7 @@ impl Peer {
         let (tx, mut rx) = mpsc::channel(1);
         async move {
             let mut connection = this.connection_state(receiver_id).await?;
-            let message_id = connection
-                .next_message_id
-                .fetch_add(1, atomic::Ordering::SeqCst);
+            let message_id = connection.next_message_id.fetch_add(1, SeqCst);
             connection
                 .response_channels
                 .lock()

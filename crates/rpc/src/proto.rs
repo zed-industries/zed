@@ -121,7 +121,7 @@ macro_rules! entity_messages {
 
 messages!(
     Ack,
-    AddPeer,
+    AddCollaborator,
     BufferSaved,
     ChannelMessageSent,
     CloseBuffer,
@@ -131,7 +131,7 @@ messages!(
     GetChannelMessagesResponse,
     GetChannels,
     GetChannelsResponse,
-    UpdateCollaborators,
+    UpdateContacts,
     GetUsers,
     GetUsersResponse,
     JoinChannel,
@@ -145,7 +145,7 @@ messages!(
     OpenWorktree,
     OpenWorktreeResponse,
     Ping,
-    RemovePeer,
+    RemoveCollaborator,
     SaveBuffer,
     SendChannelMessage,
     SendChannelMessageResponse,
@@ -174,13 +174,13 @@ request_messages!(
 
 entity_messages!(
     worktree_id,
-    AddPeer,
+    AddCollaborator,
     BufferSaved,
     CloseBuffer,
     CloseWorktree,
     OpenBuffer,
     JoinWorktree,
-    RemovePeer,
+    RemoveCollaborator,
     SaveBuffer,
     UnshareWorktree,
     UpdateBuffer,

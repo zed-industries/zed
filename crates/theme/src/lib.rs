@@ -20,7 +20,7 @@ pub struct Theme {
     pub name: String,
     pub workspace: Workspace,
     pub chat_panel: ChatPanel,
-    pub people_panel: PeoplePanel,
+    pub contacts_panel: ContactsPanel,
     pub project_panel: ProjectPanel,
     pub selector: Selector,
     pub editor: EditorStyle,
@@ -42,14 +42,24 @@ pub struct Workspace {
 pub struct Titlebar {
     #[serde(flatten)]
     pub container: ContainerStyle,
+    pub height: f32,
     pub title: TextStyle,
     pub avatar_width: f32,
+    pub avatar_ribbon: AvatarRibbon,
     pub offline_icon: OfflineIcon,
     pub icon_color: Color,
     pub avatar: ImageStyle,
     pub sign_in_prompt: ContainedText,
     pub hovered_sign_in_prompt: ContainedText,
     pub outdated_warning: ContainedText,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct AvatarRibbon {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub width: f32,
+    pub height: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -137,7 +147,7 @@ pub struct ProjectPanelEntry {
 }
 
 #[derive(Deserialize, Default)]
-pub struct PeoplePanel {
+pub struct ContactsPanel {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub host_row_height: f32,
@@ -274,6 +284,15 @@ pub struct BlockStyle {
 impl EditorStyle {
     pub fn placeholder_text(&self) -> &TextStyle {
         self.placeholder_text.as_ref().unwrap_or(&self.text)
+    }
+
+    pub fn replica_selection_style(&self, replica_id: u16) -> &SelectionStyle {
+        let style_ix = replica_id as usize % (self.guest_selections.len() + 1);
+        if style_ix == 0 {
+            &self.selection
+        } else {
+            &self.guest_selections[style_ix - 1]
+        }
     }
 }
 
