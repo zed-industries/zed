@@ -2232,6 +2232,12 @@ mod tests {
             })
             .await;
 
+        worktree_a
+            .condition(&cx_a, |worktree, cx| {
+                worktree.collaborators().contains_key(&client_b.peer_id)
+            })
+            .await;
+
         cx_a.update(move |_| drop(worktree_a));
         client_a
             .user_store
