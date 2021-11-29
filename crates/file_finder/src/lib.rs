@@ -275,6 +275,7 @@ impl FileFinder {
                         EditorSettings {
                             style: settings.theme.selector.input_editor.as_editor(),
                             tab_size: settings.tab_size,
+                            soft_wrap: editor::SoftWrap::None,
                         }
                     }
                 },

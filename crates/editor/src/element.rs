@@ -1,6 +1,6 @@
 use super::{
     DisplayPoint, DisplayRow, Editor, EditorMode, EditorSettings, EditorStyle, Input, Scroll,
-    Select, SelectPhase, Snapshot, MAX_LINE_LEN,
+    Select, SelectPhase, Snapshot, SoftWrap, MAX_LINE_LEN,
 };
 use clock::ReplicaId;
 use gpui::{
@@ -703,7 +703,11 @@ impl Element for EditorElement {
         let em_width = style.text.em_width(cx.font_cache);
         let em_advance = style.text.em_advance(cx.font_cache);
         let overscroll = vec2f(em_width, 0.);
-        let wrap_width = text_width - text_offset.x() - overscroll.x() - em_width;
+        let wrap_width = match self.settings.soft_wrap {
+            SoftWrap::None => None,
+            SoftWrap::EditorWidth => Some(text_width - text_offset.x() - overscroll.x() - em_width),
+            SoftWrap::Column(column) => Some(column as f32 * em_advance),
+        };
         let snapshot = self.update_view(cx.app, |view, cx| {
             if view.set_wrap_width(wrap_width, cx) {
                 view.snapshot(cx)

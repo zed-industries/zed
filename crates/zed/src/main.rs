@@ -8,8 +8,8 @@ use log::LevelFilter;
 use parking_lot::Mutex;
 use simplelog::SimpleLogger;
 use std::{fs, path::PathBuf, sync::Arc};
-use theme::ThemeRegistry;
-use workspace::{self, settings, OpenNew};
+use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
+use workspace::{self, settings, OpenNew, Settings};
 use zed::{self, assets::Assets, fs::RealFs, language, menus, AppState, OpenParams, OpenPaths};
 
 fn main() {
@@ -24,8 +24,17 @@ fn main() {
     app.platform().fonts().add_fonts(&embedded_fonts).unwrap();
 
     let themes = ThemeRegistry::new(Assets, app.font_cache());
-    let (settings_tx, settings) =
-        settings::channel("Inconsolata", &app.font_cache(), &themes).unwrap();
+    let theme = themes.get(DEFAULT_THEME_NAME).unwrap();
+    let settings = Settings::new("Inconsolata", &app.font_cache(), theme)
+        .unwrap()
+        .with_overrides(
+            "Markdown",
+            settings::Override {
+                soft_wrap: Some(settings::SoftWrap::PreferredLineLength),
+                ..Default::default()
+            },
+        );
+    let (settings_tx, settings) = postage::watch::channel_with(settings);
     let languages = Arc::new(language::build_language_registry());
     languages.set_theme(&settings.borrow().theme.editor.syntax);
 
