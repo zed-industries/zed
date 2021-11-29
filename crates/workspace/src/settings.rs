@@ -9,9 +9,9 @@ pub struct Settings {
     pub buffer_font_family: FamilyId,
     pub buffer_font_size: f32,
     pub tab_size: usize,
-    pub soft_wrap: SoftWrap,
-    pub preferred_line_length: u32,
-    pub overrides: HashMap<String, Override>,
+    soft_wrap: SoftWrap,
+    preferred_line_length: u32,
+    overrides: HashMap<String, Override>,
     pub theme: Arc<Theme>,
 }
 
