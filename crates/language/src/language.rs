@@ -1,6 +1,7 @@
 use crate::HighlightMap;
 use anyhow::{anyhow, Result};
 use gpui::{executor::Background, AppContext};
+use lazy_static::lazy_static;
 use lsp::LanguageServer;
 use parking_lot::Mutex;
 use serde::Deserialize;
@@ -8,6 +9,19 @@ use std::{collections::HashSet, path::Path, str, sync::Arc};
 use theme::SyntaxTheme;
 use tree_sitter::{self, Query};
 pub use tree_sitter::{Parser, Tree};
+
+lazy_static! {
+    pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Plain Text".to_string(),
+            path_suffixes: Default::default(),
+            brackets: Default::default(),
+            line_comment: None,
+            language_server: None,
+        },
+        None,
+    ));
+}
 
 #[derive(Default, Deserialize)]
 pub struct LanguageConfig {

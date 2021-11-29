@@ -28,6 +28,13 @@ fn main() {
     let settings = Settings::new("Inconsolata", &app.font_cache(), theme)
         .unwrap()
         .with_overrides(
+            language::PLAIN_TEXT.name(),
+            settings::Override {
+                soft_wrap: Some(settings::SoftWrap::PreferredLineLength),
+                ..Default::default()
+            },
+        )
+        .with_overrides(
             "Markdown",
             settings::Override {
                 soft_wrap: Some(settings::SoftWrap::PreferredLineLength),

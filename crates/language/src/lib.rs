@@ -8,6 +8,7 @@ pub use self::{
     highlight_map::{HighlightId, HighlightMap},
     language::{
         BracketPair, Grammar, Language, LanguageConfig, LanguageRegistry, LanguageServerConfig,
+        PLAIN_TEXT,
     },
 };
 use anyhow::{anyhow, Result};

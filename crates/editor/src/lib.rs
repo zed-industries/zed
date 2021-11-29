@@ -518,7 +518,9 @@ impl Editor {
         _: &workspace::OpenNew,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "", cx));
+        let buffer = cx.add_model(|cx| {
+            Buffer::new(0, "", cx).with_language(Some(language::PLAIN_TEXT.clone()), None, cx)
+        });
         workspace.add_item(BufferItemHandle(buffer), cx);
     }
 
