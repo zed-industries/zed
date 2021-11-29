@@ -259,31 +259,18 @@ impl Line {
 
             for glyph in &run.glyphs {
                 let glyph_origin = origin + baseline_offset + glyph.position;
-
-                if glyph_origin.x() + max_glyph_width < visible_bounds.origin().x() {
-                    continue;
-                }
                 if glyph_origin.x() > visible_bounds.upper_right().x() {
                     break;
                 }
 
+                let mut finished_underline = None;
                 if glyph.index >= run_end {
                     if let Some((run_len, run_color, run_underline_color)) = style_runs.next() {
-                        if let Some((underline_origin, underline_color)) = underline {
+                        if let Some((_, underline_color)) = underline {
                             if *run_underline_color != Some(underline_color) {
-                                cx.scene.push_underline(scene::Quad {
-                                    bounds: RectF::from_points(
-                                        underline_origin,
-                                        glyph_origin + vec2f(0., 1.),
-                                    ),
-                                    background: Some(underline_color),
-                                    border: Default::default(),
-                                    corner_radius: 0.,
-                                });
-                                underline = None;
+                                finished_underline = underline.take();
                             }
                         }
-
                         if let Some(run_underline_color) = run_underline_color {
                             underline.get_or_insert((glyph_origin, *run_underline_color));
                         }
@@ -293,18 +280,21 @@ impl Line {
                     } else {
                         run_end = self.layout.len;
                         color = Color::black();
-                        if let Some((underline_origin, underline_color)) = underline.take() {
-                            cx.scene.push_underline(scene::Quad {
-                                bounds: RectF::from_points(
-                                    underline_origin,
-                                    glyph_origin + vec2f(0., 1.),
-                                ),
-                                background: Some(underline_color),
-                                border: Default::default(),
-                                corner_radius: 0.,
-                            });
-                        }
+                        finished_underline = underline.take();
                     }
+                }
+
+                if glyph_origin.x() + max_glyph_width < visible_bounds.origin().x() {
+                    continue;
+                }
+
+                if let Some((underline_origin, underline_color)) = finished_underline {
+                    cx.scene.push_underline(scene::Quad {
+                        bounds: RectF::from_points(underline_origin, glyph_origin + vec2f(0., 1.)),
+                        background: Some(underline_color),
+                        border: Default::default(),
+                        corner_radius: 0.,
+                    });
                 }
 
                 cx.scene.push_glyph(scene::Glyph {
