@@ -4,19 +4,19 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-test-support = ["rand", "seahash"]
+test-support = ["rand"]
 
 [dependencies]
 clock = { path = "../clock" }
+collections = { path = "../collections" }
 sum_tree = { path = "../sum_tree" }
 anyhow = "1.0.38"
 arrayvec = "0.7.1"
 log = "0.4"
 rand = { version = "0.8.3", optional = true }
-seahash = { version = "4.1", optional = true }
 smallvec = { version = "1.6", features = ["union"] }
 
 [dev-dependencies]
+collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
-seahash = "4.1"
 rand = "0.8.3"

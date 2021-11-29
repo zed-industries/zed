@@ -13,6 +13,7 @@ name = "seed"
 required-features = ["seed-support"]
 
 [dependencies]
+collections = { path = "../collections" }
 rpc = { path = "../rpc" }
 
 anyhow = "1.0.40"
@@ -54,6 +55,7 @@ version = "0.5.2"
 features = ["runtime-async-std-rustls", "postgres", "time", "uuid"]
 
 [dev-dependencies]
+collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui" }
 zed = { path = "../zed", features = ["test-support"] }
 
