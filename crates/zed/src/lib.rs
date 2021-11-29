@@ -589,7 +589,10 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert!(!editor.is_dirty(cx.as_ref()));
             assert_eq!(editor.title(cx.as_ref()), "untitled");
-            assert!(editor.language(cx).is_none());
+            assert!(Arc::ptr_eq(
+                editor.language(cx).unwrap(),
+                &language::PLAIN_TEXT
+            ));
             editor.handle_input(&editor::Input("hi".into()), cx);
             assert!(editor.is_dirty(cx.as_ref()));
         });
@@ -683,7 +686,10 @@ mod tests {
         });
 
         editor.update(&mut cx, |editor, cx| {
-            assert!(editor.language(cx).is_none());
+            assert!(Arc::ptr_eq(
+                editor.language(cx).unwrap(),
+                &language::PLAIN_TEXT
+            ));
             editor.handle_input(&editor::Input("hi".into()), cx);
             assert!(editor.is_dirty(cx.as_ref()));
         });
