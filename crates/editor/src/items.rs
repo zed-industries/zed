@@ -12,7 +12,8 @@ use project::{ProjectPath, Worktree};
 use std::fmt::Write;
 use std::path::Path;
 use workspace::{
-    EntryOpener, ItemHandle, ItemView, ItemViewHandle, Settings, StatusItemView, WeakItemHandle,
+    settings, EntryOpener, ItemHandle, ItemView, ItemViewHandle, Settings, StatusItemView,
+    WeakItemHandle,
 };
 
 pub struct BufferOpener;
@@ -47,6 +48,7 @@ impl ItemHandle for BufferItemHandle {
         settings: watch::Receiver<Settings>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
+        let buffer = self.0.downgrade();
         Box::new(cx.add_view(window_id, |cx| {
             Editor::for_buffer(
                 self.0.clone(),
@@ -71,8 +73,18 @@ impl ItemHandle for BufferItemHandle {
                         font_properties,
                         underline: None,
                     };
+                    let language = buffer.upgrade(cx).and_then(|buf| buf.read(cx).language());
+                    let soft_wrap = match settings.soft_wrap(language) {
+                        settings::SoftWrap::None => crate::SoftWrap::None,
+                        settings::SoftWrap::EditorWidth => crate::SoftWrap::EditorWidth,
+                        settings::SoftWrap::PreferredLineLength => crate::SoftWrap::Column(
+                            settings.preferred_line_length(language).saturating_sub(1),
+                        ),
+                    };
+
                     EditorSettings {
                         tab_size: settings.tab_size,
+                        soft_wrap,
                         style: theme,
                     }
                 },

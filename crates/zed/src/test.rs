@@ -30,7 +30,7 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
             path_suffixes: vec!["rs".to_string()],
             ..Default::default()
         },
-        tree_sitter_rust::language(),
+        Some(tree_sitter_rust::language()),
     )));
     Arc::new(AppState {
         settings_tx: Arc::new(Mutex::new(settings_tx)),

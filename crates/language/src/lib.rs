@@ -6,7 +6,10 @@ mod tests;
 
 pub use self::{
     highlight_map::{HighlightId, HighlightMap},
-    language::{BracketPair, Language, LanguageConfig, LanguageRegistry, LanguageServerConfig},
+    language::{
+        BracketPair, Grammar, Language, LanguageConfig, LanguageRegistry, LanguageServerConfig,
+        PLAIN_TEXT,
+    },
 };
 use anyhow::{anyhow, Result};
 pub use buffer::{Buffer as TextBuffer, Operation as _, *};
@@ -594,13 +597,13 @@ impl Buffer {
             return false;
         }
 
-        if let Some(language) = self.language.clone() {
+        if let Some(grammar) = self.grammar().cloned() {
             let old_tree = self.syntax_tree();
             let text = self.as_rope().clone();
             let parsed_version = self.version();
             let parse_task = cx.background().spawn({
-                let language = language.clone();
-                async move { Self::parse_text(&text, old_tree, &language) }
+                let grammar = grammar.clone();
+                async move { Self::parse_text(&text, old_tree, &grammar) }
             });
 
             match cx
@@ -616,11 +619,10 @@ impl Buffer {
                     cx.spawn(move |this, mut cx| async move {
                         let new_tree = parse_task.await;
                         this.update(&mut cx, move |this, cx| {
-                            let language_changed =
-                                this.language.as_ref().map_or(true, |curr_language| {
-                                    !Arc::ptr_eq(curr_language, &language)
-                                });
-                            let parse_again = this.version.gt(&parsed_version) || language_changed;
+                            let grammar_changed = this
+                                .grammar()
+                                .map_or(true, |curr_grammar| !Arc::ptr_eq(&grammar, curr_grammar));
+                            let parse_again = this.version.gt(&parsed_version) || grammar_changed;
                             this.parsing_in_background = false;
                             this.did_finish_parsing(new_tree, parsed_version, cx);
 
@@ -636,11 +638,11 @@ impl Buffer {
         false
     }
 
-    fn parse_text(text: &Rope, old_tree: Option<Tree>, language: &Language) -> Tree {
+    fn parse_text(text: &Rope, old_tree: Option<Tree>, grammar: &Grammar) -> Tree {
         PARSER.with(|parser| {
             let mut parser = parser.borrow_mut();
             parser
-                .set_language(language.grammar)
+                .set_language(grammar.ts_language)
                 .expect("incompatible grammar");
             let mut chunks = text.chunks_in_range(0..text.len());
             let tree = parser
@@ -1069,15 +1071,15 @@ impl Buffer {
         &self,
         range: Range<T>,
     ) -> Option<(Range<usize>, Range<usize>)> {
-        let (lang, tree) = self.language.as_ref().zip(self.syntax_tree())?;
-        let open_capture_ix = lang.brackets_query.capture_index_for_name("open")?;
-        let close_capture_ix = lang.brackets_query.capture_index_for_name("close")?;
+        let (grammar, tree) = self.grammar().zip(self.syntax_tree())?;
+        let open_capture_ix = grammar.brackets_query.capture_index_for_name("open")?;
+        let close_capture_ix = grammar.brackets_query.capture_index_for_name("close")?;
 
         // Find bracket pairs that *inclusively* contain the given range.
         let range = range.start.to_offset(self).saturating_sub(1)..range.end.to_offset(self) + 1;
         let mut cursor = QueryCursorHandle::new();
         let matches = cursor.set_byte_range(range).matches(
-            &lang.brackets_query,
+            &grammar.brackets_query,
             tree.root_node(),
             TextProvider(self.as_rope()),
         );
@@ -1342,6 +1344,10 @@ impl Buffer {
         cx.notify();
     }
 
+    fn grammar(&self) -> Option<&Arc<Grammar>> {
+        self.language.as_ref().and_then(|l| l.grammar.as_ref())
+    }
+
     pub fn add_selection_set<T: ToOffset>(
         &mut self,
         selections: &[Selection<T>],
@@ -1550,19 +1556,19 @@ impl Snapshot {
         row_range: Range<u32>,
     ) -> Option<impl Iterator<Item = IndentSuggestion> + 'a> {
         let mut query_cursor = QueryCursorHandle::new();
-        if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
+        if let Some((grammar, tree)) = self.grammar().zip(self.tree.as_ref()) {
             let prev_non_blank_row = self.prev_non_blank_row(row_range.start);
 
             // Get the "indentation ranges" that intersect this row range.
-            let indent_capture_ix = language.indents_query.capture_index_for_name("indent");
-            let end_capture_ix = language.indents_query.capture_index_for_name("end");
+            let indent_capture_ix = grammar.indents_query.capture_index_for_name("indent");
+            let end_capture_ix = grammar.indents_query.capture_index_for_name("end");
             query_cursor.set_point_range(
                 Point::new(prev_non_blank_row.unwrap_or(row_range.start), 0).to_ts_point()
                     ..Point::new(row_range.end, 0).to_ts_point(),
             );
             let mut indentation_ranges = Vec::<(Range<Point>, &'static str)>::new();
             for mat in query_cursor.matches(
-                &language.indents_query,
+                &grammar.indents_query,
                 tree.root_node(),
                 TextProvider(self.as_rope()),
             ) {
@@ -1682,7 +1688,7 @@ impl Snapshot {
             diagnostic_endpoints
                 .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
 
-            if let Some((language, tree)) = self.language.as_ref().zip(self.tree.as_ref()) {
+            if let Some((grammar, tree)) = self.grammar().zip(self.tree.as_ref()) {
                 let mut query_cursor = QueryCursorHandle::new();
 
                 // TODO - add a Tree-sitter API to remove the need for this.
@@ -1690,7 +1696,7 @@ impl Snapshot {
                     std::mem::transmute::<_, &'static mut QueryCursor>(query_cursor.deref_mut())
                 };
                 let captures = cursor.set_byte_range(range.clone()).captures(
-                    &language.highlights_query,
+                    &grammar.highlights_query,
                     tree.root_node(),
                     TextProvider(self.text.as_rope()),
                 );
@@ -1698,7 +1704,7 @@ impl Snapshot {
                     captures,
                     next_capture: None,
                     stack: Default::default(),
-                    highlight_map: language.highlight_map(),
+                    highlight_map: grammar.highlight_map(),
                     _query_cursor: query_cursor,
                     theme,
                 })
@@ -1718,6 +1724,12 @@ impl Snapshot {
             hint_depth: 0,
             highlights,
         }
+    }
+
+    fn grammar(&self) -> Option<&Arc<Grammar>> {
+        self.language
+            .as_ref()
+            .and_then(|language| language.grammar.as_ref())
     }
 }
 

@@ -1616,7 +1616,7 @@ mod tests {
                 language_server: Some(language_server_config),
                 ..Default::default()
             },
-            tree_sitter_rust::language(),
+            Some(tree_sitter_rust::language()),
         )));
 
         let lang_registry = Arc::new(lang_registry);

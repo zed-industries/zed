@@ -970,7 +970,7 @@ fn rust_lang() -> Language {
             language_server: None,
             ..Default::default()
         },
-        tree_sitter_rust::language(),
+        Some(tree_sitter_rust::language()),
     )
     .with_indents_query(
         r#"

@@ -69,6 +69,7 @@ impl ThemeSelector {
                         EditorSettings {
                             tab_size: settings.tab_size,
                             style: settings.theme.selector.input_editor.as_editor(),
+                            soft_wrap: editor::SoftWrap::None,
                         }
                     }
                 },

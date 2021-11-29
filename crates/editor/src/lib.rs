@@ -333,7 +333,15 @@ pub enum EditorMode {
 #[derive(Clone)]
 pub struct EditorSettings {
     pub tab_size: usize,
+    pub soft_wrap: SoftWrap,
     pub style: EditorStyle,
+}
+
+#[derive(Clone)]
+pub enum SoftWrap {
+    None,
+    EditorWidth,
+    Column(u32),
 }
 
 pub struct Editor {
@@ -510,7 +518,9 @@ impl Editor {
         _: &workspace::OpenNew,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "", cx));
+        let buffer = cx.add_model(|cx| {
+            Buffer::new(0, "", cx).with_language(Some(language::PLAIN_TEXT.clone()), None, cx)
+        });
         workspace.add_item(BufferItemHandle(buffer), cx);
     }
 
@@ -3379,9 +3389,9 @@ impl Editor {
             .text()
     }
 
-    pub fn set_wrap_width(&self, width: f32, cx: &mut MutableAppContext) -> bool {
+    pub fn set_wrap_width(&self, width: Option<f32>, cx: &mut MutableAppContext) -> bool {
         self.display_map
-            .update(cx, |map, cx| map.set_wrap_width(Some(width), cx))
+            .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
     pub fn set_highlighted_row(&mut self, row: Option<u32>) {
@@ -3539,6 +3549,7 @@ impl EditorSettings {
     pub fn test(cx: &AppContext) -> Self {
         Self {
             tab_size: 4,
+            soft_wrap: SoftWrap::None,
             style: {
                 let font_cache: &gpui::FontCache = cx.font_cache();
                 let font_family_name = Arc::from("Monaco");
@@ -4409,7 +4420,7 @@ mod tests {
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
         view.update(cx, |view, cx| {
-            view.set_wrap_width(140., cx);
+            view.set_wrap_width(Some(140.), cx);
             assert_eq!(
                 view.display_text(cx),
                 "use one::{\n    two::three::\n    four::five\n};"
@@ -5286,7 +5297,7 @@ mod tests {
         let settings = cx.read(EditorSettings::test);
         let language = Some(Arc::new(Language::new(
             LanguageConfig::default(),
-            tree_sitter_rust::language(),
+            Some(tree_sitter_rust::language()),
         )));
 
         let text = r#"
@@ -5443,7 +5454,7 @@ mod tests {
                 ],
                 ..Default::default()
             },
-            tree_sitter_rust::language(),
+            Some(tree_sitter_rust::language()),
         )));
 
         let text = r#"
@@ -5542,7 +5553,7 @@ mod tests {
                 line_comment: Some("// ".to_string()),
                 ..Default::default()
             },
-            tree_sitter_rust::language(),
+            Some(tree_sitter_rust::language()),
         )));
 
         let text = "
@@ -5640,7 +5651,7 @@ mod tests {
                 ],
                 ..Default::default()
             },
-            tree_sitter_rust::language(),
+            Some(tree_sitter_rust::language()),
         )));
 
         let text = concat!(
