@@ -108,7 +108,7 @@ impl ProjectPanel {
                 visible_entries: Default::default(),
                 expanded_dir_ids: Default::default(),
                 selection: None,
-                handle: cx.handle().downgrade(),
+                handle: cx.weak_handle(),
             };
             this.update_visible_entries(None, cx);
             this

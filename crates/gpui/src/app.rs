@@ -2110,7 +2110,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         S::Event: 'static,
         F: 'static + FnMut(&mut T, ModelHandle<S>, &S::Event, &mut ModelContext<T>),
     {
-        let subscriber = self.handle().downgrade();
+        let subscriber = self.weak_handle();
         self.app
             .subscribe_internal(handle, move |emitter, event, cx| {
                 if let Some(subscriber) = subscriber.upgrade(cx) {
@@ -2129,7 +2129,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         S: Entity,
         F: 'static + FnMut(&mut T, ModelHandle<S>, &mut ModelContext<T>),
     {
-        let observer = self.handle().downgrade();
+        let observer = self.weak_handle();
         self.app.observe_internal(handle, move |observed, cx| {
             if let Some(observer) = observer.upgrade(cx) {
                 observer.update(cx, |observer, cx| {
@@ -2144,6 +2144,10 @@ impl<'a, T: Entity> ModelContext<'a, T> {
 
     pub fn handle(&self) -> ModelHandle<T> {
         ModelHandle::new(self.model_id, &self.app.cx.ref_counts)
+    }
+
+    pub fn weak_handle(&self) -> WeakModelHandle<T> {
+        WeakModelHandle::new(self.model_id)
     }
 
     pub fn spawn<F, Fut, S>(&self, f: F) -> Task<S>
@@ -2162,7 +2166,7 @@ impl<'a, T: Entity> ModelContext<'a, T> {
         Fut: 'static + Future<Output = S>,
         S: 'static,
     {
-        let handle = self.handle().downgrade();
+        let handle = self.weak_handle();
         self.app.spawn(|cx| f(handle, cx))
     }
 }
@@ -2239,6 +2243,10 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn handle(&self) -> ViewHandle<T> {
         ViewHandle::new(self.window_id, self.view_id, &self.app.cx.ref_counts)
+    }
+
+    pub fn weak_handle(&self) -> WeakViewHandle<T> {
+        WeakViewHandle::new(self.window_id, self.view_id)
     }
 
     pub fn window_id(&self) -> usize {
@@ -2336,7 +2344,7 @@ impl<'a, T: View> ViewContext<'a, T> {
         H: Handle<E>,
         F: 'static + FnMut(&mut T, H, &E::Event, &mut ViewContext<T>),
     {
-        let subscriber = self.handle().downgrade();
+        let subscriber = self.weak_handle();
         self.app
             .subscribe_internal(handle, move |emitter, event, cx| {
                 if let Some(subscriber) = subscriber.upgrade(cx) {
@@ -2356,7 +2364,7 @@ impl<'a, T: View> ViewContext<'a, T> {
         H: Handle<E>,
         F: 'static + FnMut(&mut T, H, &mut ViewContext<T>),
     {
-        let observer = self.handle().downgrade();
+        let observer = self.weak_handle();
         self.app.observe_internal(handle, move |observed, cx| {
             if let Some(observer) = observer.upgrade(cx) {
                 observer.update(cx, |observer, cx| {
@@ -2400,7 +2408,7 @@ impl<'a, T: View> ViewContext<'a, T> {
         Fut: 'static + Future<Output = S>,
         S: 'static,
     {
-        let handle = self.handle().downgrade();
+        let handle = self.weak_handle();
         self.app.spawn(|cx| f(handle, cx))
     }
 }

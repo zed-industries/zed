@@ -487,7 +487,7 @@ impl Editor {
             )
         });
         Self {
-            handle: cx.handle().downgrade(),
+            handle: cx.weak_handle(),
             buffer,
             display_map,
             selection_set_id,
