@@ -778,7 +778,7 @@ mod tests {
                     path_suffixes: vec![".test".to_string()],
                     ..Default::default()
                 },
-                tree_sitter_rust::language(),
+                Some(tree_sitter_rust::language()),
             )
             .with_highlights_query(
                 r#"
@@ -865,7 +865,7 @@ mod tests {
                     path_suffixes: vec![".test".to_string()],
                     ..Default::default()
                 },
-                tree_sitter_rust::language(),
+                Some(tree_sitter_rust::language()),
             )
             .with_highlights_query(
                 r#"

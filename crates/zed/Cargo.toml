@@ -85,7 +85,6 @@ time = "0.3"
 tiny_http = "0.8"
 toml = "0.5"
 tree-sitter = "0.19.5"
-tree-sitter-markdown = "0.7"
 tree-sitter-rust = "0.19.0"
 url = "2.2"
 

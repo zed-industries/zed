@@ -17,7 +17,7 @@ pub fn build_language_registry() -> LanguageRegistry {
 fn rust() -> Language {
     let grammar = tree_sitter_rust::language();
     let config = toml::from_slice(&LanguageDir::get("rust/config.toml").unwrap().data).unwrap();
-    Language::new(config, grammar)
+    Language::new(config, Some(grammar))
         .with_highlights_query(load_query("rust/highlights.scm").as_ref())
         .unwrap()
         .with_brackets_query(load_query("rust/brackets.scm").as_ref())
@@ -27,9 +27,8 @@ fn rust() -> Language {
 }
 
 fn markdown() -> Language {
-    let grammar = tree_sitter_markdown::language();
     let config = toml::from_slice(&LanguageDir::get("markdown/config.toml").unwrap().data).unwrap();
-    Language::new(config, grammar)
+    Language::new(config, None)
 }
 
 fn load_query(path: &str) -> Cow<'static, str> {

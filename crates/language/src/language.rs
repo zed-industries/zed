@@ -1,12 +1,12 @@
 use crate::HighlightMap;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use gpui::{executor::Background, AppContext};
 use lsp::LanguageServer;
 use parking_lot::Mutex;
 use serde::Deserialize;
 use std::{collections::HashSet, path::Path, str, sync::Arc};
 use theme::SyntaxTheme;
-use tree_sitter::{Language as Grammar, Query};
+use tree_sitter::{self, Query};
 pub use tree_sitter::{Parser, Tree};
 
 #[derive(Default, Deserialize)]
@@ -37,7 +37,11 @@ pub struct BracketPair {
 
 pub struct Language {
     pub(crate) config: LanguageConfig,
-    pub(crate) grammar: Grammar,
+    pub(crate) grammar: Option<Arc<Grammar>>,
+}
+
+pub struct Grammar {
+    pub(crate) ts_language: tree_sitter::Language,
     pub(crate) highlights_query: Query,
     pub(crate) brackets_query: Query,
     pub(crate) indents_query: Query,
@@ -86,29 +90,48 @@ impl LanguageRegistry {
 }
 
 impl Language {
-    pub fn new(config: LanguageConfig, grammar: Grammar) -> Self {
+    pub fn new(config: LanguageConfig, ts_language: Option<tree_sitter::Language>) -> Self {
         Self {
             config,
-            brackets_query: Query::new(grammar, "").unwrap(),
-            highlights_query: Query::new(grammar, "").unwrap(),
-            indents_query: Query::new(grammar, "").unwrap(),
-            grammar,
-            highlight_map: Default::default(),
+            grammar: ts_language.map(|ts_language| {
+                Arc::new(Grammar {
+                    brackets_query: Query::new(ts_language, "").unwrap(),
+                    highlights_query: Query::new(ts_language, "").unwrap(),
+                    indents_query: Query::new(ts_language, "").unwrap(),
+                    ts_language,
+                    highlight_map: Default::default(),
+                })
+            }),
         }
     }
 
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
-        self.highlights_query = Query::new(self.grammar, source)?;
+        let grammar = self
+            .grammar
+            .as_mut()
+            .and_then(Arc::get_mut)
+            .ok_or_else(|| anyhow!("grammar does not exist or is already being used"))?;
+        grammar.highlights_query = Query::new(grammar.ts_language, source)?;
         Ok(self)
     }
 
     pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
-        self.brackets_query = Query::new(self.grammar, source)?;
+        let grammar = self
+            .grammar
+            .as_mut()
+            .and_then(Arc::get_mut)
+            .ok_or_else(|| anyhow!("grammar does not exist or is already being used"))?;
+        grammar.brackets_query = Query::new(grammar.ts_language, source)?;
         Ok(self)
     }
 
     pub fn with_indents_query(mut self, source: &str) -> Result<Self> {
-        self.indents_query = Query::new(self.grammar, source)?;
+        let grammar = self
+            .grammar
+            .as_mut()
+            .and_then(Arc::get_mut)
+            .ok_or_else(|| anyhow!("grammar does not exist or is already being used"))?;
+        grammar.indents_query = Query::new(grammar.ts_language, source)?;
         Ok(self)
     }
 
@@ -156,13 +179,17 @@ impl Language {
         &self.config.brackets
     }
 
+    pub fn set_theme(&self, theme: &SyntaxTheme) {
+        if let Some(grammar) = self.grammar.as_ref() {
+            *grammar.highlight_map.lock() =
+                HighlightMap::new(grammar.highlights_query.capture_names(), theme);
+        }
+    }
+}
+
+impl Grammar {
     pub fn highlight_map(&self) -> HighlightMap {
         self.highlight_map.lock().clone()
-    }
-
-    pub fn set_theme(&self, theme: &SyntaxTheme) {
-        *self.highlight_map.lock() =
-            HighlightMap::new(self.highlights_query.capture_names(), theme);
     }
 }
 
@@ -189,7 +216,6 @@ mod tests {
 
     #[test]
     fn test_select_language() {
-        let grammar = tree_sitter_rust::language();
         let registry = LanguageRegistry {
             languages: vec![
                 Arc::new(Language::new(
@@ -198,7 +224,7 @@ mod tests {
                         path_suffixes: vec!["rs".to_string()],
                         ..Default::default()
                     },
-                    grammar,
+                    Some(tree_sitter_rust::language()),
                 )),
                 Arc::new(Language::new(
                     LanguageConfig {
@@ -206,7 +232,7 @@ mod tests {
                         path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
                         ..Default::default()
                     },
-                    grammar,
+                    Some(tree_sitter_rust::language()),
                 )),
             ],
         };

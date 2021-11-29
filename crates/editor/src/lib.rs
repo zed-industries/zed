@@ -5295,7 +5295,7 @@ mod tests {
         let settings = cx.read(EditorSettings::test);
         let language = Some(Arc::new(Language::new(
             LanguageConfig::default(),
-            tree_sitter_rust::language(),
+            Some(tree_sitter_rust::language()),
         )));
 
         let text = r#"
@@ -5452,7 +5452,7 @@ mod tests {
                 ],
                 ..Default::default()
             },
-            tree_sitter_rust::language(),
+            Some(tree_sitter_rust::language()),
         )));
 
         let text = r#"
@@ -5551,7 +5551,7 @@ mod tests {
                 line_comment: Some("// ".to_string()),
                 ..Default::default()
             },
-            tree_sitter_rust::language(),
+            Some(tree_sitter_rust::language()),
         )));
 
         let text = "
@@ -5649,7 +5649,7 @@ mod tests {
                 ],
                 ..Default::default()
             },
-            tree_sitter_rust::language(),
+            Some(tree_sitter_rust::language()),
         )));
 
         let text = concat!(
