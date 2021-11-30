@@ -1,5 +1,5 @@
 use buffer::{Bias, Point, Selection};
-use editor::{Autoscroll, Editor, EditorSettings};
+use editor::{display_map::ToDisplayPoint, Autoscroll, Editor, EditorSettings};
 use gpui::{
     action, elements::*, geometry::vector::Vector2F, keymap::Binding, Axis, Entity,
     MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
@@ -138,10 +138,11 @@ impl GoToLine {
                     )
                 }) {
                     self.line_selection = self.active_editor.update(cx, |active_editor, cx| {
-                        let buffer = active_editor.buffer().read(cx);
-                        let point = buffer.clip_point(point, Bias::Left);
+                        let snapshot = active_editor.snapshot(cx).display_snapshot;
+                        let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
+                        let display_point = point.to_display_point(&snapshot);
                         active_editor.select_ranges([point..point], Some(Autoscroll::Center), cx);
-                        active_editor.set_highlighted_row(Some(point.row));
+                        active_editor.set_highlighted_row(Some(display_point.row()));
                         Some(active_editor.newest_selection(cx))
                     });
                     cx.notify();
