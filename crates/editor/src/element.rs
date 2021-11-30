@@ -931,7 +931,7 @@ pub struct LayoutState {
     line_height: f32,
     em_width: f32,
     em_advance: f32,
-    selections: HashMap<ReplicaId, Vec<buffer::Selection<DisplayPoint>>>,
+    selections: HashMap<ReplicaId, Vec<text::Selection<DisplayPoint>>>,
     overscroll: Vector2F,
     text_offset: Vector2F,
     max_visible_line_width: f32,

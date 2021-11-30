@@ -1,6 +1,5 @@
 use crate::{Editor, EditorSettings, Event};
 use anyhow::Result;
-use buffer::{Point, Selection, ToPoint};
 use gpui::{
     elements::*, fonts::TextStyle, AppContext, Entity, ModelContext, ModelHandle,
     MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
@@ -11,6 +10,7 @@ use postage::watch;
 use project::{ProjectPath, Worktree};
 use std::fmt::Write;
 use std::path::Path;
+use text::{Point, Selection, ToPoint};
 use workspace::{
     settings, EntryOpener, ItemHandle, ItemView, ItemViewHandle, Settings, StatusItemView,
     WeakItemHandle,

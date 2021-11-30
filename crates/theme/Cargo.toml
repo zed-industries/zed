@@ -3,6 +3,9 @@ name = "theme"
 version = "0.1.0"
 edition = "2018"
 
+[lib]
+path = "src/theme.rs"
+
 [dependencies]
 gpui = { path = "../gpui" }
 anyhow = "1.0.38"

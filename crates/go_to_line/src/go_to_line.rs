@@ -1,4 +1,4 @@
-use buffer::{Bias, Point, Selection};
+use text::{Bias, Point, Selection};
 use editor::{display_map::ToDisplayPoint, Autoscroll, Editor, EditorSettings};
 use gpui::{
     action, elements::*, geometry::vector::Vector2F, keymap::Binding, Axis, Entity,

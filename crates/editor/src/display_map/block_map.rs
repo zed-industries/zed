@@ -2,7 +2,6 @@ use super::{
     wrap_map::{self, Edit as WrapEdit, Snapshot as WrapSnapshot, WrapPoint},
     BlockStyle, DisplayRow,
 };
-use buffer::{rope, Anchor, Bias, Edit, Point, Rope, ToOffset, ToPoint as _};
 use gpui::{fonts::HighlightStyle, AppContext, ModelHandle};
 use language::{Buffer, Chunk};
 use parking_lot::Mutex;
@@ -19,6 +18,7 @@ use std::{
     vec,
 };
 use sum_tree::SumTree;
+use text::{rope, Anchor, Bias, Edit, Point, Rope, ToOffset, ToPoint as _};
 use theme::SyntaxTheme;
 
 pub struct BlockMap {
@@ -1003,11 +1003,11 @@ fn offset_for_row(s: &str, target: u32) -> (u32, usize) {
 mod tests {
     use super::*;
     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
-    use buffer::RandomCharIter;
     use gpui::color::Color;
     use language::Buffer;
     use rand::prelude::*;
     use std::env;
+    use text::RandomCharIter;
 
     #[gpui::test]
     fn test_offset_for_row() {

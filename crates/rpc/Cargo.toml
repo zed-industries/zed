@@ -4,6 +4,9 @@ edition = "2018"
 name = "rpc"
 version = "0.1.0"
 
+[lib]
+path = "src/rpc.rs"
+
 [features]
 test-support = []
 

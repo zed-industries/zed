@@ -3,8 +3,11 @@ name = "go_to_line"
 version = "0.1.0"
 edition = "2018"
 
+[lib]
+path = "src/go_to_line.rs"
+
 [dependencies]
-buffer = { path = "../buffer" }
+text = { path = "../text" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 workspace = { path = "../workspace" }

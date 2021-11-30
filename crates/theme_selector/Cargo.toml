@@ -3,6 +3,9 @@ name = "theme_selector"
 version = "0.1.0"
 edition = "2018"
 
+[lib]
+path = "src/theme_selector.rs"
+
 [dependencies]
 editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }

@@ -3,6 +3,9 @@ name = "lsp"
 version = "0.1.0"
 edition = "2018"
 
+[lib]
+path = "src/lsp.rs"
+
 [features]
 test-support = ["async-pipe"]
 

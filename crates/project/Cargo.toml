@@ -3,11 +3,14 @@ name = "project"
 version = "0.1.0"
 edition = "2018"
 
+[lib]
+path = "src/project.rs"
+
 [features]
-test-support = ["language/test-support", "buffer/test-support"]
+test-support = ["language/test-support", "text/test-support"]
 
 [dependencies]
-buffer = { path = "../buffer" }
+text = { path = "../text" }
 client = { path = "../client" }
 clock = { path = "../clock" }
 fsevent = { path = "../fsevent" }

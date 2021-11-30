@@ -3,15 +3,18 @@ name = "editor"
 version = "0.1.0"
 edition = "2018"
 
+[lib]
+path = "src/editor.rs"
+
 [features]
 test-support = [
-    "buffer/test-support",
+    "text/test-support",
     "language/test-support",
     "gpui/test-support",
 ]
 
 [dependencies]
-buffer = { path = "../buffer" }
+text = { path = "../text" }
 clock = { path = "../clock" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
@@ -31,7 +34,7 @@ smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 
 [dev-dependencies]
-buffer = { path = "../buffer", features = ["test-support"] }
+text = { path = "../text", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 ctor = "0.1"

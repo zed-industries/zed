@@ -3,6 +3,9 @@ name = "contacts_panel"
 version = "0.1.0"
 edition = "2018"
 
+[lib]
+path = "src/contacts_panel.rs"
+
 [dependencies]
 client = { path = "../client" }
 gpui = { path = "../gpui" }

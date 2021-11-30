@@ -3,6 +3,9 @@ name = "clock"
 version = "0.1.0"
 edition = "2018"
 
+[lib]
+path = "src/clock.rs"
+
 [dependencies]
 smallvec = { version = "1.6", features = ["union"] }
 rpc = { path = "../rpc" }

@@ -4,6 +4,9 @@ edition = "2018"
 name = "gpui"
 version = "0.1.0"
 
+[lib]
+path = "src/gpui.rs"
+
 [features]
 test-support = ["env_logger"]
 

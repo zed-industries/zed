@@ -3,6 +3,9 @@ name = "client"
 version = "0.1.0"
 edition = "2018"
 
+[lib]
+path = "src/client.rs"
+
 [features]
 test-support = ["rpc/test-support"]
 

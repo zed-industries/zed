@@ -3,6 +3,9 @@ name = "fuzzy"
 version = "0.1.0"
 edition = "2018"
 
+[lib]
+path = "src/fuzzy.rs"
+
 [dependencies]
 gpui = { path = "../gpui" }
 util = { path = "../util" }

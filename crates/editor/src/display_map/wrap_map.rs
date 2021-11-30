@@ -16,7 +16,7 @@ use sum_tree::{Bias, Cursor, SumTree};
 use theme::SyntaxTheme;
 
 pub use super::tab_map::TextSummary;
-pub type Edit = buffer::Edit<u32>;
+pub type Edit = text::Edit<u32>;
 
 pub struct WrapMap {
     snapshot: Snapshot,
@@ -991,10 +991,10 @@ mod tests {
         display_map::{fold_map::FoldMap, tab_map::TabMap},
         test::Observer,
     };
-    use buffer::Rope;
     use language::{Buffer, RandomCharIter};
     use rand::prelude::*;
     use std::{cmp, env};
+    use text::Rope;
 
     #[gpui::test(iterations = 100)]
     async fn test_random_wraps(mut cx: gpui::TestAppContext, mut rng: StdRng) {
