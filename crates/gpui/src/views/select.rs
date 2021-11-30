@@ -42,7 +42,7 @@ impl Select {
         render_item: F,
     ) -> Self {
         Self {
-            handle: cx.handle().downgrade(),
+            handle: cx.weak_handle(),
             render_item: Box::new(render_item),
             selected_item_ix: 0,
             item_count,

@@ -1,7 +1,8 @@
 use crate::db::{ChannelId, UserId};
 use anyhow::anyhow;
+use collections::{HashMap, HashSet};
 use rpc::{proto, ConnectionId};
-use std::collections::{hash_map, HashMap, HashSet};
+use std::collections::hash_map;
 
 #[derive(Default)]
 pub struct Store {
@@ -172,15 +173,15 @@ impl Store {
     }
 
     pub fn contacts_for_user(&self, user_id: UserId) -> Vec<proto::Contact> {
-        let mut contacts = HashMap::new();
+        let mut contacts = HashMap::default();
         for worktree_id in self
             .visible_worktrees_by_user_id
             .get(&user_id)
-            .unwrap_or(&HashSet::new())
+            .unwrap_or(&HashSet::default())
         {
             let worktree = &self.worktrees[worktree_id];
 
-            let mut guests = HashSet::new();
+            let mut guests = HashSet::default();
             if let Ok(share) = worktree.share() {
                 for guest_connection_id in share.guests.keys() {
                     if let Ok(user_id) = self.user_id_for_connection(*guest_connection_id) {

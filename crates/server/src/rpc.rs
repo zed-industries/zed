@@ -8,6 +8,7 @@ use super::{
 use anyhow::anyhow;
 use async_std::task;
 use async_tungstenite::{tungstenite::protocol::Role, WebSocketStream};
+use collections::{HashMap, HashSet};
 use futures::{future::BoxFuture, FutureExt};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use postage::{mpsc, prelude::Sink as _, prelude::Stream as _};
@@ -16,14 +17,7 @@ use rpc::{
     Connection, ConnectionId, Peer, TypedEnvelope,
 };
 use sha1::{Digest as _, Sha1};
-use std::{
-    any::TypeId,
-    collections::{HashMap, HashSet},
-    future::Future,
-    mem,
-    sync::Arc,
-    time::Instant,
-};
+use std::{any::TypeId, future::Future, mem, sync::Arc, time::Instant};
 use store::{Store, Worktree};
 use surf::StatusCode;
 use tide::log;
@@ -220,7 +214,7 @@ impl Server {
         let receipt = request.receipt();
         let host_user_id = self.state().user_id_for_connection(request.sender_id)?;
 
-        let mut contact_user_ids = HashSet::new();
+        let mut contact_user_ids = HashSet::default();
         contact_user_ids.insert(host_user_id);
         for github_login in request.payload.authorized_logins {
             match self.app_state.db.create_user(&github_login, false).await {
@@ -2235,6 +2229,12 @@ mod tests {
             .user_store
             .condition(&cx_c, |user_store, _| {
                 contacts(user_store) == vec![("user_a", vec![("a", vec!["user_b"])])]
+            })
+            .await;
+
+        worktree_a
+            .condition(&cx_a, |worktree, cx| {
+                worktree.collaborators().contains_key(&client_b.peer_id)
             })
             .await;
 

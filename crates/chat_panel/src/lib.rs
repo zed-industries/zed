@@ -96,7 +96,7 @@ impl ChatPanel {
         });
 
         let mut message_list = ListState::new(0, Orientation::Bottom, 1000., {
-            let this = cx.handle().downgrade();
+            let this = cx.weak_handle();
             move |ix, cx| {
                 let this = this.upgrade(cx).unwrap().read(cx);
                 let message = this.active_channel.as_ref().unwrap().0.read(cx).message(ix);

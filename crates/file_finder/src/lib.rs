@@ -286,7 +286,7 @@ impl FileFinder {
             .detach();
 
         Self {
-            handle: cx.handle().downgrade(),
+            handle: cx.weak_handle(),
             settings,
             project,
             query_editor,

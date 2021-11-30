@@ -272,7 +272,7 @@ impl Client {
         let subscription_id = (TypeId::of::<T>(), Default::default());
         let client = self.clone();
         let mut state = self.state.write();
-        let model = cx.handle().downgrade();
+        let model = cx.weak_handle();
         let prev_extractor = state
             .entity_id_extractors
             .insert(subscription_id.0, Box::new(|_| Default::default()));
@@ -317,7 +317,7 @@ impl Client {
         let subscription_id = (TypeId::of::<T>(), remote_id);
         let client = self.clone();
         let mut state = self.state.write();
-        let model = cx.handle().downgrade();
+        let model = cx.weak_handle();
         state
             .entity_id_extractors
             .entry(subscription_id.0)

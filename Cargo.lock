@@ -746,10 +746,10 @@ dependencies = [
  "anyhow",
  "arrayvec 0.7.1",
  "clock",
+ "collections",
  "gpui",
  "log",
  "rand 0.8.3",
- "seahash",
  "smallvec",
  "sum_tree",
 ]
@@ -1055,6 +1055,13 @@ dependencies = [
  "foreign-types",
  "libc",
  "objc",
+]
+
+[[package]]
+name = "collections"
+version = "0.1.0"
+dependencies = [
+ "seahash",
 ]
 
 [[package]]
@@ -5739,6 +5746,7 @@ dependencies = [
  "async-tungstenite",
  "base64 0.13.0",
  "clap 3.0.0-beta.2",
+ "collections",
  "comrak",
  "either",
  "envy",
