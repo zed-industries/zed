@@ -108,8 +108,16 @@ impl WrapMap {
         edits: Vec<TabEdit>,
         cx: &mut ModelContext<Self>,
     ) -> (Snapshot, Vec<Edit>) {
-        self.pending_edits.push_back((tab_snapshot, edits));
-        self.flush_edits(cx);
+        if self.wrap_width.is_some() {
+            self.pending_edits.push_back((tab_snapshot, edits));
+            self.flush_edits(cx);
+        } else {
+            self.edits_since_sync = self
+                .edits_since_sync
+                .compose(&self.snapshot.interpolate(tab_snapshot, &edits));
+            self.snapshot.interpolated = false;
+        }
+
         (
             self.snapshot.clone(),
             mem::take(&mut self.edits_since_sync).into_inner(),
@@ -1112,6 +1120,7 @@ mod tests {
                 while wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
                     notifications.recv().await.unwrap();
                 }
+                wrap_map.read_with(&cx, |map, _| assert!(map.pending_edits.is_empty()));
             }
 
             if !wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
@@ -1193,6 +1202,14 @@ mod tests {
             }
             assert_eq!(initial_text.to_string(), snapshot_text.to_string());
         }
+
+        if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
+            log::info!("Waiting for wrapping to finish");
+            while wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
+                notifications.recv().await.unwrap();
+            }
+        }
+        wrap_map.read_with(&cx, |map, _| assert!(map.pending_edits.is_empty()));
     }
 
     fn wrap_text(
