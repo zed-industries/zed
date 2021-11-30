@@ -1,6 +1,14 @@
-use crate::HighlightMap;
+mod buffer;
+mod highlight_map;
+pub mod proto;
+#[cfg(test)]
+mod tests;
+
 use anyhow::{anyhow, Result};
+pub use buffer::Operation;
+pub use buffer::*;
 use gpui::{executor::Background, AppContext};
+use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use lsp::LanguageServer;
 use parking_lot::Mutex;
@@ -221,58 +229,5 @@ impl LanguageServerConfig {
             },
             fake,
         )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_select_language() {
-        let registry = LanguageRegistry {
-            languages: vec![
-                Arc::new(Language::new(
-                    LanguageConfig {
-                        name: "Rust".to_string(),
-                        path_suffixes: vec!["rs".to_string()],
-                        ..Default::default()
-                    },
-                    Some(tree_sitter_rust::language()),
-                )),
-                Arc::new(Language::new(
-                    LanguageConfig {
-                        name: "Make".to_string(),
-                        path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
-                        ..Default::default()
-                    },
-                    Some(tree_sitter_rust::language()),
-                )),
-            ],
-        };
-
-        // matching file extension
-        assert_eq!(
-            registry.select_language("zed/lib.rs").map(|l| l.name()),
-            Some("Rust")
-        );
-        assert_eq!(
-            registry.select_language("zed/lib.mk").map(|l| l.name()),
-            Some("Make")
-        );
-
-        // matching filename
-        assert_eq!(
-            registry.select_language("zed/Makefile").map(|l| l.name()),
-            Some("Make")
-        );
-
-        // matching suffix that is not the full file extension or filename
-        assert_eq!(registry.select_language("zed/cars").map(|l| l.name()), None);
-        assert_eq!(
-            registry.select_language("zed/a.cars").map(|l| l.name()),
-            None
-        );
-        assert_eq!(registry.select_language("zed/sumk").map(|l| l.name()), None);
     }
 }

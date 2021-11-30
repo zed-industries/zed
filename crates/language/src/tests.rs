@@ -1,7 +1,55 @@
 use super::*;
-use gpui::{ModelHandle, MutableAppContext};
-use std::{iter::FromIterator, rc::Rc};
+use gpui::{ModelHandle, MutableAppContext, Task};
+use std::{any::Any, cell::RefCell, ffi::OsString, iter::FromIterator, ops::Range, path::PathBuf, rc::Rc, time::{Duration, Instant, SystemTime}};
 use unindent::Unindent as _;
+
+#[test]
+fn test_select_language() {
+    let registry = LanguageRegistry {
+        languages: vec![
+            Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Rust".to_string(),
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )),
+            Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Make".to_string(),
+                    path_suffixes: vec!["Makefile".to_string(), "mk".to_string()],
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )),
+        ],
+    };
+
+    // matching file extension
+    assert_eq!(
+        registry.select_language("zed/lib.rs").map(|l| l.name()),
+        Some("Rust")
+    );
+    assert_eq!(
+        registry.select_language("zed/lib.mk").map(|l| l.name()),
+        Some("Make")
+    );
+
+    // matching filename
+    assert_eq!(
+        registry.select_language("zed/Makefile").map(|l| l.name()),
+        Some("Make")
+    );
+
+    // matching suffix that is not the full file extension or filename
+    assert_eq!(registry.select_language("zed/cars").map(|l| l.name()), None);
+    assert_eq!(
+        registry.select_language("zed/a.cars").map(|l| l.name()),
+        None
+    );
+    assert_eq!(registry.select_language("zed/sumk").map(|l| l.name()), None);
+}
 
 #[gpui::test]
 fn test_edit_events(cx: &mut gpui::MutableAppContext) {

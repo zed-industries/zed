@@ -3,6 +3,9 @@ name = "project"
 version = "0.1.0"
 edition = "2018"
 
+[lib]
+path = "src/project.rs"
+
 [features]
 test-support = ["language/test-support", "text/test-support"]
 

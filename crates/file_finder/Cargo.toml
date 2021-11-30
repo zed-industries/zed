@@ -3,6 +3,9 @@ name = "file_finder"
 version = "0.1.0"
 edition = "2018"
 
+[lib]
+path = "src/file_finder.rs"
+
 [dependencies]
 editor = { path = "../editor" }
 fuzzy = { path = "../fuzzy" }

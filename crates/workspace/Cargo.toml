@@ -3,6 +3,9 @@ name = "workspace"
 version = "0.1.0"
 edition = "2018"
 
+[lib]
+path = "src/workspace.rs"
+
 [features]
 test-support = [
     "client/test-support",

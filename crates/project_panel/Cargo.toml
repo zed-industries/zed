@@ -3,6 +3,9 @@ name = "project_panel"
 version = "0.1.0"
 edition = "2018"
 
+[lib]
+path = "src/project_panel.rs"
+
 [dependencies]
 gpui = { path = "../gpui" }
 project = { path = "../project" }

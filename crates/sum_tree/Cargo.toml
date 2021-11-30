@@ -3,6 +3,9 @@ name = "sum_tree"
 version = "0.1.0"
 edition = "2018"
 
+[lib]
+path = "src/sum_tree.rs"
+
 [dependencies]
 arrayvec = "0.7.1"
 

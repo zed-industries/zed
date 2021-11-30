@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use crate::Diagnostic;
-
-use super::Operation;
+use crate::{Diagnostic, Operation};
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use lsp::DiagnosticSeverity;

@@ -3,6 +3,9 @@ name = "editor"
 version = "0.1.0"
 edition = "2018"
 
+[lib]
+path = "src/editor.rs"
+
 [features]
 test-support = [
     "text/test-support",

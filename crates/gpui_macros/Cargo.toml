@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2018"
 
 [lib]
+path = "src/gpui_macros.rs"
 proc-macro = true
 
 [dependencies]
