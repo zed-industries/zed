@@ -3,7 +3,7 @@ authors = ["Nathan Sobo <nathansobo@gmail.com>"]
 description = "The fast, collaborative code editor."
 edition = "2018"
 name = "zed"
-version = "0.8.0"
+version = "0.9.0"
 
 [lib]
 name = "zed"
