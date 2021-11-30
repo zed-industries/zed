@@ -2233,7 +2233,7 @@ mod tests {
             .await;
 
         worktree_a
-            .condition(&cx_a, |worktree, cx| {
+            .condition(&cx_a, |worktree, _| {
                 worktree.collaborators().contains_key(&client_b.peer_id)
             })
             .await;
