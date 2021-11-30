@@ -6,13 +6,13 @@ edition = "2018"
 [features]
 test-support = [
     "rand",
-    "buffer/test-support",
+    "text/test-support",
     "lsp/test-support",
     "tree-sitter-rust",
 ]
 
 [dependencies]
-buffer = { path = "../buffer" }
+text = { path = "../text" }
 clock = { path = "../clock" }
 gpui = { path = "../gpui" }
 lsp = { path = "../lsp" }
@@ -33,7 +33,7 @@ tree-sitter = "0.19.5"
 tree-sitter-rust = { version = "0.19.0", optional = true }
 
 [dev-dependencies]
-buffer = { path = "../buffer", features = ["test-support"] }
+text = { path = "../text", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 rand = "0.8.3"

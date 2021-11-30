@@ -1,6 +1,6 @@
 use std::{cmp, mem};
 
-type Edit = buffer::Edit<u32>;
+type Edit = text::Edit<u32>;
 
 #[derive(Default, Debug, PartialEq, Eq)]
 pub struct Patch(Vec<Edit>);

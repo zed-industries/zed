@@ -3004,7 +3004,6 @@ mod tests {
     use super::*;
     use crate::fs::FakeFs;
     use anyhow::Result;
-    use buffer::Point;
     use client::test::{FakeHttpClient, FakeServer};
     use fs::RealFs;
     use language::{tree_sitter_rust, LanguageServerConfig};
@@ -3018,6 +3017,7 @@ mod tests {
         fmt::Write,
         time::{SystemTime, UNIX_EPOCH},
     };
+    use text::Point;
     use util::test::temp_tree;
 
     #[gpui::test]
@@ -3559,8 +3559,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_buffer_file_changes_on_disk(mut cx: gpui::TestAppContext) {
-        use buffer::{Point, Selection, SelectionGoal};
         use std::fs;
+        use text::{Point, Selection, SelectionGoal};
 
         let initial_contents = "aaa\nbbbbb\nc\n";
         let dir = temp_tree(json!({ "the-file": initial_contents }));

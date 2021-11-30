@@ -110,7 +110,7 @@ impl<'a> FoldMapWriter<'a> {
             if range.start != range.end {
                 let fold = Fold(buffer.anchor_after(range.start)..buffer.anchor_before(range.end));
                 folds.push(fold);
-                edits.push(buffer::Edit {
+                edits.push(text::Edit {
                     old: range.clone(),
                     new: range,
                 });
@@ -154,7 +154,7 @@ impl<'a> FoldMapWriter<'a> {
             let mut folds_cursor = intersecting_folds(&buffer, &self.0.folds, range, true);
             while let Some(fold) = folds_cursor.item() {
                 let offset_range = fold.0.start.to_offset(&buffer)..fold.0.end.to_offset(&buffer);
-                edits.push(buffer::Edit {
+                edits.push(text::Edit {
                     old: offset_range.clone(),
                     new: offset_range,
                 });
@@ -285,11 +285,7 @@ impl FoldMap {
         }
     }
 
-    fn apply_edits(
-        &self,
-        buffer_edits: Vec<buffer::Edit<usize>>,
-        cx: &AppContext,
-    ) -> Vec<FoldEdit> {
+    fn apply_edits(&self, buffer_edits: Vec<text::Edit<usize>>, cx: &AppContext) -> Vec<FoldEdit> {
         let buffer = self.buffer.read(cx).snapshot();
         let mut buffer_edits_iter = buffer_edits.iter().cloned().peekable();
 
@@ -713,7 +709,7 @@ impl Snapshot {
 }
 
 fn intersecting_folds<'a, T>(
-    buffer: &'a buffer::Snapshot,
+    buffer: &'a text::Snapshot,
     folds: &'a SumTree<Fold>,
     range: Range<T>,
     inclusive: bool,
@@ -738,7 +734,7 @@ where
     )
 }
 
-fn consolidate_buffer_edits(edits: &mut Vec<buffer::Edit<usize>>) {
+fn consolidate_buffer_edits(edits: &mut Vec<text::Edit<usize>>) {
     edits.sort_unstable_by(|a, b| {
         a.old
             .start
@@ -864,9 +860,9 @@ impl Default for FoldSummary {
 }
 
 impl sum_tree::Summary for FoldSummary {
-    type Context = buffer::Snapshot;
+    type Context = text::Snapshot;
 
-    fn add_summary(&mut self, other: &Self, buffer: &buffer::Snapshot) {
+    fn add_summary(&mut self, other: &Self, buffer: &text::Snapshot) {
         if other.min_start.cmp(&self.min_start, buffer).unwrap() == Ordering::Less {
             self.min_start = other.min_start.clone();
         }
@@ -890,20 +886,20 @@ impl sum_tree::Summary for FoldSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, FoldSummary> for Fold {
-    fn add_summary(&mut self, summary: &'a FoldSummary, _: &buffer::Snapshot) {
+    fn add_summary(&mut self, summary: &'a FoldSummary, _: &text::Snapshot) {
         self.0.start = summary.start.clone();
         self.0.end = summary.end.clone();
     }
 }
 
 impl<'a> sum_tree::SeekTarget<'a, FoldSummary, Fold> for Fold {
-    fn cmp(&self, other: &Self, buffer: &buffer::Snapshot) -> Ordering {
+    fn cmp(&self, other: &Self, buffer: &text::Snapshot) -> Ordering {
         self.0.cmp(&other.0, buffer).unwrap()
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, FoldSummary> for usize {
-    fn add_summary(&mut self, summary: &'a FoldSummary, _: &buffer::Snapshot) {
+    fn add_summary(&mut self, summary: &'a FoldSummary, _: &text::Snapshot) {
         *self += summary.count;
     }
 }
@@ -1078,9 +1074,9 @@ impl FoldEdit {
 mod tests {
     use super::*;
     use crate::{test::sample_text, ToPoint};
-    use buffer::RandomCharIter;
     use rand::prelude::*;
     use std::{env, mem};
+    use text::RandomCharIter;
     use Bias::{Left, Right};
 
     #[gpui::test]

@@ -1,9 +1,9 @@
 use super::fold_map::{self, FoldEdit, FoldPoint, Snapshot as FoldSnapshot, ToFoldPoint};
-use buffer::Point;
 use language::{rope, Chunk};
 use parking_lot::Mutex;
 use std::{cmp, mem, ops::Range};
 use sum_tree::Bias;
+use text::Point;
 use theme::SyntaxTheme;
 
 pub struct TabMap(Mutex<Snapshot>);
@@ -451,9 +451,9 @@ impl<'a> Iterator for Chunks<'a> {
 mod tests {
     use super::*;
     use crate::display_map::fold_map::FoldMap;
-    use buffer::{RandomCharIter, Rope};
     use language::Buffer;
     use rand::{prelude::StdRng, Rng};
+    use text::{RandomCharIter, Rope};
 
     #[test]
     fn test_expand_tabs() {

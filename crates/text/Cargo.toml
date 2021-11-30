@@ -1,7 +1,10 @@
 [package]
-name = "buffer"
+name = "text"
 version = "0.1.0"
 edition = "2021"
+
+[lib]
+path = "src/text.rs"
 
 [features]
 test-support = ["rand"]

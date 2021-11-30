@@ -740,21 +740,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "buffer"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arrayvec 0.7.1",
- "clock",
- "collections",
- "gpui",
- "log",
- "rand 0.8.3",
- "smallvec",
- "sum_tree",
-]
-
-[[package]]
 name = "build_const"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1541,7 +1526,6 @@ version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "anyhow",
- "buffer",
  "clock",
  "ctor",
  "env_logger",
@@ -1557,6 +1541,7 @@ dependencies = [
  "smallvec",
  "smol",
  "sum_tree",
+ "text",
  "theme",
  "tree-sitter",
  "tree-sitter-rust",
@@ -2107,10 +2092,10 @@ dependencies = [
 name = "go_to_line"
 version = "0.1.0"
 dependencies = [
- "buffer",
  "editor",
  "gpui",
  "postage",
+ "text",
  "workspace",
 ]
 
@@ -2589,7 +2574,6 @@ name = "language"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "buffer",
  "clock",
  "futures",
  "gpui",
@@ -2603,6 +2587,7 @@ dependencies = [
  "serde",
  "similar",
  "smol",
+ "text",
  "theme",
  "tree-sitter",
  "tree-sitter-rust",
@@ -3451,7 +3436,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "buffer",
  "client",
  "clock",
  "fsevent",
@@ -3474,6 +3458,7 @@ dependencies = [
  "smol",
  "sum_tree",
  "tempdir",
+ "text",
  "toml",
  "unindent",
  "util",
@@ -4857,6 +4842,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "text"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrayvec 0.7.1",
+ "clock",
+ "collections",
+ "gpui",
+ "log",
+ "rand 0.8.3",
+ "smallvec",
+ "sum_tree",
+]
+
+[[package]]
 name = "textwrap"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5676,7 +5676,6 @@ dependencies = [
  "async-recursion",
  "async-trait",
  "async-tungstenite",
- "buffer",
  "chat_panel",
  "client",
  "clock",
@@ -5721,6 +5720,7 @@ dependencies = [
  "sum_tree",
  "surf",
  "tempdir",
+ "text",
  "theme",
  "theme_selector",
  "thiserror",

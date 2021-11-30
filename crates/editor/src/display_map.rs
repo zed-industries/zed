@@ -6,7 +6,6 @@ mod wrap_map;
 
 pub use block_map::{BlockDisposition, BlockId, BlockProperties, BufferRows, Chunks};
 use block_map::{BlockMap, BlockPoint};
-use buffer::Rope;
 use fold_map::{FoldMap, ToFoldPoint as _};
 use gpui::{
     fonts::{FontId, HighlightStyle},
@@ -19,6 +18,7 @@ use std::{
 };
 use sum_tree::Bias;
 use tab_map::TabMap;
+use text::Rope;
 use theme::{BlockStyle, SyntaxTheme};
 use wrap_map::WrapMap;
 

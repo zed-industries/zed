@@ -7,7 +7,6 @@ pub mod movement;
 mod test;
 
 use aho_corasick::AhoCorasick;
-use buffer::rope::TextDimension;
 use clock::ReplicaId;
 use display_map::*;
 pub use display_map::{DisplayPoint, DisplayRow};
@@ -35,6 +34,7 @@ use std::{
     time::Duration,
 };
 use sum_tree::Bias;
+use text::rope::TextDimension;
 use theme::{DiagnosticStyle, EditorStyle, SyntaxTheme};
 use util::post_inc;
 use workspace::{EntryOpener, Workspace};
@@ -3731,7 +3731,7 @@ pub fn diagnostic_style(
 mod tests {
     use super::*;
     use crate::test::sample_text;
-    use buffer::Point;
+    use text::Point;
     use unindent::Unindent;
 
     #[gpui::test]

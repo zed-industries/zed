@@ -4,20 +4,20 @@ use crate::Diagnostic;
 
 use super::Operation;
 use anyhow::{anyhow, Result};
-use buffer::*;
 use clock::ReplicaId;
 use lsp::DiagnosticSeverity;
 use rpc::proto;
+use text::*;
 
 pub use proto::Buffer;
 
 pub fn serialize_operation(operation: &Operation) -> proto::Operation {
     proto::Operation {
         variant: Some(match operation {
-            Operation::Buffer(buffer::Operation::Edit(edit)) => {
+            Operation::Buffer(text::Operation::Edit(edit)) => {
                 proto::operation::Variant::Edit(serialize_edit_operation(edit))
             }
-            Operation::Buffer(buffer::Operation::Undo {
+            Operation::Buffer(text::Operation::Undo {
                 undo,
                 lamport_timestamp,
             }) => proto::operation::Variant::Undo(proto::operation::Undo {
@@ -43,7 +43,7 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                     .collect(),
                 version: From::from(&undo.version),
             }),
-            Operation::Buffer(buffer::Operation::UpdateSelections {
+            Operation::Buffer(text::Operation::UpdateSelections {
                 set_id,
                 selections,
                 lamport_timestamp,
@@ -62,7 +62,7 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                     })
                     .collect(),
             }),
-            Operation::Buffer(buffer::Operation::RemoveSelections {
+            Operation::Buffer(text::Operation::RemoveSelections {
                 set_id,
                 lamport_timestamp,
             }) => proto::operation::Variant::RemoveSelections(proto::operation::RemoveSelections {
@@ -70,7 +70,7 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 local_timestamp: set_id.value,
                 lamport_timestamp: lamport_timestamp.value,
             }),
-            Operation::Buffer(buffer::Operation::SetActiveSelections {
+            Operation::Buffer(text::Operation::SetActiveSelections {
                 set_id,
                 lamport_timestamp,
             }) => proto::operation::Variant::SetActiveSelections(
@@ -155,9 +155,9 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
             .ok_or_else(|| anyhow!("missing operation variant"))?
         {
             proto::operation::Variant::Edit(edit) => {
-                Operation::Buffer(buffer::Operation::Edit(deserialize_edit_operation(edit)))
+                Operation::Buffer(text::Operation::Edit(deserialize_edit_operation(edit)))
             }
-            proto::operation::Variant::Undo(undo) => Operation::Buffer(buffer::Operation::Undo {
+            proto::operation::Variant::Undo(undo) => Operation::Buffer(text::Operation::Undo {
                 lamport_timestamp: clock::Lamport {
                     replica_id: undo.replica_id as ReplicaId,
                     value: undo.lamport_timestamp,
@@ -211,7 +211,7 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                     entries,
                 );
 
-                Operation::Buffer(buffer::Operation::UpdateSelections {
+                Operation::Buffer(text::Operation::UpdateSelections {
                     set_id: clock::Lamport {
                         replica_id: message.replica_id as ReplicaId,
                         value: message.local_timestamp,
@@ -224,7 +224,7 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                 })
             }
             proto::operation::Variant::RemoveSelections(message) => {
-                Operation::Buffer(buffer::Operation::RemoveSelections {
+                Operation::Buffer(text::Operation::RemoveSelections {
                     set_id: clock::Lamport {
                         replica_id: message.replica_id as ReplicaId,
                         value: message.local_timestamp,
@@ -236,7 +236,7 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                 })
             }
             proto::operation::Variant::SetActiveSelections(message) => {
-                Operation::Buffer(buffer::Operation::SetActiveSelections {
+                Operation::Buffer(text::Operation::SetActiveSelections {
                     set_id: message.local_timestamp.map(|value| clock::Lamport {
                         replica_id: message.replica_id as ReplicaId,
                         value,

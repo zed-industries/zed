@@ -12,7 +12,6 @@ pub use self::{
     },
 };
 use anyhow::{anyhow, Result};
-pub use buffer::{Buffer as TextBuffer, Operation as _, *};
 use clock::ReplicaId;
 use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, MutableAppContext, Task};
@@ -37,6 +36,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     vec,
 };
+pub use text::{Buffer as TextBuffer, Operation as _, *};
 use theme::SyntaxTheme;
 use tree_sitter::{InputEdit, Parser, QueryCursor, Tree};
 use util::{post_inc, TryFutureExt as _};
@@ -77,7 +77,7 @@ pub struct Buffer {
 }
 
 pub struct Snapshot {
-    text: buffer::Snapshot,
+    text: text::Snapshot,
     tree: Option<Tree>,
     diagnostics: AnchorRangeMultimap<Diagnostic>,
     is_parsing: bool,
@@ -102,14 +102,14 @@ struct LanguageServerState {
 
 #[derive(Clone)]
 struct LanguageServerSnapshot {
-    buffer_snapshot: buffer::Snapshot,
+    buffer_snapshot: text::Snapshot,
     version: usize,
     path: Arc<Path>,
 }
 
 #[derive(Clone)]
 pub enum Operation {
-    Buffer(buffer::Operation),
+    Buffer(text::Operation),
     UpdateDiagnostics(AnchorRangeMultimap<Diagnostic>),
 }
 
@@ -269,11 +269,11 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) -> Result<Self> {
         let mut buffer =
-            buffer::Buffer::new(replica_id, message.id, History::new(message.content.into()));
+            text::Buffer::new(replica_id, message.id, History::new(message.content.into()));
         let ops = message
             .history
             .into_iter()
-            .map(|op| buffer::Operation::Edit(proto::deserialize_edit_operation(op)));
+            .map(|op| text::Operation::Edit(proto::deserialize_edit_operation(op)));
         buffer.apply_ops(ops)?;
         for set in message.selections {
             let set = proto::deserialize_selection_set(set);
@@ -1321,7 +1321,7 @@ impl Buffer {
         }
 
         self.end_transaction(None, cx).unwrap();
-        self.send_operation(Operation::Buffer(buffer::Operation::Edit(edit)), cx);
+        self.send_operation(Operation::Buffer(text::Operation::Edit(edit)), cx);
     }
 
     fn did_edit(
@@ -1354,7 +1354,7 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) -> SelectionSetId {
         let operation = self.text.add_selection_set(selections);
-        if let buffer::Operation::UpdateSelections { set_id, .. } = &operation {
+        if let text::Operation::UpdateSelections { set_id, .. } = &operation {
             let set_id = *set_id;
             cx.notify();
             self.send_operation(Operation::Buffer(operation), cx);
@@ -1746,7 +1746,7 @@ impl Clone for Snapshot {
 }
 
 impl Deref for Snapshot {
-    type Target = buffer::Snapshot;
+    type Target = text::Snapshot;
 
     fn deref(&self) -> &Self::Target {
         &self.text

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2018"
 
 [dependencies]
-buffer = { path = "../buffer" }
+text = { path = "../text" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 workspace = { path = "../workspace" }

@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Result};
-use buffer::Rope;
 use fsevent::EventStream;
 use futures::{Stream, StreamExt};
 use postage::prelude::Sink as _;
@@ -11,6 +10,7 @@ use std::{
     pin::Pin,
     time::{Duration, SystemTime},
 };
+use text::Rope;
 
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {

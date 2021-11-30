@@ -1,7 +1,7 @@
 use super::{Bias, DisplayMapSnapshot, DisplayPoint, SelectionGoal, ToDisplayPoint};
 use anyhow::Result;
-use buffer::ToPoint;
 use std::{cmp, ops::Range};
+use text::ToPoint;
 
 pub fn left(map: &DisplayMapSnapshot, mut point: DisplayPoint) -> Result<DisplayPoint> {
     if point.column() > 0 {
