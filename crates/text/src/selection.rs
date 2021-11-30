@@ -1,8 +1,8 @@
 use sum_tree::Bias;
 
-use crate::rope::TextDimension;
+use crate::{rope::TextDimension, Snapshot};
 
-use super::{AnchorRangeMap, Buffer, Content, Point, ToOffset, ToPoint};
+use super::{AnchorRangeMap, Buffer, Point, ToOffset, ToPoint};
 use std::{cmp::Ordering, ops::Range, sync::Arc};
 
 pub type SelectionSetId = clock::Lamport;
@@ -103,10 +103,12 @@ impl SelectionSet {
         self.selections.len()
     }
 
-    pub fn selections<'a, D, C>(&'a self, content: C) -> impl 'a + Iterator<Item = Selection<D>>
+    pub fn selections<'a, D>(
+        &'a self,
+        content: &'a Snapshot,
+    ) -> impl 'a + Iterator<Item = Selection<D>>
     where
         D: 'a + TextDimension<'a>,
-        C: 'a + Into<Content<'a>>,
     {
         self.selections
             .ranges(content)
@@ -119,15 +121,14 @@ impl SelectionSet {
             })
     }
 
-    pub fn intersecting_selections<'a, D, I, C>(
+    pub fn intersecting_selections<'a, D, I>(
         &'a self,
         range: Range<(I, Bias)>,
-        content: C,
+        content: &'a Snapshot,
     ) -> impl 'a + Iterator<Item = Selection<D>>
     where
         D: 'a + TextDimension<'a>,
         I: 'a + ToOffset,
-        C: 'a + Into<Content<'a>>,
     {
         self.selections
             .intersecting_ranges(range, content)
@@ -140,10 +141,9 @@ impl SelectionSet {
             })
     }
 
-    pub fn oldest_selection<'a, D, C>(&'a self, content: C) -> Option<Selection<D>>
+    pub fn oldest_selection<'a, D>(&'a self, content: &'a Snapshot) -> Option<Selection<D>>
     where
         D: 'a + TextDimension<'a>,
-        C: 'a + Into<Content<'a>>,
     {
         self.selections
             .min_by_key(content, |selection| selection.id)
@@ -156,10 +156,9 @@ impl SelectionSet {
             })
     }
 
-    pub fn newest_selection<'a, D, C>(&'a self, content: C) -> Option<Selection<D>>
+    pub fn newest_selection<'a, D>(&'a self, content: &'a Snapshot) -> Option<Selection<D>>
     where
         D: 'a + TextDimension<'a>,
-        C: 'a + Into<Content<'a>>,
     {
         self.selections
             .max_by_key(content, |selection| selection.id)

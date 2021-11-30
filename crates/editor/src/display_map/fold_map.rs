@@ -359,7 +359,8 @@ impl FoldMap {
                 }
 
                 if fold.start > sum.input.bytes {
-                    let text_summary = buffer.text_summary_for_range(sum.input.bytes..fold.start);
+                    let text_summary = buffer
+                        .text_summary_for_range::<TextSummary, _>(sum.input.bytes..fold.start);
                     new_transforms.push(
                         Transform {
                             summary: TransformSummary {
@@ -400,7 +401,8 @@ impl FoldMap {
 
             let sum = new_transforms.summary();
             if sum.input.bytes < edit.new.end {
-                let text_summary = buffer.text_summary_for_range(sum.input.bytes..edit.new.end);
+                let text_summary =
+                    buffer.text_summary_for_range::<TextSummary, _>(sum.input.bytes..edit.new.end);
                 new_transforms.push(
                     Transform {
                         summary: TransformSummary {
@@ -539,7 +541,7 @@ impl Snapshot {
                     let buffer_end = cursor.start().1 + end_in_transform;
                     summary += self
                         .buffer_snapshot
-                        .text_summary_for_range(buffer_start..buffer_end);
+                        .text_summary_for_range::<TextSummary, _>(buffer_start..buffer_end);
                 }
             }
         }

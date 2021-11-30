@@ -67,7 +67,7 @@ fn test_random_edits(mut rng: StdRng) {
 
         let range = buffer.random_byte_range(0, &mut rng);
         assert_eq!(
-            buffer.text_summary_for_range(range.clone()),
+            buffer.text_summary_for_range::<TextSummary, _>(range.clone()),
             TextSummary::from(&reference_string[range])
         );
 
@@ -119,7 +119,7 @@ fn test_line_len() {
 fn test_text_summary_for_range() {
     let buffer = Buffer::new(0, 0, History::new("ab\nefg\nhklm\nnopqrs\ntuvwxyz".into()));
     assert_eq!(
-        buffer.text_summary_for_range(1..3),
+        buffer.text_summary_for_range::<TextSummary, _>(1..3),
         TextSummary {
             bytes: 2,
             lines: Point::new(1, 0),
@@ -131,7 +131,7 @@ fn test_text_summary_for_range() {
         }
     );
     assert_eq!(
-        buffer.text_summary_for_range(1..12),
+        buffer.text_summary_for_range::<TextSummary, _>(1..12),
         TextSummary {
             bytes: 11,
             lines: Point::new(3, 0),
@@ -143,7 +143,7 @@ fn test_text_summary_for_range() {
         }
     );
     assert_eq!(
-        buffer.text_summary_for_range(0..20),
+        buffer.text_summary_for_range::<TextSummary, _>(0..20),
         TextSummary {
             bytes: 20,
             lines: Point::new(4, 1),
@@ -155,7 +155,7 @@ fn test_text_summary_for_range() {
         }
     );
     assert_eq!(
-        buffer.text_summary_for_range(0..22),
+        buffer.text_summary_for_range::<TextSummary, _>(0..22),
         TextSummary {
             bytes: 22,
             lines: Point::new(4, 3),
@@ -167,7 +167,7 @@ fn test_text_summary_for_range() {
         }
     );
     assert_eq!(
-        buffer.text_summary_for_range(7..22),
+        buffer.text_summary_for_range::<TextSummary, _>(7..22),
         TextSummary {
             bytes: 15,
             lines: Point::new(2, 3),

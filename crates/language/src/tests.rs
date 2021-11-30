@@ -1,6 +1,15 @@
 use super::*;
 use gpui::{ModelHandle, MutableAppContext, Task};
-use std::{any::Any, cell::RefCell, ffi::OsString, iter::FromIterator, ops::Range, path::PathBuf, rc::Rc, time::{Duration, Instant, SystemTime}};
+use std::{
+    any::Any,
+    cell::RefCell,
+    ffi::OsString,
+    iter::FromIterator,
+    ops::Range,
+    path::PathBuf,
+    rc::Rc,
+    time::{Duration, Instant, SystemTime},
+};
 use unindent::Unindent as _;
 
 #[test]
@@ -359,7 +368,7 @@ fn test_autoindent_moves_selections(cx: &mut MutableAppContext) {
         let selection_ranges = buffer
             .selection_set(selection_set_id)
             .unwrap()
-            .selections::<Point, _>(&buffer)
+            .selections::<Point>(&buffer)
             .map(|selection| selection.point_range(&buffer))
             .collect::<Vec<_>>();
 

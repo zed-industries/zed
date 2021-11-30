@@ -183,7 +183,7 @@ pub fn next_word_boundary(map: &DisplayMapSnapshot, mut point: DisplayPoint) -> 
 
 pub fn is_inside_word(map: &DisplayMapSnapshot, point: DisplayPoint) -> bool {
     let ix = map.clip_point(point, Bias::Left).to_offset(map, Bias::Left);
-    let text = map.buffer_snapshot.text();
+    let text = &map.buffer_snapshot;
     let next_char_kind = text.chars_at(ix).next().map(char_kind);
     let prev_char_kind = text.reversed_chars_at(ix).next().map(char_kind);
     prev_char_kind.zip(next_char_kind) == Some((CharKind::Word, CharKind::Word))
@@ -193,7 +193,7 @@ pub fn surrounding_word(map: &DisplayMapSnapshot, point: DisplayPoint) -> Range<
     let mut start = map.clip_point(point, Bias::Left).to_offset(map, Bias::Left);
     let mut end = start;
 
-    let text = map.buffer_snapshot.text();
+    let text = &map.buffer_snapshot;
     let mut next_chars = text.chars_at(start).peekable();
     let mut prev_chars = text.reversed_chars_at(start).peekable();
     let word_kind = cmp::max(

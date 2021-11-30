@@ -1358,7 +1358,7 @@ impl Editor {
         let buffer = self.buffer.read(cx);
         if old_selections
             .iter()
-            .zip(autoclose_pair_state.ranges.ranges::<usize, _>(buffer))
+            .zip(autoclose_pair_state.ranges.ranges::<usize>(buffer))
             .all(|(selection, autoclose_range)| {
                 let autoclose_range_end = autoclose_range.end.to_offset(buffer);
                 selection.is_empty() && selection.start == autoclose_range_end
@@ -3072,7 +3072,7 @@ impl Editor {
             .read(cx)
             .selection_set(set_id)
             .unwrap()
-            .intersecting_selections::<Point, _, _>(range, buffer);
+            .intersecting_selections::<Point, _>(range, buffer);
 
         selections
             .map(move |s| Selection {
@@ -3090,7 +3090,7 @@ impl Editor {
         D: 'a + TextDimension<'a> + Ord,
     {
         let buffer = self.buffer.read(cx);
-        let mut selections = self.selection_set(cx).selections::<D, _>(buffer).peekable();
+        let mut selections = self.selection_set(cx).selections::<D>(buffer).peekable();
         let mut pending_selection = self.pending_selection(cx);
         iter::from_fn(move || {
             if let Some(pending) = pending_selection.as_mut() {
@@ -3124,8 +3124,8 @@ impl Editor {
         let buffer = self.buffer.read(cx);
         self.pending_selection.as_ref().map(|pending| Selection {
             id: pending.selection.id,
-            start: pending.selection.start.summary::<D, _>(buffer),
-            end: pending.selection.end.summary::<D, _>(buffer),
+            start: pending.selection.start.summary::<D>(buffer),
+            end: pending.selection.end.summary::<D>(buffer),
             reversed: pending.selection.reversed,
             goal: pending.selection.goal,
         })
@@ -3201,7 +3201,7 @@ impl Editor {
                 if selections.len() == autoclose_pair_state.ranges.len() {
                     selections
                         .iter()
-                        .zip(autoclose_pair_state.ranges.ranges::<Point, _>(buffer))
+                        .zip(autoclose_pair_state.ranges.ranges::<Point>(buffer))
                         .all(|(selection, autoclose_range)| {
                             let head = selection.head().to_point(&*buffer);
                             autoclose_range.start <= head && autoclose_range.end >= head

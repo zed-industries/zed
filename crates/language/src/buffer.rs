@@ -692,9 +692,9 @@ impl Buffer {
                 .pending_snapshots
                 .get(&version)
                 .ok_or_else(|| anyhow!("missing snapshot"))?;
-            snapshot.buffer_snapshot.content()
+            &snapshot.buffer_snapshot
         } else {
-            self.content()
+            self.deref()
         };
         let abs_path = self.file.as_ref().and_then(|f| f.abs_path());
 
@@ -816,9 +816,8 @@ impl Buffer {
         T: 'a + ToOffset,
         O: 'a + FromAnchor,
     {
-        let content = self.content();
         self.diagnostics
-            .intersecting_ranges(search_range, content, true)
+            .intersecting_ranges(search_range, self, true)
             .map(move |(_, range, diagnostic)| (range, diagnostic))
     }
 
@@ -829,9 +828,8 @@ impl Buffer {
     where
         O: 'a + FromAnchor,
     {
-        let content = self.content();
         self.diagnostics
-            .filter(content, move |diagnostic| diagnostic.group_id == group_id)
+            .filter(self, move |diagnostic| diagnostic.group_id == group_id)
             .map(move |(_, range, diagnostic)| (range, diagnostic))
     }
 
@@ -875,12 +873,12 @@ impl Buffer {
             for request in autoindent_requests {
                 let old_to_new_rows = request
                     .edited
-                    .iter::<Point, _>(&request.before_edit)
+                    .iter::<Point>(&request.before_edit)
                     .map(|point| point.row)
                     .zip(
                         request
                             .edited
-                            .iter::<Point, _>(&snapshot)
+                            .iter::<Point>(&snapshot)
                             .map(|point| point.row),
                     )
                     .collect::<BTreeMap<u32, u32>>();
@@ -943,7 +941,7 @@ impl Buffer {
                 if let Some(inserted) = request.inserted.as_ref() {
                     let inserted_row_ranges = contiguous_ranges(
                         inserted
-                            .ranges::<Point, _>(&snapshot)
+                            .ranges::<Point>(&snapshot)
                             .flat_map(|range| range.start.row..range.end.row + 1),
                         max_rows_between_yields,
                     );
@@ -991,7 +989,7 @@ impl Buffer {
         for selection_set_id in &selection_set_ids {
             if let Ok(set) = self.selection_set(*selection_set_id) {
                 let new_selections = set
-                    .selections::<Point, _>(&*self)
+                    .selections::<Point>(&*self)
                     .map(|selection| {
                         if selection.start.column == 0 {
                             let delta = Point::new(
@@ -1021,10 +1019,6 @@ impl Buffer {
 
         self.end_transaction(selection_set_ids.iter().copied(), cx)
             .unwrap();
-    }
-
-    pub fn indent_column_for_line(&self, row: u32) -> u32 {
-        self.content().indent_column_for_line(row)
     }
 
     fn set_indent_column_for_line(&mut self, row: u32, column: u32, cx: &mut ModelContext<Self>) {
@@ -1239,7 +1233,7 @@ impl Buffer {
         // Skip invalid ranges and coalesce contiguous ones.
         let mut ranges: Vec<Range<usize>> = Vec::new();
         for range in ranges_iter {
-            let range = range.start.to_offset(&*self)..range.end.to_offset(&*self);
+            let range = range.start.to_offset(self)..range.end.to_offset(self);
             if !new_text.is_empty() || !range.is_empty() {
                 if let Some(prev_range) = ranges.last_mut() {
                     if prev_range.end >= range.start {
@@ -1260,10 +1254,10 @@ impl Buffer {
         self.pending_autoindent.take();
         let autoindent_request = if autoindent && self.language.is_some() {
             let before_edit = self.snapshot();
-            let edited = self.content().anchor_set(
+            let edited = self.anchor_set(
                 Bias::Left,
                 ranges.iter().filter_map(|range| {
-                    let start = range.start.to_point(&*self);
+                    let start = range.start.to_point(self);
                     if new_text.starts_with('\n') && start.column == self.line_len(start.row) {
                         None
                     } else {
@@ -1285,7 +1279,7 @@ impl Buffer {
             let mut inserted = None;
             if let Some(first_newline_ix) = first_newline_ix {
                 let mut delta = 0isize;
-                inserted = Some(self.content().anchor_range_set(
+                inserted = Some(self.anchor_range_set(
                     Bias::Left,
                     Bias::Right,
                     ranges.iter().map(|range| {
@@ -1524,24 +1518,6 @@ impl Deref for Buffer {
     }
 }
 
-impl<'a> From<&'a Buffer> for Content<'a> {
-    fn from(buffer: &'a Buffer) -> Self {
-        Self::from(&buffer.text)
-    }
-}
-
-impl<'a> From<&'a mut Buffer> for Content<'a> {
-    fn from(buffer: &'a mut Buffer) -> Self {
-        Self::from(&buffer.text)
-    }
-}
-
-impl<'a> From<&'a Snapshot> for Content<'a> {
-    fn from(snapshot: &'a Snapshot) -> Self {
-        Self::from(&snapshot.text)
-    }
-}
-
 impl Snapshot {
     fn suggest_autoindents<'a>(
         &'a self,
@@ -1657,14 +1633,14 @@ impl Snapshot {
         range: Range<T>,
         theme: Option<&'a SyntaxTheme>,
     ) -> Chunks<'a> {
-        let range = range.start.to_offset(&*self)..range.end.to_offset(&*self);
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut highlights = None;
         let mut diagnostic_endpoints = Vec::<DiagnosticEndpoint>::new();
         if let Some(theme) = theme {
             for (_, range, diagnostic) in
                 self.diagnostics
-                    .intersecting_ranges(range.clone(), self.content(), true)
+                    .intersecting_ranges(range.clone(), self, true)
             {
                 diagnostic_endpoints.push(DiagnosticEndpoint {
                     offset: range.start,

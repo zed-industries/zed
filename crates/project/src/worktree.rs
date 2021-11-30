@@ -3630,7 +3630,7 @@ mod tests {
             let cursor_positions = buffer
                 .selection_set(selection_set_id)
                 .unwrap()
-                .selections::<Point, _>(&*buffer)
+                .selections::<Point>(&*buffer)
                 .map(|selection| {
                     assert_eq!(selection.start, selection.end);
                     selection.start
