@@ -24,7 +24,7 @@ pub use selection::*;
 use std::{
     cmp::{self, Reverse},
     iter::Iterator,
-    ops::{self, Range},
+    ops::{self, Deref, Range},
     str,
     sync::Arc,
     time::{Duration, Instant},
@@ -34,12 +34,8 @@ use sum_tree::{FilterCursor, SumTree};
 
 #[derive(Clone)]
 pub struct Buffer {
-    fragments: SumTree<Fragment>,
-    visible_text: Rope,
-    deleted_text: Rope,
-    pub version: clock::Global,
+    snapshot: Snapshot,
     last_edit: clock::Local,
-    undo_map: UndoMap,
     history: History,
     selections: HashMap<SelectionSetId, SelectionSet>,
     deferred_ops: OperationQueue,
@@ -48,6 +44,15 @@ pub struct Buffer {
     remote_id: u64,
     local_clock: clock::Local,
     lamport_clock: clock::Lamport,
+}
+
+#[derive(Clone)]
+pub struct Snapshot {
+    visible_text: Rope,
+    deleted_text: Rope,
+    undo_map: UndoMap,
+    fragments: SumTree<Fragment>,
+    pub version: clock::Global,
 }
 
 #[derive(Clone, Debug)]
@@ -440,12 +445,14 @@ impl Buffer {
         }
 
         Buffer {
-            visible_text,
-            deleted_text: Rope::new(),
-            fragments,
-            version,
+            snapshot: Snapshot {
+                visible_text,
+                deleted_text: Rope::new(),
+                fragments,
+                version,
+                undo_map: Default::default(),
+            },
             last_edit: clock::Local::default(),
-            undo_map: Default::default(),
             history,
             selections: HashMap::default(),
             deferred_ops: OperationQueue::new(),
@@ -471,133 +478,12 @@ impl Buffer {
         }
     }
 
-    pub fn content<'a>(&'a self) -> Content<'a> {
-        self.into()
-    }
-
-    pub fn as_rope(&self) -> &Rope {
-        &self.visible_text
-    }
-
-    pub fn text_summary_for_range(&self, range: Range<usize>) -> TextSummary {
-        self.content().text_summary_for_range(range)
-    }
-
-    pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
-        self.anchor_at(position, Bias::Left)
-    }
-
-    pub fn anchor_after<T: ToOffset>(&self, position: T) -> Anchor {
-        self.anchor_at(position, Bias::Right)
-    }
-
-    pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
-        self.content().anchor_at(position, bias)
-    }
-
-    pub fn anchor_range_set<E>(
-        &self,
-        start_bias: Bias,
-        end_bias: Bias,
-        entries: E,
-    ) -> AnchorRangeSet
-    where
-        E: IntoIterator<Item = Range<usize>>,
-    {
-        self.content()
-            .anchor_range_set(start_bias, end_bias, entries)
-    }
-
-    pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
-        self.content().point_for_offset(offset)
-    }
-
-    pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
-        self.content().clip_point(point, bias)
-    }
-
-    pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
-        self.visible_text.clip_offset(offset, bias)
-    }
-
     pub fn replica_id(&self) -> ReplicaId {
         self.local_clock.replica_id
     }
 
     pub fn remote_id(&self) -> u64 {
         self.remote_id
-    }
-
-    pub fn text_summary(&self) -> TextSummary {
-        self.visible_text.summary()
-    }
-
-    pub fn len(&self) -> usize {
-        self.content().len()
-    }
-
-    pub fn line_len(&self, row: u32) -> u32 {
-        self.content().line_len(row)
-    }
-
-    pub fn is_line_blank(&self, row: u32) -> bool {
-        self.content().is_line_blank(row)
-    }
-
-    pub fn max_point(&self) -> Point {
-        self.visible_text.max_point()
-    }
-
-    pub fn row_count(&self) -> u32 {
-        self.max_point().row + 1
-    }
-
-    pub fn text(&self) -> String {
-        self.text_for_range(0..self.len()).collect()
-    }
-
-    pub fn text_for_range<'a, T: ToOffset>(&'a self, range: Range<T>) -> Chunks<'a> {
-        self.content().text_for_range(range)
-    }
-
-    pub fn chars(&self) -> impl Iterator<Item = char> + '_ {
-        self.chars_at(0)
-    }
-
-    pub fn chars_at<'a, T: 'a + ToOffset>(
-        &'a self,
-        position: T,
-    ) -> impl Iterator<Item = char> + 'a {
-        self.content().chars_at(position)
-    }
-
-    pub fn reversed_chars_at<'a, T: 'a + ToOffset>(
-        &'a self,
-        position: T,
-    ) -> impl Iterator<Item = char> + 'a {
-        self.content().reversed_chars_at(position)
-    }
-
-    pub fn chars_for_range<T: ToOffset>(&self, range: Range<T>) -> impl Iterator<Item = char> + '_ {
-        self.text_for_range(range).flat_map(str::chars)
-    }
-
-    pub fn bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> rope::Bytes {
-        self.content().bytes_in_range(range)
-    }
-
-    pub fn contains_str_at<T>(&self, position: T, needle: &str) -> bool
-    where
-        T: ToOffset,
-    {
-        let position = position.to_offset(self);
-        position == self.clip_offset(position, Bias::Left)
-            && self
-                .bytes_in_range(position..self.len())
-                .flatten()
-                .copied()
-                .take(needle.len())
-                .eq(needle.bytes())
     }
 
     pub fn deferred_ops_len(&self) -> usize {
@@ -630,7 +516,7 @@ impl Buffer {
         self.history.push(edit.clone());
         self.history.push_undo(edit.timestamp.local());
         self.last_edit = edit.timestamp.local();
-        self.version.observe(edit.timestamp.local());
+        self.snapshot.version.observe(edit.timestamp.local());
         self.end_transaction(None);
         edit
     }
@@ -755,9 +641,9 @@ impl Buffer {
         let (visible_text, deleted_text) = new_ropes.finish();
         drop(old_fragments);
 
-        self.fragments = new_fragments;
-        self.visible_text = visible_text;
-        self.deleted_text = deleted_text;
+        self.snapshot.fragments = new_fragments;
+        self.snapshot.visible_text = visible_text;
+        self.snapshot.deleted_text = deleted_text;
         edit.new_text = new_text;
         edit
     }
@@ -787,7 +673,7 @@ impl Buffer {
                         edit.new_text.as_deref(),
                         edit.timestamp,
                     );
-                    self.version.observe(edit.timestamp.local());
+                    self.snapshot.version.observe(edit.timestamp.local());
                     self.history.push(edit);
                 }
             }
@@ -797,7 +683,7 @@ impl Buffer {
             } => {
                 if !self.version.observed(undo.id) {
                     self.apply_undo(&undo)?;
-                    self.version.observe(undo.id);
+                    self.snapshot.version.observe(undo.id);
                     self.lamport_clock.observe(lamport_timestamp);
                 }
             }
@@ -989,15 +875,15 @@ impl Buffer {
         let (visible_text, deleted_text) = new_ropes.finish();
         drop(old_fragments);
 
-        self.fragments = new_fragments;
-        self.visible_text = visible_text;
-        self.deleted_text = deleted_text;
+        self.snapshot.fragments = new_fragments;
+        self.snapshot.visible_text = visible_text;
+        self.snapshot.deleted_text = deleted_text;
         self.local_clock.observe(timestamp.local());
         self.lamport_clock.observe(timestamp.lamport());
     }
 
     fn apply_undo(&mut self, undo: &UndoOperation) -> Result<()> {
-        self.undo_map.insert(undo);
+        self.snapshot.undo_map.insert(undo);
 
         let mut cx = undo.version.clone();
         for edit_id in undo.counts.keys().copied() {
@@ -1065,9 +951,9 @@ impl Buffer {
 
         drop(old_fragments);
         let (visible_text, deleted_text) = new_ropes.finish();
-        self.fragments = new_fragments;
-        self.visible_text = visible_text;
-        self.deleted_text = deleted_text;
+        self.snapshot.fragments = new_fragments;
+        self.snapshot.visible_text = visible_text;
+        self.snapshot.deleted_text = deleted_text;
         Ok(())
     }
 
@@ -1216,7 +1102,7 @@ impl Buffer {
             version: transaction.start.clone(),
         };
         self.apply_undo(&undo)?;
-        self.version.observe(undo.id);
+        self.snapshot.version.observe(undo.id);
 
         Ok(Operation::Undo {
             undo,
@@ -1238,7 +1124,7 @@ impl Buffer {
         &self,
         selections: &[Selection<T>],
     ) -> Arc<AnchorRangeMap<SelectionState>> {
-        Arc::new(self.content().anchor_range_map(
+        Arc::new(self.anchor_range_map(
             Bias::Left,
             Bias::Left,
             selections.iter().map(|selection| {
@@ -1344,16 +1230,6 @@ impl Buffer {
             set_id,
             lamport_timestamp: self.lamport_clock.tick(),
         })
-    }
-
-    pub fn edits_since<'a, D>(
-        &'a self,
-        since: &'a clock::Global,
-    ) -> impl 'a + Iterator<Item = Edit<D>>
-    where
-        D: 'a + TextDimension<'a> + Ord,
-    {
-        self.content().edits_since(since)
     }
 }
 
@@ -1516,13 +1392,12 @@ impl Buffer {
     }
 }
 
-#[derive(Clone)]
-pub struct Snapshot {
-    visible_text: Rope,
-    deleted_text: Rope,
-    undo_map: UndoMap,
-    fragments: SumTree<Fragment>,
-    version: clock::Global,
+impl Deref for Buffer {
+    type Target = Snapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.snapshot
+    }
 }
 
 impl Snapshot {
@@ -1530,24 +1405,38 @@ impl Snapshot {
         &self.visible_text
     }
 
+    pub fn row_count(&self) -> u32 {
+        self.max_point().row + 1
+    }
+
     pub fn len(&self) -> usize {
         self.visible_text.len()
     }
 
-    pub fn line_len(&self, row: u32) -> u32 {
-        self.content().line_len(row)
+    pub fn chars(&self) -> impl Iterator<Item = char> + '_ {
+        self.chars_at(0)
     }
 
-    pub fn is_line_blank(&self, row: u32) -> bool {
-        self.content().is_line_blank(row)
+    pub fn chars_for_range<T: ToOffset>(&self, range: Range<T>) -> impl Iterator<Item = char> + '_ {
+        self.text_for_range(range).flat_map(str::chars)
     }
 
-    pub fn indent_column_for_line(&self, row: u32) -> u32 {
-        self.content().indent_column_for_line(row)
+    pub fn contains_str_at<T>(&self, position: T, needle: &str) -> bool
+    where
+        T: ToOffset,
+    {
+        let position = position.to_offset(self);
+        position == self.clip_offset(position, Bias::Left)
+            && self
+                .bytes_in_range(position..self.len())
+                .flatten()
+                .copied()
+                .take(needle.len())
+                .eq(needle.bytes())
     }
 
-    pub fn text(&self) -> Rope {
-        self.visible_text.clone()
+    pub fn text(&self) -> String {
+        self.text_for_range(0..self.len()).collect()
     }
 
     pub fn text_summary(&self) -> TextSummary {
@@ -1558,34 +1447,6 @@ impl Snapshot {
         self.visible_text.max_point()
     }
 
-    pub fn bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> rope::Bytes {
-        self.content().bytes_in_range(range)
-    }
-
-    pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> Chunks {
-        self.content().text_for_range(range)
-    }
-
-    pub fn text_summary_for_range<T>(&self, range: Range<T>) -> TextSummary
-    where
-        T: ToOffset,
-    {
-        let range = range.start.to_offset(self.content())..range.end.to_offset(self.content());
-        self.content().text_summary_for_range(range)
-    }
-
-    pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
-        self.content().point_for_offset(offset)
-    }
-
-    pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
-        self.visible_text.clip_offset(offset, bias)
-    }
-
-    pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
-        self.visible_text.clip_point(point, bias)
-    }
-
     pub fn to_offset(&self, point: Point) -> usize {
         self.visible_text.point_to_offset(point)
     }
@@ -1594,122 +1455,36 @@ impl Snapshot {
         self.visible_text.offset_to_point(offset)
     }
 
-    pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
-        self.content().anchor_at(position, Bias::Left)
-    }
-
-    pub fn anchor_after<T: ToOffset>(&self, position: T) -> Anchor {
-        self.content().anchor_at(position, Bias::Right)
-    }
-
-    pub fn edits_since<'a, D>(
-        &'a self,
-        since: &'a clock::Global,
-    ) -> impl 'a + Iterator<Item = Edit<D>>
-    where
-        D: 'a + TextDimension<'a> + Ord,
-    {
-        self.content().edits_since(since)
-    }
-
     pub fn version(&self) -> &clock::Global {
         &self.version
     }
 
-    pub fn content(&self) -> Content {
-        self.into()
-    }
-}
-
-#[derive(Clone)]
-pub struct Content<'a> {
-    visible_text: &'a Rope,
-    deleted_text: &'a Rope,
-    undo_map: &'a UndoMap,
-    fragments: &'a SumTree<Fragment>,
-    version: &'a clock::Global,
-}
-
-impl<'a> From<&'a Snapshot> for Content<'a> {
-    fn from(snapshot: &'a Snapshot) -> Self {
-        Self {
-            visible_text: &snapshot.visible_text,
-            deleted_text: &snapshot.deleted_text,
-            undo_map: &snapshot.undo_map,
-            fragments: &snapshot.fragments,
-            version: &snapshot.version,
-        }
-    }
-}
-
-impl<'a> From<&'a Buffer> for Content<'a> {
-    fn from(buffer: &'a Buffer) -> Self {
-        Self {
-            visible_text: &buffer.visible_text,
-            deleted_text: &buffer.deleted_text,
-            undo_map: &buffer.undo_map,
-            fragments: &buffer.fragments,
-            version: &buffer.version,
-        }
-    }
-}
-
-impl<'a> From<&'a mut Buffer> for Content<'a> {
-    fn from(buffer: &'a mut Buffer) -> Self {
-        Self {
-            visible_text: &buffer.visible_text,
-            deleted_text: &buffer.deleted_text,
-            undo_map: &buffer.undo_map,
-            fragments: &buffer.fragments,
-            version: &buffer.version,
-        }
-    }
-}
-
-impl<'a> From<&'a Content<'a>> for Content<'a> {
-    fn from(content: &'a Content) -> Self {
-        Self {
-            visible_text: &content.visible_text,
-            deleted_text: &content.deleted_text,
-            undo_map: &content.undo_map,
-            fragments: &content.fragments,
-            version: &content.version,
-        }
-    }
-}
-
-impl<'a> Content<'a> {
-    fn max_point(&self) -> Point {
-        self.visible_text.max_point()
-    }
-
-    fn len(&self) -> usize {
-        self.fragments.extent::<usize>(&None)
-    }
-
-    pub fn chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + 'a {
+    pub fn chars_at<'a, T: ToOffset>(&'a self, position: T) -> impl Iterator<Item = char> + 'a {
         let offset = position.to_offset(self);
         self.visible_text.chars_at(offset)
     }
 
-    pub fn reversed_chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + 'a {
+    pub fn reversed_chars_at<'a, T: ToOffset>(
+        &'a self,
+        position: T,
+    ) -> impl Iterator<Item = char> + 'a {
         let offset = position.to_offset(self);
         self.visible_text.reversed_chars_at(offset)
     }
 
-    pub fn bytes_in_range<T: ToOffset>(&self, range: Range<T>) -> rope::Bytes<'a> {
+    pub fn bytes_in_range<'a, T: ToOffset>(&'a self, range: Range<T>) -> rope::Bytes<'a> {
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);
         self.visible_text.bytes_in_range(start..end)
     }
 
-    pub fn text_for_range<T: ToOffset>(&self, range: Range<T>) -> Chunks<'a> {
+    pub fn text_for_range<'a, T: ToOffset>(&'a self, range: Range<T>) -> Chunks<'a> {
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);
         self.visible_text.chunks_in_range(start..end)
     }
 
-    fn line_len(&self, row: u32) -> u32 {
+    pub fn line_len(&self, row: u32) -> u32 {
         let row_start_offset = Point::new(row, 0).to_offset(self);
         let row_end_offset = if row >= self.max_point().row {
             self.len()
@@ -1719,7 +1494,7 @@ impl<'a> Content<'a> {
         (row_end_offset - row_start_offset) as u32
     }
 
-    fn is_line_blank(&self, row: u32) -> bool {
+    pub fn is_line_blank(&self, row: u32) -> bool {
         self.text_for_range(Point::new(row, 0)..Point::new(row, self.line_len(row)))
             .all(|chunk| chunk.matches(|c: char| !c.is_whitespace()).next().is_none())
     }
@@ -1736,7 +1511,7 @@ impl<'a> Content<'a> {
         result
     }
 
-    fn summary_for_anchor<D>(&self, anchor: &Anchor) -> D
+    fn summary_for_anchor<'a, D>(&'a self, anchor: &Anchor) -> D
     where
         D: TextDimension<'a>,
     {
@@ -1755,15 +1530,17 @@ impl<'a> Content<'a> {
         self.text_summary_for_range(0..cursor.start().1 + overshoot)
     }
 
-    fn text_summary_for_range<D>(&self, range: Range<usize>) -> D
+    pub fn text_summary_for_range<'a, D, O: ToOffset>(&'a self, range: Range<O>) -> D
     where
         D: TextDimension<'a>,
     {
-        self.visible_text.cursor(range.start).summary(range.end)
+        self.visible_text
+            .cursor(range.start.to_offset(self))
+            .summary(range.end.to_offset(self))
     }
 
-    fn summaries_for_anchors<D, I>(
-        &self,
+    fn summaries_for_anchors<'a, D, I>(
+        &'a self,
         version: clock::Global,
         bias: Bias,
         ranges: I,
@@ -1788,8 +1565,8 @@ impl<'a> Content<'a> {
         })
     }
 
-    fn summaries_for_anchor_ranges<D, I>(
-        &self,
+    fn summaries_for_anchor_ranges<'a, D, I>(
+        &'a self,
         version: clock::Global,
         start_bias: Bias,
         end_bias: Bias,
@@ -1826,7 +1603,15 @@ impl<'a> Content<'a> {
         })
     }
 
-    fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
+    pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
+        self.anchor_at(position, Bias::Left)
+    }
+
+    pub fn anchor_after<T: ToOffset>(&self, position: T) -> Anchor {
+        self.anchor_at(position, Bias::Right)
+    }
+
+    pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
         Anchor {
             full_offset: position.to_full_offset(self, bias),
             bias,
@@ -1962,6 +1747,10 @@ impl<'a> Content<'a> {
         FullOffset(summary.visible + summary.deleted + overshoot)
     }
 
+    pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
+        self.visible_text.clip_offset(offset, bias)
+    }
+
     pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
         self.visible_text.clip_point(point, bias)
     }
@@ -1970,7 +1759,7 @@ impl<'a> Content<'a> {
         self.visible_text.clip_point_utf16(point, bias)
     }
 
-    fn point_for_offset(&self, offset: usize) -> Result<Point> {
+    pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
         if offset <= self.len() {
             Ok(self.text_summary_for_range(0..offset))
         } else {
@@ -1978,11 +1767,14 @@ impl<'a> Content<'a> {
         }
     }
 
-    pub fn edits_since<D>(&self, since: &'a clock::Global) -> impl 'a + Iterator<Item = Edit<D>>
+    pub fn edits_since<'a, D>(
+        &'a self,
+        since: &'a clock::Global,
+    ) -> impl 'a + Iterator<Item = Edit<D>>
     where
         D: 'a + TextDimension<'a> + Ord,
     {
-        let fragments_cursor = if since == self.version {
+        let fragments_cursor = if *since == self.version {
             None
         } else {
             Some(
@@ -2324,10 +2116,9 @@ impl Operation {
 }
 
 pub trait ToOffset {
-    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize;
+    fn to_offset<'a>(&self, content: &Snapshot) -> usize;
 
-    fn to_full_offset<'a>(&self, content: impl Into<Content<'a>>, bias: Bias) -> FullOffset {
-        let content = content.into();
+    fn to_full_offset<'a>(&self, content: &Snapshot, bias: Bias) -> FullOffset {
         let offset = self.to_offset(&content);
         let mut cursor = content.fragments.cursor::<FragmentTextSummary>();
         cursor.seek(&offset, bias, &None);
@@ -2336,70 +2127,70 @@ pub trait ToOffset {
 }
 
 impl ToOffset for Point {
-    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize {
-        content.into().visible_text.point_to_offset(*self)
+    fn to_offset<'a>(&self, content: &Snapshot) -> usize {
+        content.visible_text.point_to_offset(*self)
     }
 }
 
 impl ToOffset for PointUtf16 {
-    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize {
-        content.into().visible_text.point_utf16_to_offset(*self)
+    fn to_offset<'a>(&self, content: &Snapshot) -> usize {
+        content.visible_text.point_utf16_to_offset(*self)
     }
 }
 
 impl ToOffset for usize {
-    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize {
-        assert!(*self <= content.into().len(), "offset is out of range");
+    fn to_offset<'a>(&self, content: &Snapshot) -> usize {
+        assert!(*self <= content.len(), "offset is out of range");
         *self
     }
 }
 
 impl ToOffset for Anchor {
-    fn to_offset<'a>(&self, content: impl Into<Content<'a>>) -> usize {
-        content.into().summary_for_anchor(self)
+    fn to_offset<'a>(&self, content: &Snapshot) -> usize {
+        content.summary_for_anchor(self)
     }
 }
 
 impl<'a> ToOffset for &'a Anchor {
-    fn to_offset<'b>(&self, content: impl Into<Content<'b>>) -> usize {
-        content.into().summary_for_anchor(self)
+    fn to_offset(&self, content: &Snapshot) -> usize {
+        content.summary_for_anchor(self)
     }
 }
 
 pub trait ToPoint {
-    fn to_point<'a>(&self, content: impl Into<Content<'a>>) -> Point;
+    fn to_point<'a>(&self, content: &Snapshot) -> Point;
 }
 
 impl ToPoint for Anchor {
-    fn to_point<'a>(&self, content: impl Into<Content<'a>>) -> Point {
-        content.into().summary_for_anchor(self)
+    fn to_point<'a>(&self, content: &Snapshot) -> Point {
+        content.summary_for_anchor(self)
     }
 }
 
 impl ToPoint for usize {
-    fn to_point<'a>(&self, content: impl Into<Content<'a>>) -> Point {
-        content.into().visible_text.offset_to_point(*self)
+    fn to_point<'a>(&self, content: &Snapshot) -> Point {
+        content.visible_text.offset_to_point(*self)
     }
 }
 
 impl ToPoint for Point {
-    fn to_point<'a>(&self, _: impl Into<Content<'a>>) -> Point {
+    fn to_point<'a>(&self, _: &Snapshot) -> Point {
         *self
     }
 }
 
 pub trait FromAnchor {
-    fn from_anchor<'a>(anchor: &Anchor, content: &Content<'a>) -> Self;
+    fn from_anchor(anchor: &Anchor, content: &Snapshot) -> Self;
 }
 
 impl FromAnchor for Point {
-    fn from_anchor<'a>(anchor: &Anchor, content: &Content<'a>) -> Self {
+    fn from_anchor(anchor: &Anchor, content: &Snapshot) -> Self {
         anchor.to_point(content)
     }
 }
 
 impl FromAnchor for usize {
-    fn from_anchor<'a>(anchor: &Anchor, content: &Content<'a>) -> Self {
+    fn from_anchor(anchor: &Anchor, content: &Snapshot) -> Self {
         anchor.to_offset(content)
     }
 }
