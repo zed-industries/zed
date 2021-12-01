@@ -253,8 +253,6 @@ pub struct EditorStyle {
 #[derive(Copy, Clone, Deserialize, Default)]
 pub struct DiagnosticStyle {
     pub text: Color,
-    #[serde(flatten)]
-    pub block: BlockStyle,
 }
 
 #[derive(Clone, Copy, Default, Deserialize)]
@@ -271,14 +269,6 @@ pub struct InputEditorStyle {
     #[serde(default)]
     pub placeholder_text: Option<TextStyle>,
     pub selection: SelectionStyle,
-}
-
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
-pub struct BlockStyle {
-    pub background: Option<Color>,
-    pub border: Option<Color>,
-    pub gutter_background: Option<Color>,
-    pub gutter_border: Option<Color>,
 }
 
 impl EditorStyle {

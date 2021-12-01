@@ -1,7 +1,6 @@
 use super::{
     fold_map,
     tab_map::{self, Edit as TabEdit, Snapshot as TabSnapshot, TabPoint},
-    DisplayRow,
 };
 use gpui::{
     fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, ModelHandle, MutableAppContext,
@@ -607,13 +606,6 @@ impl Snapshot {
         len as u32
     }
 
-    pub fn line_char_count(&self, row: u32) -> u32 {
-        self.text_chunks(row)
-            .flat_map(|c| c.chars())
-            .take_while(|c| *c != '\n')
-            .count() as u32
-    }
-
     pub fn soft_wrap_indent(&self, row: u32) -> Option<u32> {
         let mut cursor = self.transforms.cursor::<WrapPoint>();
         cursor.seek(&WrapPoint::new(row + 1, 0), Bias::Right, &());
@@ -719,11 +711,7 @@ impl Snapshot {
                     prev_tab_row = tab_point.row();
                     soft_wrapped = false;
                 }
-                expected_buffer_rows.push(if soft_wrapped {
-                    DisplayRow::Wrap
-                } else {
-                    DisplayRow::Buffer(buffer_row)
-                });
+                expected_buffer_rows.push(if soft_wrapped { None } else { Some(buffer_row) });
             }
 
             for start_display_row in 0..expected_buffer_rows.len() {
@@ -803,7 +791,7 @@ impl<'a> Iterator for Chunks<'a> {
 }
 
 impl<'a> Iterator for BufferRows<'a> {
-    type Item = DisplayRow;
+    type Item = Option<u32>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.output_row > self.max_output_row {
@@ -823,11 +811,7 @@ impl<'a> Iterator for BufferRows<'a> {
             self.soft_wrapped = true;
         }
 
-        Some(if soft_wrapped {
-            DisplayRow::Wrap
-        } else {
-            DisplayRow::Buffer(buffer_row)
-        })
+        Some(if soft_wrapped { None } else { Some(buffer_row) })
     }
 }
 

@@ -301,6 +301,10 @@ impl<T: Element> Default for Lifecycle<T> {
 }
 
 impl ElementBox {
+    pub fn name(&self) -> Option<&str> {
+        self.0.name.as_deref()
+    }
+
     pub fn metadata<T: 'static>(&self) -> Option<&T> {
         let element = unsafe { &*self.0.element.as_ptr() };
         element.metadata().and_then(|m| m.downcast_ref())

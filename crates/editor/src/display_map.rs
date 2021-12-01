@@ -3,13 +3,12 @@ mod fold_map;
 mod tab_map;
 mod wrap_map;
 
-pub use block_map::{BlockDisposition, BlockId, BlockProperties, BufferRows, Chunks};
+pub use block_map::{
+    AlignedBlock, BlockContext, BlockDisposition, BlockId, BlockProperties, BufferRows, Chunks,
+};
 use block_map::{BlockMap, BlockPoint};
 use fold_map::{FoldMap, ToFoldPoint as _};
-use gpui::{
-    fonts::{FontId, HighlightStyle},
-    AppContext, Entity, ModelContext, ModelHandle,
-};
+use gpui::{fonts::FontId, ElementBox, Entity, ModelContext, ModelHandle};
 use language::{Anchor, Buffer, Point, Subscription as BufferSubscription, ToOffset, ToPoint};
 use std::{
     collections::{HashMap, HashSet},
@@ -17,8 +16,7 @@ use std::{
 };
 use sum_tree::Bias;
 use tab_map::TabMap;
-use text::Rope;
-use theme::{BlockStyle, SyntaxTheme};
+use theme::SyntaxTheme;
 use wrap_map::WrapMap;
 
 pub trait ToDisplayPoint {
@@ -124,14 +122,13 @@ impl DisplayMap {
         self.block_map.read(snapshot, edits, cx);
     }
 
-    pub fn insert_blocks<P, T>(
+    pub fn insert_blocks<P>(
         &mut self,
-        blocks: impl IntoIterator<Item = BlockProperties<P, T>>,
+        blocks: impl IntoIterator<Item = BlockProperties<P>>,
         cx: &mut ModelContext<Self>,
     ) -> Vec<BlockId>
     where
         P: ToOffset + Clone,
-        T: Into<Rope> + Clone,
     {
         let snapshot = self.buffer.read(cx).snapshot();
         let edits = self.buffer_subscription.consume().into_inner();
@@ -144,12 +141,11 @@ impl DisplayMap {
         block_map.insert(blocks, cx)
     }
 
-    pub fn restyle_blocks<F1, F2>(&mut self, styles: HashMap<BlockId, (Option<F1>, Option<F2>)>)
+    pub fn replace_blocks<F>(&mut self, styles: HashMap<BlockId, F>)
     where
-        F1: 'static + Fn(&AppContext) -> Vec<(usize, HighlightStyle)>,
-        F2: 'static + Fn(&AppContext) -> BlockStyle,
+        F: 'static + Fn(&BlockContext) -> ElementBox,
     {
-        self.block_map.restyle(styles);
+        self.block_map.replace(styles);
     }
 
     pub fn remove_blocks(&mut self, ids: HashSet<BlockId>, cx: &mut ModelContext<Self>) {
@@ -198,8 +194,8 @@ impl DisplayMapSnapshot {
         self.buffer_snapshot.len() == 0
     }
 
-    pub fn buffer_rows<'a>(&'a self, start_row: u32, cx: Option<&'a AppContext>) -> BufferRows<'a> {
-        self.blocks_snapshot.buffer_rows(start_row, cx)
+    pub fn buffer_rows<'a>(&'a self, start_row: u32) -> BufferRows<'a> {
+        self.blocks_snapshot.buffer_rows(start_row)
     }
 
     pub fn buffer_row_count(&self) -> u32 {
@@ -256,7 +252,7 @@ impl DisplayMapSnapshot {
 
     pub fn text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
         self.blocks_snapshot
-            .chunks(display_row..self.max_point().row() + 1, None, None)
+            .chunks(display_row..self.max_point().row() + 1, None)
             .map(|h| h.text)
     }
 
@@ -264,9 +260,8 @@ impl DisplayMapSnapshot {
         &'a self,
         display_rows: Range<u32>,
         theme: Option<&'a SyntaxTheme>,
-        cx: &'a AppContext,
     ) -> block_map::Chunks<'a> {
-        self.blocks_snapshot.chunks(display_rows, theme, Some(cx))
+        self.blocks_snapshot.chunks(display_rows, theme)
     }
 
     pub fn chars_at<'a>(&'a self, point: DisplayPoint) -> impl Iterator<Item = char> + 'a {
@@ -320,6 +315,13 @@ impl DisplayMapSnapshot {
         T: ToOffset,
     {
         self.folds_snapshot.folds_in_range(range)
+    }
+
+    pub fn blocks_in_range<'a>(
+        &'a self,
+        rows: Range<u32>,
+    ) -> impl Iterator<Item = (u32, &'a AlignedBlock)> {
+        self.blocks_snapshot.blocks_in_range(rows)
     }
 
     pub fn intersects_fold<T: ToOffset>(&self, offset: T) -> bool {
@@ -446,13 +448,6 @@ impl ToDisplayPoint for Anchor {
     fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint {
         self.to_point(&map.buffer_snapshot).to_display_point(map)
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum DisplayRow {
-    Buffer(u32),
-    Block(BlockId, Option<BlockStyle>),
-    Wrap,
 }
 
 #[cfg(test)]
@@ -1065,7 +1060,7 @@ mod tests {
     ) -> Vec<(String, Option<Color>)> {
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<Color>)> = Vec::new();
-        for chunk in snapshot.chunks(rows, Some(theme), cx) {
+        for chunk in snapshot.chunks(rows, Some(theme)) {
             let color = chunk.highlight_style.map(|s| s.color);
             if let Some((last_chunk, last_color)) = chunks.last_mut() {
                 if color == *last_color {
