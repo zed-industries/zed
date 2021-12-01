@@ -20,7 +20,6 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
-
 use serde::Deserialize;
 use smol::channel::{self, Sender};
 use std::{
@@ -3495,14 +3494,14 @@ mod tests {
                 &[
                     language::Event::Edited,
                     language::Event::Dirtied,
-                    language::Event::Edited
+                    language::Event::Edited,
                 ],
             );
             events.borrow_mut().clear();
 
             // TODO - currently, after restoring the buffer to its
             // previously-saved state, the is still considered dirty.
-            buffer.edit(vec![1..3], "", cx);
+            buffer.edit([1..3], "", cx);
             assert!(buffer.text() == "ac");
             assert!(buffer.is_dirty());
         });

@@ -1104,7 +1104,7 @@ mod tests {
         let text = "aaa\nbbb\nccc\nddd";
 
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        let (fold_map, folds_snapshot) = FoldMap::new(buffer.clone(), cx);
+        let (fold_map, folds_snapshot) = FoldMap::new(buffer.read(cx).snapshot());
         let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), 1);
         let (wrap_map, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, None, cx);
         let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot.clone());
@@ -1228,11 +1228,13 @@ mod tests {
 
         // Insert a line break, separating two block decorations into separate
         // lines.
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([Point::new(1, 1)..Point::new(1, 1)], "!!!\n", cx)
+        let (buffer_snapshot, buffer_edits) = buffer.update(cx, |buffer, cx| {
+            let v0 = buffer.version();
+            buffer.edit([Point::new(1, 1)..Point::new(1, 1)], "!!!\n", cx);
+            (buffer.snapshot(), buffer.edits_since(&v0).collect())
         });
 
-        let (folds_snapshot, fold_edits) = fold_map.read(cx);
+        let (folds_snapshot, fold_edits) = fold_map.read(buffer_snapshot, buffer_edits);
         let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
             wrap_map.sync(tabs_snapshot, tab_edits, cx)
@@ -1255,7 +1257,7 @@ mod tests {
         let text = "one two three\nfour five six\nseven eight";
 
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        let (_, folds_snapshot) = FoldMap::new(buffer.clone(), cx);
+        let (_, folds_snapshot) = FoldMap::new(buffer.read(cx).snapshot());
         let (_, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), 1);
         let (_, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, Some(60.), cx);
         let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot.clone());
@@ -1317,7 +1319,8 @@ mod tests {
             log::info!("initial buffer text: {:?}", text);
             Buffer::new(0, text, cx)
         });
-        let (fold_map, folds_snapshot) = FoldMap::new(buffer.clone(), cx);
+        let mut buffer_snapshot = buffer.read(cx).snapshot();
+        let (fold_map, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
         let (wrap_map, wraps_snapshot) =
             WrapMap::new(tabs_snapshot, font_id, font_size, wrap_width, cx);
@@ -1325,6 +1328,7 @@ mod tests {
         let mut expected_blocks = Vec::new();
 
         for _ in 0..operations {
+            let mut buffer_edits = Vec::new();
             match rng.gen_range(0..=100) {
                 0..=19 => {
                     let wrap_width = if rng.gen_bool(0.2) {
@@ -1375,7 +1379,8 @@ mod tests {
                         })
                         .collect::<Vec<_>>();
 
-                    let (folds_snapshot, fold_edits) = fold_map.read(cx);
+                    let (folds_snapshot, fold_edits) =
+                        fold_map.read(buffer_snapshot.clone(), vec![]);
                     let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tabs_snapshot, tab_edits, cx)
@@ -1396,7 +1401,8 @@ mod tests {
                         })
                         .collect();
 
-                    let (folds_snapshot, fold_edits) = fold_map.read(cx);
+                    let (folds_snapshot, fold_edits) =
+                        fold_map.read(buffer_snapshot.clone(), vec![]);
                     let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tabs_snapshot, tab_edits, cx)
@@ -1405,14 +1411,18 @@ mod tests {
                     block_map.remove(block_ids_to_remove, cx);
                 }
                 _ => {
-                    buffer.update(cx, |buffer, _| {
-                        buffer.randomly_edit(&mut rng, 1);
+                    buffer.update(cx, |buffer, cx| {
+                        let v0 = buffer.version();
+                        let edit_count = rng.gen_range(1..=5);
+                        buffer.randomly_edit(&mut rng, edit_count, cx);
                         log::info!("buffer text: {:?}", buffer.text());
+                        buffer_edits.extend(buffer.edits_since(&v0));
+                        buffer_snapshot = buffer.snapshot();
                     });
                 }
             }
 
-            let (folds_snapshot, fold_edits) = fold_map.read(cx);
+            let (folds_snapshot, fold_edits) = fold_map.read(buffer_snapshot.clone(), buffer_edits);
             let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
             let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                 wrap_map.sync(tabs_snapshot, tab_edits, cx)

@@ -470,11 +470,12 @@ mod tests {
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
             Buffer::new(0, text, cx)
         });
+        let buffer_snapshot = buffer.read(cx).snapshot();
         log::info!("Buffer text: {:?}", buffer.read(cx).text());
 
-        let (mut fold_map, _) = FoldMap::new(buffer.clone(), cx);
-        fold_map.randomly_mutate(&mut rng, cx);
-        let (folds_snapshot, _) = fold_map.read(cx);
+        let (mut fold_map, _) = FoldMap::new(buffer_snapshot.clone());
+        fold_map.randomly_mutate(&mut rng);
+        let (folds_snapshot, _) = fold_map.read(buffer_snapshot.clone(), vec![]);
         log::info!("FoldMap text: {:?}", folds_snapshot.text());
 
         let (_, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);

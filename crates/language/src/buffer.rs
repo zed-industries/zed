@@ -72,8 +72,10 @@ pub struct Snapshot {
     text: text::Snapshot,
     tree: Option<Tree>,
     diagnostics: AnchorRangeMultimap<Diagnostic>,
+    diagnostics_update_count: usize,
     is_parsing: bool,
     language: Option<Arc<Language>>,
+    parse_count: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -113,6 +115,7 @@ pub enum Event {
     FileHandleChanged,
     Reloaded,
     Reparsed,
+    DiagnosticsUpdated,
     Closed,
 }
 
@@ -338,8 +341,10 @@ impl Buffer {
             text: self.text.snapshot(),
             tree: self.syntax_tree(),
             diagnostics: self.diagnostics.clone(),
+            diagnostics_update_count: self.diagnostics_update_count,
             is_parsing: self.parsing_in_background,
             language: self.language.clone(),
+            parse_count: self.parse_count,
         }
     }
 
@@ -805,6 +810,7 @@ impl Buffer {
 
         self.diagnostics_update_count += 1;
         cx.notify();
+        cx.emit(Event::DiagnosticsUpdated);
         Ok(Operation::UpdateDiagnostics(self.diagnostics.clone()))
     }
 
@@ -1132,6 +1138,10 @@ impl Buffer {
                 .map_or(false, |file| file.mtime() > self.saved_mtime)
     }
 
+    pub fn subscribe(&mut self) -> Subscription {
+        self.text.subscribe()
+    }
+
     pub fn start_transaction(
         &mut self,
         selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
@@ -1316,7 +1326,8 @@ impl Buffer {
         was_dirty: bool,
         cx: &mut ModelContext<Self>,
     ) {
-        if self.edits_since::<usize>(old_version).next().is_none() {
+        let patch = Patch::new(self.edits_since::<usize>(old_version).collect());
+        if patch.is_empty() {
             return;
         }
 
@@ -1461,18 +1472,26 @@ impl Buffer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl Buffer {
-    pub fn randomly_edit<T>(&mut self, rng: &mut T, old_range_count: usize)
-    where
+    pub fn randomly_edit<T>(
+        &mut self,
+        rng: &mut T,
+        old_range_count: usize,
+        cx: &mut ModelContext<Self>,
+    ) where
         T: rand::Rng,
     {
+        self.start_transaction(None).unwrap();
         self.text.randomly_edit(rng, old_range_count);
+        self.end_transaction(None, cx).unwrap();
     }
 
-    pub fn randomly_mutate<T>(&mut self, rng: &mut T)
+    pub fn randomly_mutate<T>(&mut self, rng: &mut T, cx: &mut ModelContext<Self>)
     where
         T: rand::Rng,
     {
+        self.start_transaction(None).unwrap();
         self.text.randomly_mutate(rng);
+        self.end_transaction(None, cx).unwrap();
     }
 }
 
@@ -1482,30 +1501,6 @@ impl Entity for Buffer {
     fn release(&mut self, cx: &mut gpui::MutableAppContext) {
         if let Some(file) = self.file.as_ref() {
             file.buffer_removed(self.remote_id(), cx);
-        }
-    }
-}
-
-// TODO: Do we need to clone a buffer?
-impl Clone for Buffer {
-    fn clone(&self) -> Self {
-        Self {
-            text: self.text.clone(),
-            saved_version: self.saved_version.clone(),
-            saved_mtime: self.saved_mtime,
-            file: self.file.as_ref().map(|f| f.boxed_clone()),
-            language: self.language.clone(),
-            syntax_tree: Mutex::new(self.syntax_tree.lock().clone()),
-            parsing_in_background: false,
-            sync_parse_timeout: self.sync_parse_timeout,
-            parse_count: self.parse_count,
-            autoindent_requests: Default::default(),
-            pending_autoindent: Default::default(),
-            diagnostics: self.diagnostics.clone(),
-            diagnostics_update_count: self.diagnostics_update_count,
-            language_server: None,
-            #[cfg(test)]
-            operations: self.operations.clone(),
         }
     }
 }
@@ -1699,6 +1694,14 @@ impl Snapshot {
             .as_ref()
             .and_then(|language| language.grammar.as_ref())
     }
+
+    pub fn diagnostics_update_count(&self) -> usize {
+        self.diagnostics_update_count
+    }
+
+    pub fn parse_count(&self) -> usize {
+        self.parse_count
+    }
 }
 
 impl Clone for Snapshot {
@@ -1707,8 +1710,10 @@ impl Clone for Snapshot {
             text: self.text.clone(),
             tree: self.tree.clone(),
             diagnostics: self.diagnostics.clone(),
+            diagnostics_update_count: self.diagnostics_update_count,
             is_parsing: self.is_parsing,
             language: self.language.clone(),
+            parse_count: self.parse_count,
         }
     }
 }
