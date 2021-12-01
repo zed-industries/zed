@@ -106,7 +106,7 @@ where
                         new: new_start..new_end,
                     });
 
-                    old_edit.old.start += overshoot;
+                    old_edit.old.start = old_end;
                     old_edit.new.start += overshoot;
                     old_start = old_end;
                     new_start = new_end;
@@ -124,7 +124,7 @@ where
                     });
 
                     new_edit.old.start += overshoot;
-                    new_edit.new.start += overshoot;
+                    new_edit.new.start = new_end;
                     old_start = old_end;
                     new_start = new_end;
                 }
