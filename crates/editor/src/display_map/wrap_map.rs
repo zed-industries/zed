@@ -1026,7 +1026,8 @@ mod tests {
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
             Buffer::new(0, text, cx)
         });
-        let (mut fold_map, folds_snapshot) = cx.read(|cx| FoldMap::new(buffer.clone(), cx));
+        let buffer_snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+        let (mut fold_map, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
         log::info!(
             "Unwrapped text (no folds): {:?}",
@@ -1079,9 +1080,7 @@ mod tests {
                     wrap_map.update(&mut cx, |map, cx| map.set_wrap_width(wrap_width, cx));
                 }
                 20..=39 => {
-                    for (folds_snapshot, fold_edits) in
-                        cx.read(|cx| fold_map.randomly_mutate(&mut rng, cx))
-                    {
+                    for (folds_snapshot, fold_edits) in fold_map.randomly_mutate(&mut rng) {
                         let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
                         let (mut snapshot, wrap_edits) = wrap_map
                             .update(&mut cx, |map, cx| map.sync(tabs_snapshot, tab_edits, cx));
@@ -1091,19 +1090,18 @@ mod tests {
                     }
                 }
                 _ => {
-                    buffer.update(&mut cx, |buffer, _| {
+                    buffer.update(&mut cx, |buffer, cx| {
                         let v0 = buffer.version();
-                        buffer.randomly_mutate(&mut rng);
+                        let edit_count = rng.gen_range(1..=5);
+                        buffer.randomly_edit(&mut rng, edit_count, cx);
                         buffer_edits.extend(buffer.edits_since(&v0));
                     });
                 }
             }
 
-            log::info!(
-                "Unwrapped text (no folds): {:?}",
-                buffer.read_with(&cx, |buf, _| buf.text())
-            );
-            let (folds_snapshot, fold_edits) = cx.read(|cx| fold_map.read(buffer_edits, cx));
+            let buffer_snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+            log::info!("Unwrapped text (no folds): {:?}", buffer_snapshot.text());
+            let (folds_snapshot, fold_edits) = fold_map.read(buffer_snapshot, buffer_edits);
             log::info!(
                 "Unwrapped text (unexpanded tabs): {:?}",
                 folds_snapshot.text()

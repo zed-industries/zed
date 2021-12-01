@@ -72,8 +72,10 @@ pub struct Snapshot {
     text: text::Snapshot,
     tree: Option<Tree>,
     diagnostics: AnchorRangeMultimap<Diagnostic>,
+    diagnostics_update_count: usize,
     is_parsing: bool,
     language: Option<Arc<Language>>,
+    parse_count: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -339,8 +341,10 @@ impl Buffer {
             text: self.text.snapshot(),
             tree: self.syntax_tree(),
             diagnostics: self.diagnostics.clone(),
+            diagnostics_update_count: self.diagnostics_update_count,
             is_parsing: self.parsing_in_background,
             language: self.language.clone(),
+            parse_count: self.parse_count,
         }
     }
 
@@ -1465,18 +1469,26 @@ impl Buffer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl Buffer {
-    pub fn randomly_edit<T>(&mut self, rng: &mut T, old_range_count: usize)
-    where
+    pub fn randomly_edit<T>(
+        &mut self,
+        rng: &mut T,
+        old_range_count: usize,
+        cx: &mut ModelContext<Self>,
+    ) where
         T: rand::Rng,
     {
+        self.start_transaction(None).unwrap();
         self.text.randomly_edit(rng, old_range_count);
+        self.end_transaction(None, cx).unwrap();
     }
 
-    pub fn randomly_mutate<T>(&mut self, rng: &mut T)
+    pub fn randomly_mutate<T>(&mut self, rng: &mut T, cx: &mut ModelContext<Self>)
     where
         T: rand::Rng,
     {
+        self.start_transaction(None).unwrap();
         self.text.randomly_mutate(rng);
+        self.end_transaction(None, cx).unwrap();
     }
 }
 
@@ -1703,6 +1715,14 @@ impl Snapshot {
             .as_ref()
             .and_then(|language| language.grammar.as_ref())
     }
+
+    pub fn diagnostics_update_count(&self) -> usize {
+        self.diagnostics_update_count
+    }
+
+    pub fn parse_count(&self) -> usize {
+        self.parse_count
+    }
 }
 
 impl Clone for Snapshot {
@@ -1711,8 +1731,10 @@ impl Clone for Snapshot {
             text: self.text.clone(),
             tree: self.tree.clone(),
             diagnostics: self.diagnostics.clone(),
+            diagnostics_update_count: self.diagnostics_update_count,
             is_parsing: self.is_parsing,
             language: self.language.clone(),
+            parse_count: self.parse_count,
         }
     }
 }
