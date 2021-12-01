@@ -1326,8 +1326,7 @@ impl Buffer {
         was_dirty: bool,
         cx: &mut ModelContext<Self>,
     ) {
-        let patch = Patch::new(self.edits_since::<usize>(old_version).collect());
-        if patch.is_empty() {
+        if self.edits_since::<usize>(old_version).next().is_none() {
             return;
         }
 
