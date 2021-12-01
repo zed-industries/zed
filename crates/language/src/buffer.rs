@@ -109,7 +109,7 @@ pub enum Operation {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Event {
-    Edited(Patch<usize>),
+    Edited,
     Dirtied,
     Saved,
     FileHandleChanged,
@@ -1138,6 +1138,10 @@ impl Buffer {
                 .map_or(false, |file| file.mtime() > self.saved_mtime)
     }
 
+    pub fn subscribe(&mut self) -> Subscription {
+        self.text.subscribe()
+    }
+
     pub fn start_transaction(
         &mut self,
         selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
@@ -1330,7 +1334,7 @@ impl Buffer {
         self.reparse(cx);
         self.update_language_server();
 
-        cx.emit(Event::Edited(patch));
+        cx.emit(Event::Edited);
         if !was_dirty {
             cx.emit(Event::Dirtied);
         }

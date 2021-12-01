@@ -3016,7 +3016,7 @@ mod tests {
         fmt::Write,
         time::{SystemTime, UNIX_EPOCH},
     };
-    use text::{Patch, Point};
+    use text::Point;
     use util::test::temp_tree;
 
     #[gpui::test]
@@ -3469,13 +3469,7 @@ mod tests {
             assert!(buffer.is_dirty());
             assert_eq!(
                 *events.borrow(),
-                &[
-                    language::Event::Edited(Patch::new(vec![text::Edit {
-                        old: 1..2,
-                        new: 1..1
-                    }])),
-                    language::Event::Dirtied
-                ]
+                &[language::Event::Edited, language::Event::Dirtied]
             );
             events.borrow_mut().clear();
             buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), None, cx);
@@ -3498,15 +3492,9 @@ mod tests {
             assert_eq!(
                 *events.borrow(),
                 &[
-                    language::Event::Edited(Patch::new(vec![text::Edit {
-                        old: 1..1,
-                        new: 1..2
-                    }])),
+                    language::Event::Edited,
                     language::Event::Dirtied,
-                    language::Event::Edited(Patch::new(vec![text::Edit {
-                        old: 2..2,
-                        new: 2..3
-                    }])),
+                    language::Event::Edited,
                 ],
             );
             events.borrow_mut().clear();
@@ -3518,13 +3506,7 @@ mod tests {
             assert!(buffer.is_dirty());
         });
 
-        assert_eq!(
-            *events.borrow(),
-            &[language::Event::Edited(Patch::new(vec![text::Edit {
-                old: 1..3,
-                new: 1..1
-            }]))]
-        );
+        assert_eq!(*events.borrow(), &[language::Event::Edited]);
 
         // When a file is deleted, the buffer is considered dirty.
         let events = Rc::new(RefCell::new(Vec::new()));

@@ -46,7 +46,7 @@ pub struct Buffer {
     remote_id: u64,
     local_clock: clock::Local,
     lamport_clock: clock::Lamport,
-    subscriptions: Vec<Weak<Subscription>>,
+    subscriptions: Vec<Weak<Mutex<Vec<Patch<usize>>>>>,
 }
 
 #[derive(Clone)]
@@ -342,7 +342,7 @@ impl<D1, D2> Edit<(D1, D2)> {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Subscription(Arc<Mutex<Vec<Patch<usize>>>>);
 
 impl Subscription {
@@ -353,11 +353,6 @@ impl Subscription {
             changes = changes.compose(&patch);
         }
         changes
-    }
-
-    pub fn publish(&self, patch: Patch<usize>) {
-        let mut changes = self.0.lock();
-        changes.push(patch);
     }
 }
 
@@ -1200,16 +1195,16 @@ impl Buffer {
         })
     }
 
-    pub fn subscribe(&mut self) -> Arc<Subscription> {
-        let subscription = Arc::new(Default::default());
-        self.subscriptions.push(Arc::downgrade(&subscription));
+    pub fn subscribe(&mut self) -> Subscription {
+        let subscription = Subscription(Default::default());
+        self.subscriptions.push(Arc::downgrade(&subscription.0));
         subscription
     }
 
     fn update_subscriptions(&mut self, edits: Patch<usize>) {
         self.subscriptions.retain(|subscription| {
             if let Some(subscription) = subscription.upgrade() {
-                subscription.publish(edits.clone());
+                subscription.lock().push(edits.clone());
                 true
             } else {
                 false
