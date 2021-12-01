@@ -1228,11 +1228,13 @@ mod tests {
 
         // Insert a line break, separating two block decorations into separate
         // lines.
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit([Point::new(1, 1)..Point::new(1, 1)], "!!!\n", cx)
+        let buffer_edits = buffer.update(cx, |buffer, cx| {
+            let v0 = buffer.version();
+            buffer.edit([Point::new(1, 1)..Point::new(1, 1)], "!!!\n", cx);
+            buffer.edits_since(&v0).collect()
         });
 
-        let (folds_snapshot, fold_edits) = fold_map.read(cx);
+        let (folds_snapshot, fold_edits) = fold_map.read(buffer_edits, cx);
         let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
             wrap_map.sync(tabs_snapshot, tab_edits, cx)
@@ -1325,6 +1327,7 @@ mod tests {
         let mut expected_blocks = Vec::new();
 
         for _ in 0..operations {
+            let mut buffer_edits = Vec::new();
             match rng.gen_range(0..=100) {
                 0..=19 => {
                     let wrap_width = if rng.gen_bool(0.2) {
@@ -1375,7 +1378,7 @@ mod tests {
                         })
                         .collect::<Vec<_>>();
 
-                    let (folds_snapshot, fold_edits) = fold_map.read(cx);
+                    let (folds_snapshot, fold_edits) = fold_map.read(vec![], cx);
                     let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tabs_snapshot, tab_edits, cx)
@@ -1396,7 +1399,7 @@ mod tests {
                         })
                         .collect();
 
-                    let (folds_snapshot, fold_edits) = fold_map.read(cx);
+                    let (folds_snapshot, fold_edits) = fold_map.read(vec![], cx);
                     let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tabs_snapshot, tab_edits, cx)
@@ -1406,13 +1409,15 @@ mod tests {
                 }
                 _ => {
                     buffer.update(cx, |buffer, _| {
+                        let v0 = buffer.version();
                         buffer.randomly_edit(&mut rng, 1);
                         log::info!("buffer text: {:?}", buffer.text());
+                        buffer_edits.extend(buffer.edits_since(&v0));
                     });
                 }
             }
 
-            let (folds_snapshot, fold_edits) = fold_map.read(cx);
+            let (folds_snapshot, fold_edits) = fold_map.read(buffer_edits, cx);
             let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
             let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                 wrap_map.sync(tabs_snapshot, tab_edits, cx)

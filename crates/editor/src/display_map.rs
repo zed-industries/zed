@@ -1,6 +1,5 @@
 mod block_map;
 mod fold_map;
-mod patch;
 mod tab_map;
 mod wrap_map;
 
@@ -11,9 +10,11 @@ use gpui::{
     fonts::{FontId, HighlightStyle},
     AppContext, Entity, ModelContext, ModelHandle,
 };
-use language::{Anchor, Buffer, Point, ToOffset, ToPoint};
+use language::{Anchor, Buffer, Patch, Point, ToOffset, ToPoint};
+use parking_lot::Mutex;
 use std::{
     collections::{HashMap, HashSet},
+    mem,
     ops::Range,
 };
 use sum_tree::Bias;
@@ -32,6 +33,7 @@ pub struct DisplayMap {
     tab_map: TabMap,
     wrap_map: ModelHandle<WrapMap>,
     block_map: BlockMap,
+    edits_since_sync: Mutex<Patch<usize>>,
 }
 
 impl Entity for DisplayMap {
@@ -52,17 +54,22 @@ impl DisplayMap {
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font_id, font_size, wrap_width, cx);
         let block_map = BlockMap::new(buffer.clone(), snapshot);
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
+        cx.subscribe(&buffer, Self::handle_buffer_event).detach();
         DisplayMap {
             buffer,
             fold_map,
             tab_map,
             wrap_map,
             block_map,
+            edits_since_sync: Default::default(),
         }
     }
 
     pub fn snapshot(&self, cx: &mut ModelContext<Self>) -> DisplayMapSnapshot {
-        let (folds_snapshot, edits) = self.fold_map.read(cx);
+        let (folds_snapshot, edits) = self.fold_map.read(
+            mem::take(&mut *self.edits_since_sync.lock()).into_inner(),
+            cx,
+        );
         let (tabs_snapshot, edits) = self.tab_map.sync(folds_snapshot.clone(), edits);
         let (wraps_snapshot, edits) = self
             .wrap_map
@@ -83,7 +90,10 @@ impl DisplayMap {
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &mut ModelContext<Self>,
     ) {
-        let (mut fold_map, snapshot, edits) = self.fold_map.write(cx);
+        let (mut fold_map, snapshot, edits) = self.fold_map.write(
+            mem::take(&mut *self.edits_since_sync.lock()).into_inner(),
+            cx,
+        );
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         let (snapshot, edits) = self
             .wrap_map
@@ -102,7 +112,10 @@ impl DisplayMap {
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &mut ModelContext<Self>,
     ) {
-        let (mut fold_map, snapshot, edits) = self.fold_map.write(cx);
+        let (mut fold_map, snapshot, edits) = self.fold_map.write(
+            mem::take(&mut *self.edits_since_sync.lock()).into_inner(),
+            cx,
+        );
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         let (snapshot, edits) = self
             .wrap_map
@@ -125,7 +138,10 @@ impl DisplayMap {
         P: ToOffset + Clone,
         T: Into<Rope> + Clone,
     {
-        let (snapshot, edits) = self.fold_map.read(cx);
+        let (snapshot, edits) = self.fold_map.read(
+            mem::take(&mut *self.edits_since_sync.lock()).into_inner(),
+            cx,
+        );
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         let (snapshot, edits) = self
             .wrap_map
@@ -143,7 +159,10 @@ impl DisplayMap {
     }
 
     pub fn remove_blocks(&mut self, ids: HashSet<BlockId>, cx: &mut ModelContext<Self>) {
-        let (snapshot, edits) = self.fold_map.read(cx);
+        let (snapshot, edits) = self.fold_map.read(
+            mem::take(&mut *self.edits_since_sync.lock()).into_inner(),
+            cx,
+        );
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         let (snapshot, edits) = self
             .wrap_map
@@ -165,6 +184,25 @@ impl DisplayMap {
     #[cfg(test)]
     pub fn is_rewrapping(&self, cx: &gpui::AppContext) -> bool {
         self.wrap_map.read(cx).is_rewrapping()
+    }
+
+    fn handle_buffer_event(
+        &mut self,
+        _: ModelHandle<Buffer>,
+        event: &language::Event,
+        _: &mut ModelContext<Self>,
+    ) {
+        match event {
+            language::Event::Edited(patch) => {
+                self.fold_map.version += 1;
+                let mut edits_since_sync = self.edits_since_sync.lock();
+                *edits_since_sync = edits_since_sync.compose(patch);
+            }
+            language::Event::Reparsed | language::Event::DiagnosticsUpdated => {
+                self.fold_map.version += 1;
+            }
+            _ => {}
+        }
     }
 }
 

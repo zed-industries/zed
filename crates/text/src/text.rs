@@ -1,5 +1,6 @@
 mod anchor;
 mod operation_queue;
+mod patch;
 mod point;
 mod point_utf16;
 #[cfg(any(test, feature = "test-support"))]
@@ -14,6 +15,7 @@ use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use operation_queue::OperationQueue;
+pub use patch::Patch;
 pub use point::*;
 pub use point_utf16::*;
 #[cfg(any(test, feature = "test-support"))]
@@ -24,7 +26,7 @@ pub use selection::*;
 use std::{
     cmp::{self, Reverse},
     iter::Iterator,
-    ops::{self, Deref, Range},
+    ops::{self, Deref, Range, Sub},
     str,
     sync::Arc,
     time::{Duration, Instant},
@@ -305,6 +307,23 @@ struct Edits<'a, D: TextDimension<'a>, F: FnMut(&FragmentSummary) -> bool> {
 pub struct Edit<D> {
     pub old: Range<D>,
     pub new: Range<D>,
+}
+
+impl<D> Edit<D>
+where
+    D: Sub<D, Output = D> + PartialEq + Copy,
+{
+    pub fn old_len(&self) -> D {
+        self.old.end - self.old.start
+    }
+
+    pub fn new_len(&self) -> D {
+        self.new.end - self.new.start
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.old.start == self.old.end && self.new.start == self.new.end
+    }
 }
 
 impl<D1, D2> Edit<(D1, D2)> {

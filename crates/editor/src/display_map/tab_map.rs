@@ -474,7 +474,7 @@ mod tests {
 
         let (mut fold_map, _) = FoldMap::new(buffer.clone(), cx);
         fold_map.randomly_mutate(&mut rng, cx);
-        let (folds_snapshot, _) = fold_map.read(cx);
+        let (folds_snapshot, _) = fold_map.read(vec![], cx);
         log::info!("FoldMap text: {:?}", folds_snapshot.text());
 
         let (_, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);

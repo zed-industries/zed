@@ -110,11 +110,34 @@ fn test_edit_events(cx: &mut gpui::MutableAppContext) {
     let buffer_1_events = buffer_1_events.borrow();
     assert_eq!(
         *buffer_1_events,
-        vec![Event::Edited, Event::Dirtied, Event::Edited, Event::Edited]
+        vec![
+            Event::Edited(Patch::new(vec![Edit {
+                old: 2..4,
+                new: 2..5
+            }])),
+            Event::Dirtied,
+            Event::Edited(Patch::new(vec![Edit {
+                old: 5..5,
+                new: 5..7
+            }])),
+            Event::Edited(Patch::new(vec![Edit {
+                old: 5..7,
+                new: 5..5,
+            }]))
+        ]
     );
 
     let buffer_2_events = buffer_2_events.borrow();
-    assert_eq!(*buffer_2_events, vec![Event::Edited, Event::Dirtied]);
+    assert_eq!(
+        *buffer_2_events,
+        vec![
+            Event::Edited(Patch::new(vec![Edit {
+                old: 2..4,
+                new: 2..5
+            }])),
+            Event::Dirtied
+        ]
+    );
 }
 
 #[gpui::test]

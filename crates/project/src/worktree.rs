@@ -20,7 +20,6 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
-
 use serde::Deserialize;
 use smol::channel::{self, Sender};
 use std::{
@@ -3017,7 +3016,7 @@ mod tests {
         fmt::Write,
         time::{SystemTime, UNIX_EPOCH},
     };
-    use text::Point;
+    use text::{Patch, Point};
     use util::test::temp_tree;
 
     #[gpui::test]
@@ -3470,7 +3469,13 @@ mod tests {
             assert!(buffer.is_dirty());
             assert_eq!(
                 *events.borrow(),
-                &[language::Event::Edited, language::Event::Dirtied]
+                &[
+                    language::Event::Edited(Patch::new(vec![text::Edit {
+                        old: 1..2,
+                        new: 1..1
+                    }])),
+                    language::Event::Dirtied
+                ]
             );
             events.borrow_mut().clear();
             buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), None, cx);
@@ -3493,21 +3498,33 @@ mod tests {
             assert_eq!(
                 *events.borrow(),
                 &[
-                    language::Event::Edited,
+                    language::Event::Edited(Patch::new(vec![text::Edit {
+                        old: 1..1,
+                        new: 1..2
+                    }])),
                     language::Event::Dirtied,
-                    language::Event::Edited
+                    language::Event::Edited(Patch::new(vec![text::Edit {
+                        old: 2..2,
+                        new: 2..3
+                    }])),
                 ],
             );
             events.borrow_mut().clear();
 
             // TODO - currently, after restoring the buffer to its
             // previously-saved state, the is still considered dirty.
-            buffer.edit(vec![1..3], "", cx);
+            buffer.edit([1..3], "", cx);
             assert!(buffer.text() == "ac");
             assert!(buffer.is_dirty());
         });
 
-        assert_eq!(*events.borrow(), &[language::Event::Edited]);
+        assert_eq!(
+            *events.borrow(),
+            &[language::Event::Edited(Patch::new(vec![text::Edit {
+                old: 1..3,
+                new: 1..1
+            }]))]
+        );
 
         // When a file is deleted, the buffer is considered dirty.
         let events = Rc::new(RefCell::new(Vec::new()));

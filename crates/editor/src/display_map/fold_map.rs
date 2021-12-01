@@ -1,11 +1,12 @@
 use gpui::{AppContext, ModelHandle};
-use language::{Anchor, AnchorRangeExt, Buffer, Chunk, Point, PointUtf16, TextSummary, ToOffset};
+use language::{
+    Anchor, AnchorRangeExt, Buffer, Chunk, Edit, Point, PointUtf16, TextSummary, ToOffset,
+};
 use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
-    iter, mem,
+    iter,
     ops::Range,
-    sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
 use sum_tree::{Bias, Cursor, FilterCursor, SumTree};
 use theme::SyntaxTheme;
@@ -131,12 +132,12 @@ impl<'a> FoldMapWriter<'a> {
         };
 
         consolidate_buffer_edits(&mut edits);
-        let edits = self.0.apply_edits(edits, cx);
+        let edits = self.0.sync(edits, cx);
         let snapshot = Snapshot {
             transforms: self.0.transforms.lock().clone(),
             folds: self.0.folds.clone(),
             buffer_snapshot: self.0.buffer.read(cx).snapshot(),
-            version: self.0.version.load(SeqCst),
+            version: self.0.version,
         };
         (snapshot, edits)
     }
@@ -150,7 +151,7 @@ impl<'a> FoldMapWriter<'a> {
         let mut fold_ixs_to_delete = Vec::new();
         let buffer = self.0.buffer.read(cx).snapshot();
         for range in ranges.into_iter() {
-            // Remove intersecting folds and add their ranges to edits that are passed to apply_edits.
+            // Remove intersecting folds and add their ranges to edits that are passed to sync.
             let mut folds_cursor = intersecting_folds(&buffer, &self.0.folds, range, true);
             while let Some(fold) = folds_cursor.item() {
                 let offset_range = fold.0.start.to_offset(&buffer)..fold.0.end.to_offset(&buffer);
@@ -178,12 +179,12 @@ impl<'a> FoldMapWriter<'a> {
         };
 
         consolidate_buffer_edits(&mut edits);
-        let edits = self.0.apply_edits(edits, cx);
+        let edits = self.0.sync(edits, cx);
         let snapshot = Snapshot {
             transforms: self.0.transforms.lock().clone(),
             folds: self.0.folds.clone(),
             buffer_snapshot: self.0.buffer.read(cx).snapshot(),
-            version: self.0.version.load(SeqCst),
+            version: self.0.version,
         };
         (snapshot, edits)
     }
@@ -193,15 +194,7 @@ pub struct FoldMap {
     buffer: ModelHandle<Buffer>,
     transforms: Mutex<SumTree<Transform>>,
     folds: SumTree<Fold>,
-    last_sync: Mutex<SyncState>,
-    version: AtomicUsize,
-}
-
-#[derive(Clone)]
-struct SyncState {
-    version: clock::Global,
-    parse_count: usize,
-    diagnostics_update_count: usize,
+    pub version: usize,
 }
 
 impl FoldMap {
@@ -220,58 +213,31 @@ impl FoldMap {
                 },
                 &(),
             )),
-            last_sync: Mutex::new(SyncState {
-                version: buffer.version(),
-                parse_count: buffer.parse_count(),
-                diagnostics_update_count: buffer.diagnostics_update_count(),
-            }),
-            version: AtomicUsize::new(0),
+            version: 0,
         };
-        let (snapshot, _) = this.read(cx);
+        let (snapshot, _) = this.read(Vec::new(), cx);
         (this, snapshot)
     }
 
-    pub fn read(&self, cx: &AppContext) -> (Snapshot, Vec<FoldEdit>) {
-        let edits = self.sync(cx);
+    pub fn read(&self, edits: Vec<Edit<usize>>, cx: &AppContext) -> (Snapshot, Vec<FoldEdit>) {
+        let edits = self.sync(edits, cx);
         self.check_invariants(cx);
         let snapshot = Snapshot {
             transforms: self.transforms.lock().clone(),
             folds: self.folds.clone(),
             buffer_snapshot: self.buffer.read(cx).snapshot(),
-            version: self.version.load(SeqCst),
+            version: self.version,
         };
         (snapshot, edits)
     }
 
-    pub fn write(&mut self, cx: &AppContext) -> (FoldMapWriter, Snapshot, Vec<FoldEdit>) {
-        let (snapshot, edits) = self.read(cx);
+    pub fn write(
+        &mut self,
+        edits: Vec<Edit<usize>>,
+        cx: &AppContext,
+    ) -> (FoldMapWriter, Snapshot, Vec<FoldEdit>) {
+        let (snapshot, edits) = self.read(edits, cx);
         (FoldMapWriter(self), snapshot, edits)
-    }
-
-    fn sync(&self, cx: &AppContext) -> Vec<FoldEdit> {
-        let buffer = self.buffer.read(cx);
-        let last_sync = mem::replace(
-            &mut *self.last_sync.lock(),
-            SyncState {
-                version: buffer.version(),
-                parse_count: buffer.parse_count(),
-                diagnostics_update_count: buffer.diagnostics_update_count(),
-            },
-        );
-        let edits = buffer
-            .edits_since(&last_sync.version)
-            .map(Into::into)
-            .collect::<Vec<_>>();
-        if edits.is_empty() {
-            if last_sync.parse_count != buffer.parse_count()
-                || last_sync.diagnostics_update_count != buffer.diagnostics_update_count()
-            {
-                self.version.fetch_add(1, SeqCst);
-            }
-            Vec::new()
-        } else {
-            self.apply_edits(edits, cx)
-        }
     }
 
     fn check_invariants(&self, cx: &AppContext) {
@@ -285,7 +251,11 @@ impl FoldMap {
         }
     }
 
-    fn apply_edits(&self, buffer_edits: Vec<text::Edit<usize>>, cx: &AppContext) -> Vec<FoldEdit> {
+    fn sync(&self, buffer_edits: Vec<text::Edit<usize>>, cx: &AppContext) -> Vec<FoldEdit> {
+        if buffer_edits.is_empty() {
+            return Vec::new();
+        }
+
         let buffer = self.buffer.read(cx).snapshot();
         let mut buffer_edits_iter = buffer_edits.iter().cloned().peekable();
 
@@ -479,7 +449,6 @@ impl FoldMap {
         }
 
         *transforms = new_transforms;
-        self.version.fetch_add(1, SeqCst);
         fold_edits
     }
 }
@@ -1086,7 +1055,7 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6), cx));
         let mut map = FoldMap::new(buffer.clone(), cx.as_ref()).0;
 
-        let (mut writer, _, _) = map.write(cx.as_ref());
+        let (mut writer, _, _) = map.write(vec![], cx.as_ref());
         let (snapshot2, edits) = writer.fold(
             vec![
                 Point::new(0, 2)..Point::new(2, 2),
@@ -1109,7 +1078,8 @@ mod tests {
             ]
         );
 
-        buffer.update(cx, |buffer, cx| {
+        let edits = buffer.update(cx, |buffer, cx| {
+            let v0 = buffer.version();
             buffer.edit(
                 vec![
                     Point::new(0, 0)..Point::new(0, 1),
@@ -1118,8 +1088,9 @@ mod tests {
                 "123",
                 cx,
             );
+            buffer.edits_since(&v0).collect()
         });
-        let (snapshot3, edits) = map.read(cx.as_ref());
+        let (snapshot3, edits) = map.read(edits, cx.as_ref());
         assert_eq!(snapshot3.text(), "123a…c123c…eeeee");
         assert_eq!(
             edits,
@@ -1135,15 +1106,17 @@ mod tests {
             ]
         );
 
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit(vec![Point::new(2, 6)..Point::new(4, 3)], "456", cx)
+        let edits = buffer.update(cx, |buffer, cx| {
+            let v0 = buffer.version();
+            buffer.edit(vec![Point::new(2, 6)..Point::new(4, 3)], "456", cx);
+            buffer.edits_since(&v0).collect()
         });
-        let (snapshot4, _) = map.read(cx.as_ref());
+        let (snapshot4, _) = map.read(edits, cx.as_ref());
         assert_eq!(snapshot4.text(), "123a…c123456eee");
 
-        let (mut writer, _, _) = map.write(cx.as_ref());
+        let (mut writer, _, _) = map.write(vec![], cx.as_ref());
         writer.unfold(Some(Point::new(0, 4)..Point::new(0, 5)), cx.as_ref());
-        let (snapshot5, _) = map.read(cx.as_ref());
+        let (snapshot5, _) = map.read(vec![], cx.as_ref());
         assert_eq!(snapshot5.text(), "123aaaaa\nbbbbbb\nccc123456eee");
     }
 
@@ -1154,21 +1127,21 @@ mod tests {
         {
             let mut map = FoldMap::new(buffer.clone(), cx.as_ref()).0;
 
-            let (mut writer, _, _) = map.write(cx.as_ref());
+            let (mut writer, _, _) = map.write(vec![], cx.as_ref());
             writer.fold(vec![5..8], cx.as_ref());
-            let (snapshot, _) = map.read(cx.as_ref());
+            let (snapshot, _) = map.read(vec![], cx.as_ref());
             assert_eq!(snapshot.text(), "abcde…ijkl");
 
             // Create an fold adjacent to the start of the first fold.
-            let (mut writer, _, _) = map.write(cx.as_ref());
+            let (mut writer, _, _) = map.write(vec![], cx.as_ref());
             writer.fold(vec![0..1, 2..5], cx.as_ref());
-            let (snapshot, _) = map.read(cx.as_ref());
+            let (snapshot, _) = map.read(vec![], cx.as_ref());
             assert_eq!(snapshot.text(), "…b…ijkl");
 
             // Create an fold adjacent to the end of the first fold.
-            let (mut writer, _, _) = map.write(cx.as_ref());
+            let (mut writer, _, _) = map.write(vec![], cx.as_ref());
             writer.fold(vec![11..11, 8..10], cx.as_ref());
-            let (snapshot, _) = map.read(cx.as_ref());
+            let (snapshot, _) = map.read(vec![], cx.as_ref());
             assert_eq!(snapshot.text(), "…b…kl");
         }
 
@@ -1176,14 +1149,18 @@ mod tests {
             let mut map = FoldMap::new(buffer.clone(), cx.as_ref()).0;
 
             // Create two adjacent folds.
-            let (mut writer, _, _) = map.write(cx.as_ref());
+            let (mut writer, _, _) = map.write(vec![], cx.as_ref());
             writer.fold(vec![0..2, 2..5], cx.as_ref());
-            let (snapshot, _) = map.read(cx.as_ref());
+            let (snapshot, _) = map.read(vec![], cx.as_ref());
             assert_eq!(snapshot.text(), "…fghijkl");
 
             // Edit within one of the folds.
-            buffer.update(cx, |buffer, cx| buffer.edit(vec![0..1], "12345", cx));
-            let (snapshot, _) = map.read(cx.as_ref());
+            let edits = buffer.update(cx, |buffer, cx| {
+                let v0 = buffer.version();
+                buffer.edit(vec![0..1], "12345", cx);
+                buffer.edits_since(&v0).collect()
+            });
+            let (snapshot, _) = map.read(edits, cx.as_ref());
             assert_eq!(snapshot.text(), "12345…fghijkl");
         }
     }
@@ -1192,7 +1169,7 @@ mod tests {
     fn test_overlapping_folds(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6), cx));
         let mut map = FoldMap::new(buffer.clone(), cx.as_ref()).0;
-        let (mut writer, _, _) = map.write(cx.as_ref());
+        let (mut writer, _, _) = map.write(vec![], cx.as_ref());
         writer.fold(
             vec![
                 Point::new(0, 2)..Point::new(2, 2),
@@ -1202,7 +1179,7 @@ mod tests {
             ],
             cx.as_ref(),
         );
-        let (snapshot, _) = map.read(cx.as_ref());
+        let (snapshot, _) = map.read(vec![], cx.as_ref());
         assert_eq!(snapshot.text(), "aa…eeeee");
     }
 
@@ -1211,7 +1188,7 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6), cx));
         let mut map = FoldMap::new(buffer.clone(), cx.as_ref()).0;
 
-        let (mut writer, _, _) = map.write(cx.as_ref());
+        let (mut writer, _, _) = map.write(vec![], cx.as_ref());
         writer.fold(
             vec![
                 Point::new(0, 2)..Point::new(2, 2),
@@ -1219,13 +1196,15 @@ mod tests {
             ],
             cx.as_ref(),
         );
-        let (snapshot, _) = map.read(cx.as_ref());
+        let (snapshot, _) = map.read(vec![], cx.as_ref());
         assert_eq!(snapshot.text(), "aa…cccc\nd…eeeee");
 
-        buffer.update(cx, |buffer, cx| {
-            buffer.edit(Some(Point::new(2, 2)..Point::new(3, 1)), "", cx)
+        let edits = buffer.update(cx, |buffer, cx| {
+            let v0 = buffer.version();
+            buffer.edit(Some(Point::new(2, 2)..Point::new(3, 1)), "", cx);
+            buffer.edits_since(&v0).collect()
         });
-        let (snapshot, _) = map.read(cx.as_ref());
+        let (snapshot, _) = map.read(edits, cx.as_ref());
         assert_eq!(snapshot.text(), "aa…eeeee");
     }
 
@@ -1235,7 +1214,7 @@ mod tests {
         let mut map = FoldMap::new(buffer.clone(), cx.as_ref()).0;
         let buffer = buffer.read(cx);
 
-        let (mut writer, _, _) = map.write(cx.as_ref());
+        let (mut writer, _, _) = map.write(vec![], cx.as_ref());
         writer.fold(
             vec![
                 Point::new(0, 2)..Point::new(2, 2),
@@ -1245,7 +1224,7 @@ mod tests {
             ],
             cx.as_ref(),
         );
-        let (snapshot, _) = map.read(cx.as_ref());
+        let (snapshot, _) = map.read(vec![], cx.as_ref());
         let fold_ranges = snapshot
             .folds_in_range(Point::new(1, 0)..Point::new(1, 3))
             .map(|fold| fold.start.to_point(buffer)..fold.end.to_point(buffer))
@@ -1272,27 +1251,27 @@ mod tests {
         });
         let mut map = FoldMap::new(buffer.clone(), cx.as_ref()).0;
 
-        let (mut initial_snapshot, _) = map.read(cx.as_ref());
+        let (mut initial_snapshot, _) = map.read(vec![], cx.as_ref());
         let mut snapshot_edits = Vec::new();
 
         for _ in 0..operations {
             log::info!("text: {:?}", buffer.read(cx).text());
-            match rng.gen_range(0..=100) {
+            let buffer_edits = match rng.gen_range(0..=100) {
                 0..=59 => {
                     snapshot_edits.extend(map.randomly_mutate(&mut rng, cx.as_ref()));
+                    vec![]
                 }
-                _ => {
-                    let edits = buffer.update(cx, |buffer, _| {
-                        let start_version = buffer.version.clone();
-                        let edit_count = rng.gen_range(1..=5);
-                        buffer.randomly_edit(&mut rng, edit_count);
-                        buffer
-                            .edits_since::<Point>(&start_version)
-                            .collect::<Vec<_>>()
-                    });
+                _ => buffer.update(cx, |buffer, _| {
+                    let start_version = buffer.version.clone();
+                    let edit_count = rng.gen_range(1..=5);
+                    buffer.randomly_edit(&mut rng, edit_count);
+                    let edits = buffer
+                        .edits_since::<Point>(&start_version)
+                        .collect::<Vec<_>>();
                     log::info!("editing {:?}", edits);
-                }
-            }
+                    buffer.edits_since::<usize>(&start_version).collect()
+                }),
+            };
 
             let buffer = map.buffer.read(cx).snapshot();
             let mut expected_text: String = buffer.text().to_string();
@@ -1309,7 +1288,7 @@ mod tests {
             expected_buffer_rows.extend((0..=next_row).rev());
             expected_buffer_rows.reverse();
 
-            let (snapshot, edits) = map.read(cx.as_ref());
+            let (snapshot, edits) = map.read(buffer_edits, cx.as_ref());
             assert_eq!(snapshot.text(), expected_text);
             snapshot_edits.push((snapshot.clone(), edits));
 
@@ -1479,7 +1458,7 @@ mod tests {
 
         let mut map = FoldMap::new(buffer.clone(), cx.as_ref()).0;
 
-        let (mut writer, _, _) = map.write(cx.as_ref());
+        let (mut writer, _, _) = map.write(vec![], cx.as_ref());
         writer.fold(
             vec![
                 Point::new(0, 2)..Point::new(2, 2),
@@ -1488,7 +1467,7 @@ mod tests {
             cx.as_ref(),
         );
 
-        let (snapshot, _) = map.read(cx.as_ref());
+        let (snapshot, _) = map.read(vec![], cx.as_ref());
         assert_eq!(snapshot.text(), "aa…cccc\nd…eeeee\nffffff\n");
         assert_eq!(snapshot.buffer_rows(0).collect::<Vec<_>>(), [0, 3, 5, 6]);
         assert_eq!(snapshot.buffer_rows(3).collect::<Vec<_>>(), [6]);
@@ -1540,7 +1519,7 @@ mod tests {
                         to_unfold.push(start..end);
                     }
                     log::info!("unfolding {:?}", to_unfold);
-                    let (mut writer, snapshot, edits) = self.write(cx.as_ref());
+                    let (mut writer, snapshot, edits) = self.write(vec![], cx.as_ref());
                     snapshot_edits.push((snapshot, edits));
                     let (snapshot, edits) = writer.fold(to_unfold, cx.as_ref());
                     snapshot_edits.push((snapshot, edits));
@@ -1554,7 +1533,7 @@ mod tests {
                         to_fold.push(start..end);
                     }
                     log::info!("folding {:?}", to_fold);
-                    let (mut writer, snapshot, edits) = self.write(cx.as_ref());
+                    let (mut writer, snapshot, edits) = self.write(vec![], cx.as_ref());
                     snapshot_edits.push((snapshot, edits));
                     let (snapshot, edits) = writer.fold(to_fold, cx.as_ref());
                     snapshot_edits.push((snapshot, edits));

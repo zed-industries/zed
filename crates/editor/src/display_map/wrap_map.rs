@@ -1,6 +1,5 @@
 use super::{
     fold_map,
-    patch::Patch,
     tab_map::{self, Edit as TabEdit, Snapshot as TabSnapshot, TabPoint},
     DisplayRow,
 };
@@ -13,6 +12,7 @@ use lazy_static::lazy_static;
 use smol::future::yield_now;
 use std::{collections::VecDeque, mem, ops::Range, time::Duration};
 use sum_tree::{Bias, Cursor, SumTree};
+use text::Patch;
 use theme::SyntaxTheme;
 
 pub use super::tab_map::TextSummary;
@@ -21,8 +21,8 @@ pub type Edit = text::Edit<u32>;
 pub struct WrapMap {
     snapshot: Snapshot,
     pending_edits: VecDeque<(TabSnapshot, Vec<TabEdit>)>,
-    interpolated_edits: Patch,
-    edits_since_sync: Patch,
+    interpolated_edits: Patch<u32>,
+    edits_since_sync: Patch<u32>,
     wrap_width: Option<f32>,
     background_task: Option<Task<()>>,
     font: (FontId, f32),
@@ -308,7 +308,7 @@ impl Snapshot {
         }
     }
 
-    fn interpolate(&mut self, new_tab_snapshot: TabSnapshot, tab_edits: &[TabEdit]) -> Patch {
+    fn interpolate(&mut self, new_tab_snapshot: TabSnapshot, tab_edits: &[TabEdit]) -> Patch<u32> {
         let mut new_transforms;
         if tab_edits.is_empty() {
             new_transforms = self.transforms.clone();
@@ -383,7 +383,7 @@ impl Snapshot {
         tab_edits: &[TabEdit],
         wrap_width: f32,
         line_wrapper: &mut LineWrapper,
-    ) -> Patch {
+    ) -> Patch<u32> {
         #[derive(Debug)]
         struct RowEdit {
             old_rows: Range<u32>,
@@ -526,7 +526,7 @@ impl Snapshot {
         old_snapshot.compute_edits(tab_edits, self)
     }
 
-    fn compute_edits(&self, tab_edits: &[TabEdit], new_snapshot: &Snapshot) -> Patch {
+    fn compute_edits(&self, tab_edits: &[TabEdit], new_snapshot: &Snapshot) -> Patch<u32> {
         let mut wrap_edits = Vec::new();
         let mut old_cursor = self.transforms.cursor::<TransformSummary>();
         let mut new_cursor = new_snapshot.transforms.cursor::<TransformSummary>();
@@ -1067,6 +1067,7 @@ mod tests {
         for _i in 0..operations {
             log::info!("{} ==============================================", _i);
 
+            let mut buffer_edits = Vec::new();
             match rng.gen_range(0..=100) {
                 0..=19 => {
                     wrap_width = if rng.gen_bool(0.2) {
@@ -1090,7 +1091,11 @@ mod tests {
                     }
                 }
                 _ => {
-                    buffer.update(&mut cx, |buffer, _| buffer.randomly_mutate(&mut rng));
+                    buffer.update(&mut cx, |buffer, _| {
+                        let v0 = buffer.version();
+                        buffer.randomly_mutate(&mut rng);
+                        buffer_edits.extend(buffer.edits_since(&v0));
+                    });
                 }
             }
 
@@ -1098,7 +1103,7 @@ mod tests {
                 "Unwrapped text (no folds): {:?}",
                 buffer.read_with(&cx, |buf, _| buf.text())
             );
-            let (folds_snapshot, fold_edits) = cx.read(|cx| fold_map.read(cx));
+            let (folds_snapshot, fold_edits) = cx.read(|cx| fold_map.read(buffer_edits, cx));
             log::info!(
                 "Unwrapped text (unexpanded tabs): {:?}",
                 folds_snapshot.text()

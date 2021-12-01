@@ -3466,13 +3466,13 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            language::Event::Edited => cx.emit(Event::Edited),
+            language::Event::Edited(_) => cx.emit(Event::Edited),
             language::Event::Dirtied => cx.emit(Event::Dirtied),
             language::Event::Saved => cx.emit(Event::Saved),
             language::Event::FileHandleChanged => cx.emit(Event::FileHandleChanged),
             language::Event::Reloaded => cx.emit(Event::FileHandleChanged),
             language::Event::Closed => cx.emit(Event::Closed),
-            language::Event::Reparsed => {}
+            _ => {}
         }
     }
 

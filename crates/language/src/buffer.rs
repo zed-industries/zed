@@ -107,12 +107,13 @@ pub enum Operation {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Event {
-    Edited,
+    Edited(Patch<usize>),
     Dirtied,
     Saved,
     FileHandleChanged,
     Reloaded,
     Reparsed,
+    DiagnosticsUpdated,
     Closed,
 }
 
@@ -805,6 +806,7 @@ impl Buffer {
 
         self.diagnostics_update_count += 1;
         cx.notify();
+        cx.emit(Event::DiagnosticsUpdated);
         Ok(Operation::UpdateDiagnostics(self.diagnostics.clone()))
     }
 
@@ -1316,14 +1318,16 @@ impl Buffer {
         was_dirty: bool,
         cx: &mut ModelContext<Self>,
     ) {
-        if self.edits_since::<usize>(old_version).next().is_none() {
+        let patch =
+            unsafe { Patch::new_unchecked(self.edits_since::<usize>(old_version).collect()) };
+        if patch.is_empty() {
             return;
         }
 
         self.reparse(cx);
         self.update_language_server();
 
-        cx.emit(Event::Edited);
+        cx.emit(Event::Edited(patch));
         if !was_dirty {
             cx.emit(Event::Dirtied);
         }

@@ -1,16 +1,40 @@
-use std::{cmp, mem};
+use crate::Edit;
+use std::{
+    cmp, mem,
+    ops::{Add, AddAssign, Sub},
+};
 
-type Edit = text::Edit<u32>;
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
+pub struct Patch<T>(Vec<Edit<T>>);
 
-#[derive(Default, Debug, PartialEq, Eq)]
-pub struct Patch(Vec<Edit>);
-
-impl Patch {
-    pub unsafe fn new_unchecked(edits: Vec<Edit>) -> Self {
+impl<T> Patch<T>
+where
+    T: Clone
+        + Copy
+        + Ord
+        + Sub<T, Output = T>
+        + Add<T, Output = T>
+        + AddAssign
+        + Default
+        + PartialEq,
+{
+    pub unsafe fn new_unchecked(edits: Vec<Edit<T>>) -> Self {
         Self(edits)
     }
 
-    pub fn into_inner(self) -> Vec<Edit> {
+    pub fn new(edits: Vec<Edit<T>>) -> Self {
+        let mut last_edit: Option<&Edit<T>> = None;
+        for edit in &edits {
+            if let Some(last_edit) = last_edit {
+                assert!(edit.old.start > last_edit.old.end);
+                assert!(edit.new.start > last_edit.new.end);
+            }
+            last_edit = Some(edit);
+        }
+        Self(edits)
+    }
+
+    pub fn into_inner(self) -> Vec<Edit<T>> {
         self.0
     }
 
@@ -19,8 +43,8 @@ impl Patch {
         let mut new_edits_iter = other.0.iter().cloned().peekable();
         let mut composed = Patch(Vec::new());
 
-        let mut old_start = 0;
-        let mut new_start = 0;
+        let mut old_start = T::default();
+        let mut new_start = T::default();
         loop {
             let old_edit = old_edits_iter.peek_mut();
             let new_edit = new_edits_iter.peek_mut();
@@ -33,8 +57,8 @@ impl Patch {
                     old_start += catchup;
                     new_start += catchup;
 
-                    let old_end = old_start + old_edit.old.len() as u32;
-                    let new_end = new_start + old_edit.new.len() as u32;
+                    let old_end = old_start + old_edit.old_len();
+                    let new_end = new_start + old_edit.new_len();
                     composed.push(Edit {
                         old: old_start..old_end,
                         new: new_start..new_end,
@@ -54,8 +78,8 @@ impl Patch {
                     old_start += catchup;
                     new_start += catchup;
 
-                    let old_end = old_start + new_edit.old.len() as u32;
-                    let new_end = new_start + new_edit.new.len() as u32;
+                    let old_end = old_start + new_edit.old_len();
+                    let new_end = new_start + new_edit.new_len();
                     composed.push(Edit {
                         old: old_start..old_end,
                         new: new_start..new_end,
@@ -106,9 +130,8 @@ impl Patch {
                 }
 
                 if old_edit.new.end > new_edit.old.end {
-                    let old_end =
-                        old_start + cmp::min(old_edit.old.len() as u32, new_edit.old.len() as u32);
-                    let new_end = new_start + new_edit.new.len() as u32;
+                    let old_end = old_start + cmp::min(old_edit.old_len(), new_edit.old_len());
+                    let new_end = new_start + new_edit.new_len();
                     composed.push(Edit {
                         old: old_start..old_end,
                         new: new_start..new_end,
@@ -120,9 +143,8 @@ impl Patch {
                     new_start = new_end;
                     new_edits_iter.next();
                 } else {
-                    let old_end = old_start + old_edit.old.len() as u32;
-                    let new_end =
-                        new_start + cmp::min(old_edit.new.len() as u32, new_edit.new.len() as u32);
+                    let old_end = old_start + old_edit.old_len();
+                    let new_end = new_start + cmp::min(old_edit.new_len(), new_edit.new_len());
                     composed.push(Edit {
                         old: old_start..old_end,
                         new: new_start..new_end,
@@ -153,8 +175,12 @@ impl Patch {
         self.0.clear();
     }
 
-    fn push(&mut self, edit: Edit) {
-        if edit.old.len() == 0 && edit.new.len() == 0 {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn push(&mut self, edit: Edit<T>) {
+        if edit.is_empty() {
             return;
         }
 
@@ -479,7 +505,7 @@ mod tests {
     }
 
     #[track_caller]
-    fn assert_patch_composition(old: Patch, new: Patch, composed: Patch) {
+    fn assert_patch_composition(old: Patch<u32>, new: Patch<u32>, composed: Patch<u32>) {
         let original = ('a'..'z').collect::<Vec<_>>();
         let inserted = ('A'..'Z').collect::<Vec<_>>();
 
@@ -498,7 +524,7 @@ mod tests {
         assert_eq!(old.compose(&new), composed);
     }
 
-    fn apply_patch(text: &mut Vec<char>, patch: &Patch, new_text: &[char]) {
+    fn apply_patch(text: &mut Vec<char>, patch: &Patch<u32>, new_text: &[char]) {
         for edit in patch.0.iter().rev() {
             text.splice(
                 edit.old.start as usize..edit.old.end as usize,
