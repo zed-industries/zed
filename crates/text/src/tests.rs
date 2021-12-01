@@ -8,6 +8,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(test)]
+#[ctor::ctor]
+fn init_logger() {
+    // std::env::set_var("RUST_LOG", "info");
+    env_logger::init();
+}
+
 #[test]
 fn test_edit() {
     let mut buffer = Buffer::new(0, 0, History::new("abc".into()));
@@ -72,30 +79,43 @@ fn test_random_edits(mut rng: StdRng) {
         );
 
         if rng.gen_bool(0.3) {
-            buffer_versions.push(buffer.clone());
+            buffer_versions.push((buffer.clone(), buffer.subscribe()));
         }
     }
 
-    for mut old_buffer in buffer_versions {
+    for (old_buffer, subscription) in buffer_versions {
         let edits = buffer
             .edits_since::<usize>(&old_buffer.version)
             .collect::<Vec<_>>();
 
         log::info!(
-            "mutating old buffer version {:?}, text: {:?}, edits since: {:?}",
+            "applying edits since version {:?} to old text: {:?}: {:?}",
             old_buffer.version(),
             old_buffer.text(),
             edits,
         );
 
+        let mut text = old_buffer.visible_text.clone();
         for edit in edits {
             let new_text: String = buffer.text_for_range(edit.new.clone()).collect();
-            old_buffer.edit(
-                Some(edit.new.start..edit.new.start + edit.old.len()),
-                new_text,
-            );
+            text.replace(edit.new.start..edit.new.start + edit.old.len(), &new_text);
         }
-        assert_eq!(old_buffer.text(), buffer.text());
+        assert_eq!(text.to_string(), buffer.text());
+
+        let subscription_edits = subscription.consume();
+        log::info!(
+            "applying subscription edits since version {:?} to old text: {:?}: {:?}",
+            old_buffer.version(),
+            old_buffer.text(),
+            subscription_edits,
+        );
+
+        let mut text = old_buffer.visible_text.clone();
+        for edit in subscription_edits.into_inner() {
+            let new_text: String = buffer.text_for_range(edit.new.clone()).collect();
+            text.replace(edit.new.start..edit.new.start + edit.old.len(), &new_text);
+        }
+        assert_eq!(text.to_string(), buffer.text());
     }
 }
 

@@ -18,18 +18,17 @@ where
         + Default
         + PartialEq,
 {
-    pub unsafe fn new_unchecked(edits: Vec<Edit<T>>) -> Self {
-        Self(edits)
-    }
-
     pub fn new(edits: Vec<Edit<T>>) -> Self {
-        let mut last_edit: Option<&Edit<T>> = None;
-        for edit in &edits {
-            if let Some(last_edit) = last_edit {
-                assert!(edit.old.start > last_edit.old.end);
-                assert!(edit.new.start > last_edit.new.end);
+        #[cfg(debug_assertions)]
+        {
+            let mut last_edit: Option<&Edit<T>> = None;
+            for edit in &edits {
+                if let Some(last_edit) = last_edit {
+                    assert!(edit.old.start > last_edit.old.end);
+                    assert!(edit.new.start > last_edit.new.end);
+                }
+                last_edit = Some(edit);
             }
-            last_edit = Some(edit);
         }
         Self(edits)
     }
@@ -179,7 +178,7 @@ where
         self.0.is_empty()
     }
 
-    fn push(&mut self, edit: Edit<T>) {
+    pub fn push(&mut self, edit: Edit<T>) {
         if edit.is_empty() {
             return;
         }

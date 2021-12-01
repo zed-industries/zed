@@ -1322,8 +1322,7 @@ impl Buffer {
         was_dirty: bool,
         cx: &mut ModelContext<Self>,
     ) {
-        let patch =
-            unsafe { Patch::new_unchecked(self.edits_since::<usize>(old_version).collect()) };
+        let patch = Patch::new(self.edits_since::<usize>(old_version).collect());
         if patch.is_empty() {
             return;
         }
@@ -1498,30 +1497,6 @@ impl Entity for Buffer {
     fn release(&mut self, cx: &mut gpui::MutableAppContext) {
         if let Some(file) = self.file.as_ref() {
             file.buffer_removed(self.remote_id(), cx);
-        }
-    }
-}
-
-// TODO: Do we need to clone a buffer?
-impl Clone for Buffer {
-    fn clone(&self) -> Self {
-        Self {
-            text: self.text.clone(),
-            saved_version: self.saved_version.clone(),
-            saved_mtime: self.saved_mtime,
-            file: self.file.as_ref().map(|f| f.boxed_clone()),
-            language: self.language.clone(),
-            syntax_tree: Mutex::new(self.syntax_tree.lock().clone()),
-            parsing_in_background: false,
-            sync_parse_timeout: self.sync_parse_timeout,
-            parse_count: self.parse_count,
-            autoindent_requests: Default::default(),
-            pending_autoindent: Default::default(),
-            diagnostics: self.diagnostics.clone(),
-            diagnostics_update_count: self.diagnostics_update_count,
-            language_server: None,
-            #[cfg(test)]
-            operations: self.operations.clone(),
         }
     }
 }

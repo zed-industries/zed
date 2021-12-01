@@ -204,12 +204,10 @@ impl WrapMap {
             }
             let new_rows = self.snapshot.transforms.summary().output.lines.row + 1;
             self.snapshot.interpolated = false;
-            self.edits_since_sync = self.edits_since_sync.compose(&unsafe {
-                Patch::new_unchecked(vec![Edit {
-                    old: 0..old_rows,
-                    new: 0..new_rows,
-                }])
-            });
+            self.edits_since_sync = self.edits_since_sync.compose(&Patch::new(vec![Edit {
+                old: 0..old_rows,
+                new: 0..new_rows,
+            }]));
         }
     }
 
@@ -559,7 +557,7 @@ impl Snapshot {
         }
 
         consolidate_wrap_edits(&mut wrap_edits);
-        unsafe { Patch::new_unchecked(wrap_edits) }
+        Patch::new(wrap_edits)
     }
 
     pub fn text_chunks(&self, wrap_row: u32) -> impl Iterator<Item = &str> {
