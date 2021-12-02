@@ -827,8 +827,8 @@ impl AlignedBlock {
         self.render.lock()(cx)
     }
 
-    pub fn disposition(&self) -> BlockDisposition {
-        self.block.disposition
+    pub fn position(&self) -> &Anchor {
+        &self.block.position
     }
 }
 

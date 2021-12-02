@@ -1,4 +1,4 @@
-use crate::display_map::{BlockContext, BlockDisposition};
+use crate::display_map::{BlockContext, ToDisplayPoint};
 
 use super::{
     DisplayPoint, Editor, EditorMode, EditorSettings, EditorStyle, Input, Scroll, Select,
@@ -19,7 +19,7 @@ use gpui::{
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
-use language::Chunk;
+use language::{Chunk, ToPoint};
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
@@ -633,10 +633,11 @@ impl EditorElement {
         snapshot
             .blocks_in_range(rows.clone())
             .map(|(start_row, block)| {
-                let anchor_row = match block.disposition() {
-                    BlockDisposition::Above => start_row + block.height(),
-                    BlockDisposition::Below => start_row - 1,
-                };
+                let anchor_row = block
+                    .position()
+                    .to_point(&snapshot.buffer_snapshot)
+                    .to_display_point(snapshot)
+                    .row();
 
                 let anchor_x = if rows.contains(&anchor_row) {
                     line_layouts[(anchor_row - rows.start) as usize]
