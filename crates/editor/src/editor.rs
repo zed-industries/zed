@@ -8,11 +8,12 @@ mod test;
 
 use aho_corasick::AhoCorasick;
 use clock::ReplicaId;
+pub use display_map::DisplayPoint;
 use display_map::*;
-pub use display_map::{DisplayPoint, DisplayRow};
 pub use element::*;
 use gpui::{
     action,
+    elements::Text,
     geometry::vector::{vec2f, Vector2F},
     keymap::Binding,
     text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
@@ -28,14 +29,14 @@ use std::{
     cmp,
     collections::HashMap,
     iter, mem,
-    ops::{Range, RangeInclusive},
+    ops::{Deref, Range, RangeInclusive},
     rc::Rc,
     sync::Arc,
     time::Duration,
 };
 use sum_tree::Bias;
 use text::rope::TextDimension;
-use theme::{DiagnosticStyle, EditorStyle, SyntaxTheme};
+use theme::{DiagnosticStyle, EditorStyle};
 use util::post_inc;
 use workspace::{EntryOpener, Workspace};
 
@@ -2877,35 +2878,16 @@ impl Editor {
                 active_diagnostics.is_valid = is_valid;
                 let mut new_styles = HashMap::new();
                 for (block_id, diagnostic) in &active_diagnostics.blocks {
-                    let severity = diagnostic.severity;
-                    let message_len = diagnostic.message.len();
-                    new_styles.insert(
-                        *block_id,
-                        (
-                            Some({
-                                let build_settings = self.build_settings.clone();
-                                move |cx: &AppContext| {
-                                    let settings = build_settings.borrow()(cx);
-                                    vec![(
-                                        message_len,
-                                        diagnostic_style(severity, is_valid, &settings.style)
-                                            .text
-                                            .into(),
-                                    )]
-                                }
-                            }),
-                            Some({
-                                let build_settings = self.build_settings.clone();
-                                move |cx: &AppContext| {
-                                    let settings = build_settings.borrow()(cx);
-                                    diagnostic_style(severity, is_valid, &settings.style).block
-                                }
-                            }),
-                        ),
-                    );
+                    let build_settings = self.build_settings.clone();
+                    let diagnostic = diagnostic.clone();
+                    new_styles.insert(*block_id, move |cx: &BlockContext| {
+                        let diagnostic = diagnostic.clone();
+                        let settings = build_settings.borrow()(cx.cx);
+                        render_diagnostic(diagnostic, &settings.style, is_valid, cx.anchor_x)
+                    });
                 }
                 self.display_map
-                    .update(cx, |display_map, _| display_map.restyle_blocks(new_styles));
+                    .update(cx, |display_map, _| display_map.replace_blocks(new_styles));
             }
         }
     }
@@ -2940,30 +2922,17 @@ impl Editor {
                 .insert_blocks(
                     diagnostic_group.iter().map(|(range, diagnostic)| {
                         let build_settings = self.build_settings.clone();
-                        let message_len = diagnostic.message.len();
-                        let severity = diagnostic.severity;
+                        let diagnostic = diagnostic.clone();
+                        let message_height = diagnostic.message.lines().count() as u8;
+
                         BlockProperties {
                             position: range.start,
-                            text: diagnostic.message.as_str(),
-                            build_runs: Some(Arc::new({
-                                let build_settings = build_settings.clone();
-                                move |cx| {
-                                    let settings = build_settings.borrow()(cx);
-                                    vec![(
-                                        message_len,
-                                        diagnostic_style(severity, true, &settings.style)
-                                            .text
-                                            .into(),
-                                    )]
-                                }
-                            })),
-                            build_style: Some(Arc::new({
-                                let build_settings = build_settings.clone();
-                                move |cx| {
-                                    let settings = build_settings.borrow()(cx);
-                                    diagnostic_style(severity, true, &settings.style).block
-                                }
-                            })),
+                            height: message_height,
+                            render: Arc::new(move |cx| {
+                                let settings = build_settings.borrow()(cx.cx);
+                                let diagnostic = diagnostic.clone();
+                                render_diagnostic(diagnostic, &settings.style, true, cx.anchor_x)
+                            }),
                             disposition: BlockDisposition::Below,
                         }
                     }),
@@ -3482,33 +3451,12 @@ impl Editor {
 }
 
 impl Snapshot {
-    pub fn is_empty(&self) -> bool {
-        self.display_snapshot.is_empty()
-    }
-
     pub fn is_focused(&self) -> bool {
         self.is_focused
     }
 
     pub fn placeholder_text(&self) -> Option<&Arc<str>> {
         self.placeholder_text.as_ref()
-    }
-
-    pub fn buffer_row_count(&self) -> u32 {
-        self.display_snapshot.buffer_row_count()
-    }
-
-    pub fn buffer_rows<'a>(&'a self, start_row: u32, cx: &'a AppContext) -> BufferRows<'a> {
-        self.display_snapshot.buffer_rows(start_row, Some(cx))
-    }
-
-    pub fn chunks<'a>(
-        &'a self,
-        display_rows: Range<u32>,
-        theme: Option<&'a SyntaxTheme>,
-        cx: &'a AppContext,
-    ) -> display_map::Chunks<'a> {
-        self.display_snapshot.chunks(display_rows, theme, cx)
     }
 
     pub fn scroll_position(&self) -> Vector2F {
@@ -3518,29 +3466,13 @@ impl Snapshot {
             &self.scroll_top_anchor,
         )
     }
+}
 
-    pub fn max_point(&self) -> DisplayPoint {
-        self.display_snapshot.max_point()
-    }
+impl Deref for Snapshot {
+    type Target = DisplayMapSnapshot;
 
-    pub fn longest_row(&self) -> u32 {
-        self.display_snapshot.longest_row()
-    }
-
-    pub fn line_len(&self, display_row: u32) -> u32 {
-        self.display_snapshot.line_len(display_row)
-    }
-
-    pub fn line(&self, display_row: u32) -> String {
-        self.display_snapshot.line(display_row)
-    }
-
-    pub fn prev_row_boundary(&self, point: DisplayPoint) -> (DisplayPoint, Point) {
-        self.display_snapshot.prev_row_boundary(point)
-    }
-
-    pub fn next_row_boundary(&self, point: DisplayPoint) -> (DisplayPoint, Point) {
-        self.display_snapshot.next_row_boundary(point)
+    fn deref(&self) -> &Self::Target {
+        &self.display_snapshot
     }
 }
 
@@ -3707,6 +3639,20 @@ impl SelectionExt for Selection<Point> {
             display_rows: display_start.row()..display_end.row() + 1,
         }
     }
+}
+
+fn render_diagnostic(
+    diagnostic: Diagnostic,
+    style: &EditorStyle,
+    valid: bool,
+    anchor_x: f32,
+) -> ElementBox {
+    let mut text_style = style.text.clone();
+    text_style.color = diagnostic_style(diagnostic.severity, valid, &style).text;
+    Text::new(diagnostic.message, text_style)
+        .contained()
+        .with_margin_left(anchor_x)
+        .boxed()
 }
 
 pub fn diagnostic_style(
