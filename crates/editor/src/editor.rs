@@ -2883,7 +2883,7 @@ impl Editor {
                     new_styles.insert(*block_id, move |cx: &BlockContext| {
                         let diagnostic = diagnostic.clone();
                         let settings = build_settings.borrow()(cx.cx);
-                        render_diagnostic(diagnostic, &settings.style)
+                        render_diagnostic(diagnostic, &settings.style, is_valid, cx.anchor_x)
                     });
                 }
                 self.display_map
@@ -2931,7 +2931,7 @@ impl Editor {
                             render: Arc::new(move |cx| {
                                 let settings = build_settings.borrow()(cx.cx);
                                 let diagnostic = diagnostic.clone();
-                                render_diagnostic(diagnostic, &settings.style)
+                                render_diagnostic(diagnostic, &settings.style, true, cx.anchor_x)
                             }),
                             disposition: BlockDisposition::Below,
                         }
@@ -3641,10 +3641,18 @@ impl SelectionExt for Selection<Point> {
     }
 }
 
-fn render_diagnostic(diagnostic: Diagnostic, style: &EditorStyle) -> ElementBox {
+fn render_diagnostic(
+    diagnostic: Diagnostic,
+    style: &EditorStyle,
+    valid: bool,
+    anchor_x: f32,
+) -> ElementBox {
     let mut text_style = style.text.clone();
-    text_style.color = diagnostic_style(diagnostic.severity, true, &style).text;
-    Text::new(diagnostic.message, text_style).boxed()
+    text_style.color = diagnostic_style(diagnostic.severity, valid, &style).text;
+    Text::new(diagnostic.message, text_style)
+        .contained()
+        .with_margin_left(anchor_x)
+        .boxed()
 }
 
 pub fn diagnostic_style(

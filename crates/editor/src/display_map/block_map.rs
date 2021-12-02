@@ -66,7 +66,6 @@ where
 
 pub struct BlockContext<'a> {
     pub cx: &'a AppContext,
-    pub gutter_width: f32,
     pub anchor_x: f32,
 }
 
@@ -822,6 +821,10 @@ impl AlignedBlock {
     pub fn render(&self, cx: &BlockContext) -> ElementBox {
         self.render.lock()(cx)
     }
+
+    pub fn disposition(&self) -> BlockDisposition {
+        self.block.disposition
+    }
 }
 
 impl Deref for AlignedBlock {
@@ -935,11 +938,7 @@ mod tests {
                     start_row..start_row + block.height(),
                     block.column(),
                     block
-                        .render(&BlockContext {
-                            cx,
-                            gutter_width: 0.,
-                            anchor_x: 0.,
-                        })
+                        .render(&BlockContext { cx, anchor_x: 0. })
                         .name()
                         .unwrap()
                         .to_string(),

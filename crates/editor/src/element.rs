@@ -1,4 +1,4 @@
-use crate::display_map::BlockContext;
+use crate::display_map::{BlockContext, BlockDisposition};
 
 use super::{
     DisplayPoint, Editor, EditorMode, EditorSettings, EditorStyle, Input, Scroll, Select,
@@ -220,7 +220,6 @@ impl EditorElement {
     ) {
         let bounds = gutter_bounds.union_rect(text_bounds);
         let scroll_top = layout.snapshot.scroll_position().y() * layout.line_height;
-        let start_row = layout.snapshot.scroll_position().y() as u32;
         let editor = self.view(cx.app);
         let style = &self.settings.style;
         cx.scene.push_quad(Quad {
@@ -419,13 +418,19 @@ impl EditorElement {
 
     fn paint_blocks(
         &mut self,
-        bounds: RectF,
+        text_bounds: RectF,
         visible_bounds: RectF,
-        layout: &LayoutState,
+        layout: &mut LayoutState,
         cx: &mut PaintContext,
     ) {
-        for (row_range, block) in &layout.blocks {
-            //
+        let scroll_position = layout.snapshot.scroll_position();
+        let scroll_left = scroll_position.x() * layout.em_width;
+        let scroll_top = scroll_position.y() * layout.line_height;
+
+        for (row, element) in &mut layout.blocks {
+            let origin = text_bounds.origin()
+                + vec2f(-scroll_left, *row as f32 * layout.line_height - scroll_top);
+            element.paint(origin, visible_bounds, cx);
         }
     }
 
@@ -619,19 +624,37 @@ impl EditorElement {
         &mut self,
         rows: Range<u32>,
         snapshot: &Snapshot,
-        cx: &LayoutContext,
-    ) -> Vec<(Range<u32>, ElementBox)> {
+        text_width: f32,
+        line_height: f32,
+        style: &EditorStyle,
+        line_layouts: &[text_layout::Line],
+        cx: &mut LayoutContext,
+    ) -> Vec<(u32, ElementBox)> {
         snapshot
-            .blocks_in_range(rows)
+            .blocks_in_range(rows.clone())
             .map(|(start_row, block)| {
-                (
-                    start_row..start_row + block.height(),
-                    block.render(&BlockContext {
-                        cx,
-                        gutter_width: 0.0,
-                        anchor_x: 0.0,
-                    }),
-                )
+                let anchor_row = match block.disposition() {
+                    BlockDisposition::Above => start_row + block.height(),
+                    BlockDisposition::Below => start_row - 1,
+                };
+
+                let anchor_x = if rows.contains(&anchor_row) {
+                    line_layouts[(anchor_row - rows.start) as usize]
+                        .x_for_index(block.column() as usize)
+                } else {
+                    layout_line(anchor_row, snapshot, style, cx.text_layout_cache)
+                        .x_for_index(block.column() as usize)
+                };
+
+                let mut element = block.render(&BlockContext { cx, anchor_x });
+                element.layout(
+                    SizeConstraint {
+                        min: Vector2F::zero(),
+                        max: vec2f(text_width, block.height() as f32 * line_height),
+                    },
+                    cx,
+                );
+                (start_row, element)
             })
             .collect()
     }
@@ -750,7 +773,15 @@ impl Element for EditorElement {
             }
         }
 
-        let blocks = self.layout_blocks(start_row..end_row, &snapshot, cx);
+        let blocks = self.layout_blocks(
+            start_row..end_row,
+            &snapshot,
+            text_size.x(),
+            line_height,
+            &style,
+            &line_layouts,
+            cx,
+        );
 
         let mut layout = LayoutState {
             size,
@@ -896,7 +927,7 @@ pub struct LayoutState {
     highlighted_row: Option<u32>,
     line_layouts: Vec<text_layout::Line>,
     line_number_layouts: Vec<Option<text_layout::Line>>,
-    blocks: Vec<(Range<u32>, ElementBox)>,
+    blocks: Vec<(u32, ElementBox)>,
     line_height: f32,
     em_width: f32,
     em_advance: f32,
@@ -909,7 +940,8 @@ pub struct LayoutState {
 impl LayoutState {
     fn scroll_width(&self, layout_cache: &TextLayoutCache) -> f32 {
         let row = self.snapshot.longest_row();
-        let longest_line_width = self.layout_line(row, &self.snapshot, layout_cache).width();
+        let longest_line_width =
+            layout_line(row, &self.snapshot, &self.style, layout_cache).width();
         longest_line_width.max(self.max_visible_line_width) + self.overscroll.x()
     }
 
@@ -924,36 +956,36 @@ impl LayoutState {
             max_row.saturating_sub(1) as f32,
         )
     }
+}
 
-    pub fn layout_line(
-        &self,
-        row: u32,
-        snapshot: &Snapshot,
-        layout_cache: &TextLayoutCache,
-    ) -> text_layout::Line {
-        let mut line = snapshot.line(row);
+fn layout_line(
+    row: u32,
+    snapshot: &Snapshot,
+    style: &EditorStyle,
+    layout_cache: &TextLayoutCache,
+) -> text_layout::Line {
+    let mut line = snapshot.line(row);
 
-        if line.len() > MAX_LINE_LEN {
-            let mut len = MAX_LINE_LEN;
-            while !line.is_char_boundary(len) {
-                len -= 1;
-            }
-            line.truncate(len);
+    if line.len() > MAX_LINE_LEN {
+        let mut len = MAX_LINE_LEN;
+        while !line.is_char_boundary(len) {
+            len -= 1;
         }
-
-        layout_cache.layout_str(
-            &line,
-            self.style.text.font_size,
-            &[(
-                snapshot.line_len(row) as usize,
-                RunStyle {
-                    font_id: self.style.text.font_id,
-                    color: Color::black(),
-                    underline: None,
-                },
-            )],
-        )
+        line.truncate(len);
     }
+
+    layout_cache.layout_str(
+        &line,
+        style.text.font_size,
+        &[(
+            snapshot.line_len(row) as usize,
+            RunStyle {
+                font_id: style.text.font_id,
+                color: Color::black(),
+                underline: None,
+            },
+        )],
+    )
 }
 
 pub struct PaintState {
