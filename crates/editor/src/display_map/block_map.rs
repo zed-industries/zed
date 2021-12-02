@@ -704,12 +704,17 @@ impl<'a> Iterator for Chunks<'a> {
         let transform = self.transforms.item()?;
         if transform.block.is_some() {
             let block_start = self.transforms.start().0 .0;
-            let block_end = self.transforms.end(&()).0 .0;
+            let mut block_end = self.transforms.end(&()).0 .0;
+            self.transforms.next(&());
+            if self.transforms.item().is_none() {
+                block_end -= 1;
+            }
+
             let start_in_block = self.output_row - block_start;
             let end_in_block = cmp::min(self.max_output_row, block_end) - block_start;
             let line_count = end_in_block - start_in_block;
             self.output_row += line_count;
-            self.transforms.next(&());
+
             return Some(Chunk {
                 text: unsafe { std::str::from_utf8_unchecked(&NEWLINES[..line_count as usize]) },
                 highlight_style: None,
@@ -904,7 +909,7 @@ mod tests {
         let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot.clone());
 
         let mut writer = block_map.write(wraps_snapshot.clone(), vec![], cx);
-        let block_ids = writer.insert(
+        writer.insert(
             vec![
                 BlockProperties {
                     position: Point::new(1, 0),
@@ -929,7 +934,7 @@ mod tests {
         );
 
         let mut snapshot = block_map.read(wraps_snapshot, vec![], cx);
-        assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n\n");
+        assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n");
 
         let blocks = snapshot
             .blocks_in_range(0..8)
@@ -960,11 +965,11 @@ mod tests {
         );
         assert_eq!(
             snapshot.to_block_point(WrapPoint::new(1, 0)),
-            BlockPoint::new(3, 0)
+            BlockPoint::new(4, 0)
         );
         assert_eq!(
             snapshot.to_block_point(WrapPoint::new(3, 3)),
-            BlockPoint::new(5, 3)
+            BlockPoint::new(6, 3)
         );
 
         assert_eq!(
@@ -980,7 +985,7 @@ mod tests {
             WrapPoint::new(1, 0)
         );
         assert_eq!(
-            snapshot.to_wrap_point(BlockPoint::new(6, 0)),
+            snapshot.to_wrap_point(BlockPoint::new(7, 0)),
             WrapPoint::new(3, 3)
         );
 
@@ -990,7 +995,7 @@ mod tests {
         );
         assert_eq!(
             snapshot.clip_point(BlockPoint::new(1, 0), Bias::Right),
-            BlockPoint::new(3, 0)
+            BlockPoint::new(4, 0)
         );
         assert_eq!(
             snapshot.clip_point(BlockPoint::new(1, 1), Bias::Left),
@@ -998,36 +1003,47 @@ mod tests {
         );
         assert_eq!(
             snapshot.clip_point(BlockPoint::new(1, 1), Bias::Right),
-            BlockPoint::new(3, 0)
+            BlockPoint::new(4, 0)
         );
         assert_eq!(
-            snapshot.clip_point(BlockPoint::new(3, 0), Bias::Left),
-            BlockPoint::new(3, 0)
+            snapshot.clip_point(BlockPoint::new(4, 0), Bias::Left),
+            BlockPoint::new(4, 0)
         );
         assert_eq!(
-            snapshot.clip_point(BlockPoint::new(3, 0), Bias::Right),
-            BlockPoint::new(3, 0)
+            snapshot.clip_point(BlockPoint::new(4, 0), Bias::Right),
+            BlockPoint::new(4, 0)
         );
         assert_eq!(
-            snapshot.clip_point(BlockPoint::new(5, 3), Bias::Left),
-            BlockPoint::new(5, 3)
+            snapshot.clip_point(BlockPoint::new(6, 3), Bias::Left),
+            BlockPoint::new(6, 3)
         );
         assert_eq!(
-            snapshot.clip_point(BlockPoint::new(5, 3), Bias::Right),
-            BlockPoint::new(5, 3)
+            snapshot.clip_point(BlockPoint::new(6, 3), Bias::Right),
+            BlockPoint::new(6, 3)
         );
         assert_eq!(
-            snapshot.clip_point(BlockPoint::new(6, 0), Bias::Left),
-            BlockPoint::new(5, 3)
+            snapshot.clip_point(BlockPoint::new(7, 0), Bias::Left),
+            BlockPoint::new(6, 3)
         );
         assert_eq!(
-            snapshot.clip_point(BlockPoint::new(6, 0), Bias::Right),
-            BlockPoint::new(5, 3)
+            snapshot.clip_point(BlockPoint::new(7, 0), Bias::Right),
+            BlockPoint::new(6, 3)
         );
 
         assert_eq!(
             snapshot.buffer_rows(0).collect::<Vec<_>>(),
-            &[Some(0), None, None, Some(1), Some(2), Some(3), None]
+            &[
+                Some(0),
+                None,
+                None,
+                None,
+                Some(1),
+                Some(2),
+                Some(3),
+                None,
+                None,
+                None
+            ]
         );
 
         // Insert a line break, separating two block decorations into separate
@@ -1047,365 +1063,337 @@ mod tests {
         assert_eq!(snapshot.text(), "aaa\n\nb!!!\n\n\nbb\nccc\nddd\n\n\n");
     }
 
-    // #[gpui::test]
-    // fn test_blocks_on_wrapped_lines(cx: &mut gpui::MutableAppContext) {
-    //     let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
-    //     let font_id = cx
-    //         .font_cache()
-    //         .select_font(family_id, &Default::default())
-    //         .unwrap();
+    #[gpui::test]
+    fn test_blocks_on_wrapped_lines(cx: &mut gpui::MutableAppContext) {
+        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let font_id = cx
+            .font_cache()
+            .select_font(family_id, &Default::default())
+            .unwrap();
 
-    //     let text = "one two three\nfour five six\nseven eight";
+        let text = "one two three\nfour five six\nseven eight";
 
-    //     let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-    //     let (_, folds_snapshot) = FoldMap::new(buffer.read(cx).snapshot());
-    //     let (_, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), 1);
-    //     let (_, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, Some(60.), cx);
-    //     let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot.clone());
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+        let (_, folds_snapshot) = FoldMap::new(buffer.read(cx).snapshot());
+        let (_, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), 1);
+        let (_, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, Some(60.), cx);
+        let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot.clone());
 
-    //     let mut writer = block_map.write(wraps_snapshot.clone(), vec![], cx);
-    //     writer.insert(
-    //         vec![
-    //             BlockProperties {
-    //                 position: Point::new(1, 12),
-    //                 text: "<BLOCK 1",
-    //                 disposition: BlockDisposition::Above,
-    //                 build_runs: None,
-    //                 build_style: None,
-    //             },
-    //             BlockProperties {
-    //                 position: Point::new(1, 1),
-    //                 text: ">BLOCK 2",
-    //                 disposition: BlockDisposition::Below,
-    //                 build_runs: None,
-    //                 build_style: None,
-    //             },
-    //         ],
-    //         cx,
-    //     );
+        let mut writer = block_map.write(wraps_snapshot.clone(), vec![], cx);
+        writer.insert(
+            vec![
+                BlockProperties {
+                    position: Point::new(1, 12),
+                    disposition: BlockDisposition::Above,
+                    render: Arc::new(|_| Empty::new().named("block 1")),
+                    height: 1,
+                },
+                BlockProperties {
+                    position: Point::new(1, 1),
+                    disposition: BlockDisposition::Below,
+                    render: Arc::new(|_| Empty::new().named("block 2")),
+                    height: 1,
+                },
+            ],
+            cx,
+        );
 
-    //     // Blocks with an 'above' disposition go above their corresponding buffer line.
-    //     // Blocks with a 'below' disposition go below their corresponding buffer line.
-    //     let mut snapshot = block_map.read(wraps_snapshot, vec![], cx);
-    //     assert_eq!(
-    //         snapshot.text(),
-    //         "one two \nthree\n  <BLOCK 1\nfour five \nsix\n >BLOCK 2\nseven \neight"
-    //     );
-    // }
+        // Blocks with an 'above' disposition go above their corresponding buffer line.
+        // Blocks with a 'below' disposition go below their corresponding buffer line.
+        let mut snapshot = block_map.read(wraps_snapshot, vec![], cx);
+        assert_eq!(
+            snapshot.text(),
+            "one two \nthree\n\nfour five \nsix\n\nseven \neight"
+        );
+    }
 
-    // #[gpui::test(iterations = 100)]
-    // fn test_random_blocks(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
-    //     let operations = env::var("OPERATIONS")
-    //         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
-    //         .unwrap_or(10);
+    #[gpui::test(iterations = 100)]
+    fn test_random_blocks(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
+        let operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10);
 
-    //     let wrap_width = if rng.gen_bool(0.2) {
-    //         None
-    //     } else {
-    //         Some(rng.gen_range(0.0..=100.0))
-    //     };
-    //     let tab_size = 1;
-    //     let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
-    //     let font_id = cx
-    //         .font_cache()
-    //         .select_font(family_id, &Default::default())
-    //         .unwrap();
-    //     let font_size = 14.0;
+        let wrap_width = if rng.gen_bool(0.2) {
+            None
+        } else {
+            Some(rng.gen_range(0.0..=100.0))
+        };
+        let tab_size = 1;
+        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let font_id = cx
+            .font_cache()
+            .select_font(family_id, &Default::default())
+            .unwrap();
+        let font_size = 14.0;
 
-    //     log::info!("Wrap width: {:?}", wrap_width);
+        log::info!("Wrap width: {:?}", wrap_width);
 
-    //     let buffer = cx.add_model(|cx| {
-    //         let len = rng.gen_range(0..10);
-    //         let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-    //         log::info!("initial buffer text: {:?}", text);
-    //         Buffer::new(0, text, cx)
-    //     });
-    //     let mut buffer_snapshot = buffer.read(cx).snapshot();
-    //     let (fold_map, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
-    //     let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
-    //     let (wrap_map, wraps_snapshot) =
-    //         WrapMap::new(tabs_snapshot, font_id, font_size, wrap_width, cx);
-    //     let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot);
-    //     let mut expected_blocks = Vec::new();
+        let buffer = cx.add_model(|cx| {
+            let len = rng.gen_range(0..10);
+            let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+            log::info!("initial buffer text: {:?}", text);
+            Buffer::new(0, text, cx)
+        });
+        let mut buffer_snapshot = buffer.read(cx).snapshot();
+        let (fold_map, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
+        let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
+        let (wrap_map, wraps_snapshot) =
+            WrapMap::new(tabs_snapshot, font_id, font_size, wrap_width, cx);
+        let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot);
+        let mut expected_blocks = Vec::new();
 
-    //     for _ in 0..operations {
-    //         let mut buffer_edits = Vec::new();
-    //         match rng.gen_range(0..=100) {
-    //             0..=19 => {
-    //                 let wrap_width = if rng.gen_bool(0.2) {
-    //                     None
-    //                 } else {
-    //                     Some(rng.gen_range(0.0..=100.0))
-    //                 };
-    //                 log::info!("Setting wrap width to {:?}", wrap_width);
-    //                 wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
-    //             }
-    //             20..=39 => {
-    //                 let block_count = rng.gen_range(1..=1);
-    //                 let block_properties = (0..block_count)
-    //                     .map(|_| {
-    //                         let buffer = buffer.read(cx);
-    //                         let position = buffer.anchor_after(
-    //                             buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Left),
-    //                         );
+        for _ in 0..operations {
+            let mut buffer_edits = Vec::new();
+            match rng.gen_range(0..=100) {
+                0..=19 => {
+                    let wrap_width = if rng.gen_bool(0.2) {
+                        None
+                    } else {
+                        Some(rng.gen_range(0.0..=100.0))
+                    };
+                    log::info!("Setting wrap width to {:?}", wrap_width);
+                    wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
+                }
+                20..=39 => {
+                    let block_count = rng.gen_range(1..=1);
+                    let block_properties = (0..block_count)
+                        .map(|_| {
+                            let buffer = buffer.read(cx);
+                            let position = buffer.anchor_after(
+                                buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Left),
+                            );
 
-    //                         let len = rng.gen_range(0..10);
-    //                         let mut text = Rope::from(
-    //                             RandomCharIter::new(&mut rng)
-    //                                 .take(len)
-    //                                 .collect::<String>()
-    //                                 .to_uppercase()
-    //                                 .as_str(),
-    //                         );
-    //                         let disposition = if rng.gen() {
-    //                             text.push_front("<");
-    //                             BlockDisposition::Above
-    //                         } else {
-    //                             text.push_front(">");
-    //                             BlockDisposition::Below
-    //                         };
-    //                         log::info!(
-    //                             "inserting block {:?} {:?} with text {:?}",
-    //                             disposition,
-    //                             position.to_point(buffer),
-    //                             text.to_string()
-    //                         );
-    //                         BlockProperties {
-    //                             position,
-    //                             text,
-    //                             disposition,
-    //                             build_runs: None,
-    //                             build_style: None,
-    //                         }
-    //                     })
-    //                     .collect::<Vec<_>>();
+                            let disposition = if rng.gen() {
+                                BlockDisposition::Above
+                            } else {
+                                BlockDisposition::Below
+                            };
+                            let height = rng.gen_range(1..5);
+                            log::info!(
+                                "inserting block {:?} {:?} with height {}",
+                                disposition,
+                                position.to_point(buffer),
+                                height
+                            );
+                            BlockProperties {
+                                position,
+                                height,
+                                disposition,
+                                render: Arc::new(|_| Empty::new().boxed()),
+                            }
+                        })
+                        .collect::<Vec<_>>();
 
-    //                 let (folds_snapshot, fold_edits) =
-    //                     fold_map.read(buffer_snapshot.clone(), vec![]);
-    //                 let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
-    //                 let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-    //                     wrap_map.sync(tabs_snapshot, tab_edits, cx)
-    //                 });
-    //                 let mut block_map = block_map.write(wraps_snapshot, wrap_edits, cx);
-    //                 let block_ids = block_map.insert(block_properties.clone(), cx);
-    //                 for (block_id, props) in block_ids.into_iter().zip(block_properties) {
-    //                     expected_blocks.push((block_id, props));
-    //                 }
-    //             }
-    //             40..=59 if !expected_blocks.is_empty() => {
-    //                 let block_count = rng.gen_range(1..=4.min(expected_blocks.len()));
-    //                 let block_ids_to_remove = (0..block_count)
-    //                     .map(|_| {
-    //                         expected_blocks
-    //                             .remove(rng.gen_range(0..expected_blocks.len()))
-    //                             .0
-    //                     })
-    //                     .collect();
+                    let (folds_snapshot, fold_edits) =
+                        fold_map.read(buffer_snapshot.clone(), vec![]);
+                    let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+                    let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+                        wrap_map.sync(tabs_snapshot, tab_edits, cx)
+                    });
+                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits, cx);
+                    let block_ids = block_map.insert(block_properties.clone(), cx);
+                    for (block_id, props) in block_ids.into_iter().zip(block_properties) {
+                        expected_blocks.push((block_id, props));
+                    }
+                }
+                40..=59 if !expected_blocks.is_empty() => {
+                    let block_count = rng.gen_range(1..=4.min(expected_blocks.len()));
+                    let block_ids_to_remove = (0..block_count)
+                        .map(|_| {
+                            expected_blocks
+                                .remove(rng.gen_range(0..expected_blocks.len()))
+                                .0
+                        })
+                        .collect();
 
-    //                 let (folds_snapshot, fold_edits) =
-    //                     fold_map.read(buffer_snapshot.clone(), vec![]);
-    //                 let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
-    //                 let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-    //                     wrap_map.sync(tabs_snapshot, tab_edits, cx)
-    //                 });
-    //                 let mut block_map = block_map.write(wraps_snapshot, wrap_edits, cx);
-    //                 block_map.remove(block_ids_to_remove, cx);
-    //             }
-    //             _ => {
-    //                 buffer.update(cx, |buffer, cx| {
-    //                     let v0 = buffer.version();
-    //                     let edit_count = rng.gen_range(1..=5);
-    //                     buffer.randomly_edit(&mut rng, edit_count, cx);
-    //                     log::info!("buffer text: {:?}", buffer.text());
-    //                     buffer_edits.extend(buffer.edits_since(&v0));
-    //                     buffer_snapshot = buffer.snapshot();
-    //                 });
-    //             }
-    //         }
+                    let (folds_snapshot, fold_edits) =
+                        fold_map.read(buffer_snapshot.clone(), vec![]);
+                    let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+                    let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+                        wrap_map.sync(tabs_snapshot, tab_edits, cx)
+                    });
+                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits, cx);
+                    block_map.remove(block_ids_to_remove, cx);
+                }
+                _ => {
+                    buffer.update(cx, |buffer, cx| {
+                        let v0 = buffer.version();
+                        let edit_count = rng.gen_range(1..=5);
+                        buffer.randomly_edit(&mut rng, edit_count, cx);
+                        log::info!("buffer text: {:?}", buffer.text());
+                        buffer_edits.extend(buffer.edits_since(&v0));
+                        buffer_snapshot = buffer.snapshot();
+                    });
+                }
+            }
 
-    //         let (folds_snapshot, fold_edits) = fold_map.read(buffer_snapshot.clone(), buffer_edits);
-    //         let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
-    //         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-    //             wrap_map.sync(tabs_snapshot, tab_edits, cx)
-    //         });
-    //         let mut blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits, cx);
-    //         assert_eq!(
-    //             blocks_snapshot.transforms.summary().input_rows,
-    //             wraps_snapshot.max_point().row() + 1
-    //         );
-    //         log::info!("blocks text: {:?}", blocks_snapshot.text());
+            let (folds_snapshot, fold_edits) = fold_map.read(buffer_snapshot.clone(), buffer_edits);
+            let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
+            let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+                wrap_map.sync(tabs_snapshot, tab_edits, cx)
+            });
+            let mut blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits, cx);
+            assert_eq!(
+                blocks_snapshot.transforms.summary().input_rows,
+                wraps_snapshot.max_point().row() + 1
+            );
+            log::info!("blocks text: {:?}", blocks_snapshot.text());
 
-    //         let buffer = buffer.read(cx);
-    //         let mut sorted_blocks = expected_blocks
-    //             .iter()
-    //             .cloned()
-    //             .map(|(id, block)| {
-    //                 let mut position = block.position.to_point(buffer);
-    //                 let column = wraps_snapshot.from_point(position, Bias::Left).column();
-    //                 match block.disposition {
-    //                     BlockDisposition::Above => {
-    //                         position.column = 0;
-    //                     }
-    //                     BlockDisposition::Below => {
-    //                         position.column = buffer.line_len(position.row);
-    //                     }
-    //                 };
-    //                 let row = wraps_snapshot.from_point(position, Bias::Left).row();
-    //                 (
-    //                     id,
-    //                     BlockProperties {
-    //                         position: BlockPoint::new(row, column),
-    //                         text: block.text,
-    //                         build_runs: block.build_runs.clone(),
-    //                         build_style: None,
-    //                         disposition: block.disposition,
-    //                     },
-    //                 )
-    //             })
-    //             .collect::<Vec<_>>();
-    //         sorted_blocks
-    //             .sort_unstable_by_key(|(id, block)| (block.position.row, block.disposition, *id));
-    //         let mut sorted_blocks = sorted_blocks.into_iter().peekable();
+            let buffer = buffer.read(cx);
+            let mut sorted_blocks = expected_blocks
+                .iter()
+                .cloned()
+                .map(|(id, block)| {
+                    let mut position = block.position.to_point(buffer);
+                    let column = wraps_snapshot.from_point(position, Bias::Left).column();
+                    match block.disposition {
+                        BlockDisposition::Above => {
+                            position.column = 0;
+                        }
+                        BlockDisposition::Below => {
+                            position.column = buffer.line_len(position.row);
+                        }
+                    };
+                    let row = wraps_snapshot.from_point(position, Bias::Left).row();
+                    (
+                        id,
+                        BlockProperties {
+                            position: BlockPoint::new(row, column),
+                            height: block.height,
+                            disposition: block.disposition,
+                            render: block.render.clone(),
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            sorted_blocks
+                .sort_unstable_by_key(|(id, block)| (block.position.row, block.disposition, *id));
+            let mut sorted_blocks = sorted_blocks.into_iter().peekable();
 
-    //         let mut expected_buffer_rows = Vec::new();
-    //         let mut expected_text = String::new();
-    //         let input_text = wraps_snapshot.text();
-    //         for (row, input_line) in input_text.split('\n').enumerate() {
-    //             let row = row as u32;
-    //             if row > 0 {
-    //                 expected_text.push('\n');
-    //             }
+            let mut expected_buffer_rows = Vec::new();
+            let mut expected_text = String::new();
+            let input_text = wraps_snapshot.text();
+            for (row, input_line) in input_text.split('\n').enumerate() {
+                let row = row as u32;
+                if row > 0 {
+                    expected_text.push('\n');
+                }
 
-    //             let buffer_row = wraps_snapshot
-    //                 .to_point(WrapPoint::new(row, 0), Bias::Left)
-    //                 .row;
+                let buffer_row = wraps_snapshot
+                    .to_point(WrapPoint::new(row, 0), Bias::Left)
+                    .row;
 
-    //             while let Some((block_id, block)) = sorted_blocks.peek() {
-    //                 if block.position.row == row && block.disposition == BlockDisposition::Above {
-    //                     let text = block.text.to_string();
-    //                     let padding = " ".repeat(block.position.column as usize);
-    //                     for line in text.split('\n') {
-    //                         if !line.is_empty() {
-    //                             expected_text.push_str(&padding);
-    //                             expected_text.push_str(line);
-    //                         }
-    //                         expected_text.push('\n');
-    //                         expected_buffer_rows.push(DisplayRow::Block(*block_id, None));
-    //                     }
-    //                     sorted_blocks.next();
-    //                 } else {
-    //                     break;
-    //                 }
-    //             }
+                while let Some((_, block)) = sorted_blocks.peek() {
+                    if block.position.row == row && block.disposition == BlockDisposition::Above {
+                        let text = "\n".repeat(block.height as usize);
+                        expected_text.push_str(&text);
+                        for _ in 0..block.height {
+                            expected_buffer_rows.push(None);
+                        }
+                        sorted_blocks.next();
+                    } else {
+                        break;
+                    }
+                }
 
-    //             let soft_wrapped = wraps_snapshot.to_tab_point(WrapPoint::new(row, 0)).column() > 0;
-    //             expected_buffer_rows.push(if soft_wrapped {
-    //                 DisplayRow::Wrap
-    //             } else {
-    //                 DisplayRow::Buffer(buffer_row)
-    //             });
-    //             expected_text.push_str(input_line);
+                let soft_wrapped = wraps_snapshot.to_tab_point(WrapPoint::new(row, 0)).column() > 0;
+                expected_buffer_rows.push(if soft_wrapped { None } else { Some(buffer_row) });
+                expected_text.push_str(input_line);
 
-    //             while let Some((block_id, block)) = sorted_blocks.peek() {
-    //                 if block.position.row == row && block.disposition == BlockDisposition::Below {
-    //                     let text = block.text.to_string();
-    //                     let padding = " ".repeat(block.position.column as usize);
-    //                     for line in text.split('\n') {
-    //                         expected_text.push('\n');
-    //                         if !line.is_empty() {
-    //                             expected_text.push_str(&padding);
-    //                             expected_text.push_str(line);
-    //                         }
-    //                         expected_buffer_rows.push(DisplayRow::Block(*block_id, None));
-    //                     }
-    //                     sorted_blocks.next();
-    //                 } else {
-    //                     break;
-    //                 }
-    //             }
-    //         }
+                while let Some((_, block)) = sorted_blocks.peek() {
+                    if block.position.row == row && block.disposition == BlockDisposition::Below {
+                        let text = "\n".repeat(block.height as usize);
+                        expected_text.push_str(&text);
+                        for _ in 0..block.height {
+                            expected_buffer_rows.push(None);
+                        }
+                        sorted_blocks.next();
+                    } else {
+                        break;
+                    }
+                }
+            }
 
-    //         let expected_lines = expected_text.split('\n').collect::<Vec<_>>();
-    //         let expected_row_count = expected_lines.len();
-    //         for start_row in 0..expected_row_count {
-    //             let expected_text = expected_lines[start_row..].join("\n");
-    //             let actual_text = blocks_snapshot
-    //                 .chunks(start_row as u32..expected_row_count as u32, None, None)
-    //                 .map(|chunk| chunk.text)
-    //                 .collect::<String>();
-    //             assert_eq!(
-    //                 actual_text, expected_text,
-    //                 "incorrect text starting from row {}",
-    //                 start_row
-    //             );
-    //             assert_eq!(
-    //                 blocks_snapshot
-    //                     .buffer_rows(start_row as u32, None)
-    //                     .collect::<Vec<_>>(),
-    //                 &expected_buffer_rows[start_row..]
-    //             );
-    //         }
+            let expected_lines = expected_text.split('\n').collect::<Vec<_>>();
+            let expected_row_count = expected_lines.len();
+            for start_row in 0..expected_row_count {
+                let expected_text = expected_lines[start_row..].join("\n");
+                let actual_text = blocks_snapshot
+                    .chunks(start_row as u32..expected_row_count as u32, None)
+                    .map(|chunk| chunk.text)
+                    .collect::<String>();
+                assert_eq!(
+                    actual_text, expected_text,
+                    "incorrect text starting from row {}",
+                    start_row
+                );
+                assert_eq!(
+                    blocks_snapshot
+                        .buffer_rows(start_row as u32)
+                        .collect::<Vec<_>>(),
+                    &expected_buffer_rows[start_row..]
+                );
+            }
 
-    //         let mut expected_longest_rows = Vec::new();
-    //         let mut longest_line_len = -1_isize;
-    //         for (row, line) in expected_lines.iter().enumerate() {
-    //             let row = row as u32;
+            let mut expected_longest_rows = Vec::new();
+            let mut longest_line_len = -1_isize;
+            for (row, line) in expected_lines.iter().enumerate() {
+                let row = row as u32;
 
-    //             assert_eq!(
-    //                 blocks_snapshot.line_len(row),
-    //                 line.len() as u32,
-    //                 "invalid line len for row {}",
-    //                 row
-    //             );
+                assert_eq!(
+                    blocks_snapshot.line_len(row),
+                    line.len() as u32,
+                    "invalid line len for row {}",
+                    row
+                );
 
-    //             let line_char_count = line.chars().count() as isize;
-    //             match line_char_count.cmp(&longest_line_len) {
-    //                 Ordering::Less => {}
-    //                 Ordering::Equal => expected_longest_rows.push(row),
-    //                 Ordering::Greater => {
-    //                     longest_line_len = line_char_count;
-    //                     expected_longest_rows.clear();
-    //                     expected_longest_rows.push(row);
-    //                 }
-    //             }
-    //         }
+                let line_char_count = line.chars().count() as isize;
+                match line_char_count.cmp(&longest_line_len) {
+                    Ordering::Less => {}
+                    Ordering::Equal => expected_longest_rows.push(row),
+                    Ordering::Greater => {
+                        longest_line_len = line_char_count;
+                        expected_longest_rows.clear();
+                        expected_longest_rows.push(row);
+                    }
+                }
+            }
 
-    //         log::info!("getting longest row >>>>>>>>>>>>>>>>>>>>>>>>");
-    //         let longest_row = blocks_snapshot.longest_row();
-    //         assert!(
-    //             expected_longest_rows.contains(&longest_row),
-    //             "incorrect longest row {}. expected {:?} with length {}",
-    //             longest_row,
-    //             expected_longest_rows,
-    //             longest_line_len,
-    //         );
+            let longest_row = blocks_snapshot.longest_row();
+            assert!(
+                expected_longest_rows.contains(&longest_row),
+                "incorrect longest row {}. expected {:?} with length {}",
+                longest_row,
+                expected_longest_rows,
+                longest_line_len,
+            );
 
-    //         for row in 0..=blocks_snapshot.wrap_snapshot.max_point().row() {
-    //             let wrap_point = WrapPoint::new(row, 0);
-    //             let block_point = blocks_snapshot.to_block_point(wrap_point);
-    //             assert_eq!(blocks_snapshot.to_wrap_point(block_point), wrap_point);
-    //         }
+            for row in 0..=blocks_snapshot.wrap_snapshot.max_point().row() {
+                let wrap_point = WrapPoint::new(row, 0);
+                let block_point = blocks_snapshot.to_block_point(wrap_point);
+                assert_eq!(blocks_snapshot.to_wrap_point(block_point), wrap_point);
+            }
 
-    //         let mut block_point = BlockPoint::new(0, 0);
-    //         for c in expected_text.chars() {
-    //             let left_point = blocks_snapshot.clip_point(block_point, Bias::Left);
-    //             let right_point = blocks_snapshot.clip_point(block_point, Bias::Right);
+            let mut block_point = BlockPoint::new(0, 0);
+            for c in expected_text.chars() {
+                let left_point = blocks_snapshot.clip_point(block_point, Bias::Left);
+                let right_point = blocks_snapshot.clip_point(block_point, Bias::Right);
 
-    //             assert_eq!(
-    //                 blocks_snapshot.to_block_point(blocks_snapshot.to_wrap_point(left_point)),
-    //                 left_point
-    //             );
-    //             assert_eq!(
-    //                 blocks_snapshot.to_block_point(blocks_snapshot.to_wrap_point(right_point)),
-    //                 right_point
-    //             );
+                assert_eq!(
+                    blocks_snapshot.to_block_point(blocks_snapshot.to_wrap_point(left_point)),
+                    left_point
+                );
+                assert_eq!(
+                    blocks_snapshot.to_block_point(blocks_snapshot.to_wrap_point(right_point)),
+                    right_point
+                );
 
-    //             if c == '\n' {
-    //                 block_point.0 += Point::new(1, 0);
-    //             } else {
-    //                 block_point.column += c.len_utf8() as u32;
-    //             }
-    //         }
-    //     }
-    // }
+                if c == '\n' {
+                    block_point.0 += Point::new(1, 0);
+                } else {
+                    block_point.column += c.len_utf8() as u32;
+                }
+            }
+        }
+    }
 }
