@@ -1344,7 +1344,6 @@ impl MutableAppContext {
     {
         self.update(|this| {
             let view_id = post_inc(&mut this.next_entity_id);
-            let handle = ViewHandle::new(window_id, view_id, &this.cx.ref_counts);
             let mut cx = ViewContext::new(this, window_id, view_id);
             let handle = if let Some(view) = build_view(&mut cx) {
                 this.cx.views.insert((window_id, view_id), Box::new(view));
@@ -1355,7 +1354,7 @@ impl MutableAppContext {
                         .updated
                         .insert(view_id);
                 }
-                Some(handle)
+                Some(ViewHandle::new(window_id, view_id, &this.cx.ref_counts))
             } else {
                 None
             };
