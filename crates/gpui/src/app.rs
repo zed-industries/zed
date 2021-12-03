@@ -1181,6 +1181,7 @@ impl MutableAppContext {
                 MatchResult::Action(action) => {
                     if self.dispatch_action_any(window_id, &responder_chain[0..=i], action.as_ref())
                     {
+                        self.keystroke_matcher.clear_pending();
                         return Ok(true);
                     }
                 }

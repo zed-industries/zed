@@ -93,6 +93,10 @@ impl Matcher {
         self.keymap.add_bindings(bindings);
     }
 
+    pub fn clear_pending(&mut self) {
+        self.pending.clear();
+    }
+
     pub fn push_keystroke(
         &mut self,
         keystroke: Keystroke,
