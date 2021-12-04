@@ -286,6 +286,35 @@ mod tests {
                 "\n",      //
                 "jj"       //
             )
-        )
+        );
+
+        buffer_1.update(cx, |buffer, cx| {
+            buffer.edit(
+                [
+                    Point::new(0, 0)..Point::new(0, 0),
+                    Point::new(2, 1)..Point::new(2, 2),
+                ],
+                "\n",
+                cx,
+            );
+        });
+
+        assert_eq!(
+            list.read(cx).text(),
+            concat!(
+                "\n",     // Preserve newlines
+                "\n",     //
+                "bbbb\n", //
+                "c\n",    //
+                "ccc\n",  //
+                "\n",     //
+                "ddd\n",  //
+                "eeee\n", //
+                "\n",     //
+                "\n",     //
+                "\n",     //
+                "jj"      //
+            )
+        );
     }
 }
