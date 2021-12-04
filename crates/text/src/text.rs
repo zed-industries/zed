@@ -49,7 +49,7 @@ pub struct Buffer {
     subscriptions: Vec<Weak<Mutex<Vec<Patch<usize>>>>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Snapshot {
     visible_text: Rope,
     deleted_text: Rope,

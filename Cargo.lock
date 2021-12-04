@@ -2587,6 +2587,7 @@ dependencies = [
  "serde",
  "similar",
  "smol",
+ "sum_tree",
  "text",
  "theme",
  "tree-sitter",

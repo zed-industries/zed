@@ -11,6 +11,7 @@ test-support = [
     "text/test-support",
     "language/test-support",
     "gpui/test-support",
+    "util/test-support",
 ]
 
 [dependencies]
@@ -37,6 +38,7 @@ smol = "1.2"
 text = { path = "../text", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
+util = { path = "../util", features = ["test-support"] }
 ctor = "0.1"
 env_logger = "0.8"
 rand = "0.8"

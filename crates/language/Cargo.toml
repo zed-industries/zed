@@ -12,6 +12,7 @@ test-support = [
     "text/test-support",
     "lsp/test-support",
     "tree-sitter-rust",
+    "util/test-support",
 ]
 
 [dependencies]
@@ -20,6 +21,7 @@ clock = { path = "../clock" }
 gpui = { path = "../gpui" }
 lsp = { path = "../lsp" }
 rpc = { path = "../rpc" }
+sum_tree = { path = "../sum_tree" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 anyhow = "1.0.38"
@@ -39,6 +41,7 @@ tree-sitter-rust = { version = "0.19.0", optional = true }
 text = { path = "../text", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
+util = { path = "../util", features = ["test-support"] }
 rand = "0.8.3"
 tree-sitter-rust = "0.19.0"
 unindent = "0.1.7"

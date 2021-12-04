@@ -3676,9 +3676,9 @@ pub fn diagnostic_style(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::sample_text;
     use text::Point;
     use unindent::Unindent;
+    use util::test::sample_text;
 
     #[gpui::test]
     fn test_selection_with_mouse(cx: &mut gpui::MutableAppContext) {
@@ -3912,7 +3912,7 @@ mod tests {
 
     #[gpui::test]
     fn test_move_cursor(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6), cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'a'), cx));
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(buffer.clone(), settings, cx)
@@ -4708,7 +4708,7 @@ mod tests {
     #[gpui::test]
     fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(10, 5), cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(10, 5, 'a'), cx));
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.fold_ranges(
@@ -4954,7 +4954,7 @@ mod tests {
     #[gpui::test]
     fn test_select_line(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 5), cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 5, 'a'), cx));
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -5000,7 +5000,7 @@ mod tests {
     #[gpui::test]
     fn test_split_selection_into_lines(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(9, 5), cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(9, 5, 'a'), cx));
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.fold_ranges(

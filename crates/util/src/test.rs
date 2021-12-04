@@ -35,3 +35,16 @@ fn write_tree(path: &Path, tree: serde_json::Value) {
         panic!("You must pass a JSON object to this helper")
     }
 }
+
+pub fn sample_text(rows: usize, cols: usize, start_char: char) -> String {
+    let mut text = String::new();
+    for row in 0..rows {
+        let c: char = (start_char as u32 + row as u32) as u8 as char;
+        let mut line = c.to_string().repeat(cols);
+        if row < rows - 1 {
+            line.push('\n');
+        }
+        text += &line;
+    }
+    text
+}

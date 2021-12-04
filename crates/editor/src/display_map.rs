@@ -459,6 +459,7 @@ mod tests {
     use rand::{prelude::StdRng, Rng};
     use std::{env, sync::Arc};
     use theme::SyntaxTheme;
+    use util::test::sample_text;
     use Bias::*;
 
     #[gpui::test(iterations = 100)]
@@ -720,7 +721,7 @@ mod tests {
 
     #[gpui::test]
     fn test_text_chunks(cx: &mut gpui::MutableAppContext) {
-        let text = sample_text(6, 6);
+        let text = sample_text(6, 6, 'a');
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
         let tab_size = 4;
         let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();

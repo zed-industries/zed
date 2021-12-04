@@ -1064,16 +1064,17 @@ impl FoldEdit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test::sample_text, ToPoint};
+    use crate::ToPoint;
     use language::Buffer;
     use rand::prelude::*;
     use std::{env, mem};
     use text::RandomCharIter;
+    use util::test::sample_text;
     use Bias::{Left, Right};
 
     #[gpui::test]
     fn test_basic_folds(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6), cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6, 'a'), cx));
         let buffer_snapshot = buffer.read(cx).snapshot();
         let mut map = FoldMap::new(buffer_snapshot.clone()).0;
 
@@ -1187,7 +1188,7 @@ mod tests {
 
     #[gpui::test]
     fn test_overlapping_folds(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6), cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6, 'a'), cx));
         let buffer_snapshot = buffer.read(cx).snapshot();
         let mut map = FoldMap::new(buffer_snapshot.clone()).0;
         let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
@@ -1203,7 +1204,7 @@ mod tests {
 
     #[gpui::test]
     fn test_merging_folds_via_edit(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6), cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6, 'a'), cx));
         let buffer_snapshot = buffer.read(cx).snapshot();
         let mut map = FoldMap::new(buffer_snapshot.clone()).0;
 
@@ -1226,7 +1227,7 @@ mod tests {
 
     #[gpui::test]
     fn test_folds_in_range(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6), cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6, 'a'), cx));
         let buffer_snapshot = buffer.read(cx).snapshot();
         let mut map = FoldMap::new(buffer_snapshot.clone()).0;
         let buffer = buffer.read(cx);
@@ -1471,7 +1472,7 @@ mod tests {
 
     #[gpui::test]
     fn test_buffer_rows(cx: &mut gpui::MutableAppContext) {
-        let text = sample_text(6, 6) + "\n";
+        let text = sample_text(6, 6, 'a') + "\n";
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
 
         let buffer_snapshot = buffer.read(cx).snapshot();
