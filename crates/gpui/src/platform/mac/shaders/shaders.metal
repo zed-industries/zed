@@ -205,8 +205,6 @@ vertex SpriteFragmentInput sprite_vertex(
     };
 }
 
-#define MAX_WINDINGS 32.
-
 fragment float4 sprite_fragment(
     SpriteFragmentInput input [[stage_in]],
     texture2d<float> atlas [[ texture(GPUISpriteFragmentInputIndexAtlas) ]]
@@ -216,7 +214,7 @@ fragment float4 sprite_fragment(
     float4 sample = atlas.sample(atlas_sampler, input.atlas_position);
     float mask;
     if (input.compute_winding) {
-        mask = 1. - abs(1. - fmod(sample.r * MAX_WINDINGS, 2.));
+        mask = 1. - abs(1. - fmod(sample.r, 2.));
     } else {
         mask = sample.a;
     }
@@ -303,6 +301,6 @@ fragment float4 path_atlas_fragment(
     );
     float f = (input.st_position.x * input.st_position.x) - input.st_position.y;
     float distance = f / length(gradient);
-    float alpha = saturate(0.5 - distance) / MAX_WINDINGS;
+    float alpha = saturate(0.5 - distance);
     return float4(alpha, 0., 0., 1.);
 }
