@@ -19,7 +19,13 @@ pub type FragmentId = Location;
 #[derive(Default)]
 pub struct FragmentList {
     snapshot: Mutex<Snapshot>,
-    buffers: HashMap<usize, (ModelHandle<Buffer>, text::Subscription, Vec<FragmentId>)>,
+    buffers: HashMap<usize, BufferState>,
+}
+
+struct BufferState {
+    buffer: ModelHandle<Buffer>,
+    subscription: text::Subscription,
+    fragments: Vec<FragmentId>,
 }
 
 #[derive(Clone, Default)]
@@ -108,9 +114,13 @@ impl FragmentList {
             .entry(props.buffer.id())
             .or_insert_with(|| {
                 let subscription = props.buffer.update(cx, |buffer, _| buffer.subscribe());
-                (props.buffer.clone(), subscription, Default::default())
+                BufferState {
+                    buffer: props.buffer.clone(),
+                    subscription,
+                    fragments: Default::default(),
+                }
             })
-            .2
+            .fragments
             .push(id.clone());
 
         id
@@ -120,15 +130,16 @@ impl FragmentList {
         let mut snapshot = self.snapshot.lock();
         let mut patches = Vec::new();
         let mut fragments_to_edit = Vec::new();
-        for (buffer, subscription, fragment_ids) in self.buffers.values() {
-            let patch = subscription.consume();
+        for buffer_state in self.buffers.values() {
+            let patch = buffer_state.subscription.consume();
             if !patch.is_empty() {
                 let patch_ix = patches.len();
                 patches.push(patch);
                 fragments_to_edit.extend(
-                    fragment_ids
+                    buffer_state
+                        .fragments
                         .iter()
-                        .map(|fragment_id| (buffer, fragment_id, patch_ix)),
+                        .map(|fragment_id| (&buffer_state.buffer, fragment_id, patch_ix)),
                 )
             }
         }
@@ -440,7 +451,7 @@ mod tests {
         );
     }
 
-    #[gpui::test(iterations = 10000)]
+    #[gpui::test(iterations = 100)]
     fn test_location(mut rng: StdRng) {
         let mut lhs = Default::default();
         let mut rhs = Default::default();
