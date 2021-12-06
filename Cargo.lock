@@ -2575,6 +2575,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clock",
+ "collections",
  "futures",
  "gpui",
  "lazy_static",
@@ -2586,6 +2587,7 @@ dependencies = [
  "rpc",
  "serde",
  "similar",
+ "smallvec",
  "smol",
  "sum_tree",
  "text",

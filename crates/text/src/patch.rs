@@ -33,6 +33,10 @@ where
         Self(edits)
     }
 
+    pub fn edits(&self) -> &[Edit<T>] {
+        &self.0
+    }
+
     pub fn into_inner(self) -> Vec<Edit<T>> {
         self.0
     }

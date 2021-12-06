@@ -1,14 +1,12 @@
-use std::{
-    cmp,
-    ops::{Deref, Range},
-};
+use crate::{buffer, Buffer, Chunk};
+use collections::HashMap;
+use gpui::{AppContext, Entity, ModelContext, ModelHandle};
+use parking_lot::Mutex;
+use smallvec::{smallvec, SmallVec};
+use std::{cmp, iter, mem, ops::Range};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::TextSummary;
 use theme::SyntaxTheme;
-use util::post_inc;
-
-use crate::{buffer, Buffer, Chunk};
-use gpui::{Entity, ModelContext, ModelHandle};
 
 const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
 
@@ -16,12 +14,12 @@ pub trait ToOffset {
     fn to_offset<'a>(&self, content: &Snapshot) -> usize;
 }
 
-pub type FragmentId = usize;
+pub type FragmentId = Location;
 
 #[derive(Default)]
 pub struct FragmentList {
-    snapshot: Snapshot,
-    next_fragment_id: FragmentId,
+    snapshot: Mutex<Snapshot>,
+    buffers: HashMap<usize, (ModelHandle<Buffer>, text::Subscription, Vec<FragmentId>)>,
 }
 
 #[derive(Clone, Default)]
@@ -37,8 +35,8 @@ pub struct FragmentProperties<'a, T> {
 
 #[derive(Clone)]
 struct Entry {
+    id: FragmentId,
     buffer: buffer::Snapshot,
-    buffer_id: usize,
     buffer_range: Range<usize>,
     text_summary: TextSummary,
     header_height: u8,
@@ -46,10 +44,12 @@ struct Entry {
 
 #[derive(Clone, Debug, Default)]
 struct EntrySummary {
-    min_buffer_id: usize,
-    max_buffer_id: usize,
+    fragment_id: FragmentId,
     text: TextSummary,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Location(SmallVec<[usize; 4]>);
 
 pub struct Chunks<'a> {
     range: Range<usize>,
@@ -64,12 +64,20 @@ impl FragmentList {
         Self::default()
     }
 
-    pub fn push<'a, O: text::ToOffset>(
+    pub fn snapshot(&self, cx: &AppContext) -> Snapshot {
+        self.sync(cx);
+        self.snapshot.lock().clone()
+    }
+
+    pub fn push<O>(
         &mut self,
-        props: FragmentProperties<'a, O>,
+        props: FragmentProperties<O>,
         cx: &mut ModelContext<Self>,
-    ) -> FragmentId {
-        let id = post_inc(&mut self.next_fragment_id);
+    ) -> FragmentId
+    where
+        O: text::ToOffset,
+    {
+        self.sync(cx);
 
         let buffer = props.buffer.read(cx);
         let buffer_range = props.range.start.to_offset(buffer)..props.range.end.to_offset(buffer);
@@ -82,10 +90,13 @@ impl FragmentList {
             text_summary.bytes += props.header_height as usize;
         }
 
-        self.snapshot.entries.push(
+        let mut snapshot = self.snapshot.lock();
+        let prev_id = snapshot.entries.last().map(|e| &e.id);
+        let id = FragmentId::between(prev_id.unwrap_or(&FragmentId::min()), &FragmentId::max());
+        snapshot.entries.push(
             Entry {
+                id: id.clone(),
                 buffer: props.buffer.read(cx).snapshot(),
-                buffer_id: props.buffer.id(),
                 buffer_range,
                 text_summary,
                 header_height: props.header_height,
@@ -93,15 +104,89 @@ impl FragmentList {
             &(),
         );
 
+        self.buffers
+            .entry(props.buffer.id())
+            .or_insert_with(|| {
+                let subscription = props.buffer.update(cx, |buffer, _| buffer.subscribe());
+                (props.buffer.clone(), subscription, Default::default())
+            })
+            .2
+            .push(id.clone());
+
         id
     }
-}
 
-impl Deref for FragmentList {
-    type Target = Snapshot;
+    fn sync(&self, cx: &AppContext) {
+        let mut snapshot = self.snapshot.lock();
+        let mut patches = Vec::new();
+        let mut fragments_to_edit = Vec::new();
+        for (buffer, subscription, fragment_ids) in self.buffers.values() {
+            let patch = subscription.consume();
+            if !patch.is_empty() {
+                let patch_ix = patches.len();
+                patches.push(patch);
+                fragments_to_edit.extend(
+                    fragment_ids
+                        .iter()
+                        .map(|fragment_id| (buffer, fragment_id, patch_ix)),
+                )
+            }
+        }
+        fragments_to_edit.sort_unstable_by_key(|(_, fragment_id, _)| *fragment_id);
 
-    fn deref(&self) -> &Self::Target {
-        &self.snapshot
+        let old_fragments = mem::take(&mut snapshot.entries);
+        let mut cursor = old_fragments.cursor::<FragmentId>();
+        for (buffer, fragment_id, patch_ix) in fragments_to_edit {
+            snapshot
+                .entries
+                .push_tree(cursor.slice(fragment_id, Bias::Left, &()), &());
+
+            let fragment = cursor.item().unwrap();
+            let mut new_range = fragment.buffer_range.clone();
+            for edit in patches[patch_ix].edits() {
+                let edit_start = edit.new.start;
+                let edit_end = edit.new.start + edit.old_len();
+                if edit_end < new_range.start {
+                    let delta = edit.new_len() as isize - edit.old_len() as isize;
+                    new_range.start = (new_range.start as isize + delta) as usize;
+                    new_range.end = (new_range.end as isize + delta) as usize;
+                } else if edit_start >= new_range.end {
+                    break;
+                } else {
+                    let mut new_range_len = new_range.len();
+                    new_range_len -=
+                        cmp::min(new_range.end, edit_end) - cmp::max(new_range.start, edit_start);
+                    if edit_start > new_range.start {
+                        new_range_len += edit.new_len();
+                    }
+
+                    new_range.start = cmp::min(new_range.start, edit.new.end);
+                    new_range.end = new_range.start + new_range_len;
+                }
+            }
+
+            let buffer = buffer.read(cx);
+            let mut text_summary: TextSummary = buffer.text_summary_for_range(new_range.clone());
+            if fragment.header_height > 0 {
+                text_summary.first_line_chars = 0;
+                text_summary.lines.row += fragment.header_height as u32;
+                text_summary.lines_utf16.row += fragment.header_height as u32;
+                text_summary.bytes += fragment.header_height as usize;
+            }
+            snapshot.entries.push(
+                Entry {
+                    id: fragment.id.clone(),
+                    buffer: buffer.snapshot(),
+                    buffer_range: new_range,
+                    text_summary,
+                    header_height: fragment.header_height,
+                },
+                &(),
+            );
+
+            cursor.next(&());
+        }
+        snapshot.entries.push_tree(cursor.suffix(&()), &());
     }
 }
 
@@ -154,8 +239,7 @@ impl sum_tree::Item for Entry {
 
     fn summary(&self) -> Self::Summary {
         EntrySummary {
-            min_buffer_id: self.buffer_id,
-            max_buffer_id: self.buffer_id,
+            fragment_id: self.id.clone(),
             text: self.text_summary.clone(),
         }
     }
@@ -165,15 +249,22 @@ impl sum_tree::Summary for EntrySummary {
     type Context = ();
 
     fn add_summary(&mut self, summary: &Self, _: &()) {
-        self.min_buffer_id = cmp::min(self.min_buffer_id, summary.min_buffer_id);
-        self.max_buffer_id = cmp::max(self.max_buffer_id, summary.max_buffer_id);
+        debug_assert!(summary.fragment_id > self.fragment_id);
+        self.fragment_id = summary.fragment_id.clone();
         self.text.add_summary(&summary.text, &());
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, EntrySummary> for usize {
     fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
-        *self += summary.text.bytes
+        *self += summary.text.bytes;
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, EntrySummary> for FragmentId {
+    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
+        debug_assert!(summary.fragment_id > *self);
+        *self = summary.fragment_id.clone();
     }
 }
 
@@ -228,11 +319,42 @@ impl ToOffset for usize {
     }
 }
 
+impl Default for Location {
+    fn default() -> Self {
+        Self::min()
+    }
+}
+
+impl Location {
+    pub fn min() -> Self {
+        Self(smallvec![usize::MIN])
+    }
+
+    pub fn max() -> Self {
+        Self(smallvec![usize::MAX])
+    }
+
+    pub fn between(lhs: &Self, rhs: &Self) -> Self {
+        let lhs = lhs.0.iter().copied().chain(iter::repeat(usize::MIN));
+        let rhs = rhs.0.iter().copied().chain(iter::repeat(usize::MAX));
+        let mut location = SmallVec::new();
+        for (lhs, rhs) in lhs.zip(rhs) {
+            let mid = lhs + (rhs.saturating_sub(lhs)) / 2;
+            location.push(mid);
+            if mid > lhs {
+                break;
+            }
+        }
+        Self(location)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{FragmentList, FragmentProperties};
+    use super::*;
     use crate::Buffer;
     use gpui::MutableAppContext;
+    use rand::prelude::*;
     use text::Point;
     use util::test::sample_text;
 
@@ -272,7 +394,7 @@ mod tests {
         });
 
         assert_eq!(
-            list.read(cx).text(),
+            list.read(cx).snapshot(cx).text(),
             concat!(
                 "\n",      // Preserve newlines
                 "\n",      //
@@ -300,7 +422,7 @@ mod tests {
         });
 
         assert_eq!(
-            list.read(cx).text(),
+            list.read(cx).snapshot(cx).text(),
             concat!(
                 "\n",     // Preserve newlines
                 "\n",     //
@@ -316,5 +438,37 @@ mod tests {
                 "jj"      //
             )
         );
+    }
+
+    #[gpui::test(iterations = 10000)]
+    fn test_location(mut rng: StdRng) {
+        let mut lhs = Default::default();
+        let mut rhs = Default::default();
+        while lhs == rhs {
+            lhs = Location(
+                (0..rng.gen_range(1..=5))
+                    .map(|_| rng.gen_range(0..=100))
+                    .collect(),
+            );
+            rhs = Location(
+                (0..rng.gen_range(1..=5))
+                    .map(|_| rng.gen_range(0..=100))
+                    .collect(),
+            );
+        }
+
+        if lhs > rhs {
+            mem::swap(&mut lhs, &mut rhs);
+        }
+
+        let middle = Location::between(&lhs, &rhs);
+        assert!(middle > lhs);
+        assert!(middle < rhs);
+        for ix in 0..middle.0.len() - 1 {
+            assert!(
+                middle.0[ix] == *lhs.0.get(ix).unwrap_or(&0)
+                    || middle.0[ix] == *rhs.0.get(ix).unwrap_or(&0)
+            );
+        }
     }
 }
