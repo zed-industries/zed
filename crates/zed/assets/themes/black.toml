@@ -50,3 +50,10 @@ comment = "#6a9955"
 property = "#4e94ce"
 variant = "#4fc1ff"
 constant = "#9cdcfe"
+
+title = { color = "#9cdcfe", weight = "bold" }
+emphasis = "#4ec9b0"
+"emphasis.strong" = { color = "#4ec9b0", weight = "bold" }
+link_uri = { color = "#6a9955", underline = true }
+link_text = { color = "#cb8f77", italic = true }
+list_marker = "#4e94ce"

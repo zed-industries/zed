@@ -38,7 +38,7 @@ smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
 time = { version = "0.3" }
 tiny-skia = "0.5"
-tree-sitter = "0.19"
+tree-sitter = "0.20"
 usvg = "0.14"
 waker-fn = "1.1.0"
 
