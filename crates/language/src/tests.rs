@@ -12,6 +12,13 @@ use std::{
 };
 use unindent::Unindent as _;
 
+#[cfg(test)]
+#[ctor::ctor]
+fn init_logger() {
+    // std::env::set_var("RUST_LOG", "info");
+    env_logger::init();
+}
+
 #[test]
 fn test_select_language() {
     let registry = LanguageRegistry {

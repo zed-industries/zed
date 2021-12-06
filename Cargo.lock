@@ -2576,6 +2576,8 @@ dependencies = [
  "anyhow",
  "clock",
  "collections",
+ "ctor",
+ "env_logger",
  "futures",
  "gpui",
  "lazy_static",

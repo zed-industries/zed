@@ -157,21 +157,22 @@ impl FragmentList {
             for edit in patches[patch_ix].edits() {
                 let edit_start = edit.new.start;
                 let edit_end = edit.new.start + edit.old_len();
-                if edit_end < new_range.start {
+                if edit_start > new_range.end {
+                    break;
+                } else if edit_end < new_range.start {
                     let delta = edit.new_len() as isize - edit.old_len() as isize;
                     new_range.start = (new_range.start as isize + delta) as usize;
                     new_range.end = (new_range.end as isize + delta) as usize;
-                } else if edit_start >= new_range.end {
-                    break;
                 } else {
                     let mut new_range_len = new_range.len();
                     new_range_len -=
                         cmp::min(new_range.end, edit_end) - cmp::max(new_range.start, edit_start);
-                    if edit_start > new_range.start {
+                    if edit_start < new_range.start {
+                        new_range.start = edit.new.end;
+                    } else {
                         new_range_len += edit.new_len();
                     }
 
-                    new_range.start = cmp::min(new_range.start, edit.new.end);
                     new_range.end = new_range.start + new_range_len;
                 }
             }
@@ -362,11 +363,13 @@ impl Location {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
+
     use super::*;
     use crate::Buffer;
     use gpui::MutableAppContext;
     use rand::prelude::*;
-    use text::Point;
+    use text::{Point, RandomCharIter};
     use util::test::sample_text;
 
     #[gpui::test]
@@ -449,6 +452,77 @@ mod tests {
                 "jj"      //
             )
         );
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_random(cx: &mut MutableAppContext, mut rng: StdRng) {
+        let operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10);
+
+        let mut buffers: Vec<ModelHandle<Buffer>> = Vec::new();
+        let list = cx.add_model(|_| FragmentList::new());
+        let mut fragment_ids = Vec::new();
+        let mut expected_fragments = Vec::new();
+
+        for _ in 0..operations {
+            match rng.gen_range(0..100) {
+                0..=19 if !buffers.is_empty() => {
+                    let buffer = buffers.choose(&mut rng).unwrap();
+                    buffer.update(cx, |buf, cx| buf.randomly_edit(&mut rng, 5, cx));
+                }
+                _ => {
+                    let buffer_handle = if buffers.is_empty() || rng.gen_bool(0.4) {
+                        let base_text = RandomCharIter::new(&mut rng).take(10).collect::<String>();
+                        buffers.push(cx.add_model(|cx| Buffer::new(0, base_text, cx)));
+                        buffers.last().unwrap()
+                    } else {
+                        buffers.choose(&mut rng).unwrap()
+                    };
+
+                    let buffer = buffer_handle.read(cx);
+                    let end_ix = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Right);
+                    let start_ix = buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
+                    let header_height = rng.gen_range(0..=5);
+                    let anchor_range = buffer.anchor_before(start_ix)..buffer.anchor_after(end_ix);
+                    log::info!(
+                        "Pushing fragment for buffer {}: {:?}[{:?}] = {:?}",
+                        buffer_handle.id(),
+                        buffer.text(),
+                        start_ix..end_ix,
+                        &buffer.text()[start_ix..end_ix]
+                    );
+
+                    let fragment_id = list.update(cx, |list, cx| {
+                        list.push(
+                            FragmentProperties {
+                                buffer: &buffer_handle,
+                                range: start_ix..end_ix,
+                                header_height,
+                            },
+                            cx,
+                        )
+                    });
+                    fragment_ids.push(fragment_id);
+                    expected_fragments.push((buffer_handle.clone(), anchor_range, header_height));
+                }
+            }
+
+            let snapshot = list.read(cx).snapshot(cx);
+            let mut expected_text = String::new();
+            for (buffer, range, header_height) in &expected_fragments {
+                let buffer = buffer.read(cx);
+                if !expected_text.is_empty() {
+                    expected_text.push('\n');
+                }
+
+                for _ in 0..*header_height {
+                    expected_text.push('\n');
+                }
+                expected_text.extend(buffer.text_for_range(range.clone()));
+            }
+            assert_eq!(snapshot.text(), expected_text);
+        }
     }
 
     #[gpui::test(iterations = 100)]
