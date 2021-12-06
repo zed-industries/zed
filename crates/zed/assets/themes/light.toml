@@ -49,4 +49,11 @@ number = "#b5cea8"
 comment = "#6a9955"
 property = "#4e94ce"
 variant = "#4fc1ff"
-constant = "#9cdcfe"
+constant = "#5a9ccc"
+
+title = { color = "#5a9ccc", weight = "bold" }
+emphasis = "#267f29"
+"emphasis.strong" = { color = "#267f29", weight = "bold" }
+link_uri = { color = "#6a9955", underline = true }
+link_text = { color = "#a82121", italic = true }
+list_marker = "#4e94ce"
