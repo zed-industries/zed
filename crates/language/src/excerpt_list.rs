@@ -3,7 +3,10 @@ use collections::HashMap;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle};
 use parking_lot::Mutex;
 use smallvec::{smallvec, SmallVec};
-use std::{cmp, iter, ops::Range};
+use std::{
+    cmp, iter,
+    ops::{Deref, Range},
+};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{
     subscription::{Subscription, Topic},
@@ -146,15 +149,6 @@ impl ExcerptList {
             new_excerpts.push_tree(cursor.slice(id, Bias::Left, &()), &());
             let old_excerpt = cursor.item().unwrap();
             let buffer = buffer_state.buffer.read(cx);
-            new_excerpts.push(
-                Excerpt::new(
-                    id.clone(),
-                    buffer.snapshot(),
-                    old_excerpt.range.clone(),
-                    old_excerpt.header_height,
-                ),
-                &(),
-            );
 
             edits.extend(
                 buffer
@@ -163,14 +157,26 @@ impl ExcerptList {
                         old_excerpt.range.clone(),
                     )
                     .map(|mut edit| {
-                        let excerpt_old_start = cursor.start().1;
-                        let excerpt_new_start = new_excerpts.summary().text.bytes;
+                        let excerpt_old_start =
+                            cursor.start().1 + old_excerpt.header_height as usize;
+                        let excerpt_new_start =
+                            new_excerpts.summary().text.bytes + old_excerpt.header_height as usize;
                         edit.old.start += excerpt_old_start;
                         edit.old.end += excerpt_old_start;
                         edit.new.start += excerpt_new_start;
                         edit.new.end += excerpt_new_start;
                         edit
                     }),
+            );
+
+            new_excerpts.push(
+                Excerpt::new(
+                    id.clone(),
+                    buffer.snapshot(),
+                    old_excerpt.range.clone(),
+                    old_excerpt.header_height,
+                ),
+                &(),
             );
 
             cursor.next(&());
@@ -195,6 +201,13 @@ impl Snapshot {
             .collect()
     }
 
+    pub fn text_for_range<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = &'a str> {
+        self.chunks(range, None).map(|chunk| chunk.text)
+    }
+
     pub fn len(&self) -> usize {
         self.excerpts.summary().text.bytes
     }
@@ -208,16 +221,34 @@ impl Snapshot {
         let mut cursor = self.excerpts.cursor::<usize>();
         cursor.seek(&range.start, Bias::Right, &());
 
-        let entry_chunks = cursor.item().map(|entry| {
-            let buffer_range = entry.range.to_offset(&entry.buffer);
-            let buffer_start = buffer_range.start + (range.start - cursor.start());
-            let buffer_end = cmp::min(
-                buffer_range.end,
-                buffer_range.start + (range.end - cursor.start()),
-            );
-            entry.buffer.chunks(buffer_start..buffer_end, theme)
+        let mut header_height: u8 = 0;
+        let entry_chunks = cursor.item().map(|excerpt| {
+            let buffer_range = excerpt.range.to_offset(&excerpt.buffer);
+            header_height = excerpt.header_height;
+            let start_overshoot = range.start - cursor.start();
+            let buffer_start;
+            if start_overshoot < excerpt.header_height as usize {
+                header_height -= start_overshoot as u8;
+                buffer_start = buffer_range.start;
+            } else {
+                buffer_start = buffer_range.start + start_overshoot - header_height as usize;
+                header_height = 0;
+            }
+
+            let end_overshoot = range.end - cursor.start();
+            let buffer_end;
+            if end_overshoot < excerpt.header_height as usize {
+                header_height -= excerpt.header_height - end_overshoot as u8;
+                buffer_end = buffer_start;
+            } else {
+                buffer_end = cmp::min(
+                    buffer_range.end,
+                    buffer_range.start + end_overshoot - header_height as usize,
+                );
+            }
+
+            excerpt.buffer.chunks(buffer_start..buffer_end, theme)
         });
-        let header_height = cursor.item().map_or(0, |entry| entry.header_height);
 
         Chunks {
             range,
@@ -242,7 +273,15 @@ impl Excerpt {
             text_summary.lines.row += header_height as u32;
             text_summary.lines_utf16.row += header_height as u32;
             text_summary.bytes += header_height as usize;
+            text_summary.longest_row += header_height as u32;
         }
+        text_summary.last_line_chars = 0;
+        text_summary.lines.row += 1;
+        text_summary.lines.column = 0;
+        text_summary.lines_utf16.row += 1;
+        text_summary.lines_utf16.column = 0;
+        text_summary.bytes += 1;
+
         Excerpt {
             id,
             buffer,
@@ -307,6 +346,10 @@ impl<'a> Iterator for Chunks<'a> {
                 return Some(chunk);
             } else {
                 self.entry_chunks.take();
+                return Some(Chunk {
+                    text: "\n",
+                    ..Default::default()
+                });
             }
         }
 
@@ -325,10 +368,7 @@ impl<'a> Iterator for Chunks<'a> {
                 .chunks(buffer_range.start..buffer_end, self.theme),
         );
 
-        Some(Chunk {
-            text: "\n",
-            ..Default::default()
-        })
+        self.next()
     }
 }
 
@@ -399,7 +439,7 @@ mod tests {
                 subscription.consume().into_inner(),
                 [Edit {
                     old: 0..0,
-                    new: 0..12
+                    new: 0..13
                 }]
             );
 
@@ -422,8 +462,8 @@ mod tests {
             assert_eq!(
                 subscription.consume().into_inner(),
                 [Edit {
-                    old: 12..12,
-                    new: 12..26
+                    old: 13..13,
+                    new: 13..29
                 }]
             );
 
@@ -443,7 +483,7 @@ mod tests {
                 "\n",      //
                 "\n",      //
                 "\n",      //
-                "jj"       //
+                "jj\n"     //
             )
         );
 
@@ -472,15 +512,15 @@ mod tests {
                 "\n",     //
                 "\n",     //
                 "\n",     //
-                "jj"      //
+                "jj\n"    //
             )
         );
 
         assert_eq!(
             subscription.consume().into_inner(),
             [Edit {
-                old: 17..19,
-                new: 17..18
+                old: 18..20,
+                new: 18..19
             }]
         );
     }
@@ -495,12 +535,13 @@ mod tests {
         let list = cx.add_model(|_| ExcerptList::new());
         let mut excerpt_ids = Vec::new();
         let mut expected_excerpts = Vec::new();
+        let mut old_versions = Vec::new();
 
         for _ in 0..operations {
             match rng.gen_range(0..100) {
                 0..=19 if !buffers.is_empty() => {
                     let buffer = buffers.choose(&mut rng).unwrap();
-                    buffer.update(cx, |buf, cx| buf.randomly_edit(&mut rng, 5, cx));
+                    buffer.update(cx, |buf, cx| buf.randomly_edit(&mut rng, 1, cx));
                 }
                 _ => {
                     let buffer_handle = if buffers.is_empty() || rng.gen_bool(0.4) {
@@ -539,21 +580,53 @@ mod tests {
                 }
             }
 
+            if rng.gen_bool(0.3) {
+                list.update(cx, |list, cx| {
+                    old_versions.push((list.snapshot(cx), list.subscribe()));
+                })
+            }
+
             let snapshot = list.read(cx).snapshot(cx);
             let mut expected_text = String::new();
             for (buffer, range, header_height) in &expected_excerpts {
                 let buffer = buffer.read(cx);
-                if !expected_text.is_empty() {
-                    expected_text.push('\n');
-                }
-
                 for _ in 0..*header_height {
                     expected_text.push('\n');
                 }
                 expected_text.extend(buffer.text_for_range(range.clone()));
+                expected_text.push('\n');
             }
             assert_eq!(snapshot.text(), expected_text);
+
+            for i in 0..10 {
+                let end_ix = snapshot.clip_offset(rng.gen_range(0..=snapshot.len()), Bias::Right);
+                let start_ix = snapshot.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
+
+                let actual = snapshot.text_for_range(start_ix..end_ix).collect();
+            }
+            // for i in 0..expected_text.len() {
+            //     assert_eq!(snapshot.text(), expected_text);
+
+            // }
         }
+
+        // let snapshot = list.read(cx).snapshot(cx);
+        // for (old_snapshot, subscription) in old_versions {
+        //     let edits = subscription.consume().into_inner();
+
+        //     log::info!(
+        //         "applying edits since old text: {:?}: {:?}",
+        //         old_snapshot.text(),
+        //         edits,
+        //     );
+
+        //     let mut text = old_snapshot.text();
+        //     for edit in edits {
+        //         let new_text: String = snapshot.text_for_range(edit.new.clone()).collect();
+        //         text.replace_range(edit.new.start..edit.new.start + edit.old.len(), &new_text);
+        //     }
+        //     assert_eq!(text.to_string(), snapshot.text());
+        // }
     }
 
     #[gpui::test(iterations = 100)]
