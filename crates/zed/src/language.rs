@@ -27,8 +27,11 @@ fn rust() -> Language {
 }
 
 fn markdown() -> Language {
+    let grammar = tree_sitter_markdown::language();
     let config = toml::from_slice(&LanguageDir::get("markdown/config.toml").unwrap().data).unwrap();
-    Language::new(config, None)
+    Language::new(config, Some(grammar))
+        .with_highlights_query(load_query("markdown/highlights.scm").as_ref())
+        .unwrap()
 }
 
 fn load_query(path: &str) -> Cow<'static, str> {

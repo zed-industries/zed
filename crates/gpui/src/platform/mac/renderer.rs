@@ -107,7 +107,7 @@ impl Renderer {
             "path_atlas",
             "path_atlas_vertex",
             "path_atlas_fragment",
-            MTLPixelFormat::R8Unorm,
+            MTLPixelFormat::R16Float,
         );
         Self {
             sprite_cache,
@@ -827,7 +827,7 @@ fn build_path_atlas_texture_descriptor() -> metal::TextureDescriptor {
     let texture_descriptor = metal::TextureDescriptor::new();
     texture_descriptor.set_width(2048);
     texture_descriptor.set_height(2048);
-    texture_descriptor.set_pixel_format(MTLPixelFormat::R8Unorm);
+    texture_descriptor.set_pixel_format(MTLPixelFormat::R16Float);
     texture_descriptor
         .set_usage(metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead);
     texture_descriptor.set_storage_mode(metal::MTLStorageMode::Private);
