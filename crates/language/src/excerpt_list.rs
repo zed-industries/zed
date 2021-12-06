@@ -7,7 +7,7 @@ use std::{cmp, iter, ops::Range};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{
     subscription::{Subscription, Topic},
-    Anchor, AnchorRangeExt, Edit, Patch, TextSummary,
+    Anchor, AnchorRangeExt, Edit, TextSummary,
 };
 use theme::SyntaxTheme;
 
@@ -138,7 +138,7 @@ impl ExcerptList {
         }
         excerpts_to_edit.sort_unstable_by_key(|(excerpt_id, _)| *excerpt_id);
 
-        let mut patch = Patch::<usize>::default();
+        let mut edits = Vec::new();
         let mut new_excerpts = SumTree::new();
         let mut cursor = snapshot.excerpts.cursor::<(ExcerptId, usize)>();
 
@@ -156,21 +156,22 @@ impl ExcerptList {
                 &(),
             );
 
-            let edits = buffer
-                .edits_since_in_range::<usize>(
-                    old_excerpt.buffer.version(),
-                    old_excerpt.range.clone(),
-                )
-                .map(|mut edit| {
-                    let excerpt_old_start = cursor.start().1;
-                    let excerpt_new_start = new_excerpts.summary().text.bytes;
-                    edit.old.start += excerpt_old_start;
-                    edit.old.end += excerpt_old_start;
-                    edit.new.start += excerpt_new_start;
-                    edit.new.end += excerpt_new_start;
-                    edit
-                });
-            patch = patch.compose(edits);
+            edits.extend(
+                buffer
+                    .edits_since_in_range::<usize>(
+                        old_excerpt.buffer.version(),
+                        old_excerpt.range.clone(),
+                    )
+                    .map(|mut edit| {
+                        let excerpt_old_start = cursor.start().1;
+                        let excerpt_new_start = new_excerpts.summary().text.bytes;
+                        edit.old.start += excerpt_old_start;
+                        edit.old.end += excerpt_old_start;
+                        edit.new.start += excerpt_new_start;
+                        edit.new.end += excerpt_new_start;
+                        edit
+                    }),
+            );
 
             cursor.next(&());
         }
@@ -179,7 +180,7 @@ impl ExcerptList {
         drop(cursor);
         snapshot.excerpts = new_excerpts;
 
-        self.subscriptions.publish(&patch);
+        self.subscriptions.publish(edits);
     }
 }
 
@@ -382,7 +383,7 @@ mod tests {
         let buffer_1 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'a'), cx));
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'g'), cx));
 
-        let list = cx.add_model(|cx| ExcerptList::new());
+        let list = cx.add_model(|_| ExcerptList::new());
 
         let subscription = list.update(cx, |list, cx| {
             let subscription = list.subscribe();
@@ -485,7 +486,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random(cx: &mut MutableAppContext, mut rng: StdRng) {
+    fn test_random_excerpts(cx: &mut MutableAppContext, mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
