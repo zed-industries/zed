@@ -1,11 +1,12 @@
 use crate::{buffer, Buffer, Chunk};
 use collections::HashMap;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle};
+use lsp::TextDocumentSaveReason;
 use parking_lot::Mutex;
 use smallvec::{smallvec, SmallVec};
 use std::{cmp, iter, mem, ops::Range};
 use sum_tree::{Bias, Cursor, SumTree};
-use text::{Anchor, AnchorRangeExt, TextSummary};
+use text::{Anchor, AnchorRangeExt, Patch, TextSummary};
 use theme::SyntaxTheme;
 
 const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
@@ -22,15 +23,16 @@ pub struct ExcerptList {
     buffers: HashMap<usize, BufferState>,
 }
 
+#[derive(Debug)]
 struct BufferState {
     buffer: ModelHandle<Buffer>,
-    subscription: text::Subscription,
+    last_sync: clock::Global,
     excerpts: Vec<ExcerptId>,
 }
 
 #[derive(Clone, Default)]
 pub struct Snapshot {
-    entries: SumTree<Entry>,
+    excerpts: SumTree<Excerpt>,
 }
 
 pub struct ExcerptProperties<'a, T> {
@@ -40,10 +42,10 @@ pub struct ExcerptProperties<'a, T> {
 }
 
 #[derive(Clone)]
-struct Entry {
+struct Excerpt {
     id: ExcerptId,
     buffer: buffer::Snapshot,
-    buffer_range: Range<Anchor>,
+    range: Range<Anchor>,
     text_summary: TextSummary,
     header_height: u8,
 }
@@ -55,11 +57,11 @@ struct EntrySummary {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Location(SmallVec<[usize; 4]>);
+pub struct Location(SmallVec<[u8; 4]>);
 
 pub struct Chunks<'a> {
     range: Range<usize>,
-    cursor: Cursor<'a, Entry, usize>,
+    cursor: Cursor<'a, Excerpt, usize>,
     header_height: u8,
     entry_chunks: Option<buffer::Chunks<'a>>,
     theme: Option<&'a SyntaxTheme>,
@@ -82,40 +84,21 @@ impl ExcerptList {
         self.sync(cx);
 
         let buffer = props.buffer.read(cx);
-        let buffer_range =
-            buffer.anchor_before(props.range.start)..buffer.anchor_after(props.range.end);
-        let mut text_summary =
-            buffer.text_summary_for_range::<TextSummary, _>(buffer_range.clone());
-        if props.header_height > 0 {
-            text_summary.first_line_chars = 0;
-            text_summary.lines.row += props.header_height as u32;
-            text_summary.lines_utf16.row += props.header_height as u32;
-            text_summary.bytes += props.header_height as usize;
-        }
-
+        let range = buffer.anchor_before(props.range.start)..buffer.anchor_after(props.range.end);
         let mut snapshot = self.snapshot.lock();
-        let prev_id = snapshot.entries.last().map(|e| &e.id);
+        let prev_id = snapshot.excerpts.last().map(|e| &e.id);
         let id = ExcerptId::between(prev_id.unwrap_or(&ExcerptId::min()), &ExcerptId::max());
-        snapshot.entries.push(
-            Entry {
-                id: id.clone(),
-                buffer: props.buffer.read(cx).snapshot(),
-                buffer_range,
-                text_summary,
-                header_height: props.header_height,
-            },
+
+        snapshot.excerpts.push(
+            Excerpt::new(id.clone(), buffer.snapshot(), range, props.header_height),
             &(),
         );
-
         self.buffers
             .entry(props.buffer.id())
-            .or_insert_with(|| {
-                let subscription = props.buffer.update(cx, |buffer, _| buffer.subscribe());
-                BufferState {
-                    buffer: props.buffer.clone(),
-                    subscription,
-                    excerpts: Default::default(),
-                }
+            .or_insert_with(|| BufferState {
+                buffer: props.buffer.clone(),
+                last_sync: buffer.version(),
+                excerpts: Default::default(),
             })
             .excerpts
             .push(id.clone());
@@ -125,78 +108,66 @@ impl ExcerptList {
 
     fn sync(&self, cx: &AppContext) {
         let mut snapshot = self.snapshot.lock();
-        let mut patches = Vec::new();
         let mut excerpts_to_edit = Vec::new();
         for buffer_state in self.buffers.values() {
-            let patch = buffer_state.subscription.consume();
-            if !patch.is_empty() {
-                let patch_ix = patches.len();
-                patches.push(patch);
+            if buffer_state
+                .buffer
+                .read(cx)
+                .version()
+                .gt(&buffer_state.last_sync)
+            {
                 excerpts_to_edit.extend(
                     buffer_state
                         .excerpts
                         .iter()
-                        .map(|excerpt_id| (&buffer_state.buffer, excerpt_id, patch_ix)),
-                )
+                        .map(|excerpt_id| (excerpt_id, buffer_state)),
+                );
             }
         }
-        excerpts_to_edit.sort_unstable_by_key(|(_, excerpt_id, _)| *excerpt_id);
+        excerpts_to_edit.sort_unstable_by_key(|(excerpt_id, _)| *excerpt_id);
 
-        let old_excerpts = mem::take(&mut snapshot.entries);
-        let mut cursor = old_excerpts.cursor::<ExcerptId>();
-        for (buffer, excerpt_id, patch_ix) in excerpts_to_edit {
-            let buffer = buffer.read(cx);
-            snapshot
-                .entries
-                .push_tree(cursor.slice(excerpt_id, Bias::Left, &()), &());
+        dbg!(&excerpts_to_edit);
 
-            let excerpt = cursor.item().unwrap();
-            let mut new_range = excerpt.buffer_range.to_offset(buffer);
-            for edit in patches[patch_ix].edits() {
-                let edit_start = edit.new.start;
-                let edit_end = edit.new.start + edit.old_len();
-                if edit_start > new_range.end {
-                    break;
-                } else if edit_end < new_range.start {
-                    let delta = edit.new_len() as isize - edit.old_len() as isize;
-                    new_range.start = (new_range.start as isize + delta) as usize;
-                    new_range.end = (new_range.end as isize + delta) as usize;
-                } else {
-                    let mut new_range_len = new_range.len();
-                    new_range_len -=
-                        cmp::min(new_range.end, edit_end) - cmp::max(new_range.start, edit_start);
-                    if edit_start < new_range.start {
-                        new_range.start = edit.new.end;
-                    } else {
-                        new_range_len += edit.new_len();
-                    }
+        let mut patch = Patch::<usize>::default();
+        let mut new_excerpts = SumTree::new();
+        let mut cursor = snapshot.excerpts.cursor::<(ExcerptId, usize)>();
 
-                    new_range.end = new_range.start + new_range_len;
-                }
-            }
-
-            let mut text_summary: TextSummary = buffer.text_summary_for_range(new_range.clone());
-            if excerpt.header_height > 0 {
-                text_summary.first_line_chars = 0;
-                text_summary.lines.row += excerpt.header_height as u32;
-                text_summary.lines_utf16.row += excerpt.header_height as u32;
-                text_summary.bytes += excerpt.header_height as usize;
-            }
-            snapshot.entries.push(
-                Entry {
-                    id: excerpt.id.clone(),
-                    buffer: buffer.snapshot(),
-                    buffer_range: buffer.anchor_before(new_range.start)
-                        ..buffer.anchor_after(new_range.end),
-                    text_summary,
-                    header_height: excerpt.header_height,
-                },
+        for (id, buffer_state) in excerpts_to_edit {
+            new_excerpts.push_tree(cursor.slice(id, Bias::Left, &()), &());
+            let old_excerpt = cursor.item().unwrap();
+            let buffer = buffer_state.buffer.read(cx);
+            new_excerpts.push(
+                Excerpt::new(
+                    id.clone(),
+                    buffer.snapshot(),
+                    old_excerpt.range.clone(),
+                    old_excerpt.header_height,
+                ),
                 &(),
             );
 
+            let edits = buffer
+                .edits_since_in_range::<usize>(
+                    old_excerpt.buffer.version(),
+                    old_excerpt.range.clone(),
+                )
+                .map(|mut edit| {
+                    let excerpt_old_start = cursor.start().1;
+                    let excerpt_new_start = new_excerpts.summary().text.bytes;
+                    edit.old.start += excerpt_old_start;
+                    edit.old.end += excerpt_old_start;
+                    edit.new.start += excerpt_new_start;
+                    edit.new.end += excerpt_new_start;
+                    edit
+                });
+            patch = patch.compose(edits);
+
             cursor.next(&());
         }
-        snapshot.entries.push_tree(cursor.suffix(&()), &());
+        new_excerpts.push_tree(cursor.suffix(&()), &());
+
+        drop(cursor);
+        snapshot.excerpts = new_excerpts;
     }
 }
 
@@ -212,7 +183,7 @@ impl Snapshot {
     }
 
     pub fn len(&self) -> usize {
-        self.entries.summary().text.bytes
+        self.excerpts.summary().text.bytes
     }
 
     pub fn chunks<'a, T: ToOffset>(
@@ -221,11 +192,11 @@ impl Snapshot {
         theme: Option<&'a SyntaxTheme>,
     ) -> Chunks<'a> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let mut cursor = self.entries.cursor::<usize>();
+        let mut cursor = self.excerpts.cursor::<usize>();
         cursor.seek(&range.start, Bias::Right, &());
 
         let entry_chunks = cursor.item().map(|entry| {
-            let buffer_range = entry.buffer_range.to_offset(&entry.buffer);
+            let buffer_range = entry.range.to_offset(&entry.buffer);
             let buffer_start = buffer_range.start + (range.start - cursor.start());
             let buffer_end = cmp::min(
                 buffer_range.end,
@@ -245,7 +216,31 @@ impl Snapshot {
     }
 }
 
-impl sum_tree::Item for Entry {
+impl Excerpt {
+    fn new(
+        id: ExcerptId,
+        buffer: buffer::Snapshot,
+        range: Range<Anchor>,
+        header_height: u8,
+    ) -> Self {
+        let mut text_summary = buffer.text_summary_for_range::<TextSummary, _>(range.clone());
+        if header_height > 0 {
+            text_summary.first_line_chars = 0;
+            text_summary.lines.row += header_height as u32;
+            text_summary.lines_utf16.row += header_height as u32;
+            text_summary.bytes += header_height as usize;
+        }
+        Excerpt {
+            id,
+            buffer,
+            range,
+            text_summary,
+            header_height,
+        }
+    }
+}
+
+impl sum_tree::Item for Excerpt {
     type Summary = EntrySummary;
 
     fn summary(&self) -> Self::Summary {
@@ -272,7 +267,7 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for usize {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, EntrySummary> for ExcerptId {
+impl<'a> sum_tree::Dimension<'a, EntrySummary> for Location {
     fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
         debug_assert!(summary.excerpt_id > *self);
         *self = summary.excerpt_id.clone();
@@ -304,7 +299,7 @@ impl<'a> Iterator for Chunks<'a> {
 
         self.cursor.next(&());
         let entry = self.cursor.item()?;
-        let buffer_range = entry.buffer_range.to_offset(&entry.buffer);
+        let buffer_range = entry.range.to_offset(&entry.buffer);
         let buffer_end = cmp::min(
             buffer_range.end,
             buffer_range.start + (self.range.end - self.cursor.start()),
@@ -338,16 +333,16 @@ impl Default for Location {
 
 impl Location {
     pub fn min() -> Self {
-        Self(smallvec![usize::MIN])
+        Self(smallvec![u8::MIN])
     }
 
     pub fn max() -> Self {
-        Self(smallvec![usize::MAX])
+        Self(smallvec![u8::MAX])
     }
 
     pub fn between(lhs: &Self, rhs: &Self) -> Self {
-        let lhs = lhs.0.iter().copied().chain(iter::repeat(usize::MIN));
-        let rhs = rhs.0.iter().copied().chain(iter::repeat(usize::MAX));
+        let lhs = lhs.0.iter().copied().chain(iter::repeat(u8::MIN));
+        let rhs = rhs.0.iter().copied().chain(iter::repeat(u8::MAX));
         let mut location = SmallVec::new();
         for (lhs, rhs) in lhs.zip(rhs) {
             let mid = lhs + (rhs.saturating_sub(lhs)) / 2;
@@ -378,7 +373,10 @@ mod tests {
 
         let list = cx.add_model(|cx| {
             let mut list = ExcerptList::new();
-
+            // aaaaaa
+            // bbbbbb
+            // cccccc
+            // dddddd
             list.push(
                 ExcerptProperties {
                     buffer: &buffer_1,
