@@ -14,10 +14,10 @@ pub trait ToOffset {
     fn to_offset<'a>(&self, content: &Snapshot) -> usize;
 }
 
-pub type FragmentId = Location;
+pub type ExcerptId = Location;
 
 #[derive(Default)]
-pub struct FragmentList {
+pub struct ExcerptList {
     snapshot: Mutex<Snapshot>,
     buffers: HashMap<usize, BufferState>,
 }
@@ -25,7 +25,7 @@ pub struct FragmentList {
 struct BufferState {
     buffer: ModelHandle<Buffer>,
     subscription: text::Subscription,
-    fragments: Vec<FragmentId>,
+    excerpts: Vec<ExcerptId>,
 }
 
 #[derive(Clone, Default)]
@@ -33,7 +33,7 @@ pub struct Snapshot {
     entries: SumTree<Entry>,
 }
 
-pub struct FragmentProperties<'a, T> {
+pub struct ExcerptProperties<'a, T> {
     buffer: &'a ModelHandle<Buffer>,
     range: Range<T>,
     header_height: u8,
@@ -41,7 +41,7 @@ pub struct FragmentProperties<'a, T> {
 
 #[derive(Clone)]
 struct Entry {
-    id: FragmentId,
+    id: ExcerptId,
     buffer: buffer::Snapshot,
     buffer_range: Range<Anchor>,
     text_summary: TextSummary,
@@ -50,7 +50,7 @@ struct Entry {
 
 #[derive(Clone, Debug, Default)]
 struct EntrySummary {
-    fragment_id: FragmentId,
+    excerpt_id: ExcerptId,
     text: TextSummary,
 }
 
@@ -65,7 +65,7 @@ pub struct Chunks<'a> {
     theme: Option<&'a SyntaxTheme>,
 }
 
-impl FragmentList {
+impl ExcerptList {
     pub fn new() -> Self {
         Self::default()
     }
@@ -75,11 +75,7 @@ impl FragmentList {
         self.snapshot.lock().clone()
     }
 
-    pub fn push<O>(
-        &mut self,
-        props: FragmentProperties<O>,
-        cx: &mut ModelContext<Self>,
-    ) -> FragmentId
+    pub fn push<O>(&mut self, props: ExcerptProperties<O>, cx: &mut ModelContext<Self>) -> ExcerptId
     where
         O: text::ToOffset,
     {
@@ -99,7 +95,7 @@ impl FragmentList {
 
         let mut snapshot = self.snapshot.lock();
         let prev_id = snapshot.entries.last().map(|e| &e.id);
-        let id = FragmentId::between(prev_id.unwrap_or(&FragmentId::min()), &FragmentId::max());
+        let id = ExcerptId::between(prev_id.unwrap_or(&ExcerptId::min()), &ExcerptId::max());
         snapshot.entries.push(
             Entry {
                 id: id.clone(),
@@ -118,10 +114,10 @@ impl FragmentList {
                 BufferState {
                     buffer: props.buffer.clone(),
                     subscription,
-                    fragments: Default::default(),
+                    excerpts: Default::default(),
                 }
             })
-            .fragments
+            .excerpts
             .push(id.clone());
 
         id
@@ -130,32 +126,32 @@ impl FragmentList {
     fn sync(&self, cx: &AppContext) {
         let mut snapshot = self.snapshot.lock();
         let mut patches = Vec::new();
-        let mut fragments_to_edit = Vec::new();
+        let mut excerpts_to_edit = Vec::new();
         for buffer_state in self.buffers.values() {
             let patch = buffer_state.subscription.consume();
             if !patch.is_empty() {
                 let patch_ix = patches.len();
                 patches.push(patch);
-                fragments_to_edit.extend(
+                excerpts_to_edit.extend(
                     buffer_state
-                        .fragments
+                        .excerpts
                         .iter()
-                        .map(|fragment_id| (&buffer_state.buffer, fragment_id, patch_ix)),
+                        .map(|excerpt_id| (&buffer_state.buffer, excerpt_id, patch_ix)),
                 )
             }
         }
-        fragments_to_edit.sort_unstable_by_key(|(_, fragment_id, _)| *fragment_id);
+        excerpts_to_edit.sort_unstable_by_key(|(_, excerpt_id, _)| *excerpt_id);
 
-        let old_fragments = mem::take(&mut snapshot.entries);
-        let mut cursor = old_fragments.cursor::<FragmentId>();
-        for (buffer, fragment_id, patch_ix) in fragments_to_edit {
+        let old_excerpts = mem::take(&mut snapshot.entries);
+        let mut cursor = old_excerpts.cursor::<ExcerptId>();
+        for (buffer, excerpt_id, patch_ix) in excerpts_to_edit {
             let buffer = buffer.read(cx);
             snapshot
                 .entries
-                .push_tree(cursor.slice(fragment_id, Bias::Left, &()), &());
+                .push_tree(cursor.slice(excerpt_id, Bias::Left, &()), &());
 
-            let fragment = cursor.item().unwrap();
-            let mut new_range = fragment.buffer_range.to_offset(buffer);
+            let excerpt = cursor.item().unwrap();
+            let mut new_range = excerpt.buffer_range.to_offset(buffer);
             for edit in patches[patch_ix].edits() {
                 let edit_start = edit.new.start;
                 let edit_end = edit.new.start + edit.old_len();
@@ -180,20 +176,20 @@ impl FragmentList {
             }
 
             let mut text_summary: TextSummary = buffer.text_summary_for_range(new_range.clone());
-            if fragment.header_height > 0 {
+            if excerpt.header_height > 0 {
                 text_summary.first_line_chars = 0;
-                text_summary.lines.row += fragment.header_height as u32;
-                text_summary.lines_utf16.row += fragment.header_height as u32;
-                text_summary.bytes += fragment.header_height as usize;
+                text_summary.lines.row += excerpt.header_height as u32;
+                text_summary.lines_utf16.row += excerpt.header_height as u32;
+                text_summary.bytes += excerpt.header_height as usize;
             }
             snapshot.entries.push(
                 Entry {
-                    id: fragment.id.clone(),
+                    id: excerpt.id.clone(),
                     buffer: buffer.snapshot(),
                     buffer_range: buffer.anchor_before(new_range.start)
                         ..buffer.anchor_after(new_range.end),
                     text_summary,
-                    header_height: fragment.header_height,
+                    header_height: excerpt.header_height,
                 },
                 &(),
             );
@@ -204,7 +200,7 @@ impl FragmentList {
     }
 }
 
-impl Entity for FragmentList {
+impl Entity for ExcerptList {
     type Event = ();
 }
 
@@ -254,7 +250,7 @@ impl sum_tree::Item for Entry {
 
     fn summary(&self) -> Self::Summary {
         EntrySummary {
-            fragment_id: self.id.clone(),
+            excerpt_id: self.id.clone(),
             text: self.text_summary.clone(),
         }
     }
@@ -264,8 +260,8 @@ impl sum_tree::Summary for EntrySummary {
     type Context = ();
 
     fn add_summary(&mut self, summary: &Self, _: &()) {
-        debug_assert!(summary.fragment_id > self.fragment_id);
-        self.fragment_id = summary.fragment_id.clone();
+        debug_assert!(summary.excerpt_id > self.excerpt_id);
+        self.excerpt_id = summary.excerpt_id.clone();
         self.text.add_summary(&summary.text, &());
     }
 }
@@ -276,10 +272,10 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for usize {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, EntrySummary> for FragmentId {
+impl<'a> sum_tree::Dimension<'a, EntrySummary> for ExcerptId {
     fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
-        debug_assert!(summary.fragment_id > *self);
-        *self = summary.fragment_id.clone();
+        debug_assert!(summary.excerpt_id > *self);
+        *self = summary.excerpt_id.clone();
     }
 }
 
@@ -376,15 +372,15 @@ mod tests {
     use util::test::sample_text;
 
     #[gpui::test]
-    fn test_fragment_buffer(cx: &mut MutableAppContext) {
+    fn test_excerpt_buffer(cx: &mut MutableAppContext) {
         let buffer_1 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'a'), cx));
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'g'), cx));
 
         let list = cx.add_model(|cx| {
-            let mut list = FragmentList::new();
+            let mut list = ExcerptList::new();
 
             list.push(
-                FragmentProperties {
+                ExcerptProperties {
                     buffer: &buffer_1,
                     range: Point::new(1, 2)..Point::new(2, 5),
                     header_height: 2,
@@ -392,7 +388,7 @@ mod tests {
                 cx,
             );
             list.push(
-                FragmentProperties {
+                ExcerptProperties {
                     buffer: &buffer_1,
                     range: Point::new(3, 3)..Point::new(4, 4),
                     header_height: 1,
@@ -400,7 +396,7 @@ mod tests {
                 cx,
             );
             list.push(
-                FragmentProperties {
+                ExcerptProperties {
                     buffer: &buffer_2,
                     range: Point::new(3, 1)..Point::new(3, 3),
                     header_height: 3,
@@ -464,9 +460,9 @@ mod tests {
             .unwrap_or(10);
 
         let mut buffers: Vec<ModelHandle<Buffer>> = Vec::new();
-        let list = cx.add_model(|_| FragmentList::new());
-        let mut fragment_ids = Vec::new();
-        let mut expected_fragments = Vec::new();
+        let list = cx.add_model(|_| ExcerptList::new());
+        let mut excerpt_ids = Vec::new();
+        let mut expected_excerpts = Vec::new();
 
         for _ in 0..operations {
             match rng.gen_range(0..100) {
@@ -489,16 +485,16 @@ mod tests {
                     let header_height = rng.gen_range(0..=5);
                     let anchor_range = buffer.anchor_before(start_ix)..buffer.anchor_after(end_ix);
                     log::info!(
-                        "Pushing fragment for buffer {}: {:?}[{:?}] = {:?}",
+                        "Pushing excerpt for buffer {}: {:?}[{:?}] = {:?}",
                         buffer_handle.id(),
                         buffer.text(),
                         start_ix..end_ix,
                         &buffer.text()[start_ix..end_ix]
                     );
 
-                    let fragment_id = list.update(cx, |list, cx| {
+                    let excerpt_id = list.update(cx, |list, cx| {
                         list.push(
-                            FragmentProperties {
+                            ExcerptProperties {
                                 buffer: &buffer_handle,
                                 range: start_ix..end_ix,
                                 header_height,
@@ -506,14 +502,14 @@ mod tests {
                             cx,
                         )
                     });
-                    fragment_ids.push(fragment_id);
-                    expected_fragments.push((buffer_handle.clone(), anchor_range, header_height));
+                    excerpt_ids.push(excerpt_id);
+                    expected_excerpts.push((buffer_handle.clone(), anchor_range, header_height));
                 }
             }
 
             let snapshot = list.read(cx).snapshot(cx);
             let mut expected_text = String::new();
-            for (buffer, range, header_height) in &expected_fragments {
+            for (buffer, range, header_height) in &expected_excerpts {
                 let buffer = buffer.read(cx);
                 if !expected_text.is_empty() {
                     expected_text.push('\n');

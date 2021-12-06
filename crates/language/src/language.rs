@@ -1,5 +1,5 @@
 mod buffer;
-mod fragment_list;
+mod excerpt_list;
 mod highlight_map;
 pub mod proto;
 #[cfg(test)]
