@@ -210,6 +210,15 @@ impl<'a, T: Clone> IntoIterator for &'a Patch<T> {
     }
 }
 
+impl<'a, T: Clone> IntoIterator for &'a mut Patch<T> {
+    type Item = Edit<T>;
+    type IntoIter = std::iter::Cloned<std::slice::Iter<'a, Edit<T>>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter().cloned()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

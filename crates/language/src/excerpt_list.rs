@@ -1,12 +1,14 @@
 use crate::{buffer, Buffer, Chunk};
 use collections::HashMap;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle};
-use lsp::TextDocumentSaveReason;
 use parking_lot::Mutex;
 use smallvec::{smallvec, SmallVec};
-use std::{cmp, iter, mem, ops::Range};
+use std::{cmp, iter, ops::Range};
 use sum_tree::{Bias, Cursor, SumTree};
-use text::{Anchor, AnchorRangeExt, Patch, TextSummary};
+use text::{
+    subscription::{Subscription, Topic},
+    Anchor, AnchorRangeExt, Edit, Patch, TextSummary,
+};
 use theme::SyntaxTheme;
 
 const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
@@ -21,6 +23,7 @@ pub type ExcerptId = Location;
 pub struct ExcerptList {
     snapshot: Mutex<Snapshot>,
     buffers: HashMap<usize, BufferState>,
+    subscriptions: Topic,
 }
 
 #[derive(Debug)]
@@ -77,6 +80,10 @@ impl ExcerptList {
         self.snapshot.lock().clone()
     }
 
+    pub fn subscribe(&mut self) -> Subscription {
+        self.subscriptions.subscribe()
+    }
+
     pub fn push<O>(&mut self, props: ExcerptProperties<O>, cx: &mut ModelContext<Self>) -> ExcerptId
     where
         O: text::ToOffset,
@@ -89,10 +96,13 @@ impl ExcerptList {
         let prev_id = snapshot.excerpts.last().map(|e| &e.id);
         let id = ExcerptId::between(prev_id.unwrap_or(&ExcerptId::min()), &ExcerptId::max());
 
-        snapshot.excerpts.push(
-            Excerpt::new(id.clone(), buffer.snapshot(), range, props.header_height),
-            &(),
-        );
+        let edit_start = snapshot.excerpts.summary().text.bytes;
+        let excerpt = Excerpt::new(id.clone(), buffer.snapshot(), range, props.header_height);
+        let edit = Edit {
+            old: edit_start..edit_start,
+            new: edit_start..edit_start + excerpt.text_summary.bytes,
+        };
+        snapshot.excerpts.push(excerpt, &());
         self.buffers
             .entry(props.buffer.id())
             .or_insert_with(|| BufferState {
@@ -102,6 +112,8 @@ impl ExcerptList {
             })
             .excerpts
             .push(id.clone());
+
+        self.subscriptions.publish_mut([edit]);
 
         id
     }
@@ -125,8 +137,6 @@ impl ExcerptList {
             }
         }
         excerpts_to_edit.sort_unstable_by_key(|(excerpt_id, _)| *excerpt_id);
-
-        dbg!(&excerpts_to_edit);
 
         let mut patch = Patch::<usize>::default();
         let mut new_excerpts = SumTree::new();
@@ -168,6 +178,8 @@ impl ExcerptList {
 
         drop(cursor);
         snapshot.excerpts = new_excerpts;
+
+        self.subscriptions.publish(&patch);
     }
 }
 
@@ -357,12 +369,11 @@ impl Location {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
-
     use super::*;
     use crate::Buffer;
     use gpui::MutableAppContext;
     use rand::prelude::*;
+    use std::{env, mem};
     use text::{Point, RandomCharIter};
     use util::test::sample_text;
 
@@ -371,12 +382,10 @@ mod tests {
         let buffer_1 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'a'), cx));
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'g'), cx));
 
-        let list = cx.add_model(|cx| {
-            let mut list = ExcerptList::new();
-            // aaaaaa
-            // bbbbbb
-            // cccccc
-            // dddddd
+        let list = cx.add_model(|cx| ExcerptList::new());
+
+        let subscription = list.update(cx, |list, cx| {
+            let subscription = list.subscribe();
             list.push(
                 ExcerptProperties {
                     buffer: &buffer_1,
@@ -385,6 +394,14 @@ mod tests {
                 },
                 cx,
             );
+            assert_eq!(
+                subscription.consume().into_inner(),
+                [Edit {
+                    old: 0..0,
+                    new: 0..12
+                }]
+            );
+
             list.push(
                 ExcerptProperties {
                     buffer: &buffer_1,
@@ -401,7 +418,15 @@ mod tests {
                 },
                 cx,
             );
-            list
+            assert_eq!(
+                subscription.consume().into_inner(),
+                [Edit {
+                    old: 12..12,
+                    new: 12..26
+                }]
+            );
+
+            subscription
         });
 
         assert_eq!(
@@ -425,7 +450,7 @@ mod tests {
             buffer.edit(
                 [
                     Point::new(0, 0)..Point::new(0, 0),
-                    Point::new(2, 1)..Point::new(2, 2),
+                    Point::new(2, 1)..Point::new(2, 3),
                 ],
                 "\n",
                 cx,
@@ -439,7 +464,7 @@ mod tests {
                 "\n",     //
                 "bbbb\n", //
                 "c\n",    //
-                "ccc\n",  //
+                "cc\n",   //
                 "\n",     //
                 "ddd\n",  //
                 "eeee\n", //
@@ -448,6 +473,14 @@ mod tests {
                 "\n",     //
                 "jj"      //
             )
+        );
+
+        assert_eq!(
+            subscription.consume().into_inner(),
+            [Edit {
+                old: 17..19,
+                new: 17..18
+            }]
         );
     }
 
