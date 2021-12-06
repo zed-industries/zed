@@ -102,6 +102,32 @@ fn test_random_edits(mut rng: StdRng) {
         }
         assert_eq!(text.to_string(), buffer.text());
 
+        for _ in 0..5 {
+            let end_ix = old_buffer.clip_offset(rng.gen_range(0..=old_buffer.len()), Bias::Right);
+            let start_ix = old_buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
+            let range = old_buffer.anchor_before(start_ix)..old_buffer.anchor_after(end_ix);
+            let mut old_text = old_buffer.text_for_range(range.clone()).collect::<String>();
+            let edits = buffer
+                .edits_since_in_range::<usize>(&old_buffer.version, range.clone())
+                .collect::<Vec<_>>();
+            log::info!(
+                "applying edits since version {:?} to old text in range {:?}: {:?}: {:?}",
+                old_buffer.version(),
+                start_ix..end_ix,
+                old_text,
+                edits,
+            );
+
+            let new_text = buffer.text_for_range(range).collect::<String>();
+            for edit in edits {
+                old_text.replace_range(
+                    edit.new.start..edit.new.start + edit.old_len(),
+                    &new_text[edit.new],
+                );
+            }
+            assert_eq!(old_text, new_text);
+        }
+
         let subscription_edits = subscription.consume();
         log::info!(
             "applying subscription edits since version {:?} to old text: {:?}: {:?}",

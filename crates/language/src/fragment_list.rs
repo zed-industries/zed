@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use smallvec::{smallvec, SmallVec};
 use std::{cmp, iter, mem, ops::Range};
 use sum_tree::{Bias, Cursor, SumTree};
-use text::TextSummary;
+use text::{Anchor, AnchorRangeExt, TextSummary};
 use theme::SyntaxTheme;
 
 const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
@@ -43,7 +43,7 @@ pub struct FragmentProperties<'a, T> {
 struct Entry {
     id: FragmentId,
     buffer: buffer::Snapshot,
-    buffer_range: Range<usize>,
+    buffer_range: Range<Anchor>,
     text_summary: TextSummary,
     header_height: u8,
 }
@@ -86,7 +86,8 @@ impl FragmentList {
         self.sync(cx);
 
         let buffer = props.buffer.read(cx);
-        let buffer_range = props.range.start.to_offset(buffer)..props.range.end.to_offset(buffer);
+        let buffer_range =
+            buffer.anchor_before(props.range.start)..buffer.anchor_after(props.range.end);
         let mut text_summary =
             buffer.text_summary_for_range::<TextSummary, _>(buffer_range.clone());
         if props.header_height > 0 {
@@ -148,12 +149,13 @@ impl FragmentList {
         let old_fragments = mem::take(&mut snapshot.entries);
         let mut cursor = old_fragments.cursor::<FragmentId>();
         for (buffer, fragment_id, patch_ix) in fragments_to_edit {
+            let buffer = buffer.read(cx);
             snapshot
                 .entries
                 .push_tree(cursor.slice(fragment_id, Bias::Left, &()), &());
 
             let fragment = cursor.item().unwrap();
-            let mut new_range = fragment.buffer_range.clone();
+            let mut new_range = fragment.buffer_range.to_offset(buffer);
             for edit in patches[patch_ix].edits() {
                 let edit_start = edit.new.start;
                 let edit_end = edit.new.start + edit.old_len();
@@ -177,7 +179,6 @@ impl FragmentList {
                 }
             }
 
-            let buffer = buffer.read(cx);
             let mut text_summary: TextSummary = buffer.text_summary_for_range(new_range.clone());
             if fragment.header_height > 0 {
                 text_summary.first_line_chars = 0;
@@ -189,7 +190,8 @@ impl FragmentList {
                 Entry {
                     id: fragment.id.clone(),
                     buffer: buffer.snapshot(),
-                    buffer_range: new_range,
+                    buffer_range: buffer.anchor_before(new_range.start)
+                        ..buffer.anchor_after(new_range.end),
                     text_summary,
                     header_height: fragment.header_height,
                 },
@@ -227,10 +229,11 @@ impl Snapshot {
         cursor.seek(&range.start, Bias::Right, &());
 
         let entry_chunks = cursor.item().map(|entry| {
-            let buffer_start = entry.buffer_range.start + (range.start - cursor.start());
+            let buffer_range = entry.buffer_range.to_offset(&entry.buffer);
+            let buffer_start = buffer_range.start + (range.start - cursor.start());
             let buffer_end = cmp::min(
-                entry.buffer_range.end,
-                entry.buffer_range.start + (range.end - cursor.start()),
+                buffer_range.end,
+                buffer_range.start + (range.end - cursor.start()),
             );
             entry.buffer.chunks(buffer_start..buffer_end, theme)
         });
@@ -305,17 +308,17 @@ impl<'a> Iterator for Chunks<'a> {
 
         self.cursor.next(&());
         let entry = self.cursor.item()?;
-
+        let buffer_range = entry.buffer_range.to_offset(&entry.buffer);
         let buffer_end = cmp::min(
-            entry.buffer_range.end,
-            entry.buffer_range.start + (self.range.end - self.cursor.start()),
+            buffer_range.end,
+            buffer_range.start + (self.range.end - self.cursor.start()),
         );
 
         self.header_height = entry.header_height;
         self.entry_chunks = Some(
             entry
                 .buffer
-                .chunks(entry.buffer_range.start..buffer_end, self.theme),
+                .chunks(buffer_range.start..buffer_end, self.theme),
         );
 
         Some(Chunk {

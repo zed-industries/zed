@@ -302,6 +302,7 @@ struct Edits<'a, D: TextDimension<'a>, F: FnMut(&FragmentSummary) -> bool> {
     since: &'a clock::Global,
     old_end: D,
     new_end: D,
+    range: Range<FullOffset>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -400,6 +401,12 @@ pub struct FragmentSummary {
 struct FragmentTextSummary {
     visible: usize,
     deleted: usize,
+}
+
+impl FragmentTextSummary {
+    pub fn full_offset(&self) -> FullOffset {
+        FullOffset(self.visible + self.deleted)
+    }
 }
 
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FragmentTextSummary {
@@ -1876,6 +1883,17 @@ impl Snapshot {
     where
         D: 'a + TextDimension<'a> + Ord,
     {
+        self.edits_since_in_range(since, Anchor::min()..Anchor::max())
+    }
+
+    pub fn edits_since_in_range<'a, D>(
+        &'a self,
+        since: &'a clock::Global,
+        range: Range<Anchor>,
+    ) -> impl 'a + Iterator<Item = Edit<D>>
+    where
+        D: 'a + TextDimension<'a> + Ord,
+    {
         let fragments_cursor = if *since == self.version {
             None
         } else {
@@ -1885,14 +1903,36 @@ impl Snapshot {
             )
         };
 
+        let mut cursor = self
+            .fragments
+            .cursor::<(VersionedFullOffset, FragmentTextSummary)>();
+        cursor.seek(
+            &VersionedFullOffset::Offset(range.start.full_offset),
+            range.start.bias,
+            &Some(range.start.version),
+        );
+        let mut visible_start = cursor.start().1.visible;
+        let mut deleted_start = cursor.start().1.deleted;
+        if let Some(fragment) = cursor.item() {
+            let overshoot = range.start.full_offset.0 - cursor.start().0.full_offset().0;
+            if fragment.visible {
+                visible_start += overshoot;
+            } else {
+                deleted_start += overshoot;
+            }
+        }
+
+        let full_offset_start = FullOffset(visible_start + deleted_start);
+        let full_offset_end = range.end.to_full_offset(self, range.end.bias);
         Edits {
-            visible_cursor: self.visible_text.cursor(0),
-            deleted_cursor: self.deleted_text.cursor(0),
+            visible_cursor: self.visible_text.cursor(visible_start),
+            deleted_cursor: self.deleted_text.cursor(deleted_start),
             fragments_cursor,
             undos: &self.undo_map,
             since,
             old_end: Default::default(),
             new_end: Default::default(),
+            range: full_offset_start..full_offset_end,
         }
     }
 }
@@ -1960,9 +2000,19 @@ impl<'a, D: TextDimension<'a> + Ord, F: FnMut(&FragmentSummary) -> bool> Iterato
         let cursor = self.fragments_cursor.as_mut()?;
 
         while let Some(fragment) = cursor.item() {
-            let summary = self.visible_cursor.summary(cursor.start().visible);
-            self.old_end.add_assign(&summary);
-            self.new_end.add_assign(&summary);
+            if cursor.end(&None).full_offset() < self.range.start {
+                cursor.next(&None);
+                continue;
+            } else if cursor.start().full_offset() >= self.range.end {
+                break;
+            }
+
+            if cursor.start().visible > self.visible_cursor.offset() {
+                let summary = self.visible_cursor.summary(cursor.start().visible);
+                self.old_end.add_assign(&summary);
+                self.new_end.add_assign(&summary);
+            }
+
             if pending_edit
                 .as_ref()
                 .map_or(false, |change| change.new.end < self.new_end)
@@ -1971,7 +2021,12 @@ impl<'a, D: TextDimension<'a> + Ord, F: FnMut(&FragmentSummary) -> bool> Iterato
             }
 
             if !fragment.was_visible(&self.since, &self.undos) && fragment.visible {
-                let fragment_summary = self.visible_cursor.summary(cursor.end(&None).visible);
+                let visible_end = cmp::min(
+                    cursor.end(&None).visible,
+                    cursor.start().visible + (self.range.end - cursor.start().full_offset()),
+                );
+
+                let fragment_summary = self.visible_cursor.summary(visible_end);
                 let mut new_end = self.new_end.clone();
                 new_end.add_assign(&fragment_summary);
                 if let Some(pending_edit) = pending_edit.as_mut() {
@@ -1985,8 +2040,15 @@ impl<'a, D: TextDimension<'a> + Ord, F: FnMut(&FragmentSummary) -> bool> Iterato
 
                 self.new_end = new_end;
             } else if fragment.was_visible(&self.since, &self.undos) && !fragment.visible {
-                self.deleted_cursor.seek_forward(cursor.start().deleted);
-                let fragment_summary = self.deleted_cursor.summary(cursor.end(&None).deleted);
+                let deleted_end = cmp::min(
+                    cursor.end(&None).deleted,
+                    cursor.start().deleted + (self.range.end - cursor.start().full_offset()),
+                );
+
+                if cursor.start().deleted > self.deleted_cursor.offset() {
+                    self.deleted_cursor.seek_forward(cursor.start().deleted);
+                }
+                let fragment_summary = self.deleted_cursor.summary(deleted_end);
                 let mut old_end = self.old_end.clone();
                 old_end.add_assign(&fragment_summary);
                 if let Some(pending_edit) = pending_edit.as_mut() {
@@ -2250,6 +2312,28 @@ impl ToOffset for usize {
 impl ToOffset for Anchor {
     fn to_offset<'a>(&self, content: &Snapshot) -> usize {
         content.summary_for_anchor(self)
+    }
+
+    fn to_full_offset<'a>(&self, content: &Snapshot, bias: Bias) -> FullOffset {
+        if content.version == self.version {
+            self.full_offset
+        } else {
+            let mut cursor = content
+                .fragments
+                .cursor::<(VersionedFullOffset, FragmentTextSummary)>();
+            cursor.seek(
+                &VersionedFullOffset::Offset(self.full_offset),
+                bias,
+                &Some(self.version.clone()),
+            );
+
+            let mut full_offset = cursor.start().1.full_offset().0;
+            if cursor.item().is_some() {
+                full_offset += self.full_offset - cursor.start().0.full_offset();
+            }
+
+            FullOffset(full_offset)
+        }
     }
 }
 
