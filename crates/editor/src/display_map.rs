@@ -11,7 +11,7 @@ use fold_map::{FoldMap, ToFoldPoint as _};
 use gpui::{fonts::FontId, ElementBox, Entity, ModelContext, ModelHandle};
 use language::{
     buffer::{Bias, Point},
-    document::{Document, DocumentSnapshot, ToDocumentOffset, ToDocumentPoint},
+    traits::{Document, DocumentSnapshot, ToDocumentOffset, ToDocumentPoint},
 };
 use std::{
     collections::{HashMap, HashSet},

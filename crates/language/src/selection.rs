@@ -1,6 +1,6 @@
 use crate::{
     buffer::{Point, Selection},
-    document::{DocumentSnapshot, ToDocumentOffset, ToDocumentPoint},
+    traits::{DocumentSnapshot, ToDocumentOffset, ToDocumentPoint},
 };
 use std::ops::Range;
 

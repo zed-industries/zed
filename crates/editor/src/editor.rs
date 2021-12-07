@@ -20,10 +20,10 @@ use gpui::{
     MutableAppContext, RenderContext, View, ViewContext, WeakViewHandle,
 };
 use items::BufferItemHandle;
-pub use language::buffer::{self, Buffer};
+pub use language::buffer;
 use language::{
     buffer::{DiagnosticSeverity, Point, Selection, SelectionGoal, SelectionSetId},
-    document::{
+    traits::{
         Document, DocumentAnchor, DocumentAnchorRangeExt, DocumentAnchorRangeSet,
         DocumentSelectionSet, DocumentSnapshot, ToDocumentOffset, ToDocumentPoint,
     },
@@ -218,68 +218,68 @@ pub fn init(cx: &mut MutableAppContext, entry_openers: &mut Vec<Box<dyn EntryOpe
         Binding::new("alt-cmd-f", FoldSelectedRanges, Some("Editor")),
     ]);
 
-    cx.add_action(Editor::<Buffer>::open_new);
-    cx.add_action(|this: &mut Editor<Buffer>, action: &Scroll, cx| {
+    cx.add_action(Editor::<buffer::Buffer>::open_new);
+    cx.add_action(|this: &mut Editor<buffer::Buffer>, action: &Scroll, cx| {
         this.set_scroll_position(action.0, cx)
     });
-    cx.add_action(Editor::<Buffer>::select);
-    cx.add_action(Editor::<Buffer>::cancel);
-    cx.add_action(Editor::<Buffer>::handle_input);
-    cx.add_action(Editor::<Buffer>::newline);
-    cx.add_action(Editor::<Buffer>::backspace);
-    cx.add_action(Editor::<Buffer>::delete);
-    cx.add_action(Editor::<Buffer>::tab);
-    cx.add_action(Editor::<Buffer>::outdent);
-    cx.add_action(Editor::<Buffer>::delete_line);
-    cx.add_action(Editor::<Buffer>::delete_to_previous_word_boundary);
-    cx.add_action(Editor::<Buffer>::delete_to_next_word_boundary);
-    cx.add_action(Editor::<Buffer>::delete_to_beginning_of_line);
-    cx.add_action(Editor::<Buffer>::delete_to_end_of_line);
-    cx.add_action(Editor::<Buffer>::cut_to_end_of_line);
-    cx.add_action(Editor::<Buffer>::duplicate_line);
-    cx.add_action(Editor::<Buffer>::move_line_up);
-    cx.add_action(Editor::<Buffer>::move_line_down);
-    cx.add_action(Editor::<Buffer>::cut);
-    cx.add_action(Editor::<Buffer>::copy);
-    cx.add_action(Editor::<Buffer>::paste);
-    cx.add_action(Editor::<Buffer>::undo);
-    cx.add_action(Editor::<Buffer>::redo);
-    cx.add_action(Editor::<Buffer>::move_up);
-    cx.add_action(Editor::<Buffer>::move_down);
-    cx.add_action(Editor::<Buffer>::move_left);
-    cx.add_action(Editor::<Buffer>::move_right);
-    cx.add_action(Editor::<Buffer>::move_to_previous_word_boundary);
-    cx.add_action(Editor::<Buffer>::move_to_next_word_boundary);
-    cx.add_action(Editor::<Buffer>::move_to_beginning_of_line);
-    cx.add_action(Editor::<Buffer>::move_to_end_of_line);
-    cx.add_action(Editor::<Buffer>::move_to_beginning);
-    cx.add_action(Editor::<Buffer>::move_to_end);
-    cx.add_action(Editor::<Buffer>::select_up);
-    cx.add_action(Editor::<Buffer>::select_down);
-    cx.add_action(Editor::<Buffer>::select_left);
-    cx.add_action(Editor::<Buffer>::select_right);
-    cx.add_action(Editor::<Buffer>::select_to_previous_word_boundary);
-    cx.add_action(Editor::<Buffer>::select_to_next_word_boundary);
-    cx.add_action(Editor::<Buffer>::select_to_beginning_of_line);
-    cx.add_action(Editor::<Buffer>::select_to_end_of_line);
-    cx.add_action(Editor::<Buffer>::select_to_beginning);
-    cx.add_action(Editor::<Buffer>::select_to_end);
-    cx.add_action(Editor::<Buffer>::select_all);
-    cx.add_action(Editor::<Buffer>::select_line);
-    cx.add_action(Editor::<Buffer>::split_selection_into_lines);
-    cx.add_action(Editor::<Buffer>::add_selection_above);
-    cx.add_action(Editor::<Buffer>::add_selection_below);
-    cx.add_action(Editor::<Buffer>::select_next);
-    cx.add_action(Editor::<Buffer>::toggle_comments);
-    cx.add_action(Editor::<Buffer>::select_larger_syntax_node);
-    cx.add_action(Editor::<Buffer>::select_smaller_syntax_node);
-    cx.add_action(Editor::<Buffer>::move_to_enclosing_bracket);
-    cx.add_action(Editor::<Buffer>::show_next_diagnostic);
-    cx.add_action(Editor::<Buffer>::page_up);
-    cx.add_action(Editor::<Buffer>::page_down);
-    cx.add_action(Editor::<Buffer>::fold);
-    cx.add_action(Editor::<Buffer>::unfold);
-    cx.add_action(Editor::<Buffer>::fold_selected_ranges);
+    cx.add_action(Editor::<buffer::Buffer>::select);
+    cx.add_action(Editor::<buffer::Buffer>::cancel);
+    cx.add_action(Editor::<buffer::Buffer>::handle_input);
+    cx.add_action(Editor::<buffer::Buffer>::newline);
+    cx.add_action(Editor::<buffer::Buffer>::backspace);
+    cx.add_action(Editor::<buffer::Buffer>::delete);
+    cx.add_action(Editor::<buffer::Buffer>::tab);
+    cx.add_action(Editor::<buffer::Buffer>::outdent);
+    cx.add_action(Editor::<buffer::Buffer>::delete_line);
+    cx.add_action(Editor::<buffer::Buffer>::delete_to_previous_word_boundary);
+    cx.add_action(Editor::<buffer::Buffer>::delete_to_next_word_boundary);
+    cx.add_action(Editor::<buffer::Buffer>::delete_to_beginning_of_line);
+    cx.add_action(Editor::<buffer::Buffer>::delete_to_end_of_line);
+    cx.add_action(Editor::<buffer::Buffer>::cut_to_end_of_line);
+    cx.add_action(Editor::<buffer::Buffer>::duplicate_line);
+    cx.add_action(Editor::<buffer::Buffer>::move_line_up);
+    cx.add_action(Editor::<buffer::Buffer>::move_line_down);
+    cx.add_action(Editor::<buffer::Buffer>::cut);
+    cx.add_action(Editor::<buffer::Buffer>::copy);
+    cx.add_action(Editor::<buffer::Buffer>::paste);
+    cx.add_action(Editor::<buffer::Buffer>::undo);
+    cx.add_action(Editor::<buffer::Buffer>::redo);
+    cx.add_action(Editor::<buffer::Buffer>::move_up);
+    cx.add_action(Editor::<buffer::Buffer>::move_down);
+    cx.add_action(Editor::<buffer::Buffer>::move_left);
+    cx.add_action(Editor::<buffer::Buffer>::move_right);
+    cx.add_action(Editor::<buffer::Buffer>::move_to_previous_word_boundary);
+    cx.add_action(Editor::<buffer::Buffer>::move_to_next_word_boundary);
+    cx.add_action(Editor::<buffer::Buffer>::move_to_beginning_of_line);
+    cx.add_action(Editor::<buffer::Buffer>::move_to_end_of_line);
+    cx.add_action(Editor::<buffer::Buffer>::move_to_beginning);
+    cx.add_action(Editor::<buffer::Buffer>::move_to_end);
+    cx.add_action(Editor::<buffer::Buffer>::select_up);
+    cx.add_action(Editor::<buffer::Buffer>::select_down);
+    cx.add_action(Editor::<buffer::Buffer>::select_left);
+    cx.add_action(Editor::<buffer::Buffer>::select_right);
+    cx.add_action(Editor::<buffer::Buffer>::select_to_previous_word_boundary);
+    cx.add_action(Editor::<buffer::Buffer>::select_to_next_word_boundary);
+    cx.add_action(Editor::<buffer::Buffer>::select_to_beginning_of_line);
+    cx.add_action(Editor::<buffer::Buffer>::select_to_end_of_line);
+    cx.add_action(Editor::<buffer::Buffer>::select_to_beginning);
+    cx.add_action(Editor::<buffer::Buffer>::select_to_end);
+    cx.add_action(Editor::<buffer::Buffer>::select_all);
+    cx.add_action(Editor::<buffer::Buffer>::select_line);
+    cx.add_action(Editor::<buffer::Buffer>::split_selection_into_lines);
+    cx.add_action(Editor::<buffer::Buffer>::add_selection_above);
+    cx.add_action(Editor::<buffer::Buffer>::add_selection_below);
+    cx.add_action(Editor::<buffer::Buffer>::select_next);
+    cx.add_action(Editor::<buffer::Buffer>::toggle_comments);
+    cx.add_action(Editor::<buffer::Buffer>::select_larger_syntax_node);
+    cx.add_action(Editor::<buffer::Buffer>::select_smaller_syntax_node);
+    cx.add_action(Editor::<buffer::Buffer>::move_to_enclosing_bracket);
+    cx.add_action(Editor::<buffer::Buffer>::show_next_diagnostic);
+    cx.add_action(Editor::<buffer::Buffer>::page_up);
+    cx.add_action(Editor::<buffer::Buffer>::page_down);
+    cx.add_action(Editor::<buffer::Buffer>::fold);
+    cx.add_action(Editor::<buffer::Buffer>::unfold);
+    cx.add_action(Editor::<buffer::Buffer>::fold_selected_ranges);
 }
 
 trait SelectionExt<D: DocumentSnapshot> {
@@ -426,12 +426,12 @@ struct ClipboardSelection {
     is_entire_line: bool,
 }
 
-impl Editor<Buffer> {
+impl Editor<buffer::Buffer> {
     pub fn single_line(
         build_settings: impl 'static + Fn(&AppContext) -> EditorSettings,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
+        let buffer = cx.add_model(|cx| buffer::Buffer::new(0, String::new(), cx));
         let mut view = Self::for_buffer(buffer, build_settings, cx);
         view.mode = EditorMode::SingleLine;
         view
@@ -442,14 +442,14 @@ impl Editor<Buffer> {
         build_settings: impl 'static + Fn(&AppContext) -> EditorSettings,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
+        let buffer = cx.add_model(|cx| buffer::Buffer::new(0, String::new(), cx));
         let mut view = Self::for_buffer(buffer, build_settings, cx);
         view.mode = EditorMode::AutoHeight { max_lines };
         view
     }
 
     pub fn for_buffer(
-        buffer: ModelHandle<Buffer>,
+        buffer: ModelHandle<buffer::Buffer>,
         build_settings: impl 'static + Fn(&AppContext) -> EditorSettings,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -532,7 +532,11 @@ impl<D: Document> Editor<D> {
         cx: &mut ViewContext<Workspace>,
     ) {
         let buffer = cx.add_model(|cx| {
-            Buffer::new(0, "", cx).with_language(Some(language::PLAIN_TEXT.clone()), None, cx)
+            buffer::Buffer::new(0, "", cx).with_language(
+                Some(language::PLAIN_TEXT.clone()),
+                None,
+                cx,
+            )
         });
         workspace.add_item(BufferItemHandle(buffer), cx);
     }
@@ -3721,7 +3725,8 @@ mod tests {
 
     #[gpui::test]
     fn test_selection_with_mouse(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
+        let buffer =
+            cx.add_model(|cx| buffer::Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
         let settings = EditorSettings::test(cx);
         let (_, editor) =
             cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
@@ -3788,7 +3793,8 @@ mod tests {
 
     #[gpui::test]
     fn test_canceling_pending_selection(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
+        let buffer =
+            cx.add_model(|cx| buffer::Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
         let settings = EditorSettings::test(cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
@@ -3820,7 +3826,8 @@ mod tests {
 
     #[gpui::test]
     fn test_cancel(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
+        let buffer =
+            cx.add_model(|cx| buffer::Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
         let settings = EditorSettings::test(cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
@@ -3861,7 +3868,7 @@ mod tests {
     #[gpui::test]
     fn test_fold(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| {
-            Buffer::new(
+            buffer::Buffer::new(
                 0,
                 "
                     impl Foo {
@@ -3951,7 +3958,7 @@ mod tests {
 
     #[gpui::test]
     fn test_move_cursor(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'a'), cx));
+        let buffer = cx.add_model(|cx| buffer::Buffer::new(0, sample_text(6, 6, 'a'), cx));
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(buffer.clone(), settings, cx)
@@ -4028,7 +4035,7 @@ mod tests {
 
     #[gpui::test]
     fn test_move_cursor_multibyte(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcde\nαβγδε\n", cx));
+        let buffer = cx.add_model(|cx| buffer::Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcde\nαβγδε\n", cx));
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(buffer.clone(), settings, cx)
@@ -4086,7 +4093,8 @@ mod tests {
 
     #[gpui::test]
     fn test_move_cursor_different_line_lengths(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", cx));
+        let buffer =
+            cx.add_model(|cx| buffer::Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", cx));
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(buffer.clone(), settings, cx)
@@ -4117,7 +4125,7 @@ mod tests {
 
     #[gpui::test]
     fn test_beginning_end_of_line(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\n  def", cx));
+        let buffer = cx.add_model(|cx| buffer::Buffer::new(0, "abc\n  def", cx));
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
@@ -4259,8 +4267,9 @@ mod tests {
 
     #[gpui::test]
     fn test_prev_next_word_boundary(cx: &mut gpui::MutableAppContext) {
-        let buffer =
-            cx.add_model(|cx| Buffer::new(0, "use std::str::{foo, bar}\n\n  {baz.qux()}", cx));
+        let buffer = cx.add_model(|cx| {
+            buffer::Buffer::new(0, "use std::str::{foo, bar}\n\n  {baz.qux()}", cx)
+        });
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
@@ -4399,8 +4408,9 @@ mod tests {
 
     #[gpui::test]
     fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut gpui::MutableAppContext) {
-        let buffer =
-            cx.add_model(|cx| Buffer::new(0, "use one::{\n    two::three::four::five\n};", cx));
+        let buffer = cx.add_model(|cx| {
+            buffer::Buffer::new(0, "use one::{\n    two::three::four::five\n};", cx)
+        });
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
@@ -4454,7 +4464,7 @@ mod tests {
 
     #[gpui::test]
     fn test_delete_to_word_boundary(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "one two three four", cx));
+        let buffer = cx.add_model(|cx| buffer::Buffer::new(0, "one two three four", cx));
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(buffer.clone(), settings, cx)
@@ -4495,7 +4505,7 @@ mod tests {
 
     #[gpui::test]
     fn test_newline(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "aaaa\n    bbbb\n", cx));
+        let buffer = cx.add_model(|cx| buffer::Buffer::new(0, "aaaa\n    bbbb\n", cx));
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(buffer.clone(), settings, cx)
@@ -4519,7 +4529,7 @@ mod tests {
 
     #[gpui::test]
     fn test_indent_outdent(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "  one two\nthree\n four", cx));
+        let buffer = cx.add_model(|cx| buffer::Buffer::new(0, "  one two\nthree\n four", cx));
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(buffer.clone(), settings, cx)
@@ -4581,7 +4591,7 @@ mod tests {
     #[gpui::test]
     fn test_backspace(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| {
-            Buffer::new(
+            buffer::Buffer::new(
                 0,
                 "one two three\nfour five six\nseven eight nine\nten\n",
                 cx,
@@ -4617,7 +4627,7 @@ mod tests {
     #[gpui::test]
     fn test_delete(cx: &mut gpui::MutableAppContext) {
         let buffer = cx.add_model(|cx| {
-            Buffer::new(
+            buffer::Buffer::new(
                 0,
                 "one two three\nfour five six\nseven eight nine\nten\n",
                 cx,
@@ -4653,7 +4663,7 @@ mod tests {
     #[gpui::test]
     fn test_delete_line(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
+        let buffer = cx.add_model(|cx| buffer::Buffer::new(0, "abc\ndef\nghi\n", cx));
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -4677,7 +4687,7 @@ mod tests {
         });
 
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
+        let buffer = cx.add_model(|cx| buffer::Buffer::new(0, "abc\ndef\nghi\n", cx));
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_display_ranges(&[DisplayPoint::new(2, 0)..DisplayPoint::new(0, 1)], cx)
@@ -4694,7 +4704,7 @@ mod tests {
     #[gpui::test]
     fn test_duplicate_line(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
+        let buffer = cx.add_model(|cx| buffer::Buffer::new(0, "abc\ndef\nghi\n", cx));
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -4721,7 +4731,7 @@ mod tests {
         });
 
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
+        let buffer = cx.add_model(|cx| buffer::Buffer::new(0, "abc\ndef\nghi\n", cx));
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -4747,7 +4757,7 @@ mod tests {
     #[gpui::test]
     fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(10, 5, 'a'), cx));
+        let buffer = cx.add_model(|cx| buffer::Buffer::new(0, sample_text(10, 5, 'a'), cx));
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.fold_ranges(
@@ -4843,7 +4853,8 @@ mod tests {
 
     #[gpui::test]
     fn test_clipboard(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "one✅ two three four five six ", cx));
+        let buffer =
+            cx.add_model(|cx| buffer::Buffer::new(0, "one✅ two three four five six ", cx));
         let settings = EditorSettings::test(&cx);
         let view = cx
             .add_window(Default::default(), |cx| {
@@ -4978,7 +4989,7 @@ mod tests {
 
     #[gpui::test]
     fn test_select_all(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\nde\nfgh", cx));
+        let buffer = cx.add_model(|cx| buffer::Buffer::new(0, "abc\nde\nfgh", cx));
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
@@ -4993,7 +5004,7 @@ mod tests {
     #[gpui::test]
     fn test_select_line(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 5, 'a'), cx));
+        let buffer = cx.add_model(|cx| buffer::Buffer::new(0, sample_text(6, 5, 'a'), cx));
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -5039,7 +5050,7 @@ mod tests {
     #[gpui::test]
     fn test_split_selection_into_lines(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(9, 5, 'a'), cx));
+        let buffer = cx.add_model(|cx| buffer::Buffer::new(0, sample_text(9, 5, 'a'), cx));
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.fold_ranges(
@@ -5107,7 +5118,7 @@ mod tests {
     #[gpui::test]
     fn test_add_selection_above_below(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndefghi\n\njk\nlmno\n", cx));
+        let buffer = cx.add_model(|cx| buffer::Buffer::new(0, "abc\ndefghi\n\njk\nlmno\n", cx));
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
         view.update(cx, |view, cx| {
@@ -5294,7 +5305,8 @@ mod tests {
         "#
         .unindent();
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer =
+            cx.add_model(|cx| buffer::Buffer::new(0, text, cx).with_language(language, None, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
             .await;
@@ -5450,7 +5462,8 @@ mod tests {
         "#
         .unindent();
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer =
+            cx.add_model(|cx| buffer::Buffer::new(0, text, cx).with_language(language, None, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
             .await;
@@ -5550,7 +5563,8 @@ mod tests {
         "
         .unindent();
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer =
+            cx.add_model(|cx| buffer::Buffer::new(0, text, cx).with_language(language, None, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
 
         view.update(&mut cx, |editor, cx| {
@@ -5647,7 +5661,8 @@ mod tests {
             "{{} }\n",     //
         );
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer =
+            cx.add_model(|cx| buffer::Buffer::new(0, text, cx).with_language(language, None, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
             .await;
@@ -5682,7 +5697,7 @@ mod tests {
         });
     }
 
-    impl Editor<Buffer> {
+    impl Editor<buffer::Buffer> {
         fn selection_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
             self.intersecting_selections(
                 self.selection_set_id,
@@ -5707,10 +5722,10 @@ mod tests {
     }
 
     fn build_editor(
-        buffer: ModelHandle<Buffer>,
+        buffer: ModelHandle<buffer::Buffer>,
         settings: EditorSettings,
-        cx: &mut ViewContext<Editor<Buffer>>,
-    ) -> Editor<Buffer> {
+        cx: &mut ViewContext<Editor<buffer::Buffer>>,
+    ) -> Editor<buffer::Buffer> {
         Editor::for_buffer(buffer, move |_| settings.clone(), cx)
     }
 }

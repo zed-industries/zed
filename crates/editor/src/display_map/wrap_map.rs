@@ -8,7 +8,7 @@ use gpui::{
 };
 use language::{
     buffer::{Chunk, Patch, Point},
-    document::DocumentSnapshot,
+    traits::DocumentSnapshot,
 };
 use lazy_static::lazy_static;
 use smol::future::yield_now;

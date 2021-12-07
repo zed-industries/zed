@@ -2,7 +2,7 @@ use client::{
     channel::{Channel, ChannelEvent, ChannelList, ChannelMessage},
     Client,
 };
-use editor::{Buffer, Editor, EditorSettings};
+use editor::{buffer::Buffer, Editor, EditorSettings};
 use gpui::{
     action,
     elements::*,

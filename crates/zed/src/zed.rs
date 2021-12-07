@@ -214,7 +214,7 @@ impl<'a> From<&'a AppState> for ThemeSelectorParams {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::{Buffer, Editor};
+    use editor::{buffer::Buffer, Editor};
     use project::ProjectPath;
     use serde_json::json;
     use std::{collections::HashSet, path::Path};

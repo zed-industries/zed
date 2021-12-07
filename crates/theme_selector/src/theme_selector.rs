@@ -1,4 +1,4 @@
-use editor::{Buffer, Editor, EditorSettings};
+use editor::{buffer::Buffer, Editor, EditorSettings};
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     action,

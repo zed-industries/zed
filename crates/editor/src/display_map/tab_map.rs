@@ -1,7 +1,7 @@
 use super::fold_map::{self, FoldEdit, FoldPoint, Snapshot as FoldSnapshot, ToFoldPoint};
 use language::{
     buffer::{rope, Chunk, Point},
-    document::DocumentSnapshot,
+    traits::DocumentSnapshot,
 };
 use parking_lot::Mutex;
 use std::{cmp, mem, ops::Range};

@@ -1,6 +1,6 @@
 use language::{
     buffer::{Chunk, Edit, Point, PointUtf16, TextSummary},
-    document::{
+    traits::{
         DocumentAnchor, DocumentAnchorRangeExt, DocumentChunks, DocumentSnapshot, ToDocumentOffset,
     },
 };

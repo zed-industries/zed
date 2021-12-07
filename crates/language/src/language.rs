@@ -1,11 +1,11 @@
 pub mod buffer;
-pub mod document;
 mod excerpt_list;
 mod highlight_map;
 pub mod proto;
 mod selection;
 #[cfg(test)]
 mod tests;
+pub mod traits;
 
 use anyhow::{anyhow, Result};
 pub use buffer::Diagnostic;

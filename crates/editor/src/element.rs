@@ -19,7 +19,7 @@ use gpui::{
 use json::json;
 use language::{
     buffer::Chunk,
-    document::{Document, DocumentSnapshot, ToDocumentPoint},
+    traits::{Document, DocumentSnapshot, ToDocumentPoint},
 };
 use smallvec::SmallVec;
 use std::{

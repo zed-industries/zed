@@ -2,7 +2,7 @@ use super::wrap_map::{self, Edit as WrapEdit, Snapshot as WrapSnapshot, WrapPoin
 use gpui::{AppContext, ElementBox};
 use language::{
     buffer::{Bias, Chunk, Edit, Point},
-    document::{DocumentAnchor, DocumentSnapshot, ToDocumentOffset, ToDocumentPoint},
+    traits::{DocumentAnchor, DocumentSnapshot, ToDocumentOffset, ToDocumentPoint},
 };
 use parking_lot::Mutex;
 use std::{

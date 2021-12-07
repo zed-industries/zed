@@ -1,6 +1,6 @@
 use super::{Bias, DisplayMapSnapshot, DisplayPoint, SelectionGoal, ToDisplayPoint};
 use anyhow::Result;
-use language::document::{DocumentSnapshot, ToDocumentPoint};
+use language::traits::{DocumentSnapshot, ToDocumentPoint};
 use std::{cmp, ops::Range};
 
 pub fn left<S: DocumentSnapshot>(

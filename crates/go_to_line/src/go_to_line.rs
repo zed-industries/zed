@@ -1,4 +1,4 @@
-use editor::{display_map::ToDisplayPoint, Autoscroll, Buffer, Editor, EditorSettings};
+use editor::{buffer::Buffer, display_map::ToDisplayPoint, Autoscroll, Editor, EditorSettings};
 use gpui::{
     action, elements::*, geometry::vector::Vector2F, keymap::Binding, Axis, Entity,
     MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
