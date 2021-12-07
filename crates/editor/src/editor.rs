@@ -273,11 +273,11 @@ pub fn init(cx: &mut MutableAppContext, entry_openers: &mut Vec<Box<dyn EntryOpe
 }
 
 trait SelectionExt {
-    fn display_range(&self, map: &DisplayMapSnapshot) -> Range<DisplayPoint>;
+    fn display_range(&self, map: &DisplayMapSnapshot<language::Snapshot>) -> Range<DisplayPoint>;
     fn spanned_rows(
         &self,
         include_end_if_at_line_start: bool,
-        map: &DisplayMapSnapshot,
+        map: &DisplayMapSnapshot<language::Snapshot>,
     ) -> SpannedRows;
 }
 
@@ -348,7 +348,7 @@ pub enum SoftWrap {
 pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<Buffer>,
-    display_map: ModelHandle<DisplayMap>,
+    display_map: ModelHandle<DisplayMap<Buffer>>,
     selection_set_id: SelectionSetId,
     pending_selection: Option<PendingSelection>,
     columnar_selection_tail: Option<Anchor>,
@@ -373,7 +373,7 @@ pub struct Editor {
 
 pub struct Snapshot {
     pub mode: EditorMode,
-    pub display_snapshot: DisplayMapSnapshot,
+    pub display_snapshot: DisplayMapSnapshot<language::Snapshot>,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
     scroll_position: Vector2F,
@@ -986,7 +986,7 @@ impl Editor {
         tail: DisplayPoint,
         head: DisplayPoint,
         overshoot: u32,
-        display_map: &DisplayMapSnapshot,
+        display_map: &DisplayMapSnapshot<language::Snapshot>,
         cx: &mut ViewContext<Self>,
     ) {
         let start_row = cmp::min(tail.row(), head.row());
@@ -2966,7 +2966,7 @@ impl Editor {
 
     fn build_columnar_selection(
         &mut self,
-        display_map: &DisplayMapSnapshot,
+        display_map: &DisplayMapSnapshot<language::Snapshot>,
         row: u32,
         columns: &Range<u32>,
         reversed: bool,
@@ -3271,7 +3271,11 @@ impl Editor {
         self.unfold_ranges(ranges, cx);
     }
 
-    fn is_line_foldable(&self, display_map: &DisplayMapSnapshot, display_row: u32) -> bool {
+    fn is_line_foldable(
+        &self,
+        display_map: &DisplayMapSnapshot<language::Snapshot>,
+        display_row: u32,
+    ) -> bool {
         let max_point = display_map.max_point();
         if display_row >= max_point.row() {
             false
@@ -3293,7 +3297,7 @@ impl Editor {
 
     fn foldable_range_for_line(
         &self,
-        display_map: &DisplayMapSnapshot,
+        display_map: &DisplayMapSnapshot<language::Snapshot>,
         start_row: u32,
     ) -> Range<Point> {
         let max_point = display_map.max_point();
@@ -3445,7 +3449,11 @@ impl Editor {
         }
     }
 
-    fn on_display_map_changed(&mut self, _: ModelHandle<DisplayMap>, cx: &mut ViewContext<Self>) {
+    fn on_display_map_changed(
+        &mut self,
+        _: ModelHandle<DisplayMap<Buffer>>,
+        cx: &mut ViewContext<Self>,
+    ) {
         cx.notify();
     }
 }
@@ -3469,7 +3477,7 @@ impl Snapshot {
 }
 
 impl Deref for Snapshot {
-    type Target = DisplayMapSnapshot;
+    type Target = DisplayMapSnapshot<language::Snapshot>;
 
     fn deref(&self) -> &Self::Target {
         &self.display_snapshot
@@ -3525,7 +3533,7 @@ impl EditorSettings {
 }
 
 fn compute_scroll_position(
-    snapshot: &DisplayMapSnapshot,
+    snapshot: &DisplayMapSnapshot<language::Snapshot>,
     mut scroll_position: Vector2F,
     scroll_top_anchor: &Anchor,
 ) -> Vector2F {
@@ -3606,7 +3614,7 @@ impl View for Editor {
 }
 
 impl SelectionExt for Selection<Point> {
-    fn display_range(&self, map: &DisplayMapSnapshot) -> Range<DisplayPoint> {
+    fn display_range(&self, map: &DisplayMapSnapshot<language::Snapshot>) -> Range<DisplayPoint> {
         let start = self.start.to_display_point(map);
         let end = self.end.to_display_point(map);
         if self.reversed {
@@ -3619,7 +3627,7 @@ impl SelectionExt for Selection<Point> {
     fn spanned_rows(
         &self,
         include_end_if_at_line_start: bool,
-        map: &DisplayMapSnapshot,
+        map: &DisplayMapSnapshot<language::Snapshot>,
     ) -> SpannedRows {
         let display_start = self.start.to_display_point(map);
         let mut display_end = self.end.to_display_point(map);

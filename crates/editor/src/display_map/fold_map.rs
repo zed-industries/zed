@@ -14,8 +14,8 @@ use std::{
 use sum_tree::{Bias, Cursor, FilterCursor, SumTree};
 use theme::SyntaxTheme;
 
-pub trait ToFoldPoint {
-    fn to_fold_point<S: DocumentSnapshot>(&self, snapshot: &Snapshot<S>, bias: Bias) -> FoldPoint;
+pub trait ToFoldPoint<S: DocumentSnapshot> {
+    fn to_fold_point(&self, snapshot: &Snapshot<S>, bias: Bias) -> FoldPoint;
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
@@ -78,8 +78,8 @@ impl FoldPoint {
     }
 }
 
-impl ToFoldPoint for Point {
-    fn to_fold_point<S: DocumentSnapshot>(&self, snapshot: &Snapshot<S>, bias: Bias) -> FoldPoint {
+impl<S: DocumentSnapshot> ToFoldPoint<S> for Point {
+    fn to_fold_point(&self, snapshot: &Snapshot<S>, bias: Bias) -> FoldPoint {
         let mut cursor = snapshot.transforms.cursor::<(Point, FoldPoint)>();
         cursor.seek(self, Bias::Right, &());
         if cursor.item().map_or(false, |t| t.is_fold()) {

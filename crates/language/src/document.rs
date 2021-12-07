@@ -1,9 +1,15 @@
+use crate::{rope::TextDimension, Chunk, Point, Subscription, TextSummary};
+use gpui::Entity;
 use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::Bias;
-use text::{rope::TextDimension, Point, TextSummary};
 use theme::SyntaxTheme;
 
-use crate::Chunk;
+pub trait Document: 'static + Entity {
+    type Snapshot: DocumentSnapshot;
+
+    fn snapshot(&self) -> Self::Snapshot;
+    fn subscribe(&mut self) -> Subscription;
+}
 
 pub trait DocumentSnapshot: 'static + Clone + Send + Unpin {
     type Anchor: DocumentAnchor<Snapshot = Self>;

@@ -1993,6 +1993,18 @@ pub fn contiguous_ranges(
     })
 }
 
+impl crate::document::Document for Buffer {
+    type Snapshot = Snapshot;
+
+    fn snapshot(&self) -> Self::Snapshot {
+        self.snapshot()
+    }
+
+    fn subscribe(&mut self) -> Subscription {
+        self.subscribe()
+    }
+}
+
 impl crate::document::DocumentSnapshot for Snapshot {
     type Anchor = Anchor;
 
