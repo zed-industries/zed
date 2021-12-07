@@ -1,25 +1,25 @@
 use crate::{
     buffer::{Point, Selection},
-    traits::{DocumentSnapshot, ToDocumentOffset, ToDocumentPoint},
+    traits::{Snapshot, ToOffset, ToPoint},
 };
 use std::ops::Range;
 
 pub trait SelectionExt<T> {
     fn point_range<S>(&self, snapshot: &S) -> Range<Point>
     where
-        S: DocumentSnapshot,
-        T: ToDocumentPoint<S>;
+        S: Snapshot,
+        T: ToPoint<S>;
     fn offset_range<S>(&self, snapshot: &S) -> Range<usize>
     where
-        S: DocumentSnapshot,
-        T: ToDocumentOffset<S>;
+        S: Snapshot,
+        T: ToOffset<S>;
 }
 
 impl<T> SelectionExt<T> for Selection<T> {
     fn point_range<S>(&self, snapshot: &S) -> Range<Point>
     where
-        S: DocumentSnapshot,
-        T: ToDocumentPoint<S>,
+        S: Snapshot,
+        T: ToPoint<S>,
     {
         let start = self.start.to_point(snapshot);
         let end = self.end.to_point(snapshot);
@@ -32,8 +32,8 @@ impl<T> SelectionExt<T> for Selection<T> {
 
     fn offset_range<S>(&self, snapshot: &S) -> Range<usize>
     where
-        S: DocumentSnapshot,
-        T: ToDocumentOffset<S>,
+        S: Snapshot,
+        T: ToOffset<S>,
     {
         let start = self.start.to_offset(snapshot);
         let end = self.end.to_offset(snapshot);

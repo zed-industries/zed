@@ -4,14 +4,15 @@ mod tab_map;
 mod wrap_map;
 
 pub use block_map::{
-    AlignedBlock, BlockContext, BlockDisposition, BlockId, BlockProperties, BufferRows, Chunks,
+    AlignedBlock, BlockBufferRows, BlockChunks, BlockContext, BlockDisposition, BlockId,
+    BlockProperties,
 };
 use block_map::{BlockMap, BlockPoint};
 use fold_map::{FoldMap, ToFoldPoint as _};
 use gpui::{fonts::FontId, ElementBox, Entity, ModelContext, ModelHandle};
 use language::{
     buffer::{Bias, Point},
-    traits::{Document, DocumentSnapshot, ToDocumentOffset, ToDocumentPoint},
+    traits::{Buffer, Snapshot, ToOffset, ToPoint},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -21,11 +22,11 @@ use tab_map::TabMap;
 use theme::SyntaxTheme;
 use wrap_map::WrapMap;
 
-pub trait ToDisplayPoint<S: DocumentSnapshot> {
-    fn to_display_point(&self, map: &DisplayMapSnapshot<S>) -> DisplayPoint;
+pub trait ToDisplayPoint<S: Snapshot> {
+    fn to_display_point(&self, map: &DisplaySnapshot<S>) -> DisplayPoint;
 }
 
-pub struct DisplayMap<D: Document> {
+pub struct DisplayMap<D: Buffer> {
     buffer: ModelHandle<D>,
     buffer_subscription: language::buffer::Subscription,
     fold_map: FoldMap<D::Snapshot>,
@@ -34,11 +35,11 @@ pub struct DisplayMap<D: Document> {
     block_map: BlockMap<D::Snapshot>,
 }
 
-impl<D: Document> Entity for DisplayMap<D> {
+impl<D: Buffer> Entity for DisplayMap<D> {
     type Event = ();
 }
 
-impl<D: Document> DisplayMap<D> {
+impl<D: Buffer> DisplayMap<D> {
     pub fn new(
         buffer: ModelHandle<D>,
         tab_size: usize,
@@ -63,7 +64,7 @@ impl<D: Document> DisplayMap<D> {
         }
     }
 
-    pub fn snapshot(&self, cx: &mut ModelContext<Self>) -> DisplayMapSnapshot<D::Snapshot> {
+    pub fn snapshot(&self, cx: &mut ModelContext<Self>) -> DisplaySnapshot<D::Snapshot> {
         let buffer_snapshot = self.buffer.read(cx).snapshot();
         let edits = self.buffer_subscription.consume().into_inner();
         let (folds_snapshot, edits) = self.fold_map.read(buffer_snapshot, edits);
@@ -73,7 +74,7 @@ impl<D: Document> DisplayMap<D> {
             .update(cx, |map, cx| map.sync(tabs_snapshot.clone(), edits, cx));
         let blocks_snapshot = self.block_map.read(wraps_snapshot.clone(), edits);
 
-        DisplayMapSnapshot {
+        DisplaySnapshot {
             buffer_snapshot: self.buffer.read(cx).snapshot(),
             folds_snapshot,
             tabs_snapshot,
@@ -82,7 +83,7 @@ impl<D: Document> DisplayMap<D> {
         }
     }
 
-    pub fn fold<T: ToDocumentOffset<D::Snapshot>>(
+    pub fn fold<T: ToOffset<D::Snapshot>>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &mut ModelContext<Self>,
@@ -103,7 +104,7 @@ impl<D: Document> DisplayMap<D> {
         self.block_map.read(snapshot, edits);
     }
 
-    pub fn unfold<T: ToDocumentOffset<D::Snapshot>>(
+    pub fn unfold<T: ToOffset<D::Snapshot>>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &mut ModelContext<Self>,
@@ -130,7 +131,7 @@ impl<D: Document> DisplayMap<D> {
         cx: &mut ModelContext<Self>,
     ) -> Vec<BlockId>
     where
-        P: ToDocumentOffset<D::Snapshot> + Clone,
+        P: ToOffset<D::Snapshot> + Clone,
     {
         let snapshot = self.buffer.read(cx).snapshot();
         let edits = self.buffer_subscription.consume().into_inner();
@@ -178,15 +179,15 @@ impl<D: Document> DisplayMap<D> {
     }
 }
 
-pub struct DisplayMapSnapshot<S: DocumentSnapshot> {
+pub struct DisplaySnapshot<S: Snapshot> {
     pub buffer_snapshot: S,
-    folds_snapshot: fold_map::Snapshot<S>,
-    tabs_snapshot: tab_map::Snapshot<S>,
-    wraps_snapshot: wrap_map::Snapshot<S>,
+    folds_snapshot: fold_map::FoldSnapshot<S>,
+    tabs_snapshot: tab_map::TabSnapshot<S>,
+    wraps_snapshot: wrap_map::WrapSnapshot<S>,
     blocks_snapshot: block_map::BlockSnapshot<S>,
 }
 
-impl<S: DocumentSnapshot> DisplayMapSnapshot<S> {
+impl<S: Snapshot> DisplaySnapshot<S> {
     #[cfg(test)]
     pub fn fold_count(&self) -> usize {
         self.folds_snapshot.fold_count()
@@ -196,7 +197,7 @@ impl<S: DocumentSnapshot> DisplayMapSnapshot<S> {
         self.buffer_snapshot.len() == 0
     }
 
-    pub fn buffer_rows<'a>(&'a self, start_row: u32) -> BufferRows<'a, S> {
+    pub fn buffer_rows<'a>(&'a self, start_row: u32) -> BlockBufferRows<'a, S> {
         self.blocks_snapshot.buffer_rows(start_row)
     }
 
@@ -262,7 +263,7 @@ impl<S: DocumentSnapshot> DisplayMapSnapshot<S> {
         &'a self,
         display_rows: Range<u32>,
         theme: Option<&'a SyntaxTheme>,
-    ) -> block_map::Chunks<'a, S> {
+    ) -> block_map::BlockChunks<'a, S> {
         self.blocks_snapshot.chunks(display_rows, theme)
     }
 
@@ -314,7 +315,7 @@ impl<S: DocumentSnapshot> DisplayMapSnapshot<S> {
         range: Range<T>,
     ) -> impl Iterator<Item = &'a Range<S::Anchor>>
     where
-        T: ToDocumentOffset<S>,
+        T: ToOffset<S>,
     {
         self.folds_snapshot.folds_in_range(range)
     }
@@ -326,7 +327,7 @@ impl<S: DocumentSnapshot> DisplayMapSnapshot<S> {
         self.blocks_snapshot.blocks_in_range(rows)
     }
 
-    pub fn intersects_fold<T: ToDocumentOffset<S>>(&self, offset: T) -> bool {
+    pub fn intersects_fold<T: ToOffset<S>>(&self, offset: T) -> bool {
         self.folds_snapshot.intersects_fold(offset)
     }
 
@@ -422,11 +423,11 @@ impl DisplayPoint {
         &mut self.0.column
     }
 
-    pub fn to_point<S: DocumentSnapshot>(self, map: &DisplayMapSnapshot<S>) -> Point {
+    pub fn to_point<S: Snapshot>(self, map: &DisplaySnapshot<S>) -> Point {
         map.display_point_to_point(self, Bias::Left)
     }
 
-    pub fn to_offset<S: DocumentSnapshot>(self, map: &DisplayMapSnapshot<S>, bias: Bias) -> usize {
+    pub fn to_offset<S: Snapshot>(self, map: &DisplaySnapshot<S>, bias: Bias) -> usize {
         let unblocked_point = map.blocks_snapshot.to_wrap_point(self.0);
         let unwrapped_point = map.wraps_snapshot.to_tab_point(unblocked_point);
         let unexpanded_point = map.tabs_snapshot.to_fold_point(unwrapped_point, bias).0;
@@ -434,8 +435,8 @@ impl DisplayPoint {
     }
 }
 
-impl<S: DocumentSnapshot, T: ToDocumentPoint<S>> ToDisplayPoint<S> for T {
-    fn to_display_point(&self, map: &DisplayMapSnapshot<S>) -> DisplayPoint {
+impl<S: Snapshot, T: ToPoint<S>> ToDisplayPoint<S> for T {
+    fn to_display_point(&self, map: &DisplaySnapshot<S>) -> DisplayPoint {
         map.point_to_display_point(self.to_point(&map.buffer_snapshot), Bias::Left)
     }
 }

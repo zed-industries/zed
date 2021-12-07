@@ -1,18 +1,19 @@
-use super::fold_map::{self, FoldEdit, FoldPoint, Snapshot as FoldSnapshot, ToFoldPoint};
+use super::fold_map::{FoldBufferRows, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot, ToFoldPoint};
 use language::{
     buffer::{rope, Chunk, Point},
-    traits::DocumentSnapshot,
+    traits::Snapshot,
 };
 use parking_lot::Mutex;
 use std::{cmp, mem, ops::Range};
 use sum_tree::Bias;
+use text::Edit;
 use theme::SyntaxTheme;
 
-pub struct TabMap<S: DocumentSnapshot>(Mutex<Snapshot<S>>);
+pub struct TabMap<S: Snapshot>(Mutex<TabSnapshot<S>>);
 
-impl<S: DocumentSnapshot> TabMap<S> {
-    pub fn new(input: FoldSnapshot<S>, tab_size: usize) -> (Self, Snapshot<S>) {
-        let snapshot = Snapshot {
+impl<S: Snapshot> TabMap<S> {
+    pub fn new(input: FoldSnapshot<S>, tab_size: usize) -> (Self, TabSnapshot<S>) {
+        let snapshot = TabSnapshot {
             fold_snapshot: input,
             tab_size,
         };
@@ -23,10 +24,10 @@ impl<S: DocumentSnapshot> TabMap<S> {
         &self,
         fold_snapshot: FoldSnapshot<S>,
         mut fold_edits: Vec<FoldEdit>,
-    ) -> (Snapshot<S>, Vec<Edit>) {
+    ) -> (TabSnapshot<S>, Vec<TabEdit>) {
         let mut old_snapshot = self.0.lock();
         let max_offset = old_snapshot.fold_snapshot.len();
-        let new_snapshot = Snapshot {
+        let new_snapshot = TabSnapshot {
             fold_snapshot,
             tab_size: old_snapshot.tab_size,
         };
@@ -36,13 +37,13 @@ impl<S: DocumentSnapshot> TabMap<S> {
             let mut delta = 0;
             for chunk in old_snapshot
                 .fold_snapshot
-                .chunks(fold_edit.old_bytes.end..max_offset, None)
+                .chunks(fold_edit.old.end..max_offset, None)
             {
                 let patterns: &[_] = &['\t', '\n'];
                 if let Some(ix) = chunk.text.find(patterns) {
                     if &chunk.text[ix..ix + 1] == "\t" {
-                        fold_edit.old_bytes.end.0 += delta + ix + 1;
-                        fold_edit.new_bytes.end.0 += delta + ix + 1;
+                        fold_edit.old.end.0 += delta + ix + 1;
+                        fold_edit.new.end.0 += delta + ix + 1;
                     }
 
                     break;
@@ -57,9 +58,9 @@ impl<S: DocumentSnapshot> TabMap<S> {
             let (prev_edits, next_edits) = fold_edits.split_at_mut(ix);
             let prev_edit = prev_edits.last_mut().unwrap();
             let edit = &next_edits[0];
-            if prev_edit.old_bytes.end >= edit.old_bytes.start {
-                prev_edit.old_bytes.end = edit.old_bytes.end;
-                prev_edit.new_bytes.end = edit.new_bytes.end;
+            if prev_edit.old.end >= edit.old.start {
+                prev_edit.old.end = edit.old.end;
+                prev_edit.new.end = edit.new.end;
                 fold_edits.remove(ix);
             } else {
                 ix += 1;
@@ -67,25 +68,13 @@ impl<S: DocumentSnapshot> TabMap<S> {
         }
 
         for fold_edit in fold_edits {
-            let old_start = fold_edit
-                .old_bytes
-                .start
-                .to_point(&old_snapshot.fold_snapshot);
-            let old_end = fold_edit
-                .old_bytes
-                .end
-                .to_point(&old_snapshot.fold_snapshot);
-            let new_start = fold_edit
-                .new_bytes
-                .start
-                .to_point(&new_snapshot.fold_snapshot);
-            let new_end = fold_edit
-                .new_bytes
-                .end
-                .to_point(&new_snapshot.fold_snapshot);
-            tab_edits.push(Edit {
-                old_lines: old_snapshot.to_tab_point(old_start)..old_snapshot.to_tab_point(old_end),
-                new_lines: new_snapshot.to_tab_point(new_start)..new_snapshot.to_tab_point(new_end),
+            let old_start = fold_edit.old.start.to_point(&old_snapshot.fold_snapshot);
+            let old_end = fold_edit.old.end.to_point(&old_snapshot.fold_snapshot);
+            let new_start = fold_edit.new.start.to_point(&new_snapshot.fold_snapshot);
+            let new_end = fold_edit.new.end.to_point(&new_snapshot.fold_snapshot);
+            tab_edits.push(TabEdit {
+                old: old_snapshot.to_tab_point(old_start)..old_snapshot.to_tab_point(old_end),
+                new: new_snapshot.to_tab_point(new_start)..new_snapshot.to_tab_point(new_end),
             });
         }
 
@@ -95,12 +84,12 @@ impl<S: DocumentSnapshot> TabMap<S> {
 }
 
 #[derive(Clone)]
-pub struct Snapshot<S: DocumentSnapshot> {
+pub struct TabSnapshot<S: Snapshot> {
     pub fold_snapshot: FoldSnapshot<S>,
     pub tab_size: usize,
 }
 
-impl<S: DocumentSnapshot> Snapshot<S> {
+impl<S: Snapshot> TabSnapshot<S> {
     pub fn text_summary(&self) -> TextSummary {
         self.text_summary_for_range(TabPoint::zero()..self.max_point())
     }
@@ -157,7 +146,7 @@ impl<S: DocumentSnapshot> Snapshot<S> {
         &'a self,
         range: Range<TabPoint>,
         theme: Option<&'a SyntaxTheme>,
-    ) -> Chunks<'a> {
+    ) -> TabChunks<'a> {
         let (input_start, expanded_char_column, to_next_stop) =
             self.to_fold_point(range.start, Bias::Left);
         let input_start = input_start.to_offset(&self.fold_snapshot);
@@ -171,7 +160,7 @@ impl<S: DocumentSnapshot> Snapshot<S> {
             to_next_stop
         };
 
-        Chunks {
+        TabChunks {
             fold_chunks: self.fold_snapshot.chunks(input_start..input_end, theme),
             column: expanded_char_column,
             output_position: range.start.0,
@@ -185,7 +174,7 @@ impl<S: DocumentSnapshot> Snapshot<S> {
         }
     }
 
-    pub fn buffer_rows(&self, row: u32) -> fold_map::BufferRows {
+    pub fn buffer_rows(&self, row: u32) -> FoldBufferRows {
         self.fold_snapshot.buffer_rows(row)
     }
 
@@ -324,11 +313,7 @@ impl From<super::Point> for TabPoint {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Edit {
-    pub old_lines: Range<TabPoint>,
-    pub new_lines: Range<TabPoint>,
-}
+pub type TabEdit = Edit<TabPoint>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TextSummary {
@@ -382,8 +367,8 @@ impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
 // Handles a tab width <= 16
 const SPACES: &'static str = "                ";
 
-pub struct Chunks<'a> {
-    fold_chunks: fold_map::Chunks<'a>,
+pub struct TabChunks<'a> {
+    fold_chunks: FoldChunks<'a>,
     chunk: Chunk<'a>,
     column: usize,
     output_position: Point,
@@ -392,7 +377,7 @@ pub struct Chunks<'a> {
     skip_leading_tab: bool,
 }
 
-impl<'a> Iterator for Chunks<'a> {
+impl<'a> Iterator for TabChunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {

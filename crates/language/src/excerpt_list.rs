@@ -47,7 +47,7 @@ pub struct ExcerptProperties<'a, T> {
 #[derive(Clone)]
 struct Excerpt {
     id: ExcerptId,
-    buffer: buffer::Snapshot,
+    buffer: buffer::BufferSnapshot,
     range: Range<Anchor>,
     text_summary: TextSummary,
     header_height: u8,
@@ -66,7 +66,7 @@ pub struct Chunks<'a> {
     range: Range<usize>,
     cursor: Cursor<'a, Excerpt, usize>,
     header_height: u8,
-    entry_chunks: Option<buffer::Chunks<'a>>,
+    entry_chunks: Option<buffer::BufferChunks<'a>>,
     theme: Option<&'a SyntaxTheme>,
 }
 
@@ -339,7 +339,7 @@ impl Snapshot {
 impl Excerpt {
     fn new(
         id: ExcerptId,
-        buffer: buffer::Snapshot,
+        buffer: buffer::BufferSnapshot,
         range: Range<Anchor>,
         header_height: u8,
     ) -> Self {

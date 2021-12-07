@@ -23,10 +23,7 @@ use items::BufferItemHandle;
 pub use language::buffer;
 use language::{
     buffer::{DiagnosticSeverity, Point, Selection, SelectionGoal, SelectionSetId},
-    traits::{
-        Document, DocumentAnchor, DocumentAnchorRangeExt, DocumentAnchorRangeSet,
-        DocumentSelectionSet, DocumentSnapshot, ToDocumentOffset, ToDocumentPoint,
-    },
+    traits::*,
     BracketPair, Diagnostic, Language, SelectionExt as _,
 };
 use serde::{Deserialize, Serialize};
@@ -282,12 +279,12 @@ pub fn init(cx: &mut MutableAppContext, entry_openers: &mut Vec<Box<dyn EntryOpe
     cx.add_action(Editor::<buffer::Buffer>::fold_selected_ranges);
 }
 
-trait SelectionExt<D: DocumentSnapshot> {
-    fn display_range(&self, map: &DisplayMapSnapshot<D>) -> Range<DisplayPoint>;
+trait SelectionExt<D: Snapshot> {
+    fn display_range(&self, map: &DisplaySnapshot<D>) -> Range<DisplayPoint>;
     fn spanned_rows(
         &self,
         include_end_if_at_line_start: bool,
-        map: &DisplayMapSnapshot<D>,
+        map: &DisplaySnapshot<D>,
     ) -> SpannedRows;
 }
 
@@ -355,13 +352,13 @@ pub enum SoftWrap {
     Column(u32),
 }
 
-pub struct Editor<D: Document> {
+pub struct Editor<D: Buffer> {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<D>,
     display_map: ModelHandle<DisplayMap<D>>,
     selection_set_id: SelectionSetId,
     pending_selection: Option<PendingSelection<D::Snapshot>>,
-    columnar_selection_tail: Option<<D::Snapshot as DocumentSnapshot>::Anchor>,
+    columnar_selection_tail: Option<<D::Snapshot as Snapshot>::Anchor>,
     next_selection_id: usize,
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
@@ -369,7 +366,7 @@ pub struct Editor<D: Document> {
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     active_diagnostics: Option<ActiveDiagnosticGroup<D::Snapshot>>,
     scroll_position: Vector2F,
-    scroll_top_anchor: <D::Snapshot as DocumentSnapshot>::Anchor,
+    scroll_top_anchor: <D::Snapshot as Snapshot>::Anchor,
     autoscroll_request: Option<Autoscroll>,
     build_settings: Rc<RefCell<dyn Fn(&AppContext) -> EditorSettings>>,
     focused: bool,
@@ -381,16 +378,16 @@ pub struct Editor<D: Document> {
     highlighted_row: Option<u32>,
 }
 
-pub struct Snapshot<S: DocumentSnapshot> {
+pub struct EditorSnapshot<S: Snapshot> {
     pub mode: EditorMode,
-    pub display_snapshot: DisplayMapSnapshot<S>,
+    pub display_snapshot: DisplaySnapshot<S>,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
     scroll_position: Vector2F,
     scroll_top_anchor: S::Anchor,
 }
 
-struct PendingSelection<S: DocumentSnapshot> {
+struct PendingSelection<S: Snapshot> {
     selection: Selection<S::Anchor>,
     mode: SelectMode<S::Anchor>,
 }
@@ -407,13 +404,13 @@ struct SelectNextState {
 }
 
 #[derive(Debug)]
-struct BracketPairState<S: DocumentSnapshot> {
+struct BracketPairState<S: Snapshot> {
     ranges: S::AnchorRangeSet,
     pair: BracketPair,
 }
 
 #[derive(Debug)]
-struct ActiveDiagnosticGroup<S: DocumentSnapshot> {
+struct ActiveDiagnosticGroup<S: Snapshot> {
     primary_range: Range<S::Anchor>,
     primary_message: String,
     blocks: HashMap<BlockId, Diagnostic>,
@@ -457,7 +454,7 @@ impl Editor<buffer::Buffer> {
     }
 }
 
-impl<D: Document> Editor<D> {
+impl<D: Buffer> Editor<D> {
     pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
         let mut clone = Self::new(self.buffer.clone(), self.build_settings.clone(), cx);
         clone.scroll_position = self.scroll_position;
@@ -514,7 +511,7 @@ impl<D: Document> Editor<D> {
             active_diagnostics: None,
             build_settings,
             scroll_position: Vector2F::zero(),
-            scroll_top_anchor: <D::Snapshot as DocumentSnapshot>::Anchor::min(),
+            scroll_top_anchor: <D::Snapshot as Snapshot>::Anchor::min(),
             autoscroll_request: None,
             focused: false,
             show_local_cursors: false,
@@ -549,8 +546,8 @@ impl<D: Document> Editor<D> {
         &self.buffer
     }
 
-    pub fn snapshot(&mut self, cx: &mut MutableAppContext) -> Snapshot<D::Snapshot> {
-        Snapshot {
+    pub fn snapshot(&mut self, cx: &mut MutableAppContext) -> EditorSnapshot<D::Snapshot> {
+        EditorSnapshot {
             mode: self.mode,
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             scroll_position: self.scroll_position,
@@ -1001,7 +998,7 @@ impl<D: Document> Editor<D> {
         tail: DisplayPoint,
         head: DisplayPoint,
         overshoot: u32,
-        display_map: &DisplayMapSnapshot<D::Snapshot>,
+        display_map: &DisplaySnapshot<D::Snapshot>,
         cx: &mut ViewContext<Self>,
     ) {
         let start_row = cmp::min(tail.row(), head.row());
@@ -1072,7 +1069,7 @@ impl<D: Document> Editor<D> {
         cx: &mut ViewContext<Self>,
     ) where
         I: IntoIterator<Item = Range<T>>,
-        T: ToDocumentOffset<D::Snapshot>,
+        T: ToOffset<D::Snapshot>,
     {
         let buffer = self.buffer.read(cx).snapshot();
         let selections = ranges
@@ -2990,7 +2987,7 @@ impl<D: Document> Editor<D> {
 
     fn build_columnar_selection(
         &mut self,
-        display_map: &DisplayMapSnapshot<D::Snapshot>,
+        display_map: &DisplaySnapshot<D::Snapshot>,
         row: u32,
         columns: &Range<u32>,
         reversed: bool,
@@ -3164,11 +3161,7 @@ impl<D: Document> Editor<D> {
         autoscroll: Option<Autoscroll>,
         cx: &mut ViewContext<Self>,
     ) where
-        T: ToDocumentOffset<D::Snapshot>
-            + ToDocumentPoint<D::Snapshot>
-            + Ord
-            + std::marker::Copy
-            + std::fmt::Debug,
+        T: ToOffset<D::Snapshot> + ToPoint<D::Snapshot> + Ord + std::marker::Copy + std::fmt::Debug,
     {
         // Merge overlapping selections.
         let buffer = self.buffer.read(cx).snapshot();
@@ -3299,7 +3292,7 @@ impl<D: Document> Editor<D> {
 
     fn is_line_foldable(
         &self,
-        display_map: &DisplayMapSnapshot<D::Snapshot>,
+        display_map: &DisplaySnapshot<D::Snapshot>,
         display_row: u32,
     ) -> bool {
         let max_point = display_map.max_point();
@@ -3323,7 +3316,7 @@ impl<D: Document> Editor<D> {
 
     fn foldable_range_for_line(
         &self,
-        display_map: &DisplayMapSnapshot<D::Snapshot>,
+        display_map: &DisplaySnapshot<D::Snapshot>,
         start_row: u32,
     ) -> Range<Point> {
         let max_point = display_map.max_point();
@@ -3349,7 +3342,7 @@ impl<D: Document> Editor<D> {
         self.fold_ranges(ranges, cx);
     }
 
-    fn fold_ranges<T: ToDocumentOffset<D::Snapshot>>(
+    fn fold_ranges<T: ToOffset<D::Snapshot>>(
         &mut self,
         ranges: Vec<Range<T>>,
         cx: &mut ViewContext<Self>,
@@ -3361,7 +3354,7 @@ impl<D: Document> Editor<D> {
         }
     }
 
-    fn unfold_ranges<T: ToDocumentOffset<D::Snapshot>>(
+    fn unfold_ranges<T: ToOffset<D::Snapshot>>(
         &mut self,
         ranges: Vec<Range<T>>,
         cx: &mut ViewContext<Self>,
@@ -3492,7 +3485,7 @@ impl<D: Document> Editor<D> {
     }
 }
 
-impl<S: DocumentSnapshot> Snapshot<S> {
+impl<S: Snapshot> EditorSnapshot<S> {
     pub fn is_focused(&self) -> bool {
         self.is_focused
     }
@@ -3510,8 +3503,8 @@ impl<S: DocumentSnapshot> Snapshot<S> {
     }
 }
 
-impl<S: DocumentSnapshot> Deref for Snapshot<S> {
-    type Target = DisplayMapSnapshot<S>;
+impl<S: Snapshot> Deref for EditorSnapshot<S> {
+    type Target = DisplaySnapshot<S>;
 
     fn deref(&self) -> &Self::Target {
         &self.display_snapshot
@@ -3566,8 +3559,8 @@ impl EditorSettings {
     }
 }
 
-fn compute_scroll_position<S: DocumentSnapshot>(
-    snapshot: &DisplayMapSnapshot<S>,
+fn compute_scroll_position<S: Snapshot>(
+    snapshot: &DisplaySnapshot<S>,
     mut scroll_position: Vector2F,
     scroll_top_anchor: &S::Anchor,
 ) -> Vector2F {
@@ -3586,7 +3579,7 @@ pub enum Event {
     Closed,
 }
 
-impl<D: Document> Entity for Editor<D> {
+impl<D: Buffer> Entity for Editor<D> {
     type Event = Event;
 
     fn release(&mut self, cx: &mut MutableAppContext) {
@@ -3598,7 +3591,7 @@ impl<D: Document> Entity for Editor<D> {
     }
 }
 
-impl<D: Document> View for Editor<D> {
+impl<D: Buffer> View for Editor<D> {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let settings = self.build_settings.borrow_mut()(cx);
         self.display_map.update(cx, |map, cx| {
@@ -3647,8 +3640,8 @@ impl<D: Document> View for Editor<D> {
     }
 }
 
-impl<D: DocumentSnapshot> SelectionExt<D> for Selection<Point> {
-    fn display_range(&self, map: &DisplayMapSnapshot<D>) -> Range<DisplayPoint> {
+impl<D: Snapshot> SelectionExt<D> for Selection<Point> {
+    fn display_range(&self, map: &DisplaySnapshot<D>) -> Range<DisplayPoint> {
         let start = self.start.to_display_point(map);
         let end = self.end.to_display_point(map);
         if self.reversed {
@@ -3661,7 +3654,7 @@ impl<D: DocumentSnapshot> SelectionExt<D> for Selection<Point> {
     fn spanned_rows(
         &self,
         include_end_if_at_line_start: bool,
-        map: &DisplayMapSnapshot<D>,
+        map: &DisplaySnapshot<D>,
     ) -> SpannedRows {
         let display_start = self.start.to_display_point(map);
         let mut display_end = self.end.to_display_point(map);
