@@ -21,7 +21,7 @@ const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
 pub struct BlockMap {
     buffer: ModelHandle<Buffer>,
     next_block_id: AtomicUsize,
-    wrap_snapshot: Mutex<WrapSnapshot>,
+    wrap_snapshot: Mutex<WrapSnapshot<language::Snapshot>>,
     blocks: Vec<Arc<Block>>,
     transforms: Mutex<SumTree<Transform>>,
 }
@@ -29,7 +29,7 @@ pub struct BlockMap {
 pub struct BlockMapWriter<'a>(&'a mut BlockMap);
 
 pub struct BlockSnapshot {
-    wrap_snapshot: WrapSnapshot,
+    wrap_snapshot: WrapSnapshot<language::Snapshot>,
     transforms: SumTree<Transform>,
 }
 
@@ -109,7 +109,10 @@ pub struct BufferRows<'a> {
 }
 
 impl BlockMap {
-    pub fn new(buffer: ModelHandle<Buffer>, wrap_snapshot: WrapSnapshot) -> Self {
+    pub fn new(
+        buffer: ModelHandle<Buffer>,
+        wrap_snapshot: WrapSnapshot<language::Snapshot>,
+    ) -> Self {
         Self {
             buffer,
             next_block_id: AtomicUsize::new(0),
@@ -124,7 +127,7 @@ impl BlockMap {
 
     pub fn read(
         &self,
-        wrap_snapshot: WrapSnapshot,
+        wrap_snapshot: WrapSnapshot<language::Snapshot>,
         edits: Vec<WrapEdit>,
         cx: &AppContext,
     ) -> BlockSnapshot {
@@ -138,7 +141,7 @@ impl BlockMap {
 
     pub fn write(
         &mut self,
-        wrap_snapshot: WrapSnapshot,
+        wrap_snapshot: WrapSnapshot<language::Snapshot>,
         edits: Vec<WrapEdit>,
         cx: &AppContext,
     ) -> BlockMapWriter {
@@ -147,7 +150,12 @@ impl BlockMap {
         BlockMapWriter(self)
     }
 
-    fn sync(&self, wrap_snapshot: &WrapSnapshot, edits: Vec<WrapEdit>, cx: &AppContext) {
+    fn sync(
+        &self,
+        wrap_snapshot: &WrapSnapshot<language::Snapshot>,
+        edits: Vec<WrapEdit>,
+        cx: &AppContext,
+    ) {
         if edits.is_empty() {
             return;
         }

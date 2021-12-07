@@ -6,7 +6,10 @@ use gpui::{
     fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
 };
-use language::{Chunk, Point};
+use language::{
+    document::{DocumentSnapshot, ToDocumentOffset},
+    Chunk, Point,
+};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
 use std::{collections::VecDeque, mem, ops::Range, time::Duration};
@@ -17,9 +20,9 @@ use theme::SyntaxTheme;
 pub use super::tab_map::TextSummary;
 pub type Edit = text::Edit<u32>;
 
-pub struct WrapMap {
-    snapshot: Snapshot,
-    pending_edits: VecDeque<(TabSnapshot<language::Snapshot>, Vec<TabEdit>)>,
+pub struct WrapMap<S: DocumentSnapshot> {
+    snapshot: Snapshot<S>,
+    pending_edits: VecDeque<(TabSnapshot<S>, Vec<TabEdit>)>,
     interpolated_edits: Patch<u32>,
     edits_since_sync: Patch<u32>,
     wrap_width: Option<f32>,
@@ -27,13 +30,13 @@ pub struct WrapMap {
     font: (FontId, f32),
 }
 
-impl Entity for WrapMap {
+impl<S: DocumentSnapshot> Entity for WrapMap<S> {
     type Event = ();
 }
 
 #[derive(Clone)]
-pub struct Snapshot {
-    tab_snapshot: TabSnapshot<language::Snapshot>,
+pub struct Snapshot<S: DocumentSnapshot> {
+    tab_snapshot: TabSnapshot<S>,
     transforms: SumTree<Transform>,
     interpolated: bool,
 }
@@ -70,14 +73,18 @@ pub struct BufferRows<'a> {
     transforms: Cursor<'a, Transform, (WrapPoint, TabPoint)>,
 }
 
-impl WrapMap {
+impl<S: DocumentSnapshot> WrapMap<S>
+where
+    usize: ToDocumentOffset<S>,
+    Point: ToDocumentOffset<S>,
+{
     pub fn new(
-        tab_snapshot: TabSnapshot<language::Snapshot>,
+        tab_snapshot: TabSnapshot<S>,
         font_id: FontId,
         font_size: f32,
         wrap_width: Option<f32>,
         cx: &mut MutableAppContext,
-    ) -> (ModelHandle<Self>, Snapshot) {
+    ) -> (ModelHandle<Self>, Snapshot<S>) {
         let handle = cx.add_model(|cx| {
             let mut this = Self {
                 font: (font_id, font_size),
@@ -103,10 +110,10 @@ impl WrapMap {
 
     pub fn sync(
         &mut self,
-        tab_snapshot: TabSnapshot<language::Snapshot>,
+        tab_snapshot: TabSnapshot<S>,
         edits: Vec<TabEdit>,
         cx: &mut ModelContext<Self>,
-    ) -> (Snapshot, Vec<Edit>) {
+    ) -> (Snapshot<S>, Vec<Edit>) {
         if self.wrap_width.is_some() {
             self.pending_edits.push_back((tab_snapshot, edits));
             self.flush_edits(cx);
@@ -291,8 +298,12 @@ impl WrapMap {
     }
 }
 
-impl Snapshot {
-    fn new(tab_snapshot: TabSnapshot<language::Snapshot>) -> Self {
+impl<S: DocumentSnapshot> Snapshot<S>
+where
+    usize: ToDocumentOffset<S>,
+    Point: ToDocumentOffset<S>,
+{
+    fn new(tab_snapshot: TabSnapshot<S>) -> Self {
         let mut transforms = SumTree::new();
         let extent = tab_snapshot.text_summary();
         if !extent.lines.is_zero() {
@@ -307,7 +318,7 @@ impl Snapshot {
 
     fn interpolate(
         &mut self,
-        new_tab_snapshot: TabSnapshot<language::Snapshot>,
+        new_tab_snapshot: TabSnapshot<S>,
         tab_edits: &[TabEdit],
     ) -> Patch<u32> {
         let mut new_transforms;
@@ -380,7 +391,7 @@ impl Snapshot {
 
     async fn update(
         &mut self,
-        new_tab_snapshot: TabSnapshot<language::Snapshot>,
+        new_tab_snapshot: TabSnapshot<S>,
         tab_edits: &[TabEdit],
         wrap_width: f32,
         line_wrapper: &mut LineWrapper,
@@ -527,7 +538,7 @@ impl Snapshot {
         old_snapshot.compute_edits(tab_edits, self)
     }
 
-    fn compute_edits(&self, tab_edits: &[TabEdit], new_snapshot: &Snapshot) -> Patch<u32> {
+    fn compute_edits(&self, tab_edits: &[TabEdit], new_snapshot: &Snapshot<S>) -> Patch<u32> {
         let mut wrap_edits = Vec::new();
         let mut old_cursor = self.transforms.cursor::<TransformSummary>();
         let mut new_cursor = new_snapshot.transforms.cursor::<TransformSummary>();
@@ -1228,7 +1239,11 @@ mod tests {
         }
     }
 
-    impl Snapshot {
+    impl<S: DocumentSnapshot> Snapshot<S>
+    where
+        usize: ToDocumentOffset<S>,
+        Point: ToDocumentOffset<S>,
+    {
         pub fn text(&self) -> String {
             self.text_chunks(0).collect()
         }

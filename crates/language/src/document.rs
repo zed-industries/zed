@@ -5,7 +5,7 @@ use theme::SyntaxTheme;
 
 use crate::Chunk;
 
-pub trait DocumentSnapshot: Clone {
+pub trait DocumentSnapshot: 'static + Clone + Send + Unpin {
     type Anchor: DocumentAnchor<Snapshot = Self>;
 
     fn chunks<'a, T: ToDocumentOffset<Self>>(
@@ -33,7 +33,7 @@ pub trait ToDocumentOffset<S: DocumentSnapshot> {
     fn to_offset(&self, snapshot: &S) -> usize;
 }
 
-pub trait DocumentAnchor: Clone + Debug + ToDocumentOffset<Self::Snapshot> {
+pub trait DocumentAnchor: Clone + Debug + Send + Sync + ToDocumentOffset<Self::Snapshot> {
     type Snapshot: DocumentSnapshot;
 
     fn min() -> Self;
