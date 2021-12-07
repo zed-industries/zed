@@ -1992,3 +1992,104 @@ pub fn contiguous_ranges(
         }
     })
 }
+
+impl crate::document::DocumentSnapshot for Snapshot {
+    type Anchor = Anchor;
+
+    fn chunks<'a, T: crate::document::ToDocumentOffset<Self>>(
+        &'a self,
+        range: Range<T>,
+        theme: Option<&'a SyntaxTheme>,
+    ) -> Box<dyn 'a + crate::document::DocumentChunks<'a>> {
+        Box::new(self.chunks(
+            range.start.to_offset(self)..range.end.to_offset(self),
+            theme,
+        ))
+    }
+
+    fn text_summary(&self) -> TextSummary {
+        (**self).text_summary()
+    }
+
+    fn text_summary_for_range<'a, D, O>(&'a self, range: Range<O>) -> D
+    where
+        D: rope::TextDimension<'a>,
+        O: crate::document::ToDocumentOffset<Self>,
+    {
+        (**self).text_summary_for_range(range.start.to_offset(self)..range.end.to_offset(self))
+    }
+
+    fn len(&self) -> usize {
+        (**self).len()
+    }
+
+    fn anchor_before<T: crate::document::ToDocumentOffset<Self>>(
+        &self,
+        position: T,
+    ) -> Self::Anchor {
+        (**self).anchor_before(position.to_offset(self))
+    }
+
+    fn anchor_after<T: crate::document::ToDocumentOffset<Self>>(
+        &self,
+        position: T,
+    ) -> Self::Anchor {
+        (**self).anchor_after(position.to_offset(self))
+    }
+
+    fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
+        (**self).clip_offset(offset, bias)
+    }
+
+    fn clip_point(&self, point: Point, bias: Bias) -> Point {
+        (**self).clip_point(point, bias)
+    }
+
+    fn to_offset(&self, point: Point) -> usize {
+        (**self).to_offset(point)
+    }
+
+    fn to_point(&self, offset: usize) -> Point {
+        (**self).to_point(offset)
+    }
+
+    fn parse_count(&self) -> usize {
+        self.parse_count()
+    }
+
+    fn diagnostics_update_count(&self) -> usize {
+        self.diagnostics_update_count()
+    }
+}
+
+impl crate::document::DocumentAnchor for Anchor {
+    type Snapshot = Snapshot;
+
+    fn min() -> Self {
+        Self::min()
+    }
+
+    fn max() -> Self {
+        Self::max()
+    }
+
+    fn cmp(&self, other: &Self, snapshot: &Self::Snapshot) -> cmp::Ordering {
+        self.cmp(other, snapshot).unwrap()
+    }
+}
+
+impl<'a> crate::document::DocumentChunks<'a> for Chunks<'a> {
+    fn seek(&mut self, offset: usize) {
+        self.seek(offset);
+    }
+
+    fn offset(&self) -> usize {
+        self.offset()
+    }
+}
+
+impl<T: ToOffset> crate::document::ToDocumentOffset<Snapshot> for T {
+    fn to_offset(&self, snapshot: &Snapshot) -> usize {
+        self.to_offset(snapshot)
+    }
+}

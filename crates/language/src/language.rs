@@ -1,4 +1,5 @@
 mod buffer;
+pub mod document;
 mod excerpt_list;
 mod highlight_map;
 pub mod proto;

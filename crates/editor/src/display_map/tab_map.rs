@@ -9,7 +9,7 @@ use theme::SyntaxTheme;
 pub struct TabMap(Mutex<Snapshot>);
 
 impl TabMap {
-    pub fn new(input: FoldSnapshot, tab_size: usize) -> (Self, Snapshot) {
+    pub fn new(input: FoldSnapshot<language::Snapshot>, tab_size: usize) -> (Self, Snapshot) {
         let snapshot = Snapshot {
             fold_snapshot: input,
             tab_size,
@@ -19,7 +19,7 @@ impl TabMap {
 
     pub fn sync(
         &self,
-        fold_snapshot: FoldSnapshot,
+        fold_snapshot: FoldSnapshot<language::Snapshot>,
         mut fold_edits: Vec<FoldEdit>,
     ) -> (Snapshot, Vec<Edit>) {
         let mut old_snapshot = self.0.lock();
@@ -94,7 +94,7 @@ impl TabMap {
 
 #[derive(Clone)]
 pub struct Snapshot {
-    pub fold_snapshot: FoldSnapshot,
+    pub fold_snapshot: FoldSnapshot<language::Snapshot>,
     pub tab_size: usize,
 }
 
