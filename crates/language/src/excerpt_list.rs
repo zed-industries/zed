@@ -615,8 +615,8 @@ mod tests {
         assert_eq!(
             subscription.consume().into_inner(),
             [Edit {
-                old: 18..20,
-                new: 18..19
+                old: 8..10,
+                new: 8..9
             }]
         );
     }
