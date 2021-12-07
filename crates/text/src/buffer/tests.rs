@@ -1,3 +1,5 @@
+use crate::{RandomCharIter, ToPoint};
+
 use super::*;
 use clock::ReplicaId;
 use rand::prelude::*;
@@ -135,8 +137,8 @@ fn test_random_edits(mut rng: StdRng) {
             old_buffer.text(),
             subscription_edits,
         );
-
         let mut text = old_buffer.visible_text.clone();
+
         for edit in subscription_edits.into_inner() {
             let new_text: String = buffer.text_for_range(edit.new.clone()).collect();
             text.replace(edit.new.start..edit.new.start + edit.old.len(), &new_text);

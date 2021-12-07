@@ -1,6 +1,6 @@
 use sum_tree::Bias;
 
-use crate::{rope::TextDimension, Snapshot};
+use crate::{rope::TextDimension, BufferSnapshot};
 
 use super::{AnchorRangeMap, ToOffset};
 use std::{cmp::Ordering, ops::Range, sync::Arc};
@@ -85,7 +85,7 @@ impl SelectionSet {
 
     pub fn selections<'a, D>(
         &'a self,
-        content: &'a Snapshot,
+        content: &'a BufferSnapshot,
     ) -> impl 'a + Iterator<Item = Selection<D>>
     where
         D: TextDimension,
@@ -104,7 +104,7 @@ impl SelectionSet {
     pub fn intersecting_selections<'a, D, I>(
         &'a self,
         range: Range<(I, Bias)>,
-        content: &'a Snapshot,
+        content: &'a BufferSnapshot,
     ) -> impl 'a + Iterator<Item = Selection<D>>
     where
         D: TextDimension,
@@ -121,7 +121,7 @@ impl SelectionSet {
             })
     }
 
-    pub fn oldest_selection<'a, D>(&'a self, content: &'a Snapshot) -> Option<Selection<D>>
+    pub fn oldest_selection<'a, D>(&'a self, content: &'a BufferSnapshot) -> Option<Selection<D>>
     where
         D: TextDimension,
     {
@@ -136,7 +136,7 @@ impl SelectionSet {
             })
     }
 
-    pub fn newest_selection<'a, D>(&'a self, content: &'a Snapshot) -> Option<Selection<D>>
+    pub fn newest_selection<'a, D>(&'a self, content: &'a BufferSnapshot) -> Option<Selection<D>>
     where
         D: TextDimension,
     {

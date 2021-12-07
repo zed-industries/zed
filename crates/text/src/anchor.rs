@@ -1,4 +1,4 @@
-use crate::{rope::TextDimension, FragmentTextSummary, Snapshot, VersionedFullOffset};
+use crate::{rope::TextDimension, BufferSnapshot};
 
 use super::{Buffer, FromAnchor, FullOffset, Point, ToOffset};
 use anyhow::Result;
@@ -83,7 +83,7 @@ impl Anchor {
         }
     }
 
-    pub fn cmp<'a>(&self, other: &Anchor, buffer: &Snapshot) -> Result<Ordering> {
+    pub fn cmp<'a>(&self, other: &Anchor, buffer: &BufferSnapshot) -> Result<Ordering> {
         if self == other {
             return Ok(Ordering::Equal);
         }
@@ -91,9 +91,8 @@ impl Anchor {
         let offset_comparison = if self.version == other.version {
             self.full_offset.cmp(&other.full_offset)
         } else {
-            buffer
-                .full_offset_for_anchor(self)
-                .cmp(&buffer.full_offset_for_anchor(other))
+            self.to_full_offset(buffer)
+                .cmp(&other.to_full_offset(buffer))
         };
 
         Ok(offset_comparison.then_with(|| self.bias.cmp(&other.bias)))
@@ -115,33 +114,11 @@ impl Anchor {
         }
     }
 
-    pub fn summary<'a, D>(&self, content: &'a Snapshot) -> D
+    pub fn summary<'a, D>(&self, content: &'a BufferSnapshot) -> D
     where
         D: TextDimension,
     {
         content.summary_for_anchor(self)
-    }
-
-    pub fn to_full_offset<'a>(&self, content: &Snapshot, bias: Bias) -> FullOffset {
-        if content.version == self.version {
-            self.full_offset
-        } else {
-            let mut cursor = content
-                .fragments
-                .cursor::<(VersionedFullOffset, FragmentTextSummary)>();
-            cursor.seek(
-                &VersionedFullOffset::Offset(self.full_offset),
-                bias,
-                &Some(self.version.clone()),
-            );
-
-            let mut full_offset = cursor.start().1.full_offset().0;
-            if cursor.item().is_some() {
-                full_offset += self.full_offset - cursor.start().0.full_offset();
-            }
-
-            FullOffset(full_offset)
-        }
     }
 }
 
@@ -154,7 +131,10 @@ impl<T> AnchorMap<T> {
         self.entries.len()
     }
 
-    pub fn iter<'a, D>(&'a self, snapshot: &'a Snapshot) -> impl Iterator<Item = (D, &'a T)> + 'a
+    pub fn iter<'a, D>(
+        &'a self,
+        snapshot: &'a BufferSnapshot,
+    ) -> impl Iterator<Item = (D, &'a T)> + 'a
     where
         D: TextDimension,
     {
@@ -177,7 +157,7 @@ impl AnchorSet {
         self.0.len()
     }
 
-    pub fn iter<'a, D>(&'a self, content: &'a Snapshot) -> impl Iterator<Item = D> + 'a
+    pub fn iter<'a, D>(&'a self, content: &'a BufferSnapshot) -> impl Iterator<Item = D> + 'a
     where
         D: TextDimension,
     {
@@ -210,7 +190,7 @@ impl<T> AnchorRangeMap<T> {
 
     pub fn ranges<'a, D>(
         &'a self,
-        content: &'a Snapshot,
+        content: &'a BufferSnapshot,
     ) -> impl Iterator<Item = (Range<D>, &'a T)> + 'a
     where
         D: TextDimension,
@@ -228,7 +208,7 @@ impl<T> AnchorRangeMap<T> {
     pub fn intersecting_ranges<'a, D, I>(
         &'a self,
         range: Range<(I, Bias)>,
-        content: &'a Snapshot,
+        content: &'a BufferSnapshot,
     ) -> impl Iterator<Item = (Range<D>, &'a T)> + 'a
     where
         D: TextDimension,
@@ -265,7 +245,7 @@ impl<T> AnchorRangeMap<T> {
 
     pub fn min_by_key<'a, D, F, K>(
         &self,
-        content: &'a Snapshot,
+        content: &'a BufferSnapshot,
         mut extract_key: F,
     ) -> Option<(Range<D>, &T)>
     where
@@ -281,7 +261,7 @@ impl<T> AnchorRangeMap<T> {
 
     pub fn max_by_key<'a, D, F, K>(
         &self,
-        content: &'a Snapshot,
+        content: &'a BufferSnapshot,
         mut extract_key: F,
     ) -> Option<(Range<D>, &T)>
     where
@@ -295,7 +275,11 @@ impl<T> AnchorRangeMap<T> {
             .map(|(range, value)| (self.resolve_range(range, &content), value))
     }
 
-    fn resolve_range<'a, D>(&self, range: &Range<FullOffset>, content: &'a Snapshot) -> Range<D>
+    fn resolve_range<'a, D>(
+        &self,
+        range: &Range<FullOffset>,
+        content: &'a BufferSnapshot,
+    ) -> Range<D>
     where
         D: TextDimension,
     {
@@ -352,7 +336,10 @@ impl AnchorRangeSet {
         self.0.version()
     }
 
-    pub fn ranges<'a, D>(&'a self, content: &'a Snapshot) -> impl 'a + Iterator<Item = Range<Point>>
+    pub fn ranges<'a, D>(
+        &'a self,
+        content: &'a BufferSnapshot,
+    ) -> impl 'a + Iterator<Item = Range<Point>>
     where
         D: TextDimension,
     {
@@ -379,7 +366,7 @@ impl<T: Clone> AnchorRangeMultimap<T> {
     pub fn intersecting_ranges<'a, I, O>(
         &'a self,
         range: Range<I>,
-        content: &'a Snapshot,
+        content: &'a BufferSnapshot,
         inclusive: bool,
     ) -> impl Iterator<Item = (usize, Range<O>, &T)> + 'a
     where
@@ -399,12 +386,12 @@ impl<T: Clone> AnchorRangeMultimap<T> {
                 move |summary: &AnchorRangeMultimapSummary| {
                     endpoint.full_offset = summary.max_end;
                     endpoint.bias = self.end_bias;
-                    let max_end = endpoint.to_full_offset(&content, self.end_bias);
+                    let max_end = endpoint.to_full_offset(&content);
                     let start_cmp = range.start.cmp(&max_end);
 
                     endpoint.full_offset = summary.min_start;
                     endpoint.bias = self.start_bias;
-                    let min_start = endpoint.to_full_offset(&content, self.start_bias);
+                    let min_start = endpoint.to_full_offset(&content);
                     let end_cmp = range.end.cmp(&min_start);
 
                     if inclusive {
@@ -473,7 +460,7 @@ impl<T: Clone> AnchorRangeMultimap<T> {
 
     pub fn filter<'a, O, F>(
         &'a self,
-        content: &'a Snapshot,
+        content: &'a BufferSnapshot,
         mut f: F,
     ) -> impl 'a + Iterator<Item = (usize, Range<O>, &T)>
     where
@@ -582,19 +569,19 @@ impl<'a> sum_tree::SeekTarget<'a, AnchorRangeMultimapSummary, FullOffsetRange> f
 }
 
 pub trait AnchorRangeExt {
-    fn cmp(&self, b: &Range<Anchor>, buffer: &Snapshot) -> Result<Ordering>;
-    fn to_offset(&self, content: &Snapshot) -> Range<usize>;
+    fn cmp(&self, b: &Range<Anchor>, buffer: &BufferSnapshot) -> Result<Ordering>;
+    fn to_offset(&self, content: &BufferSnapshot) -> Range<usize>;
 }
 
 impl AnchorRangeExt for Range<Anchor> {
-    fn cmp(&self, other: &Range<Anchor>, buffer: &Snapshot) -> Result<Ordering> {
+    fn cmp(&self, other: &Range<Anchor>, buffer: &BufferSnapshot) -> Result<Ordering> {
         Ok(match self.start.cmp(&other.start, buffer)? {
             Ordering::Equal => other.end.cmp(&self.end, buffer)?,
             ord @ _ => ord,
         })
     }
 
-    fn to_offset(&self, content: &Snapshot) -> Range<usize> {
+    fn to_offset(&self, content: &BufferSnapshot) -> Range<usize> {
         self.start.to_offset(&content)..self.end.to_offset(&content)
     }
 }

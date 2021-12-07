@@ -66,7 +66,7 @@ pub struct Buffer {
 }
 
 pub struct BufferSnapshot {
-    text: text::Snapshot,
+    text: text::BufferSnapshot,
     tree: Option<Tree>,
     diagnostics: AnchorRangeMultimap<Diagnostic>,
     diagnostics_update_count: usize,
@@ -93,7 +93,7 @@ struct LanguageServerState {
 
 #[derive(Clone)]
 struct LanguageServerSnapshot {
-    buffer_snapshot: text::Snapshot,
+    buffer_snapshot: text::BufferSnapshot,
     version: usize,
     path: Arc<Path>,
 }
@@ -1715,7 +1715,7 @@ impl Clone for BufferSnapshot {
 }
 
 impl Deref for BufferSnapshot {
-    type Target = text::Snapshot;
+    type Target = text::BufferSnapshot;
 
     fn deref(&self) -> &Self::Target {
         &self.text
