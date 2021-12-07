@@ -8,18 +8,18 @@ pub trait SelectionExt<T> {
     fn point_range<S>(&self, snapshot: &S) -> Range<Point>
     where
         S: Snapshot,
-        T: ToPoint<S>;
+        T: ToPoint;
     fn offset_range<S>(&self, snapshot: &S) -> Range<usize>
     where
         S: Snapshot,
-        T: ToOffset<S>;
+        T: ToOffset;
 }
 
 impl<T> SelectionExt<T> for Selection<T> {
     fn point_range<S>(&self, snapshot: &S) -> Range<Point>
     where
         S: Snapshot,
-        T: ToPoint<S>,
+        T: ToPoint,
     {
         let start = self.start.to_point(snapshot);
         let end = self.end.to_point(snapshot);
@@ -33,7 +33,7 @@ impl<T> SelectionExt<T> for Selection<T> {
     fn offset_range<S>(&self, snapshot: &S) -> Range<usize>
     where
         S: Snapshot,
-        T: ToOffset<S>,
+        T: ToOffset,
     {
         let start = self.start.to_offset(snapshot);
         let end = self.end.to_offset(snapshot);

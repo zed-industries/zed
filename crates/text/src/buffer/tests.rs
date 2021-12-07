@@ -1,6 +1,5 @@
-use crate::{RandomCharIter, ToPoint};
-
 use super::*;
+use crate::{AnchorRangeExt, RandomCharIter};
 use clock::ReplicaId;
 use rand::prelude::*;
 use std::{
@@ -108,7 +107,9 @@ fn test_random_edits(mut rng: StdRng) {
             let end_ix = old_buffer.clip_offset(rng.gen_range(0..=old_buffer.len()), Bias::Right);
             let start_ix = old_buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
             let range = old_buffer.anchor_before(start_ix)..old_buffer.anchor_after(end_ix);
-            let mut old_text = old_buffer.text_for_range(range.clone()).collect::<String>();
+            let mut old_text = old_buffer
+                .text_for_range(range.to_offset(&old_buffer))
+                .collect::<String>();
             let edits = buffer
                 .edits_since_in_range::<usize>(&old_buffer.version, range.clone())
                 .collect::<Vec<_>>();
@@ -120,7 +121,9 @@ fn test_random_edits(mut rng: StdRng) {
                 edits,
             );
 
-            let new_text = buffer.text_for_range(range).collect::<String>();
+            let new_text = buffer
+                .text_for_range(range.to_offset(&buffer))
+                .collect::<String>();
             for edit in edits {
                 old_text.replace_range(
                     edit.new.start..edit.new.start + edit.old_len(),
@@ -269,31 +272,31 @@ fn test_anchors() {
 
     buffer.edit(vec![1..1], "def\n");
     assert_eq!(buffer.text(), "adef\nbc");
-    assert_eq!(left_anchor.to_offset(&buffer), 6);
-    assert_eq!(right_anchor.to_offset(&buffer), 6);
-    assert_eq!(left_anchor.to_point(&buffer), Point { row: 1, column: 1 });
-    assert_eq!(right_anchor.to_point(&buffer), Point { row: 1, column: 1 });
+    assert_eq!(left_anchor.to_offset(&*buffer), 6);
+    assert_eq!(right_anchor.to_offset(&*buffer), 6);
+    assert_eq!(left_anchor.to_point(&*buffer), Point { row: 1, column: 1 });
+    assert_eq!(right_anchor.to_point(&*buffer), Point { row: 1, column: 1 });
 
     buffer.edit(vec![2..3], "");
     assert_eq!(buffer.text(), "adf\nbc");
-    assert_eq!(left_anchor.to_offset(&buffer), 5);
-    assert_eq!(right_anchor.to_offset(&buffer), 5);
-    assert_eq!(left_anchor.to_point(&buffer), Point { row: 1, column: 1 });
-    assert_eq!(right_anchor.to_point(&buffer), Point { row: 1, column: 1 });
+    assert_eq!(left_anchor.to_offset(&*buffer), 5);
+    assert_eq!(right_anchor.to_offset(&*buffer), 5);
+    assert_eq!(left_anchor.to_point(&*buffer), Point { row: 1, column: 1 });
+    assert_eq!(right_anchor.to_point(&*buffer), Point { row: 1, column: 1 });
 
     buffer.edit(vec![5..5], "ghi\n");
     assert_eq!(buffer.text(), "adf\nbghi\nc");
-    assert_eq!(left_anchor.to_offset(&buffer), 5);
-    assert_eq!(right_anchor.to_offset(&buffer), 9);
-    assert_eq!(left_anchor.to_point(&buffer), Point { row: 1, column: 1 });
-    assert_eq!(right_anchor.to_point(&buffer), Point { row: 2, column: 0 });
+    assert_eq!(left_anchor.to_offset(&*buffer), 5);
+    assert_eq!(right_anchor.to_offset(&*buffer), 9);
+    assert_eq!(left_anchor.to_point(&*buffer), Point { row: 1, column: 1 });
+    assert_eq!(right_anchor.to_point(&*buffer), Point { row: 2, column: 0 });
 
     buffer.edit(vec![7..9], "");
     assert_eq!(buffer.text(), "adf\nbghc");
-    assert_eq!(left_anchor.to_offset(&buffer), 5);
-    assert_eq!(right_anchor.to_offset(&buffer), 7);
-    assert_eq!(left_anchor.to_point(&buffer), Point { row: 1, column: 1 },);
-    assert_eq!(right_anchor.to_point(&buffer), Point { row: 1, column: 3 });
+    assert_eq!(left_anchor.to_offset(&*buffer), 5);
+    assert_eq!(right_anchor.to_offset(&*buffer), 7);
+    assert_eq!(left_anchor.to_point(&*buffer), Point { row: 1, column: 1 },);
+    assert_eq!(right_anchor.to_point(&*buffer), Point { row: 1, column: 3 });
 
     // Ensure anchoring to a point is equivalent to anchoring to an offset.
     assert_eq!(
@@ -404,8 +407,8 @@ fn test_anchors_at_start_and_end() {
 
     buffer.edit(vec![0..0], "abc");
     assert_eq!(buffer.text(), "abc");
-    assert_eq!(before_start_anchor.to_offset(&buffer), 0);
-    assert_eq!(after_end_anchor.to_offset(&buffer), 3);
+    assert_eq!(before_start_anchor.to_offset(&*buffer), 0);
+    assert_eq!(after_end_anchor.to_offset(&*buffer), 3);
 
     let after_start_anchor = buffer.anchor_after(0);
     let before_end_anchor = buffer.anchor_before(3);
@@ -413,10 +416,10 @@ fn test_anchors_at_start_and_end() {
     buffer.edit(vec![3..3], "def");
     buffer.edit(vec![0..0], "ghi");
     assert_eq!(buffer.text(), "ghiabcdef");
-    assert_eq!(before_start_anchor.to_offset(&buffer), 0);
-    assert_eq!(after_start_anchor.to_offset(&buffer), 3);
-    assert_eq!(before_end_anchor.to_offset(&buffer), 6);
-    assert_eq!(after_end_anchor.to_offset(&buffer), 9);
+    assert_eq!(before_start_anchor.to_offset(&*buffer), 0);
+    assert_eq!(after_start_anchor.to_offset(&*buffer), 3);
+    assert_eq!(before_end_anchor.to_offset(&*buffer), 6);
+    assert_eq!(after_end_anchor.to_offset(&*buffer), 9);
 }
 
 #[test]

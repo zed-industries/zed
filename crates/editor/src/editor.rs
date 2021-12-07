@@ -22,7 +22,7 @@ use gpui::{
 use items::BufferItemHandle;
 pub use language::buffer;
 use language::{
-    buffer::{DiagnosticSeverity, Point, Selection, SelectionGoal, SelectionSetId},
+    buffer::{DiagnosticSeverity, Point, Selection, SelectionGoal, SelectionSetId, Snapshot as _},
     traits::*,
     BracketPair, Diagnostic, Language, SelectionExt as _,
 };
@@ -582,7 +582,12 @@ impl<D: Buffer> Editor<D> {
             .anchor_at(scroll_top_buffer_offset, Bias::Right);
         self.scroll_position = vec2f(
             scroll_position.x(),
-            scroll_position.y() - self.scroll_top_anchor.to_display_point(&map).row() as f32,
+            scroll_position.y()
+                - self
+                    .scroll_top_anchor
+                    .to_point(&map.buffer_snapshot)
+                    .to_display_point(&map)
+                    .row() as f32,
         );
 
         debug_assert_eq!(
@@ -904,7 +909,9 @@ impl<D: Buffer> Editor<D> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
         if let Some(tail) = self.columnar_selection_tail.as_ref() {
-            let tail = tail.to_display_point(&display_map);
+            let tail = tail
+                .to_point(&display_map.buffer_snapshot)
+                .to_display_point(&display_map);
             self.select_columns(tail, position, overshoot, &display_map, cx);
         } else if let Some(PendingSelection { selection, mode }) = self.pending_selection.as_mut() {
             let buffer = &display_map.buffer_snapshot;
@@ -916,8 +923,8 @@ impl<D: Buffer> Editor<D> {
                     tail = selection.tail().to_point(buffer);
                 }
                 SelectMode::Word(original_range) => {
-                    let original_display_range = original_range.start.to_display_point(&display_map)
-                        ..original_range.end.to_display_point(&display_map);
+                    let original_display_range =
+                        display_map.anchor_range_to_display_points(&original_range);
                     let original_buffer_range = original_display_range.start.to_point(&display_map)
                         ..original_display_range.end.to_point(&display_map);
                     if movement::is_inside_word(&display_map, position)
@@ -940,8 +947,8 @@ impl<D: Buffer> Editor<D> {
                     }
                 }
                 SelectMode::Line(original_range) => {
-                    let original_display_range = original_range.start.to_display_point(&display_map)
-                        ..original_range.end.to_display_point(&display_map);
+                    let original_display_range =
+                        display_map.anchor_range_to_display_points(&original_range);
                     let original_buffer_range = original_display_range.start.to_point(&display_map)
                         ..original_display_range.end.to_point(&display_map);
                     let line_start = movement::line_beginning(&display_map, position, false);
@@ -1069,7 +1076,7 @@ impl<D: Buffer> Editor<D> {
         cx: &mut ViewContext<Self>,
     ) where
         I: IntoIterator<Item = Range<T>>,
-        T: ToOffset<D::Snapshot>,
+        T: ToOffset,
     {
         let buffer = self.buffer.read(cx).snapshot();
         let selections = ranges
@@ -2885,13 +2892,13 @@ impl<D: Buffer> Editor<D> {
     fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
             let buffer = self.buffer.read(cx).snapshot();
-            let primary_range_start = active_diagnostics.primary_range.start.to_offset(&buffer);
+            let primary_range = active_diagnostics.primary_range.to_offset(&buffer);
             let is_valid = buffer
-                .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone())
+                .diagnostics_in_range::<_, usize>(primary_range.clone())
                 .any(|(range, diagnostic)| {
                     diagnostic.is_primary
                         && !range.is_empty()
-                        && range.start == primary_range_start
+                        && range.start == primary_range.start
                         && diagnostic.message == active_diagnostics.primary_message
                 });
 
@@ -3036,8 +3043,8 @@ impl<D: Buffer> Editor<D> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let pending_selection = if set_id == self.selection_set_id {
             self.pending_selection.as_ref().and_then(|pending| {
-                let selection_start = pending.selection.start.to_display_point(&display_map);
-                let selection_end = pending.selection.end.to_display_point(&display_map);
+                let selection_start = display_map.anchor_to_display_point(&pending.selection.start);
+                let selection_end = display_map.anchor_to_display_point(&pending.selection.end);
                 if selection_start <= range.end || selection_end <= range.end {
                     Some(Selection {
                         id: pending.selection.id,
@@ -3161,7 +3168,7 @@ impl<D: Buffer> Editor<D> {
         autoscroll: Option<Autoscroll>,
         cx: &mut ViewContext<Self>,
     ) where
-        T: ToOffset<D::Snapshot> + ToPoint<D::Snapshot> + Ord + std::marker::Copy + std::fmt::Debug,
+        T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
     {
         // Merge overlapping selections.
         let buffer = self.buffer.read(cx).snapshot();
@@ -3342,11 +3349,7 @@ impl<D: Buffer> Editor<D> {
         self.fold_ranges(ranges, cx);
     }
 
-    fn fold_ranges<T: ToOffset<D::Snapshot>>(
-        &mut self,
-        ranges: Vec<Range<T>>,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn fold_ranges<T: ToOffset>(&mut self, ranges: Vec<Range<T>>, cx: &mut ViewContext<Self>) {
         if !ranges.is_empty() {
             self.display_map.update(cx, |map, cx| map.fold(ranges, cx));
             self.request_autoscroll(Autoscroll::Fit, cx);
@@ -3354,11 +3357,7 @@ impl<D: Buffer> Editor<D> {
         }
     }
 
-    fn unfold_ranges<T: ToOffset<D::Snapshot>>(
-        &mut self,
-        ranges: Vec<Range<T>>,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn unfold_ranges<T: ToOffset>(&mut self, ranges: Vec<Range<T>>, cx: &mut ViewContext<Self>) {
         if !ranges.is_empty() {
             self.display_map
                 .update(cx, |map, cx| map.unfold(ranges, cx));
@@ -3564,7 +3563,10 @@ fn compute_scroll_position<S: Snapshot>(
     mut scroll_position: Vector2F,
     scroll_top_anchor: &S::Anchor,
 ) -> Vector2F {
-    let scroll_top = scroll_top_anchor.to_display_point(snapshot).row() as f32;
+    let scroll_top = scroll_top_anchor
+        .to_point(&snapshot.buffer_snapshot)
+        .to_display_point(snapshot)
+        .row() as f32;
     scroll_position.set_y(scroll_top + scroll_position.y());
     scroll_position
 }

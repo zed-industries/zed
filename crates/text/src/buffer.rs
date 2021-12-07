@@ -2,19 +2,15 @@
 mod tests;
 
 use crate::{
-    Anchor, AnchorMap, AnchorRangeMap, AnchorRangeMultimap, AnchorRangeMultimapEntry,
-    AnchorRangeSet, AnchorSet, FullOffsetRange, ToOffset,
-};
-
-use super::operation_queue::OperationQueue;
-use super::subscription::*;
-use super::{
+    operation_queue::OperationQueue,
     patch::Patch,
     point::*,
     point_utf16::*,
-    rope,
-    rope::{Chunks, Rope, TextDimension, TextSummary},
+    rope::{self, Chunks, Rope, TextDimension, TextSummary},
     selection::*,
+    subscription::*,
+    Anchor, AnchorMap, AnchorRangeMap, AnchorRangeMultimap, AnchorRangeMultimapEntry,
+    AnchorRangeSet, AnchorSet, FullOffsetRange, Snapshot, ToOffset,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
@@ -558,7 +554,7 @@ impl Buffer {
         };
 
         let mut ranges = ranges
-            .map(|range| range.start.to_offset(&*self)..range.end.to_offset(&*self))
+            .map(|range| range.start.to_offset(self)..range.end.to_offset(self))
             .peekable();
 
         let mut new_ropes =
@@ -1204,8 +1200,8 @@ impl Buffer {
             Bias::Left,
             Bias::Left,
             selections.iter().map(|selection| {
-                let start = selection.start.to_offset(self);
-                let end = selection.end.to_offset(self);
+                let start = selection.start.to_offset(&self.snapshot);
+                let end = selection.end.to_offset(&self.snapshot);
                 let range = start..end;
                 let state = SelectionState {
                     id: selection.id,
@@ -1468,6 +1464,12 @@ impl Buffer {
     }
 }
 
+impl AsRef<BufferSnapshot> for Buffer {
+    fn as_ref(&self) -> &BufferSnapshot {
+        todo!()
+    }
+}
+
 impl Deref for Buffer {
     type Target = BufferSnapshot;
 
@@ -1483,10 +1485,6 @@ impl BufferSnapshot {
 
     pub fn row_count(&self) -> u32 {
         self.max_point().row + 1
-    }
-
-    pub fn len(&self) -> usize {
-        self.visible_text.len()
     }
 
     pub fn chars(&self) -> impl Iterator<Item = char> + '_ {
@@ -1515,31 +1513,11 @@ impl BufferSnapshot {
         self.text_for_range(0..self.len()).collect()
     }
 
-    pub fn text_summary(&self) -> TextSummary {
-        self.visible_text.summary()
-    }
-
-    pub fn max_point(&self) -> Point {
-        self.visible_text.max_point()
-    }
-
-    pub fn point_to_offset(&self, point: Point) -> usize {
-        self.visible_text.point_to_offset(point)
-    }
-
-    pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
-        self.visible_text.point_utf16_to_offset(point)
-    }
-
     pub fn to_full_offset<T: ToOffset>(&self, offset: T, bias: Bias) -> FullOffset {
         let offset = offset.to_offset(self);
         let mut cursor = self.fragments.cursor::<FragmentTextSummary>();
         cursor.seek(&offset, bias, &None);
         FullOffset(offset + cursor.start().deleted)
-    }
-
-    pub fn offset_to_point(&self, offset: usize) -> Point {
-        self.visible_text.offset_to_point(offset)
     }
 
     pub fn version(&self) -> &clock::Global {
@@ -1569,16 +1547,6 @@ impl BufferSnapshot {
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);
         self.visible_text.chunks_in_range(start..end)
-    }
-
-    pub fn line_len(&self, row: u32) -> u32 {
-        let row_start_offset = Point::new(row, 0).to_offset(self);
-        let row_end_offset = if row >= self.max_point().row {
-            self.len()
-        } else {
-            Point::new(row + 1, 0).to_offset(self) - 1
-        };
-        (row_end_offset - row_start_offset) as u32
     }
 
     pub fn is_line_blank(&self, row: u32) -> bool {
@@ -1615,15 +1583,6 @@ impl BufferSnapshot {
             0
         };
         self.text_summary_for_range(0..cursor.start().1 + overshoot)
-    }
-
-    pub fn text_summary_for_range<'a, D, O: ToOffset>(&'a self, range: Range<O>) -> D
-    where
-        D: TextDimension,
-    {
-        self.visible_text
-            .cursor(range.start.to_offset(self))
-            .summary(range.end.to_offset(self))
     }
 
     pub fn summaries_for_anchors<'a, D, I>(
@@ -1815,18 +1774,6 @@ impl BufferSnapshot {
         }
     }
 
-    pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
-        self.visible_text.clip_offset(offset, bias)
-    }
-
-    pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
-        self.visible_text.clip_point(point, bias)
-    }
-
-    pub fn clip_point_utf16(&self, point: PointUtf16, bias: Bias) -> PointUtf16 {
-        self.visible_text.clip_point_utf16(point, bias)
-    }
-
     pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
         if offset <= self.len() {
             Ok(self.text_summary_for_range(0..offset))
@@ -1893,6 +1840,108 @@ impl BufferSnapshot {
             new_end: Default::default(),
             range: full_offset_start..full_offset_end,
         }
+    }
+}
+
+impl Snapshot for Buffer {
+    fn line_len(&self, row: u32) -> u32 {
+        self.snapshot.line_len(row)
+    }
+
+    fn text_summary(&self) -> TextSummary {
+        self.snapshot.text_summary()
+    }
+
+    fn text_summary_for_range<'a, D, O>(&'a self, range: Range<O>) -> D
+    where
+        D: TextDimension,
+        O: ToOffset,
+        Self: Sized,
+    {
+        self.snapshot.text_summary_for_range(range)
+    }
+
+    fn point_to_offset(&self, point: Point) -> usize {
+        self.snapshot.point_to_offset(point)
+    }
+
+    fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
+        self.snapshot.point_utf16_to_offset(point)
+    }
+
+    fn offset_to_point(&self, offset: usize) -> Point {
+        self.snapshot.offset_to_point(offset)
+    }
+
+    fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
+        self.snapshot.clip_offset(offset, bias)
+    }
+
+    fn clip_point(&self, point: Point, bias: Bias) -> Point {
+        self.snapshot.clip_point(point, bias)
+    }
+
+    fn clip_point_utf16(&self, point: PointUtf16, bias: Bias) -> PointUtf16 {
+        self.snapshot.clip_point_utf16(point, bias)
+    }
+}
+
+impl Snapshot for BufferSnapshot {
+    fn len(&self) -> usize {
+        self.visible_text.len()
+    }
+
+    fn point_to_offset(&self, point: Point) -> usize {
+        self.visible_text.point_to_offset(point)
+    }
+
+    fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
+        self.visible_text.point_utf16_to_offset(point)
+    }
+
+    fn offset_to_point(&self, offset: usize) -> Point {
+        self.visible_text.offset_to_point(offset)
+    }
+
+    fn line_len(&self, row: u32) -> u32 {
+        let row_start_offset = Point::new(row, 0).to_offset(self);
+        let row_end_offset = if row >= self.max_point().row {
+            self.len()
+        } else {
+            Point::new(row + 1, 0).to_offset(self) - 1
+        };
+        (row_end_offset - row_start_offset) as u32
+    }
+
+    fn max_point(&self) -> Point {
+        self.visible_text.max_point()
+    }
+
+    fn text_summary(&self) -> TextSummary {
+        self.visible_text.summary()
+    }
+
+    fn text_summary_for_range<'a, D, O>(&'a self, range: Range<O>) -> D
+    where
+        D: TextDimension,
+        O: ToOffset,
+        Self: Sized,
+    {
+        self.visible_text
+            .cursor(range.start.to_offset(self))
+            .summary(range.end.to_offset(self))
+    }
+
+    fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
+        self.visible_text.clip_offset(offset, bias)
+    }
+
+    fn clip_point(&self, point: Point, bias: Bias) -> Point {
+        self.visible_text.clip_point(point, bias)
+    }
+
+    fn clip_point_utf16(&self, point: PointUtf16, bias: Bias) -> PointUtf16 {
+        self.visible_text.clip_point_utf16(point, bias)
     }
 }
 

@@ -12,7 +12,7 @@ use fold_map::{FoldMap, ToFoldPoint as _};
 use gpui::{fonts::FontId, ElementBox, Entity, ModelContext, ModelHandle};
 use language::{
     buffer::{Bias, Point},
-    traits::{Buffer, Snapshot, ToOffset, ToPoint},
+    traits::{Anchor, Buffer, Snapshot, ToOffset, ToPoint},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -83,7 +83,7 @@ impl<D: Buffer> DisplayMap<D> {
         }
     }
 
-    pub fn fold<T: ToOffset<D::Snapshot>>(
+    pub fn fold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &mut ModelContext<Self>,
@@ -104,7 +104,7 @@ impl<D: Buffer> DisplayMap<D> {
         self.block_map.read(snapshot, edits);
     }
 
-    pub fn unfold<T: ToOffset<D::Snapshot>>(
+    pub fn unfold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &mut ModelContext<Self>,
@@ -131,7 +131,7 @@ impl<D: Buffer> DisplayMap<D> {
         cx: &mut ModelContext<Self>,
     ) -> Vec<BlockId>
     where
-        P: ToOffset<D::Snapshot> + Clone,
+        P: ToOffset + Clone,
     {
         let snapshot = self.buffer.read(cx).snapshot();
         let edits = self.buffer_subscription.consume().into_inner();
@@ -231,6 +231,14 @@ impl<S: Snapshot> DisplaySnapshot<S> {
         }
     }
 
+    pub fn anchor_range_to_display_points(&self, range: &Range<S::Anchor>) -> Range<DisplayPoint> {
+        self.anchor_to_display_point(&range.start)..self.anchor_to_display_point(&range.end)
+    }
+
+    pub fn anchor_to_display_point(&self, anchor: &S::Anchor) -> DisplayPoint {
+        self.point_to_display_point(anchor.to_point(&self.buffer_snapshot), Bias::Left)
+    }
+
     fn point_to_display_point(&self, point: Point, bias: Bias) -> DisplayPoint {
         DisplayPoint(
             self.blocks_snapshot.to_block_point(
@@ -315,7 +323,7 @@ impl<S: Snapshot> DisplaySnapshot<S> {
         range: Range<T>,
     ) -> impl Iterator<Item = &'a Range<S::Anchor>>
     where
-        T: ToOffset<S>,
+        T: ToOffset,
     {
         self.folds_snapshot.folds_in_range(range)
     }
@@ -327,7 +335,7 @@ impl<S: Snapshot> DisplaySnapshot<S> {
         self.blocks_snapshot.blocks_in_range(rows)
     }
 
-    pub fn intersects_fold<T: ToOffset<S>>(&self, offset: T) -> bool {
+    pub fn intersects_fold<T: ToOffset>(&self, offset: T) -> bool {
         self.folds_snapshot.intersects_fold(offset)
     }
 
@@ -435,7 +443,13 @@ impl DisplayPoint {
     }
 }
 
-impl<S: Snapshot, T: ToPoint<S>> ToDisplayPoint<S> for T {
+impl<S: Snapshot> ToDisplayPoint<S> for Point {
+    fn to_display_point(&self, map: &DisplaySnapshot<S>) -> DisplayPoint {
+        map.point_to_display_point(self.to_point(&map.buffer_snapshot), Bias::Left)
+    }
+}
+
+impl<S: Snapshot> ToDisplayPoint<S> for usize {
     fn to_display_point(&self, map: &DisplaySnapshot<S>) -> DisplayPoint {
         map.point_to_display_point(self.to_point(&map.buffer_snapshot), Bias::Left)
     }
@@ -447,7 +461,7 @@ mod tests {
     use crate::{movement, test::*};
     use gpui::{color::Color, MutableAppContext};
     use language::{
-        buffer::{Buffer, RandomCharIter, SelectionGoal},
+        buffer::{Buffer, RandomCharIter, SelectionGoal, Snapshot as _},
         Language, LanguageConfig,
     };
     use rand::{prelude::StdRng, Rng};

@@ -1,6 +1,6 @@
 use crate::buffer::{
     rope::TextDimension, Chunk, Diagnostic, Event, Language, Point, Selection, SelectionSetId,
-    Subscription, TextSummary,
+    Subscription,
 };
 use anyhow::Result;
 use clock::ReplicaId;
@@ -8,6 +8,8 @@ use gpui::{Entity, ModelContext};
 use std::{cmp::Ordering, fmt::Debug, io, ops::Range, sync::Arc};
 use sum_tree::Bias;
 use theme::SyntaxTheme;
+
+pub use text::{ToOffset, ToPoint};
 
 pub trait Buffer: 'static + Entity<Event = Event> {
     type Snapshot: Snapshot;
@@ -26,7 +28,7 @@ pub trait Buffer: 'static + Entity<Event = Event> {
     fn edit<I, S, T>(&mut self, ranges_iter: I, new_text: T, cx: &mut ModelContext<Self>)
     where
         I: IntoIterator<Item = Range<S>>,
-        S: ToOffset<Self::Snapshot>,
+        S: ToOffset,
         T: Into<String>;
     fn edit_with_autoindent<I, S, T>(
         &mut self,
@@ -35,16 +37,16 @@ pub trait Buffer: 'static + Entity<Event = Event> {
         cx: &mut ModelContext<Self>,
     ) where
         I: IntoIterator<Item = Range<S>>,
-        S: ToOffset<Self::Snapshot>,
+        S: ToOffset,
         T: Into<String>;
     fn undo(&mut self, cx: &mut ModelContext<Self>);
     fn redo(&mut self, cx: &mut ModelContext<Self>);
-    fn add_selection_set<T: ToOffset<Self::Snapshot>>(
+    fn add_selection_set<T: ToOffset>(
         &mut self,
         selections: &[Selection<T>],
         cx: &mut ModelContext<Self>,
     ) -> SelectionSetId;
-    fn update_selection_set<T: ToOffset<Self::Snapshot>>(
+    fn update_selection_set<T: ToOffset>(
         &mut self,
         set_id: SelectionSetId,
         selections: &[Selection<T>],
@@ -66,53 +68,41 @@ pub trait Buffer: 'static + Entity<Event = Event> {
     ) -> Box<dyn 'a + Iterator<Item = (&'a SelectionSetId, &'a Self::SelectionSet)>>;
 }
 
-pub trait Snapshot: 'static + Clone + Send + Unpin {
+pub trait Snapshot: 'static + text::Snapshot + Clone + Send + Unpin {
     type Anchor: Anchor<Snapshot = Self>;
     type AnchorRangeSet: AnchorRangeSet<Snapshot = Self>;
 
     fn text(&self) -> String;
-    fn text_for_range<'a, T: ToOffset<Self>>(
+    fn text_for_range<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
     ) -> Box<dyn 'a + Iterator<Item = &'a str>>;
-    fn chunks<'a, T: ToOffset<Self>>(
+    fn chunks<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
         theme: Option<&'a SyntaxTheme>,
     ) -> Box<dyn 'a + Chunks<'a>>;
-    fn chars_at<'a, T: ToOffset<Self>>(
-        &'a self,
-        position: T,
-    ) -> Box<dyn 'a + Iterator<Item = char>>;
-    fn chars_for_range<'a, T: ToOffset<Self>>(
+    fn chars_at<'a, T: ToOffset>(&'a self, position: T) -> Box<dyn 'a + Iterator<Item = char>>;
+    fn chars_for_range<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
     ) -> Box<dyn 'a + Iterator<Item = char>>;
-    fn reversed_chars_at<'a, T: ToOffset<Self>>(
+    fn reversed_chars_at<'a, T: ToOffset>(
         &'a self,
         position: T,
     ) -> Box<dyn 'a + Iterator<Item = char>>;
-    fn bytes_in_range<'a, T: ToOffset<Self>>(&'a self, range: Range<T>) -> Box<dyn 'a + Bytes<'a>>;
-    fn contains_str_at<T: ToOffset<Self>>(&self, position: T, needle: &str) -> bool;
+    fn bytes_in_range<'a, T: ToOffset>(&'a self, range: Range<T>) -> Box<dyn 'a + Bytes<'a>>;
+    fn contains_str_at<T: ToOffset>(&self, position: T, needle: &str) -> bool;
     fn is_line_blank(&self, row: u32) -> bool;
     fn indent_column_for_line(&self, row: u32) -> u32;
-    fn range_for_syntax_ancestor<T: ToOffset<Self>>(&self, range: Range<T>)
-        -> Option<Range<usize>>;
-    fn enclosing_bracket_ranges<T: ToOffset<Self>>(
+    fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>>;
+    fn enclosing_bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
     ) -> Option<(Range<usize>, Range<usize>)>;
-    fn text_summary(&self) -> TextSummary;
-    fn text_summary_for_range<'a, D, O>(&'a self, range: Range<O>) -> D
-    where
-        D: TextDimension,
-        O: ToOffset<Self>;
-    fn max_point(&self) -> Point;
-    fn len(&self) -> usize;
-    fn line_len(&self, row: u32) -> u32;
-    fn anchor_before<T: ToOffset<Self>>(&self, position: T) -> Self::Anchor;
-    fn anchor_at<T: ToOffset<Self>>(&self, position: T, bias: Bias) -> Self::Anchor;
-    fn anchor_after<T: ToOffset<Self>>(&self, position: T) -> Self::Anchor;
+    fn anchor_before<T: ToOffset>(&self, position: T) -> Self::Anchor;
+    fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Self::Anchor;
+    fn anchor_after<T: ToOffset>(&self, position: T) -> Self::Anchor;
     fn anchor_range_set<E>(
         &self,
         start_bias: Bias,
@@ -121,10 +111,6 @@ pub trait Snapshot: 'static + Clone + Send + Unpin {
     ) -> Self::AnchorRangeSet
     where
         E: IntoIterator<Item = Range<usize>>;
-    fn clip_offset(&self, offset: usize, bias: Bias) -> usize;
-    fn clip_point(&self, point: Point, bias: Bias) -> Point;
-    fn to_offset(&self, point: Point) -> usize;
-    fn to_point(&self, offset: usize) -> Point;
     fn parse_count(&self) -> usize;
     fn diagnostics_update_count(&self) -> usize;
     fn diagnostics_in_range<'a, T, O>(
@@ -132,7 +118,7 @@ pub trait Snapshot: 'static + Clone + Send + Unpin {
         search_range: Range<T>,
     ) -> Box<dyn 'a + Iterator<Item = (Range<O>, &Diagnostic)>>
     where
-        T: 'a + ToOffset<Self>,
+        T: 'a + ToOffset,
         O: 'a + FromAnchor<Self>;
     fn diagnostic_group<'a, O>(
         &'a self,
@@ -142,27 +128,21 @@ pub trait Snapshot: 'static + Clone + Send + Unpin {
         O: 'a + FromAnchor<Self>;
 }
 
-pub trait ToOffset<S: Snapshot> {
-    fn to_offset(&self, snapshot: &S) -> usize;
-}
-
-pub trait ToPoint<S: Snapshot> {
-    fn to_point(&self, snapshot: &S) -> Point;
-}
-
-pub trait Anchor:
-    Clone + Debug + Send + Sync + ToOffset<Self::Snapshot> + ToPoint<Self::Snapshot>
-{
+pub trait Anchor: Clone + Debug + Send + Sync {
     type Snapshot: Snapshot;
 
     fn min() -> Self;
     fn max() -> Self;
     fn cmp(&self, other: &Self, snapshot: &Self::Snapshot) -> Ordering;
-    fn summary<'a, D: TextDimension>(&self, snapshot: &'a Self::Snapshot) -> D;
-}
+    fn summary<D: TextDimension>(&self, snapshot: &Self::Snapshot) -> D;
 
-pub trait FromAnchor<S: Snapshot> {
-    fn from_anchor(anchor: &S::Anchor, content: &S) -> Self;
+    fn to_offset(&self, snapshot: &Self::Snapshot) -> usize {
+        self.summary(snapshot)
+    }
+
+    fn to_point(&self, snapshot: &Self::Snapshot) -> Point {
+        self.summary(snapshot)
+    }
 }
 
 pub trait AnchorRangeSet {
@@ -178,6 +158,10 @@ pub trait AnchorRangeSet {
         D: TextDimension;
 }
 
+pub trait FromAnchor<S: Snapshot> {
+    fn from_anchor(anchor: &S::Anchor, content: &S) -> Self;
+}
+
 pub trait DocumentSelectionSet {
     type Document: Buffer;
 
@@ -190,7 +174,7 @@ pub trait DocumentSelectionSet {
     ) -> Box<dyn 'a + Iterator<Item = Selection<D>>>
     where
         D: TextDimension,
-        I: 'a + ToOffset<<Self::Document as Buffer>::Snapshot>;
+        I: 'a + ToOffset;
     fn selections<'a, D>(
         &'a self,
         document: &'a Self::Document,
@@ -217,43 +201,13 @@ pub trait AnchorRangeExt<T: Anchor> {
     fn to_offset(&self, content: &T::Snapshot) -> Range<usize>;
 }
 
-impl<S: Snapshot> ToOffset<S> for usize {
-    fn to_offset(&self, _: &S) -> usize {
-        *self
-    }
-}
-
-impl<S: Snapshot> ToOffset<S> for Point {
-    fn to_offset(&self, snapshot: &S) -> usize {
-        snapshot.to_offset(*self)
-    }
-}
-
-impl<S: Snapshot> ToPoint<S> for Point {
-    fn to_point(&self, _: &S) -> Point {
-        *self
-    }
-}
-
-impl<S: Snapshot> ToPoint<S> for usize {
-    fn to_point(&self, snapshot: &S) -> Point {
-        snapshot.to_point(*self)
-    }
-}
-
-impl<S: Snapshot> FromAnchor<S> for usize
-where
-    S::Anchor: ToOffset<S>,
-{
+impl<S: Snapshot> FromAnchor<S> for usize {
     fn from_anchor(anchor: &S::Anchor, snapshot: &S) -> Self {
         anchor.to_offset(snapshot)
     }
 }
 
-impl<S: Snapshot> FromAnchor<S> for Point
-where
-    S::Anchor: ToPoint<S>,
-{
+impl<S: Snapshot> FromAnchor<S> for Point {
     fn from_anchor(anchor: &S::Anchor, snapshot: &S) -> Self {
         anchor.to_point(snapshot)
     }

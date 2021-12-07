@@ -2,7 +2,7 @@ use super::wrap_map::{WrapBufferRows, WrapChunks, WrapEdit, WrapPoint, WrapSnaps
 use gpui::{AppContext, ElementBox};
 use language::{
     buffer::{Bias, Chunk, Edit, Point},
-    traits::{Anchor, Snapshot, ToOffset, ToPoint},
+    traits::{Anchor, Snapshot, ToOffset},
 };
 use parking_lot::Mutex;
 use std::{
@@ -146,7 +146,7 @@ impl<S: Snapshot> BlockMap<S> {
             return;
         }
 
-        let buffer = &wrap_snapshot.tab_snapshot.fold_snapshot.document_snapshot;
+        let buffer = &wrap_snapshot.tab_snapshot.fold_snapshot.buffer_snapshot;
         let mut transforms = self.transforms.lock();
         let mut new_transforms = SumTree::new();
         let old_row_count = transforms.summary().input_rows;
@@ -368,12 +368,12 @@ impl<'a, S: Snapshot> BlockMapWriter<'a, S> {
         blocks: impl IntoIterator<Item = BlockProperties<P>>,
     ) -> Vec<BlockId>
     where
-        P: ToOffset<S> + Clone,
+        P: ToOffset + Clone,
     {
         let mut ids = Vec::new();
         let mut edits = Vec::<Edit<u32>>::new();
         let wrap_snapshot = &*self.0.wrap_snapshot.lock();
-        let buffer = &wrap_snapshot.tab_snapshot.fold_snapshot.document_snapshot;
+        let buffer = &wrap_snapshot.tab_snapshot.fold_snapshot.buffer_snapshot;
 
         for block in blocks {
             let id = BlockId(self.0.next_block_id.fetch_add(1, SeqCst));
@@ -427,7 +427,7 @@ impl<'a, S: Snapshot> BlockMapWriter<'a, S> {
 
     pub fn remove(&mut self, block_ids: HashSet<BlockId>) {
         let wrap_snapshot = &*self.0.wrap_snapshot.lock();
-        let buffer = &wrap_snapshot.tab_snapshot.fold_snapshot.document_snapshot;
+        let buffer = &wrap_snapshot.tab_snapshot.fold_snapshot.buffer_snapshot;
         let mut edits = Vec::new();
         let mut last_block_buffer_row = None;
         self.0.blocks.retain(|block| {
@@ -868,7 +868,7 @@ mod tests {
     use super::*;
     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
     use gpui::{elements::Empty, Element};
-    use language::buffer::Buffer;
+    use language::buffer::{Buffer, Snapshot};
     use rand::prelude::*;
     use std::env;
     use text::RandomCharIter;
@@ -1180,7 +1180,13 @@ mod tests {
                         wrap_map.sync(tabs_snapshot, tab_edits, cx)
                     });
                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
-                    let block_ids = block_map.insert(block_properties.clone());
+                    let block_ids =
+                        block_map.insert(block_properties.iter().map(|block| BlockProperties {
+                            position: block.position.to_offset(&buffer_snapshot),
+                            render: block.render.clone(),
+                            height: block.height,
+                            disposition: block.disposition,
+                        }));
                     for (block_id, props) in block_ids.into_iter().zip(block_properties) {
                         expected_blocks.push((block_id, props));
                     }

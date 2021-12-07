@@ -1,6 +1,6 @@
 use super::{
     BlockContext, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
-    Input, Scroll, Select, SelectPhase, SoftWrap, ToDisplayPoint, MAX_LINE_LEN,
+    Input, Scroll, Select, SelectPhase, SoftWrap, MAX_LINE_LEN,
 };
 use clock::ReplicaId;
 use gpui::{
@@ -19,7 +19,7 @@ use gpui::{
 use json::json;
 use language::{
     buffer::Chunk,
-    traits::{Buffer, Snapshot, ToPoint},
+    traits::{Buffer, Snapshot},
 };
 use smallvec::SmallVec;
 use std::{
@@ -638,10 +638,9 @@ impl<D: Buffer> EditorElement<D> {
         snapshot
             .blocks_in_range(rows.clone())
             .map(|(start_row, block)| {
-                let anchor_row = block
-                    .position()
-                    .to_point(&snapshot.buffer_snapshot)
-                    .to_display_point(snapshot)
+                let anchor_row = snapshot
+                    .display_snapshot
+                    .anchor_to_display_point(block.position())
                     .row();
 
                 let anchor_x = if rows.contains(&anchor_row) {

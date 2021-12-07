@@ -53,8 +53,8 @@ impl FoldPoint {
         cursor.seek(self, Bias::Right, &());
         let overshoot = self.0 - cursor.start().0 .0;
         snapshot
-            .document_snapshot
-            .to_offset(cursor.start().1 + overshoot)
+            .buffer_snapshot
+            .point_to_offset(cursor.start().1 + overshoot)
     }
 
     pub fn to_offset<S: Snapshot>(&self, snapshot: &FoldSnapshot<S>) -> FoldOffset {
@@ -68,8 +68,8 @@ impl FoldPoint {
             let transform = cursor.item().expect("display point out of range");
             assert!(transform.output_text.is_none());
             let end_buffer_offset = snapshot
-                .document_snapshot
-                .to_offset(cursor.start().1.input.lines + overshoot);
+                .buffer_snapshot
+                .point_to_offset(cursor.start().1.input.lines + overshoot);
             offset += end_buffer_offset - cursor.start().1.input.bytes;
         }
         FoldOffset(offset)
@@ -99,7 +99,7 @@ impl<S: Snapshot> ToFoldPoint<S> for Point {
 pub struct FoldMapWriter<'a, S: Snapshot>(&'a mut FoldMap<S>);
 
 impl<'a, S: Snapshot> FoldMapWriter<'a, S> {
-    pub fn fold<T: ToOffset<S>>(
+    pub fn fold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
     ) -> (FoldSnapshot<S>, Vec<FoldEdit>) {
@@ -136,13 +136,13 @@ impl<'a, S: Snapshot> FoldMapWriter<'a, S> {
         let snapshot = FoldSnapshot {
             transforms: self.0.transforms.lock().clone(),
             folds: self.0.folds.clone(),
-            document_snapshot: buffer,
+            buffer_snapshot: buffer,
             version: self.0.version.load(SeqCst),
         };
         (snapshot, edits)
     }
 
-    pub fn unfold<T: ToOffset<S>>(
+    pub fn unfold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
     ) -> (FoldSnapshot<S>, Vec<FoldEdit>) {
@@ -182,7 +182,7 @@ impl<'a, S: Snapshot> FoldMapWriter<'a, S> {
         let snapshot = FoldSnapshot {
             transforms: self.0.transforms.lock().clone(),
             folds: self.0.folds.clone(),
-            document_snapshot: buffer,
+            buffer_snapshot: buffer,
             version: self.0.version.load(SeqCst),
         };
         (snapshot, edits)
@@ -217,7 +217,7 @@ impl<S: Snapshot> FoldMap<S> {
         let snapshot = FoldSnapshot {
             transforms: this.transforms.lock().clone(),
             folds: this.folds.clone(),
-            document_snapshot: this.document_snapshot.lock().clone(),
+            buffer_snapshot: this.document_snapshot.lock().clone(),
             version: this.version.load(SeqCst),
         };
         (this, snapshot)
@@ -229,7 +229,7 @@ impl<S: Snapshot> FoldMap<S> {
         let snapshot = FoldSnapshot {
             transforms: self.transforms.lock().clone(),
             folds: self.folds.clone(),
-            document_snapshot: self.document_snapshot.lock().clone(),
+            buffer_snapshot: self.document_snapshot.lock().clone(),
             version: self.version.load(SeqCst),
         };
         (snapshot, edits)
@@ -469,7 +469,7 @@ impl<S: Snapshot> FoldMap<S> {
 pub struct FoldSnapshot<S: Snapshot> {
     transforms: SumTree<Transform>,
     folds: SumTree<Fold<S::Anchor>>,
-    pub document_snapshot: S,
+    pub buffer_snapshot: S,
     pub version: usize,
 }
 
@@ -483,7 +483,7 @@ impl<S: Snapshot> FoldSnapshot<S> {
 
     #[cfg(test)]
     pub fn fold_count(&self) -> usize {
-        self.folds.items(&self.document_snapshot).len()
+        self.folds.items(&self.buffer_snapshot).len()
     }
 
     pub fn text_summary_for_range(&self, range: Range<FoldPoint>) -> TextSummary {
@@ -503,7 +503,7 @@ impl<S: Snapshot> FoldSnapshot<S> {
                 let buffer_start = cursor.start().1 + start_in_transform;
                 let buffer_end = cursor.start().1 + end_in_transform;
                 summary = self
-                    .document_snapshot
+                    .buffer_snapshot
                     .text_summary_for_range(buffer_start..buffer_end);
             }
         }
@@ -521,7 +521,7 @@ impl<S: Snapshot> FoldSnapshot<S> {
                     let buffer_start = cursor.start().1;
                     let buffer_end = cursor.start().1 + end_in_transform;
                     summary += self
-                        .document_snapshot
+                        .buffer_snapshot
                         .text_summary_for_range::<TextSummary, _>(buffer_start..buffer_end);
                 }
             }
@@ -570,21 +570,21 @@ impl<S: Snapshot> FoldSnapshot<S> {
         range: Range<T>,
     ) -> impl Iterator<Item = &'a Range<S::Anchor>>
     where
-        T: ToOffset<S>,
+        T: ToOffset,
     {
-        let mut folds = intersecting_folds(&self.document_snapshot, &self.folds, range, false);
+        let mut folds = intersecting_folds(&self.buffer_snapshot, &self.folds, range, false);
         iter::from_fn(move || {
             let item = folds.item().map(|f| &f.0);
-            folds.next(&self.document_snapshot);
+            folds.next(&self.buffer_snapshot);
             item
         })
     }
 
     pub fn intersects_fold<T>(&self, offset: T) -> bool
     where
-        T: ToOffset<S>,
+        T: ToOffset,
     {
-        let offset = offset.to_offset(&self.document_snapshot);
+        let offset = offset.to_offset(&self.buffer_snapshot);
         let mut cursor = self.transforms.cursor::<usize>();
         cursor.seek(&offset, Bias::Right, &());
         cursor.item().map_or(false, |t| t.output_text.is_some())
@@ -629,9 +629,7 @@ impl<S: Snapshot> FoldSnapshot<S> {
 
         FoldChunks {
             transform_cursor,
-            buffer_chunks: self
-                .document_snapshot
-                .chunks(buffer_start..buffer_end, theme),
+            buffer_chunks: self.buffer_snapshot.chunks(buffer_start..buffer_end, theme),
             buffer_chunk: None,
             buffer_offset: buffer_start,
             output_offset: range.start.0,
@@ -654,7 +652,7 @@ impl<S: Snapshot> FoldSnapshot<S> {
             } else {
                 let overshoot = offset.0 - transform_start;
                 let buffer_offset = cursor.start().1 + overshoot;
-                let clipped_buffer_offset = self.document_snapshot.clip_offset(buffer_offset, bias);
+                let clipped_buffer_offset = self.buffer_snapshot.clip_offset(buffer_offset, bias);
                 FoldOffset(
                     (offset.0 as isize + (clipped_buffer_offset as isize - buffer_offset as isize))
                         as usize,
@@ -680,7 +678,7 @@ impl<S: Snapshot> FoldSnapshot<S> {
                 let overshoot = point.0 - transform_start;
                 let buffer_position = cursor.start().1 + overshoot;
                 let clipped_buffer_position =
-                    self.document_snapshot.clip_point(buffer_position, bias);
+                    self.buffer_snapshot.clip_point(buffer_position, bias);
                 FoldPoint::new(
                     point.row(),
                     ((point.column() as i32) + clipped_buffer_position.column as i32
@@ -701,7 +699,7 @@ fn intersecting_folds<'a, S, T>(
 ) -> FilterCursor<'a, impl 'a + FnMut(&FoldSummary<S::Anchor>) -> bool, Fold<S::Anchor>, usize>
 where
     S: Snapshot,
-    T: ToOffset<S>,
+    T: ToOffset,
 {
     let start = buffer.anchor_before(range.start);
     let end = buffer.anchor_after(range.end);
@@ -1010,7 +1008,7 @@ impl FoldOffset {
             Point::new(0, (self.0 - cursor.start().0 .0) as u32)
         } else {
             let buffer_offset = cursor.start().1.input.bytes + self.0 - cursor.start().0 .0;
-            let buffer_point = snapshot.document_snapshot.to_point(buffer_offset);
+            let buffer_point = snapshot.buffer_snapshot.offset_to_point(buffer_offset);
             buffer_point - cursor.start().1.input.lines
         };
         FoldPoint(cursor.start().1.output.lines + overshoot)
@@ -1048,7 +1046,7 @@ pub type FoldEdit = Edit<FoldOffset>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use language::buffer::{Buffer, ToPoint};
+    use language::buffer::{Buffer, TextSnapshot as _, ToPoint};
     use rand::prelude::*;
     use std::{env, mem};
     use text::RandomCharIter;
@@ -1225,7 +1223,7 @@ mod tests {
         let (snapshot, _) = map.read(buffer_snapshot.clone(), vec![]);
         let fold_ranges = snapshot
             .folds_in_range(Point::new(1, 0)..Point::new(1, 3))
-            .map(|fold| fold.start.to_point(buffer)..fold.end.to_point(buffer))
+            .map(|fold| fold.start.to_point(&***buffer)..fold.end.to_point(&***buffer))
             .collect::<Vec<_>>();
         assert_eq!(
             fold_ranges,

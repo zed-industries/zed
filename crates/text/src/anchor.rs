@@ -1,6 +1,5 @@
+use super::{Buffer, FullOffset, Point, ToOffset};
 use crate::{rope::TextDimension, BufferSnapshot};
-
-use super::{Buffer, FromAnchor, FullOffset, Point, ToOffset};
 use anyhow::Result;
 use std::{
     cmp::Ordering,
@@ -98,11 +97,19 @@ impl Anchor {
         Ok(offset_comparison.then_with(|| self.bias.cmp(&other.bias)))
     }
 
+    pub fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
+        self.summary(snapshot)
+    }
+
+    pub fn to_point(&self, snapshot: &BufferSnapshot) -> Point {
+        self.summary(snapshot)
+    }
+
     pub fn bias_left(&self, buffer: &Buffer) -> Anchor {
         if self.bias == Bias::Left {
             self.clone()
         } else {
-            buffer.anchor_before(self)
+            buffer.anchor_before(self.to_offset(buffer))
         }
     }
 
@@ -110,7 +117,7 @@ impl Anchor {
         if self.bias == Bias::Right {
             self.clone()
         } else {
-            buffer.anchor_after(self)
+            buffer.anchor_after(self.to_offset(buffer))
         }
     }
 
@@ -582,6 +589,22 @@ impl AnchorRangeExt for Range<Anchor> {
     }
 
     fn to_offset(&self, content: &BufferSnapshot) -> Range<usize> {
-        self.start.to_offset(&content)..self.end.to_offset(&content)
+        self.start.to_offset(content)..self.end.to_offset(content)
+    }
+}
+
+pub trait FromAnchor {
+    fn from_anchor(anchor: &Anchor, content: &BufferSnapshot) -> Self;
+}
+
+impl FromAnchor for Point {
+    fn from_anchor(anchor: &Anchor, content: &BufferSnapshot) -> Self {
+        content.summary_for_anchor(anchor)
+    }
+}
+
+impl FromAnchor for usize {
+    fn from_anchor(anchor: &Anchor, content: &BufferSnapshot) -> Self {
+        content.summary_for_anchor(anchor)
     }
 }

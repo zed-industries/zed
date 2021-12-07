@@ -3008,8 +3008,7 @@ mod tests {
     use anyhow::Result;
     use client::test::{FakeHttpClient, FakeServer};
     use fs::RealFs;
-    use language::{tree_sitter_rust, LanguageServerConfig};
-    use language::{Diagnostic, LanguageConfig};
+    use language::{tree_sitter_rust, Diagnostic, LanguageConfig, LanguageServerConfig};
     use lsp::Url;
     use rand::prelude::*;
     use serde_json::json;
@@ -3019,7 +3018,7 @@ mod tests {
         fmt::Write,
         time::{SystemTime, UNIX_EPOCH},
     };
-    use text::Point;
+    use text::{Point, Snapshot as _};
     use util::test::temp_tree;
 
     #[gpui::test]

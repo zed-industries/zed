@@ -253,7 +253,7 @@ impl CursorPosition {
                 last_selection = Some(selection);
             }
         }
-        self.position = last_selection.map(|s| s.head().to_point(buffer));
+        self.position = last_selection.map(|s| s.head().to_point(&***buffer));
 
         cx.notify();
     }

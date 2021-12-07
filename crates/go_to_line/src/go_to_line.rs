@@ -4,7 +4,7 @@ use gpui::{
     MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
 };
 use postage::watch;
-use text::{Bias, Point, Selection};
+use text::{Bias, Point, Selection, Snapshot as _};
 use workspace::{Settings, Workspace};
 
 action!(Toggle);

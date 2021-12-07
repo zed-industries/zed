@@ -1021,8 +1021,8 @@ impl Buffer {
         range: Range<T>,
     ) -> Option<(Range<Point>, Range<Point>)> {
         self.enclosing_bracket_ranges(range).map(|(start, end)| {
-            let point_start = start.start.to_point(self)..start.end.to_point(self);
-            let point_end = end.start.to_point(self)..end.end.to_point(self);
+            let point_start = start.start.to_point(&***self)..start.end.to_point(&***self);
+            let point_end = end.start.to_point(&***self)..end.end.to_point(&***self);
             (point_start, point_end)
         })
     }

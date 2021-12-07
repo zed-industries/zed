@@ -947,8 +947,9 @@ mod tests {
         editor::{Editor, EditorSettings, Input},
         fs::{FakeFs, Fs as _},
         language::{
-            buffer::Point, tree_sitter_rust, Diagnostic, Language, LanguageConfig,
-            LanguageRegistry, LanguageServerConfig,
+            buffer::{Point, Snapshot as _},
+            tree_sitter_rust, Diagnostic, Language, LanguageConfig, LanguageRegistry,
+            LanguageServerConfig,
         },
         lsp,
         project::{ProjectPath, Worktree},

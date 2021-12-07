@@ -1,3 +1,4 @@
+use crate::traits;
 pub use crate::{
     highlight_map::{HighlightId, HighlightMap},
     proto, BracketPair, Grammar, Language, LanguageConfig, LanguageRegistry, LanguageServerConfig,
@@ -28,7 +29,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     vec,
 };
-pub use text::{Buffer as TextBuffer, Operation as _, *};
+pub use text::{Buffer as TextBuffer, Operation as _, Snapshot as TextSnapshot, *};
 use theme::SyntaxTheme;
 use tree_sitter::{InputEdit, Parser, QueryCursor, Tree};
 use util::{post_inc, TryFutureExt as _};
@@ -1027,7 +1028,7 @@ impl Buffer {
     fn set_indent_column_for_line(&mut self, row: u32, column: u32, cx: &mut ModelContext<Self>) {
         let current_column = self.indent_column_for_line(row);
         if column > current_column {
-            let offset = Point::new(row, 0).to_offset(&*self);
+            let offset = Point::new(row, 0).to_offset(&*self.text);
             self.edit(
                 [offset..offset],
                 " ".repeat((column - current_column) as usize),
@@ -1045,7 +1046,7 @@ impl Buffer {
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
         if let Some(tree) = self.syntax_tree() {
             let root = tree.root_node();
-            let range = range.start.to_offset(self)..range.end.to_offset(self);
+            let range = range.start.to_offset(self.as_ref())..range.end.to_offset(&***self);
             let mut node = root.descendant_for_byte_range(range.start, range.end);
             while node.map_or(false, |n| n.byte_range() == range) {
                 node = node.unwrap().parent();
@@ -1065,7 +1066,8 @@ impl Buffer {
         let close_capture_ix = grammar.brackets_query.capture_index_for_name("close")?;
 
         // Find bracket pairs that *inclusively* contain the given range.
-        let range = range.start.to_offset(self).saturating_sub(1)..range.end.to_offset(self) + 1;
+        let range = range.start.to_offset(self.as_ref()).saturating_sub(1)
+            ..range.end.to_offset(self.as_ref()) + 1;
         let mut cursor = QueryCursorHandle::new();
         let matches = cursor.set_byte_range(range).matches(
             &grammar.brackets_query,
@@ -1133,10 +1135,6 @@ impl Buffer {
                 .file
                 .as_ref()
                 .map_or(false, |file| file.mtime() > self.saved_mtime)
-    }
-
-    pub fn subscribe(&mut self) -> Subscription {
-        self.text.subscribe()
     }
 
     pub fn start_transaction(
@@ -1264,7 +1262,7 @@ impl Buffer {
             let edited = self.anchor_set(
                 Bias::Left,
                 ranges.iter().filter_map(|range| {
-                    let start = range.start.to_point(self);
+                    let start = range.start.to_point(self.as_ref() as &text::BufferSnapshot);
                     if new_text.starts_with('\n') && start.column == self.line_len(start.row) {
                         None
                     } else {
@@ -1498,6 +1496,12 @@ impl Entity for Buffer {
         if let Some(file) = self.file.as_ref() {
             file.buffer_removed(self.remote_id(), cx);
         }
+    }
+}
+
+impl AsRef<text::BufferSnapshot> for Buffer {
+    fn as_ref(&self) -> &text::BufferSnapshot {
+        self.text.as_ref()
     }
 }
 
@@ -1990,16 +1994,16 @@ pub fn contiguous_ranges(
     })
 }
 
-impl crate::traits::Buffer for Buffer {
+impl traits::Buffer for Buffer {
     type Snapshot = BufferSnapshot;
     type SelectionSet = SelectionSet;
 
     fn replica_id(&self) -> ReplicaId {
-        (**self).replica_id()
+        self.text.replica_id()
     }
 
     fn language(&self) -> Option<&Arc<Language>> {
-        todo!()
+        self.language()
     }
 
     fn snapshot(&self) -> Self::Snapshot {
@@ -2007,7 +2011,7 @@ impl crate::traits::Buffer for Buffer {
     }
 
     fn subscribe(&mut self) -> Subscription {
-        self.subscribe()
+        self.text.subscribe()
     }
 
     fn start_transaction(&mut self, set_id: Option<SelectionSetId>) -> Result<()> {
@@ -2025,7 +2029,7 @@ impl crate::traits::Buffer for Buffer {
     fn edit<I, S, T>(&mut self, ranges_iter: I, new_text: T, cx: &mut ModelContext<Self>)
     where
         I: IntoIterator<Item = Range<S>>,
-        S: crate::traits::ToOffset<Self::Snapshot>,
+        S: ToOffset,
         T: Into<String>,
     {
         todo!()
@@ -2038,7 +2042,7 @@ impl crate::traits::Buffer for Buffer {
         cx: &mut ModelContext<Self>,
     ) where
         I: IntoIterator<Item = Range<S>>,
-        S: crate::traits::ToOffset<Self::Snapshot>,
+        S: ToOffset,
         T: Into<String>,
     {
         todo!()
@@ -2052,7 +2056,7 @@ impl crate::traits::Buffer for Buffer {
         todo!()
     }
 
-    fn add_selection_set<T: crate::traits::ToOffset<Self::Snapshot>>(
+    fn add_selection_set<T: ToOffset>(
         &mut self,
         selections: &[Selection<T>],
         cx: &mut ModelContext<Self>,
@@ -2060,7 +2064,7 @@ impl crate::traits::Buffer for Buffer {
         todo!()
     }
 
-    fn update_selection_set<T: crate::traits::ToOffset<Self::Snapshot>>(
+    fn update_selection_set<T: ToOffset>(
         &mut self,
         set_id: SelectionSetId,
         selections: &[Selection<T>],
@@ -2096,7 +2100,111 @@ impl crate::traits::Buffer for Buffer {
     }
 }
 
-impl crate::traits::Snapshot for BufferSnapshot {
+impl text::Snapshot for Buffer {
+    fn len(&self) -> usize {
+        self.text.len()
+    }
+
+    fn line_len(&self, row: u32) -> u32 {
+        self.text.line_len(row)
+    }
+
+    fn max_point(&self) -> Point {
+        self.text.max_point()
+    }
+
+    fn text_summary(&self) -> TextSummary {
+        self.text.text_summary()
+    }
+
+    fn text_summary_for_range<'a, D, O>(&'a self, range: Range<O>) -> D
+    where
+        D: rope::TextDimension,
+        O: ToOffset,
+        Self: Sized,
+    {
+        self.text
+            .text_summary_for_range(range.start.to_offset(self)..range.end.to_offset(self))
+    }
+
+    fn point_to_offset(&self, point: Point) -> usize {
+        self.text.point_to_offset(point)
+    }
+
+    fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
+        self.text.point_utf16_to_offset(point)
+    }
+
+    fn offset_to_point(&self, offset: usize) -> Point {
+        self.text.offset_to_point(offset)
+    }
+
+    fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
+        self.text.clip_offset(offset, bias)
+    }
+
+    fn clip_point(&self, point: Point, bias: Bias) -> Point {
+        self.text.clip_point(point, bias)
+    }
+
+    fn clip_point_utf16(&self, point: PointUtf16, bias: Bias) -> PointUtf16 {
+        self.text.clip_point_utf16(point, bias)
+    }
+}
+
+impl text::Snapshot for BufferSnapshot {
+    fn len(&self) -> usize {
+        self.text.len()
+    }
+
+    fn line_len(&self, row: u32) -> u32 {
+        self.text.line_len(row)
+    }
+
+    fn max_point(&self) -> Point {
+        self.text.max_point()
+    }
+
+    fn text_summary(&self) -> TextSummary {
+        self.text.text_summary()
+    }
+
+    fn text_summary_for_range<'a, D, O>(&'a self, range: Range<O>) -> D
+    where
+        D: rope::TextDimension,
+        O: ToOffset,
+        Self: Sized,
+    {
+        self.text
+            .text_summary_for_range(range.start.to_offset(self)..range.end.to_offset(self))
+    }
+
+    fn point_to_offset(&self, point: Point) -> usize {
+        self.text.point_to_offset(point)
+    }
+
+    fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
+        self.text.point_utf16_to_offset(point)
+    }
+
+    fn offset_to_point(&self, offset: usize) -> Point {
+        self.text.offset_to_point(offset)
+    }
+
+    fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
+        self.text.clip_offset(offset, bias)
+    }
+
+    fn clip_point(&self, point: Point, bias: Bias) -> Point {
+        self.text.clip_point(point, bias)
+    }
+
+    fn clip_point_utf16(&self, point: PointUtf16, bias: Bias) -> PointUtf16 {
+        self.text.clip_point_utf16(point, bias)
+    }
+}
+
+impl traits::Snapshot for BufferSnapshot {
     type Anchor = Anchor;
     type AnchorRangeSet = AnchorRangeSet;
 
@@ -2104,53 +2212,50 @@ impl crate::traits::Snapshot for BufferSnapshot {
         todo!()
     }
 
-    fn text_for_range<'a, T: crate::traits::ToOffset<Self>>(
+    fn text_for_range<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
     ) -> Box<dyn 'a + Iterator<Item = &'a str>> {
         todo!()
     }
 
-    fn chunks<'a, T: crate::traits::ToOffset<Self>>(
+    fn chunks<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
         theme: Option<&'a SyntaxTheme>,
-    ) -> Box<dyn 'a + crate::traits::Chunks<'a>> {
+    ) -> Box<dyn 'a + traits::Chunks<'a>> {
         Box::new(self.chunks(
             range.start.to_offset(self)..range.end.to_offset(self),
             theme,
         ))
     }
 
-    fn chars_at<'a, T: crate::traits::ToOffset<Self>>(
-        &'a self,
-        position: T,
-    ) -> Box<dyn 'a + Iterator<Item = char>> {
+    fn chars_at<'a, T: ToOffset>(&'a self, position: T) -> Box<dyn 'a + Iterator<Item = char>> {
         todo!()
     }
 
-    fn chars_for_range<'a, T: crate::traits::ToOffset<Self>>(
+    fn chars_for_range<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
     ) -> Box<dyn 'a + Iterator<Item = char>> {
         todo!()
     }
 
-    fn reversed_chars_at<'a, T: crate::traits::ToOffset<Self>>(
+    fn reversed_chars_at<'a, T: ToOffset>(
         &'a self,
         position: T,
     ) -> Box<dyn 'a + Iterator<Item = char>> {
         todo!()
     }
 
-    fn bytes_in_range<'a, T: crate::traits::ToOffset<Self>>(
+    fn bytes_in_range<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
-    ) -> Box<dyn 'a + crate::traits::Bytes<'a>> {
+    ) -> Box<dyn 'a + traits::Bytes<'a>> {
         todo!()
     }
 
-    fn contains_str_at<T: crate::traits::ToOffset<Self>>(&self, position: T, needle: &str) -> bool {
+    fn contains_str_at<T: ToOffset>(&self, position: T, needle: &str) -> bool {
         todo!()
     }
 
@@ -2162,53 +2267,26 @@ impl crate::traits::Snapshot for BufferSnapshot {
         todo!()
     }
 
-    fn range_for_syntax_ancestor<T: crate::traits::ToOffset<Self>>(
-        &self,
-        range: Range<T>,
-    ) -> Option<Range<usize>> {
+    fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
         todo!()
     }
 
-    fn enclosing_bracket_ranges<T: crate::traits::ToOffset<Self>>(
+    fn enclosing_bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
     ) -> Option<(Range<usize>, Range<usize>)> {
         todo!()
     }
 
-    fn text_summary(&self) -> TextSummary {
-        (**self).text_summary()
-    }
-
-    fn text_summary_for_range<'a, D, O>(&'a self, range: Range<O>) -> D
-    where
-        D: rope::TextDimension,
-        O: crate::traits::ToOffset<Self>,
-    {
-        (**self).text_summary_for_range(range.start.to_offset(self)..range.end.to_offset(self))
-    }
-
-    fn max_point(&self) -> Point {
-        (**self).max_point()
-    }
-
-    fn len(&self) -> usize {
-        (**self).len()
-    }
-
-    fn line_len(&self, row: u32) -> u32 {
-        (**self).line_len(row)
-    }
-
-    fn anchor_before<T: crate::traits::ToOffset<Self>>(&self, position: T) -> Self::Anchor {
+    fn anchor_before<T: ToOffset>(&self, position: T) -> Self::Anchor {
         (**self).anchor_before(position.to_offset(self))
     }
 
-    fn anchor_at<T: crate::traits::ToOffset<Self>>(&self, position: T, bias: Bias) -> Self::Anchor {
+    fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Self::Anchor {
         todo!()
     }
 
-    fn anchor_after<T: crate::traits::ToOffset<Self>>(&self, position: T) -> Self::Anchor {
+    fn anchor_after<T: ToOffset>(&self, position: T) -> Self::Anchor {
         (**self).anchor_after(position.to_offset(self))
     }
 
@@ -2224,22 +2302,6 @@ impl crate::traits::Snapshot for BufferSnapshot {
         todo!()
     }
 
-    fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
-        (**self).clip_offset(offset, bias)
-    }
-
-    fn clip_point(&self, point: Point, bias: Bias) -> Point {
-        (**self).clip_point(point, bias)
-    }
-
-    fn to_offset(&self, point: Point) -> usize {
-        (**self).point_to_offset(point)
-    }
-
-    fn to_point(&self, offset: usize) -> Point {
-        (**self).offset_to_point(offset)
-    }
-
     fn parse_count(&self) -> usize {
         self.parse_count()
     }
@@ -2253,8 +2315,8 @@ impl crate::traits::Snapshot for BufferSnapshot {
         search_range: Range<T>,
     ) -> Box<dyn 'a + Iterator<Item = (Range<O>, &Diagnostic)>>
     where
-        T: 'a + crate::traits::ToOffset<Self>,
-        O: 'a + crate::traits::FromAnchor<Self>,
+        T: 'a + ToOffset,
+        O: 'a + traits::FromAnchor<Self>,
     {
         todo!()
     }
@@ -2264,13 +2326,13 @@ impl crate::traits::Snapshot for BufferSnapshot {
         group_id: usize,
     ) -> Box<dyn 'a + Iterator<Item = (Range<O>, &Diagnostic)>>
     where
-        O: 'a + crate::traits::FromAnchor<Self>,
+        O: 'a + traits::FromAnchor<Self>,
     {
         todo!()
     }
 }
 
-impl crate::traits::Anchor for Anchor {
+impl traits::Anchor for Anchor {
     type Snapshot = BufferSnapshot;
 
     fn min() -> Self {
@@ -2290,7 +2352,7 @@ impl crate::traits::Anchor for Anchor {
     }
 }
 
-impl crate::traits::AnchorRangeSet for AnchorRangeSet {
+impl traits::AnchorRangeSet for AnchorRangeSet {
     type Snapshot = BufferSnapshot;
 
     fn len(&self) -> usize {
@@ -2312,7 +2374,7 @@ impl crate::traits::AnchorRangeSet for AnchorRangeSet {
     }
 }
 
-impl crate::traits::DocumentSelectionSet for SelectionSet {
+impl traits::DocumentSelectionSet for SelectionSet {
     type Document = Buffer;
 
     fn len(&self) -> usize {
@@ -2330,7 +2392,7 @@ impl crate::traits::DocumentSelectionSet for SelectionSet {
     ) -> Box<dyn 'a + Iterator<Item = Selection<D>>>
     where
         D: 'a + rope::TextDimension,
-        I: 'a + crate::traits::ToOffset<BufferSnapshot>,
+        I: 'a + ToOffset,
     {
         todo!()
     }
@@ -2360,36 +2422,12 @@ impl crate::traits::DocumentSelectionSet for SelectionSet {
     }
 }
 
-impl<'a> crate::traits::Chunks<'a> for BufferChunks<'a> {
+impl<'a> traits::Chunks<'a> for BufferChunks<'a> {
     fn seek(&mut self, offset: usize) {
         self.seek(offset);
     }
 
     fn offset(&self) -> usize {
         self.offset()
-    }
-}
-
-impl crate::traits::ToOffset<BufferSnapshot> for PointUtf16 {
-    fn to_offset<'a>(&self, content: &BufferSnapshot) -> usize {
-        text::ToOffset::to_offset(self, content)
-    }
-}
-
-impl crate::traits::ToOffset<BufferSnapshot> for Anchor {
-    fn to_offset<'a>(&self, content: &BufferSnapshot) -> usize {
-        text::ToOffset::to_offset(self, content)
-    }
-}
-
-impl<'a> crate::traits::ToOffset<BufferSnapshot> for &'a Anchor {
-    fn to_offset(&self, content: &BufferSnapshot) -> usize {
-        text::ToOffset::to_offset(self, content)
-    }
-}
-
-impl crate::traits::ToPoint<BufferSnapshot> for Anchor {
-    fn to_point<'a>(&self, content: &BufferSnapshot) -> Point {
-        text::ToPoint::to_point(self, content)
     }
 }
