@@ -2233,11 +2233,11 @@ impl crate::traits::Snapshot for BufferSnapshot {
     }
 
     fn to_offset(&self, point: Point) -> usize {
-        (**self).to_offset(point)
+        (**self).point_to_offset(point)
     }
 
     fn to_point(&self, offset: usize) -> Point {
-        (**self).to_point(offset)
+        (**self).offset_to_point(offset)
     }
 
     fn parse_count(&self) -> usize {

@@ -249,9 +249,9 @@ impl Snapshot {
                     text::ToOffset::to_offset(&excerpt.range.start, &excerpt.buffer);
                 let excerpt_start_point =
                     text::ToPoint::to_point(&excerpt.range.start, &excerpt.buffer);
-                let buffer_point = excerpt
-                    .buffer
-                    .to_point(excerpt_start_offset + (offset - header_height - cursor.start().0));
+                let buffer_point = excerpt.buffer.offset_to_point(
+                    excerpt_start_offset + (offset - header_height - cursor.start().0),
+                );
                 cursor.start().1
                     + Point::new(header_height as u32, 0)
                     + (buffer_point - excerpt_start_point)
@@ -274,9 +274,9 @@ impl Snapshot {
                     text::ToOffset::to_offset(&excerpt.range.start, &excerpt.buffer);
                 let excerpt_start_point =
                     text::ToPoint::to_point(&excerpt.range.start, &excerpt.buffer);
-                let buffer_offset = excerpt
-                    .buffer
-                    .to_offset(excerpt_start_point + (point - header_height - cursor.start().0));
+                let buffer_offset = excerpt.buffer.point_to_offset(
+                    excerpt_start_point + (point - header_height - cursor.start().0),
+                );
                 cursor.start().1
                     + excerpt.header_height as usize
                     + (buffer_offset - excerpt_start_offset)
@@ -690,7 +690,7 @@ mod tests {
                 let buffer_id = buffer.id();
                 let buffer = buffer.read(cx);
                 let buffer_range = range.to_offset(buffer);
-                let buffer_start_point = buffer.to_point(buffer_range.start);
+                let buffer_start_point = buffer.offset_to_point(buffer_range.start);
 
                 for _ in 0..*header_height {
                     expected_text.push('\n');
@@ -727,7 +727,7 @@ mod tests {
                     assert_eq!(
                         left_point,
                         excerpt_start.lines
-                            + (buffer.to_point(buffer_left_offset) - buffer_start_point),
+                            + (buffer.offset_to_point(buffer_left_offset) - buffer_start_point),
                         "to_point({}). buffer: {}, buffer offset: {}",
                         offset,
                         buffer_id,

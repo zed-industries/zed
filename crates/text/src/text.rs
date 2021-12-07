@@ -1530,11 +1530,18 @@ impl Snapshot {
         self.visible_text.max_point()
     }
 
-    pub fn to_offset(&self, point: Point) -> usize {
+    pub fn point_to_offset(&self, point: Point) -> usize {
         self.visible_text.point_to_offset(point)
     }
 
-    pub fn to_point(&self, offset: usize) -> Point {
+    pub fn to_full_offset<T: ToOffset>(&self, offset: T, bias: Bias) -> FullOffset {
+        let offset = offset.to_offset(self);
+        let mut cursor = self.fragments.cursor::<FragmentTextSummary>();
+        cursor.seek(&offset, bias, &None);
+        FullOffset(offset + cursor.start().deleted)
+    }
+
+    pub fn offset_to_point(&self, offset: usize) -> Point {
         self.visible_text.offset_to_point(offset)
     }
 
@@ -1696,7 +1703,7 @@ impl Snapshot {
 
     pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
         Anchor {
-            full_offset: position.to_full_offset(self, bias),
+            full_offset: self.to_full_offset(position.to_offset(self), bias),
             bias,
             version: self.version.clone(),
         }
@@ -1796,8 +1803,8 @@ impl Snapshot {
             .into_iter()
             .map(|(range, value)| AnchorRangeMultimapEntry {
                 range: FullOffsetRange {
-                    start: range.start.to_full_offset(self, start_bias),
-                    end: range.end.to_full_offset(self, end_bias),
+                    start: self.to_full_offset(range.start, start_bias),
+                    end: self.to_full_offset(range.end, end_bias),
                 },
                 value,
             })
@@ -2253,13 +2260,6 @@ impl Operation {
 
 pub trait ToOffset {
     fn to_offset<'a>(&self, content: &Snapshot) -> usize;
-
-    fn to_full_offset<'a>(&self, content: &Snapshot, bias: Bias) -> FullOffset {
-        let offset = self.to_offset(&content);
-        let mut cursor = content.fragments.cursor::<FragmentTextSummary>();
-        cursor.seek(&offset, bias, &None);
-        FullOffset(offset + cursor.start().deleted)
-    }
 }
 
 impl ToOffset for Point {
@@ -2284,28 +2284,6 @@ impl ToOffset for usize {
 impl ToOffset for Anchor {
     fn to_offset<'a>(&self, content: &Snapshot) -> usize {
         content.summary_for_anchor(self)
-    }
-
-    fn to_full_offset<'a>(&self, content: &Snapshot, bias: Bias) -> FullOffset {
-        if content.version == self.version {
-            self.full_offset
-        } else {
-            let mut cursor = content
-                .fragments
-                .cursor::<(VersionedFullOffset, FragmentTextSummary)>();
-            cursor.seek(
-                &VersionedFullOffset::Offset(self.full_offset),
-                bias,
-                &Some(self.version.clone()),
-            );
-
-            let mut full_offset = cursor.start().1.full_offset().0;
-            if cursor.item().is_some() {
-                full_offset += self.full_offset - cursor.start().0.full_offset();
-            }
-
-            FullOffset(full_offset)
-        }
     }
 }
 

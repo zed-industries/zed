@@ -1,4 +1,4 @@
-use crate::{rope::TextDimension, Snapshot};
+use crate::{rope::TextDimension, FragmentTextSummary, Snapshot, VersionedFullOffset};
 
 use super::{Buffer, FromAnchor, FullOffset, Point, ToOffset};
 use anyhow::Result;
@@ -120,6 +120,28 @@ impl Anchor {
         D: TextDimension,
     {
         content.summary_for_anchor(self)
+    }
+
+    pub fn to_full_offset<'a>(&self, content: &Snapshot, bias: Bias) -> FullOffset {
+        if content.version == self.version {
+            self.full_offset
+        } else {
+            let mut cursor = content
+                .fragments
+                .cursor::<(VersionedFullOffset, FragmentTextSummary)>();
+            cursor.seek(
+                &VersionedFullOffset::Offset(self.full_offset),
+                bias,
+                &Some(self.version.clone()),
+            );
+
+            let mut full_offset = cursor.start().1.full_offset().0;
+            if cursor.item().is_some() {
+                full_offset += self.full_offset - cursor.start().0.full_offset();
+            }
+
+            FullOffset(full_offset)
+        }
     }
 }
 
@@ -365,8 +387,8 @@ impl<T: Clone> AnchorRangeMultimap<T> {
         O: FromAnchor,
     {
         let end_bias = if inclusive { Bias::Right } else { Bias::Left };
-        let range = range.start.to_full_offset(&content, Bias::Left)
-            ..range.end.to_full_offset(&content, end_bias);
+        let range = content.to_full_offset(range.start, Bias::Left)
+            ..content.to_full_offset(range.end, end_bias);
         let mut cursor = self.entries.filter::<_, usize>(
             {
                 let mut endpoint = Anchor {
