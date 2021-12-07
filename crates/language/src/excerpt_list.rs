@@ -3,10 +3,7 @@ use collections::HashMap;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle};
 use parking_lot::Mutex;
 use smallvec::{smallvec, SmallVec};
-use std::{
-    cmp, iter,
-    ops::{Deref, Range},
-};
+use std::{cmp, iter, ops::Range};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{
     subscription::{Subscription, Topic},
@@ -212,6 +209,33 @@ impl Snapshot {
         self.excerpts.summary().text.bytes
     }
 
+    pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
+        let mut cursor = self.excerpts.cursor::<usize>();
+        cursor.seek(&offset, bias, &());
+        if let Some(excerpt) = cursor.item() {
+            let overshoot = offset - cursor.start();
+            let header_height = excerpt.header_height as usize;
+            if overshoot < header_height {
+                *cursor.start()
+            } else {
+                let excerpt_start =
+                    text::ToOffset::to_offset(&excerpt.range.start, &excerpt.buffer);
+                let buffer_offset = excerpt.buffer.clip_offset(
+                    excerpt_start + (offset - header_height - cursor.start()),
+                    bias,
+                );
+                let offset_in_excerpt = if buffer_offset > excerpt_start {
+                    buffer_offset - excerpt_start
+                } else {
+                    0
+                };
+                cursor.start() + header_height + offset_in_excerpt
+            }
+        } else {
+            self.excerpts.summary().text.bytes
+        }
+    }
+
     pub fn chunks<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
@@ -225,25 +249,27 @@ impl Snapshot {
         let entry_chunks = cursor.item().map(|excerpt| {
             let buffer_range = excerpt.range.to_offset(&excerpt.buffer);
             header_height = excerpt.header_height;
-            let start_overshoot = range.start - cursor.start();
+
             let buffer_start;
+            let start_overshoot = range.start - cursor.start();
             if start_overshoot < excerpt.header_height as usize {
                 header_height -= start_overshoot as u8;
                 buffer_start = buffer_range.start;
             } else {
-                buffer_start = buffer_range.start + start_overshoot - header_height as usize;
+                buffer_start =
+                    buffer_range.start + start_overshoot - excerpt.header_height as usize;
                 header_height = 0;
             }
 
-            let end_overshoot = range.end - cursor.start();
             let buffer_end;
+            let end_overshoot = range.end - cursor.start();
             if end_overshoot < excerpt.header_height as usize {
                 header_height -= excerpt.header_height - end_overshoot as u8;
                 buffer_end = buffer_start;
             } else {
                 buffer_end = cmp::min(
                     buffer_range.end,
-                    buffer_range.start + end_overshoot - header_height as usize,
+                    buffer_range.start + end_overshoot - excerpt.header_height as usize,
                 );
             }
 
@@ -344,26 +370,35 @@ impl<'a> Iterator for Chunks<'a> {
         if let Some(entry_chunks) = self.entry_chunks.as_mut() {
             if let Some(chunk) = entry_chunks.next() {
                 return Some(chunk);
-            } else {
+            } else if self.range.end >= self.cursor.end(&()) {
                 self.entry_chunks.take();
                 return Some(Chunk {
                     text: "\n",
                     ..Default::default()
                 });
+            } else {
+                return None;
             }
         }
 
         self.cursor.next(&());
-        let entry = self.cursor.item()?;
-        let buffer_range = entry.range.to_offset(&entry.buffer);
+        if *self.cursor.start() == self.range.end {
+            return None;
+        }
+
+        let excerpt = self.cursor.item()?;
+        let buffer_range = excerpt.range.to_offset(&excerpt.buffer);
+
         let buffer_end = cmp::min(
             buffer_range.end,
-            buffer_range.start + (self.range.end - self.cursor.start()),
+            buffer_range.start + self.range.end
+                - excerpt.header_height as usize
+                - self.cursor.start(),
         );
 
-        self.header_height = entry.header_height;
+        self.header_height = excerpt.header_height;
         self.entry_chunks = Some(
-            entry
+            excerpt
                 .buffer
                 .chunks(buffer_range.start..buffer_end, self.theme),
         );
@@ -558,7 +593,8 @@ mod tests {
                     let header_height = rng.gen_range(0..=5);
                     let anchor_range = buffer.anchor_before(start_ix)..buffer.anchor_after(end_ix);
                     log::info!(
-                        "Pushing excerpt for buffer {}: {:?}[{:?}] = {:?}",
+                        "Pushing excerpt wih header {}, buffer {}: {:?}[{:?}] = {:?}",
+                        header_height,
                         buffer_handle.id(),
                         buffer.text(),
                         start_ix..end_ix,
@@ -598,35 +634,38 @@ mod tests {
             }
             assert_eq!(snapshot.text(), expected_text);
 
-            for i in 0..10 {
+            for _ in 0..10 {
                 let end_ix = snapshot.clip_offset(rng.gen_range(0..=snapshot.len()), Bias::Right);
                 let start_ix = snapshot.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
 
-                let actual = snapshot.text_for_range(start_ix..end_ix).collect();
+                assert_eq!(
+                    snapshot
+                        .text_for_range(start_ix..end_ix)
+                        .collect::<String>(),
+                    &expected_text[start_ix..end_ix],
+                    "incorrect text for range {:?}",
+                    start_ix..end_ix
+                );
             }
-            // for i in 0..expected_text.len() {
-            //     assert_eq!(snapshot.text(), expected_text);
-
-            // }
         }
 
-        // let snapshot = list.read(cx).snapshot(cx);
-        // for (old_snapshot, subscription) in old_versions {
-        //     let edits = subscription.consume().into_inner();
+        let snapshot = list.read(cx).snapshot(cx);
+        for (old_snapshot, subscription) in old_versions {
+            let edits = subscription.consume().into_inner();
 
-        //     log::info!(
-        //         "applying edits since old text: {:?}: {:?}",
-        //         old_snapshot.text(),
-        //         edits,
-        //     );
+            log::info!(
+                "applying edits since old text: {:?}: {:?}",
+                old_snapshot.text(),
+                edits,
+            );
 
-        //     let mut text = old_snapshot.text();
-        //     for edit in edits {
-        //         let new_text: String = snapshot.text_for_range(edit.new.clone()).collect();
-        //         text.replace_range(edit.new.start..edit.new.start + edit.old.len(), &new_text);
-        //     }
-        //     assert_eq!(text.to_string(), snapshot.text());
-        // }
+            let mut text = old_snapshot.text();
+            for edit in edits {
+                let new_text: String = snapshot.text_for_range(edit.new.clone()).collect();
+                text.replace_range(edit.new.start..edit.new.start + edit.old.len(), &new_text);
+            }
+            assert_eq!(text.to_string(), snapshot.text());
+        }
     }
 
     #[gpui::test(iterations = 100)]
