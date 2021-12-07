@@ -479,7 +479,7 @@ where
 pub struct Snapshot<S: DocumentSnapshot> {
     transforms: SumTree<Transform>,
     folds: SumTree<Fold<S::Anchor>>,
-    document_snapshot: S,
+    pub document_snapshot: S,
     pub version: usize,
 }
 

@@ -2019,8 +2019,16 @@ impl crate::document::DocumentSnapshot for Snapshot {
         (**self).text_summary_for_range(range.start.to_offset(self)..range.end.to_offset(self))
     }
 
+    fn max_point(&self) -> Point {
+        (**self).max_point()
+    }
+
     fn len(&self) -> usize {
         (**self).len()
+    }
+
+    fn line_len(&self, row: u32) -> u32 {
+        (**self).line_len(row)
     }
 
     fn anchor_before<T: crate::document::ToDocumentOffset<Self>>(
@@ -2091,5 +2099,11 @@ impl<'a> crate::document::DocumentChunks<'a> for Chunks<'a> {
 impl<T: ToOffset> crate::document::ToDocumentOffset<Snapshot> for T {
     fn to_offset(&self, snapshot: &Snapshot) -> usize {
         self.to_offset(snapshot)
+    }
+}
+
+impl<T: ToPoint> crate::document::ToDocumentPoint<Snapshot> for T {
+    fn to_point(&self, snapshot: &Snapshot) -> Point {
+        self.to_point(snapshot)
     }
 }

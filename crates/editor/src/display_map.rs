@@ -29,7 +29,7 @@ pub struct DisplayMap {
     fold_map: FoldMap<language::Snapshot>,
     tab_map: TabMap<language::Snapshot>,
     wrap_map: ModelHandle<WrapMap<language::Snapshot>>,
-    block_map: BlockMap,
+    block_map: BlockMap<language::Snapshot>,
 }
 
 impl Entity for DisplayMap {
@@ -49,7 +49,7 @@ impl DisplayMap {
         let (fold_map, snapshot) = FoldMap::new(buffer.read(cx).snapshot());
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font_id, font_size, wrap_width, cx);
-        let block_map = BlockMap::new(buffer.clone(), snapshot);
+        let block_map = BlockMap::new(snapshot);
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
         DisplayMap {
             buffer,
@@ -69,7 +69,7 @@ impl DisplayMap {
         let (wraps_snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(tabs_snapshot.clone(), edits, cx));
-        let blocks_snapshot = self.block_map.read(wraps_snapshot.clone(), edits, cx);
+        let blocks_snapshot = self.block_map.read(wraps_snapshot.clone(), edits);
 
         DisplayMapSnapshot {
             buffer_snapshot: self.buffer.read(cx).snapshot(),
@@ -92,13 +92,13 @@ impl DisplayMap {
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits, cx);
+        self.block_map.read(snapshot, edits);
         let (snapshot, edits) = fold_map.fold(ranges);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits, cx);
+        self.block_map.read(snapshot, edits);
     }
 
     pub fn unfold<T: ToOffset>(
@@ -113,13 +113,13 @@ impl DisplayMap {
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits, cx);
+        self.block_map.read(snapshot, edits);
         let (snapshot, edits) = fold_map.unfold(ranges);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits, cx);
+        self.block_map.read(snapshot, edits);
     }
 
     pub fn insert_blocks<P>(
@@ -137,8 +137,8 @@ impl DisplayMap {
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        let mut block_map = self.block_map.write(snapshot, edits, cx);
-        block_map.insert(blocks, cx)
+        let mut block_map = self.block_map.write(snapshot, edits);
+        block_map.insert(blocks)
     }
 
     pub fn replace_blocks<F>(&mut self, styles: HashMap<BlockId, F>)
@@ -156,8 +156,8 @@ impl DisplayMap {
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        let mut block_map = self.block_map.write(snapshot, edits, cx);
-        block_map.remove(ids, cx);
+        let mut block_map = self.block_map.write(snapshot, edits);
+        block_map.remove(ids);
     }
 
     pub fn set_font(&self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) {
@@ -181,7 +181,7 @@ pub struct DisplayMapSnapshot {
     folds_snapshot: fold_map::Snapshot<language::Snapshot>,
     tabs_snapshot: tab_map::Snapshot<language::Snapshot>,
     wraps_snapshot: wrap_map::Snapshot<language::Snapshot>,
-    blocks_snapshot: block_map::BlockSnapshot,
+    blocks_snapshot: block_map::BlockSnapshot<language::Snapshot>,
 }
 
 impl DisplayMapSnapshot {
@@ -194,7 +194,7 @@ impl DisplayMapSnapshot {
         self.buffer_snapshot.len() == 0
     }
 
-    pub fn buffer_rows<'a>(&'a self, start_row: u32) -> BufferRows<'a> {
+    pub fn buffer_rows<'a>(&'a self, start_row: u32) -> BufferRows<'a, language::Snapshot> {
         self.blocks_snapshot.buffer_rows(start_row)
     }
 
@@ -260,7 +260,7 @@ impl DisplayMapSnapshot {
         &'a self,
         display_rows: Range<u32>,
         theme: Option<&'a SyntaxTheme>,
-    ) -> block_map::Chunks<'a> {
+    ) -> block_map::Chunks<'a, language::Snapshot> {
         self.blocks_snapshot.chunks(display_rows, theme)
     }
 
@@ -320,7 +320,7 @@ impl DisplayMapSnapshot {
     pub fn blocks_in_range<'a>(
         &'a self,
         rows: Range<u32>,
-    ) -> impl Iterator<Item = (u32, &'a AlignedBlock)> {
+    ) -> impl Iterator<Item = (u32, &'a AlignedBlock<Anchor>)> {
         self.blocks_snapshot.blocks_in_range(rows)
     }
 

@@ -8,13 +8,12 @@ use gpui::{
 };
 use language::{
     document::{DocumentSnapshot, ToDocumentOffset},
-    Chunk, Point,
+    Chunk, Patch, Point,
 };
 use lazy_static::lazy_static;
 use smol::future::yield_now;
 use std::{collections::VecDeque, mem, ops::Range, time::Duration};
 use sum_tree::{Bias, Cursor, SumTree};
-use text::Patch;
 use theme::SyntaxTheme;
 
 pub use super::tab_map::TextSummary;
@@ -36,7 +35,7 @@ impl<S: DocumentSnapshot> Entity for WrapMap<S> {
 
 #[derive(Clone)]
 pub struct Snapshot<S: DocumentSnapshot> {
-    tab_snapshot: TabSnapshot<S>,
+    pub tab_snapshot: TabSnapshot<S>,
     transforms: SumTree<Transform>,
     interpolated: bool,
 }

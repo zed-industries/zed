@@ -1,12 +1,11 @@
 use super::fold_map::{self, FoldEdit, FoldPoint, Snapshot as FoldSnapshot, ToFoldPoint};
 use language::{
     document::{DocumentSnapshot, ToDocumentOffset},
-    rope, Chunk,
+    rope, Chunk, Point,
 };
 use parking_lot::Mutex;
 use std::{cmp, mem, ops::Range};
 use sum_tree::Bias;
-use text::Point;
 use theme::SyntaxTheme;
 
 pub struct TabMap<S: DocumentSnapshot>(Mutex<Snapshot<S>>);

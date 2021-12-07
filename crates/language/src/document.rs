@@ -18,7 +18,9 @@ pub trait DocumentSnapshot: 'static + Clone + Send + Unpin {
     where
         D: TextDimension<'a>,
         O: ToDocumentOffset<Self>;
+    fn max_point(&self) -> Point;
     fn len(&self) -> usize;
+    fn line_len(&self, row: u32) -> u32;
     fn anchor_before<T: ToDocumentOffset<Self>>(&self, position: T) -> Self::Anchor;
     fn anchor_after<T: ToDocumentOffset<Self>>(&self, position: T) -> Self::Anchor;
     fn clip_offset(&self, offset: usize, bias: Bias) -> usize;
@@ -33,7 +35,13 @@ pub trait ToDocumentOffset<S: DocumentSnapshot> {
     fn to_offset(&self, snapshot: &S) -> usize;
 }
 
-pub trait DocumentAnchor: Clone + Debug + Send + Sync + ToDocumentOffset<Self::Snapshot> {
+pub trait ToDocumentPoint<S: DocumentSnapshot> {
+    fn to_point(&self, snapshot: &S) -> Point;
+}
+
+pub trait DocumentAnchor:
+    Clone + Debug + Send + Sync + ToDocumentOffset<Self::Snapshot> + ToDocumentPoint<Self::Snapshot>
+{
     type Snapshot: DocumentSnapshot;
 
     fn min() -> Self;
