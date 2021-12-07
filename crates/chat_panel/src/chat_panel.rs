@@ -2,7 +2,7 @@ use client::{
     channel::{Channel, ChannelEvent, ChannelList, ChannelMessage},
     Client,
 };
-use editor::{Editor, EditorSettings};
+use editor::{Buffer, Editor, EditorSettings};
 use gpui::{
     action,
     elements::*,
@@ -25,7 +25,7 @@ pub struct ChatPanel {
     channel_list: ModelHandle<ChannelList>,
     active_channel: Option<(ModelHandle<Channel>, Subscription)>,
     message_list: ListState,
-    input_editor: ViewHandle<Editor>,
+    input_editor: ViewHandle<Editor<Buffer>>,
     channel_select: ViewHandle<Select>,
     settings: watch::Receiver<Settings>,
     local_timezone: UtcOffset,

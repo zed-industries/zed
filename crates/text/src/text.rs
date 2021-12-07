@@ -295,7 +295,7 @@ impl UndoMap {
     }
 }
 
-struct Edits<'a, D: TextDimension<'a>, F: FnMut(&FragmentSummary) -> bool> {
+struct Edits<'a, D: TextDimension, F: FnMut(&FragmentSummary) -> bool> {
     visible_cursor: rope::Cursor<'a>,
     deleted_cursor: rope::Cursor<'a>,
     fragments_cursor: Option<FilterCursor<'a, F, Fragment, FragmentTextSummary>>,
@@ -1447,7 +1447,7 @@ impl Buffer {
     #[cfg(test)]
     pub fn selection_ranges<'a, D>(&'a self, set_id: SelectionSetId) -> Result<Vec<Range<D>>>
     where
-        D: 'a + TextDimension<'a>,
+        D: TextDimension,
     {
         Ok(self
             .selection_set(set_id)?
@@ -1467,7 +1467,7 @@ impl Buffer {
         &'a self,
     ) -> impl 'a + Iterator<Item = (SelectionSetId, Vec<Range<usize>>)>
     where
-        D: 'a + TextDimension<'a>,
+        D: TextDimension,
     {
         self.selections
             .keys()
@@ -1596,7 +1596,7 @@ impl Snapshot {
 
     fn summary_for_anchor<'a, D>(&'a self, anchor: &Anchor) -> D
     where
-        D: TextDimension<'a>,
+        D: TextDimension,
     {
         let cx = Some(anchor.version.clone());
         let mut cursor = self.fragments.cursor::<(VersionedFullOffset, usize)>();
@@ -1615,7 +1615,7 @@ impl Snapshot {
 
     pub fn text_summary_for_range<'a, D, O: ToOffset>(&'a self, range: Range<O>) -> D
     where
-        D: TextDimension<'a>,
+        D: TextDimension,
     {
         self.visible_text
             .cursor(range.start.to_offset(self))
@@ -1629,7 +1629,7 @@ impl Snapshot {
         ranges: I,
     ) -> impl 'a + Iterator<Item = D>
     where
-        D: 'a + TextDimension<'a>,
+        D: TextDimension,
         I: 'a + IntoIterator<Item = &'a FullOffset>,
     {
         let cx = Some(version.clone());
@@ -1656,7 +1656,7 @@ impl Snapshot {
         ranges: I,
     ) -> impl 'a + Iterator<Item = Range<D>>
     where
-        D: 'a + TextDimension<'a>,
+        D: TextDimension,
         I: 'a + IntoIterator<Item = &'a Range<FullOffset>>,
     {
         let cx = Some(version);
@@ -1855,7 +1855,7 @@ impl Snapshot {
         since: &'a clock::Global,
     ) -> impl 'a + Iterator<Item = Edit<D>>
     where
-        D: 'a + TextDimension<'a> + Ord,
+        D: TextDimension + Ord,
     {
         self.edits_since_in_range(since, Anchor::min()..Anchor::max())
     }
@@ -1866,7 +1866,7 @@ impl Snapshot {
         range: Range<Anchor>,
     ) -> impl 'a + Iterator<Item = Edit<D>>
     where
-        D: 'a + TextDimension<'a> + Ord,
+        D: TextDimension + Ord,
     {
         let fragments_cursor = if *since == self.version {
             None
@@ -1964,9 +1964,7 @@ impl<'a> RopeBuilder<'a> {
     }
 }
 
-impl<'a, D: TextDimension<'a> + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator
-    for Edits<'a, D, F>
-{
+impl<'a, D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator for Edits<'a, D, F> {
     type Item = Edit<D>;
 
     fn next(&mut self) -> Option<Self::Item> {

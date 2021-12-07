@@ -1,10 +1,10 @@
-use text::{Bias, Point, Selection};
-use editor::{display_map::ToDisplayPoint, Autoscroll, Editor, EditorSettings};
+use editor::{display_map::ToDisplayPoint, Autoscroll, Buffer, Editor, EditorSettings};
 use gpui::{
     action, elements::*, geometry::vector::Vector2F, keymap::Binding, Axis, Entity,
     MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
 };
 use postage::watch;
+use text::{Bias, Point, Selection};
 use workspace::{Settings, Workspace};
 
 action!(Toggle);
@@ -22,8 +22,8 @@ pub fn init(cx: &mut MutableAppContext) {
 
 pub struct GoToLine {
     settings: watch::Receiver<Settings>,
-    line_editor: ViewHandle<Editor>,
-    active_editor: ViewHandle<Editor>,
+    line_editor: ViewHandle<Editor<Buffer>>,
+    active_editor: ViewHandle<Editor<Buffer>>,
     restore_state: Option<RestoreState>,
     line_selection: Option<Selection<usize>>,
     cursor_point: Point,
@@ -41,7 +41,7 @@ pub enum Event {
 
 impl GoToLine {
     pub fn new(
-        active_editor: ViewHandle<Editor>,
+        active_editor: ViewHandle<Editor<Buffer>>,
         settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -94,7 +94,7 @@ impl GoToLine {
                 .active_item(cx)
                 .unwrap()
                 .to_any()
-                .downcast::<Editor>()
+                .downcast::<Editor<Buffer>>()
                 .unwrap();
             let view = cx.add_view(|cx| GoToLine::new(editor, workspace.settings.clone(), cx));
             cx.subscribe(&view, Self::on_event).detach();
@@ -120,7 +120,7 @@ impl GoToLine {
 
     fn on_line_editor_event(
         &mut self,
-        _: ViewHandle<Editor>,
+        _: ViewHandle<Editor<Buffer>>,
         event: &editor::Event,
         cx: &mut ViewContext<Self>,
     ) {

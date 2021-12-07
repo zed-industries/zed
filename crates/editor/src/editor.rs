@@ -20,6 +20,7 @@ use gpui::{
     MutableAppContext, RenderContext, View, ViewContext, WeakViewHandle,
 };
 use items::BufferItemHandle;
+pub use language::Buffer;
 use language::{
     document::{
         Document, DocumentAnchor, DocumentAnchorRangeExt, DocumentAnchorRangeSet,
@@ -562,10 +563,7 @@ impl<D: Document> Editor<D> {
         }
     }
 
-    pub fn language<'a, T: ToDocumentOffset<D::Snapshot>>(
-        &self,
-        cx: &'a AppContext,
-    ) -> Option<&'a Arc<Language>> {
+    pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
         self.buffer.read(cx).language()
     }
 
@@ -2835,7 +2833,7 @@ impl<D: Document> Editor<D> {
         let active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
             active_diagnostics
                 .primary_range
-                .to_offset(buffer)
+                .to_offset(&buffer)
                 .to_inclusive()
         });
         let mut search_start = if let Some(active_primary_range) = active_primary_range.as_ref() {
@@ -2888,7 +2886,7 @@ impl<D: Document> Editor<D> {
     fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
             let buffer = self.buffer.read(cx).snapshot();
-            let primary_range_start = active_diagnostics.primary_range.start.to_offset(buffer);
+            let primary_range_start = active_diagnostics.primary_range.start.to_offset(&buffer);
             let is_valid = buffer
                 .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone())
                 .any(|(range, diagnostic)| {
@@ -2919,7 +2917,7 @@ impl<D: Document> Editor<D> {
     fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) {
         self.dismiss_diagnostics(cx);
         self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
-            let buffer = self.buffer.read(cx);
+            let buffer = self.buffer.read(cx).snapshot();
 
             let mut primary_range = None;
             let mut primary_message = None;
@@ -3037,8 +3035,6 @@ impl<D: Document> Editor<D> {
         cx: &'a mut MutableAppContext,
     ) -> impl 'a + Iterator<Item = Selection<DisplayPoint>> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = &display_map.buffer_snapshot;
-
         let pending_selection = if set_id == self.selection_set_id {
             self.pending_selection.as_ref().and_then(|pending| {
                 let selection_start = pending.selection.start.to_display_point(&display_map);
@@ -3061,9 +3057,8 @@ impl<D: Document> Editor<D> {
 
         let range = (range.start.to_offset(&display_map, Bias::Left), Bias::Left)
             ..(range.end.to_offset(&display_map, Bias::Left), Bias::Right);
-        let selections = self
-            .buffer
-            .read(cx)
+        let buffer = self.buffer.read(cx);
+        let selections = buffer
             .selection_set(set_id)
             .unwrap()
             .intersecting_selections::<Point, _>(range, buffer);
@@ -3081,7 +3076,7 @@ impl<D: Document> Editor<D> {
 
     pub fn selections<'a, T>(&self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Selection<T>>
     where
-        T: 'a + TextDimension<'a> + Ord,
+        T: TextDimension + Ord,
     {
         let buffer = self.buffer.read(cx);
         let mut selections = self.selection_set(cx).selections::<T>(buffer).peekable();
@@ -3111,15 +3106,15 @@ impl<D: Document> Editor<D> {
         })
     }
 
-    fn pending_selection<'a, T>(&self, cx: &'a AppContext) -> Option<Selection<T>>
+    fn pending_selection<'a, T>(&self, cx: &AppContext) -> Option<Selection<T>>
     where
-        T: 'a + TextDimension<'a>,
+        T: TextDimension,
     {
-        let buffer = self.buffer.read(cx);
+        let buffer = self.buffer.read(cx).snapshot();
         self.pending_selection.as_ref().map(|pending| Selection {
             id: pending.selection.id,
-            start: pending.selection.start.summary::<T>(buffer),
-            end: pending.selection.end.summary::<T>(buffer),
+            start: pending.selection.start.summary::<T>(&buffer),
+            end: pending.selection.end.summary::<T>(&buffer),
             reversed: pending.selection.reversed,
             goal: pending.selection.goal,
         })
@@ -3135,7 +3130,7 @@ impl<D: Document> Editor<D> {
 
     pub fn oldest_selection<'a, T>(&self, cx: &'a AppContext) -> Selection<T>
     where
-        T: 'a + TextDimension<'a>,
+        T: TextDimension,
     {
         let buffer = self.buffer.read(cx);
         self.selection_set(cx)
@@ -3146,7 +3141,7 @@ impl<D: Document> Editor<D> {
 
     pub fn newest_selection<'a, T>(&self, cx: &'a AppContext) -> Selection<T>
     where
-        T: 'a + TextDimension<'a>,
+        T: TextDimension,
     {
         let buffer = self.buffer.read(cx);
         self.pending_selection(cx)
@@ -3154,10 +3149,7 @@ impl<D: Document> Editor<D> {
             .unwrap()
     }
 
-    fn selection_set<'a>(
-        &self,
-        cx: &'a AppContext,
-    ) -> &'a <D::Snapshot as DocumentSnapshot>::SelectionSet {
+    fn selection_set<'a>(&self, cx: &'a AppContext) -> &'a D::SelectionSet {
         self.buffer
             .read(cx)
             .selection_set(self.selection_set_id)
@@ -3288,7 +3280,7 @@ impl<D: Document> Editor<D> {
     pub fn unfold(&mut self, _: &Unfold, cx: &mut ViewContext<Self>) {
         let selections = self.selections::<Point>(cx).collect::<Vec<_>>();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx);
+        let buffer = &display_map.buffer_snapshot;
         let ranges = selections
             .iter()
             .map(|s| {
@@ -3393,7 +3385,7 @@ impl<D: Document> Editor<D> {
     }
 
     pub fn text(&self, cx: &AppContext) -> String {
-        self.buffer.read(cx).text()
+        self.buffer.read(cx).snapshot().text()
     }
 
     pub fn display_text(&self, cx: &mut MutableAppContext) -> String {
@@ -3721,2008 +3713,2009 @@ pub fn diagnostic_style(
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use text::Point;
-//     use unindent::Unindent;
-//     use util::test::sample_text;
-
-//     #[gpui::test]
-//     fn test_selection_with_mouse(cx: &mut gpui::MutableAppContext) {
-//         let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
-//         let settings = EditorSettings::test(cx);
-//         let (_, editor) =
-//             cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
-
-//         editor.update(cx, |view, cx| {
-//             view.begin_selection(DisplayPoint::new(2, 2), false, 1, cx);
-//         });
-
-//         assert_eq!(
-//             editor.update(cx, |view, cx| view.selection_ranges(cx)),
-//             [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
-//         );
-
-//         editor.update(cx, |view, cx| {
-//             view.update_selection(DisplayPoint::new(3, 3), 0, Vector2F::zero(), cx);
-//         });
-
-//         assert_eq!(
-//             editor.update(cx, |view, cx| view.selection_ranges(cx)),
-//             [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
-//         );
-
-//         editor.update(cx, |view, cx| {
-//             view.update_selection(DisplayPoint::new(1, 1), 0, Vector2F::zero(), cx);
-//         });
-
-//         assert_eq!(
-//             editor.update(cx, |view, cx| view.selection_ranges(cx)),
-//             [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
-//         );
-
-//         editor.update(cx, |view, cx| {
-//             view.end_selection(cx);
-//             view.update_selection(DisplayPoint::new(3, 3), 0, Vector2F::zero(), cx);
-//         });
-
-//         assert_eq!(
-//             editor.update(cx, |view, cx| view.selection_ranges(cx)),
-//             [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
-//         );
-
-//         editor.update(cx, |view, cx| {
-//             view.begin_selection(DisplayPoint::new(3, 3), true, 1, cx);
-//             view.update_selection(DisplayPoint::new(0, 0), 0, Vector2F::zero(), cx);
-//         });
-
-//         assert_eq!(
-//             editor.update(cx, |view, cx| view.selection_ranges(cx)),
-//             [
-//                 DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1),
-//                 DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)
-//             ]
-//         );
-
-//         editor.update(cx, |view, cx| {
-//             view.end_selection(cx);
-//         });
-
-//         assert_eq!(
-//             editor.update(cx, |view, cx| view.selection_ranges(cx)),
-//             [DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)]
-//         );
-//     }
-
-//     #[gpui::test]
-//     fn test_canceling_pending_selection(cx: &mut gpui::MutableAppContext) {
-//         let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
-//         let settings = EditorSettings::test(cx);
-//         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
-
-//         view.update(cx, |view, cx| {
-//             view.begin_selection(DisplayPoint::new(2, 2), false, 1, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.update_selection(DisplayPoint::new(3, 3), 0, Vector2F::zero(), cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.cancel(&Cancel, cx);
-//             view.update_selection(DisplayPoint::new(1, 1), 0, Vector2F::zero(), cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_cancel(cx: &mut gpui::MutableAppContext) {
-//         let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
-//         let settings = EditorSettings::test(cx);
-//         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
-
-//         view.update(cx, |view, cx| {
-//             view.begin_selection(DisplayPoint::new(3, 4), false, 1, cx);
-//             view.update_selection(DisplayPoint::new(1, 1), 0, Vector2F::zero(), cx);
-//             view.end_selection(cx);
-
-//             view.begin_selection(DisplayPoint::new(0, 1), true, 1, cx);
-//             view.update_selection(DisplayPoint::new(0, 3), 0, Vector2F::zero(), cx);
-//             view.end_selection(cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 [
-//                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
-//                     DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.cancel(&Cancel, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 [DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1)]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.cancel(&Cancel, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 [DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1)]
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_fold(cx: &mut gpui::MutableAppContext) {
-//         let buffer = cx.add_model(|cx| {
-//             Buffer::new(
-//                 0,
-//                 "
-//                     impl Foo {
-//                         // Hello!
-
-//                         fn a() {
-//                             1
-//                         }
-
-//                         fn b() {
-//                             2
-//                         }
-
-//                         fn c() {
-//                             3
-//                         }
-//                     }
-//                 "
-//                 .unindent(),
-//                 cx,
-//             )
-//         });
-//         let settings = EditorSettings::test(&cx);
-//         let (_, view) = cx.add_window(Default::default(), |cx| {
-//             build_editor(buffer.clone(), settings, cx)
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(&[DisplayPoint::new(8, 0)..DisplayPoint::new(12, 0)], cx)
-//                 .unwrap();
-//             view.fold(&Fold, cx);
-//             assert_eq!(
-//                 view.display_text(cx),
-//                 "
-//                     impl Foo {
-//                         // Hello!
-
-//                         fn a() {
-//                             1
-//                         }
-
-//                         fn b() {…
-//                         }
-
-//                         fn c() {…
-//                         }
-//                     }
-//                 "
-//                 .unindent(),
-//             );
-
-//             view.fold(&Fold, cx);
-//             assert_eq!(
-//                 view.display_text(cx),
-//                 "
-//                     impl Foo {…
-//                     }
-//                 "
-//                 .unindent(),
-//             );
-
-//             view.unfold(&Unfold, cx);
-//             assert_eq!(
-//                 view.display_text(cx),
-//                 "
-//                     impl Foo {
-//                         // Hello!
-
-//                         fn a() {
-//                             1
-//                         }
-
-//                         fn b() {…
-//                         }
-
-//                         fn c() {…
-//                         }
-//                     }
-//                 "
-//                 .unindent(),
-//             );
-
-//             view.unfold(&Unfold, cx);
-//             assert_eq!(view.display_text(cx), buffer.read(cx).text());
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_move_cursor(cx: &mut gpui::MutableAppContext) {
-//         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'a'), cx));
-//         let settings = EditorSettings::test(&cx);
-//         let (_, view) = cx.add_window(Default::default(), |cx| {
-//             build_editor(buffer.clone(), settings, cx)
-//         });
-
-//         buffer.update(cx, |buffer, cx| {
-//             buffer.edit(
-//                 vec![
-//                     Point::new(1, 0)..Point::new(1, 0),
-//                     Point::new(1, 1)..Point::new(1, 1),
-//                 ],
-//                 "\t",
-//                 cx,
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
-//             );
-
-//             view.move_down(&MoveDown, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
-//             );
-
-//             view.move_right(&MoveRight, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4)]
-//             );
-
-//             view.move_left(&MoveLeft, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
-//             );
-
-//             view.move_up(&MoveUp, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
-//             );
-
-//             view.move_to_end(&MoveToEnd, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[DisplayPoint::new(5, 6)..DisplayPoint::new(5, 6)]
-//             );
-
-//             view.move_to_beginning(&MoveToBeginning, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
-//             );
-
-//             view.select_display_ranges(&[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2)], cx)
-//                 .unwrap();
-//             view.select_to_beginning(&SelectToBeginning, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 0)]
-//             );
-
-//             view.select_to_end(&SelectToEnd, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[DisplayPoint::new(0, 1)..DisplayPoint::new(5, 6)]
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_move_cursor_multibyte(cx: &mut gpui::MutableAppContext) {
-//         let buffer = cx.add_model(|cx| Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcde\nαβγδε\n", cx));
-//         let settings = EditorSettings::test(&cx);
-//         let (_, view) = cx.add_window(Default::default(), |cx| {
-//             build_editor(buffer.clone(), settings, cx)
-//         });
-
-//         assert_eq!('ⓐ'.len_utf8(), 3);
-//         assert_eq!('α'.len_utf8(), 2);
-
-//         view.update(cx, |view, cx| {
-//             view.fold_ranges(
-//                 vec![
-//                     Point::new(0, 6)..Point::new(0, 12),
-//                     Point::new(1, 2)..Point::new(1, 4),
-//                     Point::new(2, 4)..Point::new(2, 8),
-//                 ],
-//                 cx,
-//             );
-//             assert_eq!(view.display_text(cx), "ⓐⓑ…ⓔ\nab…e\nαβ…ε\n");
-
-//             view.move_right(&MoveRight, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐ".len())]);
-//             view.move_right(&MoveRight, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ".len())]);
-//             view.move_right(&MoveRight, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ…".len())]);
-
-//             view.move_down(&MoveDown, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(1, "ab…".len())]);
-//             view.move_left(&MoveLeft, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(1, "ab".len())]);
-//             view.move_left(&MoveLeft, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(1, "a".len())]);
-
-//             view.move_down(&MoveDown, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(2, "α".len())]);
-//             view.move_right(&MoveRight, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβ".len())]);
-//             view.move_right(&MoveRight, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβ…".len())]);
-//             view.move_right(&MoveRight, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβ…ε".len())]);
-
-//             view.move_up(&MoveUp, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(1, "ab…e".len())]);
-//             view.move_up(&MoveUp, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ…ⓔ".len())]);
-//             view.move_left(&MoveLeft, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ…".len())]);
-//             view.move_left(&MoveLeft, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ".len())]);
-//             view.move_left(&MoveLeft, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐ".len())]);
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_move_cursor_different_line_lengths(cx: &mut gpui::MutableAppContext) {
-//         let buffer = cx.add_model(|cx| Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", cx));
-//         let settings = EditorSettings::test(&cx);
-//         let (_, view) = cx.add_window(Default::default(), |cx| {
-//             build_editor(buffer.clone(), settings, cx)
-//         });
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(&[empty_range(0, "ⓐⓑⓒⓓⓔ".len())], cx)
-//                 .unwrap();
-
-//             view.move_down(&MoveDown, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(1, "abcd".len())]);
-
-//             view.move_down(&MoveDown, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβγ".len())]);
-
-//             view.move_down(&MoveDown, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(3, "abcd".len())]);
-
-//             view.move_down(&MoveDown, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(4, "ⓐⓑⓒⓓⓔ".len())]);
-
-//             view.move_up(&MoveUp, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(3, "abcd".len())]);
-
-//             view.move_up(&MoveUp, cx);
-//             assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβγ".len())]);
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_beginning_end_of_line(cx: &mut gpui::MutableAppContext) {
-//         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\n  def", cx));
-//         let settings = EditorSettings::test(&cx);
-//         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(
-//                 &[
-//                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-//                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-//                     DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-//                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-//                     DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.move_to_end_of_line(&MoveToEndOfLine, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-//                     DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
-//                 ]
-//             );
-//         });
-
-//         // Moving to the end of line again is a no-op.
-//         view.update(cx, |view, cx| {
-//             view.move_to_end_of_line(&MoveToEndOfLine, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-//                     DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.move_left(&MoveLeft, cx);
-//             view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
-//                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
-//                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 0),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
-//                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.select_to_end_of_line(&SelectToEndOfLine, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 3),
-//                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 5),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.delete_to_end_of_line(&DeleteToEndOfLine, cx);
-//             assert_eq!(view.display_text(cx), "ab\n  de");
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-//                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.delete_to_beginning_of_line(&DeleteToBeginningOfLine, cx);
-//             assert_eq!(view.display_text(cx), "\n");
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-//                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-//                 ]
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_prev_next_word_boundary(cx: &mut gpui::MutableAppContext) {
-//         let buffer =
-//             cx.add_model(|cx| Buffer::new(0, "use std::str::{foo, bar}\n\n  {baz.qux()}", cx));
-//         let settings = EditorSettings::test(&cx);
-//         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(
-//                 &[
-//                     DisplayPoint::new(0, 11)..DisplayPoint::new(0, 11),
-//                     DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
-//                     DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
-//                     DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4),
-//                     DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-//                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-//                     DisplayPoint::new(0, 23)..DisplayPoint::new(0, 23),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-//                     DisplayPoint::new(0, 24)..DisplayPoint::new(0, 24),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
-//                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
-//                     DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.move_right(&MoveRight, cx);
-//             view.select_to_previous_word_boundary(&SelectToPreviousWordBoundary, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
-//                     DisplayPoint::new(2, 4)..DisplayPoint::new(2, 3),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.select_to_previous_word_boundary(&SelectToPreviousWordBoundary, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 10)..DisplayPoint::new(0, 7),
-//                     DisplayPoint::new(2, 4)..DisplayPoint::new(2, 2),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.select_to_next_word_boundary(&SelectToNextWordBoundary, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
-//                     DisplayPoint::new(2, 4)..DisplayPoint::new(2, 3),
-//                 ]
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut gpui::MutableAppContext) {
-//         let buffer =
-//             cx.add_model(|cx| Buffer::new(0, "use one::{\n    two::three::four::five\n};", cx));
-//         let settings = EditorSettings::test(&cx);
-//         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
-
-//         view.update(cx, |view, cx| {
-//             view.set_wrap_width(Some(140.), cx);
-//             assert_eq!(
-//                 view.display_text(cx),
-//                 "use one::{\n    two::three::\n    four::five\n};"
-//             );
-
-//             view.select_display_ranges(&[DisplayPoint::new(1, 7)..DisplayPoint::new(1, 7)], cx)
-//                 .unwrap();
-
-//             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[DisplayPoint::new(1, 9)..DisplayPoint::new(1, 9)]
-//             );
-
-//             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
-//             );
-
-//             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
-//             );
-
-//             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[DisplayPoint::new(2, 8)..DisplayPoint::new(2, 8)]
-//             );
-
-//             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
-//             );
-
-//             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_delete_to_word_boundary(cx: &mut gpui::MutableAppContext) {
-//         let buffer = cx.add_model(|cx| Buffer::new(0, "one two three four", cx));
-//         let settings = EditorSettings::test(&cx);
-//         let (_, view) = cx.add_window(Default::default(), |cx| {
-//             build_editor(buffer.clone(), settings, cx)
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(
-//                 &[
-//                     // an empty selection - the preceding word fragment is deleted
-//                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-//                     // characters selected - they are deleted
-//                     DisplayPoint::new(0, 9)..DisplayPoint::new(0, 12),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//             view.delete_to_previous_word_boundary(&DeleteToPreviousWordBoundary, cx);
-//         });
-
-//         assert_eq!(buffer.read(cx).text(), "e two te four");
-
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(
-//                 &[
-//                     // an empty selection - the following word fragment is deleted
-//                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-//                     // characters selected - they are deleted
-//                     DisplayPoint::new(0, 9)..DisplayPoint::new(0, 10),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//             view.delete_to_next_word_boundary(&DeleteToNextWordBoundary, cx);
-//         });
-
-//         assert_eq!(buffer.read(cx).text(), "e t te our");
-//     }
-
-//     #[gpui::test]
-//     fn test_newline(cx: &mut gpui::MutableAppContext) {
-//         let buffer = cx.add_model(|cx| Buffer::new(0, "aaaa\n    bbbb\n", cx));
-//         let settings = EditorSettings::test(&cx);
-//         let (_, view) = cx.add_window(Default::default(), |cx| {
-//             build_editor(buffer.clone(), settings, cx)
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(
-//                 &[
-//                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-//                     DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
-//                     DisplayPoint::new(1, 6)..DisplayPoint::new(1, 6),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-
-//             view.newline(&Newline, cx);
-//             assert_eq!(view.text(cx), "aa\naa\n  \n    bb\n    bb\n");
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_indent_outdent(cx: &mut gpui::MutableAppContext) {
-//         let buffer = cx.add_model(|cx| Buffer::new(0, "  one two\nthree\n four", cx));
-//         let settings = EditorSettings::test(&cx);
-//         let (_, view) = cx.add_window(Default::default(), |cx| {
-//             build_editor(buffer.clone(), settings, cx)
-//         });
-
-//         view.update(cx, |view, cx| {
-//             // two selections on the same line
-//             view.select_display_ranges(
-//                 &[
-//                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 5),
-//                     DisplayPoint::new(0, 6)..DisplayPoint::new(0, 9),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-
-//             // indent from mid-tabstop to full tabstop
-//             view.tab(&Tab, cx);
-//             assert_eq!(view.text(cx), "    one two\nthree\n four");
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 4)..DisplayPoint::new(0, 7),
-//                     DisplayPoint::new(0, 8)..DisplayPoint::new(0, 11),
-//                 ]
-//             );
-
-//             // outdent from 1 tabstop to 0 tabstops
-//             view.outdent(&Outdent, cx);
-//             assert_eq!(view.text(cx), "one two\nthree\n four");
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 3),
-//                     DisplayPoint::new(0, 4)..DisplayPoint::new(0, 7),
-//                 ]
-//             );
-
-//             // select across line ending
-//             view.select_display_ranges(&[DisplayPoint::new(1, 1)..DisplayPoint::new(2, 0)], cx)
-//                 .unwrap();
-
-//             // indent and outdent affect only the preceding line
-//             view.tab(&Tab, cx);
-//             assert_eq!(view.text(cx), "one two\n    three\n four");
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[DisplayPoint::new(1, 5)..DisplayPoint::new(2, 0)]
-//             );
-//             view.outdent(&Outdent, cx);
-//             assert_eq!(view.text(cx), "one two\nthree\n four");
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[DisplayPoint::new(1, 1)..DisplayPoint::new(2, 0)]
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_backspace(cx: &mut gpui::MutableAppContext) {
-//         let buffer = cx.add_model(|cx| {
-//             Buffer::new(
-//                 0,
-//                 "one two three\nfour five six\nseven eight nine\nten\n",
-//                 cx,
-//             )
-//         });
-//         let settings = EditorSettings::test(&cx);
-//         let (_, view) = cx.add_window(Default::default(), |cx| {
-//             build_editor(buffer.clone(), settings, cx)
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(
-//                 &[
-//                     // an empty selection - the preceding character is deleted
-//                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-//                     // one character selected - it is deleted
-//                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
-//                     // a line suffix selected - it is deleted
-//                     DisplayPoint::new(2, 6)..DisplayPoint::new(3, 0),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//             view.backspace(&Backspace, cx);
-//         });
-
-//         assert_eq!(
-//             buffer.read(cx).text(),
-//             "oe two three\nfou five six\nseven ten\n"
-//         );
-//     }
-
-//     #[gpui::test]
-//     fn test_delete(cx: &mut gpui::MutableAppContext) {
-//         let buffer = cx.add_model(|cx| {
-//             Buffer::new(
-//                 0,
-//                 "one two three\nfour five six\nseven eight nine\nten\n",
-//                 cx,
-//             )
-//         });
-//         let settings = EditorSettings::test(&cx);
-//         let (_, view) = cx.add_window(Default::default(), |cx| {
-//             build_editor(buffer.clone(), settings, cx)
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(
-//                 &[
-//                     // an empty selection - the following character is deleted
-//                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-//                     // one character selected - it is deleted
-//                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
-//                     // a line suffix selected - it is deleted
-//                     DisplayPoint::new(2, 6)..DisplayPoint::new(3, 0),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//             view.delete(&Delete, cx);
-//         });
-
-//         assert_eq!(
-//             buffer.read(cx).text(),
-//             "on two three\nfou five six\nseven ten\n"
-//         );
-//     }
-
-//     #[gpui::test]
-//     fn test_delete_line(cx: &mut gpui::MutableAppContext) {
-//         let settings = EditorSettings::test(&cx);
-//         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
-//         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(
-//                 &[
-//                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-//                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
-//                     DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//             view.delete_line(&DeleteLine, cx);
-//             assert_eq!(view.display_text(cx), "ghi");
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-//                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)
-//                 ]
-//             );
-//         });
-
-//         let settings = EditorSettings::test(&cx);
-//         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
-//         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(&[DisplayPoint::new(2, 0)..DisplayPoint::new(0, 1)], cx)
-//                 .unwrap();
-//             view.delete_line(&DeleteLine, cx);
-//             assert_eq!(view.display_text(cx), "ghi\n");
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)]
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_duplicate_line(cx: &mut gpui::MutableAppContext) {
-//         let settings = EditorSettings::test(&cx);
-//         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
-//         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(
-//                 &[
-//                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
-//                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-//                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-//                     DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//             view.duplicate_line(&DuplicateLine, cx);
-//             assert_eq!(view.display_text(cx), "abc\nabc\ndef\ndef\nghi\n\n");
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
-//                     DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
-//                     DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
-//                     DisplayPoint::new(6, 0)..DisplayPoint::new(6, 0),
-//                 ]
-//             );
-//         });
-
-//         let settings = EditorSettings::test(&cx);
-//         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
-//         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(
-//                 &[
-//                     DisplayPoint::new(0, 1)..DisplayPoint::new(1, 1),
-//                     DisplayPoint::new(1, 2)..DisplayPoint::new(2, 1),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//             view.duplicate_line(&DuplicateLine, cx);
-//             assert_eq!(view.display_text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(3, 1)..DisplayPoint::new(4, 1),
-//                     DisplayPoint::new(4, 2)..DisplayPoint::new(5, 1),
-//                 ]
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
-//         let settings = EditorSettings::test(&cx);
-//         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(10, 5, 'a'), cx));
-//         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
-//         view.update(cx, |view, cx| {
-//             view.fold_ranges(
-//                 vec![
-//                     Point::new(0, 2)..Point::new(1, 2),
-//                     Point::new(2, 3)..Point::new(4, 1),
-//                     Point::new(7, 0)..Point::new(8, 4),
-//                 ],
-//                 cx,
-//             );
-//             view.select_display_ranges(
-//                 &[
-//                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-//                     DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
-//                     DisplayPoint::new(3, 2)..DisplayPoint::new(4, 3),
-//                     DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//             assert_eq!(
-//                 view.display_text(cx),
-//                 "aa…bbb\nccc…eeee\nfffff\nggggg\n…i\njjjjj"
-//             );
-
-//             view.move_line_up(&MoveLineUp, cx);
-//             assert_eq!(
-//                 view.display_text(cx),
-//                 "aa…bbb\nccc…eeee\nggggg\n…i\njjjjj\nfffff"
-//             );
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-//                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-//                     DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3),
-//                     DisplayPoint::new(4, 0)..DisplayPoint::new(4, 2)
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.move_line_down(&MoveLineDown, cx);
-//             assert_eq!(
-//                 view.display_text(cx),
-//                 "ccc…eeee\naa…bbb\nfffff\nggggg\n…i\njjjjj"
-//             );
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-//                     DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
-//                     DisplayPoint::new(3, 2)..DisplayPoint::new(4, 3),
-//                     DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2)
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.move_line_down(&MoveLineDown, cx);
-//             assert_eq!(
-//                 view.display_text(cx),
-//                 "ccc…eeee\nfffff\naa…bbb\nggggg\n…i\njjjjj"
-//             );
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-//                     DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
-//                     DisplayPoint::new(3, 2)..DisplayPoint::new(4, 3),
-//                     DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2)
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.move_line_up(&MoveLineUp, cx);
-//             assert_eq!(
-//                 view.display_text(cx),
-//                 "ccc…eeee\naa…bbb\nggggg\n…i\njjjjj\nfffff"
-//             );
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-//                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-//                     DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3),
-//                     DisplayPoint::new(4, 0)..DisplayPoint::new(4, 2)
-//                 ]
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_clipboard(cx: &mut gpui::MutableAppContext) {
-//         let buffer = cx.add_model(|cx| Buffer::new(0, "one✅ two three four five six ", cx));
-//         let settings = EditorSettings::test(&cx);
-//         let view = cx
-//             .add_window(Default::default(), |cx| {
-//                 build_editor(buffer.clone(), settings, cx)
-//             })
-//             .1;
-
-//         // Cut with three selections. Clipboard text is divided into three slices.
-//         view.update(cx, |view, cx| {
-//             view.select_ranges(vec![0..7, 11..17, 22..27], None, cx);
-//             view.cut(&Cut, cx);
-//             assert_eq!(view.display_text(cx), "two four six ");
-//         });
-
-//         // Paste with three cursors. Each cursor pastes one slice of the clipboard text.
-//         view.update(cx, |view, cx| {
-//             view.select_ranges(vec![4..4, 9..9, 13..13], None, cx);
-//             view.paste(&Paste, cx);
-//             assert_eq!(view.display_text(cx), "two one✅ four three six five ");
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 11)..DisplayPoint::new(0, 11),
-//                     DisplayPoint::new(0, 22)..DisplayPoint::new(0, 22),
-//                     DisplayPoint::new(0, 31)..DisplayPoint::new(0, 31)
-//                 ]
-//             );
-//         });
-
-//         // Paste again but with only two cursors. Since the number of cursors doesn't
-//         // match the number of slices in the clipboard, the entire clipboard text
-//         // is pasted at each cursor.
-//         view.update(cx, |view, cx| {
-//             view.select_ranges(vec![0..0, 31..31], None, cx);
-//             view.handle_input(&Input("( ".into()), cx);
-//             view.paste(&Paste, cx);
-//             view.handle_input(&Input(") ".into()), cx);
-//             assert_eq!(
-//                 view.display_text(cx),
-//                 "( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.select_ranges(vec![0..0], None, cx);
-//             view.handle_input(&Input("123\n4567\n89\n".into()), cx);
-//             assert_eq!(
-//                 view.display_text(cx),
-//                 "123\n4567\n89\n( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
-//             );
-//         });
-
-//         // Cut with three selections, one of which is full-line.
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(
-//                 &[
-//                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2),
-//                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-//                     DisplayPoint::new(2, 0)..DisplayPoint::new(2, 1),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//             view.cut(&Cut, cx);
-//             assert_eq!(
-//                 view.display_text(cx),
-//                 "13\n9\n( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
-//             );
-//         });
-
-//         // Paste with three selections, noticing how the copied selection that was full-line
-//         // gets inserted before the second cursor.
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(
-//                 &[
-//                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-//                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-//                     DisplayPoint::new(2, 2)..DisplayPoint::new(2, 3),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//             view.paste(&Paste, cx);
-//             assert_eq!(
-//                 view.display_text(cx),
-//                 "123\n4567\n9\n( 8ne✅ three five ) two one✅ four three six five ( one✅ three five ) "
-//             );
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-//                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-//                     DisplayPoint::new(3, 3)..DisplayPoint::new(3, 3),
-//                 ]
-//             );
-//         });
-
-//         // Copy with a single cursor only, which writes the whole line into the clipboard.
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(&[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)], cx)
-//                 .unwrap();
-//             view.copy(&Copy, cx);
-//         });
-
-//         // Paste with three selections, noticing how the copied full-line selection is inserted
-//         // before the empty selections but replaces the selection that is non-empty.
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(
-//                 &[
-//                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-//                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 2),
-//                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//             view.paste(&Paste, cx);
-//             assert_eq!(
-//                 view.display_text(cx),
-//                 "123\n123\n123\n67\n123\n9\n( 8ne✅ three five ) two one✅ four three six five ( one✅ three five ) "
-//             );
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[
-//                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-//                     DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
-//                     DisplayPoint::new(5, 1)..DisplayPoint::new(5, 1),
-//                 ]
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_select_all(cx: &mut gpui::MutableAppContext) {
-//         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\nde\nfgh", cx));
-//         let settings = EditorSettings::test(&cx);
-//         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
-//         view.update(cx, |view, cx| {
-//             view.select_all(&SelectAll, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(2, 3)]
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_select_line(cx: &mut gpui::MutableAppContext) {
-//         let settings = EditorSettings::test(&cx);
-//         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 5, 'a'), cx));
-//         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(
-//                 &[
-//                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
-//                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-//                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-//                     DisplayPoint::new(4, 2)..DisplayPoint::new(4, 2),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//             view.select_line(&SelectLine, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(0, 0)..DisplayPoint::new(2, 0),
-//                     DisplayPoint::new(4, 0)..DisplayPoint::new(5, 0),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.select_line(&SelectLine, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(0, 0)..DisplayPoint::new(3, 0),
-//                     DisplayPoint::new(4, 0)..DisplayPoint::new(5, 5),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.select_line(&SelectLine, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![DisplayPoint::new(0, 0)..DisplayPoint::new(5, 5)]
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_split_selection_into_lines(cx: &mut gpui::MutableAppContext) {
-//         let settings = EditorSettings::test(&cx);
-//         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(9, 5, 'a'), cx));
-//         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
-//         view.update(cx, |view, cx| {
-//             view.fold_ranges(
-//                 vec![
-//                     Point::new(0, 2)..Point::new(1, 2),
-//                     Point::new(2, 3)..Point::new(4, 1),
-//                     Point::new(7, 0)..Point::new(8, 4),
-//                 ],
-//                 cx,
-//             );
-//             view.select_display_ranges(
-//                 &[
-//                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
-//                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-//                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-//                     DisplayPoint::new(4, 4)..DisplayPoint::new(4, 4),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//             assert_eq!(view.display_text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i");
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.split_selection_into_lines(&SplitSelectionIntoLines, cx);
-//             assert_eq!(
-//                 view.display_text(cx),
-//                 "aaaaa\nbbbbb\nccc…eeee\nfffff\nggggg\n…i"
-//             );
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 [
-//                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-//                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
-//                     DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
-//                     DisplayPoint::new(5, 4)..DisplayPoint::new(5, 4)
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(&[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 1)], cx)
-//                 .unwrap();
-//             view.split_selection_into_lines(&SplitSelectionIntoLines, cx);
-//             assert_eq!(
-//                 view.display_text(cx),
-//                 "aaaaa\nbbbbb\nccccc\nddddd\neeeee\nfffff\nggggg\nhhhhh\niiiii"
-//             );
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 [
-//                     DisplayPoint::new(0, 5)..DisplayPoint::new(0, 5),
-//                     DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
-//                     DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
-//                     DisplayPoint::new(3, 5)..DisplayPoint::new(3, 5),
-//                     DisplayPoint::new(4, 5)..DisplayPoint::new(4, 5),
-//                     DisplayPoint::new(5, 5)..DisplayPoint::new(5, 5),
-//                     DisplayPoint::new(6, 5)..DisplayPoint::new(6, 5),
-//                     DisplayPoint::new(7, 0)..DisplayPoint::new(7, 0)
-//                 ]
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     fn test_add_selection_above_below(cx: &mut gpui::MutableAppContext) {
-//         let settings = EditorSettings::test(&cx);
-//         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndefghi\n\njk\nlmno\n", cx));
-//         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
-
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(&[DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)], cx)
-//                 .unwrap();
-//         });
-//         view.update(cx, |view, cx| {
-//             view.add_selection_above(&AddSelectionAbove, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-//                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.add_selection_above(&AddSelectionAbove, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
-//                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.add_selection_below(&AddSelectionBelow, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.add_selection_below(&AddSelectionBelow, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
-//                     DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.add_selection_below(&AddSelectionBelow, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
-//                     DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(&[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)], cx)
-//                 .unwrap();
-//         });
-//         view.update(cx, |view, cx| {
-//             view.add_selection_below(&AddSelectionBelow, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
-//                     DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.add_selection_below(&AddSelectionBelow, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
-//                     DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.add_selection_above(&AddSelectionAbove, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.add_selection_above(&AddSelectionAbove, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(&[DisplayPoint::new(0, 1)..DisplayPoint::new(1, 4)], cx)
-//                 .unwrap();
-//             view.add_selection_below(&AddSelectionBelow, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
-//                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
-//                     DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.add_selection_below(&AddSelectionBelow, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
-//                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
-//                     DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
-//                     DisplayPoint::new(4, 1)..DisplayPoint::new(4, 4),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.add_selection_above(&AddSelectionAbove, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
-//                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
-//                     DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.select_display_ranges(&[DisplayPoint::new(4, 3)..DisplayPoint::new(1, 1)], cx)
-//                 .unwrap();
-//         });
-//         view.update(cx, |view, cx| {
-//             view.add_selection_above(&AddSelectionAbove, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 1),
-//                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
-//                     DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
-//                     DisplayPoint::new(4, 3)..DisplayPoint::new(4, 1),
-//                 ]
-//             );
-//         });
-
-//         view.update(cx, |view, cx| {
-//             view.add_selection_below(&AddSelectionBelow, cx);
-//             assert_eq!(
-//                 view.selection_ranges(cx),
-//                 vec![
-//                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
-//                     DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
-//                     DisplayPoint::new(4, 3)..DisplayPoint::new(4, 1),
-//                 ]
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     async fn test_select_larger_smaller_syntax_node(mut cx: gpui::TestAppContext) {
-//         let settings = cx.read(EditorSettings::test);
-//         let language = Some(Arc::new(Language::new(
-//             LanguageConfig::default(),
-//             Some(tree_sitter_rust::language()),
-//         )));
-
-//         let text = r#"
-//             use mod1::mod2::{mod3, mod4};
-
-//             fn fn_1(param1: bool, param2: &str) {
-//                 let var1 = "text";
-//             }
-//         "#
-//         .unindent();
-
-//         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
-//         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
-//         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
-//             .await;
-
-//         view.update(&mut cx, |view, cx| {
-//             view.select_display_ranges(
-//                 &[
-//                     DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
-//                     DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
-//                     DisplayPoint::new(3, 18)..DisplayPoint::new(3, 18),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
-//         });
-//         assert_eq!(
-//             view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
-//             &[
-//                 DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
-//                 DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
-//                 DisplayPoint::new(3, 15)..DisplayPoint::new(3, 21),
-//             ]
-//         );
-
-//         view.update(&mut cx, |view, cx| {
-//             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
-//         });
-//         assert_eq!(
-//             view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
-//             &[
-//                 DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
-//                 DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
-//             ]
-//         );
-
-//         view.update(&mut cx, |view, cx| {
-//             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
-//         });
-//         assert_eq!(
-//             view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
-//             &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
-//         );
-
-//         // Trying to expand the selected syntax node one more time has no effect.
-//         view.update(&mut cx, |view, cx| {
-//             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
-//         });
-//         assert_eq!(
-//             view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
-//             &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
-//         );
-
-//         view.update(&mut cx, |view, cx| {
-//             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
-//         });
-//         assert_eq!(
-//             view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
-//             &[
-//                 DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
-//                 DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
-//             ]
-//         );
-
-//         view.update(&mut cx, |view, cx| {
-//             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
-//         });
-//         assert_eq!(
-//             view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
-//             &[
-//                 DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
-//                 DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
-//                 DisplayPoint::new(3, 15)..DisplayPoint::new(3, 21),
-//             ]
-//         );
-
-//         view.update(&mut cx, |view, cx| {
-//             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
-//         });
-//         assert_eq!(
-//             view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
-//             &[
-//                 DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
-//                 DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
-//                 DisplayPoint::new(3, 18)..DisplayPoint::new(3, 18),
-//             ]
-//         );
-
-//         // Trying to shrink the selected syntax node one more time has no effect.
-//         view.update(&mut cx, |view, cx| {
-//             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
-//         });
-//         assert_eq!(
-//             view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
-//             &[
-//                 DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
-//                 DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
-//                 DisplayPoint::new(3, 18)..DisplayPoint::new(3, 18),
-//             ]
-//         );
-
-//         // Ensure that we keep expanding the selection if the larger selection starts or ends within
-//         // a fold.
-//         view.update(&mut cx, |view, cx| {
-//             view.fold_ranges(
-//                 vec![
-//                     Point::new(0, 21)..Point::new(0, 24),
-//                     Point::new(3, 20)..Point::new(3, 22),
-//                 ],
-//                 cx,
-//             );
-//             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
-//         });
-//         assert_eq!(
-//             view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
-//             &[
-//                 DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
-//                 DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
-//                 DisplayPoint::new(3, 4)..DisplayPoint::new(3, 23),
-//             ]
-//         );
-//     }
-
-//     #[gpui::test]
-//     async fn test_autoclose_pairs(mut cx: gpui::TestAppContext) {
-//         let settings = cx.read(EditorSettings::test);
-//         let language = Some(Arc::new(Language::new(
-//             LanguageConfig {
-//                 brackets: vec![
-//                     BracketPair {
-//                         start: "{".to_string(),
-//                         end: "}".to_string(),
-//                         close: true,
-//                         newline: true,
-//                     },
-//                     BracketPair {
-//                         start: "/*".to_string(),
-//                         end: " */".to_string(),
-//                         close: true,
-//                         newline: true,
-//                     },
-//                 ],
-//                 ..Default::default()
-//             },
-//             Some(tree_sitter_rust::language()),
-//         )));
-
-//         let text = r#"
-//             a
-
-//             /
-
-//         "#
-//         .unindent();
-
-//         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
-//         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
-//         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
-//             .await;
-
-//         view.update(&mut cx, |view, cx| {
-//             view.select_display_ranges(
-//                 &[
-//                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
-//                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//             view.handle_input(&Input("{".to_string()), cx);
-//             view.handle_input(&Input("{".to_string()), cx);
-//             view.handle_input(&Input("{".to_string()), cx);
-//             assert_eq!(
-//                 view.text(cx),
-//                 "
-//                 {{{}}}
-//                 {{{}}}
-//                 /
-
-//                 "
-//                 .unindent()
-//             );
-
-//             view.move_right(&MoveRight, cx);
-//             view.handle_input(&Input("}".to_string()), cx);
-//             view.handle_input(&Input("}".to_string()), cx);
-//             view.handle_input(&Input("}".to_string()), cx);
-//             assert_eq!(
-//                 view.text(cx),
-//                 "
-//                 {{{}}}}
-//                 {{{}}}}
-//                 /
-
-//                 "
-//                 .unindent()
-//             );
-
-//             view.undo(&Undo, cx);
-//             view.handle_input(&Input("/".to_string()), cx);
-//             view.handle_input(&Input("*".to_string()), cx);
-//             assert_eq!(
-//                 view.text(cx),
-//                 "
-//                 /* */
-//                 /* */
-//                 /
-
-//                 "
-//                 .unindent()
-//             );
-
-//             view.undo(&Undo, cx);
-//             view.select_display_ranges(
-//                 &[
-//                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
-//                     DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//             view.handle_input(&Input("*".to_string()), cx);
-//             assert_eq!(
-//                 view.text(cx),
-//                 "
-//                 a
-
-//                 /*
-//                 *
-//                 "
-//                 .unindent()
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     async fn test_toggle_comment(mut cx: gpui::TestAppContext) {
-//         let settings = cx.read(EditorSettings::test);
-//         let language = Some(Arc::new(Language::new(
-//             LanguageConfig {
-//                 line_comment: Some("// ".to_string()),
-//                 ..Default::default()
-//             },
-//             Some(tree_sitter_rust::language()),
-//         )));
-
-//         let text = "
-//             fn a() {
-//                 //b();
-//                 // c();
-//                 //  d();
-//             }
-//         "
-//         .unindent();
-
-//         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
-//         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
-
-//         view.update(&mut cx, |editor, cx| {
-//             // If multiple selections intersect a line, the line is only
-//             // toggled once.
-//             editor
-//                 .select_display_ranges(
-//                     &[
-//                         DisplayPoint::new(1, 3)..DisplayPoint::new(2, 3),
-//                         DisplayPoint::new(3, 5)..DisplayPoint::new(3, 6),
-//                     ],
-//                     cx,
-//                 )
-//                 .unwrap();
-//             editor.toggle_comments(&ToggleComments, cx);
-//             assert_eq!(
-//                 editor.text(cx),
-//                 "
-//                     fn a() {
-//                         b();
-//                         c();
-//                          d();
-//                     }
-//                 "
-//                 .unindent()
-//             );
-
-//             // The comment prefix is inserted at the same column for every line
-//             // in a selection.
-//             editor
-//                 .select_display_ranges(&[DisplayPoint::new(1, 3)..DisplayPoint::new(3, 6)], cx)
-//                 .unwrap();
-//             editor.toggle_comments(&ToggleComments, cx);
-//             assert_eq!(
-//                 editor.text(cx),
-//                 "
-//                     fn a() {
-//                         // b();
-//                         // c();
-//                         //  d();
-//                     }
-//                 "
-//                 .unindent()
-//             );
-
-//             // If a selection ends at the beginning of a line, that line is not toggled.
-//             editor
-//                 .select_display_ranges(&[DisplayPoint::new(2, 0)..DisplayPoint::new(3, 0)], cx)
-//                 .unwrap();
-//             editor.toggle_comments(&ToggleComments, cx);
-//             assert_eq!(
-//                 editor.text(cx),
-//                 "
-//                         fn a() {
-//                             // b();
-//                             c();
-//                             //  d();
-//                         }
-//                     "
-//                 .unindent()
-//             );
-//         });
-//     }
-
-//     #[gpui::test]
-//     async fn test_extra_newline_insertion(mut cx: gpui::TestAppContext) {
-//         let settings = cx.read(EditorSettings::test);
-//         let language = Some(Arc::new(Language::new(
-//             LanguageConfig {
-//                 brackets: vec![
-//                     BracketPair {
-//                         start: "{".to_string(),
-//                         end: "}".to_string(),
-//                         close: true,
-//                         newline: true,
-//                     },
-//                     BracketPair {
-//                         start: "/* ".to_string(),
-//                         end: " */".to_string(),
-//                         close: true,
-//                         newline: true,
-//                     },
-//                 ],
-//                 ..Default::default()
-//             },
-//             Some(tree_sitter_rust::language()),
-//         )));
-
-//         let text = concat!(
-//             "{   }\n",     // Suppress rustfmt
-//             "  x\n",       //
-//             "  /*   */\n", //
-//             "x\n",         //
-//             "{{} }\n",     //
-//         );
-
-//         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
-//         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
-//         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
-//             .await;
-
-//         view.update(&mut cx, |view, cx| {
-//             view.select_display_ranges(
-//                 &[
-//                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 3),
-//                     DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
-//                     DisplayPoint::new(4, 4)..DisplayPoint::new(4, 4),
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//             view.newline(&Newline, cx);
-
-//             assert_eq!(
-//                 view.buffer().read(cx).text(),
-//                 concat!(
-//                     "{ \n",    // Suppress rustfmt
-//                     "\n",      //
-//                     "}\n",     //
-//                     "  x\n",   //
-//                     "  /* \n", //
-//                     "  \n",    //
-//                     "  */\n",  //
-//                     "x\n",     //
-//                     "{{} \n",  //
-//                     "}\n",     //
-//                 )
-//             );
-//         });
-//     }
-
-//     impl Editor {
-//         fn selection_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
-//             self.intersecting_selections(
-//                 self.selection_set_id,
-//                 DisplayPoint::zero()..self.max_point(cx),
-//                 cx,
-//             )
-//             .into_iter()
-//             .map(|s| {
-//                 if s.reversed {
-//                     s.end..s.start
-//                 } else {
-//                     s.start..s.end
-//                 }
-//             })
-//             .collect()
-//         }
-//     }
-
-//     fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
-//         let point = DisplayPoint::new(row as u32, column as u32);
-//         point..point
-//     }
-
-//     fn build_editor(
-//         buffer: ModelHandle<Buffer>,
-//         settings: EditorSettings,
-//         cx: &mut ViewContext<Editor>,
-//     ) -> Editor {
-//         Editor::for_buffer(buffer, move |_| settings.clone(), cx)
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use language::LanguageConfig;
+    use text::Point;
+    use unindent::Unindent;
+    use util::test::sample_text;
+
+    #[gpui::test]
+    fn test_selection_with_mouse(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
+        let settings = EditorSettings::test(cx);
+        let (_, editor) =
+            cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
+
+        editor.update(cx, |view, cx| {
+            view.begin_selection(DisplayPoint::new(2, 2), false, 1, cx);
+        });
+
+        assert_eq!(
+            editor.update(cx, |view, cx| view.selection_ranges(cx)),
+            [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
+        );
+
+        editor.update(cx, |view, cx| {
+            view.update_selection(DisplayPoint::new(3, 3), 0, Vector2F::zero(), cx);
+        });
+
+        assert_eq!(
+            editor.update(cx, |view, cx| view.selection_ranges(cx)),
+            [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
+        );
+
+        editor.update(cx, |view, cx| {
+            view.update_selection(DisplayPoint::new(1, 1), 0, Vector2F::zero(), cx);
+        });
+
+        assert_eq!(
+            editor.update(cx, |view, cx| view.selection_ranges(cx)),
+            [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
+        );
+
+        editor.update(cx, |view, cx| {
+            view.end_selection(cx);
+            view.update_selection(DisplayPoint::new(3, 3), 0, Vector2F::zero(), cx);
+        });
+
+        assert_eq!(
+            editor.update(cx, |view, cx| view.selection_ranges(cx)),
+            [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
+        );
+
+        editor.update(cx, |view, cx| {
+            view.begin_selection(DisplayPoint::new(3, 3), true, 1, cx);
+            view.update_selection(DisplayPoint::new(0, 0), 0, Vector2F::zero(), cx);
+        });
+
+        assert_eq!(
+            editor.update(cx, |view, cx| view.selection_ranges(cx)),
+            [
+                DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1),
+                DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)
+            ]
+        );
+
+        editor.update(cx, |view, cx| {
+            view.end_selection(cx);
+        });
+
+        assert_eq!(
+            editor.update(cx, |view, cx| view.selection_ranges(cx)),
+            [DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)]
+        );
+    }
+
+    #[gpui::test]
+    fn test_canceling_pending_selection(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
+        let settings = EditorSettings::test(cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
+
+        view.update(cx, |view, cx| {
+            view.begin_selection(DisplayPoint::new(2, 2), false, 1, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.update_selection(DisplayPoint::new(3, 3), 0, Vector2F::zero(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.cancel(&Cancel, cx);
+            view.update_selection(DisplayPoint::new(1, 1), 0, Vector2F::zero(), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_cancel(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
+        let settings = EditorSettings::test(cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
+
+        view.update(cx, |view, cx| {
+            view.begin_selection(DisplayPoint::new(3, 4), false, 1, cx);
+            view.update_selection(DisplayPoint::new(1, 1), 0, Vector2F::zero(), cx);
+            view.end_selection(cx);
+
+            view.begin_selection(DisplayPoint::new(0, 1), true, 1, cx);
+            view.update_selection(DisplayPoint::new(0, 3), 0, Vector2F::zero(), cx);
+            view.end_selection(cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                [
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.cancel(&Cancel, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                [DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1)]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.cancel(&Cancel, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                [DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1)]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_fold(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| {
+            Buffer::new(
+                0,
+                "
+                    impl Foo {
+                        // Hello!
+
+                        fn a() {
+                            1
+                        }
+
+                        fn b() {
+                            2
+                        }
+
+                        fn c() {
+                            3
+                        }
+                    }
+                "
+                .unindent(),
+                cx,
+            )
+        });
+        let settings = EditorSettings::test(&cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            build_editor(buffer.clone(), settings, cx)
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(&[DisplayPoint::new(8, 0)..DisplayPoint::new(12, 0)], cx)
+                .unwrap();
+            view.fold(&Fold, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "
+                    impl Foo {
+                        // Hello!
+
+                        fn a() {
+                            1
+                        }
+
+                        fn b() {…
+                        }
+
+                        fn c() {…
+                        }
+                    }
+                "
+                .unindent(),
+            );
+
+            view.fold(&Fold, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "
+                    impl Foo {…
+                    }
+                "
+                .unindent(),
+            );
+
+            view.unfold(&Unfold, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "
+                    impl Foo {
+                        // Hello!
+
+                        fn a() {
+                            1
+                        }
+
+                        fn b() {…
+                        }
+
+                        fn c() {…
+                        }
+                    }
+                "
+                .unindent(),
+            );
+
+            view.unfold(&Unfold, cx);
+            assert_eq!(view.display_text(cx), buffer.read(cx).text());
+        });
+    }
+
+    #[gpui::test]
+    fn test_move_cursor(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'a'), cx));
+        let settings = EditorSettings::test(&cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            build_editor(buffer.clone(), settings, cx)
+        });
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                vec![
+                    Point::new(1, 0)..Point::new(1, 0),
+                    Point::new(1, 1)..Point::new(1, 1),
+                ],
+                "\t",
+                cx,
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
+            );
+
+            view.move_down(&MoveDown, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
+            );
+
+            view.move_right(&MoveRight, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4)]
+            );
+
+            view.move_left(&MoveLeft, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
+            );
+
+            view.move_up(&MoveUp, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
+            );
+
+            view.move_to_end(&MoveToEnd, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(5, 6)..DisplayPoint::new(5, 6)]
+            );
+
+            view.move_to_beginning(&MoveToBeginning, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
+            );
+
+            view.select_display_ranges(&[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2)], cx)
+                .unwrap();
+            view.select_to_beginning(&SelectToBeginning, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 0)]
+            );
+
+            view.select_to_end(&SelectToEnd, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(0, 1)..DisplayPoint::new(5, 6)]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_move_cursor_multibyte(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcde\nαβγδε\n", cx));
+        let settings = EditorSettings::test(&cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            build_editor(buffer.clone(), settings, cx)
+        });
+
+        assert_eq!('ⓐ'.len_utf8(), 3);
+        assert_eq!('α'.len_utf8(), 2);
+
+        view.update(cx, |view, cx| {
+            view.fold_ranges(
+                vec![
+                    Point::new(0, 6)..Point::new(0, 12),
+                    Point::new(1, 2)..Point::new(1, 4),
+                    Point::new(2, 4)..Point::new(2, 8),
+                ],
+                cx,
+            );
+            assert_eq!(view.display_text(cx), "ⓐⓑ…ⓔ\nab…e\nαβ…ε\n");
+
+            view.move_right(&MoveRight, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐ".len())]);
+            view.move_right(&MoveRight, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ".len())]);
+            view.move_right(&MoveRight, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ…".len())]);
+
+            view.move_down(&MoveDown, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "ab…".len())]);
+            view.move_left(&MoveLeft, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "ab".len())]);
+            view.move_left(&MoveLeft, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "a".len())]);
+
+            view.move_down(&MoveDown, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "α".len())]);
+            view.move_right(&MoveRight, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβ".len())]);
+            view.move_right(&MoveRight, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβ…".len())]);
+            view.move_right(&MoveRight, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβ…ε".len())]);
+
+            view.move_up(&MoveUp, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "ab…e".len())]);
+            view.move_up(&MoveUp, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ…ⓔ".len())]);
+            view.move_left(&MoveLeft, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ…".len())]);
+            view.move_left(&MoveLeft, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ".len())]);
+            view.move_left(&MoveLeft, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐ".len())]);
+        });
+    }
+
+    #[gpui::test]
+    fn test_move_cursor_different_line_lengths(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", cx));
+        let settings = EditorSettings::test(&cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            build_editor(buffer.clone(), settings, cx)
+        });
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(&[empty_range(0, "ⓐⓑⓒⓓⓔ".len())], cx)
+                .unwrap();
+
+            view.move_down(&MoveDown, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "abcd".len())]);
+
+            view.move_down(&MoveDown, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβγ".len())]);
+
+            view.move_down(&MoveDown, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(3, "abcd".len())]);
+
+            view.move_down(&MoveDown, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(4, "ⓐⓑⓒⓓⓔ".len())]);
+
+            view.move_up(&MoveUp, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(3, "abcd".len())]);
+
+            view.move_up(&MoveUp, cx);
+            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβγ".len())]);
+        });
+    }
+
+    #[gpui::test]
+    fn test_beginning_end_of_line(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\n  def", cx));
+        let settings = EditorSettings::test(&cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4),
+                ],
+                cx,
+            )
+            .unwrap();
+        });
+
+        view.update(cx, |view, cx| {
+            view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.move_to_end_of_line(&MoveToEndOfLine, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
+                ]
+            );
+        });
+
+        // Moving to the end of line again is a no-op.
+        view.update(cx, |view, cx| {
+            view.move_to_end_of_line(&MoveToEndOfLine, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.move_left(&MoveLeft, cx);
+            view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 0),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_to_end_of_line(&SelectToEndOfLine, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 5),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.delete_to_end_of_line(&DeleteToEndOfLine, cx);
+            assert_eq!(view.display_text(cx), "ab\n  de");
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.delete_to_beginning_of_line(&DeleteToBeginningOfLine, cx);
+            assert_eq!(view.display_text(cx), "\n");
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_prev_next_word_boundary(cx: &mut gpui::MutableAppContext) {
+        let buffer =
+            cx.add_model(|cx| Buffer::new(0, "use std::str::{foo, bar}\n\n  {baz.qux()}", cx));
+        let settings = EditorSettings::test(&cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 11)..DisplayPoint::new(0, 11),
+                    DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4),
+                ],
+                cx,
+            )
+            .unwrap();
+        });
+
+        view.update(cx, |view, cx| {
+            view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
+                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
+                    DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4),
+                    DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(0, 23)..DisplayPoint::new(0, 23),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(0, 24)..DisplayPoint::new(0, 24),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
+                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.move_right(&MoveRight, cx);
+            view.select_to_previous_word_boundary(&SelectToPreviousWordBoundary, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
+                    DisplayPoint::new(2, 4)..DisplayPoint::new(2, 3),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_to_previous_word_boundary(&SelectToPreviousWordBoundary, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 10)..DisplayPoint::new(0, 7),
+                    DisplayPoint::new(2, 4)..DisplayPoint::new(2, 2),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_to_next_word_boundary(&SelectToNextWordBoundary, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
+                    DisplayPoint::new(2, 4)..DisplayPoint::new(2, 3),
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut gpui::MutableAppContext) {
+        let buffer =
+            cx.add_model(|cx| Buffer::new(0, "use one::{\n    two::three::four::five\n};", cx));
+        let settings = EditorSettings::test(&cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
+
+        view.update(cx, |view, cx| {
+            view.set_wrap_width(Some(140.), cx);
+            assert_eq!(
+                view.display_text(cx),
+                "use one::{\n    two::three::\n    four::five\n};"
+            );
+
+            view.select_display_ranges(&[DisplayPoint::new(1, 7)..DisplayPoint::new(1, 7)], cx)
+                .unwrap();
+
+            view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(1, 9)..DisplayPoint::new(1, 9)]
+            );
+
+            view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
+            );
+
+            view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
+            );
+
+            view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(2, 8)..DisplayPoint::new(2, 8)]
+            );
+
+            view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
+            );
+
+            view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_delete_to_word_boundary(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "one two three four", cx));
+        let settings = EditorSettings::test(&cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            build_editor(buffer.clone(), settings, cx)
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    // an empty selection - the preceding word fragment is deleted
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    // characters selected - they are deleted
+                    DisplayPoint::new(0, 9)..DisplayPoint::new(0, 12),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.delete_to_previous_word_boundary(&DeleteToPreviousWordBoundary, cx);
+        });
+
+        assert_eq!(buffer.read(cx).text(), "e two te four");
+
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    // an empty selection - the following word fragment is deleted
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    // characters selected - they are deleted
+                    DisplayPoint::new(0, 9)..DisplayPoint::new(0, 10),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.delete_to_next_word_boundary(&DeleteToNextWordBoundary, cx);
+        });
+
+        assert_eq!(buffer.read(cx).text(), "e t te our");
+    }
+
+    #[gpui::test]
+    fn test_newline(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "aaaa\n    bbbb\n", cx));
+        let settings = EditorSettings::test(&cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            build_editor(buffer.clone(), settings, cx)
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                    DisplayPoint::new(1, 6)..DisplayPoint::new(1, 6),
+                ],
+                cx,
+            )
+            .unwrap();
+
+            view.newline(&Newline, cx);
+            assert_eq!(view.text(cx), "aa\naa\n  \n    bb\n    bb\n");
+        });
+    }
+
+    #[gpui::test]
+    fn test_indent_outdent(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "  one two\nthree\n four", cx));
+        let settings = EditorSettings::test(&cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            build_editor(buffer.clone(), settings, cx)
+        });
+
+        view.update(cx, |view, cx| {
+            // two selections on the same line
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 5),
+                    DisplayPoint::new(0, 6)..DisplayPoint::new(0, 9),
+                ],
+                cx,
+            )
+            .unwrap();
+
+            // indent from mid-tabstop to full tabstop
+            view.tab(&Tab, cx);
+            assert_eq!(view.text(cx), "    one two\nthree\n four");
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 4)..DisplayPoint::new(0, 7),
+                    DisplayPoint::new(0, 8)..DisplayPoint::new(0, 11),
+                ]
+            );
+
+            // outdent from 1 tabstop to 0 tabstops
+            view.outdent(&Outdent, cx);
+            assert_eq!(view.text(cx), "one two\nthree\n four");
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(0, 4)..DisplayPoint::new(0, 7),
+                ]
+            );
+
+            // select across line ending
+            view.select_display_ranges(&[DisplayPoint::new(1, 1)..DisplayPoint::new(2, 0)], cx)
+                .unwrap();
+
+            // indent and outdent affect only the preceding line
+            view.tab(&Tab, cx);
+            assert_eq!(view.text(cx), "one two\n    three\n four");
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(1, 5)..DisplayPoint::new(2, 0)]
+            );
+            view.outdent(&Outdent, cx);
+            assert_eq!(view.text(cx), "one two\nthree\n four");
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(1, 1)..DisplayPoint::new(2, 0)]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_backspace(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| {
+            Buffer::new(
+                0,
+                "one two three\nfour five six\nseven eight nine\nten\n",
+                cx,
+            )
+        });
+        let settings = EditorSettings::test(&cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            build_editor(buffer.clone(), settings, cx)
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    // an empty selection - the preceding character is deleted
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    // one character selected - it is deleted
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
+                    // a line suffix selected - it is deleted
+                    DisplayPoint::new(2, 6)..DisplayPoint::new(3, 0),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.backspace(&Backspace, cx);
+        });
+
+        assert_eq!(
+            buffer.read(cx).text(),
+            "oe two three\nfou five six\nseven ten\n"
+        );
+    }
+
+    #[gpui::test]
+    fn test_delete(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| {
+            Buffer::new(
+                0,
+                "one two three\nfour five six\nseven eight nine\nten\n",
+                cx,
+            )
+        });
+        let settings = EditorSettings::test(&cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            build_editor(buffer.clone(), settings, cx)
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    // an empty selection - the following character is deleted
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    // one character selected - it is deleted
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
+                    // a line suffix selected - it is deleted
+                    DisplayPoint::new(2, 6)..DisplayPoint::new(3, 0),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.delete(&Delete, cx);
+        });
+
+        assert_eq!(
+            buffer.read(cx).text(),
+            "on two three\nfou five six\nseven ten\n"
+        );
+    }
+
+    #[gpui::test]
+    fn test_delete_line(cx: &mut gpui::MutableAppContext) {
+        let settings = EditorSettings::test(&cx);
+        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.delete_line(&DeleteLine, cx);
+            assert_eq!(view.display_text(cx), "ghi");
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)
+                ]
+            );
+        });
+
+        let settings = EditorSettings::test(&cx);
+        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(&[DisplayPoint::new(2, 0)..DisplayPoint::new(0, 1)], cx)
+                .unwrap();
+            view.delete_line(&DeleteLine, cx);
+            assert_eq!(view.display_text(cx), "ghi\n");
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_duplicate_line(cx: &mut gpui::MutableAppContext) {
+        let settings = EditorSettings::test(&cx);
+        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                    DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.duplicate_line(&DuplicateLine, cx);
+            assert_eq!(view.display_text(cx), "abc\nabc\ndef\ndef\nghi\n\n");
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                    DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                    DisplayPoint::new(6, 0)..DisplayPoint::new(6, 0),
+                ]
+            );
+        });
+
+        let settings = EditorSettings::test(&cx);
+        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(1, 2)..DisplayPoint::new(2, 1),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.duplicate_line(&DuplicateLine, cx);
+            assert_eq!(view.display_text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(4, 1),
+                    DisplayPoint::new(4, 2)..DisplayPoint::new(5, 1),
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
+        let settings = EditorSettings::test(&cx);
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(10, 5, 'a'), cx));
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
+        view.update(cx, |view, cx| {
+            view.fold_ranges(
+                vec![
+                    Point::new(0, 2)..Point::new(1, 2),
+                    Point::new(2, 3)..Point::new(4, 1),
+                    Point::new(7, 0)..Point::new(8, 4),
+                ],
+                cx,
+            );
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(4, 3),
+                    DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2),
+                ],
+                cx,
+            )
+            .unwrap();
+            assert_eq!(
+                view.display_text(cx),
+                "aa…bbb\nccc…eeee\nfffff\nggggg\n…i\njjjjj"
+            );
+
+            view.move_line_up(&MoveLineUp, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "aa…bbb\nccc…eeee\nggggg\n…i\njjjjj\nfffff"
+            );
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                    DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3),
+                    DisplayPoint::new(4, 0)..DisplayPoint::new(4, 2)
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.move_line_down(&MoveLineDown, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "ccc…eeee\naa…bbb\nfffff\nggggg\n…i\njjjjj"
+            );
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(4, 3),
+                    DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2)
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.move_line_down(&MoveLineDown, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "ccc…eeee\nfffff\naa…bbb\nggggg\n…i\njjjjj"
+            );
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(4, 3),
+                    DisplayPoint::new(5, 0)..DisplayPoint::new(5, 2)
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.move_line_up(&MoveLineUp, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "ccc…eeee\naa…bbb\nggggg\n…i\njjjjj\nfffff"
+            );
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                    DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3),
+                    DisplayPoint::new(4, 0)..DisplayPoint::new(4, 2)
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_clipboard(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "one✅ two three four five six ", cx));
+        let settings = EditorSettings::test(&cx);
+        let view = cx
+            .add_window(Default::default(), |cx| {
+                build_editor(buffer.clone(), settings, cx)
+            })
+            .1;
+
+        // Cut with three selections. Clipboard text is divided into three slices.
+        view.update(cx, |view, cx| {
+            view.select_ranges(vec![0..7, 11..17, 22..27], None, cx);
+            view.cut(&Cut, cx);
+            assert_eq!(view.display_text(cx), "two four six ");
+        });
+
+        // Paste with three cursors. Each cursor pastes one slice of the clipboard text.
+        view.update(cx, |view, cx| {
+            view.select_ranges(vec![4..4, 9..9, 13..13], None, cx);
+            view.paste(&Paste, cx);
+            assert_eq!(view.display_text(cx), "two one✅ four three six five ");
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 11)..DisplayPoint::new(0, 11),
+                    DisplayPoint::new(0, 22)..DisplayPoint::new(0, 22),
+                    DisplayPoint::new(0, 31)..DisplayPoint::new(0, 31)
+                ]
+            );
+        });
+
+        // Paste again but with only two cursors. Since the number of cursors doesn't
+        // match the number of slices in the clipboard, the entire clipboard text
+        // is pasted at each cursor.
+        view.update(cx, |view, cx| {
+            view.select_ranges(vec![0..0, 31..31], None, cx);
+            view.handle_input(&Input("( ".into()), cx);
+            view.paste(&Paste, cx);
+            view.handle_input(&Input(") ".into()), cx);
+            assert_eq!(
+                view.display_text(cx),
+                "( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_ranges(vec![0..0], None, cx);
+            view.handle_input(&Input("123\n4567\n89\n".into()), cx);
+            assert_eq!(
+                view.display_text(cx),
+                "123\n4567\n89\n( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
+            );
+        });
+
+        // Cut with three selections, one of which is full-line.
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 2),
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(2, 0)..DisplayPoint::new(2, 1),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.cut(&Cut, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "13\n9\n( one✅ three five ) two one✅ four three six five ( one✅ three five ) "
+            );
+        });
+
+        // Paste with three selections, noticing how the copied selection that was full-line
+        // gets inserted before the second cursor.
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(2, 2)..DisplayPoint::new(2, 3),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.paste(&Paste, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "123\n4567\n9\n( 8ne✅ three five ) two one✅ four three six five ( one✅ three five ) "
+            );
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                    DisplayPoint::new(3, 3)..DisplayPoint::new(3, 3),
+                ]
+            );
+        });
+
+        // Copy with a single cursor only, which writes the whole line into the clipboard.
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(&[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)], cx)
+                .unwrap();
+            view.copy(&Copy, cx);
+        });
+
+        // Paste with three selections, noticing how the copied full-line selection is inserted
+        // before the empty selections but replaces the selection that is non-empty.
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 2),
+                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.paste(&Paste, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "123\n123\n123\n67\n123\n9\n( 8ne✅ three five ) two one✅ four three six five ( one✅ three five ) "
+            );
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                    DisplayPoint::new(5, 1)..DisplayPoint::new(5, 1),
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_select_all(cx: &mut gpui::MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\nde\nfgh", cx));
+        let settings = EditorSettings::test(&cx);
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
+        view.update(cx, |view, cx| {
+            view.select_all(&SelectAll, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                &[DisplayPoint::new(0, 0)..DisplayPoint::new(2, 3)]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_select_line(cx: &mut gpui::MutableAppContext) {
+        let settings = EditorSettings::test(&cx);
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 5, 'a'), cx));
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                    DisplayPoint::new(4, 2)..DisplayPoint::new(4, 2),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.select_line(&SelectLine, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(2, 0),
+                    DisplayPoint::new(4, 0)..DisplayPoint::new(5, 0),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_line(&SelectLine, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(3, 0),
+                    DisplayPoint::new(4, 0)..DisplayPoint::new(5, 5),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_line(&SelectLine, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![DisplayPoint::new(0, 0)..DisplayPoint::new(5, 5)]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_split_selection_into_lines(cx: &mut gpui::MutableAppContext) {
+        let settings = EditorSettings::test(&cx);
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(9, 5, 'a'), cx));
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
+        view.update(cx, |view, cx| {
+            view.fold_ranges(
+                vec![
+                    Point::new(0, 2)..Point::new(1, 2),
+                    Point::new(2, 3)..Point::new(4, 1),
+                    Point::new(7, 0)..Point::new(8, 4),
+                ],
+                cx,
+            );
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                    DisplayPoint::new(4, 4)..DisplayPoint::new(4, 4),
+                ],
+                cx,
+            )
+            .unwrap();
+            assert_eq!(view.display_text(cx), "aa…bbb\nccc…eeee\nfffff\nggggg\n…i");
+        });
+
+        view.update(cx, |view, cx| {
+            view.split_selection_into_lines(&SplitSelectionIntoLines, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "aaaaa\nbbbbb\nccc…eeee\nfffff\nggggg\n…i"
+            );
+            assert_eq!(
+                view.selection_ranges(cx),
+                [
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
+                    DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
+                    DisplayPoint::new(5, 4)..DisplayPoint::new(5, 4)
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(&[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 1)], cx)
+                .unwrap();
+            view.split_selection_into_lines(&SplitSelectionIntoLines, cx);
+            assert_eq!(
+                view.display_text(cx),
+                "aaaaa\nbbbbb\nccccc\nddddd\neeeee\nfffff\nggggg\nhhhhh\niiiii"
+            );
+            assert_eq!(
+                view.selection_ranges(cx),
+                [
+                    DisplayPoint::new(0, 5)..DisplayPoint::new(0, 5),
+                    DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
+                    DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
+                    DisplayPoint::new(3, 5)..DisplayPoint::new(3, 5),
+                    DisplayPoint::new(4, 5)..DisplayPoint::new(4, 5),
+                    DisplayPoint::new(5, 5)..DisplayPoint::new(5, 5),
+                    DisplayPoint::new(6, 5)..DisplayPoint::new(6, 5),
+                    DisplayPoint::new(7, 0)..DisplayPoint::new(7, 0)
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_add_selection_above_below(cx: &mut gpui::MutableAppContext) {
+        let settings = EditorSettings::test(&cx);
+        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndefghi\n\njk\nlmno\n", cx));
+        let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
+
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(&[DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)], cx)
+                .unwrap();
+        });
+        view.update(cx, |view, cx| {
+            view.add_selection_above(&AddSelectionAbove, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.add_selection_above(&AddSelectionAbove, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.add_selection_below(&AddSelectionBelow, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.add_selection_below(&AddSelectionBelow, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
+                    DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.add_selection_below(&AddSelectionBelow, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
+                    DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(&[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)], cx)
+                .unwrap();
+        });
+        view.update(cx, |view, cx| {
+            view.add_selection_below(&AddSelectionBelow, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
+                    DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.add_selection_below(&AddSelectionBelow, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
+                    DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.add_selection_above(&AddSelectionAbove, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.add_selection_above(&AddSelectionAbove, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(&[DisplayPoint::new(0, 1)..DisplayPoint::new(1, 4)], cx)
+                .unwrap();
+            view.add_selection_below(&AddSelectionBelow, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.add_selection_below(&AddSelectionBelow, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
+                    DisplayPoint::new(4, 1)..DisplayPoint::new(4, 4),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.add_selection_above(&AddSelectionAbove, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
+                    DisplayPoint::new(3, 1)..DisplayPoint::new(3, 2),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(&[DisplayPoint::new(4, 3)..DisplayPoint::new(1, 1)], cx)
+                .unwrap();
+        });
+        view.update(cx, |view, cx| {
+            view.add_selection_above(&AddSelectionAbove, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
+                    DisplayPoint::new(4, 3)..DisplayPoint::new(4, 1),
+                ]
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            view.add_selection_below(&AddSelectionBelow, cx);
+            assert_eq!(
+                view.selection_ranges(cx),
+                vec![
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
+                    DisplayPoint::new(4, 3)..DisplayPoint::new(4, 1),
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_select_larger_smaller_syntax_node(mut cx: gpui::TestAppContext) {
+        let settings = cx.read(EditorSettings::test);
+        let language = Some(Arc::new(Language::new(
+            LanguageConfig::default(),
+            Some(tree_sitter_rust::language()),
+        )));
+
+        let text = r#"
+            use mod1::mod2::{mod3, mod4};
+
+            fn fn_1(param1: bool, param2: &str) {
+                let var1 = "text";
+            }
+        "#
+        .unindent();
+
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
+        view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
+            .await;
+
+        view.update(&mut cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
+                    DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
+                    DisplayPoint::new(3, 18)..DisplayPoint::new(3, 18),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
+        });
+        assert_eq!(
+            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            &[
+                DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
+                DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
+                DisplayPoint::new(3, 15)..DisplayPoint::new(3, 21),
+            ]
+        );
+
+        view.update(&mut cx, |view, cx| {
+            view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
+        });
+        assert_eq!(
+            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            &[
+                DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
+                DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
+            ]
+        );
+
+        view.update(&mut cx, |view, cx| {
+            view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
+        });
+        assert_eq!(
+            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
+        );
+
+        // Trying to expand the selected syntax node one more time has no effect.
+        view.update(&mut cx, |view, cx| {
+            view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
+        });
+        assert_eq!(
+            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
+        );
+
+        view.update(&mut cx, |view, cx| {
+            view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
+        });
+        assert_eq!(
+            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            &[
+                DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
+                DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
+            ]
+        );
+
+        view.update(&mut cx, |view, cx| {
+            view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
+        });
+        assert_eq!(
+            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            &[
+                DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
+                DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
+                DisplayPoint::new(3, 15)..DisplayPoint::new(3, 21),
+            ]
+        );
+
+        view.update(&mut cx, |view, cx| {
+            view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
+        });
+        assert_eq!(
+            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            &[
+                DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
+                DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
+                DisplayPoint::new(3, 18)..DisplayPoint::new(3, 18),
+            ]
+        );
+
+        // Trying to shrink the selected syntax node one more time has no effect.
+        view.update(&mut cx, |view, cx| {
+            view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
+        });
+        assert_eq!(
+            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            &[
+                DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
+                DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
+                DisplayPoint::new(3, 18)..DisplayPoint::new(3, 18),
+            ]
+        );
+
+        // Ensure that we keep expanding the selection if the larger selection starts or ends within
+        // a fold.
+        view.update(&mut cx, |view, cx| {
+            view.fold_ranges(
+                vec![
+                    Point::new(0, 21)..Point::new(0, 24),
+                    Point::new(3, 20)..Point::new(3, 22),
+                ],
+                cx,
+            );
+            view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
+        });
+        assert_eq!(
+            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            &[
+                DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
+                DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
+                DisplayPoint::new(3, 4)..DisplayPoint::new(3, 23),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_autoclose_pairs(mut cx: gpui::TestAppContext) {
+        let settings = cx.read(EditorSettings::test);
+        let language = Some(Arc::new(Language::new(
+            LanguageConfig {
+                brackets: vec![
+                    BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "/*".to_string(),
+                        end: " */".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                ],
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        )));
+
+        let text = r#"
+            a
+
+            /
+
+        "#
+        .unindent();
+
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
+        view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
+            .await;
+
+        view.update(&mut cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.handle_input(&Input("{".to_string()), cx);
+            view.handle_input(&Input("{".to_string()), cx);
+            view.handle_input(&Input("{".to_string()), cx);
+            assert_eq!(
+                view.text(cx),
+                "
+                {{{}}}
+                {{{}}}
+                /
+
+                "
+                .unindent()
+            );
+
+            view.move_right(&MoveRight, cx);
+            view.handle_input(&Input("}".to_string()), cx);
+            view.handle_input(&Input("}".to_string()), cx);
+            view.handle_input(&Input("}".to_string()), cx);
+            assert_eq!(
+                view.text(cx),
+                "
+                {{{}}}}
+                {{{}}}}
+                /
+
+                "
+                .unindent()
+            );
+
+            view.undo(&Undo, cx);
+            view.handle_input(&Input("/".to_string()), cx);
+            view.handle_input(&Input("*".to_string()), cx);
+            assert_eq!(
+                view.text(cx),
+                "
+                /* */
+                /* */
+                /
+
+                "
+                .unindent()
+            );
+
+            view.undo(&Undo, cx);
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                    DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.handle_input(&Input("*".to_string()), cx);
+            assert_eq!(
+                view.text(cx),
+                "
+                a
+
+                /*
+                *
+                "
+                .unindent()
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_comment(mut cx: gpui::TestAppContext) {
+        let settings = cx.read(EditorSettings::test);
+        let language = Some(Arc::new(Language::new(
+            LanguageConfig {
+                line_comment: Some("// ".to_string()),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        )));
+
+        let text = "
+            fn a() {
+                //b();
+                // c();
+                //  d();
+            }
+        "
+        .unindent();
+
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
+
+        view.update(&mut cx, |editor, cx| {
+            // If multiple selections intersect a line, the line is only
+            // toggled once.
+            editor
+                .select_display_ranges(
+                    &[
+                        DisplayPoint::new(1, 3)..DisplayPoint::new(2, 3),
+                        DisplayPoint::new(3, 5)..DisplayPoint::new(3, 6),
+                    ],
+                    cx,
+                )
+                .unwrap();
+            editor.toggle_comments(&ToggleComments, cx);
+            assert_eq!(
+                editor.text(cx),
+                "
+                    fn a() {
+                        b();
+                        c();
+                         d();
+                    }
+                "
+                .unindent()
+            );
+
+            // The comment prefix is inserted at the same column for every line
+            // in a selection.
+            editor
+                .select_display_ranges(&[DisplayPoint::new(1, 3)..DisplayPoint::new(3, 6)], cx)
+                .unwrap();
+            editor.toggle_comments(&ToggleComments, cx);
+            assert_eq!(
+                editor.text(cx),
+                "
+                    fn a() {
+                        // b();
+                        // c();
+                        //  d();
+                    }
+                "
+                .unindent()
+            );
+
+            // If a selection ends at the beginning of a line, that line is not toggled.
+            editor
+                .select_display_ranges(&[DisplayPoint::new(2, 0)..DisplayPoint::new(3, 0)], cx)
+                .unwrap();
+            editor.toggle_comments(&ToggleComments, cx);
+            assert_eq!(
+                editor.text(cx),
+                "
+                        fn a() {
+                            // b();
+                            c();
+                            //  d();
+                        }
+                    "
+                .unindent()
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_extra_newline_insertion(mut cx: gpui::TestAppContext) {
+        let settings = cx.read(EditorSettings::test);
+        let language = Some(Arc::new(Language::new(
+            LanguageConfig {
+                brackets: vec![
+                    BracketPair {
+                        start: "{".to_string(),
+                        end: "}".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                    BracketPair {
+                        start: "/* ".to_string(),
+                        end: " */".to_string(),
+                        close: true,
+                        newline: true,
+                    },
+                ],
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        )));
+
+        let text = concat!(
+            "{   }\n",     // Suppress rustfmt
+            "  x\n",       //
+            "  /*   */\n", //
+            "x\n",         //
+            "{{} }\n",     //
+        );
+
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
+        view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
+            .await;
+
+        view.update(&mut cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 2)..DisplayPoint::new(0, 3),
+                    DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
+                    DisplayPoint::new(4, 4)..DisplayPoint::new(4, 4),
+                ],
+                cx,
+            )
+            .unwrap();
+            view.newline(&Newline, cx);
+
+            assert_eq!(
+                view.buffer().read(cx).text(),
+                concat!(
+                    "{ \n",    // Suppress rustfmt
+                    "\n",      //
+                    "}\n",     //
+                    "  x\n",   //
+                    "  /* \n", //
+                    "  \n",    //
+                    "  */\n",  //
+                    "x\n",     //
+                    "{{} \n",  //
+                    "}\n",     //
+                )
+            );
+        });
+    }
+
+    impl Editor<Buffer> {
+        fn selection_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
+            self.intersecting_selections(
+                self.selection_set_id,
+                DisplayPoint::zero()..self.max_point(cx),
+                cx,
+            )
+            .into_iter()
+            .map(|s| {
+                if s.reversed {
+                    s.end..s.start
+                } else {
+                    s.start..s.end
+                }
+            })
+            .collect()
+        }
+    }
+
+    fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
+        let point = DisplayPoint::new(row as u32, column as u32);
+        point..point
+    }
+
+    fn build_editor(
+        buffer: ModelHandle<Buffer>,
+        settings: EditorSettings,
+        cx: &mut ViewContext<Editor<Buffer>>,
+    ) -> Editor<Buffer> {
+        Editor::for_buffer(buffer, move |_| settings.clone(), cx)
+    }
+}
 
 trait RangeExt<T> {
     fn sorted(&self) -> Range<T>;

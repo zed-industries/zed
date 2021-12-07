@@ -117,7 +117,7 @@ impl Anchor {
 
     pub fn summary<'a, D>(&self, content: &'a Snapshot) -> D
     where
-        D: TextDimension<'a>,
+        D: TextDimension,
     {
         content.summary_for_anchor(self)
     }
@@ -134,7 +134,7 @@ impl<T> AnchorMap<T> {
 
     pub fn iter<'a, D>(&'a self, snapshot: &'a Snapshot) -> impl Iterator<Item = (D, &'a T)> + 'a
     where
-        D: 'a + TextDimension<'a>,
+        D: TextDimension,
     {
         snapshot
             .summaries_for_anchors(
@@ -157,7 +157,7 @@ impl AnchorSet {
 
     pub fn iter<'a, D>(&'a self, content: &'a Snapshot) -> impl Iterator<Item = D> + 'a
     where
-        D: 'a + TextDimension<'a>,
+        D: TextDimension,
     {
         self.0.iter(content).map(|(position, _)| position)
     }
@@ -191,7 +191,7 @@ impl<T> AnchorRangeMap<T> {
         content: &'a Snapshot,
     ) -> impl Iterator<Item = (Range<D>, &'a T)> + 'a
     where
-        D: 'a + TextDimension<'a>,
+        D: TextDimension,
     {
         content
             .summaries_for_anchor_ranges(
@@ -209,7 +209,7 @@ impl<T> AnchorRangeMap<T> {
         content: &'a Snapshot,
     ) -> impl Iterator<Item = (Range<D>, &'a T)> + 'a
     where
-        D: 'a + TextDimension<'a>,
+        D: TextDimension,
         I: ToOffset,
     {
         let range = content.anchor_at(range.start.0, range.start.1)
@@ -247,7 +247,7 @@ impl<T> AnchorRangeMap<T> {
         mut extract_key: F,
     ) -> Option<(Range<D>, &T)>
     where
-        D: 'a + TextDimension<'a>,
+        D: TextDimension,
         F: FnMut(&T) -> K,
         K: Ord,
     {
@@ -263,7 +263,7 @@ impl<T> AnchorRangeMap<T> {
         mut extract_key: F,
     ) -> Option<(Range<D>, &T)>
     where
-        D: 'a + TextDimension<'a>,
+        D: TextDimension,
         F: FnMut(&T) -> K,
         K: Ord,
     {
@@ -275,7 +275,7 @@ impl<T> AnchorRangeMap<T> {
 
     fn resolve_range<'a, D>(&self, range: &Range<FullOffset>, content: &'a Snapshot) -> Range<D>
     where
-        D: 'a + TextDimension<'a>,
+        D: TextDimension,
     {
         let mut anchor = Anchor {
             full_offset: range.start,
@@ -332,7 +332,7 @@ impl AnchorRangeSet {
 
     pub fn ranges<'a, D>(&'a self, content: &'a Snapshot) -> impl 'a + Iterator<Item = Range<Point>>
     where
-        D: 'a + TextDimension<'a>,
+        D: TextDimension,
     {
         self.0.ranges(content).map(|(range, _)| range)
     }

@@ -20,7 +20,6 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     ffi::OsString,
     future::Future,
-    io,
     iter::{Iterator, Peekable},
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
@@ -2002,6 +2001,10 @@ impl crate::document::Document for Buffer {
         (**self).replica_id()
     }
 
+    fn language(&self) -> Option<&Arc<Language>> {
+        todo!()
+    }
+
     fn snapshot(&self) -> Self::Snapshot {
         self.snapshot()
     }
@@ -2010,25 +2013,15 @@ impl crate::document::Document for Buffer {
         self.subscribe()
     }
 
-    fn add_selection_set<T: crate::document::ToDocumentOffset<Self::Snapshot>>(
+    fn start_transaction(&mut self, set_id: Option<SelectionSetId>) -> Result<()> {
+        todo!()
+    }
+
+    fn end_transaction(
         &mut self,
-        selections: &[Selection<T>],
+        set_id: Option<SelectionSetId>,
         cx: &mut ModelContext<Self>,
-    ) -> SelectionSetId {
-        todo!()
-    }
-
-    fn selection_set(&self, set_id: SelectionSetId) -> Option<&SelectionSet> {
-        todo!()
-    }
-
-    fn selection_sets<'a>(
-        &'a self,
-    ) -> Box<dyn 'a + Iterator<Item = (&'a SelectionSetId, &'a SelectionSet)>> {
-        todo!()
-    }
-
-    fn language(&self) -> Option<&Arc<Language>> {
+    ) -> Result<()> {
         todo!()
     }
 
@@ -2054,19 +2047,54 @@ impl crate::document::Document for Buffer {
         todo!()
     }
 
-    fn start_transaction(&mut self, set_id: Option<SelectionSetId>) {
-        todo!()
-    }
-
-    fn end_transaction(&mut self, set_id: Option<SelectionSetId>, cx: &mut ModelContext<Self>) {
-        todo!()
-    }
-
     fn undo(&mut self, cx: &mut ModelContext<Self>) {
         todo!()
     }
 
     fn redo(&mut self, cx: &mut ModelContext<Self>) {
+        todo!()
+    }
+
+    fn add_selection_set<T: crate::document::ToDocumentOffset<Self::Snapshot>>(
+        &mut self,
+        selections: &[Selection<T>],
+        cx: &mut ModelContext<Self>,
+    ) -> SelectionSetId {
+        todo!()
+    }
+
+    fn update_selection_set<T: crate::document::ToDocumentOffset<Self::Snapshot>>(
+        &mut self,
+        set_id: SelectionSetId,
+        selections: &[Selection<T>],
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    fn remove_selection_set(
+        &mut self,
+        set_id: SelectionSetId,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    fn set_active_selection_set(
+        &mut self,
+        set_id: Option<SelectionSetId>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    fn selection_set(&self, set_id: SelectionSetId) -> Option<&SelectionSet> {
+        todo!()
+    }
+
+    fn selection_sets<'a>(
+        &'a self,
+    ) -> Box<dyn 'a + Iterator<Item = (&'a SelectionSetId, &'a SelectionSet)>> {
         todo!()
     }
 }
@@ -2161,7 +2189,7 @@ impl crate::document::DocumentSnapshot for Snapshot {
 
     fn text_summary_for_range<'a, D, O>(&'a self, range: Range<O>) -> D
     where
-        D: rope::TextDimension<'a>,
+        D: rope::TextDimension,
         O: crate::document::ToDocumentOffset<Self>,
     {
         (**self).text_summary_for_range(range.start.to_offset(self)..range.end.to_offset(self))
@@ -2236,6 +2264,27 @@ impl crate::document::DocumentSnapshot for Snapshot {
     fn diagnostics_update_count(&self) -> usize {
         self.diagnostics_update_count()
     }
+
+    fn diagnostics_in_range<'a, T, O>(
+        &'a self,
+        search_range: Range<T>,
+    ) -> Box<dyn 'a + Iterator<Item = (Range<O>, &Diagnostic)>>
+    where
+        T: 'a + crate::document::ToDocumentOffset<Self>,
+        O: 'a + crate::document::FromDocumentAnchor<Self>,
+    {
+        todo!()
+    }
+
+    fn diagnostic_group<'a, O>(
+        &'a self,
+        group_id: usize,
+    ) -> Box<dyn 'a + Iterator<Item = (Range<O>, &Diagnostic)>>
+    where
+        O: 'a + crate::document::FromDocumentAnchor<Self>,
+    {
+        todo!()
+    }
 }
 
 impl crate::document::DocumentAnchor for Anchor {
@@ -2251,6 +2300,10 @@ impl crate::document::DocumentAnchor for Anchor {
 
     fn cmp(&self, other: &Self, snapshot: &Self::Snapshot) -> cmp::Ordering {
         self.cmp(other, snapshot).unwrap()
+    }
+
+    fn summary<'a, D: rope::TextDimension>(&self, snapshot: &'a Self::Snapshot) -> D {
+        self.summary(snapshot)
     }
 }
 
@@ -2270,7 +2323,7 @@ impl crate::document::DocumentAnchorRangeSet for AnchorRangeSet {
         snapshot: &'a Self::Snapshot,
     ) -> Box<dyn 'a + Iterator<Item = Range<Point>>>
     where
-        D: 'a + rope::TextDimension<'a>,
+        D: rope::TextDimension,
     {
         Box::new(self.ranges::<D>(snapshot))
     }
@@ -2278,6 +2331,10 @@ impl crate::document::DocumentAnchorRangeSet for AnchorRangeSet {
 
 impl crate::document::DocumentSelectionSet for SelectionSet {
     type Document = Buffer;
+
+    fn len(&self) -> usize {
+        todo!()
+    }
 
     fn is_active(&self) -> bool {
         self.active
@@ -2289,8 +2346,32 @@ impl crate::document::DocumentSelectionSet for SelectionSet {
         snapshot: &'a Buffer,
     ) -> Box<dyn 'a + Iterator<Item = Selection<D>>>
     where
-        D: 'a + rope::TextDimension<'a>,
+        D: 'a + rope::TextDimension,
         I: 'a + crate::document::ToDocumentOffset<Snapshot>,
+    {
+        todo!()
+    }
+
+    fn selections<'a, D>(
+        &'a self,
+        document: &'a Self::Document,
+    ) -> Box<dyn 'a + Iterator<Item = Selection<D>>>
+    where
+        D: rope::TextDimension,
+    {
+        todo!()
+    }
+
+    fn oldest_selection<'a, D>(&'a self, document: &'a Self::Document) -> Option<Selection<D>>
+    where
+        D: rope::TextDimension,
+    {
+        todo!()
+    }
+
+    fn newest_selection<'a, D>(&'a self, document: &'a Self::Document) -> Option<Selection<D>>
+    where
+        D: rope::TextDimension,
     {
         todo!()
     }

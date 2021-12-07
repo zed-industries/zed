@@ -1,4 +1,4 @@
-use editor::{Editor, EditorSettings};
+use editor::{Buffer, Editor, EditorSettings};
 use fuzzy::PathMatch;
 use gpui::{
     action,
@@ -28,7 +28,7 @@ pub struct FileFinder {
     handle: WeakViewHandle<Self>,
     settings: watch::Receiver<Settings>,
     project: ModelHandle<Project>,
-    query_editor: ViewHandle<Editor>,
+    query_editor: ViewHandle<Editor<Buffer>>,
     search_count: usize,
     latest_search_id: usize,
     latest_search_did_cancel: bool,
@@ -310,7 +310,7 @@ impl FileFinder {
 
     fn on_query_editor_event(
         &mut self,
-        _: ViewHandle<Editor>,
+        _: ViewHandle<Editor<Buffer>>,
         event: &editor::Event,
         cx: &mut ViewContext<Self>,
     ) {

@@ -1,7 +1,8 @@
 use crate::{
-    rope::TextDimension, Chunk, Event, Language, Point, Selection, SelectionSetId, Subscription,
-    TextSummary,
+    rope::TextDimension, Chunk, Diagnostic, Event, Language, Point, Selection, SelectionSetId,
+    Subscription, TextSummary,
 };
+use anyhow::Result;
 use clock::ReplicaId;
 use gpui::{Entity, ModelContext};
 use std::{cmp::Ordering, fmt::Debug, io, ops::Range, sync::Arc};
@@ -16,8 +17,12 @@ pub trait Document: 'static + Entity<Event = Event> {
     fn language(&self) -> Option<&Arc<Language>>;
     fn snapshot(&self) -> Self::Snapshot;
     fn subscribe(&mut self) -> Subscription;
-    fn start_transaction(&mut self, set_id: Option<SelectionSetId>);
-    fn end_transaction(&mut self, set_id: Option<SelectionSetId>, cx: &mut ModelContext<Self>);
+    fn start_transaction(&mut self, set_id: Option<SelectionSetId>) -> Result<()>;
+    fn end_transaction(
+        &mut self,
+        set_id: Option<SelectionSetId>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()>;
     fn edit<I, S, T>(&mut self, ranges_iter: I, new_text: T, cx: &mut ModelContext<Self>)
     where
         I: IntoIterator<Item = Range<S>>,
@@ -39,6 +44,22 @@ pub trait Document: 'static + Entity<Event = Event> {
         selections: &[Selection<T>],
         cx: &mut ModelContext<Self>,
     ) -> SelectionSetId;
+    fn update_selection_set<T: ToDocumentOffset<Self::Snapshot>>(
+        &mut self,
+        set_id: SelectionSetId,
+        selections: &[Selection<T>],
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()>;
+    fn remove_selection_set(
+        &mut self,
+        set_id: SelectionSetId,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()>;
+    fn set_active_selection_set(
+        &mut self,
+        set_id: Option<SelectionSetId>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()>;
     fn selection_set(&self, set_id: SelectionSetId) -> Option<&Self::SelectionSet>;
     fn selection_sets<'a>(
         &'a self,
@@ -89,7 +110,7 @@ pub trait DocumentSnapshot: 'static + Clone + Send + Unpin {
     fn text_summary(&self) -> TextSummary;
     fn text_summary_for_range<'a, D, O>(&'a self, range: Range<O>) -> D
     where
-        D: TextDimension<'a>,
+        D: TextDimension,
         O: ToDocumentOffset<Self>;
     fn max_point(&self) -> Point;
     fn len(&self) -> usize;
@@ -111,6 +132,19 @@ pub trait DocumentSnapshot: 'static + Clone + Send + Unpin {
     fn to_point(&self, offset: usize) -> Point;
     fn parse_count(&self) -> usize;
     fn diagnostics_update_count(&self) -> usize;
+    fn diagnostics_in_range<'a, T, O>(
+        &'a self,
+        search_range: Range<T>,
+    ) -> Box<dyn 'a + Iterator<Item = (Range<O>, &Diagnostic)>>
+    where
+        T: 'a + ToDocumentOffset<Self>,
+        O: 'a + FromDocumentAnchor<Self>;
+    fn diagnostic_group<'a, O>(
+        &'a self,
+        group_id: usize,
+    ) -> Box<dyn 'a + Iterator<Item = (Range<O>, &Diagnostic)>>
+    where
+        O: 'a + FromDocumentAnchor<Self>;
 }
 
 pub trait ToDocumentOffset<S: DocumentSnapshot> {
@@ -129,6 +163,11 @@ pub trait DocumentAnchor:
     fn min() -> Self;
     fn max() -> Self;
     fn cmp(&self, other: &Self, snapshot: &Self::Snapshot) -> Ordering;
+    fn summary<'a, D: TextDimension>(&self, snapshot: &'a Self::Snapshot) -> D;
+}
+
+pub trait FromDocumentAnchor<S: DocumentSnapshot> {
+    fn from_anchor(anchor: &S::Anchor, content: &S) -> Self;
 }
 
 pub trait DocumentAnchorRangeSet {
@@ -141,12 +180,13 @@ pub trait DocumentAnchorRangeSet {
         snapshot: &'a Self::Snapshot,
     ) -> Box<dyn 'a + Iterator<Item = Range<Point>>>
     where
-        D: 'a + TextDimension<'a>;
+        D: TextDimension;
 }
 
 pub trait DocumentSelectionSet {
     type Document: Document;
 
+    fn len(&self) -> usize;
     fn is_active(&self) -> bool;
     fn intersecting_selections<'a, D, I>(
         &'a self,
@@ -154,8 +194,20 @@ pub trait DocumentSelectionSet {
         document: &'a Self::Document,
     ) -> Box<dyn 'a + Iterator<Item = Selection<D>>>
     where
-        D: 'a + TextDimension<'a>,
+        D: TextDimension,
         I: 'a + ToDocumentOffset<<Self::Document as Document>::Snapshot>;
+    fn selections<'a, D>(
+        &'a self,
+        document: &'a Self::Document,
+    ) -> Box<dyn 'a + Iterator<Item = Selection<D>>>
+    where
+        D: TextDimension;
+    fn oldest_selection<'a, D>(&'a self, document: &'a Self::Document) -> Option<Selection<D>>
+    where
+        D: TextDimension;
+    fn newest_selection<'a, D>(&'a self, document: &'a Self::Document) -> Option<Selection<D>>
+    where
+        D: TextDimension;
 }
 
 pub trait DocumentChunks<'a>: Send + Iterator<Item = Chunk<'a>> {
@@ -191,6 +243,24 @@ impl<S: DocumentSnapshot> ToDocumentPoint<S> for Point {
 impl<S: DocumentSnapshot> ToDocumentPoint<S> for usize {
     fn to_point(&self, snapshot: &S) -> Point {
         snapshot.to_point(*self)
+    }
+}
+
+impl<S: DocumentSnapshot> FromDocumentAnchor<S> for usize
+where
+    S::Anchor: ToDocumentOffset<S>,
+{
+    fn from_anchor(anchor: &S::Anchor, snapshot: &S) -> Self {
+        anchor.to_offset(snapshot)
+    }
+}
+
+impl<S: DocumentSnapshot> FromDocumentAnchor<S> for Point
+where
+    S::Anchor: ToDocumentPoint<S>,
+{
+    fn from_anchor(anchor: &S::Anchor, snapshot: &S) -> Self {
+        anchor.to_point(snapshot)
     }
 }
 

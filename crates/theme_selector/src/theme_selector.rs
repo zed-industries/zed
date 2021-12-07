@@ -1,4 +1,4 @@
-use editor::{Editor, EditorSettings};
+use editor::{Buffer, Editor, EditorSettings};
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     action,
@@ -25,7 +25,7 @@ pub struct ThemeSelector {
     settings: watch::Receiver<Settings>,
     themes: Arc<ThemeRegistry>,
     matches: Vec<StringMatch>,
-    query_editor: ViewHandle<Editor>,
+    query_editor: ViewHandle<Editor<Buffer>>,
     list_state: UniformListState,
     selected_index: usize,
 }
@@ -201,7 +201,7 @@ impl ThemeSelector {
 
     fn on_query_editor_event(
         &mut self,
-        _: ViewHandle<Editor>,
+        _: ViewHandle<Editor<Buffer>>,
         event: &editor::Event,
         cx: &mut ViewContext<Self>,
     ) {

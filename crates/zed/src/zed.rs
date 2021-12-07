@@ -214,7 +214,7 @@ impl<'a> From<&'a AppState> for ThemeSelectorParams {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::Editor;
+    use editor::{Buffer, Editor};
     use project::ProjectPath;
     use serde_json::json;
     use std::{collections::HashSet, path::Path};
@@ -300,7 +300,7 @@ mod tests {
                 .active_item(cx)
                 .unwrap()
                 .to_any()
-                .downcast::<editor::Editor>()
+                .downcast::<editor::Editor<Buffer>>()
                 .unwrap()
         });
 
@@ -529,7 +529,7 @@ mod tests {
         let editor = cx.read(|cx| {
             let pane = workspace.read(cx).active_pane().read(cx);
             let item = pane.active_item().unwrap();
-            item.to_any().downcast::<Editor>().unwrap()
+            item.to_any().downcast::<Editor<Buffer>>().unwrap()
         });
 
         cx.update(|cx| {
@@ -582,7 +582,7 @@ mod tests {
                 .active_item(cx)
                 .unwrap()
                 .to_any()
-                .downcast::<Editor>()
+                .downcast::<Editor<Buffer>>()
                 .unwrap()
         });
 
@@ -657,7 +657,7 @@ mod tests {
                 .active_item(cx)
                 .unwrap()
                 .to_any()
-                .downcast::<Editor>()
+                .downcast::<Editor<Buffer>>()
                 .unwrap()
         });
         cx.read(|cx| {
@@ -681,7 +681,7 @@ mod tests {
                 .active_item(cx)
                 .unwrap()
                 .to_any()
-                .downcast::<Editor>()
+                .downcast::<Editor<Buffer>>()
                 .unwrap()
         });
 
