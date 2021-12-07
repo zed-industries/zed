@@ -1,4 +1,4 @@
-use crate::{buffer, Buffer, Chunk};
+use crate::buffer::{self, Buffer, Chunk};
 use collections::HashMap;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle};
 use parking_lot::Mutex;
@@ -507,7 +507,7 @@ impl Location {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Buffer;
+    use crate::buffer::Buffer;
     use gpui::MutableAppContext;
     use rand::prelude::*;
     use std::{env, mem};

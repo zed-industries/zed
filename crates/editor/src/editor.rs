@@ -20,14 +20,14 @@ use gpui::{
     MutableAppContext, RenderContext, View, ViewContext, WeakViewHandle,
 };
 use items::BufferItemHandle;
-pub use language::Buffer;
+pub use language::buffer::{self, Buffer};
 use language::{
+    buffer::{DiagnosticSeverity, Point, Selection, SelectionGoal, SelectionSetId},
     document::{
         Document, DocumentAnchor, DocumentAnchorRangeExt, DocumentAnchorRangeSet,
         DocumentSelectionSet, DocumentSnapshot, ToDocumentOffset, ToDocumentPoint,
     },
-    BracketPair, Diagnostic, DiagnosticSeverity, Language, Point, Selection, SelectionExt as _,
-    SelectionGoal, SelectionSetId,
+    BracketPair, Diagnostic, Language, SelectionExt as _,
 };
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -218,68 +218,68 @@ pub fn init(cx: &mut MutableAppContext, entry_openers: &mut Vec<Box<dyn EntryOpe
         Binding::new("alt-cmd-f", FoldSelectedRanges, Some("Editor")),
     ]);
 
-    cx.add_action(Editor::<language::Buffer>::open_new);
-    cx.add_action(|this: &mut Editor<language::Buffer>, action: &Scroll, cx| {
+    cx.add_action(Editor::<Buffer>::open_new);
+    cx.add_action(|this: &mut Editor<Buffer>, action: &Scroll, cx| {
         this.set_scroll_position(action.0, cx)
     });
-    cx.add_action(Editor::<language::Buffer>::select);
-    cx.add_action(Editor::<language::Buffer>::cancel);
-    cx.add_action(Editor::<language::Buffer>::handle_input);
-    cx.add_action(Editor::<language::Buffer>::newline);
-    cx.add_action(Editor::<language::Buffer>::backspace);
-    cx.add_action(Editor::<language::Buffer>::delete);
-    cx.add_action(Editor::<language::Buffer>::tab);
-    cx.add_action(Editor::<language::Buffer>::outdent);
-    cx.add_action(Editor::<language::Buffer>::delete_line);
-    cx.add_action(Editor::<language::Buffer>::delete_to_previous_word_boundary);
-    cx.add_action(Editor::<language::Buffer>::delete_to_next_word_boundary);
-    cx.add_action(Editor::<language::Buffer>::delete_to_beginning_of_line);
-    cx.add_action(Editor::<language::Buffer>::delete_to_end_of_line);
-    cx.add_action(Editor::<language::Buffer>::cut_to_end_of_line);
-    cx.add_action(Editor::<language::Buffer>::duplicate_line);
-    cx.add_action(Editor::<language::Buffer>::move_line_up);
-    cx.add_action(Editor::<language::Buffer>::move_line_down);
-    cx.add_action(Editor::<language::Buffer>::cut);
-    cx.add_action(Editor::<language::Buffer>::copy);
-    cx.add_action(Editor::<language::Buffer>::paste);
-    cx.add_action(Editor::<language::Buffer>::undo);
-    cx.add_action(Editor::<language::Buffer>::redo);
-    cx.add_action(Editor::<language::Buffer>::move_up);
-    cx.add_action(Editor::<language::Buffer>::move_down);
-    cx.add_action(Editor::<language::Buffer>::move_left);
-    cx.add_action(Editor::<language::Buffer>::move_right);
-    cx.add_action(Editor::<language::Buffer>::move_to_previous_word_boundary);
-    cx.add_action(Editor::<language::Buffer>::move_to_next_word_boundary);
-    cx.add_action(Editor::<language::Buffer>::move_to_beginning_of_line);
-    cx.add_action(Editor::<language::Buffer>::move_to_end_of_line);
-    cx.add_action(Editor::<language::Buffer>::move_to_beginning);
-    cx.add_action(Editor::<language::Buffer>::move_to_end);
-    cx.add_action(Editor::<language::Buffer>::select_up);
-    cx.add_action(Editor::<language::Buffer>::select_down);
-    cx.add_action(Editor::<language::Buffer>::select_left);
-    cx.add_action(Editor::<language::Buffer>::select_right);
-    cx.add_action(Editor::<language::Buffer>::select_to_previous_word_boundary);
-    cx.add_action(Editor::<language::Buffer>::select_to_next_word_boundary);
-    cx.add_action(Editor::<language::Buffer>::select_to_beginning_of_line);
-    cx.add_action(Editor::<language::Buffer>::select_to_end_of_line);
-    cx.add_action(Editor::<language::Buffer>::select_to_beginning);
-    cx.add_action(Editor::<language::Buffer>::select_to_end);
-    cx.add_action(Editor::<language::Buffer>::select_all);
-    cx.add_action(Editor::<language::Buffer>::select_line);
-    cx.add_action(Editor::<language::Buffer>::split_selection_into_lines);
-    cx.add_action(Editor::<language::Buffer>::add_selection_above);
-    cx.add_action(Editor::<language::Buffer>::add_selection_below);
-    cx.add_action(Editor::<language::Buffer>::select_next);
-    cx.add_action(Editor::<language::Buffer>::toggle_comments);
-    cx.add_action(Editor::<language::Buffer>::select_larger_syntax_node);
-    cx.add_action(Editor::<language::Buffer>::select_smaller_syntax_node);
-    cx.add_action(Editor::<language::Buffer>::move_to_enclosing_bracket);
-    cx.add_action(Editor::<language::Buffer>::show_next_diagnostic);
-    cx.add_action(Editor::<language::Buffer>::page_up);
-    cx.add_action(Editor::<language::Buffer>::page_down);
-    cx.add_action(Editor::<language::Buffer>::fold);
-    cx.add_action(Editor::<language::Buffer>::unfold);
-    cx.add_action(Editor::<language::Buffer>::fold_selected_ranges);
+    cx.add_action(Editor::<Buffer>::select);
+    cx.add_action(Editor::<Buffer>::cancel);
+    cx.add_action(Editor::<Buffer>::handle_input);
+    cx.add_action(Editor::<Buffer>::newline);
+    cx.add_action(Editor::<Buffer>::backspace);
+    cx.add_action(Editor::<Buffer>::delete);
+    cx.add_action(Editor::<Buffer>::tab);
+    cx.add_action(Editor::<Buffer>::outdent);
+    cx.add_action(Editor::<Buffer>::delete_line);
+    cx.add_action(Editor::<Buffer>::delete_to_previous_word_boundary);
+    cx.add_action(Editor::<Buffer>::delete_to_next_word_boundary);
+    cx.add_action(Editor::<Buffer>::delete_to_beginning_of_line);
+    cx.add_action(Editor::<Buffer>::delete_to_end_of_line);
+    cx.add_action(Editor::<Buffer>::cut_to_end_of_line);
+    cx.add_action(Editor::<Buffer>::duplicate_line);
+    cx.add_action(Editor::<Buffer>::move_line_up);
+    cx.add_action(Editor::<Buffer>::move_line_down);
+    cx.add_action(Editor::<Buffer>::cut);
+    cx.add_action(Editor::<Buffer>::copy);
+    cx.add_action(Editor::<Buffer>::paste);
+    cx.add_action(Editor::<Buffer>::undo);
+    cx.add_action(Editor::<Buffer>::redo);
+    cx.add_action(Editor::<Buffer>::move_up);
+    cx.add_action(Editor::<Buffer>::move_down);
+    cx.add_action(Editor::<Buffer>::move_left);
+    cx.add_action(Editor::<Buffer>::move_right);
+    cx.add_action(Editor::<Buffer>::move_to_previous_word_boundary);
+    cx.add_action(Editor::<Buffer>::move_to_next_word_boundary);
+    cx.add_action(Editor::<Buffer>::move_to_beginning_of_line);
+    cx.add_action(Editor::<Buffer>::move_to_end_of_line);
+    cx.add_action(Editor::<Buffer>::move_to_beginning);
+    cx.add_action(Editor::<Buffer>::move_to_end);
+    cx.add_action(Editor::<Buffer>::select_up);
+    cx.add_action(Editor::<Buffer>::select_down);
+    cx.add_action(Editor::<Buffer>::select_left);
+    cx.add_action(Editor::<Buffer>::select_right);
+    cx.add_action(Editor::<Buffer>::select_to_previous_word_boundary);
+    cx.add_action(Editor::<Buffer>::select_to_next_word_boundary);
+    cx.add_action(Editor::<Buffer>::select_to_beginning_of_line);
+    cx.add_action(Editor::<Buffer>::select_to_end_of_line);
+    cx.add_action(Editor::<Buffer>::select_to_beginning);
+    cx.add_action(Editor::<Buffer>::select_to_end);
+    cx.add_action(Editor::<Buffer>::select_all);
+    cx.add_action(Editor::<Buffer>::select_line);
+    cx.add_action(Editor::<Buffer>::split_selection_into_lines);
+    cx.add_action(Editor::<Buffer>::add_selection_above);
+    cx.add_action(Editor::<Buffer>::add_selection_below);
+    cx.add_action(Editor::<Buffer>::select_next);
+    cx.add_action(Editor::<Buffer>::toggle_comments);
+    cx.add_action(Editor::<Buffer>::select_larger_syntax_node);
+    cx.add_action(Editor::<Buffer>::select_smaller_syntax_node);
+    cx.add_action(Editor::<Buffer>::move_to_enclosing_bracket);
+    cx.add_action(Editor::<Buffer>::show_next_diagnostic);
+    cx.add_action(Editor::<Buffer>::page_up);
+    cx.add_action(Editor::<Buffer>::page_down);
+    cx.add_action(Editor::<Buffer>::fold);
+    cx.add_action(Editor::<Buffer>::unfold);
+    cx.add_action(Editor::<Buffer>::fold_selected_ranges);
 }
 
 trait SelectionExt<D: DocumentSnapshot> {
@@ -426,12 +426,12 @@ struct ClipboardSelection {
     is_entire_line: bool,
 }
 
-impl Editor<language::Buffer> {
+impl Editor<Buffer> {
     pub fn single_line(
         build_settings: impl 'static + Fn(&AppContext) -> EditorSettings,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let buffer = cx.add_model(|cx| language::Buffer::new(0, String::new(), cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
         let mut view = Self::for_buffer(buffer, build_settings, cx);
         view.mode = EditorMode::SingleLine;
         view
@@ -442,14 +442,14 @@ impl Editor<language::Buffer> {
         build_settings: impl 'static + Fn(&AppContext) -> EditorSettings,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let buffer = cx.add_model(|cx| language::Buffer::new(0, String::new(), cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
         let mut view = Self::for_buffer(buffer, build_settings, cx);
         view.mode = EditorMode::AutoHeight { max_lines };
         view
     }
 
     pub fn for_buffer(
-        buffer: ModelHandle<language::Buffer>,
+        buffer: ModelHandle<Buffer>,
         build_settings: impl 'static + Fn(&AppContext) -> EditorSettings,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -532,11 +532,7 @@ impl<D: Document> Editor<D> {
         cx: &mut ViewContext<Workspace>,
     ) {
         let buffer = cx.add_model(|cx| {
-            language::Buffer::new(0, "", cx).with_language(
-                Some(language::PLAIN_TEXT.clone()),
-                None,
-                cx,
-            )
+            Buffer::new(0, "", cx).with_language(Some(language::PLAIN_TEXT.clone()), None, cx)
         });
         workspace.add_item(BufferItemHandle(buffer), cx);
     }
@@ -3469,16 +3465,16 @@ impl<D: Document> Editor<D> {
     fn on_buffer_event(
         &mut self,
         _: ModelHandle<D>,
-        event: &language::Event,
+        event: &buffer::Event,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            language::Event::Edited => cx.emit(Event::Edited),
-            language::Event::Dirtied => cx.emit(Event::Dirtied),
-            language::Event::Saved => cx.emit(Event::Saved),
-            language::Event::FileHandleChanged => cx.emit(Event::FileHandleChanged),
-            language::Event::Reloaded => cx.emit(Event::FileHandleChanged),
-            language::Event::Closed => cx.emit(Event::Closed),
+            buffer::Event::Edited => cx.emit(Event::Edited),
+            buffer::Event::Dirtied => cx.emit(Event::Dirtied),
+            buffer::Event::Saved => cx.emit(Event::Saved),
+            buffer::Event::FileHandleChanged => cx.emit(Event::FileHandleChanged),
+            buffer::Event::Reloaded => cx.emit(Event::FileHandleChanged),
+            buffer::Event::Closed => cx.emit(Event::Closed),
             _ => {}
         }
     }

@@ -1,8 +1,8 @@
 use language::{
+    buffer::{Chunk, Edit, Point, PointUtf16, TextSummary},
     document::{
         DocumentAnchor, DocumentAnchorRangeExt, DocumentChunks, DocumentSnapshot, ToDocumentOffset,
     },
-    Chunk, Edit, Point, PointUtf16, TextSummary,
 };
 use parking_lot::Mutex;
 use std::{
@@ -1061,7 +1061,7 @@ impl FoldEdit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use language::{Buffer, ToPoint};
+    use language::buffer::{Buffer, ToPoint};
     use rand::prelude::*;
     use std::{env, mem};
     use text::RandomCharIter;

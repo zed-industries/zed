@@ -1,4 +1,4 @@
-mod buffer;
+pub mod buffer;
 pub mod document;
 mod excerpt_list;
 mod highlight_map;
@@ -8,8 +8,7 @@ mod selection;
 mod tests;
 
 use anyhow::{anyhow, Result};
-pub use buffer::Operation;
-pub use buffer::*;
+pub use buffer::Diagnostic;
 use gpui::{executor::Background, AppContext};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
@@ -34,6 +33,9 @@ lazy_static! {
         None,
     ));
 }
+
+#[cfg(any(test, feature = "test-support"))]
+pub use tree_sitter_rust;
 
 #[derive(Default, Deserialize)]
 pub struct LanguageConfig {

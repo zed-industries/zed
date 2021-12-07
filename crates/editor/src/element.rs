@@ -18,8 +18,8 @@ use gpui::{
 };
 use json::json;
 use language::{
+    buffer::Chunk,
     document::{Document, DocumentSnapshot, ToDocumentPoint},
-    Chunk,
 };
 use smallvec::SmallVec;
 use std::{
@@ -1166,7 +1166,7 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 mod tests {
     use super::*;
     use crate::{Editor, EditorSettings};
-    use language::Buffer;
+    use language::buffer::Buffer;
     use util::test::sample_text;
 
     #[gpui::test]

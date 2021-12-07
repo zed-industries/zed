@@ -10,8 +10,8 @@ use block_map::{BlockMap, BlockPoint};
 use fold_map::{FoldMap, ToFoldPoint as _};
 use gpui::{fonts::FontId, ElementBox, Entity, ModelContext, ModelHandle};
 use language::{
+    buffer::{Bias, Point},
     document::{Document, DocumentSnapshot, ToDocumentOffset, ToDocumentPoint},
-    Bias, Point,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -27,7 +27,7 @@ pub trait ToDisplayPoint<S: DocumentSnapshot> {
 
 pub struct DisplayMap<D: Document> {
     buffer: ModelHandle<D>,
-    buffer_subscription: language::Subscription,
+    buffer_subscription: language::buffer::Subscription,
     fold_map: FoldMap<D::Snapshot>,
     tab_map: TabMap<D::Snapshot>,
     wrap_map: ModelHandle<WrapMap<D::Snapshot>>,
@@ -445,7 +445,10 @@ mod tests {
     use super::*;
     use crate::{movement, test::*};
     use gpui::{color::Color, MutableAppContext};
-    use language::{Buffer, Language, LanguageConfig, RandomCharIter, SelectionGoal};
+    use language::{
+        buffer::{Buffer, RandomCharIter, SelectionGoal},
+        Language, LanguageConfig,
+    };
     use rand::{prelude::StdRng, Rng};
     use std::{env, sync::Arc};
     use theme::SyntaxTheme;
@@ -1045,7 +1048,7 @@ mod tests {
 
     fn chunks<'a>(
         rows: Range<u32>,
-        map: &ModelHandle<DisplayMap<language::Buffer>>,
+        map: &ModelHandle<DisplayMap<language::buffer::Buffer>>,
         theme: &'a SyntaxTheme,
         cx: &mut MutableAppContext,
     ) -> Vec<(String, Option<Color>)> {

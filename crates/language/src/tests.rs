@@ -1,4 +1,4 @@
-use crate::selection::SelectionExt;
+use crate::{buffer::*, selection::SelectionExt};
 
 use super::*;
 use gpui::{ModelHandle, MutableAppContext, Task};
@@ -1115,7 +1115,7 @@ impl File for FakeFile {
         todo!()
     }
 
-    fn buffer_updated(&self, _: u64, _: super::Operation, _: &mut MutableAppContext) {
+    fn buffer_updated(&self, _: u64, _: buffer::Operation, _: &mut MutableAppContext) {
         todo!()
     }
 

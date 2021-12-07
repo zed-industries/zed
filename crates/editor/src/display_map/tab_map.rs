@@ -1,5 +1,8 @@
 use super::fold_map::{self, FoldEdit, FoldPoint, Snapshot as FoldSnapshot, ToFoldPoint};
-use language::{document::DocumentSnapshot, rope, Chunk, Point};
+use language::{
+    buffer::{rope, Chunk, Point},
+    document::DocumentSnapshot,
+};
 use parking_lot::Mutex;
 use std::{cmp, mem, ops::Range};
 use sum_tree::Bias;
@@ -450,7 +453,7 @@ impl<'a> Iterator for Chunks<'a> {
 mod tests {
     use super::*;
     use crate::display_map::fold_map::FoldMap;
-    use language::Buffer;
+    use language::buffer::Buffer;
     use rand::{prelude::StdRng, Rng};
     use text::{RandomCharIter, Rope};
 

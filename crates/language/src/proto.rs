@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{Diagnostic, Operation};
+use crate::{buffer::Operation, Diagnostic};
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use lsp::DiagnosticSeverity;

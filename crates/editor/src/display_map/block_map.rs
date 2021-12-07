@@ -1,8 +1,8 @@
 use super::wrap_map::{self, Edit as WrapEdit, Snapshot as WrapSnapshot, WrapPoint};
 use gpui::{AppContext, ElementBox};
 use language::{
+    buffer::{Bias, Chunk, Edit, Point},
     document::{DocumentAnchor, DocumentSnapshot, ToDocumentOffset, ToDocumentPoint},
-    Bias, Chunk, Edit, Point,
 };
 use parking_lot::Mutex;
 use std::{
@@ -864,7 +864,7 @@ mod tests {
     use super::*;
     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
     use gpui::{elements::Empty, Element};
-    use language::Buffer;
+    use language::buffer::Buffer;
     use rand::prelude::*;
     use std::env;
     use text::RandomCharIter;

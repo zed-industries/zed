@@ -33,9 +33,6 @@ use theme::SyntaxTheme;
 use tree_sitter::{InputEdit, Parser, QueryCursor, Tree};
 use util::{post_inc, TryFutureExt as _};
 
-#[cfg(any(test, feature = "test-support"))]
-pub use tree_sitter_rust;
-
 pub use lsp::DiagnosticSeverity;
 
 thread_local! {

@@ -6,7 +6,10 @@ use gpui::{
     fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
 };
-use language::{document::DocumentSnapshot, Chunk, Patch, Point};
+use language::{
+    buffer::{Chunk, Patch, Point},
+    document::DocumentSnapshot,
+};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
 use std::{collections::VecDeque, mem, ops::Range, time::Duration};
@@ -976,7 +979,7 @@ mod tests {
         display_map::{fold_map::FoldMap, tab_map::TabMap},
         test::Observer,
     };
-    use language::{Buffer, RandomCharIter};
+    use language::buffer::{Buffer, RandomCharIter};
     use rand::prelude::*;
     use std::{cmp, env};
     use text::Rope;

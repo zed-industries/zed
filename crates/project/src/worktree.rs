@@ -12,7 +12,10 @@ use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task, UpgradeModelHandle, WeakModelHandle,
 };
-use language::{Buffer, Language, LanguageRegistry, Operation, Rope};
+use language::{
+    buffer::{self, Buffer, Operation, Rope},
+    Language, LanguageRegistry,
+};
 use lazy_static::lazy_static;
 use lsp::LanguageServer;
 use parking_lot::Mutex;
@@ -1073,7 +1076,7 @@ impl LocalWorktree {
                     .update(&mut cx, |this, cx| this.as_local().unwrap().load(&path, cx))
                     .await?;
                 let language = this.read_with(&cx, |this, _| {
-                    use language::File;
+                    use buffer::File;
                     this.languages().select_language(file.full_path()).cloned()
                 });
                 let (diagnostics, language_server) = this.update(&mut cx, |this, cx| {
@@ -1497,7 +1500,7 @@ impl RemoteWorktree {
                     is_local: false,
                 };
                 let language = this.read_with(&cx, |this, _| {
-                    use language::File;
+                    use buffer::File;
                     this.languages().select_language(file.full_path()).cloned()
                 });
                 let remote_buffer = response.buffer.ok_or_else(|| anyhow!("empty buffer"))?;
@@ -1981,7 +1984,7 @@ pub struct File {
     is_local: bool,
 }
 
-impl language::File for File {
+impl buffer::File for File {
     fn worktree_id(&self) -> usize {
         self.worktree.id()
     }
@@ -2113,7 +2116,7 @@ impl language::File for File {
         });
     }
 
-    fn boxed_clone(&self) -> Box<dyn language::File> {
+    fn boxed_clone(&self) -> Box<dyn buffer::File> {
         Box::new(self.clone())
     }
 
@@ -3469,7 +3472,7 @@ mod tests {
             assert!(buffer.is_dirty());
             assert_eq!(
                 *events.borrow(),
-                &[language::Event::Edited, language::Event::Dirtied]
+                &[buffer::Event::Edited, buffer::Event::Dirtied]
             );
             events.borrow_mut().clear();
             buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), None, cx);
@@ -3478,7 +3481,7 @@ mod tests {
         // after saving, the buffer is not dirty, and emits a saved event.
         buffer1.update(&mut cx, |buffer, cx| {
             assert!(!buffer.is_dirty());
-            assert_eq!(*events.borrow(), &[language::Event::Saved]);
+            assert_eq!(*events.borrow(), &[buffer::Event::Saved]);
             events.borrow_mut().clear();
 
             buffer.edit(vec![1..1], "B", cx);
@@ -3492,9 +3495,9 @@ mod tests {
             assert_eq!(
                 *events.borrow(),
                 &[
-                    language::Event::Edited,
-                    language::Event::Dirtied,
-                    language::Event::Edited,
+                    buffer::Event::Edited,
+                    buffer::Event::Dirtied,
+                    buffer::Event::Edited,
                 ],
             );
             events.borrow_mut().clear();
@@ -3506,7 +3509,7 @@ mod tests {
             assert!(buffer.is_dirty());
         });
 
-        assert_eq!(*events.borrow(), &[language::Event::Edited]);
+        assert_eq!(*events.borrow(), &[buffer::Event::Edited]);
 
         // When a file is deleted, the buffer is considered dirty.
         let events = Rc::new(RefCell::new(Vec::new()));
@@ -3526,7 +3529,7 @@ mod tests {
         buffer2.condition(&cx, |b, _| b.is_dirty()).await;
         assert_eq!(
             *events.borrow(),
-            &[language::Event::Dirtied, language::Event::FileHandleChanged]
+            &[buffer::Event::Dirtied, buffer::Event::FileHandleChanged]
         );
 
         // When a file is already dirty when deleted, we don't emit a Dirtied event.
@@ -3552,7 +3555,7 @@ mod tests {
         buffer3
             .condition(&cx, |_, _| !events.borrow().is_empty())
             .await;
-        assert_eq!(*events.borrow(), &[language::Event::FileHandleChanged]);
+        assert_eq!(*events.borrow(), &[buffer::Event::FileHandleChanged]);
         cx.read(|cx| assert!(buffer3.read(cx).is_dirty()));
     }
 

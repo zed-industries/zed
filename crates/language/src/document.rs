@@ -1,4 +1,4 @@
-use crate::{
+use crate::buffer::{
     rope::TextDimension, Chunk, Diagnostic, Event, Language, Point, Selection, SelectionSetId,
     Subscription, TextSummary,
 };
