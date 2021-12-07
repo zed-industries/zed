@@ -100,11 +100,7 @@ impl<S: DocumentSnapshot> ToFoldPoint<S> for Point {
 
 pub struct FoldMapWriter<'a, S: DocumentSnapshot>(&'a mut FoldMap<S>);
 
-impl<'a, S: DocumentSnapshot> FoldMapWriter<'a, S>
-where
-    usize: ToDocumentOffset<S>,
-    Point: ToDocumentOffset<S>,
-{
+impl<'a, S: DocumentSnapshot> FoldMapWriter<'a, S> {
     pub fn fold<T: ToDocumentOffset<S>>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
@@ -202,11 +198,7 @@ pub struct FoldMap<S: DocumentSnapshot> {
     version: AtomicUsize,
 }
 
-impl<S: DocumentSnapshot> FoldMap<S>
-where
-    usize: ToDocumentOffset<S>,
-    Point: ToDocumentOffset<S>,
-{
+impl<S: DocumentSnapshot> FoldMap<S> {
     pub fn new(document_snapshot: S) -> (Self, Snapshot<S>) {
         let this = Self {
             document_snapshot: Mutex::new(document_snapshot.clone()),
@@ -483,11 +475,7 @@ pub struct Snapshot<S: DocumentSnapshot> {
     pub version: usize,
 }
 
-impl<S: DocumentSnapshot> Snapshot<S>
-where
-    usize: ToDocumentOffset<S>,
-    Point: ToDocumentOffset<S>,
-{
+impl<S: DocumentSnapshot> Snapshot<S> {
     #[cfg(test)]
     pub fn text(&self) -> String {
         self.chunks(FoldOffset(0)..self.len(), None)
@@ -1073,8 +1061,7 @@ impl FoldEdit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ToPoint;
-    use language::Buffer;
+    use language::{Buffer, ToPoint};
     use rand::prelude::*;
     use std::{env, mem};
     use text::RandomCharIter;
@@ -1499,11 +1486,7 @@ mod tests {
         assert_eq!(snapshot.buffer_rows(3).collect::<Vec<_>>(), [6]);
     }
 
-    impl<S: DocumentSnapshot> FoldMap<S>
-    where
-        usize: ToDocumentOffset<S>,
-        Point: ToDocumentOffset<S>,
-    {
+    impl<S: DocumentSnapshot> FoldMap<S> {
         fn merged_fold_ranges(&self) -> Vec<Range<usize>> {
             let buffer = self.document_snapshot.lock().clone();
             let mut folds = self.folds.items(&buffer);

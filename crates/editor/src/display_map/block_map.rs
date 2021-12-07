@@ -109,11 +109,7 @@ pub struct BufferRows<'a, S: DocumentSnapshot> {
     started: bool,
 }
 
-impl<S: DocumentSnapshot> BlockMap<S>
-where
-    usize: ToDocumentOffset<S>,
-    Point: ToDocumentOffset<S>,
-{
+impl<S: DocumentSnapshot> BlockMap<S> {
     pub fn new(wrap_snapshot: WrapSnapshot<S>) -> Self {
         Self {
             next_block_id: AtomicUsize::new(0),
@@ -366,11 +362,7 @@ impl std::ops::DerefMut for BlockPoint {
     }
 }
 
-impl<'a, S: DocumentSnapshot> BlockMapWriter<'a, S>
-where
-    usize: ToDocumentOffset<S>,
-    Point: ToDocumentOffset<S>,
-{
+impl<'a, S: DocumentSnapshot> BlockMapWriter<'a, S> {
     pub fn insert<P>(
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<P>>,
@@ -467,11 +459,7 @@ where
     }
 }
 
-impl<S: DocumentSnapshot> BlockSnapshot<S>
-where
-    usize: ToDocumentOffset<S>,
-    Point: ToDocumentOffset<S>,
-{
+impl<S: DocumentSnapshot> BlockSnapshot<S> {
     #[cfg(test)]
     fn text(&mut self) -> String {
         self.chunks(0..self.transforms.summary().output_rows, None)

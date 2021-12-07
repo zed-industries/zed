@@ -3,6 +3,7 @@ pub mod document;
 mod excerpt_list;
 mod highlight_map;
 pub mod proto;
+mod selection;
 #[cfg(test)]
 mod tests;
 
@@ -14,6 +15,7 @@ use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use lsp::LanguageServer;
 use parking_lot::Mutex;
+pub use selection::SelectionExt;
 use serde::Deserialize;
 use std::{collections::HashSet, path::Path, str, sync::Arc};
 use theme::SyntaxTheme;

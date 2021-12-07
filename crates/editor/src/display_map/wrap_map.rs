@@ -6,10 +6,7 @@ use gpui::{
     fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
 };
-use language::{
-    document::{DocumentSnapshot, ToDocumentOffset},
-    Chunk, Patch, Point,
-};
+use language::{document::DocumentSnapshot, Chunk, Patch, Point};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
 use std::{collections::VecDeque, mem, ops::Range, time::Duration};
@@ -72,11 +69,7 @@ pub struct BufferRows<'a> {
     transforms: Cursor<'a, Transform, (WrapPoint, TabPoint)>,
 }
 
-impl<S: DocumentSnapshot> WrapMap<S>
-where
-    usize: ToDocumentOffset<S>,
-    Point: ToDocumentOffset<S>,
-{
+impl<S: DocumentSnapshot> WrapMap<S> {
     pub fn new(
         tab_snapshot: TabSnapshot<S>,
         font_id: FontId,
@@ -297,11 +290,7 @@ where
     }
 }
 
-impl<S: DocumentSnapshot> Snapshot<S>
-where
-    usize: ToDocumentOffset<S>,
-    Point: ToDocumentOffset<S>,
-{
+impl<S: DocumentSnapshot> Snapshot<S> {
     fn new(tab_snapshot: TabSnapshot<S>) -> Self {
         let mut transforms = SumTree::new();
         let extent = tab_snapshot.text_summary();
@@ -1238,11 +1227,7 @@ mod tests {
         }
     }
 
-    impl<S: DocumentSnapshot> Snapshot<S>
-    where
-        usize: ToDocumentOffset<S>,
-        Point: ToDocumentOffset<S>,
-    {
+    impl<S: DocumentSnapshot> Snapshot<S> {
         pub fn text(&self) -> String {
             self.text_chunks(0).collect()
         }

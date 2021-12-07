@@ -1,8 +1,6 @@
-use crate::display_map::{BlockContext, ToDisplayPoint};
-
 use super::{
-    DisplayPoint, Editor, EditorMode, EditorSettings, EditorStyle, Input, Scroll, Select,
-    SelectPhase, Snapshot, SoftWrap, MAX_LINE_LEN,
+    BlockContext, DisplayPoint, Editor, EditorMode, EditorSettings, EditorStyle, Input, Scroll,
+    Select, SelectPhase, Snapshot, SoftWrap, ToDisplayPoint, MAX_LINE_LEN,
 };
 use clock::ReplicaId;
 use gpui::{
@@ -19,7 +17,10 @@ use gpui::{
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
-use language::{Chunk, ToPoint};
+use language::{
+    document::{Document, DocumentSnapshot, ToDocumentPoint},
+    Chunk,
+};
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
@@ -28,28 +29,28 @@ use std::{
     ops::Range,
 };
 
-pub struct EditorElement {
-    view: WeakViewHandle<Editor>,
+pub struct EditorElement<D: Document> {
+    view: WeakViewHandle<Editor<D>>,
     settings: EditorSettings,
 }
 
-impl EditorElement {
-    pub fn new(view: WeakViewHandle<Editor>, settings: EditorSettings) -> Self {
+impl<D: Document> EditorElement<D> {
+    pub fn new(view: WeakViewHandle<Editor<D>>, settings: EditorSettings) -> Self {
         Self { view, settings }
     }
 
-    fn view<'a>(&self, cx: &'a AppContext) -> &'a Editor {
+    fn view<'a>(&self, cx: &'a AppContext) -> &'a Editor<D> {
         self.view.upgrade(cx).unwrap().read(cx)
     }
 
     fn update_view<F, T>(&self, cx: &mut MutableAppContext, f: F) -> T
     where
-        F: FnOnce(&mut Editor, &mut ViewContext<Editor>) -> T,
+        F: FnOnce(&mut Editor<D>, &mut ViewContext<Editor<D>>) -> T,
     {
         self.view.upgrade(cx).unwrap().update(cx, f)
     }
 
-    fn snapshot(&self, cx: &mut MutableAppContext) -> Snapshot {
+    fn snapshot(&self, cx: &mut MutableAppContext) -> Snapshot<D::Snapshot> {
         self.update_view(cx, |view, cx| view.snapshot(cx))
     }
 
@@ -59,7 +60,7 @@ impl EditorElement {
         alt: bool,
         shift: bool,
         mut click_count: usize,
-        layout: &mut LayoutState,
+        layout: &mut LayoutState<D::Snapshot>,
         paint: &mut PaintState,
         cx: &mut EventContext,
     ) -> bool {
@@ -105,7 +106,7 @@ impl EditorElement {
     fn mouse_dragged(
         &self,
         position: Vector2F,
-        layout: &mut LayoutState,
+        layout: &mut LayoutState<D::Snapshot>,
         paint: &mut PaintState,
         cx: &mut EventContext,
     ) -> bool {
@@ -182,7 +183,7 @@ impl EditorElement {
         position: Vector2F,
         mut delta: Vector2F,
         precise: bool,
-        layout: &mut LayoutState,
+        layout: &mut LayoutState<D::Snapshot>,
         paint: &mut PaintState,
         cx: &mut EventContext,
     ) -> bool {
@@ -215,7 +216,7 @@ impl EditorElement {
         &self,
         gutter_bounds: RectF,
         text_bounds: RectF,
-        layout: &LayoutState,
+        layout: &LayoutState<D::Snapshot>,
         cx: &mut PaintContext,
     ) {
         let bounds = gutter_bounds.union_rect(text_bounds);
@@ -284,7 +285,7 @@ impl EditorElement {
         &mut self,
         bounds: RectF,
         visible_bounds: RectF,
-        layout: &LayoutState,
+        layout: &LayoutState<D::Snapshot>,
         cx: &mut PaintContext,
     ) {
         let scroll_top = layout.snapshot.scroll_position().y() * layout.line_height;
@@ -304,7 +305,7 @@ impl EditorElement {
         &mut self,
         bounds: RectF,
         visible_bounds: RectF,
-        layout: &LayoutState,
+        layout: &LayoutState<D::Snapshot>,
         cx: &mut PaintContext,
     ) {
         let view = self.view(cx.app);
@@ -420,7 +421,7 @@ impl EditorElement {
         &mut self,
         text_bounds: RectF,
         visible_bounds: RectF,
-        layout: &mut LayoutState,
+        layout: &mut LayoutState<D::Snapshot>,
         cx: &mut PaintContext,
     ) {
         let scroll_position = layout.snapshot.scroll_position();
@@ -434,7 +435,7 @@ impl EditorElement {
         }
     }
 
-    fn max_line_number_width(&self, snapshot: &Snapshot, cx: &LayoutContext) -> f32 {
+    fn max_line_number_width(&self, snapshot: &Snapshot<D::Snapshot>, cx: &LayoutContext) -> f32 {
         let digit_count = (snapshot.buffer_row_count() as f32).log10().floor() as usize + 1;
         let style = &self.settings.style;
 
@@ -458,7 +459,7 @@ impl EditorElement {
         &self,
         rows: Range<u32>,
         active_rows: &BTreeMap<u32, bool>,
-        snapshot: &Snapshot,
+        snapshot: &Snapshot<D::Snapshot>,
         cx: &LayoutContext,
     ) -> Vec<Option<text_layout::Line>> {
         let style = &self.settings.style;
@@ -504,7 +505,7 @@ impl EditorElement {
     fn layout_lines(
         &mut self,
         mut rows: Range<u32>,
-        snapshot: &mut Snapshot,
+        snapshot: &mut Snapshot<D::Snapshot>,
         cx: &LayoutContext,
     ) -> Vec<text_layout::Line> {
         rows.end = cmp::min(rows.end, snapshot.max_point().row() + 1);
@@ -623,7 +624,7 @@ impl EditorElement {
     fn layout_blocks(
         &mut self,
         rows: Range<u32>,
-        snapshot: &Snapshot,
+        snapshot: &Snapshot<D::Snapshot>,
         text_width: f32,
         line_height: f32,
         style: &EditorStyle,
@@ -661,8 +662,8 @@ impl EditorElement {
     }
 }
 
-impl Element for EditorElement {
-    type LayoutState = Option<LayoutState>;
+impl<D: Document> Element for EditorElement<D> {
+    type LayoutState = Option<LayoutState<D::Snapshot>>;
     type PaintState = Option<PaintState>;
 
     fn layout(
@@ -917,13 +918,13 @@ impl Element for EditorElement {
     }
 }
 
-pub struct LayoutState {
+pub struct LayoutState<S: DocumentSnapshot> {
     size: Vector2F,
     gutter_size: Vector2F,
     gutter_padding: f32,
     text_size: Vector2F,
     style: EditorStyle,
-    snapshot: Snapshot,
+    snapshot: Snapshot<S>,
     active_rows: BTreeMap<u32, bool>,
     highlighted_row: Option<u32>,
     line_layouts: Vec<text_layout::Line>,
@@ -938,7 +939,7 @@ pub struct LayoutState {
     max_visible_line_width: f32,
 }
 
-impl LayoutState {
+impl<S: DocumentSnapshot> LayoutState<S> {
     fn scroll_width(&self, layout_cache: &TextLayoutCache) -> f32 {
         let row = self.snapshot.longest_row();
         let longest_line_width =
@@ -959,9 +960,9 @@ impl LayoutState {
     }
 }
 
-fn layout_line(
+fn layout_line<S: DocumentSnapshot>(
     row: u32,
-    snapshot: &Snapshot,
+    snapshot: &Snapshot<S>,
     style: &EditorStyle,
     layout_cache: &TextLayoutCache,
 ) -> text_layout::Line {
@@ -996,10 +997,10 @@ pub struct PaintState {
 }
 
 impl PaintState {
-    fn point_for_position(
+    fn point_for_position<S: DocumentSnapshot>(
         &self,
-        snapshot: &Snapshot,
-        layout: &LayoutState,
+        snapshot: &Snapshot<S>,
+        layout: &LayoutState<S>,
         position: Vector2F,
     ) -> (DisplayPoint, u32) {
         let scroll_position = snapshot.scroll_position();

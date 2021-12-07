@@ -56,7 +56,7 @@ impl<T: Clone> Selection<T> {
     }
 }
 
-impl<T: ToOffset + ToPoint + Copy + Ord> Selection<T> {
+impl<T: Clone + Ord> Selection<T> {
     pub fn is_empty(&self) -> bool {
         self.start == self.end
     }
@@ -64,36 +64,16 @@ impl<T: ToOffset + ToPoint + Copy + Ord> Selection<T> {
     pub fn set_head(&mut self, head: T) {
         if head.cmp(&self.tail()) < Ordering::Equal {
             if !self.reversed {
-                self.end = self.start;
+                self.end = self.start.clone();
                 self.reversed = true;
             }
             self.start = head;
         } else {
             if self.reversed {
-                self.start = self.end;
+                self.start = self.end.clone();
                 self.reversed = false;
             }
             self.end = head;
-        }
-    }
-
-    pub fn point_range(&self, buffer: &Buffer) -> Range<Point> {
-        let start = self.start.to_point(buffer);
-        let end = self.end.to_point(buffer);
-        if self.reversed {
-            end..start
-        } else {
-            start..end
-        }
-    }
-
-    pub fn offset_range(&self, buffer: &Buffer) -> Range<usize> {
-        let start = self.start.to_offset(buffer);
-        let end = self.end.to_offset(buffer);
-        if self.reversed {
-            end..start
-        } else {
-            start..end
         }
     }
 }

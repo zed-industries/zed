@@ -1,8 +1,5 @@
 use super::fold_map::{self, FoldEdit, FoldPoint, Snapshot as FoldSnapshot, ToFoldPoint};
-use language::{
-    document::{DocumentSnapshot, ToDocumentOffset},
-    rope, Chunk, Point,
-};
+use language::{document::DocumentSnapshot, rope, Chunk, Point};
 use parking_lot::Mutex;
 use std::{cmp, mem, ops::Range};
 use sum_tree::Bias;
@@ -10,11 +7,7 @@ use theme::SyntaxTheme;
 
 pub struct TabMap<S: DocumentSnapshot>(Mutex<Snapshot<S>>);
 
-impl<S: DocumentSnapshot> TabMap<S>
-where
-    usize: ToDocumentOffset<S>,
-    Point: ToDocumentOffset<S>,
-{
+impl<S: DocumentSnapshot> TabMap<S> {
     pub fn new(input: FoldSnapshot<S>, tab_size: usize) -> (Self, Snapshot<S>) {
         let snapshot = Snapshot {
             fold_snapshot: input,
@@ -104,11 +97,7 @@ pub struct Snapshot<S: DocumentSnapshot> {
     pub tab_size: usize,
 }
 
-impl<S: DocumentSnapshot> Snapshot<S>
-where
-    usize: ToDocumentOffset<S>,
-    Point: ToDocumentOffset<S>,
-{
+impl<S: DocumentSnapshot> Snapshot<S> {
     pub fn text_summary(&self) -> TextSummary {
         self.text_summary_for_range(TabPoint::zero()..self.max_point())
     }
@@ -217,7 +206,7 @@ where
 
     pub fn to_tab_point(&self, input: FoldPoint) -> TabPoint {
         let chars = self.fold_snapshot.chars_at(FoldPoint::new(input.row(), 0));
-        let expanded = Self::expand_tabs(chars, input.column() as usize, self.tab_size);
+        let expanded = expand_tabs(chars, input.column() as usize, self.tab_size);
         TabPoint::new(input.row(), expanded as u32)
     }
 
@@ -229,7 +218,7 @@ where
         let chars = self.fold_snapshot.chars_at(FoldPoint::new(output.row(), 0));
         let expanded = output.column() as usize;
         let (collapsed, expanded_char_column, to_next_stop) =
-            Self::collapse_tabs(chars, expanded, bias, self.tab_size);
+            collapse_tabs(chars, expanded, bias, self.tab_size);
         (
             FoldPoint::new(output.row(), collapsed as u32),
             expanded_char_column,
@@ -242,67 +231,67 @@ where
             .0
             .to_buffer_point(&self.fold_snapshot)
     }
+}
 
-    fn expand_tabs(chars: impl Iterator<Item = char>, column: usize, tab_size: usize) -> usize {
-        let mut expanded_chars = 0;
-        let mut expanded_bytes = 0;
-        let mut collapsed_bytes = 0;
-        for c in chars {
-            if collapsed_bytes == column {
-                break;
-            }
-            if c == '\t' {
-                let tab_len = tab_size - expanded_chars % tab_size;
-                expanded_bytes += tab_len;
-                expanded_chars += tab_len;
-            } else {
-                expanded_bytes += c.len_utf8();
-                expanded_chars += 1;
-            }
-            collapsed_bytes += c.len_utf8();
+fn expand_tabs(chars: impl Iterator<Item = char>, column: usize, tab_size: usize) -> usize {
+    let mut expanded_chars = 0;
+    let mut expanded_bytes = 0;
+    let mut collapsed_bytes = 0;
+    for c in chars {
+        if collapsed_bytes == column {
+            break;
         }
-        expanded_bytes
-    }
-
-    fn collapse_tabs(
-        mut chars: impl Iterator<Item = char>,
-        column: usize,
-        bias: Bias,
-        tab_size: usize,
-    ) -> (usize, usize, usize) {
-        let mut expanded_bytes = 0;
-        let mut expanded_chars = 0;
-        let mut collapsed_bytes = 0;
-        while let Some(c) = chars.next() {
-            if expanded_bytes >= column {
-                break;
-            }
-
-            if c == '\t' {
-                let tab_len = tab_size - (expanded_chars % tab_size);
-                expanded_chars += tab_len;
-                expanded_bytes += tab_len;
-                if expanded_bytes > column {
-                    expanded_chars -= expanded_bytes - column;
-                    return match bias {
-                        Bias::Left => (collapsed_bytes, expanded_chars, expanded_bytes - column),
-                        Bias::Right => (collapsed_bytes + 1, expanded_chars, 0),
-                    };
-                }
-            } else {
-                expanded_chars += 1;
-                expanded_bytes += c.len_utf8();
-            }
-
-            if expanded_bytes > column && matches!(bias, Bias::Left) {
-                expanded_chars -= 1;
-                break;
-            }
-
-            collapsed_bytes += c.len_utf8();
+        if c == '\t' {
+            let tab_len = tab_size - expanded_chars % tab_size;
+            expanded_bytes += tab_len;
+            expanded_chars += tab_len;
+        } else {
+            expanded_bytes += c.len_utf8();
+            expanded_chars += 1;
         }
-        (collapsed_bytes, expanded_chars, 0)
+        collapsed_bytes += c.len_utf8();
     }
+    expanded_bytes
+}
+
+fn collapse_tabs(
+    mut chars: impl Iterator<Item = char>,
+    column: usize,
+    bias: Bias,
+    tab_size: usize,
+) -> (usize, usize, usize) {
+    let mut expanded_bytes = 0;
+    let mut expanded_chars = 0;
+    let mut collapsed_bytes = 0;
+    while let Some(c) = chars.next() {
+        if expanded_bytes >= column {
+            break;
+        }
+
+        if c == '\t' {
+            let tab_len = tab_size - (expanded_chars % tab_size);
+            expanded_chars += tab_len;
+            expanded_bytes += tab_len;
+            if expanded_bytes > column {
+                expanded_chars -= expanded_bytes - column;
+                return match bias {
+                    Bias::Left => (collapsed_bytes, expanded_chars, expanded_bytes - column),
+                    Bias::Right => (collapsed_bytes + 1, expanded_chars, 0),
+                };
+            }
+        } else {
+            expanded_chars += 1;
+            expanded_bytes += c.len_utf8();
+        }
+
+        if expanded_bytes > column && matches!(bias, Bias::Left) {
+            expanded_chars -= 1;
+            break;
+        }
+
+        collapsed_bytes += c.len_utf8();
+    }
+    (collapsed_bytes, expanded_chars, 0)
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
@@ -467,9 +456,9 @@ mod tests {
 
     #[test]
     fn test_expand_tabs() {
-        assert_eq!(Snapshot::expand_tabs("\t".chars(), 0, 4), 0);
-        assert_eq!(Snapshot::expand_tabs("\t".chars(), 1, 4), 4);
-        assert_eq!(Snapshot::expand_tabs("\ta".chars(), 2, 4), 5);
+        assert_eq!(expand_tabs("\t".chars(), 0, 4), 0);
+        assert_eq!(expand_tabs("\t".chars(), 1, 4), 4);
+        assert_eq!(expand_tabs("\ta".chars(), 2, 4), 5);
     }
 
     #[gpui::test(iterations = 100)]

@@ -20,6 +20,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     ffi::OsString,
     future::Future,
+    io,
     iter::{Iterator, Peekable},
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
@@ -1995,6 +1996,11 @@ pub fn contiguous_ranges(
 
 impl crate::document::Document for Buffer {
     type Snapshot = Snapshot;
+    type SelectionSet = SelectionSet;
+
+    fn replica_id(&self) -> ReplicaId {
+        (**self).replica_id()
+    }
 
     fn snapshot(&self) -> Self::Snapshot {
         self.snapshot()
@@ -2003,10 +2009,82 @@ impl crate::document::Document for Buffer {
     fn subscribe(&mut self) -> Subscription {
         self.subscribe()
     }
+
+    fn add_selection_set<T: crate::document::ToDocumentOffset<Self::Snapshot>>(
+        &mut self,
+        selections: &[Selection<T>],
+        cx: &mut ModelContext<Self>,
+    ) -> SelectionSetId {
+        todo!()
+    }
+
+    fn selection_set(&self, set_id: SelectionSetId) -> Option<&SelectionSet> {
+        todo!()
+    }
+
+    fn selection_sets<'a>(
+        &'a self,
+    ) -> Box<dyn 'a + Iterator<Item = (&'a SelectionSetId, &'a SelectionSet)>> {
+        todo!()
+    }
+
+    fn language(&self) -> Option<&Arc<Language>> {
+        todo!()
+    }
+
+    fn edit<I, S, T>(&mut self, ranges_iter: I, new_text: T, cx: &mut ModelContext<Self>)
+    where
+        I: IntoIterator<Item = Range<S>>,
+        S: crate::document::ToDocumentOffset<Self::Snapshot>,
+        T: Into<String>,
+    {
+        todo!()
+    }
+
+    fn edit_with_autoindent<I, S, T>(
+        &mut self,
+        ranges_iter: I,
+        new_text: T,
+        cx: &mut ModelContext<Self>,
+    ) where
+        I: IntoIterator<Item = Range<S>>,
+        S: crate::document::ToDocumentOffset<Self::Snapshot>,
+        T: Into<String>,
+    {
+        todo!()
+    }
+
+    fn start_transaction(&mut self, set_id: Option<SelectionSetId>) {
+        todo!()
+    }
+
+    fn end_transaction(&mut self, set_id: Option<SelectionSetId>, cx: &mut ModelContext<Self>) {
+        todo!()
+    }
+
+    fn undo(&mut self, cx: &mut ModelContext<Self>) {
+        todo!()
+    }
+
+    fn redo(&mut self, cx: &mut ModelContext<Self>) {
+        todo!()
+    }
 }
 
 impl crate::document::DocumentSnapshot for Snapshot {
     type Anchor = Anchor;
+    type AnchorRangeSet = AnchorRangeSet;
+
+    fn text(&self) -> String {
+        todo!()
+    }
+
+    fn text_for_range<'a, T: crate::document::ToDocumentOffset<Self>>(
+        &'a self,
+        range: Range<T>,
+    ) -> Box<dyn 'a + Iterator<Item = &'a str>> {
+        todo!()
+    }
 
     fn chunks<'a, T: crate::document::ToDocumentOffset<Self>>(
         &'a self,
@@ -2017,6 +2095,64 @@ impl crate::document::DocumentSnapshot for Snapshot {
             range.start.to_offset(self)..range.end.to_offset(self),
             theme,
         ))
+    }
+
+    fn chars_at<'a, T: crate::document::ToDocumentOffset<Self>>(
+        &'a self,
+        position: T,
+    ) -> Box<dyn 'a + Iterator<Item = char>> {
+        todo!()
+    }
+
+    fn chars_for_range<'a, T: crate::document::ToDocumentOffset<Self>>(
+        &'a self,
+        range: Range<T>,
+    ) -> Box<dyn 'a + Iterator<Item = char>> {
+        todo!()
+    }
+
+    fn reversed_chars_at<'a, T: crate::document::ToDocumentOffset<Self>>(
+        &'a self,
+        position: T,
+    ) -> Box<dyn 'a + Iterator<Item = char>> {
+        todo!()
+    }
+
+    fn bytes_in_range<'a, T: crate::document::ToDocumentOffset<Self>>(
+        &'a self,
+        range: Range<T>,
+    ) -> Box<dyn 'a + crate::document::DocumentBytes<'a>> {
+        todo!()
+    }
+
+    fn contains_str_at<T: crate::document::ToDocumentOffset<Self>>(
+        &self,
+        position: T,
+        needle: &str,
+    ) -> bool {
+        todo!()
+    }
+
+    fn is_line_blank(&self, row: u32) -> bool {
+        todo!()
+    }
+
+    fn indent_column_for_line(&self, row: u32) -> u32 {
+        todo!()
+    }
+
+    fn range_for_syntax_ancestor<T: crate::document::ToDocumentOffset<Self>>(
+        &self,
+        range: Range<T>,
+    ) -> Option<Range<usize>> {
+        todo!()
+    }
+
+    fn enclosing_bracket_ranges<T: crate::document::ToDocumentOffset<Self>>(
+        &self,
+        range: Range<T>,
+    ) -> Option<(Range<usize>, Range<usize>)> {
+        todo!()
     }
 
     fn text_summary(&self) -> TextSummary {
@@ -2050,11 +2186,31 @@ impl crate::document::DocumentSnapshot for Snapshot {
         (**self).anchor_before(position.to_offset(self))
     }
 
+    fn anchor_at<T: crate::document::ToDocumentOffset<Self>>(
+        &self,
+        position: T,
+        bias: Bias,
+    ) -> Self::Anchor {
+        todo!()
+    }
+
     fn anchor_after<T: crate::document::ToDocumentOffset<Self>>(
         &self,
         position: T,
     ) -> Self::Anchor {
         (**self).anchor_after(position.to_offset(self))
+    }
+
+    fn anchor_range_set<E>(
+        &self,
+        start_bias: Bias,
+        end_bias: Bias,
+        entries: E,
+    ) -> Self::AnchorRangeSet
+    where
+        E: IntoIterator<Item = Range<usize>>,
+    {
+        todo!()
     }
 
     fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
@@ -2098,6 +2254,48 @@ impl crate::document::DocumentAnchor for Anchor {
     }
 }
 
+impl crate::document::DocumentAnchorRangeSet for AnchorRangeSet {
+    type Snapshot = Snapshot;
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    fn version(&self) -> &clock::Global {
+        self.version()
+    }
+
+    fn ranges<'a, D>(
+        &'a self,
+        snapshot: &'a Self::Snapshot,
+    ) -> Box<dyn 'a + Iterator<Item = Range<Point>>>
+    where
+        D: 'a + rope::TextDimension<'a>,
+    {
+        Box::new(self.ranges::<D>(snapshot))
+    }
+}
+
+impl crate::document::DocumentSelectionSet for SelectionSet {
+    type Document = Buffer;
+
+    fn is_active(&self) -> bool {
+        self.active
+    }
+
+    fn intersecting_selections<'a, D, I>(
+        &'a self,
+        range: Range<(I, Bias)>,
+        snapshot: &'a Buffer,
+    ) -> Box<dyn 'a + Iterator<Item = Selection<D>>>
+    where
+        D: 'a + rope::TextDimension<'a>,
+        I: 'a + crate::document::ToDocumentOffset<Snapshot>,
+    {
+        todo!()
+    }
+}
+
 impl<'a> crate::document::DocumentChunks<'a> for Chunks<'a> {
     fn seek(&mut self, offset: usize) {
         self.seek(offset);
@@ -2108,14 +2306,26 @@ impl<'a> crate::document::DocumentChunks<'a> for Chunks<'a> {
     }
 }
 
-impl<T: ToOffset> crate::document::ToDocumentOffset<Snapshot> for T {
-    fn to_offset(&self, snapshot: &Snapshot) -> usize {
-        self.to_offset(snapshot)
+impl crate::document::ToDocumentOffset<Snapshot> for PointUtf16 {
+    fn to_offset<'a>(&self, content: &Snapshot) -> usize {
+        text::ToOffset::to_offset(self, content)
     }
 }
 
-impl<T: ToPoint> crate::document::ToDocumentPoint<Snapshot> for T {
-    fn to_point(&self, snapshot: &Snapshot) -> Point {
-        self.to_point(snapshot)
+impl crate::document::ToDocumentOffset<Snapshot> for Anchor {
+    fn to_offset<'a>(&self, content: &Snapshot) -> usize {
+        text::ToOffset::to_offset(self, content)
+    }
+}
+
+impl<'a> crate::document::ToDocumentOffset<Snapshot> for &'a Anchor {
+    fn to_offset(&self, content: &Snapshot) -> usize {
+        text::ToOffset::to_offset(self, content)
+    }
+}
+
+impl crate::document::ToDocumentPoint<Snapshot> for Anchor {
+    fn to_point<'a>(&self, content: &Snapshot) -> Point {
+        text::ToPoint::to_point(self, content)
     }
 }

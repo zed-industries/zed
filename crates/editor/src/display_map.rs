@@ -38,11 +38,7 @@ impl<D: Document> Entity for DisplayMap<D> {
     type Event = ();
 }
 
-impl<D: Document> DisplayMap<D>
-where
-    usize: ToDocumentOffset<D::Snapshot>,
-    Point: ToDocumentOffset<D::Snapshot>,
-{
+impl<D: Document> DisplayMap<D> {
     pub fn new(
         buffer: ModelHandle<D>,
         tab_size: usize,
@@ -190,11 +186,7 @@ pub struct DisplayMapSnapshot<S: DocumentSnapshot> {
     blocks_snapshot: block_map::BlockSnapshot<S>,
 }
 
-impl<S: DocumentSnapshot> DisplayMapSnapshot<S>
-where
-    usize: ToDocumentOffset<S>,
-    Point: ToDocumentOffset<S>,
-{
+impl<S: DocumentSnapshot> DisplayMapSnapshot<S> {
     #[cfg(test)]
     pub fn fold_count(&self) -> usize {
         self.folds_snapshot.fold_count()
@@ -430,19 +422,11 @@ impl DisplayPoint {
         &mut self.0.column
     }
 
-    pub fn to_point<S: DocumentSnapshot>(self, map: &DisplayMapSnapshot<S>) -> Point
-    where
-        usize: ToDocumentOffset<S>,
-        Point: ToDocumentOffset<S>,
-    {
+    pub fn to_point<S: DocumentSnapshot>(self, map: &DisplayMapSnapshot<S>) -> Point {
         map.display_point_to_point(self, Bias::Left)
     }
 
-    pub fn to_offset<S: DocumentSnapshot>(self, map: &DisplayMapSnapshot<S>, bias: Bias) -> usize
-    where
-        usize: ToDocumentOffset<S>,
-        Point: ToDocumentOffset<S>,
-    {
+    pub fn to_offset<S: DocumentSnapshot>(self, map: &DisplayMapSnapshot<S>, bias: Bias) -> usize {
         let unblocked_point = map.blocks_snapshot.to_wrap_point(self.0);
         let unwrapped_point = map.wraps_snapshot.to_tab_point(unblocked_point);
         let unexpanded_point = map.tabs_snapshot.to_fold_point(unwrapped_point, bias).0;
@@ -450,11 +434,7 @@ impl DisplayPoint {
     }
 }
 
-impl<S: DocumentSnapshot, T: ToDocumentPoint<S>> ToDisplayPoint<S> for T
-where
-    usize: ToDocumentOffset<S>,
-    Point: ToDocumentOffset<S>,
-{
+impl<S: DocumentSnapshot, T: ToDocumentPoint<S>> ToDisplayPoint<S> for T {
     fn to_display_point(&self, map: &DisplayMapSnapshot<S>) -> DisplayPoint {
         map.point_to_display_point(self.to_point(&map.buffer_snapshot), Bias::Left)
     }
