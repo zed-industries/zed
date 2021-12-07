@@ -356,54 +356,53 @@ impl<'a> Iterator for Chunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.header_height > 0 {
-            let chunk = Chunk {
-                text: unsafe {
-                    std::str::from_utf8_unchecked(&NEWLINES[..self.header_height as usize])
-                },
-                ..Default::default()
-            };
-            self.header_height = 0;
-            return Some(chunk);
-        }
-
-        if let Some(entry_chunks) = self.entry_chunks.as_mut() {
-            if let Some(chunk) = entry_chunks.next() {
-                return Some(chunk);
-            } else if self.range.end >= self.cursor.end(&()) {
-                self.entry_chunks.take();
-                return Some(Chunk {
-                    text: "\n",
+        loop {
+            if self.header_height > 0 {
+                let chunk = Chunk {
+                    text: unsafe {
+                        std::str::from_utf8_unchecked(&NEWLINES[..self.header_height as usize])
+                    },
                     ..Default::default()
-                });
-            } else {
+                };
+                self.header_height = 0;
+                return Some(chunk);
+            }
+
+            if let Some(entry_chunks) = self.entry_chunks.as_mut() {
+                if let Some(chunk) = entry_chunks.next() {
+                    return Some(chunk);
+                }
+                self.entry_chunks.take();
+                if self.cursor.end(&()) <= self.range.end {
+                    return Some(Chunk {
+                        text: "\n",
+                        ..Default::default()
+                    });
+                }
+            }
+
+            self.cursor.next(&());
+            if *self.cursor.start() >= self.range.end {
                 return None;
             }
+
+            let excerpt = self.cursor.item()?;
+            let buffer_range = excerpt.range.to_offset(&excerpt.buffer);
+
+            let buffer_end = cmp::min(
+                buffer_range.end,
+                buffer_range.start + self.range.end
+                    - excerpt.header_height as usize
+                    - self.cursor.start(),
+            );
+
+            self.header_height = excerpt.header_height;
+            self.entry_chunks = Some(
+                excerpt
+                    .buffer
+                    .chunks(buffer_range.start..buffer_end, self.theme),
+            );
         }
-
-        self.cursor.next(&());
-        if *self.cursor.start() == self.range.end {
-            return None;
-        }
-
-        let excerpt = self.cursor.item()?;
-        let buffer_range = excerpt.range.to_offset(&excerpt.buffer);
-
-        let buffer_end = cmp::min(
-            buffer_range.end,
-            buffer_range.start + self.range.end
-                - excerpt.header_height as usize
-                - self.cursor.start(),
-        );
-
-        self.header_height = excerpt.header_height;
-        self.entry_chunks = Some(
-            excerpt
-                .buffer
-                .chunks(buffer_range.start..buffer_end, self.theme),
-        );
-
-        self.next()
     }
 }
 
