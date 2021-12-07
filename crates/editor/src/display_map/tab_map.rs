@@ -1,15 +1,22 @@
 use super::fold_map::{self, FoldEdit, FoldPoint, Snapshot as FoldSnapshot, ToFoldPoint};
-use language::{rope, Chunk};
+use language::{
+    document::{DocumentSnapshot, ToDocumentOffset},
+    rope, Chunk,
+};
 use parking_lot::Mutex;
 use std::{cmp, mem, ops::Range};
 use sum_tree::Bias;
 use text::Point;
 use theme::SyntaxTheme;
 
-pub struct TabMap(Mutex<Snapshot>);
+pub struct TabMap<S: DocumentSnapshot>(Mutex<Snapshot<S>>);
 
-impl TabMap {
-    pub fn new(input: FoldSnapshot<language::Snapshot>, tab_size: usize) -> (Self, Snapshot) {
+impl<S: DocumentSnapshot> TabMap<S>
+where
+    usize: ToDocumentOffset<S>,
+    Point: ToDocumentOffset<S>,
+{
+    pub fn new(input: FoldSnapshot<S>, tab_size: usize) -> (Self, Snapshot<S>) {
         let snapshot = Snapshot {
             fold_snapshot: input,
             tab_size,
@@ -19,9 +26,9 @@ impl TabMap {
 
     pub fn sync(
         &self,
-        fold_snapshot: FoldSnapshot<language::Snapshot>,
+        fold_snapshot: FoldSnapshot<S>,
         mut fold_edits: Vec<FoldEdit>,
-    ) -> (Snapshot, Vec<Edit>) {
+    ) -> (Snapshot<S>, Vec<Edit>) {
         let mut old_snapshot = self.0.lock();
         let max_offset = old_snapshot.fold_snapshot.len();
         let new_snapshot = Snapshot {
@@ -93,12 +100,16 @@ impl TabMap {
 }
 
 #[derive(Clone)]
-pub struct Snapshot {
-    pub fold_snapshot: FoldSnapshot<language::Snapshot>,
+pub struct Snapshot<S: DocumentSnapshot> {
+    pub fold_snapshot: FoldSnapshot<S>,
     pub tab_size: usize,
 }
 
-impl Snapshot {
+impl<S: DocumentSnapshot> Snapshot<S>
+where
+    usize: ToDocumentOffset<S>,
+    Point: ToDocumentOffset<S>,
+{
     pub fn text_summary(&self) -> TextSummary {
         self.text_summary_for_range(TabPoint::zero()..self.max_point())
     }

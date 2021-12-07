@@ -19,7 +19,7 @@ pub type Edit = text::Edit<u32>;
 
 pub struct WrapMap {
     snapshot: Snapshot,
-    pending_edits: VecDeque<(TabSnapshot, Vec<TabEdit>)>,
+    pending_edits: VecDeque<(TabSnapshot<language::Snapshot>, Vec<TabEdit>)>,
     interpolated_edits: Patch<u32>,
     edits_since_sync: Patch<u32>,
     wrap_width: Option<f32>,
@@ -33,7 +33,7 @@ impl Entity for WrapMap {
 
 #[derive(Clone)]
 pub struct Snapshot {
-    tab_snapshot: TabSnapshot,
+    tab_snapshot: TabSnapshot<language::Snapshot>,
     transforms: SumTree<Transform>,
     interpolated: bool,
 }
@@ -72,7 +72,7 @@ pub struct BufferRows<'a> {
 
 impl WrapMap {
     pub fn new(
-        tab_snapshot: TabSnapshot,
+        tab_snapshot: TabSnapshot<language::Snapshot>,
         font_id: FontId,
         font_size: f32,
         wrap_width: Option<f32>,
@@ -103,7 +103,7 @@ impl WrapMap {
 
     pub fn sync(
         &mut self,
-        tab_snapshot: TabSnapshot,
+        tab_snapshot: TabSnapshot<language::Snapshot>,
         edits: Vec<TabEdit>,
         cx: &mut ModelContext<Self>,
     ) -> (Snapshot, Vec<Edit>) {
@@ -292,7 +292,7 @@ impl WrapMap {
 }
 
 impl Snapshot {
-    fn new(tab_snapshot: TabSnapshot) -> Self {
+    fn new(tab_snapshot: TabSnapshot<language::Snapshot>) -> Self {
         let mut transforms = SumTree::new();
         let extent = tab_snapshot.text_summary();
         if !extent.lines.is_zero() {
@@ -305,7 +305,11 @@ impl Snapshot {
         }
     }
 
-    fn interpolate(&mut self, new_tab_snapshot: TabSnapshot, tab_edits: &[TabEdit]) -> Patch<u32> {
+    fn interpolate(
+        &mut self,
+        new_tab_snapshot: TabSnapshot<language::Snapshot>,
+        tab_edits: &[TabEdit],
+    ) -> Patch<u32> {
         let mut new_transforms;
         if tab_edits.is_empty() {
             new_transforms = self.transforms.clone();
@@ -376,7 +380,7 @@ impl Snapshot {
 
     async fn update(
         &mut self,
-        new_tab_snapshot: TabSnapshot,
+        new_tab_snapshot: TabSnapshot<language::Snapshot>,
         tab_edits: &[TabEdit],
         wrap_width: f32,
         line_wrapper: &mut LineWrapper,

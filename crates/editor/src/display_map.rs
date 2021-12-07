@@ -27,7 +27,7 @@ pub struct DisplayMap {
     buffer: ModelHandle<Buffer>,
     buffer_subscription: BufferSubscription,
     fold_map: FoldMap<language::Snapshot>,
-    tab_map: TabMap,
+    tab_map: TabMap<language::Snapshot>,
     wrap_map: ModelHandle<WrapMap>,
     block_map: BlockMap,
 }
@@ -179,7 +179,7 @@ impl DisplayMap {
 pub struct DisplayMapSnapshot {
     pub buffer_snapshot: language::Snapshot,
     folds_snapshot: fold_map::Snapshot<language::Snapshot>,
-    tabs_snapshot: tab_map::Snapshot,
+    tabs_snapshot: tab_map::Snapshot<language::Snapshot>,
     wraps_snapshot: wrap_map::Snapshot,
     blocks_snapshot: block_map::BlockSnapshot,
 }
