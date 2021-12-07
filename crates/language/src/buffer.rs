@@ -28,7 +28,6 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     vec,
 };
-use text::subscription::Subscription;
 pub use text::{Buffer as TextBuffer, Operation as _, *};
 use theme::SyntaxTheme;
 use tree_sitter::{InputEdit, Parser, QueryCursor, Tree};

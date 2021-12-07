@@ -32,7 +32,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use subscription::{Subscription, Topic};
+pub use subscription::*;
 pub use sum_tree::Bias;
 use sum_tree::{FilterCursor, SumTree};
 
