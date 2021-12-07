@@ -2748,7 +2748,9 @@ impl<D: Document> Editor<D> {
         cx: &mut ViewContext<Self>,
     ) {
         let old_selections = self.selections::<usize>(cx).collect::<Box<_>>();
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let display_map = self
+            .display_map
+            .update(cx, |map, cx| DisplayMap::snapshot(map, cx)); // Work around rust-analyzer bug.
         let buffer = &display_map.buffer_snapshot;
 
         let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
@@ -3374,7 +3376,7 @@ impl<D: Document> Editor<D> {
 
     pub fn longest_row(&self, cx: &mut MutableAppContext) -> u32 {
         self.display_map
-            .update(cx, |map, cx| map.snapshot(cx))
+            .update(cx, |map, cx| DisplayMap::snapshot(map, cx)) // Work around rust-analyzer bug.
             .longest_row()
     }
 
@@ -3390,7 +3392,7 @@ impl<D: Document> Editor<D> {
 
     pub fn display_text(&self, cx: &mut MutableAppContext) -> String {
         self.display_map
-            .update(cx, |map, cx| map.snapshot(cx))
+            .update(cx, |map, cx| DisplayMap::snapshot(map, cx)) // Work around rust-analyzer bug
             .text()
     }
 
