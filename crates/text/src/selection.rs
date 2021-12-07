@@ -1,9 +1,8 @@
-use sum_tree::Bias;
-
-use crate::{rope::TextDimension, BufferSnapshot};
-
-use super::{AnchorRangeMap, Buffer, Point, ToOffset, ToPoint};
+use crate::{
+    rope::TextDimension, AnchorRangeMap, Buffer, BufferSnapshot, Point, ToOffset, ToPoint,
+};
 use std::{cmp::Ordering, ops::Range, sync::Arc};
+use sum_tree::Bias;
 
 pub type SelectionSetId = clock::Lamport;
 pub type SelectionsVersion = usize;
@@ -108,7 +107,7 @@ impl SelectionSet {
         content: &'a BufferSnapshot,
     ) -> impl 'a + Iterator<Item = Selection<D>>
     where
-        D: 'a + TextDimension<'a>,
+        D: TextDimension,
     {
         self.selections
             .ranges(content)
@@ -127,7 +126,7 @@ impl SelectionSet {
         content: &'a BufferSnapshot,
     ) -> impl 'a + Iterator<Item = Selection<D>>
     where
-        D: 'a + TextDimension<'a>,
+        D: TextDimension,
         I: 'a + ToOffset,
     {
         self.selections
@@ -143,7 +142,7 @@ impl SelectionSet {
 
     pub fn oldest_selection<'a, D>(&'a self, content: &'a BufferSnapshot) -> Option<Selection<D>>
     where
-        D: 'a + TextDimension<'a>,
+        D: TextDimension,
     {
         self.selections
             .min_by_key(content, |selection| selection.id)
@@ -158,7 +157,7 @@ impl SelectionSet {
 
     pub fn newest_selection<'a, D>(&'a self, content: &'a BufferSnapshot) -> Option<Selection<D>>
     where
-        D: 'a + TextDimension<'a>,
+        D: TextDimension,
     {
         self.selections
             .max_by_key(content, |selection| selection.id)

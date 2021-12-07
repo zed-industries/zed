@@ -3056,7 +3056,7 @@ impl Editor {
 
     pub fn selections<'a, D>(&self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Selection<D>>
     where
-        D: 'a + TextDimension<'a> + Ord,
+        D: 'a + TextDimension + Ord,
     {
         let buffer = self.buffer.read(cx);
         let mut selections = self.selection_set(cx).selections::<D>(buffer).peekable();
@@ -3086,10 +3086,7 @@ impl Editor {
         })
     }
 
-    fn pending_selection<'a, D>(&self, cx: &'a AppContext) -> Option<Selection<D>>
-    where
-        D: 'a + TextDimension<'a>,
-    {
+    fn pending_selection<D: TextDimension>(&self, cx: &AppContext) -> Option<Selection<D>> {
         let buffer = self.buffer.read(cx);
         self.pending_selection.as_ref().map(|pending| Selection {
             id: pending.selection.id,
@@ -3108,10 +3105,7 @@ impl Editor {
         selection_count
     }
 
-    pub fn oldest_selection<'a, T>(&self, cx: &'a AppContext) -> Selection<T>
-    where
-        T: 'a + TextDimension<'a>,
-    {
+    pub fn oldest_selection<T: TextDimension>(&self, cx: &AppContext) -> Selection<T> {
         let buffer = self.buffer.read(cx);
         self.selection_set(cx)
             .oldest_selection(buffer)
@@ -3119,10 +3113,7 @@ impl Editor {
             .unwrap()
     }
 
-    pub fn newest_selection<'a, T>(&self, cx: &'a AppContext) -> Selection<T>
-    where
-        T: 'a + TextDimension<'a>,
-    {
+    pub fn newest_selection<T: TextDimension>(&self, cx: &AppContext) -> Selection<T> {
         let buffer = self.buffer.read(cx);
         self.pending_selection(cx)
             .or_else(|| self.selection_set(cx).newest_selection(buffer))

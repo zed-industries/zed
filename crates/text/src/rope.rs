@@ -327,7 +327,7 @@ impl<'a> Cursor<'a> {
         slice
     }
 
-    pub fn summary<D: TextDimension<'a>>(&mut self, end_offset: usize) -> D {
+    pub fn summary<D: TextDimension>(&mut self, end_offset: usize) -> D {
         debug_assert!(end_offset >= self.offset);
 
         let mut summary = D::default();
@@ -719,12 +719,12 @@ impl std::ops::AddAssign<Self> for TextSummary {
     }
 }
 
-pub trait TextDimension<'a>: Dimension<'a, TextSummary> {
+pub trait TextDimension: 'static + for<'a> Dimension<'a, TextSummary> {
     fn from_text_summary(summary: &TextSummary) -> Self;
     fn add_assign(&mut self, other: &Self);
 }
 
-impl<'a, D1: TextDimension<'a>, D2: TextDimension<'a>> TextDimension<'a> for (D1, D2) {
+impl<'a, D1: TextDimension, D2: TextDimension> TextDimension for (D1, D2) {
     fn from_text_summary(summary: &TextSummary) -> Self {
         (
             D1::from_text_summary(summary),
@@ -738,7 +738,7 @@ impl<'a, D1: TextDimension<'a>, D2: TextDimension<'a>> TextDimension<'a> for (D1
     }
 }
 
-impl<'a> TextDimension<'a> for TextSummary {
+impl TextDimension for TextSummary {
     fn from_text_summary(summary: &TextSummary) -> Self {
         summary.clone()
     }
@@ -754,7 +754,7 @@ impl<'a> sum_tree::Dimension<'a, TextSummary> for usize {
     }
 }
 
-impl<'a> TextDimension<'a> for usize {
+impl TextDimension for usize {
     fn from_text_summary(summary: &TextSummary) -> Self {
         summary.bytes
     }
@@ -770,7 +770,7 @@ impl<'a> sum_tree::Dimension<'a, TextSummary> for Point {
     }
 }
 
-impl<'a> TextDimension<'a> for Point {
+impl TextDimension for Point {
     fn from_text_summary(summary: &TextSummary) -> Self {
         summary.lines
     }
@@ -786,7 +786,7 @@ impl<'a> sum_tree::Dimension<'a, TextSummary> for PointUtf16 {
     }
 }
 
-impl<'a> TextDimension<'a> for PointUtf16 {
+impl TextDimension for PointUtf16 {
     fn from_text_summary(summary: &TextSummary) -> Self {
         summary.lines_utf16
     }
