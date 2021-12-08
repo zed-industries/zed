@@ -1,6 +1,5 @@
+use super::{FromAnchor, FullOffset, Point, ToOffset};
 use crate::{rope::TextDimension, BufferSnapshot};
-
-use super::{Buffer, FromAnchor, FullOffset, Point, ToOffset};
 use anyhow::Result;
 use std::{
     cmp::Ordering,
@@ -99,7 +98,7 @@ impl Anchor {
         Ok(offset_comparison.then_with(|| self.bias.cmp(&other.bias)))
     }
 
-    pub fn bias_left(&self, buffer: &Buffer) -> Anchor {
+    pub fn bias_left(&self, buffer: &BufferSnapshot) -> Anchor {
         if self.bias == Bias::Left {
             self.clone()
         } else {
@@ -107,7 +106,7 @@ impl Anchor {
         }
     }
 
-    pub fn bias_right(&self, buffer: &Buffer) -> Anchor {
+    pub fn bias_right(&self, buffer: &BufferSnapshot) -> Anchor {
         if self.bias == Bias::Right {
             self.clone()
         } else {

@@ -1,20 +1,25 @@
-use crate::buffer::{self, Buffer, Chunk, ToOffset as _, ToPoint as _};
+mod anchor;
+mod location;
+mod selection;
+
+use self::location::*;
+use crate::{
+    buffer::{self, Buffer, Chunk, ToOffset as _, ToPoint as _},
+    BufferSnapshot,
+};
 use collections::HashMap;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle};
 use parking_lot::Mutex;
-use smallvec::{smallvec, SmallVec};
-use std::{cmp, iter, ops::Range};
+use std::{cmp, ops::Range};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{
     rope::TextDimension,
     subscription::{Subscription, Topic},
-    Anchor, AnchorRangeExt, Edit, Point, PointUtf16, TextSummary,
+    AnchorRangeExt, Edit, Point, PointUtf16, TextSummary,
 };
 use theme::SyntaxTheme;
 
 const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
-
-pub type ExcerptId = Location;
 
 #[derive(Default)]
 pub struct MultiBuffer {
@@ -53,7 +58,7 @@ pub struct ExcerptProperties<'a, T> {
 struct Excerpt {
     id: ExcerptId,
     buffer: buffer::BufferSnapshot,
-    range: Range<Anchor>,
+    range: Range<text::Anchor>,
     text_summary: TextSummary,
     header_height: u8,
 }
@@ -63,9 +68,6 @@ struct ExcerptSummary {
     excerpt_id: ExcerptId,
     text: TextSummary,
 }
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Location(SmallVec<[u8; 4]>);
 
 pub struct Chunks<'a> {
     range: Range<usize>,
@@ -531,13 +533,41 @@ impl MultiBufferSnapshot {
 
         summary
     }
+
+    fn resolve_excerpt<'a, D: TextDimension>(
+        &'a self,
+        excerpt_id: &ExcerptId,
+    ) -> Option<(D, &'a BufferSnapshot)> {
+        let mut cursor = self.excerpts.cursor::<(ExcerptId, TextSummary)>();
+        cursor.seek(excerpt_id, Bias::Left, &());
+        if let Some(excerpt) = cursor.item() {
+            if cursor.start().0 == *excerpt_id {
+                return Some((D::from_text_summary(&cursor.start().1), &excerpt.buffer));
+            }
+        }
+        None
+    }
+
+    fn buffer_snapshot_for_excerpt<'a>(
+        &'a self,
+        excerpt_id: &ExcerptId,
+    ) -> Option<&'a BufferSnapshot> {
+        let mut cursor = self.excerpts.cursor::<ExcerptId>();
+        cursor.seek(excerpt_id, Bias::Left, &());
+        if let Some(excerpt) = cursor.item() {
+            if cursor.start() == excerpt_id {
+                return Some(&excerpt.buffer);
+            }
+        }
+        None
+    }
 }
 
 impl Excerpt {
     fn new(
         id: ExcerptId,
         buffer: buffer::BufferSnapshot,
-        range: Range<Anchor>,
+        range: Range<text::Anchor>,
         header_height: u8,
     ) -> Self {
         let mut text_summary =
@@ -562,6 +592,18 @@ impl Excerpt {
             range,
             text_summary,
             header_height,
+        }
+    }
+
+    fn header_summary(&self) -> TextSummary {
+        TextSummary {
+            bytes: self.header_height as usize,
+            lines: Point::new(self.header_height as u32, 0),
+            lines_utf16: PointUtf16::new(self.header_height as u32, 0),
+            first_line_chars: 0,
+            last_line_chars: 0,
+            longest_row: 0,
+            longest_row_chars: 0,
         }
     }
 }
@@ -596,6 +638,18 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for TextSummary {
 impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for usize {
     fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
         *self += summary.text.bytes;
+    }
+}
+
+impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for usize {
+    fn cmp(&self, cursor_location: &ExcerptSummary, _: &()) -> cmp::Ordering {
+        Ord::cmp(self, &cursor_location.text.bytes)
+    }
+}
+
+impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for Location {
+    fn cmp(&self, cursor_location: &ExcerptSummary, _: &()) -> cmp::Ordering {
+        Ord::cmp(self, &cursor_location.excerpt_id)
     }
 }
 
@@ -703,43 +757,13 @@ impl ToPoint for Point {
     }
 }
 
-impl Default for Location {
-    fn default() -> Self {
-        Self::min()
-    }
-}
-
-impl Location {
-    pub fn min() -> Self {
-        Self(smallvec![u8::MIN])
-    }
-
-    pub fn max() -> Self {
-        Self(smallvec![u8::MAX])
-    }
-
-    pub fn between(lhs: &Self, rhs: &Self) -> Self {
-        let lhs = lhs.0.iter().copied().chain(iter::repeat(u8::MIN));
-        let rhs = rhs.0.iter().copied().chain(iter::repeat(u8::MAX));
-        let mut location = SmallVec::new();
-        for (lhs, rhs) in lhs.zip(rhs) {
-            let mid = lhs + (rhs.saturating_sub(lhs)) / 2;
-            location.push(mid);
-            if mid > lhs {
-                break;
-            }
-        }
-        Self(location)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::buffer::Buffer;
     use gpui::MutableAppContext;
     use rand::prelude::*;
-    use std::{env, mem};
+    use std::env;
     use text::{Point, RandomCharIter};
     use util::test::sample_text;
 
@@ -1092,38 +1116,6 @@ mod tests {
                 text.replace_range(edit.new.start..edit.new.start + edit.old.len(), &new_text);
             }
             assert_eq!(text.to_string(), snapshot.text());
-        }
-    }
-
-    #[gpui::test(iterations = 100)]
-    fn test_location(mut rng: StdRng) {
-        let mut lhs = Default::default();
-        let mut rhs = Default::default();
-        while lhs == rhs {
-            lhs = Location(
-                (0..rng.gen_range(1..=5))
-                    .map(|_| rng.gen_range(0..=100))
-                    .collect(),
-            );
-            rhs = Location(
-                (0..rng.gen_range(1..=5))
-                    .map(|_| rng.gen_range(0..=100))
-                    .collect(),
-            );
-        }
-
-        if lhs > rhs {
-            mem::swap(&mut lhs, &mut rhs);
-        }
-
-        let middle = Location::between(&lhs, &rhs);
-        assert!(middle > lhs);
-        assert!(middle < rhs);
-        for ix in 0..middle.0.len() - 1 {
-            assert!(
-                middle.0[ix] == *lhs.0.get(ix).unwrap_or(&0)
-                    || middle.0[ix] == *rhs.0.get(ix).unwrap_or(&0)
-            );
         }
     }
 }

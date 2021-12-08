@@ -685,6 +685,15 @@ impl sum_tree::Summary for TextSummary {
     }
 }
 
+impl<'a> std::ops::Add<Self> for TextSummary {
+    type Output = Self;
+
+    fn add(mut self, rhs: Self) -> Self::Output {
+        self.add_assign(&rhs);
+        self
+    }
+}
+
 impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
     fn add_assign(&mut self, other: &'a Self) {
         let joined_chars = self.last_line_chars + other.first_line_chars;
