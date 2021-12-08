@@ -724,7 +724,7 @@ pub trait TextDimension: 'static + for<'a> Dimension<'a, TextSummary> {
     fn add_assign(&mut self, other: &Self);
 }
 
-impl<'a, D1: TextDimension, D2: TextDimension> TextDimension for (D1, D2) {
+impl<D1: TextDimension, D2: TextDimension> TextDimension for (D1, D2) {
     fn from_text_summary(summary: &TextSummary) -> Self {
         (
             D1::from_text_summary(summary),
