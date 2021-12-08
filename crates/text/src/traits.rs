@@ -8,8 +8,7 @@ pub trait Snapshot {
     fn text_summary_for_range<'a, D, O>(&'a self, range: Range<O>) -> D
     where
         D: TextDimension,
-        O: ToOffset,
-        Self: Sized;
+        O: ToOffset;
     fn point_to_offset(&self, point: Point) -> usize;
     fn point_utf16_to_offset(&self, point: PointUtf16) -> usize;
     fn offset_to_point(&self, offset: usize) -> Point;

@@ -6,6 +6,7 @@ use smallvec::{smallvec, SmallVec};
 use std::{cmp, iter, ops::Range};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{
+    rope::TextDimension,
     subscription::{Subscription, Topic},
     Anchor, AnchorRangeExt, Edit, Point, PointUtf16, Snapshot as _, TextSummary,
 };
@@ -363,11 +364,89 @@ impl text::Snapshot for ExcerptListSnapshot {
 
     fn text_summary_for_range<'a, D, O>(&'a self, range: Range<O>) -> D
     where
-        D: text::rope::TextDimension,
+        D: TextDimension,
         O: ToOffset,
-        Self: Sized,
     {
-        todo!()
+        let mut summary = D::default();
+        let mut range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut cursor = self.excerpts.cursor::<usize>();
+        cursor.seek(&range.start, Bias::Right, &());
+        if let Some(excerpt) = cursor.item() {
+            let start_after_header = cursor.start() + excerpt.header_height as usize;
+            if range.start < start_after_header {
+                let header_len = cmp::min(range.end, start_after_header) - range.start;
+                summary.add_assign(&D::from_text_summary(&TextSummary {
+                    bytes: header_len,
+                    lines: Point::new(header_len as u32, 0),
+                    lines_utf16: PointUtf16::new(header_len as u32, 0),
+                    first_line_chars: 0,
+                    last_line_chars: 0,
+                    longest_row: 0,
+                    longest_row_chars: 0,
+                }));
+                range.start = start_after_header;
+                range.end = cmp::max(range.start, range.end);
+            }
+
+            let end_before_newline = cursor.end(&()) - 1;
+            let excerpt_start = excerpt.range.start.to_offset(&excerpt.buffer);
+            let start_in_excerpt = excerpt_start + (range.start - start_after_header);
+            let end_in_excerpt =
+                excerpt_start + (cmp::min(end_before_newline, range.end) - start_after_header);
+            summary.add_assign(
+                &excerpt
+                    .buffer
+                    .text_summary_for_range(start_in_excerpt..end_in_excerpt),
+            );
+
+            if range.end > end_before_newline {
+                summary.add_assign(&D::from_text_summary(&TextSummary {
+                    bytes: 1,
+                    lines: Point::new(1 as u32, 0),
+                    lines_utf16: PointUtf16::new(1 as u32, 0),
+                    first_line_chars: 0,
+                    last_line_chars: 0,
+                    longest_row: 0,
+                    longest_row_chars: 0,
+                }));
+            }
+
+            cursor.next(&());
+        }
+
+        if range.end > *cursor.start() {
+            summary.add_assign(&D::from_text_summary(&cursor.summary::<_, TextSummary>(
+                &range.end,
+                Bias::Right,
+                &(),
+            )));
+            if let Some(excerpt) = cursor.item() {
+                let start_after_header = cursor.start() + excerpt.header_height as usize;
+                let header_len =
+                    cmp::min(range.end - cursor.start(), excerpt.header_height as usize);
+                summary.add_assign(&D::from_text_summary(&TextSummary {
+                    bytes: header_len,
+                    lines: Point::new(header_len as u32, 0),
+                    lines_utf16: PointUtf16::new(header_len as u32, 0),
+                    first_line_chars: 0,
+                    last_line_chars: 0,
+                    longest_row: 0,
+                    longest_row_chars: 0,
+                }));
+                range.end = cmp::max(start_after_header, range.end);
+
+                let excerpt_start = excerpt.range.start.to_offset(&excerpt.buffer);
+                let end_in_excerpt = excerpt_start + (range.end - start_after_header);
+                summary.add_assign(
+                    &excerpt
+                        .buffer
+                        .text_summary_for_range(excerpt_start..end_in_excerpt),
+                );
+                cursor.next(&());
+            }
+        }
+
+        summary
     }
 
     fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
@@ -456,6 +535,12 @@ impl sum_tree::Summary for EntrySummary {
         debug_assert!(summary.excerpt_id > self.excerpt_id);
         self.excerpt_id = summary.excerpt_id.clone();
         self.text.add_summary(&summary.text, &());
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, EntrySummary> for TextSummary {
+    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
+        *self += &summary.text;
     }
 }
 
@@ -835,6 +920,14 @@ mod tests {
                         .collect::<String>(),
                     &expected_text[start_ix..end_ix],
                     "incorrect text for range {:?}",
+                    start_ix..end_ix
+                );
+
+                let expected_summary = TextSummary::from(&expected_text[start_ix..end_ix]);
+                assert_eq!(
+                    snapshot.text_summary_for_range::<TextSummary, _>(start_ix..end_ix),
+                    expected_summary,
+                    "incorrect summary for range {:?}",
                     start_ix..end_ix
                 );
             }
