@@ -453,22 +453,20 @@ impl text::Snapshot for ExcerptListSnapshot {
         let mut cursor = self.excerpts.cursor::<usize>();
         cursor.seek(&offset, Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
-            let overshoot = offset - cursor.start();
-            let header_height = excerpt.header_height as usize;
-            if overshoot < header_height {
+            let start_after_header = *cursor.start() + excerpt.header_height as usize;
+            if offset < start_after_header {
                 *cursor.start()
             } else {
                 let excerpt_start = excerpt.range.start.to_offset(&excerpt.buffer);
-                let buffer_offset = excerpt.buffer.clip_offset(
-                    excerpt_start + (offset - header_height - cursor.start()),
-                    bias,
-                );
+                let buffer_offset = excerpt
+                    .buffer
+                    .clip_offset(excerpt_start + (offset - start_after_header), bias);
                 let offset_in_excerpt = if buffer_offset > excerpt_start {
                     buffer_offset - excerpt_start
                 } else {
                     0
                 };
-                cursor.start() + header_height + offset_in_excerpt
+                start_after_header + offset_in_excerpt
             }
         } else {
             self.excerpts.summary().text.bytes
@@ -476,11 +474,52 @@ impl text::Snapshot for ExcerptListSnapshot {
     }
 
     fn clip_point(&self, point: Point, bias: Bias) -> Point {
-        todo!()
+        let mut cursor = self.excerpts.cursor::<Point>();
+        cursor.seek(&point, Bias::Right, &());
+        if let Some(excerpt) = cursor.item() {
+            let start_after_header = *cursor.start() + Point::new(excerpt.header_height as u32, 0);
+            if point < start_after_header {
+                *cursor.start()
+            } else {
+                let excerpt_start = excerpt.range.start.to_point(&excerpt.buffer);
+                let buffer_point = excerpt
+                    .buffer
+                    .clip_point(excerpt_start + (point - start_after_header), bias);
+                let point_in_excerpt = if buffer_point > excerpt_start {
+                    buffer_point - excerpt_start
+                } else {
+                    Point::zero()
+                };
+                start_after_header + point_in_excerpt
+            }
+        } else {
+            self.excerpts.summary().text.lines
+        }
     }
 
-    fn clip_point_utf16(&self, point: text::PointUtf16, bias: Bias) -> text::PointUtf16 {
-        todo!()
+    fn clip_point_utf16(&self, point: PointUtf16, bias: Bias) -> PointUtf16 {
+        let mut cursor = self.excerpts.cursor::<PointUtf16>();
+        cursor.seek(&point, Bias::Right, &());
+        if let Some(excerpt) = cursor.item() {
+            let start_after_header =
+                *cursor.start() + PointUtf16::new(excerpt.header_height as u32, 0);
+            if point < start_after_header {
+                *cursor.start()
+            } else {
+                let excerpt_start = excerpt.range.start.to_point_utf16(&excerpt.buffer);
+                let buffer_point = excerpt
+                    .buffer
+                    .clip_point_utf16(excerpt_start + (point - start_after_header), bias);
+                let point_in_excerpt = if buffer_point > excerpt_start {
+                    buffer_point - excerpt_start
+                } else {
+                    PointUtf16::new(0, 0)
+                };
+                start_after_header + point_in_excerpt
+            }
+        } else {
+            self.excerpts.summary().text.lines_utf16
+        }
     }
 }
 
@@ -857,20 +896,25 @@ mod tests {
                 let buffer = buffer.read(cx);
                 let buffer_range = range.to_offset(buffer);
                 let buffer_start_point = buffer.offset_to_point(buffer_range.start);
+                let buffer_start_point_utf16 =
+                    buffer.text_summary_for_range::<PointUtf16, _>(0..buffer_range.start);
 
                 let excerpt_start = excerpt_starts.next().unwrap();
-                for buffer_offset in buffer_range.clone() {
-                    let offset = excerpt_start.bytes + (buffer_offset - buffer_range.start);
+                let mut offset = excerpt_start.bytes;
+                let mut buffer_offset = buffer_range.start;
+                let mut point = excerpt_start.lines;
+                let mut buffer_point = buffer_start_point;
+                let mut point_utf16 = excerpt_start.lines_utf16;
+                let mut buffer_point_utf16 = buffer_start_point_utf16;
+                for byte in buffer.bytes_in_range(buffer_range.clone()).flatten() {
                     let left_offset = snapshot.clip_offset(offset, Bias::Left);
                     let right_offset = snapshot.clip_offset(offset, Bias::Right);
                     let buffer_left_offset = buffer.clip_offset(buffer_offset, Bias::Left);
                     let buffer_right_offset = buffer.clip_offset(buffer_offset, Bias::Right);
-                    let left_point = snapshot.offset_to_point(left_offset);
-
                     assert_eq!(
                         left_offset,
                         excerpt_start.bytes + (buffer_left_offset - buffer_range.start),
-                        "clip_offset({}, Left). buffer: {}, buffer offset: {}",
+                        "clip_offset({:?}, Left). buffer: {:?}, buffer offset: {:?}",
                         offset,
                         buffer_id,
                         buffer_offset,
@@ -878,26 +922,84 @@ mod tests {
                     assert_eq!(
                         right_offset,
                         excerpt_start.bytes + (buffer_right_offset - buffer_range.start),
-                        "clip_offset({}, Right). buffer: {}, buffer offset: {}",
+                        "clip_offset({:?}, Right). buffer: {:?}, buffer offset: {:?}",
                         offset,
                         buffer_id,
                         buffer_offset,
                     );
+
+                    let left_point = snapshot.clip_point(point, Bias::Left);
+                    let right_point = snapshot.clip_point(point, Bias::Right);
+                    let buffer_left_point = buffer.clip_point(buffer_point, Bias::Left);
+                    let buffer_right_point = buffer.clip_point(buffer_point, Bias::Right);
                     assert_eq!(
                         left_point,
-                        excerpt_start.lines
-                            + (buffer.offset_to_point(buffer_left_offset) - buffer_start_point),
-                        "offset_to_point({}). buffer: {}, buffer offset: {}",
-                        offset,
+                        excerpt_start.lines + (buffer_left_point - buffer_start_point),
+                        "clip_point({:?}, Left). buffer: {:?}, buffer point: {:?}",
+                        point,
                         buffer_id,
-                        buffer_offset,
+                        buffer_point,
                     );
+                    assert_eq!(
+                        right_point,
+                        excerpt_start.lines + (buffer_right_point - buffer_start_point),
+                        "clip_point({:?}, Right). buffer: {:?}, buffer point: {:?}",
+                        point,
+                        buffer_id,
+                        buffer_point,
+                    );
+
+                    let left_point_utf16 = snapshot.clip_point_utf16(point_utf16, Bias::Left);
+                    let right_point_utf16 = snapshot.clip_point_utf16(point_utf16, Bias::Right);
+                    let buffer_left_point_utf16 =
+                        buffer.clip_point_utf16(buffer_point_utf16, Bias::Left);
+                    let buffer_right_point_utf16 =
+                        buffer.clip_point_utf16(buffer_point_utf16, Bias::Right);
+                    assert_eq!(
+                        left_point_utf16,
+                        excerpt_start.lines_utf16
+                            + (buffer_left_point_utf16 - buffer_start_point_utf16),
+                        "clip_point_utf16({:?}, Left). buffer: {:?}, buffer point_utf16: {:?}",
+                        point_utf16,
+                        buffer_id,
+                        buffer_point_utf16,
+                    );
+                    assert_eq!(
+                        right_point_utf16,
+                        excerpt_start.lines_utf16
+                            + (buffer_right_point_utf16 - buffer_start_point_utf16),
+                        "clip_point_utf16({:?}, Right). buffer: {:?}, buffer point_utf16: {:?}",
+                        point_utf16,
+                        buffer_id,
+                        buffer_point_utf16,
+                    );
+
                     assert_eq!(
                         snapshot.point_to_offset(left_point),
                         left_offset,
                         "point_to_offset({:?})",
                         left_point,
-                    )
+                    );
+                    assert_eq!(
+                        snapshot.offset_to_point(left_offset),
+                        left_point,
+                        "offset_to_point({:?})",
+                        left_offset,
+                    );
+
+                    offset += 1;
+                    buffer_offset += 1;
+                    if *byte == b'\n' {
+                        point += Point::new(1, 0);
+                        point_utf16 += PointUtf16::new(1, 0);
+                        buffer_point += Point::new(1, 0);
+                        buffer_point_utf16 += PointUtf16::new(1, 0);
+                    } else {
+                        point += Point::new(0, 1);
+                        point_utf16 += PointUtf16::new(0, 1);
+                        buffer_point += Point::new(0, 1);
+                        buffer_point_utf16 += PointUtf16::new(0, 1);
+                    }
                 }
             }
 
