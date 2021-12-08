@@ -3603,7 +3603,7 @@ impl<D: Buffer> View for Editor<D> {
                 cx,
             )
         });
-        todo!()
+        EditorElement::new(cx.handle(), settings).boxed()
     }
 
     fn ui_name() -> &'static str {
