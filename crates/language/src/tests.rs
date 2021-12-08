@@ -1,4 +1,8 @@
-use crate::{buffer::*, selection::SelectionExt, traits::Snapshot};
+use crate::{
+    buffer::*,
+    selection::SelectionExt,
+    traits::{Buffer as _, Snapshot},
+};
 
 use super::*;
 use gpui::{ModelHandle, MutableAppContext, Task};

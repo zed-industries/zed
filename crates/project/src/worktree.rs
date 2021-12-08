@@ -3009,7 +3009,8 @@ mod tests {
     use client::test::{FakeHttpClient, FakeServer};
     use fs::RealFs;
     use language::{
-        buffer::TextSnapshot, tree_sitter_rust, Diagnostic, LanguageConfig, LanguageServerConfig,
+        buffer::TextSnapshot, traits::Buffer as _, tree_sitter_rust, Diagnostic, LanguageConfig,
+        LanguageServerConfig,
     };
     use lsp::Url;
     use rand::prelude::*;

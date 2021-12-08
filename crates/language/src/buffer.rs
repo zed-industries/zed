@@ -1297,22 +1297,6 @@ impl Buffer {
         self.language.as_ref().and_then(|l| l.grammar.as_ref())
     }
 
-    pub fn add_selection_set<T: ToOffset>(
-        &mut self,
-        selections: &[Selection<T>],
-        cx: &mut ModelContext<Self>,
-    ) -> SelectionSetId {
-        let operation = self.text.add_selection_set(selections);
-        if let text::Operation::UpdateSelections { set_id, .. } = &operation {
-            let set_id = *set_id;
-            cx.notify();
-            self.send_operation(Operation::Buffer(operation), cx);
-            set_id
-        } else {
-            unreachable!()
-        }
-    }
-
     pub fn update_selection_set<T: ToOffset>(
         &mut self,
         set_id: SelectionSetId,
@@ -1397,28 +1381,6 @@ impl Buffer {
     pub fn remove_peer(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Self>) {
         self.text.remove_peer(replica_id);
         cx.notify();
-    }
-
-    pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
-        let was_dirty = self.is_dirty();
-        let old_version = self.version.clone();
-
-        for operation in self.text.undo() {
-            self.send_operation(Operation::Buffer(operation), cx);
-        }
-
-        self.did_edit(&old_version, was_dirty, cx);
-    }
-
-    pub fn redo(&mut self, cx: &mut ModelContext<Self>) {
-        let was_dirty = self.is_dirty();
-        let old_version = self.version.clone();
-
-        for operation in self.text.redo() {
-            self.send_operation(Operation::Buffer(operation), cx);
-        }
-
-        self.did_edit(&old_version, was_dirty, cx);
     }
 }
 
@@ -1967,7 +1929,7 @@ impl traits::Buffer for Buffer {
     }
 
     fn start_transaction(&mut self, set_id: Option<SelectionSetId>) -> Result<()> {
-        todo!()
+        self.start_transaction_at(set_id, Instant::now())
     }
 
     fn end_transaction(
@@ -1975,7 +1937,7 @@ impl traits::Buffer for Buffer {
         set_id: Option<SelectionSetId>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        todo!()
+        self.end_transaction_at(set_id, Instant::now(), cx)
     }
 
     fn edit<I, S, T>(&mut self, ranges_iter: I, new_text: T, cx: &mut ModelContext<Self>)
@@ -1984,7 +1946,7 @@ impl traits::Buffer for Buffer {
         S: ToOffset,
         T: Into<String>,
     {
-        todo!()
+        self.edit_internal(ranges_iter, new_text, false, cx)
     }
 
     fn edit_with_autoindent<I, S, T>(
@@ -1997,15 +1959,29 @@ impl traits::Buffer for Buffer {
         S: ToOffset,
         T: Into<String>,
     {
-        todo!()
+        self.edit_internal(ranges_iter, new_text, true, cx)
     }
 
     fn undo(&mut self, cx: &mut ModelContext<Self>) {
-        todo!()
+        let was_dirty = self.is_dirty();
+        let old_version = self.version.clone();
+
+        for operation in self.text.undo() {
+            self.send_operation(Operation::Buffer(operation), cx);
+        }
+
+        self.did_edit(&old_version, was_dirty, cx);
     }
 
     fn redo(&mut self, cx: &mut ModelContext<Self>) {
-        todo!()
+        let was_dirty = self.is_dirty();
+        let old_version = self.version.clone();
+
+        for operation in self.text.redo() {
+            self.send_operation(Operation::Buffer(operation), cx);
+        }
+
+        self.did_edit(&old_version, was_dirty, cx);
     }
 
     fn add_selection_set<T: ToOffset>(
@@ -2013,7 +1989,15 @@ impl traits::Buffer for Buffer {
         selections: &[Selection<T>],
         cx: &mut ModelContext<Self>,
     ) -> SelectionSetId {
-        todo!()
+        let operation = self.text.add_selection_set(selections);
+        if let text::Operation::UpdateSelections { set_id, .. } = &operation {
+            let set_id = *set_id;
+            cx.notify();
+            self.send_operation(Operation::Buffer(operation), cx);
+            set_id
+        } else {
+            unreachable!()
+        }
     }
 
     fn update_selection_set<T: ToOffset>(
@@ -2022,7 +2006,7 @@ impl traits::Buffer for Buffer {
         selections: &[Selection<T>],
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        todo!()
+        self.update_selection_set(set_id, selections, cx)
     }
 
     fn remove_selection_set(
@@ -2030,7 +2014,7 @@ impl traits::Buffer for Buffer {
         set_id: SelectionSetId,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        todo!()
+        self.remove_selection_set(set_id, cx)
     }
 
     fn set_active_selection_set(
@@ -2038,17 +2022,17 @@ impl traits::Buffer for Buffer {
         set_id: Option<SelectionSetId>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        todo!()
+        self.set_active_selection_set(set_id, cx)
     }
 
     fn selection_set(&self, set_id: SelectionSetId) -> Option<&SelectionSet> {
-        todo!()
+        self.text.selection_set(set_id).ok()
     }
 
     fn selection_sets<'a>(
         &'a self,
     ) -> Box<dyn 'a + Iterator<Item = (&'a SelectionSetId, &'a SelectionSet)>> {
-        todo!()
+        Box::new(self.text.selection_sets())
     }
 }
 
@@ -2368,11 +2352,11 @@ impl traits::AnchorRangeSet for AnchorRangeSet {
     }
 }
 
-impl traits::DocumentSelectionSet for SelectionSet {
-    type Document = Buffer;
+impl traits::BufferSelectionSet for SelectionSet {
+    type Buffer = Buffer;
 
     fn len(&self) -> usize {
-        todo!()
+        self.len()
     }
 
     fn is_active(&self) -> bool {
@@ -2388,31 +2372,31 @@ impl traits::DocumentSelectionSet for SelectionSet {
         D: 'a + rope::TextDimension,
         I: 'a + ToOffset,
     {
-        todo!()
+        Box::new(self.intersecting_selections(range, snapshot))
     }
 
     fn selections<'a, D>(
         &'a self,
-        document: &'a Self::Document,
+        buffer: &'a Self::Buffer,
     ) -> Box<dyn 'a + Iterator<Item = Selection<D>>>
     where
         D: rope::TextDimension,
     {
-        todo!()
+        Box::new(self.selections(buffer))
     }
 
-    fn oldest_selection<'a, D>(&'a self, document: &'a Self::Document) -> Option<Selection<D>>
+    fn oldest_selection<'a, D>(&'a self, buffer: &'a Self::Buffer) -> Option<Selection<D>>
     where
         D: rope::TextDimension,
     {
-        todo!()
+        self.oldest_selection(buffer)
     }
 
-    fn newest_selection<'a, D>(&'a self, document: &'a Self::Document) -> Option<Selection<D>>
+    fn newest_selection<'a, D>(&'a self, buffer: &'a Self::Buffer) -> Option<Selection<D>>
     where
         D: rope::TextDimension,
     {
-        todo!()
+        self.newest_selection(buffer)
     }
 }
 

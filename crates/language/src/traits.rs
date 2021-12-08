@@ -14,7 +14,7 @@ pub use text::{ToOffset, ToPoint};
 
 pub trait Buffer: 'static + Entity<Event = Event> {
     type Snapshot: Snapshot;
-    type SelectionSet: DocumentSelectionSet<Document = Self>;
+    type SelectionSet: BufferSelectionSet<Buffer = Self>;
 
     fn replica_id(&self) -> ReplicaId;
     fn language(&self) -> Option<&Arc<Language>>;
@@ -163,29 +163,29 @@ pub trait AnchorRangeSet {
 //     fn from_anchor(anchor: &S::Anchor, content: &S) -> Self;
 // }
 
-pub trait DocumentSelectionSet {
-    type Document: Buffer;
+pub trait BufferSelectionSet {
+    type Buffer: Buffer;
 
     fn len(&self) -> usize;
     fn is_active(&self) -> bool;
     fn intersecting_selections<'a, D, I>(
         &'a self,
         range: Range<(I, Bias)>,
-        document: &'a Self::Document,
+        document: &'a Self::Buffer,
     ) -> Box<dyn 'a + Iterator<Item = Selection<D>>>
     where
         D: TextDimension,
         I: 'a + ToOffset;
     fn selections<'a, D>(
         &'a self,
-        document: &'a Self::Document,
+        document: &'a Self::Buffer,
     ) -> Box<dyn 'a + Iterator<Item = Selection<D>>>
     where
         D: TextDimension;
-    fn oldest_selection<'a, D>(&'a self, document: &'a Self::Document) -> Option<Selection<D>>
+    fn oldest_selection<'a, D>(&'a self, document: &'a Self::Buffer) -> Option<Selection<D>>
     where
         D: TextDimension;
-    fn newest_selection<'a, D>(&'a self, document: &'a Self::Document) -> Option<Selection<D>>
+    fn newest_selection<'a, D>(&'a self, document: &'a Self::Buffer) -> Option<Selection<D>>
     where
         D: TextDimension;
 }
