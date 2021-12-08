@@ -2255,7 +2255,7 @@ impl traits::Snapshot for BufferSnapshot {
     }
 
     fn anchor_after<T: ToOffset>(&self, position: T) -> Self::Anchor {
-        self.anchor_after(position.to_offset(self))
+        self.text.anchor_after(position.to_offset(self))
     }
 
     fn anchor_range_set<E>(
