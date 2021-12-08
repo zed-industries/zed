@@ -700,21 +700,31 @@ mod tests {
 
             let snapshot = list.read(cx).snapshot(cx);
 
+            let mut excerpt_starts = Vec::new();
             let mut expected_text = String::new();
             for (buffer, range, header_height) in &expected_excerpts {
-                let buffer_id = buffer.id();
                 let buffer = buffer.read(cx);
                 let buffer_range = range.to_offset(buffer);
-                let buffer_start_point = buffer.offset_to_point(buffer_range.start);
 
                 for _ in 0..*header_height {
                     expected_text.push('\n');
                 }
 
-                let excerpt_start = TextSummary::from(expected_text.as_str());
+                excerpt_starts.push(TextSummary::from(expected_text.as_str()));
                 expected_text.extend(buffer.text_for_range(buffer_range.clone()));
                 expected_text.push('\n');
+            }
 
+            assert_eq!(snapshot.text(), expected_text);
+
+            let mut excerpt_starts = excerpt_starts.into_iter();
+            for (buffer, range, _) in &expected_excerpts {
+                let buffer_id = buffer.id();
+                let buffer = buffer.read(cx);
+                let buffer_range = range.to_offset(buffer);
+                let buffer_start_point = buffer.offset_to_point(buffer_range.start);
+
+                let excerpt_start = excerpt_starts.next().unwrap();
                 for buffer_offset in buffer_range.clone() {
                     let offset = excerpt_start.bytes + (buffer_offset - buffer_range.start);
                     let left_offset = snapshot.clip_offset(offset, Bias::Left);
@@ -756,8 +766,6 @@ mod tests {
                     )
                 }
             }
-
-            assert_eq!(snapshot.text(), expected_text);
 
             for _ in 0..10 {
                 let end_ix = snapshot.clip_offset(rng.gen_range(0..=snapshot.len()), Bias::Right);
