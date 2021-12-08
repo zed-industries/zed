@@ -1,8 +1,8 @@
 use crate::display_map::{BlockContext, ToDisplayPoint};
 
 use super::{
-    DisplayPoint, Editor, EditorMode, EditorSettings, EditorStyle, Input, Scroll, Select,
-    SelectPhase, Snapshot, SoftWrap, MAX_LINE_LEN,
+    DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, Input, Scroll,
+    Select, SelectPhase, SoftWrap, MAX_LINE_LEN,
 };
 use clock::ReplicaId;
 use gpui::{
@@ -49,7 +49,7 @@ impl EditorElement {
         self.view.upgrade(cx).unwrap().update(cx, f)
     }
 
-    fn snapshot(&self, cx: &mut MutableAppContext) -> Snapshot {
+    fn snapshot(&self, cx: &mut MutableAppContext) -> EditorSnapshot {
         self.update_view(cx, |view, cx| view.snapshot(cx))
     }
 
@@ -434,7 +434,7 @@ impl EditorElement {
         }
     }
 
-    fn max_line_number_width(&self, snapshot: &Snapshot, cx: &LayoutContext) -> f32 {
+    fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &LayoutContext) -> f32 {
         let digit_count = (snapshot.buffer_row_count() as f32).log10().floor() as usize + 1;
         let style = &self.settings.style;
 
@@ -458,7 +458,7 @@ impl EditorElement {
         &self,
         rows: Range<u32>,
         active_rows: &BTreeMap<u32, bool>,
-        snapshot: &Snapshot,
+        snapshot: &EditorSnapshot,
         cx: &LayoutContext,
     ) -> Vec<Option<text_layout::Line>> {
         let style = &self.settings.style;
@@ -504,7 +504,7 @@ impl EditorElement {
     fn layout_lines(
         &mut self,
         mut rows: Range<u32>,
-        snapshot: &mut Snapshot,
+        snapshot: &mut EditorSnapshot,
         cx: &LayoutContext,
     ) -> Vec<text_layout::Line> {
         rows.end = cmp::min(rows.end, snapshot.max_point().row() + 1);
@@ -623,7 +623,7 @@ impl EditorElement {
     fn layout_blocks(
         &mut self,
         rows: Range<u32>,
-        snapshot: &Snapshot,
+        snapshot: &EditorSnapshot,
         text_width: f32,
         line_height: f32,
         style: &EditorStyle,
@@ -923,7 +923,7 @@ pub struct LayoutState {
     gutter_padding: f32,
     text_size: Vector2F,
     style: EditorStyle,
-    snapshot: Snapshot,
+    snapshot: EditorSnapshot,
     active_rows: BTreeMap<u32, bool>,
     highlighted_row: Option<u32>,
     line_layouts: Vec<text_layout::Line>,
@@ -961,7 +961,7 @@ impl LayoutState {
 
 fn layout_line(
     row: u32,
-    snapshot: &Snapshot,
+    snapshot: &EditorSnapshot,
     style: &EditorStyle,
     layout_cache: &TextLayoutCache,
 ) -> text_layout::Line {
@@ -998,7 +998,7 @@ pub struct PaintState {
 impl PaintState {
     fn point_for_position(
         &self,
-        snapshot: &Snapshot,
+        snapshot: &EditorSnapshot,
         layout: &LayoutState,
         position: Vector2F,
     ) -> (DisplayPoint, u32) {

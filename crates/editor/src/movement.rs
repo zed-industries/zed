@@ -1,9 +1,9 @@
-use super::{Bias, DisplayMapSnapshot, DisplayPoint, SelectionGoal, ToDisplayPoint};
+use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use anyhow::Result;
 use std::{cmp, ops::Range};
 use text::ToPoint;
 
-pub fn left(map: &DisplayMapSnapshot, mut point: DisplayPoint) -> Result<DisplayPoint> {
+pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> Result<DisplayPoint> {
     if point.column() > 0 {
         *point.column_mut() -= 1;
     } else if point.row() > 0 {
@@ -13,7 +13,7 @@ pub fn left(map: &DisplayMapSnapshot, mut point: DisplayPoint) -> Result<Display
     Ok(map.clip_point(point, Bias::Left))
 }
 
-pub fn right(map: &DisplayMapSnapshot, mut point: DisplayPoint) -> Result<DisplayPoint> {
+pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> Result<DisplayPoint> {
     let max_column = map.line_len(point.row());
     if point.column() < max_column {
         *point.column_mut() += 1;
@@ -25,7 +25,7 @@ pub fn right(map: &DisplayMapSnapshot, mut point: DisplayPoint) -> Result<Displa
 }
 
 pub fn up(
-    map: &DisplayMapSnapshot,
+    map: &DisplaySnapshot,
     mut point: DisplayPoint,
     goal: SelectionGoal,
 ) -> Result<(DisplayPoint, SelectionGoal)> {
@@ -61,7 +61,7 @@ pub fn up(
 }
 
 pub fn down(
-    map: &DisplayMapSnapshot,
+    map: &DisplaySnapshot,
     mut point: DisplayPoint,
     goal: SelectionGoal,
 ) -> Result<(DisplayPoint, SelectionGoal)> {
@@ -98,7 +98,7 @@ pub fn down(
 }
 
 pub fn line_beginning(
-    map: &DisplayMapSnapshot,
+    map: &DisplaySnapshot,
     point: DisplayPoint,
     toggle_indent: bool,
 ) -> DisplayPoint {
@@ -110,12 +110,12 @@ pub fn line_beginning(
     }
 }
 
-pub fn line_end(map: &DisplayMapSnapshot, point: DisplayPoint) -> DisplayPoint {
+pub fn line_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let line_end = DisplayPoint::new(point.row(), map.line_len(point.row()));
     map.clip_point(line_end, Bias::Left)
 }
 
-pub fn prev_word_boundary(map: &DisplayMapSnapshot, mut point: DisplayPoint) -> DisplayPoint {
+pub fn prev_word_boundary(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     let mut line_start = 0;
     if point.row() > 0 {
         if let Some(indent) = map.soft_wrap_indent(point.row() - 1) {
@@ -154,7 +154,7 @@ pub fn prev_word_boundary(map: &DisplayMapSnapshot, mut point: DisplayPoint) -> 
     boundary
 }
 
-pub fn next_word_boundary(map: &DisplayMapSnapshot, mut point: DisplayPoint) -> DisplayPoint {
+pub fn next_word_boundary(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
     let mut prev_char_kind = None;
     for c in map.chars_at(point) {
         let char_kind = char_kind(c);
@@ -181,7 +181,7 @@ pub fn next_word_boundary(map: &DisplayMapSnapshot, mut point: DisplayPoint) -> 
     point
 }
 
-pub fn is_inside_word(map: &DisplayMapSnapshot, point: DisplayPoint) -> bool {
+pub fn is_inside_word(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
     let ix = map.clip_point(point, Bias::Left).to_offset(map, Bias::Left);
     let text = &map.buffer_snapshot;
     let next_char_kind = text.chars_at(ix).next().map(char_kind);
@@ -189,7 +189,7 @@ pub fn is_inside_word(map: &DisplayMapSnapshot, point: DisplayPoint) -> bool {
     prev_char_kind.zip(next_char_kind) == Some((CharKind::Word, CharKind::Word))
 }
 
-pub fn surrounding_word(map: &DisplayMapSnapshot, point: DisplayPoint) -> Range<DisplayPoint> {
+pub fn surrounding_word(map: &DisplaySnapshot, point: DisplayPoint) -> Range<DisplayPoint> {
     let mut start = map.clip_point(point, Bias::Left).to_offset(map, Bias::Left);
     let mut end = start;
 

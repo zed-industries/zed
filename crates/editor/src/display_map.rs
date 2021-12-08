@@ -3,9 +3,6 @@ mod fold_map;
 mod tab_map;
 mod wrap_map;
 
-pub use block_map::{
-    AlignedBlock, BlockContext, BlockDisposition, BlockId, BlockProperties, BufferRows, Chunks,
-};
 use block_map::{BlockMap, BlockPoint};
 use fold_map::{FoldMap, ToFoldPoint as _};
 use gpui::{fonts::FontId, ElementBox, Entity, ModelContext, ModelHandle};
@@ -19,8 +16,13 @@ use tab_map::TabMap;
 use theme::SyntaxTheme;
 use wrap_map::WrapMap;
 
+pub use block_map::{
+    AlignedBlock, BlockBufferRows as DisplayBufferRows, BlockChunks as DisplayChunks, BlockContext,
+    BlockDisposition, BlockId, BlockProperties,
+};
+
 pub trait ToDisplayPoint {
-    fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint;
+    fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
 
 pub struct DisplayMap {
@@ -61,7 +63,7 @@ impl DisplayMap {
         }
     }
 
-    pub fn snapshot(&self, cx: &mut ModelContext<Self>) -> DisplayMapSnapshot {
+    pub fn snapshot(&self, cx: &mut ModelContext<Self>) -> DisplaySnapshot {
         let buffer_snapshot = self.buffer.read(cx).snapshot();
         let edits = self.buffer_subscription.consume().into_inner();
         let (folds_snapshot, edits) = self.fold_map.read(buffer_snapshot, edits);
@@ -71,7 +73,7 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(tabs_snapshot.clone(), edits, cx));
         let blocks_snapshot = self.block_map.read(wraps_snapshot.clone(), edits, cx);
 
-        DisplayMapSnapshot {
+        DisplaySnapshot {
             buffer_snapshot: self.buffer.read(cx).snapshot(),
             folds_snapshot,
             tabs_snapshot,
@@ -176,15 +178,15 @@ impl DisplayMap {
     }
 }
 
-pub struct DisplayMapSnapshot {
-    pub buffer_snapshot: language::Snapshot,
-    folds_snapshot: fold_map::Snapshot,
-    tabs_snapshot: tab_map::Snapshot,
-    wraps_snapshot: wrap_map::Snapshot,
+pub struct DisplaySnapshot {
+    pub buffer_snapshot: language::BufferSnapshot,
+    folds_snapshot: fold_map::FoldSnapshot,
+    tabs_snapshot: tab_map::TabSnapshot,
+    wraps_snapshot: wrap_map::WrapSnapshot,
     blocks_snapshot: block_map::BlockSnapshot,
 }
 
-impl DisplayMapSnapshot {
+impl DisplaySnapshot {
     #[cfg(test)]
     pub fn fold_count(&self) -> usize {
         self.folds_snapshot.fold_count()
@@ -194,7 +196,7 @@ impl DisplayMapSnapshot {
         self.buffer_snapshot.len() == 0
     }
 
-    pub fn buffer_rows<'a>(&'a self, start_row: u32) -> BufferRows<'a> {
+    pub fn buffer_rows<'a>(&'a self, start_row: u32) -> DisplayBufferRows<'a> {
         self.blocks_snapshot.buffer_rows(start_row)
     }
 
@@ -260,7 +262,7 @@ impl DisplayMapSnapshot {
         &'a self,
         display_rows: Range<u32>,
         theme: Option<&'a SyntaxTheme>,
-    ) -> block_map::Chunks<'a> {
+    ) -> DisplayChunks<'a> {
         self.blocks_snapshot.chunks(display_rows, theme)
     }
 
@@ -420,11 +422,11 @@ impl DisplayPoint {
         &mut self.0.column
     }
 
-    pub fn to_point(self, map: &DisplayMapSnapshot) -> Point {
+    pub fn to_point(self, map: &DisplaySnapshot) -> Point {
         map.display_point_to_point(self, Bias::Left)
     }
 
-    pub fn to_offset(self, map: &DisplayMapSnapshot, bias: Bias) -> usize {
+    pub fn to_offset(self, map: &DisplaySnapshot, bias: Bias) -> usize {
         let unblocked_point = map.blocks_snapshot.to_wrap_point(self.0);
         let unwrapped_point = map.wraps_snapshot.to_tab_point(unblocked_point);
         let unexpanded_point = map.tabs_snapshot.to_fold_point(unwrapped_point, bias).0;
@@ -433,19 +435,19 @@ impl DisplayPoint {
 }
 
 impl ToDisplayPoint for usize {
-    fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint {
+    fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
         map.point_to_display_point(self.to_point(&map.buffer_snapshot), Bias::Left)
     }
 }
 
 impl ToDisplayPoint for Point {
-    fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint {
+    fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
         map.point_to_display_point(*self, Bias::Left)
     }
 }
 
 impl ToDisplayPoint for Anchor {
-    fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint {
+    fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
         self.to_point(&map.buffer_snapshot).to_display_point(map)
     }
 }

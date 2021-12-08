@@ -273,11 +273,11 @@ pub fn init(cx: &mut MutableAppContext, entry_openers: &mut Vec<Box<dyn EntryOpe
 }
 
 trait SelectionExt {
-    fn display_range(&self, map: &DisplayMapSnapshot) -> Range<DisplayPoint>;
+    fn display_range(&self, map: &DisplaySnapshot) -> Range<DisplayPoint>;
     fn spanned_rows(
         &self,
         include_end_if_at_line_start: bool,
-        map: &DisplayMapSnapshot,
+        map: &DisplaySnapshot,
     ) -> SpannedRows;
 }
 
@@ -371,9 +371,9 @@ pub struct Editor {
     highlighted_row: Option<u32>,
 }
 
-pub struct Snapshot {
+pub struct EditorSnapshot {
     pub mode: EditorMode,
-    pub display_snapshot: DisplayMapSnapshot,
+    pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
     scroll_position: Vector2F,
@@ -533,8 +533,8 @@ impl Editor {
         &self.buffer
     }
 
-    pub fn snapshot(&mut self, cx: &mut MutableAppContext) -> Snapshot {
-        Snapshot {
+    pub fn snapshot(&mut self, cx: &mut MutableAppContext) -> EditorSnapshot {
+        EditorSnapshot {
             mode: self.mode,
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             scroll_position: self.scroll_position,
@@ -986,7 +986,7 @@ impl Editor {
         tail: DisplayPoint,
         head: DisplayPoint,
         overshoot: u32,
-        display_map: &DisplayMapSnapshot,
+        display_map: &DisplaySnapshot,
         cx: &mut ViewContext<Self>,
     ) {
         let start_row = cmp::min(tail.row(), head.row());
@@ -2966,7 +2966,7 @@ impl Editor {
 
     fn build_columnar_selection(
         &mut self,
-        display_map: &DisplayMapSnapshot,
+        display_map: &DisplaySnapshot,
         row: u32,
         columns: &Range<u32>,
         reversed: bool,
@@ -3271,7 +3271,7 @@ impl Editor {
         self.unfold_ranges(ranges, cx);
     }
 
-    fn is_line_foldable(&self, display_map: &DisplayMapSnapshot, display_row: u32) -> bool {
+    fn is_line_foldable(&self, display_map: &DisplaySnapshot, display_row: u32) -> bool {
         let max_point = display_map.max_point();
         if display_row >= max_point.row() {
             false
@@ -3293,7 +3293,7 @@ impl Editor {
 
     fn foldable_range_for_line(
         &self,
-        display_map: &DisplayMapSnapshot,
+        display_map: &DisplaySnapshot,
         start_row: u32,
     ) -> Range<Point> {
         let max_point = display_map.max_point();
@@ -3450,7 +3450,7 @@ impl Editor {
     }
 }
 
-impl Snapshot {
+impl EditorSnapshot {
     pub fn is_focused(&self) -> bool {
         self.is_focused
     }
@@ -3468,8 +3468,8 @@ impl Snapshot {
     }
 }
 
-impl Deref for Snapshot {
-    type Target = DisplayMapSnapshot;
+impl Deref for EditorSnapshot {
+    type Target = DisplaySnapshot;
 
     fn deref(&self) -> &Self::Target {
         &self.display_snapshot
@@ -3525,7 +3525,7 @@ impl EditorSettings {
 }
 
 fn compute_scroll_position(
-    snapshot: &DisplayMapSnapshot,
+    snapshot: &DisplaySnapshot,
     mut scroll_position: Vector2F,
     scroll_top_anchor: &Anchor,
 ) -> Vector2F {
@@ -3606,7 +3606,7 @@ impl View for Editor {
 }
 
 impl SelectionExt for Selection<Point> {
-    fn display_range(&self, map: &DisplayMapSnapshot) -> Range<DisplayPoint> {
+    fn display_range(&self, map: &DisplaySnapshot) -> Range<DisplayPoint> {
         let start = self.start.to_display_point(map);
         let end = self.end.to_display_point(map);
         if self.reversed {
@@ -3619,7 +3619,7 @@ impl SelectionExt for Selection<Point> {
     fn spanned_rows(
         &self,
         include_end_if_at_line_start: bool,
-        map: &DisplayMapSnapshot,
+        map: &DisplaySnapshot,
     ) -> SpannedRows {
         let display_start = self.start.to_display_point(map);
         let mut display_end = self.end.to_display_point(map);

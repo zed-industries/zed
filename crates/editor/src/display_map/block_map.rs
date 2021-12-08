@@ -1,4 +1,4 @@
-use super::wrap_map::{self, Edit as WrapEdit, Snapshot as WrapSnapshot, WrapPoint};
+use super::wrap_map::{self, Edit as WrapEdit, WrapPoint, WrapSnapshot};
 use gpui::{AppContext, ElementBox, ModelHandle};
 use language::{Buffer, Chunk};
 use parking_lot::Mutex;
@@ -93,17 +93,17 @@ struct TransformSummary {
     output_rows: u32,
 }
 
-pub struct Chunks<'a> {
+pub struct BlockChunks<'a> {
     transforms: sum_tree::Cursor<'a, Transform, (BlockRow, WrapRow)>,
-    input_chunks: wrap_map::Chunks<'a>,
+    input_chunks: wrap_map::WrapChunks<'a>,
     input_chunk: Chunk<'a>,
     output_row: u32,
     max_output_row: u32,
 }
 
-pub struct BufferRows<'a> {
+pub struct BlockBufferRows<'a> {
     transforms: sum_tree::Cursor<'a, Transform, (BlockRow, WrapRow)>,
-    input_buffer_rows: wrap_map::BufferRows<'a>,
+    input_buffer_rows: wrap_map::WrapBufferRows<'a>,
     output_row: u32,
     started: bool,
 }
@@ -476,7 +476,11 @@ impl BlockSnapshot {
             .collect()
     }
 
-    pub fn chunks<'a>(&'a self, rows: Range<u32>, theme: Option<&'a SyntaxTheme>) -> Chunks<'a> {
+    pub fn chunks<'a>(
+        &'a self,
+        rows: Range<u32>,
+        theme: Option<&'a SyntaxTheme>,
+    ) -> BlockChunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
         let input_end = {
@@ -503,7 +507,7 @@ impl BlockSnapshot {
             };
             cursor.start().1 .0 + overshoot
         };
-        Chunks {
+        BlockChunks {
             input_chunks: self.wrap_snapshot.chunks(input_start..input_end, theme),
             input_chunk: Default::default(),
             transforms: cursor,
@@ -512,7 +516,7 @@ impl BlockSnapshot {
         }
     }
 
-    pub fn buffer_rows<'a>(&'a self, start_row: u32) -> BufferRows<'a> {
+    pub fn buffer_rows<'a>(&'a self, start_row: u32) -> BlockBufferRows<'a> {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
         cursor.seek(&BlockRow(start_row), Bias::Right, &());
         let (output_start, input_start) = cursor.start();
@@ -522,7 +526,7 @@ impl BlockSnapshot {
             0
         };
         let input_start_row = input_start.0 + overshoot;
-        BufferRows {
+        BlockBufferRows {
             transforms: cursor,
             input_buffer_rows: self.wrap_snapshot.buffer_rows(input_start_row),
             output_row: start_row,
@@ -693,7 +697,7 @@ impl Transform {
     }
 }
 
-impl<'a> Iterator for Chunks<'a> {
+impl<'a> Iterator for BlockChunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -756,7 +760,7 @@ impl<'a> Iterator for Chunks<'a> {
     }
 }
 
-impl<'a> Iterator for BufferRows<'a> {
+impl<'a> Iterator for BlockBufferRows<'a> {
     type Item = Option<u32>;
 
     fn next(&mut self) -> Option<Self::Item> {

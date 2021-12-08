@@ -68,8 +68,8 @@ pub struct Buffer {
     pub(crate) operations: Vec<Operation>,
 }
 
-pub struct Snapshot {
-    text: text::Snapshot,
+pub struct BufferSnapshot {
+    text: text::BufferSnapshot,
     tree: Option<Tree>,
     diagnostics: AnchorRangeMultimap<Diagnostic>,
     diagnostics_update_count: usize,
@@ -96,7 +96,7 @@ struct LanguageServerState {
 
 #[derive(Clone)]
 struct LanguageServerSnapshot {
-    buffer_snapshot: text::Snapshot,
+    buffer_snapshot: text::BufferSnapshot,
     version: usize,
     path: Arc<Path>,
 }
@@ -172,7 +172,7 @@ struct SyntaxTree {
 #[derive(Clone)]
 struct AutoindentRequest {
     selection_set_ids: HashSet<SelectionSetId>,
-    before_edit: Snapshot,
+    before_edit: BufferSnapshot,
     edited: AnchorSet,
     inserted: Option<AnchorRangeSet>,
 }
@@ -185,7 +185,7 @@ struct IndentSuggestion {
 
 struct TextProvider<'a>(&'a Rope);
 
-struct Highlights<'a> {
+struct BufferChunkHighlights<'a> {
     captures: tree_sitter::QueryCaptures<'a, 'a, TextProvider<'a>>,
     next_capture: Option<(tree_sitter::QueryMatch<'a, 'a>, usize)>,
     stack: Vec<(usize, HighlightId)>,
@@ -194,7 +194,7 @@ struct Highlights<'a> {
     _query_cursor: QueryCursorHandle,
 }
 
-pub struct Chunks<'a> {
+pub struct BufferChunks<'a> {
     range: Range<usize>,
     chunks: rope::Chunks<'a>,
     diagnostic_endpoints: Peekable<vec::IntoIter<DiagnosticEndpoint>>,
@@ -202,7 +202,7 @@ pub struct Chunks<'a> {
     warning_depth: usize,
     information_depth: usize,
     hint_depth: usize,
-    highlights: Option<Highlights<'a>>,
+    highlights: Option<BufferChunkHighlights<'a>>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -336,8 +336,8 @@ impl Buffer {
         }
     }
 
-    pub fn snapshot(&self) -> Snapshot {
-        Snapshot {
+    pub fn snapshot(&self) -> BufferSnapshot {
+        BufferSnapshot {
             text: self.text.snapshot(),
             tree: self.syntax_tree(),
             diagnostics: self.diagnostics.clone(),
@@ -1512,7 +1512,7 @@ impl Deref for Buffer {
     }
 }
 
-impl Snapshot {
+impl BufferSnapshot {
     fn suggest_autoindents<'a>(
         &'a self,
         row_range: Range<u32>,
@@ -1626,7 +1626,7 @@ impl Snapshot {
         &'a self,
         range: Range<T>,
         theme: Option<&'a SyntaxTheme>,
-    ) -> Chunks<'a> {
+    ) -> BufferChunks<'a> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
         let mut highlights = None;
@@ -1662,7 +1662,7 @@ impl Snapshot {
                     tree.root_node(),
                     TextProvider(self.text.as_rope()),
                 );
-                highlights = Some(Highlights {
+                highlights = Some(BufferChunkHighlights {
                     captures,
                     next_capture: None,
                     stack: Default::default(),
@@ -1676,7 +1676,7 @@ impl Snapshot {
         let diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
         let chunks = self.text.as_rope().chunks_in_range(range.clone());
 
-        Chunks {
+        BufferChunks {
             range,
             chunks,
             diagnostic_endpoints,
@@ -1703,7 +1703,7 @@ impl Snapshot {
     }
 }
 
-impl Clone for Snapshot {
+impl Clone for BufferSnapshot {
     fn clone(&self) -> Self {
         Self {
             text: self.text.clone(),
@@ -1717,8 +1717,8 @@ impl Clone for Snapshot {
     }
 }
 
-impl Deref for Snapshot {
-    type Target = text::Snapshot;
+impl Deref for BufferSnapshot {
+    type Target = text::BufferSnapshot;
 
     fn deref(&self) -> &Self::Target {
         &self.text
@@ -1743,9 +1743,9 @@ impl<'a> Iterator for ByteChunks<'a> {
     }
 }
 
-unsafe impl<'a> Send for Chunks<'a> {}
+unsafe impl<'a> Send for BufferChunks<'a> {}
 
-impl<'a> Chunks<'a> {
+impl<'a> BufferChunks<'a> {
     pub fn seek(&mut self, offset: usize) {
         self.range.start = offset;
         self.chunks.seek(self.range.start);
@@ -1804,7 +1804,7 @@ impl<'a> Chunks<'a> {
     }
 }
 
-impl<'a> Iterator for Chunks<'a> {
+impl<'a> Iterator for BufferChunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {

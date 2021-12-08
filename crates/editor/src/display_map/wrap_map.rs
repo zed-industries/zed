@@ -1,6 +1,6 @@
 use super::{
     fold_map,
-    tab_map::{self, Edit as TabEdit, Snapshot as TabSnapshot, TabPoint},
+    tab_map::{self, Edit as TabEdit, TabPoint, TabSnapshot},
 };
 use gpui::{
     fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, ModelHandle, MutableAppContext,
@@ -18,7 +18,7 @@ pub use super::tab_map::TextSummary;
 pub type Edit = text::Edit<u32>;
 
 pub struct WrapMap {
-    snapshot: Snapshot,
+    snapshot: WrapSnapshot,
     pending_edits: VecDeque<(TabSnapshot, Vec<TabEdit>)>,
     interpolated_edits: Patch<u32>,
     edits_since_sync: Patch<u32>,
@@ -32,7 +32,7 @@ impl Entity for WrapMap {
 }
 
 #[derive(Clone)]
-pub struct Snapshot {
+pub struct WrapSnapshot {
     tab_snapshot: TabSnapshot,
     transforms: SumTree<Transform>,
     interpolated: bool,
@@ -53,16 +53,16 @@ struct TransformSummary {
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct WrapPoint(pub super::Point);
 
-pub struct Chunks<'a> {
-    input_chunks: tab_map::Chunks<'a>,
+pub struct WrapChunks<'a> {
+    input_chunks: tab_map::TabChunks<'a>,
     input_chunk: Chunk<'a>,
     output_position: WrapPoint,
     max_output_row: u32,
     transforms: Cursor<'a, Transform, (WrapPoint, TabPoint)>,
 }
 
-pub struct BufferRows<'a> {
-    input_buffer_rows: fold_map::BufferRows<'a>,
+pub struct WrapBufferRows<'a> {
+    input_buffer_rows: fold_map::FoldBufferRows<'a>,
     input_buffer_row: u32,
     output_row: u32,
     soft_wrapped: bool,
@@ -77,7 +77,7 @@ impl WrapMap {
         font_size: f32,
         wrap_width: Option<f32>,
         cx: &mut MutableAppContext,
-    ) -> (ModelHandle<Self>, Snapshot) {
+    ) -> (ModelHandle<Self>, WrapSnapshot) {
         let handle = cx.add_model(|cx| {
             let mut this = Self {
                 font: (font_id, font_size),
@@ -85,7 +85,7 @@ impl WrapMap {
                 pending_edits: Default::default(),
                 interpolated_edits: Default::default(),
                 edits_since_sync: Default::default(),
-                snapshot: Snapshot::new(tab_snapshot),
+                snapshot: WrapSnapshot::new(tab_snapshot),
                 background_task: None,
             };
             this.set_wrap_width(wrap_width, cx);
@@ -106,7 +106,7 @@ impl WrapMap {
         tab_snapshot: TabSnapshot,
         edits: Vec<TabEdit>,
         cx: &mut ModelContext<Self>,
-    ) -> (Snapshot, Vec<Edit>) {
+    ) -> (WrapSnapshot, Vec<Edit>) {
         if self.wrap_width.is_some() {
             self.pending_edits.push_back((tab_snapshot, edits));
             self.flush_edits(cx);
@@ -291,7 +291,7 @@ impl WrapMap {
     }
 }
 
-impl Snapshot {
+impl WrapSnapshot {
     fn new(tab_snapshot: TabSnapshot) -> Self {
         let mut transforms = SumTree::new();
         let extent = tab_snapshot.text_summary();
@@ -364,7 +364,7 @@ impl Snapshot {
 
         let old_snapshot = mem::replace(
             self,
-            Snapshot {
+            WrapSnapshot {
                 tab_snapshot: new_tab_snapshot,
                 transforms: new_transforms,
                 interpolated: true,
@@ -513,7 +513,7 @@ impl Snapshot {
 
         let old_snapshot = mem::replace(
             self,
-            Snapshot {
+            WrapSnapshot {
                 tab_snapshot: new_tab_snapshot,
                 transforms: new_transforms,
                 interpolated: false,
@@ -523,7 +523,7 @@ impl Snapshot {
         old_snapshot.compute_edits(tab_edits, self)
     }
 
-    fn compute_edits(&self, tab_edits: &[TabEdit], new_snapshot: &Snapshot) -> Patch<u32> {
+    fn compute_edits(&self, tab_edits: &[TabEdit], new_snapshot: &WrapSnapshot) -> Patch<u32> {
         let mut wrap_edits = Vec::new();
         let mut old_cursor = self.transforms.cursor::<TransformSummary>();
         let mut new_cursor = new_snapshot.transforms.cursor::<TransformSummary>();
@@ -564,7 +564,11 @@ impl Snapshot {
             .map(|h| h.text)
     }
 
-    pub fn chunks<'a>(&'a self, rows: Range<u32>, theme: Option<&'a SyntaxTheme>) -> Chunks<'a> {
+    pub fn chunks<'a>(
+        &'a self,
+        rows: Range<u32>,
+        theme: Option<&'a SyntaxTheme>,
+    ) -> WrapChunks<'a> {
         let output_start = WrapPoint::new(rows.start, 0);
         let output_end = WrapPoint::new(rows.end, 0);
         let mut transforms = self.transforms.cursor::<(WrapPoint, TabPoint)>();
@@ -576,7 +580,7 @@ impl Snapshot {
         let input_end = self
             .to_tab_point(output_end)
             .min(self.tab_snapshot.max_point());
-        Chunks {
+        WrapChunks {
             input_chunks: self.tab_snapshot.chunks(input_start..input_end, theme),
             input_chunk: Default::default(),
             output_position: output_start,
@@ -622,7 +626,7 @@ impl Snapshot {
         self.transforms.summary().output.longest_row
     }
 
-    pub fn buffer_rows(&self, start_row: u32) -> BufferRows {
+    pub fn buffer_rows(&self, start_row: u32) -> WrapBufferRows {
         let mut transforms = self.transforms.cursor::<(WrapPoint, TabPoint)>();
         transforms.seek(&WrapPoint::new(start_row, 0), Bias::Left, &());
         let mut input_row = transforms.start().1.row();
@@ -632,7 +636,7 @@ impl Snapshot {
         let soft_wrapped = transforms.item().map_or(false, |t| !t.is_isomorphic());
         let mut input_buffer_rows = self.tab_snapshot.buffer_rows(input_row);
         let input_buffer_row = input_buffer_rows.next().unwrap();
-        BufferRows {
+        WrapBufferRows {
             transforms,
             input_buffer_row,
             input_buffer_rows,
@@ -727,7 +731,7 @@ impl Snapshot {
     }
 }
 
-impl<'a> Iterator for Chunks<'a> {
+impl<'a> Iterator for WrapChunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -790,7 +794,7 @@ impl<'a> Iterator for Chunks<'a> {
     }
 }
 
-impl<'a> Iterator for BufferRows<'a> {
+impl<'a> Iterator for WrapBufferRows<'a> {
     type Item = Option<u32>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1224,7 +1228,7 @@ mod tests {
         }
     }
 
-    impl Snapshot {
+    impl WrapSnapshot {
         pub fn text(&self) -> String {
             self.text_chunks(0).collect()
         }
