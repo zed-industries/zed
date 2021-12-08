@@ -53,7 +53,7 @@ impl FoldPoint {
         let overshoot = self.0 - cursor.start().0 .0;
         snapshot
             .buffer_snapshot
-            .to_offset(cursor.start().1 + overshoot)
+            .point_to_offset(cursor.start().1 + overshoot)
     }
 
     pub fn to_offset(&self, snapshot: &FoldSnapshot) -> FoldOffset {
@@ -68,7 +68,7 @@ impl FoldPoint {
             assert!(transform.output_text.is_none());
             let end_buffer_offset = snapshot
                 .buffer_snapshot
-                .to_offset(cursor.start().1.input.lines + overshoot);
+                .point_to_offset(cursor.start().1.input.lines + overshoot);
             offset += end_buffer_offset - cursor.start().1.input.bytes;
         }
         FoldOffset(offset)
@@ -1014,7 +1014,7 @@ impl FoldOffset {
             Point::new(0, (self.0 - cursor.start().0 .0) as u32)
         } else {
             let buffer_offset = cursor.start().1.input.bytes + self.0 - cursor.start().0 .0;
-            let buffer_point = snapshot.buffer_snapshot.to_point(buffer_offset);
+            let buffer_point = snapshot.buffer_snapshot.offset_to_point(buffer_offset);
             buffer_point - cursor.start().1.input.lines
         };
         FoldPoint(cursor.start().1.output.lines + overshoot)

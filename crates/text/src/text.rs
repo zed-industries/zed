@@ -1530,12 +1530,20 @@ impl BufferSnapshot {
         self.visible_text.max_point()
     }
 
-    pub fn to_offset(&self, point: Point) -> usize {
+    pub fn point_to_offset(&self, point: Point) -> usize {
         self.visible_text.point_to_offset(point)
     }
 
-    pub fn to_point(&self, offset: usize) -> Point {
+    pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
+        self.visible_text.point_utf16_to_offset(point)
+    }
+
+    pub fn offset_to_point(&self, offset: usize) -> Point {
         self.visible_text.offset_to_point(offset)
+    }
+
+    pub fn offset_to_point_utf16(&self, offset: usize) -> PointUtf16 {
+        self.visible_text.offset_to_point_utf16(offset)
     }
 
     pub fn version(&self) -> &clock::Global {
@@ -2252,45 +2260,45 @@ impl Operation {
 }
 
 pub trait ToOffset {
-    fn to_offset<'a>(&self, content: &BufferSnapshot) -> usize;
+    fn to_offset<'a>(&self, snapshot: &BufferSnapshot) -> usize;
 
-    fn to_full_offset<'a>(&self, content: &BufferSnapshot, bias: Bias) -> FullOffset {
-        let offset = self.to_offset(&content);
-        let mut cursor = content.fragments.cursor::<FragmentTextSummary>();
+    fn to_full_offset<'a>(&self, snapshot: &BufferSnapshot, bias: Bias) -> FullOffset {
+        let offset = self.to_offset(&snapshot);
+        let mut cursor = snapshot.fragments.cursor::<FragmentTextSummary>();
         cursor.seek(&offset, bias, &None);
         FullOffset(offset + cursor.start().deleted)
     }
 }
 
 impl ToOffset for Point {
-    fn to_offset<'a>(&self, content: &BufferSnapshot) -> usize {
-        content.visible_text.point_to_offset(*self)
+    fn to_offset<'a>(&self, snapshot: &BufferSnapshot) -> usize {
+        snapshot.point_to_offset(*self)
     }
 }
 
 impl ToOffset for PointUtf16 {
-    fn to_offset<'a>(&self, content: &BufferSnapshot) -> usize {
-        content.visible_text.point_utf16_to_offset(*self)
+    fn to_offset<'a>(&self, snapshot: &BufferSnapshot) -> usize {
+        snapshot.point_utf16_to_offset(*self)
     }
 }
 
 impl ToOffset for usize {
-    fn to_offset<'a>(&self, content: &BufferSnapshot) -> usize {
-        assert!(*self <= content.len(), "offset is out of range");
+    fn to_offset<'a>(&self, snapshot: &BufferSnapshot) -> usize {
+        assert!(*self <= snapshot.len(), "offset is out of range");
         *self
     }
 }
 
 impl ToOffset for Anchor {
-    fn to_offset<'a>(&self, content: &BufferSnapshot) -> usize {
-        content.summary_for_anchor(self)
+    fn to_offset<'a>(&self, snapshot: &BufferSnapshot) -> usize {
+        snapshot.summary_for_anchor(self)
     }
 
-    fn to_full_offset<'a>(&self, content: &BufferSnapshot, bias: Bias) -> FullOffset {
-        if content.version == self.version {
+    fn to_full_offset<'a>(&self, snapshot: &BufferSnapshot, bias: Bias) -> FullOffset {
+        if snapshot.version == self.version {
             self.full_offset
         } else {
-            let mut cursor = content
+            let mut cursor = snapshot
                 .fragments
                 .cursor::<(VersionedFullOffset, FragmentTextSummary)>();
             cursor.seek(
@@ -2310,24 +2318,24 @@ impl ToOffset for Anchor {
 }
 
 impl<'a> ToOffset for &'a Anchor {
-    fn to_offset(&self, content: &BufferSnapshot) -> usize {
-        content.summary_for_anchor(self)
+    fn to_offset(&self, snapshot: &BufferSnapshot) -> usize {
+        snapshot.summary_for_anchor(self)
     }
 }
 
 pub trait ToPoint {
-    fn to_point<'a>(&self, content: &BufferSnapshot) -> Point;
+    fn to_point<'a>(&self, snapshot: &BufferSnapshot) -> Point;
 }
 
 impl ToPoint for Anchor {
-    fn to_point<'a>(&self, content: &BufferSnapshot) -> Point {
-        content.summary_for_anchor(self)
+    fn to_point<'a>(&self, snapshot: &BufferSnapshot) -> Point {
+        snapshot.summary_for_anchor(self)
     }
 }
 
 impl ToPoint for usize {
-    fn to_point<'a>(&self, content: &BufferSnapshot) -> Point {
-        content.visible_text.offset_to_point(*self)
+    fn to_point<'a>(&self, snapshot: &BufferSnapshot) -> Point {
+        snapshot.offset_to_point(*self)
     }
 }
 
@@ -2338,17 +2346,17 @@ impl ToPoint for Point {
 }
 
 pub trait FromAnchor {
-    fn from_anchor(anchor: &Anchor, content: &BufferSnapshot) -> Self;
+    fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self;
 }
 
 impl FromAnchor for Point {
-    fn from_anchor(anchor: &Anchor, content: &BufferSnapshot) -> Self {
-        anchor.to_point(content)
+    fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self {
+        anchor.to_point(snapshot)
     }
 }
 
 impl FromAnchor for usize {
-    fn from_anchor(anchor: &Anchor, content: &BufferSnapshot) -> Self {
-        anchor.to_offset(content)
+    fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self {
+        anchor.to_offset(snapshot)
     }
 }

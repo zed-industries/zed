@@ -1,4 +1,4 @@
-use crate::{buffer, Buffer, Chunk};
+use crate::buffer::{self, Buffer, Chunk, ToOffset as _, ToPoint as _};
 use collections::HashMap;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle};
 use parking_lot::Mutex;
@@ -6,24 +6,29 @@ use smallvec::{smallvec, SmallVec};
 use std::{cmp, iter, ops::Range};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{
+    rope::TextDimension,
     subscription::{Subscription, Topic},
-    Anchor, AnchorRangeExt, Edit, Point, TextSummary,
+    Anchor, AnchorRangeExt, Edit, Point, PointUtf16, TextSummary,
 };
 use theme::SyntaxTheme;
 
 const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
 
-pub trait ToOffset {
-    fn to_offset<'a>(&self, content: &Snapshot) -> usize;
-}
-
 pub type ExcerptId = Location;
 
 #[derive(Default)]
 pub struct ExcerptList {
-    snapshot: Mutex<Snapshot>,
+    snapshot: Mutex<ExcerptListSnapshot>,
     buffers: HashMap<usize, BufferState>,
     subscriptions: Topic,
+}
+
+pub trait ToOffset {
+    fn to_offset<'a>(&self, snapshot: &ExcerptListSnapshot) -> usize;
+}
+
+pub trait ToPoint {
+    fn to_point<'a>(&self, snapshot: &ExcerptListSnapshot) -> Point;
 }
 
 #[derive(Debug)]
@@ -34,7 +39,7 @@ struct BufferState {
 }
 
 #[derive(Clone, Default)]
-pub struct Snapshot {
+pub struct ExcerptListSnapshot {
     excerpts: SumTree<Excerpt>,
 }
 
@@ -75,7 +80,7 @@ impl ExcerptList {
         Self::default()
     }
 
-    pub fn snapshot(&self, cx: &AppContext) -> Snapshot {
+    pub fn snapshot(&self, cx: &AppContext) -> ExcerptListSnapshot {
         self.sync(cx);
         self.snapshot.lock().clone()
     }
@@ -191,7 +196,7 @@ impl Entity for ExcerptList {
     type Event = ();
 }
 
-impl Snapshot {
+impl ExcerptListSnapshot {
     pub fn text(&self) -> String {
         self.chunks(0..self.len(), None)
             .map(|chunk| chunk.text)
@@ -213,76 +218,74 @@ impl Snapshot {
         let mut cursor = self.excerpts.cursor::<usize>();
         cursor.seek(&offset, Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
-            let overshoot = offset - cursor.start();
-            let header_height = excerpt.header_height as usize;
-            if overshoot < header_height {
+            let start_after_header = *cursor.start() + excerpt.header_height as usize;
+            if offset < start_after_header {
                 *cursor.start()
             } else {
-                let excerpt_start =
-                    text::ToOffset::to_offset(&excerpt.range.start, &excerpt.buffer);
-                let buffer_offset = excerpt.buffer.clip_offset(
-                    excerpt_start + (offset - header_height - cursor.start()),
-                    bias,
-                );
+                let excerpt_start = excerpt.range.start.to_offset(&excerpt.buffer);
+                let buffer_offset = excerpt
+                    .buffer
+                    .clip_offset(excerpt_start + (offset - start_after_header), bias);
                 let offset_in_excerpt = if buffer_offset > excerpt_start {
                     buffer_offset - excerpt_start
                 } else {
                     0
                 };
-                cursor.start() + header_height + offset_in_excerpt
+                start_after_header + offset_in_excerpt
             }
         } else {
             self.excerpts.summary().text.bytes
         }
     }
 
-    pub fn to_point(&self, offset: usize) -> Point {
-        let mut cursor = self.excerpts.cursor::<(usize, Point)>();
-        cursor.seek(&offset, Bias::Right, &());
+    pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
+        let mut cursor = self.excerpts.cursor::<Point>();
+        cursor.seek(&point, Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
-            let overshoot = offset - cursor.start().0;
-            let header_height = excerpt.header_height as usize;
-            if overshoot < header_height {
-                cursor.start().1
+            let start_after_header = *cursor.start() + Point::new(excerpt.header_height as u32, 0);
+            if point < start_after_header {
+                *cursor.start()
             } else {
-                let excerpt_start_offset =
-                    text::ToOffset::to_offset(&excerpt.range.start, &excerpt.buffer);
-                let excerpt_start_point =
-                    text::ToPoint::to_point(&excerpt.range.start, &excerpt.buffer);
+                let excerpt_start = excerpt.range.start.to_point(&excerpt.buffer);
                 let buffer_point = excerpt
                     .buffer
-                    .to_point(excerpt_start_offset + (offset - header_height - cursor.start().0));
-                cursor.start().1
-                    + Point::new(header_height as u32, 0)
-                    + (buffer_point - excerpt_start_point)
+                    .clip_point(excerpt_start + (point - start_after_header), bias);
+                let point_in_excerpt = if buffer_point > excerpt_start {
+                    buffer_point - excerpt_start
+                } else {
+                    Point::zero()
+                };
+                start_after_header + point_in_excerpt
             }
         } else {
             self.excerpts.summary().text.lines
         }
     }
 
-    pub fn to_offset(&self, point: Point) -> usize {
-        let mut cursor = self.excerpts.cursor::<(Point, usize)>();
+    pub fn clip_point_utf16(&self, point: PointUtf16, bias: Bias) -> PointUtf16 {
+        let mut cursor = self.excerpts.cursor::<PointUtf16>();
         cursor.seek(&point, Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
-            let overshoot = point - cursor.start().0;
-            let header_height = Point::new(excerpt.header_height as u32, 0);
-            if overshoot < header_height {
-                cursor.start().1
+            let start_after_header =
+                *cursor.start() + PointUtf16::new(excerpt.header_height as u32, 0);
+            if point < start_after_header {
+                *cursor.start()
             } else {
-                let excerpt_start_offset =
-                    text::ToOffset::to_offset(&excerpt.range.start, &excerpt.buffer);
-                let excerpt_start_point =
-                    text::ToPoint::to_point(&excerpt.range.start, &excerpt.buffer);
-                let buffer_offset = excerpt
+                let excerpt_start = excerpt
                     .buffer
-                    .to_offset(excerpt_start_point + (point - header_height - cursor.start().0));
-                cursor.start().1
-                    + excerpt.header_height as usize
-                    + (buffer_offset - excerpt_start_offset)
+                    .offset_to_point_utf16(excerpt.range.start.to_offset(&excerpt.buffer));
+                let buffer_point = excerpt
+                    .buffer
+                    .clip_point_utf16(excerpt_start + (point - start_after_header), bias);
+                let point_in_excerpt = if buffer_point > excerpt_start {
+                    buffer_point - excerpt_start
+                } else {
+                    PointUtf16::new(0, 0)
+                };
+                start_after_header + point_in_excerpt
             }
         } else {
-            self.excerpts.summary().text.bytes
+            self.excerpts.summary().text.lines_utf16
         }
     }
 
@@ -334,6 +337,200 @@ impl Snapshot {
             theme,
         }
     }
+
+    pub fn offset_to_point(&self, offset: usize) -> Point {
+        let mut cursor = self.excerpts.cursor::<(usize, Point)>();
+        cursor.seek(&offset, Bias::Right, &());
+        if let Some(excerpt) = cursor.item() {
+            let (start_offset, start_point) = cursor.start();
+            let overshoot = offset - start_offset;
+            let header_height = excerpt.header_height as usize;
+            if overshoot < header_height {
+                *start_point
+            } else {
+                let excerpt_start_offset = excerpt.range.start.to_offset(&excerpt.buffer);
+                let excerpt_start_point = excerpt.range.start.to_point(&excerpt.buffer);
+                let buffer_point = excerpt
+                    .buffer
+                    .offset_to_point(excerpt_start_offset + (overshoot - header_height));
+                *start_point
+                    + Point::new(header_height as u32, 0)
+                    + (buffer_point - excerpt_start_point)
+            }
+        } else {
+            self.excerpts.summary().text.lines
+        }
+    }
+
+    pub fn point_to_offset(&self, point: Point) -> usize {
+        let mut cursor = self.excerpts.cursor::<(Point, usize)>();
+        cursor.seek(&point, Bias::Right, &());
+        if let Some(excerpt) = cursor.item() {
+            let (start_point, start_offset) = cursor.start();
+            let overshoot = point - start_point;
+            let header_height = Point::new(excerpt.header_height as u32, 0);
+            if overshoot < header_height {
+                *start_offset
+            } else {
+                let excerpt_start_offset = excerpt.range.start.to_offset(&excerpt.buffer);
+                let excerpt_start_point = excerpt.range.start.to_point(&excerpt.buffer);
+                let buffer_offset = excerpt
+                    .buffer
+                    .point_to_offset(excerpt_start_point + (overshoot - header_height));
+                *start_offset + excerpt.header_height as usize + buffer_offset
+                    - excerpt_start_offset
+            }
+        } else {
+            self.excerpts.summary().text.bytes
+        }
+    }
+
+    pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
+        let mut cursor = self.excerpts.cursor::<(PointUtf16, usize)>();
+        cursor.seek(&point, Bias::Right, &());
+        if let Some(excerpt) = cursor.item() {
+            let (start_point, start_offset) = cursor.start();
+            let overshoot = point - start_point;
+            let header_height = PointUtf16::new(excerpt.header_height as u32, 0);
+            if overshoot < header_height {
+                *start_offset
+            } else {
+                let excerpt_start_offset = excerpt.range.start.to_offset(&excerpt.buffer);
+                let excerpt_start_point = excerpt
+                    .buffer
+                    .offset_to_point_utf16(excerpt.range.start.to_offset(&excerpt.buffer));
+                let buffer_offset = excerpt
+                    .buffer
+                    .point_utf16_to_offset(excerpt_start_point + (overshoot - header_height));
+                *start_offset
+                    + excerpt.header_height as usize
+                    + (buffer_offset - excerpt_start_offset)
+            }
+        } else {
+            self.excerpts.summary().text.bytes
+        }
+    }
+
+    pub fn line_len(&self, row: u32) -> u32 {
+        let mut cursor = self.excerpts.cursor::<Point>();
+        cursor.seek(&Point::new(row, 0), Bias::Right, &());
+        if let Some(excerpt) = cursor.item() {
+            let overshoot = row - cursor.start().row;
+            let header_height = excerpt.header_height as u32;
+            if overshoot < header_height {
+                0
+            } else {
+                let excerpt_start = excerpt.range.start.to_point(&excerpt.buffer);
+                let excerpt_end = excerpt.range.end.to_point(&excerpt.buffer);
+                let buffer_row = excerpt_start.row + overshoot - header_height;
+                let mut len = excerpt.buffer.line_len(buffer_row);
+                if buffer_row == excerpt_end.row {
+                    len = excerpt_end.column;
+                }
+                if buffer_row == excerpt_start.row {
+                    len -= excerpt_start.column
+                }
+                len
+            }
+        } else {
+            0
+        }
+    }
+
+    pub fn max_point(&self) -> Point {
+        self.text_summary().lines
+    }
+
+    pub fn text_summary(&self) -> TextSummary {
+        self.excerpts.summary().text
+    }
+
+    pub fn text_summary_for_range<'a, D, O>(&'a self, range: Range<O>) -> D
+    where
+        D: TextDimension,
+        O: ToOffset,
+    {
+        let mut summary = D::default();
+        let mut range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut cursor = self.excerpts.cursor::<usize>();
+        cursor.seek(&range.start, Bias::Right, &());
+        if let Some(excerpt) = cursor.item() {
+            let start_after_header = cursor.start() + excerpt.header_height as usize;
+            if range.start < start_after_header {
+                let header_len = cmp::min(range.end, start_after_header) - range.start;
+                summary.add_assign(&D::from_text_summary(&TextSummary {
+                    bytes: header_len,
+                    lines: Point::new(header_len as u32, 0),
+                    lines_utf16: PointUtf16::new(header_len as u32, 0),
+                    first_line_chars: 0,
+                    last_line_chars: 0,
+                    longest_row: 0,
+                    longest_row_chars: 0,
+                }));
+                range.start = start_after_header;
+                range.end = cmp::max(range.start, range.end);
+            }
+
+            let end_before_newline = cursor.end(&()) - 1;
+            let excerpt_start = excerpt.range.start.to_offset(&excerpt.buffer);
+            let start_in_excerpt = excerpt_start + (range.start - start_after_header);
+            let end_in_excerpt =
+                excerpt_start + (cmp::min(end_before_newline, range.end) - start_after_header);
+            summary.add_assign(
+                &excerpt
+                    .buffer
+                    .text_summary_for_range(start_in_excerpt..end_in_excerpt),
+            );
+
+            if range.end > end_before_newline {
+                summary.add_assign(&D::from_text_summary(&TextSummary {
+                    bytes: 1,
+                    lines: Point::new(1 as u32, 0),
+                    lines_utf16: PointUtf16::new(1 as u32, 0),
+                    first_line_chars: 0,
+                    last_line_chars: 0,
+                    longest_row: 0,
+                    longest_row_chars: 0,
+                }));
+            }
+
+            cursor.next(&());
+        }
+
+        if range.end > *cursor.start() {
+            summary.add_assign(&D::from_text_summary(&cursor.summary::<_, TextSummary>(
+                &range.end,
+                Bias::Right,
+                &(),
+            )));
+            if let Some(excerpt) = cursor.item() {
+                let start_after_header = cursor.start() + excerpt.header_height as usize;
+                let header_len =
+                    cmp::min(range.end - cursor.start(), excerpt.header_height as usize);
+                summary.add_assign(&D::from_text_summary(&TextSummary {
+                    bytes: header_len,
+                    lines: Point::new(header_len as u32, 0),
+                    lines_utf16: PointUtf16::new(header_len as u32, 0),
+                    first_line_chars: 0,
+                    last_line_chars: 0,
+                    longest_row: 0,
+                    longest_row_chars: 0,
+                }));
+                range.end = cmp::max(start_after_header, range.end);
+
+                let excerpt_start = excerpt.range.start.to_offset(&excerpt.buffer);
+                let end_in_excerpt = excerpt_start + (range.end - start_after_header);
+                summary.add_assign(
+                    &excerpt
+                        .buffer
+                        .text_summary_for_range(excerpt_start..end_in_excerpt),
+                );
+                cursor.next(&());
+            }
+        }
+
+        summary
+    }
 }
 
 impl Excerpt {
@@ -343,7 +540,8 @@ impl Excerpt {
         range: Range<Anchor>,
         header_height: u8,
     ) -> Self {
-        let mut text_summary = buffer.text_summary_for_range::<TextSummary, _>(range.clone());
+        let mut text_summary =
+            buffer.text_summary_for_range::<TextSummary, _>(range.to_offset(&buffer));
         if header_height > 0 {
             text_summary.first_line_chars = 0;
             text_summary.lines.row += header_height as u32;
@@ -389,6 +587,12 @@ impl sum_tree::Summary for EntrySummary {
     }
 }
 
+impl<'a> sum_tree::Dimension<'a, EntrySummary> for TextSummary {
+    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
+        *self += &summary.text;
+    }
+}
+
 impl<'a> sum_tree::Dimension<'a, EntrySummary> for usize {
     fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
         *self += summary.text.bytes;
@@ -398,6 +602,12 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for usize {
 impl<'a> sum_tree::Dimension<'a, EntrySummary> for Point {
     fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
         *self += summary.text.lines;
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, EntrySummary> for PointUtf16 {
+    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
+        *self += summary.text.lines_utf16
     }
 }
 
@@ -462,15 +672,34 @@ impl<'a> Iterator for Chunks<'a> {
     }
 }
 
+impl ToOffset for Point {
+    fn to_offset<'a>(&self, snapshot: &ExcerptListSnapshot) -> usize {
+        snapshot.point_to_offset(*self)
+    }
+}
+
+impl ToOffset for PointUtf16 {
+    fn to_offset<'a>(&self, snapshot: &ExcerptListSnapshot) -> usize {
+        snapshot.point_utf16_to_offset(*self)
+    }
+}
+
 impl ToOffset for usize {
-    fn to_offset<'a>(&self, _: &Snapshot) -> usize {
+    fn to_offset<'a>(&self, snapshot: &ExcerptListSnapshot) -> usize {
+        assert!(*self <= snapshot.len(), "offset is out of range");
         *self
     }
 }
 
-impl ToOffset for Point {
-    fn to_offset<'a>(&self, snapshot: &Snapshot) -> usize {
-        snapshot.to_offset(*self)
+impl ToPoint for usize {
+    fn to_point<'a>(&self, snapshot: &ExcerptListSnapshot) -> Point {
+        snapshot.offset_to_point(*self)
+    }
+}
+
+impl ToPoint for Point {
+    fn to_point<'a>(&self, _: &ExcerptListSnapshot) -> Point {
+        *self
     }
 }
 
@@ -507,7 +736,7 @@ impl Location {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Buffer;
+    use crate::buffer::Buffer;
     use gpui::MutableAppContext;
     use rand::prelude::*;
     use std::{env, mem};
@@ -685,33 +914,48 @@ mod tests {
 
             let snapshot = list.read(cx).snapshot(cx);
 
+            let mut excerpt_starts = Vec::new();
             let mut expected_text = String::new();
             for (buffer, range, header_height) in &expected_excerpts {
-                let buffer_id = buffer.id();
                 let buffer = buffer.read(cx);
                 let buffer_range = range.to_offset(buffer);
-                let buffer_start_point = buffer.to_point(buffer_range.start);
 
                 for _ in 0..*header_height {
                     expected_text.push('\n');
                 }
 
-                let excerpt_start = TextSummary::from(expected_text.as_str());
+                excerpt_starts.push(TextSummary::from(expected_text.as_str()));
                 expected_text.extend(buffer.text_for_range(buffer_range.clone()));
                 expected_text.push('\n');
+            }
 
-                for buffer_offset in buffer_range.clone() {
-                    let offset = excerpt_start.bytes + (buffer_offset - buffer_range.start);
+            assert_eq!(snapshot.text(), expected_text);
+
+            let mut excerpt_starts = excerpt_starts.into_iter();
+            for (buffer, range, _) in &expected_excerpts {
+                let buffer_id = buffer.id();
+                let buffer = buffer.read(cx);
+                let buffer_range = range.to_offset(buffer);
+                let buffer_start_point = buffer.offset_to_point(buffer_range.start);
+                let buffer_start_point_utf16 =
+                    buffer.text_summary_for_range::<PointUtf16, _>(0..buffer_range.start);
+
+                let excerpt_start = excerpt_starts.next().unwrap();
+                let mut offset = excerpt_start.bytes;
+                let mut buffer_offset = buffer_range.start;
+                let mut point = excerpt_start.lines;
+                let mut buffer_point = buffer_start_point;
+                let mut point_utf16 = excerpt_start.lines_utf16;
+                let mut buffer_point_utf16 = buffer_start_point_utf16;
+                for byte in buffer.bytes_in_range(buffer_range.clone()).flatten() {
                     let left_offset = snapshot.clip_offset(offset, Bias::Left);
                     let right_offset = snapshot.clip_offset(offset, Bias::Right);
                     let buffer_left_offset = buffer.clip_offset(buffer_offset, Bias::Left);
                     let buffer_right_offset = buffer.clip_offset(buffer_offset, Bias::Right);
-                    let left_point = snapshot.to_point(left_offset);
-
                     assert_eq!(
                         left_offset,
                         excerpt_start.bytes + (buffer_left_offset - buffer_range.start),
-                        "clip_offset({}, Left). buffer: {}, buffer offset: {}",
+                        "clip_offset({:?}, Left). buffer: {:?}, buffer offset: {:?}",
                         offset,
                         buffer_id,
                         buffer_offset,
@@ -719,30 +963,95 @@ mod tests {
                     assert_eq!(
                         right_offset,
                         excerpt_start.bytes + (buffer_right_offset - buffer_range.start),
-                        "clip_offset({}, Right). buffer: {}, buffer offset: {}",
+                        "clip_offset({:?}, Right). buffer: {:?}, buffer offset: {:?}",
                         offset,
                         buffer_id,
                         buffer_offset,
                     );
+
+                    let left_point = snapshot.clip_point(point, Bias::Left);
+                    let right_point = snapshot.clip_point(point, Bias::Right);
+                    let buffer_left_point = buffer.clip_point(buffer_point, Bias::Left);
+                    let buffer_right_point = buffer.clip_point(buffer_point, Bias::Right);
                     assert_eq!(
                         left_point,
-                        excerpt_start.lines
-                            + (buffer.to_point(buffer_left_offset) - buffer_start_point),
-                        "to_point({}). buffer: {}, buffer offset: {}",
-                        offset,
+                        excerpt_start.lines + (buffer_left_point - buffer_start_point),
+                        "clip_point({:?}, Left). buffer: {:?}, buffer point: {:?}",
+                        point,
                         buffer_id,
-                        buffer_offset,
+                        buffer_point,
                     );
                     assert_eq!(
-                        snapshot.to_offset(left_point),
+                        right_point,
+                        excerpt_start.lines + (buffer_right_point - buffer_start_point),
+                        "clip_point({:?}, Right). buffer: {:?}, buffer point: {:?}",
+                        point,
+                        buffer_id,
+                        buffer_point,
+                    );
+
+                    let left_point_utf16 = snapshot.clip_point_utf16(point_utf16, Bias::Left);
+                    let right_point_utf16 = snapshot.clip_point_utf16(point_utf16, Bias::Right);
+                    let buffer_left_point_utf16 =
+                        buffer.clip_point_utf16(buffer_point_utf16, Bias::Left);
+                    let buffer_right_point_utf16 =
+                        buffer.clip_point_utf16(buffer_point_utf16, Bias::Right);
+                    assert_eq!(
+                        left_point_utf16,
+                        excerpt_start.lines_utf16
+                            + (buffer_left_point_utf16 - buffer_start_point_utf16),
+                        "clip_point_utf16({:?}, Left). buffer: {:?}, buffer point_utf16: {:?}",
+                        point_utf16,
+                        buffer_id,
+                        buffer_point_utf16,
+                    );
+                    assert_eq!(
+                        right_point_utf16,
+                        excerpt_start.lines_utf16
+                            + (buffer_right_point_utf16 - buffer_start_point_utf16),
+                        "clip_point_utf16({:?}, Right). buffer: {:?}, buffer point_utf16: {:?}",
+                        point_utf16,
+                        buffer_id,
+                        buffer_point_utf16,
+                    );
+
+                    assert_eq!(
+                        snapshot.point_to_offset(left_point),
                         left_offset,
-                        "to_offset({:?})",
+                        "point_to_offset({:?})",
                         left_point,
-                    )
+                    );
+                    assert_eq!(
+                        snapshot.offset_to_point(left_offset),
+                        left_point,
+                        "offset_to_point({:?})",
+                        left_offset,
+                    );
+
+                    offset += 1;
+                    buffer_offset += 1;
+                    if *byte == b'\n' {
+                        point += Point::new(1, 0);
+                        point_utf16 += PointUtf16::new(1, 0);
+                        buffer_point += Point::new(1, 0);
+                        buffer_point_utf16 += PointUtf16::new(1, 0);
+                    } else {
+                        point += Point::new(0, 1);
+                        point_utf16 += PointUtf16::new(0, 1);
+                        buffer_point += Point::new(0, 1);
+                        buffer_point_utf16 += PointUtf16::new(0, 1);
+                    }
                 }
             }
 
-            assert_eq!(snapshot.text(), expected_text);
+            for (row, line) in expected_text.split('\n').enumerate() {
+                assert_eq!(
+                    snapshot.line_len(row as u32),
+                    line.len() as u32,
+                    "line_len({}).",
+                    row
+                );
+            }
 
             for _ in 0..10 {
                 let end_ix = snapshot.clip_offset(rng.gen_range(0..=snapshot.len()), Bias::Right);
@@ -754,6 +1063,14 @@ mod tests {
                         .collect::<String>(),
                     &expected_text[start_ix..end_ix],
                     "incorrect text for range {:?}",
+                    start_ix..end_ix
+                );
+
+                let expected_summary = TextSummary::from(&expected_text[start_ix..end_ix]);
+                assert_eq!(
+                    snapshot.text_summary_for_range::<TextSummary, _>(start_ix..end_ix),
+                    expected_summary,
+                    "incorrect summary for range {:?}",
                     start_ix..end_ix
                 );
             }
