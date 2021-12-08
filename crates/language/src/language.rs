@@ -1,6 +1,6 @@
 mod buffer;
-mod excerpt_list;
 mod highlight_map;
+mod multi_buffer;
 pub mod proto;
 #[cfg(test)]
 mod tests;

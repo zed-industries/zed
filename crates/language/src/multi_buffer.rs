@@ -17,18 +17,18 @@ const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
 pub type ExcerptId = Location;
 
 #[derive(Default)]
-pub struct ExcerptList {
-    snapshot: Mutex<ExcerptListSnapshot>,
+pub struct MultiBuffer {
+    snapshot: Mutex<MultiBufferSnapshot>,
     buffers: HashMap<usize, BufferState>,
     subscriptions: Topic,
 }
 
 pub trait ToOffset {
-    fn to_offset<'a>(&self, snapshot: &ExcerptListSnapshot) -> usize;
+    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize;
 }
 
 pub trait ToPoint {
-    fn to_point<'a>(&self, snapshot: &ExcerptListSnapshot) -> Point;
+    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point;
 }
 
 #[derive(Debug)]
@@ -39,7 +39,7 @@ struct BufferState {
 }
 
 #[derive(Clone, Default)]
-pub struct ExcerptListSnapshot {
+pub struct MultiBufferSnapshot {
     excerpts: SumTree<Excerpt>,
 }
 
@@ -59,7 +59,7 @@ struct Excerpt {
 }
 
 #[derive(Clone, Debug, Default)]
-struct EntrySummary {
+struct ExcerptSummary {
     excerpt_id: ExcerptId,
     text: TextSummary,
 }
@@ -71,16 +71,16 @@ pub struct Chunks<'a> {
     range: Range<usize>,
     cursor: Cursor<'a, Excerpt, usize>,
     header_height: u8,
-    entry_chunks: Option<buffer::BufferChunks<'a>>,
+    excerpt_chunks: Option<buffer::BufferChunks<'a>>,
     theme: Option<&'a SyntaxTheme>,
 }
 
-impl ExcerptList {
+impl MultiBuffer {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn snapshot(&self, cx: &AppContext) -> ExcerptListSnapshot {
+    pub fn snapshot(&self, cx: &AppContext) -> MultiBufferSnapshot {
         self.sync(cx);
         self.snapshot.lock().clone()
     }
@@ -192,11 +192,11 @@ impl ExcerptList {
     }
 }
 
-impl Entity for ExcerptList {
+impl Entity for MultiBuffer {
     type Event = ();
 }
 
-impl ExcerptListSnapshot {
+impl MultiBufferSnapshot {
     pub fn text(&self) -> String {
         self.chunks(0..self.len(), None)
             .map(|chunk| chunk.text)
@@ -299,7 +299,7 @@ impl ExcerptListSnapshot {
         cursor.seek(&range.start, Bias::Right, &());
 
         let mut header_height: u8 = 0;
-        let entry_chunks = cursor.item().map(|excerpt| {
+        let excerpt_chunks = cursor.item().map(|excerpt| {
             let buffer_range = excerpt.range.to_offset(&excerpt.buffer);
             header_height = excerpt.header_height;
 
@@ -333,7 +333,7 @@ impl ExcerptListSnapshot {
             range,
             cursor,
             header_height,
-            entry_chunks,
+            excerpt_chunks,
             theme,
         }
     }
@@ -567,17 +567,17 @@ impl Excerpt {
 }
 
 impl sum_tree::Item for Excerpt {
-    type Summary = EntrySummary;
+    type Summary = ExcerptSummary;
 
     fn summary(&self) -> Self::Summary {
-        EntrySummary {
+        ExcerptSummary {
             excerpt_id: self.id.clone(),
             text: self.text_summary.clone(),
         }
     }
 }
 
-impl sum_tree::Summary for EntrySummary {
+impl sum_tree::Summary for ExcerptSummary {
     type Context = ();
 
     fn add_summary(&mut self, summary: &Self, _: &()) {
@@ -587,32 +587,32 @@ impl sum_tree::Summary for EntrySummary {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, EntrySummary> for TextSummary {
-    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
+impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for TextSummary {
+    fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
         *self += &summary.text;
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, EntrySummary> for usize {
-    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
+impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for usize {
+    fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
         *self += summary.text.bytes;
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, EntrySummary> for Point {
-    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
+impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Point {
+    fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
         *self += summary.text.lines;
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, EntrySummary> for PointUtf16 {
-    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
+impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for PointUtf16 {
+    fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
         *self += summary.text.lines_utf16
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, EntrySummary> for Location {
-    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
+impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Location {
+    fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
         debug_assert!(summary.excerpt_id > *self);
         *self = summary.excerpt_id.clone();
     }
@@ -634,11 +634,11 @@ impl<'a> Iterator for Chunks<'a> {
                 return Some(chunk);
             }
 
-            if let Some(entry_chunks) = self.entry_chunks.as_mut() {
-                if let Some(chunk) = entry_chunks.next() {
+            if let Some(excerpt_chunks) = self.excerpt_chunks.as_mut() {
+                if let Some(chunk) = excerpt_chunks.next() {
                     return Some(chunk);
                 }
-                self.entry_chunks.take();
+                self.excerpt_chunks.take();
                 if self.cursor.end(&()) <= self.range.end {
                     return Some(Chunk {
                         text: "\n",
@@ -663,7 +663,7 @@ impl<'a> Iterator for Chunks<'a> {
             );
 
             self.header_height = excerpt.header_height;
-            self.entry_chunks = Some(
+            self.excerpt_chunks = Some(
                 excerpt
                     .buffer
                     .chunks(buffer_range.start..buffer_end, self.theme),
@@ -673,32 +673,32 @@ impl<'a> Iterator for Chunks<'a> {
 }
 
 impl ToOffset for Point {
-    fn to_offset<'a>(&self, snapshot: &ExcerptListSnapshot) -> usize {
+    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
         snapshot.point_to_offset(*self)
     }
 }
 
 impl ToOffset for PointUtf16 {
-    fn to_offset<'a>(&self, snapshot: &ExcerptListSnapshot) -> usize {
+    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
         snapshot.point_utf16_to_offset(*self)
     }
 }
 
 impl ToOffset for usize {
-    fn to_offset<'a>(&self, snapshot: &ExcerptListSnapshot) -> usize {
+    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
         assert!(*self <= snapshot.len(), "offset is out of range");
         *self
     }
 }
 
 impl ToPoint for usize {
-    fn to_point<'a>(&self, snapshot: &ExcerptListSnapshot) -> Point {
+    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
         snapshot.offset_to_point(*self)
     }
 }
 
 impl ToPoint for Point {
-    fn to_point<'a>(&self, _: &ExcerptListSnapshot) -> Point {
+    fn to_point<'a>(&self, _: &MultiBufferSnapshot) -> Point {
         *self
     }
 }
@@ -748,7 +748,7 @@ mod tests {
         let buffer_1 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'a'), cx));
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'g'), cx));
 
-        let list = cx.add_model(|_| ExcerptList::new());
+        let list = cx.add_model(|_| MultiBuffer::new());
 
         let subscription = list.update(cx, |list, cx| {
             let subscription = list.subscribe();
@@ -857,7 +857,7 @@ mod tests {
             .unwrap_or(10);
 
         let mut buffers: Vec<ModelHandle<Buffer>> = Vec::new();
-        let list = cx.add_model(|_| ExcerptList::new());
+        let list = cx.add_model(|_| MultiBuffer::new());
         let mut excerpt_ids = Vec::new();
         let mut expected_excerpts = Vec::new();
         let mut old_versions = Vec::new();
