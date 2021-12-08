@@ -1,4 +1,4 @@
-use crate::{buffer::*, selection::SelectionExt};
+use crate::{buffer::*, selection::SelectionExt, traits::Snapshot};
 
 use super::*;
 use gpui::{ModelHandle, MutableAppContext, Task};
@@ -1020,11 +1020,13 @@ impl Buffer {
         &self,
         range: Range<T>,
     ) -> Option<(Range<Point>, Range<Point>)> {
-        self.enclosing_bracket_ranges(range).map(|(start, end)| {
-            let point_start = start.start.to_point(&***self)..start.end.to_point(&***self);
-            let point_end = end.start.to_point(&***self)..end.end.to_point(&***self);
-            (point_start, point_end)
-        })
+        self.snapshot()
+            .enclosing_bracket_ranges(range)
+            .map(|(start, end)| {
+                let point_start = start.start.to_point(&***self)..start.end.to_point(&***self);
+                let point_end = end.start.to_point(&***self)..end.end.to_point(&***self);
+                (point_start, point_end)
+            })
     }
 }
 
@@ -1070,11 +1072,11 @@ impl FakeFile {
 
 impl File for FakeFile {
     fn worktree_id(&self) -> usize {
-        todo!()
+        unimplemented!()
     }
 
     fn entry_id(&self) -> Option<usize> {
-        todo!()
+        unimplemented!()
     }
 
     fn mtime(&self) -> SystemTime {
@@ -1082,7 +1084,7 @@ impl File for FakeFile {
     }
 
     fn path(&self) -> &Arc<Path> {
-        todo!()
+        unimplemented!()
     }
 
     fn abs_path(&self) -> Option<PathBuf> {
@@ -1090,15 +1092,15 @@ impl File for FakeFile {
     }
 
     fn full_path(&self) -> PathBuf {
-        todo!()
+        unimplemented!()
     }
 
     fn file_name(&self) -> Option<OsString> {
-        todo!()
+        unimplemented!()
     }
 
     fn is_deleted(&self) -> bool {
-        todo!()
+        unimplemented!()
     }
 
     fn save(
@@ -1108,26 +1110,26 @@ impl File for FakeFile {
         _: clock::Global,
         _: &mut MutableAppContext,
     ) -> Task<Result<(clock::Global, SystemTime)>> {
-        todo!()
+        unimplemented!()
     }
 
     fn load_local(&self, _: &AppContext) -> Option<Task<Result<String>>> {
-        todo!()
+        unimplemented!()
     }
 
     fn buffer_updated(&self, _: u64, _: buffer::Operation, _: &mut MutableAppContext) {
-        todo!()
+        unimplemented!()
     }
 
     fn buffer_removed(&self, _: u64, _: &mut MutableAppContext) {
-        todo!()
+        unimplemented!()
     }
 
     fn boxed_clone(&self) -> Box<dyn File> {
-        todo!()
+        unimplemented!()
     }
 
     fn as_any(&self) -> &dyn Any {
-        todo!()
+        unimplemented!()
     }
 }

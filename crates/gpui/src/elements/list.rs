@@ -865,7 +865,7 @@ mod tests {
         }
 
         fn paint(&mut self, _: RectF, _: RectF, _: &mut (), _: &mut PaintContext) {
-            todo!()
+            unimplemented!()
         }
 
         fn dispatch_event(
@@ -876,7 +876,7 @@ mod tests {
             _: &mut (),
             _: &mut EventContext,
         ) -> bool {
-            todo!()
+            unimplemented!()
         }
 
         fn debug(&self, _: RectF, _: &(), _: &(), _: &DebugContext) -> serde_json::Value {

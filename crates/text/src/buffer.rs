@@ -1464,12 +1464,6 @@ impl Buffer {
     }
 }
 
-impl AsRef<BufferSnapshot> for Buffer {
-    fn as_ref(&self) -> &BufferSnapshot {
-        todo!()
-    }
-}
-
 impl Deref for Buffer {
     type Target = BufferSnapshot;
 

@@ -7,6 +7,7 @@ use clock::ReplicaId;
 use gpui::{Entity, ModelContext};
 use std::{cmp::Ordering, fmt::Debug, io, ops::Range, sync::Arc};
 use sum_tree::Bias;
+use text::FromAnchor;
 use theme::SyntaxTheme;
 
 pub use text::{ToOffset, ToPoint};
@@ -119,13 +120,13 @@ pub trait Snapshot: 'static + text::Snapshot + Clone + Send + Unpin {
     ) -> Box<dyn 'a + Iterator<Item = (Range<O>, &Diagnostic)>>
     where
         T: 'a + ToOffset,
-        O: 'a + FromAnchor<Self>;
+        O: 'a + FromAnchor;
     fn diagnostic_group<'a, O>(
         &'a self,
         group_id: usize,
     ) -> Box<dyn 'a + Iterator<Item = (Range<O>, &Diagnostic)>>
     where
-        O: 'a + FromAnchor<Self>;
+        O: 'a + FromAnchor;
 }
 
 pub trait Anchor: Clone + Debug + Send + Sync {
@@ -158,9 +159,9 @@ pub trait AnchorRangeSet {
         D: TextDimension;
 }
 
-pub trait FromAnchor<S: Snapshot> {
-    fn from_anchor(anchor: &S::Anchor, content: &S) -> Self;
-}
+// pub trait FromAnchor<S: Snapshot> {
+//     fn from_anchor(anchor: &S::Anchor, content: &S) -> Self;
+// }
 
 pub trait DocumentSelectionSet {
     type Document: Buffer;
@@ -199,18 +200,6 @@ pub trait Bytes<'a>: Send + Iterator<Item = &'a [u8]> + io::Read {}
 pub trait AnchorRangeExt<T: Anchor> {
     fn cmp(&self, b: &Range<T>, buffer: &T::Snapshot) -> Ordering;
     fn to_offset(&self, content: &T::Snapshot) -> Range<usize>;
-}
-
-impl<S: Snapshot> FromAnchor<S> for usize {
-    fn from_anchor(anchor: &S::Anchor, snapshot: &S) -> Self {
-        anchor.to_offset(snapshot)
-    }
-}
-
-impl<S: Snapshot> FromAnchor<S> for Point {
-    fn from_anchor(anchor: &S::Anchor, snapshot: &S) -> Self {
-        anchor.to_point(snapshot)
-    }
 }
 
 impl<T: Anchor> AnchorRangeExt<T> for Range<T> {

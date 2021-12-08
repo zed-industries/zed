@@ -1043,48 +1043,6 @@ impl Buffer {
         }
     }
 
-    pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
-        if let Some(tree) = self.syntax_tree() {
-            let root = tree.root_node();
-            let range = range.start.to_offset(self.as_ref())..range.end.to_offset(&***self);
-            let mut node = root.descendant_for_byte_range(range.start, range.end);
-            while node.map_or(false, |n| n.byte_range() == range) {
-                node = node.unwrap().parent();
-            }
-            node.map(|n| n.byte_range())
-        } else {
-            None
-        }
-    }
-
-    pub fn enclosing_bracket_ranges<T: ToOffset>(
-        &self,
-        range: Range<T>,
-    ) -> Option<(Range<usize>, Range<usize>)> {
-        let (grammar, tree) = self.grammar().zip(self.syntax_tree())?;
-        let open_capture_ix = grammar.brackets_query.capture_index_for_name("open")?;
-        let close_capture_ix = grammar.brackets_query.capture_index_for_name("close")?;
-
-        // Find bracket pairs that *inclusively* contain the given range.
-        let range = range.start.to_offset(self.as_ref()).saturating_sub(1)
-            ..range.end.to_offset(self.as_ref()) + 1;
-        let mut cursor = QueryCursorHandle::new();
-        let matches = cursor.set_byte_range(range).matches(
-            &grammar.brackets_query,
-            tree.root_node(),
-            TextProvider(self.as_rope()),
-        );
-
-        // Get the ranges of the innermost pair of brackets.
-        matches
-            .filter_map(|mat| {
-                let open = mat.nodes_for_capture_index(open_capture_ix).next()?;
-                let close = mat.nodes_for_capture_index(close_capture_ix).next()?;
-                Some((open.byte_range(), close.byte_range()))
-            })
-            .min_by_key(|(open_range, close_range)| close_range.end - open_range.start)
-    }
-
     pub(crate) fn diff(&self, new_text: Arc<str>, cx: &AppContext) -> Task<Diff> {
         // TODO: it would be nice to not allocate here.
         let old_text = self.text();
@@ -1262,7 +1220,7 @@ impl Buffer {
             let edited = self.anchor_set(
                 Bias::Left,
                 ranges.iter().filter_map(|range| {
-                    let start = range.start.to_point(self.as_ref() as &text::BufferSnapshot);
+                    let start = range.start.to_point(self);
                     if new_text.starts_with('\n') && start.column == self.line_len(start.row) {
                         None
                     } else {
@@ -1496,12 +1454,6 @@ impl Entity for Buffer {
         if let Some(file) = self.file.as_ref() {
             file.buffer_removed(self.remote_id(), cx);
         }
-    }
-}
-
-impl AsRef<text::BufferSnapshot> for Buffer {
-    fn as_ref(&self) -> &text::BufferSnapshot {
-        self.text.as_ref()
     }
 }
 
@@ -2209,14 +2161,16 @@ impl traits::Snapshot for BufferSnapshot {
     type AnchorRangeSet = AnchorRangeSet;
 
     fn text(&self) -> String {
-        todo!()
+        self.chunks(0..self.len(), None)
+            .map(|chunk| chunk.text)
+            .collect()
     }
 
     fn text_for_range<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
     ) -> Box<dyn 'a + Iterator<Item = &'a str>> {
-        todo!()
+        Box::new(self.chunks(range, None).map(|chunk| chunk.text))
     }
 
     fn chunks<'a, T: ToOffset>(
@@ -2224,70 +2178,100 @@ impl traits::Snapshot for BufferSnapshot {
         range: Range<T>,
         theme: Option<&'a SyntaxTheme>,
     ) -> Box<dyn 'a + traits::Chunks<'a>> {
-        Box::new(self.chunks(
-            range.start.to_offset(self)..range.end.to_offset(self),
-            theme,
-        ))
+        Box::new(self.chunks(range, theme))
     }
 
     fn chars_at<'a, T: ToOffset>(&'a self, position: T) -> Box<dyn 'a + Iterator<Item = char>> {
-        todo!()
+        Box::new(self.chars_for_range(position.to_offset(self)..self.len()))
     }
 
     fn chars_for_range<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
     ) -> Box<dyn 'a + Iterator<Item = char>> {
-        todo!()
+        Box::new(
+            self.chunks(range, None)
+                .flat_map(|chunk| chunk.text.chars()),
+        )
     }
 
     fn reversed_chars_at<'a, T: ToOffset>(
         &'a self,
         position: T,
     ) -> Box<dyn 'a + Iterator<Item = char>> {
-        todo!()
+        Box::new(self.text.reversed_chars_at(position))
     }
 
     fn bytes_in_range<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
     ) -> Box<dyn 'a + traits::Bytes<'a>> {
-        todo!()
+        Box::new(self.text.bytes_in_range(range))
     }
 
     fn contains_str_at<T: ToOffset>(&self, position: T, needle: &str) -> bool {
-        todo!()
+        self.text.contains_str_at(position, needle)
     }
 
     fn is_line_blank(&self, row: u32) -> bool {
-        todo!()
+        self.text.is_line_blank(row)
     }
 
     fn indent_column_for_line(&self, row: u32) -> u32 {
-        todo!()
+        self.text.indent_column_for_line(row)
     }
 
     fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
-        todo!()
+        if let Some(tree) = &self.tree {
+            let root = tree.root_node();
+            let range = range.start.to_offset(self)..range.end.to_offset(self);
+            let mut node = root.descendant_for_byte_range(range.start, range.end);
+            while node.map_or(false, |n| n.byte_range() == range) {
+                node = node.unwrap().parent();
+            }
+            node.map(|n| n.byte_range())
+        } else {
+            None
+        }
     }
 
     fn enclosing_bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
     ) -> Option<(Range<usize>, Range<usize>)> {
-        todo!()
+        let (grammar, tree) = self.grammar().zip(self.tree.as_ref())?;
+        let open_capture_ix = grammar.brackets_query.capture_index_for_name("open")?;
+        let close_capture_ix = grammar.brackets_query.capture_index_for_name("close")?;
+
+        // Find bracket pairs that *inclusively* contain the given range.
+        let range = range.start.to_offset(self).saturating_sub(1)..range.end.to_offset(self) + 1;
+        let mut cursor = QueryCursorHandle::new();
+        let matches = cursor.set_byte_range(range).matches(
+            &grammar.brackets_query,
+            tree.root_node(),
+            TextProvider(self.as_rope()),
+        );
+
+        // Get the ranges of the innermost pair of brackets.
+        matches
+            .filter_map(|mat| {
+                let open = mat.nodes_for_capture_index(open_capture_ix).next()?;
+                let close = mat.nodes_for_capture_index(close_capture_ix).next()?;
+                Some((open.byte_range(), close.byte_range()))
+            })
+            .min_by_key(|(open_range, close_range)| close_range.end - open_range.start)
     }
 
     fn anchor_before<T: ToOffset>(&self, position: T) -> Self::Anchor {
-        (**self).anchor_before(position.to_offset(self))
+        self.text.anchor_before(position.to_offset(self))
     }
 
     fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Self::Anchor {
-        todo!()
+        self.text.anchor_at(position, bias)
     }
 
     fn anchor_after<T: ToOffset>(&self, position: T) -> Self::Anchor {
-        (**self).anchor_after(position.to_offset(self))
+        self.anchor_after(position.to_offset(self))
     }
 
     fn anchor_range_set<E>(
@@ -2299,15 +2283,15 @@ impl traits::Snapshot for BufferSnapshot {
     where
         E: IntoIterator<Item = Range<usize>>,
     {
-        todo!()
+        self.text.anchor_range_set(start_bias, end_bias, entries)
     }
 
     fn parse_count(&self) -> usize {
-        self.parse_count()
+        self.parse_count
     }
 
     fn diagnostics_update_count(&self) -> usize {
-        self.diagnostics_update_count()
+        self.diagnostics_update_count
     }
 
     fn diagnostics_in_range<'a, T, O>(
@@ -2316,9 +2300,13 @@ impl traits::Snapshot for BufferSnapshot {
     ) -> Box<dyn 'a + Iterator<Item = (Range<O>, &Diagnostic)>>
     where
         T: 'a + ToOffset,
-        O: 'a + traits::FromAnchor<Self>,
+        O: 'a + text::FromAnchor,
     {
-        todo!()
+        Box::new(
+            self.diagnostics
+                .intersecting_ranges(search_range, self, true)
+                .map(move |(_, range, diagnostic)| (range, diagnostic)),
+        )
     }
 
     fn diagnostic_group<'a, O>(
@@ -2326,11 +2314,17 @@ impl traits::Snapshot for BufferSnapshot {
         group_id: usize,
     ) -> Box<dyn 'a + Iterator<Item = (Range<O>, &Diagnostic)>>
     where
-        O: 'a + traits::FromAnchor<Self>,
+        O: 'a + text::FromAnchor,
     {
-        todo!()
+        Box::new(
+            self.diagnostics
+                .filter(self, move |diagnostic| diagnostic.group_id == group_id)
+                .map(move |(_, range, diagnostic)| (range, diagnostic)),
+        )
     }
 }
+
+impl<'a> traits::Bytes<'a> for rope::Bytes<'a> {}
 
 impl traits::Anchor for Anchor {
     type Snapshot = BufferSnapshot;

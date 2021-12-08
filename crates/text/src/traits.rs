@@ -26,7 +26,7 @@ pub trait Snapshot {
     }
 }
 
-pub trait ToOffset {
+pub trait ToOffset: 'static {
     fn to_offset<'a, T: Snapshot>(&self, content: &T) -> usize;
 }
 

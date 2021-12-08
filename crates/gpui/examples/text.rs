@@ -118,6 +118,6 @@ impl gpui::Element for TextElement {
         _: &Self::PaintState,
         _: &DebugContext,
     ) -> gpui::json::Value {
-        todo!()
+        unimplemented!()
     }
 }
