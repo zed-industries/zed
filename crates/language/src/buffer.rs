@@ -6,6 +6,7 @@ pub use crate::{
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
+use collections::hash_map;
 use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
@@ -1911,6 +1912,7 @@ pub fn contiguous_ranges(
 impl traits::Buffer for Buffer {
     type Snapshot = BufferSnapshot;
     type SelectionSet = SelectionSet;
+    type SelectionSetIterator<'a> = hash_map::Iter<'a, SelectionSetId, SelectionSet>;
 
     fn replica_id(&self) -> ReplicaId {
         self.text.replica_id()
@@ -2029,10 +2031,8 @@ impl traits::Buffer for Buffer {
         self.text.selection_set(set_id).ok()
     }
 
-    fn selection_sets<'a>(
-        &'a self,
-    ) -> Box<dyn 'a + Iterator<Item = (&'a SelectionSetId, &'a SelectionSet)>> {
-        Box::new(self.text.selection_sets())
+    fn selection_sets<'a>(&'a self) -> Self::SelectionSetIterator<'a> {
+        self.text.selection_sets()
     }
 }
 
@@ -2143,6 +2143,7 @@ impl text::Snapshot for BufferSnapshot {
 impl traits::Snapshot for BufferSnapshot {
     type Anchor = Anchor;
     type AnchorRangeSet = AnchorRangeSet;
+    type ChunksIterator<'a> = BufferChunks<'a>;
 
     fn text(&self) -> String {
         self.chunks(0..self.len(), None)
@@ -2161,8 +2162,8 @@ impl traits::Snapshot for BufferSnapshot {
         &'a self,
         range: Range<T>,
         theme: Option<&'a SyntaxTheme>,
-    ) -> Box<dyn 'a + traits::Chunks<'a>> {
-        Box::new(self.chunks(range, theme))
+    ) -> Self::ChunksIterator<'a> {
+        self.chunks(range, theme)
     }
 
     fn chars_at<'a, T: ToOffset>(&'a self, position: T) -> Box<dyn 'a + Iterator<Item = char>> {

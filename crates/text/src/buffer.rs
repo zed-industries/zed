@@ -14,7 +14,7 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
-use collections::{HashMap, HashSet};
+use collections::{hash_map, HashMap, HashSet};
 use std::{
     cmp::{self, Reverse},
     iter::Iterator,
@@ -1188,7 +1188,7 @@ impl Buffer {
             .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))
     }
 
-    pub fn selection_sets(&self) -> impl Iterator<Item = (&SelectionSetId, &SelectionSet)> {
+    pub fn selection_sets(&self) -> hash_map::Iter<SelectionSetId, SelectionSet> {
         self.selections.iter()
     }
 

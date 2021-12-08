@@ -15,6 +15,9 @@ pub use text::{ToOffset, ToPoint};
 pub trait Buffer: 'static + Entity<Event = Event> {
     type Snapshot: Snapshot;
     type SelectionSet: BufferSelectionSet<Buffer = Self>;
+    type SelectionSetIterator<'a>: Iterator<Item = (&'a SelectionSetId, &'a Self::SelectionSet)>
+    where
+        Self: 'a;
 
     fn replica_id(&self) -> ReplicaId;
     fn language(&self) -> Option<&Arc<Language>>;
@@ -64,14 +67,15 @@ pub trait Buffer: 'static + Entity<Event = Event> {
         cx: &mut ModelContext<Self>,
     ) -> Result<()>;
     fn selection_set(&self, set_id: SelectionSetId) -> Option<&Self::SelectionSet>;
-    fn selection_sets<'a>(
-        &'a self,
-    ) -> Box<dyn 'a + Iterator<Item = (&'a SelectionSetId, &'a Self::SelectionSet)>>;
+    fn selection_sets<'a>(&'a self) -> Self::SelectionSetIterator<'a>;
 }
 
 pub trait Snapshot: 'static + text::Snapshot + Clone + Send + Unpin {
     type Anchor: Anchor<Snapshot = Self>;
     type AnchorRangeSet: AnchorRangeSet<Snapshot = Self>;
+    type ChunksIterator<'a>: Chunks<'a>
+    where
+        Self: 'a;
 
     fn text(&self) -> String;
     fn text_for_range<'a, T: ToOffset>(
@@ -82,7 +86,7 @@ pub trait Snapshot: 'static + text::Snapshot + Clone + Send + Unpin {
         &'a self,
         range: Range<T>,
         theme: Option<&'a SyntaxTheme>,
-    ) -> Box<dyn 'a + Chunks<'a>>;
+    ) -> Self::ChunksIterator<'a>;
     fn chars_at<'a, T: ToOffset>(&'a self, position: T) -> Box<dyn 'a + Iterator<Item = char>>;
     fn chars_for_range<'a, T: ToOffset>(
         &'a self,
@@ -159,10 +163,6 @@ pub trait AnchorRangeSet {
         D: TextDimension;
 }
 
-// pub trait FromAnchor<S: Snapshot> {
-//     fn from_anchor(anchor: &S::Anchor, content: &S) -> Self;
-// }
-
 pub trait BufferSelectionSet {
     type Buffer: Buffer;
 
@@ -204,8 +204,8 @@ pub trait AnchorRangeExt<T: Anchor> {
 
 impl<T: Anchor> AnchorRangeExt<T> for Range<T> {
     fn cmp(&self, other: &Range<T>, buffer: &T::Snapshot) -> Ordering {
-        match self.start.cmp(&other.start, buffer) {
-            Ordering::Equal => other.end.cmp(&self.end, buffer),
+        match T::cmp(&self.start, &other.start, buffer) {
+            Ordering::Equal => T::cmp(&other.end, &self.end, buffer),
             ord @ _ => ord,
         }
     }

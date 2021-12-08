@@ -616,7 +616,7 @@ impl<S: Snapshot> FoldSnapshot<S> {
         &'a self,
         range: Range<FoldOffset>,
         theme: Option<&'a SyntaxTheme>,
-    ) -> FoldChunks<'a> {
+    ) -> FoldChunks<'a, S> {
         let mut transform_cursor = self.transforms.cursor::<(FoldOffset, usize)>();
 
         transform_cursor.seek(&range.end, Bias::Right, &());
@@ -847,19 +847,19 @@ impl<T: Anchor> sum_tree::Summary for FoldSummary<T> {
     type Context = T::Snapshot;
 
     fn add_summary(&mut self, other: &Self, buffer: &T::Snapshot) {
-        if other.min_start.cmp(&self.min_start, buffer) == Ordering::Less {
+        if T::cmp(&other.min_start, &self.min_start, buffer) == Ordering::Less {
             self.min_start = other.min_start.clone();
         }
-        if other.max_end.cmp(&self.max_end, buffer) == Ordering::Greater {
+        if T::cmp(&other.max_end, &self.max_end, buffer) == Ordering::Greater {
             self.max_end = other.max_end.clone();
         }
 
         #[cfg(debug_assertions)]
         {
-            let start_comparison = self.start.cmp(&other.start, buffer);
+            let start_comparison = T::cmp(&self.start, &other.start, buffer);
             assert!(start_comparison <= Ordering::Equal);
             if start_comparison == Ordering::Equal {
-                assert!(self.end.cmp(&other.end, buffer) >= Ordering::Equal);
+                assert!(T::cmp(&self.end, &other.end, buffer) >= Ordering::Equal);
             }
         }
 
@@ -878,7 +878,7 @@ impl<'a, T: Anchor> sum_tree::Dimension<'a, FoldSummary<T>> for Fold<T> {
 
 impl<'a, T: Anchor> sum_tree::SeekTarget<'a, FoldSummary<T>, Fold<T>> for Fold<T> {
     fn cmp(&self, other: &Self, buffer: &T::Snapshot) -> Ordering {
-        self.0.cmp(&other.0, buffer)
+        AnchorRangeExt::cmp(&self.0, &other.0, buffer)
     }
 }
 
@@ -916,16 +916,16 @@ impl<'a> Iterator for FoldBufferRows<'a> {
     }
 }
 
-pub struct FoldChunks<'a> {
+pub struct FoldChunks<'a, S: Snapshot> {
     transform_cursor: Cursor<'a, Transform, (FoldOffset, usize)>,
-    buffer_chunks: Box<dyn 'a + Chunks<'a>>,
+    buffer_chunks: S::ChunksIterator<'a>,
     buffer_chunk: Option<(usize, Chunk<'a>)>,
     buffer_offset: usize,
     output_offset: usize,
     max_output_offset: usize,
 }
 
-impl<'a> Iterator for FoldChunks<'a> {
+impl<'a, S: Snapshot> Iterator for FoldChunks<'a, S> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {

@@ -146,7 +146,7 @@ impl<S: Snapshot> TabSnapshot<S> {
         &'a self,
         range: Range<TabPoint>,
         theme: Option<&'a SyntaxTheme>,
-    ) -> TabChunks<'a> {
+    ) -> TabChunks<'a, S> {
         let (input_start, expanded_char_column, to_next_stop) =
             self.to_fold_point(range.start, Bias::Left);
         let input_start = input_start.to_offset(&self.fold_snapshot);
@@ -367,8 +367,8 @@ impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
 // Handles a tab width <= 16
 const SPACES: &'static str = "                ";
 
-pub struct TabChunks<'a> {
-    fold_chunks: FoldChunks<'a>,
+pub struct TabChunks<'a, S: Snapshot> {
+    fold_chunks: FoldChunks<'a, S>,
     chunk: Chunk<'a>,
     column: usize,
     output_position: Point,
@@ -377,7 +377,7 @@ pub struct TabChunks<'a> {
     skip_leading_tab: bool,
 }
 
-impl<'a> Iterator for TabChunks<'a> {
+impl<'a, S: Snapshot> Iterator for TabChunks<'a, S> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {

@@ -28,6 +28,7 @@ parking = "2.0.0"
 parking_lot = "0.11.1"
 pathfinder_color = "0.5"
 pathfinder_geometry = "0.5"
+pathfinder_simd = { version = "0.5.1", features = ["pf-no-simd"] }
 postage = { version = "0.4.1", features = ["futures-traits"] }
 rand = "0.8.3"
 resvg = "0.14"

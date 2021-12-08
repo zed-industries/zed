@@ -1,3 +1,5 @@
+#![feature(generic_associated_types)]
+
 pub mod buffer;
 mod excerpt_list;
 mod highlight_map;

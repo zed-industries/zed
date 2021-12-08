@@ -55,8 +55,8 @@ struct TransformSummary {
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 pub struct WrapPoint(pub super::Point);
 
-pub struct WrapChunks<'a> {
-    input_chunks: TabChunks<'a>,
+pub struct WrapChunks<'a, S: Snapshot> {
+    input_chunks: TabChunks<'a, S>,
     input_chunk: Chunk<'a>,
     output_position: WrapPoint,
     max_output_row: u32,
@@ -571,7 +571,7 @@ impl<S: Snapshot> WrapSnapshot<S> {
         &'a self,
         rows: Range<u32>,
         theme: Option<&'a SyntaxTheme>,
-    ) -> WrapChunks<'a> {
+    ) -> WrapChunks<'a, S> {
         let output_start = WrapPoint::new(rows.start, 0);
         let output_end = WrapPoint::new(rows.end, 0);
         let mut transforms = self.transforms.cursor::<(WrapPoint, TabPoint)>();
@@ -734,7 +734,7 @@ impl<S: Snapshot> WrapSnapshot<S> {
     }
 }
 
-impl<'a> Iterator for WrapChunks<'a> {
+impl<'a, S: Snapshot> Iterator for WrapChunks<'a, S> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {

@@ -96,7 +96,7 @@ struct TransformSummary {
 
 pub struct BlockChunks<'a, S: Snapshot> {
     transforms: sum_tree::Cursor<'a, Transform<S::Anchor>, (BlockRow, WrapRow)>,
-    input_chunks: WrapChunks<'a>,
+    input_chunks: WrapChunks<'a, S>,
     input_chunk: Chunk<'a>,
     output_row: u32,
     max_output_row: u32,

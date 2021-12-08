@@ -1111,7 +1111,9 @@ impl<D: Buffer> Editor<D> {
     where
         T: IntoIterator<Item = &'a Range<DisplayPoint>>,
     {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let display_map = self
+            .display_map
+            .update(cx, |map, cx| DisplayMap::snapshot(map, cx));
         let selections = ranges
             .into_iter()
             .map(|range| {
