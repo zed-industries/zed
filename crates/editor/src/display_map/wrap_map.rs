@@ -1,6 +1,6 @@
 use super::{
     fold_map,
-    tab_map::{self, Edit as TabEdit, TabPoint, TabSnapshot},
+    tab_map::{self, TabEdit, TabPoint, TabSnapshot},
 };
 use gpui::{
     fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, ModelHandle, MutableAppContext,
@@ -15,7 +15,7 @@ use text::Patch;
 use theme::SyntaxTheme;
 
 pub use super::tab_map::TextSummary;
-pub type Edit = text::Edit<u32>;
+pub type WrapEdit = text::Edit<u32>;
 
 pub struct WrapMap {
     snapshot: WrapSnapshot,
@@ -106,7 +106,7 @@ impl WrapMap {
         tab_snapshot: TabSnapshot,
         edits: Vec<TabEdit>,
         cx: &mut ModelContext<Self>,
-    ) -> (WrapSnapshot, Vec<Edit>) {
+    ) -> (WrapSnapshot, Vec<WrapEdit>) {
         if self.wrap_width.is_some() {
             self.pending_edits.push_back((tab_snapshot, edits));
             self.flush_edits(cx);
@@ -157,8 +157,8 @@ impl WrapMap {
                     .update(
                         tab_snapshot,
                         &[TabEdit {
-                            old_lines: range.clone(),
-                            new_lines: range.clone(),
+                            old: range.clone(),
+                            new: range.clone(),
                         }],
                         wrap_width,
                         &mut line_wrapper,
@@ -203,7 +203,7 @@ impl WrapMap {
             }
             let new_rows = self.snapshot.transforms.summary().output.lines.row + 1;
             self.snapshot.interpolated = false;
-            self.edits_since_sync = self.edits_since_sync.compose(&Patch::new(vec![Edit {
+            self.edits_since_sync = self.edits_since_sync.compose(&Patch::new(vec![WrapEdit {
                 old: 0..old_rows,
                 new: 0..new_rows,
             }]));
@@ -313,47 +313,44 @@ impl WrapSnapshot {
             let mut old_cursor = self.transforms.cursor::<TabPoint>();
 
             let mut tab_edits_iter = tab_edits.iter().peekable();
-            new_transforms = old_cursor.slice(
-                &tab_edits_iter.peek().unwrap().old_lines.start,
-                Bias::Right,
-                &(),
-            );
+            new_transforms =
+                old_cursor.slice(&tab_edits_iter.peek().unwrap().old.start, Bias::Right, &());
 
             while let Some(edit) = tab_edits_iter.next() {
-                if edit.new_lines.start > TabPoint::from(new_transforms.summary().input.lines) {
+                if edit.new.start > TabPoint::from(new_transforms.summary().input.lines) {
                     let summary = new_tab_snapshot.text_summary_for_range(
-                        TabPoint::from(new_transforms.summary().input.lines)..edit.new_lines.start,
+                        TabPoint::from(new_transforms.summary().input.lines)..edit.new.start,
                     );
                     new_transforms.push_or_extend(Transform::isomorphic(summary));
                 }
 
-                if !edit.new_lines.is_empty() {
+                if !edit.new.is_empty() {
                     new_transforms.push_or_extend(Transform::isomorphic(
-                        new_tab_snapshot.text_summary_for_range(edit.new_lines.clone()),
+                        new_tab_snapshot.text_summary_for_range(edit.new.clone()),
                     ));
                 }
 
-                old_cursor.seek_forward(&edit.old_lines.end, Bias::Right, &());
+                old_cursor.seek_forward(&edit.old.end, Bias::Right, &());
                 if let Some(next_edit) = tab_edits_iter.peek() {
-                    if next_edit.old_lines.start > old_cursor.end(&()) {
-                        if old_cursor.end(&()) > edit.old_lines.end {
+                    if next_edit.old.start > old_cursor.end(&()) {
+                        if old_cursor.end(&()) > edit.old.end {
                             let summary = self
                                 .tab_snapshot
-                                .text_summary_for_range(edit.old_lines.end..old_cursor.end(&()));
+                                .text_summary_for_range(edit.old.end..old_cursor.end(&()));
                             new_transforms.push_or_extend(Transform::isomorphic(summary));
                         }
 
                         old_cursor.next(&());
                         new_transforms.push_tree(
-                            old_cursor.slice(&next_edit.old_lines.start, Bias::Right, &()),
+                            old_cursor.slice(&next_edit.old.start, Bias::Right, &()),
                             &(),
                         );
                     }
                 } else {
-                    if old_cursor.end(&()) > edit.old_lines.end {
+                    if old_cursor.end(&()) > edit.old.end {
                         let summary = self
                             .tab_snapshot
-                            .text_summary_for_range(edit.old_lines.end..old_cursor.end(&()));
+                            .text_summary_for_range(edit.old.end..old_cursor.end(&()));
                         new_transforms.push_or_extend(Transform::isomorphic(summary));
                     }
                     old_cursor.next(&());
@@ -391,14 +388,14 @@ impl WrapSnapshot {
         let mut row_edits = Vec::new();
         while let Some(edit) = tab_edits_iter.next() {
             let mut row_edit = RowEdit {
-                old_rows: edit.old_lines.start.row()..edit.old_lines.end.row() + 1,
-                new_rows: edit.new_lines.start.row()..edit.new_lines.end.row() + 1,
+                old_rows: edit.old.start.row()..edit.old.end.row() + 1,
+                new_rows: edit.new.start.row()..edit.new.end.row() + 1,
             };
 
             while let Some(next_edit) = tab_edits_iter.peek() {
-                if next_edit.old_lines.start.row() <= row_edit.old_rows.end {
-                    row_edit.old_rows.end = next_edit.old_lines.end.row() + 1;
-                    row_edit.new_rows.end = next_edit.new_lines.end.row() + 1;
+                if next_edit.old.start.row() <= row_edit.old_rows.end {
+                    row_edit.old_rows.end = next_edit.old.end.row() + 1;
+                    row_edit.new_rows.end = next_edit.new.end.row() + 1;
                     tab_edits_iter.next();
                 } else {
                     break;
@@ -528,28 +525,28 @@ impl WrapSnapshot {
         let mut old_cursor = self.transforms.cursor::<TransformSummary>();
         let mut new_cursor = new_snapshot.transforms.cursor::<TransformSummary>();
         for mut tab_edit in tab_edits.iter().cloned() {
-            tab_edit.old_lines.start.0.column = 0;
-            tab_edit.old_lines.end.0 += Point::new(1, 0);
-            tab_edit.new_lines.start.0.column = 0;
-            tab_edit.new_lines.end.0 += Point::new(1, 0);
+            tab_edit.old.start.0.column = 0;
+            tab_edit.old.end.0 += Point::new(1, 0);
+            tab_edit.new.start.0.column = 0;
+            tab_edit.new.end.0 += Point::new(1, 0);
 
-            old_cursor.seek(&tab_edit.old_lines.start, Bias::Right, &());
+            old_cursor.seek(&tab_edit.old.start, Bias::Right, &());
             let mut old_start = old_cursor.start().output.lines;
-            old_start += tab_edit.old_lines.start.0 - old_cursor.start().input.lines;
+            old_start += tab_edit.old.start.0 - old_cursor.start().input.lines;
 
-            old_cursor.seek(&tab_edit.old_lines.end, Bias::Right, &());
+            old_cursor.seek(&tab_edit.old.end, Bias::Right, &());
             let mut old_end = old_cursor.start().output.lines;
-            old_end += tab_edit.old_lines.end.0 - old_cursor.start().input.lines;
+            old_end += tab_edit.old.end.0 - old_cursor.start().input.lines;
 
-            new_cursor.seek(&tab_edit.new_lines.start, Bias::Right, &());
+            new_cursor.seek(&tab_edit.new.start, Bias::Right, &());
             let mut new_start = new_cursor.start().output.lines;
-            new_start += tab_edit.new_lines.start.0 - new_cursor.start().input.lines;
+            new_start += tab_edit.new.start.0 - new_cursor.start().input.lines;
 
-            new_cursor.seek(&tab_edit.new_lines.end, Bias::Right, &());
+            new_cursor.seek(&tab_edit.new.end, Bias::Right, &());
             let mut new_end = new_cursor.start().output.lines;
-            new_end += tab_edit.new_lines.end.0 - new_cursor.start().input.lines;
+            new_end += tab_edit.new.end.0 - new_cursor.start().input.lines;
 
-            wrap_edits.push(Edit {
+            wrap_edits.push(WrapEdit {
                 old: old_start.row..old_end.row,
                 new: new_start.row..new_end.row,
             });
@@ -955,7 +952,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for WrapPoint {
     }
 }
 
-fn consolidate_wrap_edits(edits: &mut Vec<Edit>) {
+fn consolidate_wrap_edits(edits: &mut Vec<WrapEdit>) {
     let mut i = 1;
     while i < edits.len() {
         let edit = edits[i].clone();

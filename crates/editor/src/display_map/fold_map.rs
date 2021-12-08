@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
     iter,
-    ops::Range,
+    ops::{Range, Sub},
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
 use sum_tree::{Bias, Cursor, FilterCursor, SumTree};
@@ -456,8 +456,8 @@ impl FoldMap {
                         new_transforms.start().1 .0 + (edit.new.end - new_transforms.start().0);
 
                     fold_edits.push(FoldEdit {
-                        old_bytes: FoldOffset(old_start)..FoldOffset(old_end),
-                        new_bytes: FoldOffset(new_start)..FoldOffset(new_end),
+                        old: FoldOffset(old_start)..FoldOffset(old_end),
+                        new: FoldOffset(new_start)..FoldOffset(new_end),
                     });
                 }
 
@@ -749,20 +749,20 @@ fn consolidate_buffer_edits(edits: &mut Vec<text::Edit<usize>>) {
 
 fn consolidate_fold_edits(edits: &mut Vec<FoldEdit>) {
     edits.sort_unstable_by(|a, b| {
-        a.old_bytes
+        a.old
             .start
-            .cmp(&b.old_bytes.start)
-            .then_with(|| b.old_bytes.end.cmp(&a.old_bytes.end))
+            .cmp(&b.old.start)
+            .then_with(|| b.old.end.cmp(&a.old.end))
     });
 
     let mut i = 1;
     while i < edits.len() {
         let edit = edits[i].clone();
         let prev_edit = &mut edits[i - 1];
-        if prev_edit.old_bytes.end >= edit.old_bytes.start {
-            prev_edit.old_bytes.end = prev_edit.old_bytes.end.max(edit.old_bytes.end);
-            prev_edit.new_bytes.start = prev_edit.new_bytes.start.min(edit.new_bytes.start);
-            prev_edit.new_bytes.end = prev_edit.new_bytes.end.max(edit.new_bytes.end);
+        if prev_edit.old.end >= edit.old.start {
+            prev_edit.old.end = prev_edit.old.end.max(edit.old.end);
+            prev_edit.new.start = prev_edit.new.start.min(edit.new.start);
+            prev_edit.new.end = prev_edit.new.end.max(edit.new.end);
             edits.remove(i);
             continue;
         }
@@ -1021,6 +1021,14 @@ impl FoldOffset {
     }
 }
 
+impl Sub for FoldOffset {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Self(self.0 - rhs.0)
+    }
+}
+
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for FoldOffset {
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         self.0 += &summary.output.bytes;
@@ -1039,26 +1047,7 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for usize {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FoldEdit {
-    pub old_bytes: Range<FoldOffset>,
-    pub new_bytes: Range<FoldOffset>,
-}
-
-#[cfg(test)]
-impl FoldEdit {
-    pub fn delta(&self) -> isize {
-        self.inserted_bytes() as isize - self.deleted_bytes() as isize
-    }
-
-    pub fn deleted_bytes(&self) -> usize {
-        self.old_bytes.end.0 - self.old_bytes.start.0
-    }
-
-    pub fn inserted_bytes(&self) -> usize {
-        self.new_bytes.end.0 - self.new_bytes.start.0
-    }
-}
+pub type FoldEdit = Edit<FoldOffset>;
 
 #[cfg(test)]
 mod tests {
@@ -1087,12 +1076,12 @@ mod tests {
             edits,
             &[
                 FoldEdit {
-                    old_bytes: FoldOffset(2)..FoldOffset(16),
-                    new_bytes: FoldOffset(2)..FoldOffset(5),
+                    old: FoldOffset(2)..FoldOffset(16),
+                    new: FoldOffset(2)..FoldOffset(5),
                 },
                 FoldEdit {
-                    old_bytes: FoldOffset(18)..FoldOffset(29),
-                    new_bytes: FoldOffset(7)..FoldOffset(10)
+                    old: FoldOffset(18)..FoldOffset(29),
+                    new: FoldOffset(7)..FoldOffset(10)
                 },
             ]
         );
@@ -1115,12 +1104,12 @@ mod tests {
             edits,
             &[
                 FoldEdit {
-                    old_bytes: FoldOffset(0)..FoldOffset(1),
-                    new_bytes: FoldOffset(0)..FoldOffset(3),
+                    old: FoldOffset(0)..FoldOffset(1),
+                    new: FoldOffset(0)..FoldOffset(3),
                 },
                 FoldEdit {
-                    old_bytes: FoldOffset(6)..FoldOffset(6),
-                    new_bytes: FoldOffset(8)..FoldOffset(11),
+                    old: FoldOffset(6)..FoldOffset(6),
+                    new: FoldOffset(8)..FoldOffset(11),
                 },
             ]
         );
@@ -1454,12 +1443,9 @@ mod tests {
             let mut text = initial_snapshot.text();
             for (snapshot, edits) in snapshot_edits.drain(..) {
                 let new_text = snapshot.text();
-                let mut delta = 0isize;
                 for edit in edits {
-                    let old_bytes = ((edit.old_bytes.start.0 as isize) + delta) as usize
-                        ..((edit.old_bytes.end.0 as isize) + delta) as usize;
-                    let new_bytes = edit.new_bytes.start.0..edit.new_bytes.end.0;
-                    delta += edit.delta();
+                    let old_bytes = edit.new.start.0..edit.new.start.0 + edit.old_len().0;
+                    let new_bytes = edit.new.start.0..edit.new.end.0;
                     text.replace_range(old_bytes, &new_text[new_bytes]);
                 }
 

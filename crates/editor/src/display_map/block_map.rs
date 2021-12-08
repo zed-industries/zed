@@ -1,4 +1,4 @@
-use super::wrap_map::{self, Edit as WrapEdit, WrapPoint, WrapSnapshot};
+use super::wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot};
 use gpui::{AppContext, ElementBox, ModelHandle};
 use language::{Buffer, Chunk};
 use parking_lot::Mutex;

@@ -21,7 +21,7 @@ impl TabMap {
         &self,
         fold_snapshot: FoldSnapshot,
         mut fold_edits: Vec<FoldEdit>,
-    ) -> (TabSnapshot, Vec<Edit>) {
+    ) -> (TabSnapshot, Vec<TabEdit>) {
         let mut old_snapshot = self.0.lock();
         let max_offset = old_snapshot.fold_snapshot.len();
         let new_snapshot = TabSnapshot {
@@ -34,13 +34,13 @@ impl TabMap {
             let mut delta = 0;
             for chunk in old_snapshot
                 .fold_snapshot
-                .chunks(fold_edit.old_bytes.end..max_offset, None)
+                .chunks(fold_edit.old.end..max_offset, None)
             {
                 let patterns: &[_] = &['\t', '\n'];
                 if let Some(ix) = chunk.text.find(patterns) {
                     if &chunk.text[ix..ix + 1] == "\t" {
-                        fold_edit.old_bytes.end.0 += delta + ix + 1;
-                        fold_edit.new_bytes.end.0 += delta + ix + 1;
+                        fold_edit.old.end.0 += delta + ix + 1;
+                        fold_edit.new.end.0 += delta + ix + 1;
                     }
 
                     break;
@@ -55,9 +55,9 @@ impl TabMap {
             let (prev_edits, next_edits) = fold_edits.split_at_mut(ix);
             let prev_edit = prev_edits.last_mut().unwrap();
             let edit = &next_edits[0];
-            if prev_edit.old_bytes.end >= edit.old_bytes.start {
-                prev_edit.old_bytes.end = edit.old_bytes.end;
-                prev_edit.new_bytes.end = edit.new_bytes.end;
+            if prev_edit.old.end >= edit.old.start {
+                prev_edit.old.end = edit.old.end;
+                prev_edit.new.end = edit.new.end;
                 fold_edits.remove(ix);
             } else {
                 ix += 1;
@@ -65,25 +65,13 @@ impl TabMap {
         }
 
         for fold_edit in fold_edits {
-            let old_start = fold_edit
-                .old_bytes
-                .start
-                .to_point(&old_snapshot.fold_snapshot);
-            let old_end = fold_edit
-                .old_bytes
-                .end
-                .to_point(&old_snapshot.fold_snapshot);
-            let new_start = fold_edit
-                .new_bytes
-                .start
-                .to_point(&new_snapshot.fold_snapshot);
-            let new_end = fold_edit
-                .new_bytes
-                .end
-                .to_point(&new_snapshot.fold_snapshot);
-            tab_edits.push(Edit {
-                old_lines: old_snapshot.to_tab_point(old_start)..old_snapshot.to_tab_point(old_end),
-                new_lines: new_snapshot.to_tab_point(new_start)..new_snapshot.to_tab_point(new_end),
+            let old_start = fold_edit.old.start.to_point(&old_snapshot.fold_snapshot);
+            let old_end = fold_edit.old.end.to_point(&old_snapshot.fold_snapshot);
+            let new_start = fold_edit.new.start.to_point(&new_snapshot.fold_snapshot);
+            let new_end = fold_edit.new.end.to_point(&new_snapshot.fold_snapshot);
+            tab_edits.push(TabEdit {
+                old: old_snapshot.to_tab_point(old_start)..old_snapshot.to_tab_point(old_end),
+                new: new_snapshot.to_tab_point(new_start)..new_snapshot.to_tab_point(new_end),
             });
         }
 
@@ -322,11 +310,7 @@ impl From<super::Point> for TabPoint {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Edit {
-    pub old_lines: Range<TabPoint>,
-    pub new_lines: Range<TabPoint>,
-}
+pub type TabEdit = text::Edit<TabPoint>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TextSummary {
