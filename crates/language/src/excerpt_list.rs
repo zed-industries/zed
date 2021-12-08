@@ -7,7 +7,7 @@ use std::{cmp, iter, ops::Range};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{
     subscription::{Subscription, Topic},
-    Anchor, AnchorRangeExt, Edit, Point, Snapshot as _, TextSummary,
+    Anchor, AnchorRangeExt, Edit, Point, PointUtf16, Snapshot as _, TextSummary,
 };
 use theme::SyntaxTheme;
 
@@ -260,17 +260,18 @@ impl text::Snapshot for ExcerptListSnapshot {
         let mut cursor = self.excerpts.cursor::<(usize, Point)>();
         cursor.seek(&offset, Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
-            let overshoot = offset - cursor.start().0;
+            let (start_offset, start_point) = cursor.start();
+            let overshoot = offset - start_offset;
             let header_height = excerpt.header_height as usize;
             if overshoot < header_height {
-                cursor.start().1
+                *start_point
             } else {
                 let excerpt_start_offset = excerpt.range.start.to_offset(&excerpt.buffer);
                 let excerpt_start_point = excerpt.range.start.to_point(&excerpt.buffer);
-                let buffer_point = excerpt.buffer.offset_to_point(
-                    excerpt_start_offset + (offset - header_height - cursor.start().0),
-                );
-                cursor.start().1
+                let buffer_point = excerpt
+                    .buffer
+                    .offset_to_point(excerpt_start_offset + (overshoot - header_height));
+                *start_point
                     + Point::new(header_height as u32, 0)
                     + (buffer_point - excerpt_start_point)
             }
@@ -283,17 +284,41 @@ impl text::Snapshot for ExcerptListSnapshot {
         let mut cursor = self.excerpts.cursor::<(Point, usize)>();
         cursor.seek(&point, Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
-            let overshoot = point - cursor.start().0;
+            let (start_point, start_offset) = cursor.start();
+            let overshoot = point - start_point;
             let header_height = Point::new(excerpt.header_height as u32, 0);
             if overshoot < header_height {
-                cursor.start().1
+                *start_offset
             } else {
                 let excerpt_start_offset = excerpt.range.start.to_offset(&excerpt.buffer);
                 let excerpt_start_point = excerpt.range.start.to_point(&excerpt.buffer);
-                let buffer_offset = excerpt.buffer.point_to_offset(
-                    excerpt_start_point + (point - header_height - cursor.start().0),
-                );
-                cursor.start().1
+                let buffer_offset = excerpt
+                    .buffer
+                    .point_to_offset(excerpt_start_point + (overshoot - header_height));
+                *start_offset + excerpt.header_height as usize + buffer_offset
+                    - excerpt_start_offset
+            }
+        } else {
+            self.excerpts.summary().text.bytes
+        }
+    }
+
+    fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
+        let mut cursor = self.excerpts.cursor::<(PointUtf16, usize)>();
+        cursor.seek(&point, Bias::Right, &());
+        if let Some(excerpt) = cursor.item() {
+            let (start_point, start_offset) = cursor.start();
+            let overshoot = point - start_point;
+            let header_height = PointUtf16::new(excerpt.header_height as u32, 0);
+            if overshoot < header_height {
+                *start_offset
+            } else {
+                let excerpt_start_offset = excerpt.range.start.to_offset(&excerpt.buffer);
+                let excerpt_start_point = excerpt.range.start.to_point_utf16(&excerpt.buffer);
+                let buffer_offset = excerpt
+                    .buffer
+                    .point_utf16_to_offset(excerpt_start_point + (overshoot - header_height));
+                *start_offset
                     + excerpt.header_height as usize
                     + (buffer_offset - excerpt_start_offset)
             }
@@ -302,12 +327,30 @@ impl text::Snapshot for ExcerptListSnapshot {
         }
     }
 
-    fn point_utf16_to_offset(&self, point: text::PointUtf16) -> usize {
-        todo!()
-    }
-
     fn line_len(&self, row: u32) -> u32 {
-        todo!()
+        let mut cursor = self.excerpts.cursor::<Point>();
+        cursor.seek(&Point::new(row, 0), Bias::Right, &());
+        if let Some(excerpt) = cursor.item() {
+            let overshoot = row - cursor.start().row;
+            let header_height = excerpt.header_height as u32;
+            if overshoot < header_height {
+                0
+            } else {
+                let excerpt_start = excerpt.range.start.to_point(&excerpt.buffer);
+                let excerpt_end = excerpt.range.end.to_point(&excerpt.buffer);
+                let buffer_row = excerpt_start.row + overshoot - header_height;
+                let mut len = excerpt.buffer.line_len(buffer_row);
+                if buffer_row == excerpt_end.row {
+                    len = excerpt_end.column;
+                }
+                if buffer_row == excerpt_start.row {
+                    len -= excerpt_start.column
+                }
+                len
+            }
+        } else {
+            0
+        }
     }
 
     fn max_point(&self) -> Point {
@@ -425,6 +468,12 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for usize {
 impl<'a> sum_tree::Dimension<'a, EntrySummary> for Point {
     fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
         *self += summary.text.lines;
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, EntrySummary> for PointUtf16 {
+    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
+        *self += summary.text.lines_utf16
     }
 }
 
@@ -765,6 +814,15 @@ mod tests {
                         left_point,
                     )
                 }
+            }
+
+            for (row, line) in expected_text.split('\n').enumerate() {
+                assert_eq!(
+                    snapshot.line_len(row as u32),
+                    line.len() as u32,
+                    "line_len({}).",
+                    row
+                );
             }
 
             for _ in 0..10 {

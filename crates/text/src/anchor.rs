@@ -1,5 +1,5 @@
 use super::{Buffer, FullOffset, Point, ToOffset};
-use crate::{rope::TextDimension, BufferSnapshot};
+use crate::{rope::TextDimension, BufferSnapshot, PointUtf16};
 use anyhow::Result;
 use std::{
     cmp::Ordering,
@@ -102,6 +102,10 @@ impl Anchor {
     }
 
     pub fn to_point(&self, snapshot: &BufferSnapshot) -> Point {
+        self.summary(snapshot)
+    }
+
+    pub fn to_point_utf16(&self, snapshot: &BufferSnapshot) -> PointUtf16 {
         self.summary(snapshot)
     }
 
