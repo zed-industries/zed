@@ -19,7 +19,7 @@ use gpui::{
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
-use language::{Chunk, ToPoint};
+use language::{multi_buffer::ToPoint, Chunk};
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
@@ -738,13 +738,11 @@ impl Element for EditorElement {
         self.update_view(cx.app, |view, cx| {
             highlighted_row = view.highlighted_row();
             for selection_set_id in view.active_selection_sets(cx).collect::<Vec<_>>() {
-                let replica_selections = view
-                    .intersecting_selections(
-                        selection_set_id,
-                        DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
-                        cx,
-                    )
-                    .collect::<Vec<_>>();
+                let replica_selections = view.intersecting_selections(
+                    selection_set_id,
+                    DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
+                    cx,
+                );
                 for selection in &replica_selections {
                     if selection_set_id == view.selection_set_id {
                         let is_empty = selection.start == selection.end;
@@ -1165,14 +1163,13 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 mod tests {
     use super::*;
     use crate::{Editor, EditorSettings};
-    use language::Buffer;
+    use language::{MultiBuffer};
     use util::test::sample_text;
 
     #[gpui::test]
     fn test_layout_line_numbers(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(cx);
-
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'a'), cx));
+        let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
         let (window_id, editor) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(
                 buffer,

@@ -1,7 +1,7 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use anyhow::Result;
+use language::multi_buffer::ToPoint;
 use std::{cmp, ops::Range};
-use text::ToPoint;
 
 pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> Result<DisplayPoint> {
     if point.column() > 0 {
@@ -244,7 +244,8 @@ fn char_kind(c: char) -> CharKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{display_map::DisplayMap, Buffer};
+    use crate::display_map::DisplayMap;
+    use language::MultiBuffer;
 
     #[gpui::test]
     fn test_prev_next_word_boundary_multibyte(cx: &mut gpui::MutableAppContext) {
@@ -256,7 +257,7 @@ mod tests {
             .unwrap();
         let font_size = 14.0;
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, "a bcΔ defγ hi—jk", cx));
+        let buffer = MultiBuffer::build_simple("a bcΔ defγ hi—jk", cx);
         let display_map =
             cx.add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, cx));
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -312,7 +313,7 @@ mod tests {
             .select_font(family_id, &Default::default())
             .unwrap();
         let font_size = 14.0;
-        let buffer = cx.add_model(|cx| Buffer::new(0, "lorem ipsum   dolor\n    sit", cx));
+        let buffer = MultiBuffer::build_simple("lorem ipsum   dolor\n    sit", cx);
         let display_map =
             cx.add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, cx));
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));

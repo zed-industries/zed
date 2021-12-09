@@ -1,9 +1,12 @@
-use super::{location::*, ExcerptSummary, MultiBufferSnapshot, ToOffset};
+use super::{location::*, ExcerptSummary, MultiBufferSnapshot, ToOffset, ToPoint};
 use anyhow::{anyhow, Result};
 use smallvec::SmallVec;
-use std::{cmp::Ordering, ops::Range};
+use std::{
+    cmp::Ordering,
+    ops::{Range, Sub},
+};
 use sum_tree::Bias;
-use text::{rope::TextDimension, AnchorRangeExt, ToOffset as _};
+use text::{rope::TextDimension, AnchorRangeExt as _, Point};
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
 pub struct Anchor {
@@ -15,6 +18,9 @@ pub struct Anchor {
 pub struct AnchorRangeMap<T> {
     entries: SmallVec<[(ExcerptId, text::AnchorRangeMap<T>); 1]>,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AnchorRangeSet(AnchorRangeMap<()>);
 
 impl Anchor {
     pub fn min() -> Self {
@@ -67,6 +73,27 @@ impl Anchor {
             }
         }
         self.clone()
+    }
+
+    pub fn summary<'a, D>(&self, snapshot: &'a MultiBufferSnapshot) -> D
+    where
+        D: TextDimension + Ord + Sub<D, Output = D>,
+    {
+        let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>();
+        cursor.seek(&self.excerpt_id, Bias::Left, &());
+        if let Some(excerpt) = cursor.item() {
+            if excerpt.id == self.excerpt_id {
+                let mut excerpt_start = D::from_text_summary(&cursor.start().text);
+                excerpt_start.add_summary(&excerpt.header_summary(), &());
+                let excerpt_buffer_start = excerpt.range.start.summary::<D>(&excerpt.buffer);
+                let buffer_point = self.text_anchor.summary::<D>(&excerpt.buffer);
+                if buffer_point > excerpt_buffer_start {
+                    excerpt_start.add_assign(&(buffer_point - excerpt_buffer_start));
+                }
+                return excerpt_start;
+            }
+        }
+        D::from_text_summary(&cursor.start().text)
     }
 }
 
@@ -263,18 +290,48 @@ impl<T> AnchorRangeMap<T> {
     }
 }
 
+impl AnchorRangeSet {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn ranges<'a, D>(
+        &'a self,
+        content: &'a MultiBufferSnapshot,
+    ) -> impl 'a + Iterator<Item = Range<Point>>
+    where
+        D: TextDimension,
+    {
+        self.0.ranges(content).map(|(range, _)| range)
+    }
+}
+
 impl ToOffset for Anchor {
     fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
-        let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>();
-        cursor.seek(&self.excerpt_id, Bias::Left, &());
-        if let Some(excerpt) = cursor.item() {
-            if excerpt.id == self.excerpt_id {
-                let buffer_offset = self.text_anchor.to_offset(&excerpt.buffer);
-                return cursor.start().text.bytes
-                    + excerpt.header_height as usize
-                    + buffer_offset.saturating_sub(excerpt.range.start.to_offset(&excerpt.buffer));
-            }
-        }
-        cursor.start().text.bytes
+        self.summary(snapshot)
+    }
+}
+
+impl ToPoint for Anchor {
+    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point {
+        self.summary(snapshot)
+    }
+}
+
+pub trait AnchorRangeExt {
+    fn cmp(&self, b: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> Result<Ordering>;
+    fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<usize>;
+}
+
+impl AnchorRangeExt for Range<Anchor> {
+    fn cmp(&self, other: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> Result<Ordering> {
+        Ok(match self.start.cmp(&other.start, buffer)? {
+            Ordering::Equal => other.end.cmp(&self.end, buffer)?,
+            ord @ _ => ord,
+        })
+    }
+
+    fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<usize> {
+        self.start.to_offset(&content)..self.end.to_offset(&content)
     }
 }

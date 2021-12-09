@@ -201,6 +201,15 @@ where
     }
 }
 
+impl<T: Clone> IntoIterator for Patch<T> {
+    type Item = Edit<T>;
+    type IntoIter = std::vec::IntoIter<Edit<T>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
 impl<'a, T: Clone> IntoIterator for &'a Patch<T> {
     type Item = Edit<T>;
     type IntoIter = std::iter::Cloned<std::slice::Iter<'a, Edit<T>>>;

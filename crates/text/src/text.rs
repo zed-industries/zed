@@ -1850,13 +1850,13 @@ impl BufferSnapshot {
         self.visible_text.clip_point_utf16(point, bias)
     }
 
-    pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
-        if offset <= self.len() {
-            Ok(self.text_summary_for_range(0..offset))
-        } else {
-            Err(anyhow!("offset out of bounds"))
-        }
-    }
+    // pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
+    //     if offset <= self.len() {
+    //         Ok(self.text_summary_for_range(0..offset))
+    //     } else {
+    //         Err(anyhow!("offset out of bounds"))
+    //     }
+    // }
 
     pub fn edits_since<'a, D>(
         &'a self,

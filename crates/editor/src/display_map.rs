@@ -6,7 +6,10 @@ mod wrap_map;
 use block_map::{BlockMap, BlockPoint};
 use fold_map::{FoldMap, ToFoldPoint as _};
 use gpui::{fonts::FontId, ElementBox, Entity, ModelContext, ModelHandle};
-use language::{Anchor, Buffer, Point, Subscription as BufferSubscription, ToOffset, ToPoint};
+use language::{
+    multi_buffer::{Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint},
+    Point, Subscription as BufferSubscription,
+};
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,
@@ -26,7 +29,7 @@ pub trait ToDisplayPoint {
 }
 
 pub struct DisplayMap {
-    buffer: ModelHandle<Buffer>,
+    buffer: ModelHandle<MultiBuffer>,
     buffer_subscription: BufferSubscription,
     fold_map: FoldMap,
     tab_map: TabMap,
@@ -40,7 +43,7 @@ impl Entity for DisplayMap {
 
 impl DisplayMap {
     pub fn new(
-        buffer: ModelHandle<Buffer>,
+        buffer: ModelHandle<MultiBuffer>,
         tab_size: usize,
         font_id: FontId,
         font_size: f32,
@@ -48,7 +51,7 @@ impl DisplayMap {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let buffer_subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
-        let (fold_map, snapshot) = FoldMap::new(buffer.read(cx).snapshot());
+        let (fold_map, snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font_id, font_size, wrap_width, cx);
         let block_map = BlockMap::new(buffer.clone(), snapshot);
@@ -64,7 +67,7 @@ impl DisplayMap {
     }
 
     pub fn snapshot(&self, cx: &mut ModelContext<Self>) -> DisplaySnapshot {
-        let buffer_snapshot = self.buffer.read(cx).snapshot();
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (folds_snapshot, edits) = self.fold_map.read(buffer_snapshot, edits);
         let (tabs_snapshot, edits) = self.tab_map.sync(folds_snapshot.clone(), edits);
@@ -74,7 +77,7 @@ impl DisplayMap {
         let blocks_snapshot = self.block_map.read(wraps_snapshot.clone(), edits, cx);
 
         DisplaySnapshot {
-            buffer_snapshot: self.buffer.read(cx).snapshot(),
+            buffer_snapshot: self.buffer.read(cx).snapshot(cx),
             folds_snapshot,
             tabs_snapshot,
             wraps_snapshot,
@@ -87,7 +90,7 @@ impl DisplayMap {
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &mut ModelContext<Self>,
     ) {
-        let snapshot = self.buffer.read(cx).snapshot();
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
@@ -108,7 +111,7 @@ impl DisplayMap {
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &mut ModelContext<Self>,
     ) {
-        let snapshot = self.buffer.read(cx).snapshot();
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
@@ -132,7 +135,7 @@ impl DisplayMap {
     where
         P: ToOffset + Clone,
     {
-        let snapshot = self.buffer.read(cx).snapshot();
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
@@ -151,7 +154,7 @@ impl DisplayMap {
     }
 
     pub fn remove_blocks(&mut self, ids: HashSet<BlockId>, cx: &mut ModelContext<Self>) {
-        let snapshot = self.buffer.read(cx).snapshot();
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
@@ -179,7 +182,7 @@ impl DisplayMap {
 }
 
 pub struct DisplaySnapshot {
-    pub buffer_snapshot: language::BufferSnapshot,
+    pub buffer_snapshot: MultiBufferSnapshot,
     folds_snapshot: fold_map::FoldSnapshot,
     tabs_snapshot: tab_map::TabSnapshot,
     wraps_snapshot: wrap_map::WrapSnapshot,
@@ -457,7 +460,7 @@ mod tests {
     use super::*;
     use crate::{movement, test::*};
     use gpui::{color::Color, MutableAppContext};
-    use language::{Language, LanguageConfig, RandomCharIter, SelectionGoal};
+    use language::{Buffer, Language, LanguageConfig, RandomCharIter, SelectionGoal};
     use rand::{prelude::StdRng, Rng};
     use std::{env, sync::Arc};
     use theme::SyntaxTheme;
@@ -489,10 +492,10 @@ mod tests {
         log::info!("tab size: {}", tab_size);
         log::info!("wrap width: {:?}", wrap_width);
 
-        let buffer = cx.add_model(|cx| {
+        let buffer = cx.update(|cx| {
             let len = rng.gen_range(0..10);
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-            Buffer::new(0, text, cx)
+            MultiBuffer::build_simple(&text, cx)
         });
 
         let map = cx.add_model(|cx| {
@@ -563,8 +566,10 @@ mod tests {
                 assert_eq!(prev_display_bound.column(), 0);
                 if next_display_bound < snapshot.max_point() {
                     assert_eq!(
-                        buffer
-                            .read_with(&cx, |buffer, _| buffer.chars_at(next_buffer_bound).next()),
+                        buffer.read_with(&cx, |buffer, _| buffer
+                            .as_snapshot()
+                            .chars_at(next_buffer_bound)
+                            .next()),
                         Some('\n')
                     )
                 }
@@ -651,7 +656,7 @@ mod tests {
         let wrap_width = Some(64.);
 
         let text = "one two three four five\nsix seven eight";
-        let buffer = cx.add_model(|cx| Buffer::new(0, text.to_string(), cx));
+        let buffer = MultiBuffer::build_simple(text, cx);
         let map = cx.add_model(|cx| {
             DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, wrap_width, cx)
         });
@@ -724,7 +729,7 @@ mod tests {
     #[gpui::test]
     fn test_text_chunks(cx: &mut gpui::MutableAppContext) {
         let text = sample_text(6, 6, 'a');
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+        let buffer = MultiBuffer::build_simple(&text, cx);
         let tab_size = 4;
         let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
         let font_id = cx
@@ -803,6 +808,7 @@ mod tests {
         let buffer =
             cx.add_model(|cx| Buffer::new(0, text, cx).with_language(Some(lang), None, cx));
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
 
         let tab_size = 2;
         let font_cache = cx.font_cache();
@@ -890,6 +896,7 @@ mod tests {
         let buffer =
             cx.add_model(|cx| Buffer::new(0, text, cx).with_language(Some(lang), None, cx));
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
 
         let font_cache = cx.font_cache();
 
@@ -935,7 +942,7 @@ mod tests {
 
         let text = "\n'a', 'α',\t'✋',\t'❎', '🍐'\n";
         let display_text = "\n'a', 'α',   '✋',    '❎', '🍐'\n";
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+        let buffer = MultiBuffer::build_simple(text, cx);
 
         let tab_size = 4;
         let font_cache = cx.font_cache();
@@ -979,7 +986,7 @@ mod tests {
     #[gpui::test]
     fn test_tabs_with_multibyte_chars(cx: &mut gpui::MutableAppContext) {
         let text = "✅\t\tα\nβ\t\n🏀β\t\tγ";
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+        let buffer = MultiBuffer::build_simple(text, cx);
         let tab_size = 4;
         let font_cache = cx.font_cache();
         let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
@@ -1038,7 +1045,7 @@ mod tests {
 
     #[gpui::test]
     fn test_max_point(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "aaa\n\t\tbbb", cx));
+        let buffer = MultiBuffer::build_simple("aaa\n\t\tbbb", cx);
         let tab_size = 4;
         let font_cache = cx.font_cache();
         let family_id = font_cache.load_family(&["Helvetica"]).unwrap();

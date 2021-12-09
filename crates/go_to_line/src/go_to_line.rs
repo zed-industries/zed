@@ -67,7 +67,7 @@ impl GoToLine {
         let (restore_state, cursor_point, max_point) = active_editor.update(cx, |editor, cx| {
             let restore_state = Some(RestoreState {
                 scroll_position: editor.scroll_position(cx),
-                selections: editor.selections::<usize>(cx).collect(),
+                selections: editor.selections::<usize>(cx),
             });
 
             (

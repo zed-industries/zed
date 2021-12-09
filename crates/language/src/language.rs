@@ -1,6 +1,6 @@
 mod buffer;
 mod highlight_map;
-mod multi_buffer;
+pub mod multi_buffer;
 pub mod proto;
 #[cfg(test)]
 mod tests;
@@ -12,6 +12,7 @@ use gpui::{executor::Background, AppContext};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use lsp::LanguageServer;
+pub use multi_buffer::MultiBuffer;
 use parking_lot::Mutex;
 use serde::Deserialize;
 use std::{collections::HashSet, path::Path, str, sync::Arc};

@@ -948,7 +948,7 @@ mod tests {
         fs::{FakeFs, Fs as _},
         language::{
             tree_sitter_rust, Diagnostic, Language, LanguageConfig, LanguageRegistry,
-            LanguageServerConfig, Point,
+            LanguageServerConfig, MultiBuffer, Point,
         },
         lsp,
         project::{ProjectPath, Worktree},
@@ -1035,6 +1035,7 @@ mod tests {
             .update(&mut cx_b, |worktree, cx| worktree.open_buffer("b.txt", cx))
             .await
             .unwrap();
+        let buffer_b = cx_b.add_model(|cx| MultiBuffer::singleton(buffer_b, cx));
         buffer_b.read_with(&cx_b, |buf, _| assert_eq!(buf.text(), "b-contents"));
         worktree_a.read_with(&cx_a, |tree, cx| assert!(tree.has_open_buffer("b.txt", cx)));
         let buffer_a = worktree_a

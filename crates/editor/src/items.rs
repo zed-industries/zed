@@ -5,12 +5,15 @@ use gpui::{
     MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
     WeakModelHandle,
 };
-use language::{Buffer, Diagnostic, File as _};
+use language::{
+    multi_buffer::{MultiBuffer, ToPoint as _},
+    Diagnostic, File as _,
+};
 use postage::watch;
 use project::{ProjectPath, Worktree};
 use std::fmt::Write;
 use std::path::Path;
-use text::{Point, Selection, ToPoint};
+use text::{Point, Selection};
 use workspace::{
     settings, EntryOpener, ItemHandle, ItemView, ItemViewHandle, Settings, StatusItemView,
     WeakItemHandle,
@@ -19,10 +22,10 @@ use workspace::{
 pub struct BufferOpener;
 
 #[derive(Clone)]
-pub struct BufferItemHandle(pub ModelHandle<Buffer>);
+pub struct BufferItemHandle(pub ModelHandle<MultiBuffer>);
 
 #[derive(Clone)]
-struct WeakBufferItemHandle(WeakModelHandle<Buffer>);
+struct WeakBufferItemHandle(WeakModelHandle<MultiBuffer>);
 
 impl EntryOpener for BufferOpener {
     fn open(
@@ -32,10 +35,10 @@ impl EntryOpener for BufferOpener {
         cx: &mut ModelContext<Worktree>,
     ) -> Option<Task<Result<Box<dyn ItemHandle>>>> {
         let buffer = worktree.open_buffer(project_path.path, cx);
-        let task = cx.spawn(|_, _| async move {
-            buffer
-                .await
-                .map(|buffer| Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)
+        let task = cx.spawn(|_, mut cx| async move {
+            let buffer = buffer.await?;
+            let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+            Ok(Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)
         });
         Some(task)
     }
@@ -102,7 +105,7 @@ impl ItemHandle for BufferItemHandle {
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
-        self.0.read(cx).file().map(|f| ProjectPath {
+        self.0.read(cx).file(cx).map(|f| ProjectPath {
             worktree_id: f.worktree_id(),
             path: f.path().clone(),
         })
@@ -137,7 +140,7 @@ impl ItemView for Editor {
         let filename = self
             .buffer()
             .read(cx)
-            .file()
+            .file(cx)
             .and_then(|file| file.file_name());
         if let Some(name) = filename {
             name.to_string_lossy().into()
@@ -147,7 +150,7 @@ impl ItemView for Editor {
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
-        self.buffer().read(cx).file().map(|file| ProjectPath {
+        self.buffer().read(cx).file(cx).map(|file| ProjectPath {
             worktree_id: file.worktree_id(),
             path: file.path().clone(),
         })
@@ -174,7 +177,14 @@ impl ItemView for Editor {
         path: &Path,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        self.buffer().update(cx, |buffer, cx| {
+        let buffer = self
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .expect("cannot call save_as on an excerpt list")
+            .clone();
+
+        buffer.update(cx, |buffer, cx| {
             let handle = cx.handle();
             let text = buffer.as_rope().clone();
             let version = buffer.version();
@@ -237,7 +247,7 @@ impl CursorPosition {
 
     fn update_position(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
         let editor = editor.read(cx);
-        let buffer = editor.buffer().read(cx);
+        let buffer = editor.buffer().read(cx).snapshot(cx);
 
         self.selected_count = 0;
         let mut last_selection: Option<Selection<usize>> = None;
@@ -250,7 +260,7 @@ impl CursorPosition {
                 last_selection = Some(selection);
             }
         }
-        self.position = last_selection.map(|s| s.head().to_point(buffer));
+        self.position = last_selection.map(|s| s.head().to_point(&buffer));
 
         cx.notify();
     }

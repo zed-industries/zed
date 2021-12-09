@@ -1,5 +1,6 @@
 use language::{
-    Anchor, AnchorRangeExt, BufferSnapshot, Chunk, Edit, Point, PointUtf16, TextSummary, ToOffset,
+    multi_buffer::{Anchor, AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, ToOffset},
+    Chunk, Edit, Point, PointUtf16, TextSummary,
 };
 use parking_lot::Mutex;
 use std::{
@@ -189,14 +190,14 @@ impl<'a> FoldMapWriter<'a> {
 }
 
 pub struct FoldMap {
-    buffer: Mutex<BufferSnapshot>,
+    buffer: Mutex<MultiBufferSnapshot>,
     transforms: Mutex<SumTree<Transform>>,
     folds: SumTree<Fold>,
     version: AtomicUsize,
 }
 
 impl FoldMap {
-    pub fn new(buffer: BufferSnapshot) -> (Self, FoldSnapshot) {
+    pub fn new(buffer: MultiBufferSnapshot) -> (Self, FoldSnapshot) {
         let this = Self {
             buffer: Mutex::new(buffer.clone()),
             folds: Default::default(),
@@ -224,7 +225,7 @@ impl FoldMap {
 
     pub fn read(
         &self,
-        buffer: BufferSnapshot,
+        buffer: MultiBufferSnapshot,
         edits: Vec<Edit<usize>>,
     ) -> (FoldSnapshot, Vec<FoldEdit>) {
         let edits = self.sync(buffer, edits);
@@ -240,7 +241,7 @@ impl FoldMap {
 
     pub fn write(
         &mut self,
-        buffer: BufferSnapshot,
+        buffer: MultiBufferSnapshot,
         edits: Vec<Edit<usize>>,
     ) -> (FoldMapWriter, FoldSnapshot, Vec<FoldEdit>) {
         let (snapshot, edits) = self.read(buffer, edits);
@@ -259,7 +260,7 @@ impl FoldMap {
 
     fn sync(
         &self,
-        new_buffer: BufferSnapshot,
+        new_buffer: MultiBufferSnapshot,
         buffer_edits: Vec<text::Edit<usize>>,
     ) -> Vec<FoldEdit> {
         if buffer_edits.is_empty() {
@@ -476,7 +477,7 @@ impl FoldMap {
 pub struct FoldSnapshot {
     transforms: SumTree<Transform>,
     folds: SumTree<Fold>,
-    buffer_snapshot: language::BufferSnapshot,
+    buffer_snapshot: MultiBufferSnapshot,
     pub version: usize,
 }
 
@@ -699,7 +700,7 @@ impl FoldSnapshot {
 }
 
 fn intersecting_folds<'a, T>(
-    buffer: &'a text::BufferSnapshot,
+    buffer: &'a MultiBufferSnapshot,
     folds: &'a SumTree<Fold>,
     range: Range<T>,
     inclusive: bool,
@@ -850,9 +851,9 @@ impl Default for FoldSummary {
 }
 
 impl sum_tree::Summary for FoldSummary {
-    type Context = text::BufferSnapshot;
+    type Context = MultiBufferSnapshot;
 
-    fn add_summary(&mut self, other: &Self, buffer: &text::BufferSnapshot) {
+    fn add_summary(&mut self, other: &Self, buffer: &MultiBufferSnapshot) {
         if other.min_start.cmp(&self.min_start, buffer).unwrap() == Ordering::Less {
             self.min_start = other.min_start.clone();
         }
@@ -876,20 +877,20 @@ impl sum_tree::Summary for FoldSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, FoldSummary> for Fold {
-    fn add_summary(&mut self, summary: &'a FoldSummary, _: &text::BufferSnapshot) {
+    fn add_summary(&mut self, summary: &'a FoldSummary, _: &MultiBufferSnapshot) {
         self.0.start = summary.start.clone();
         self.0.end = summary.end.clone();
     }
 }
 
 impl<'a> sum_tree::SeekTarget<'a, FoldSummary, Fold> for Fold {
-    fn cmp(&self, other: &Self, buffer: &text::BufferSnapshot) -> Ordering {
+    fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
         self.0.cmp(&other.0, buffer).unwrap()
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, FoldSummary> for usize {
-    fn add_summary(&mut self, summary: &'a FoldSummary, _: &text::BufferSnapshot) {
+    fn add_summary(&mut self, summary: &'a FoldSummary, _: &MultiBufferSnapshot) {
         *self += summary.count;
     }
 }
@@ -924,7 +925,7 @@ impl<'a> Iterator for FoldBufferRows<'a> {
 
 pub struct FoldChunks<'a> {
     transform_cursor: Cursor<'a, Transform, (FoldOffset, usize)>,
-    buffer_chunks: language::BufferChunks<'a>,
+    buffer_chunks: MultiBufferChunks<'a>,
     buffer_chunk: Option<(usize, Chunk<'a>)>,
     buffer_offset: usize,
     output_offset: usize,
@@ -1053,7 +1054,7 @@ pub type FoldEdit = Edit<FoldOffset>;
 mod tests {
     use super::*;
     use crate::ToPoint;
-    use language::Buffer;
+    use language::multi_buffer::MultiBuffer;
     use rand::prelude::*;
     use std::{env, mem};
     use text::RandomCharIter;
@@ -1062,8 +1063,9 @@ mod tests {
 
     #[gpui::test]
     fn test_basic_folds(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6, 'a'), cx));
-        let buffer_snapshot = buffer.read(cx).snapshot();
+        let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
+        let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let mut map = FoldMap::new(buffer_snapshot.clone()).0;
 
         let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
@@ -1086,8 +1088,7 @@ mod tests {
             ]
         );
 
-        let (buffer_snapshot, edits) = buffer.update(cx, |buffer, cx| {
-            let v0 = buffer.version();
+        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
             buffer.edit(
                 vec![
                     Point::new(0, 0)..Point::new(0, 1),
@@ -1096,9 +1097,10 @@ mod tests {
                 "123",
                 cx,
             );
-            (buffer.snapshot(), buffer.edits_since(&v0).collect())
+            buffer.snapshot(cx)
         });
-        let (snapshot3, edits) = map.read(buffer_snapshot.clone(), edits);
+        let (snapshot3, edits) =
+            map.read(buffer_snapshot.clone(), subscription.consume().into_inner());
         assert_eq!(snapshot3.text(), "123a…c123c…eeeee");
         assert_eq!(
             edits,
@@ -1114,12 +1116,11 @@ mod tests {
             ]
         );
 
-        let (buffer_snapshot, edits) = buffer.update(cx, |buffer, cx| {
-            let v0 = buffer.version();
+        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
             buffer.edit(vec![Point::new(2, 6)..Point::new(4, 3)], "456", cx);
-            (buffer.snapshot(), buffer.edits_since(&v0).collect())
+            buffer.snapshot(cx)
         });
-        let (snapshot4, _) = map.read(buffer_snapshot.clone(), edits);
+        let (snapshot4, _) = map.read(buffer_snapshot.clone(), subscription.consume().into_inner());
         assert_eq!(snapshot4.text(), "123a…c123456eee");
 
         let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
@@ -1130,8 +1131,9 @@ mod tests {
 
     #[gpui::test]
     fn test_adjacent_folds(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "abcdefghijkl", cx));
-        let buffer_snapshot = buffer.read(cx).snapshot();
+        let buffer = MultiBuffer::build_simple("abcdefghijkl", cx);
+        let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
 
         {
             let mut map = FoldMap::new(buffer_snapshot.clone()).0;
@@ -1164,20 +1166,20 @@ mod tests {
             assert_eq!(snapshot.text(), "…fghijkl");
 
             // Edit within one of the folds.
-            let (buffer_snapshot, edits) = buffer.update(cx, |buffer, cx| {
-                let v0 = buffer.version();
+            let buffer_snapshot = buffer.update(cx, |buffer, cx| {
                 buffer.edit(vec![0..1], "12345", cx);
-                (buffer.snapshot(), buffer.edits_since(&v0).collect())
+                buffer.snapshot(cx)
             });
-            let (snapshot, _) = map.read(buffer_snapshot.clone(), edits);
+            let (snapshot, _) =
+                map.read(buffer_snapshot.clone(), subscription.consume().into_inner());
             assert_eq!(snapshot.text(), "12345…fghijkl");
         }
     }
 
     #[gpui::test]
     fn test_overlapping_folds(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6, 'a'), cx));
-        let buffer_snapshot = buffer.read(cx).snapshot();
+        let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let mut map = FoldMap::new(buffer_snapshot.clone()).0;
         let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
         writer.fold(vec![
@@ -1192,8 +1194,9 @@ mod tests {
 
     #[gpui::test]
     fn test_merging_folds_via_edit(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6, 'a'), cx));
-        let buffer_snapshot = buffer.read(cx).snapshot();
+        let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
+        let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let mut map = FoldMap::new(buffer_snapshot.clone()).0;
 
         let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
@@ -1204,19 +1207,18 @@ mod tests {
         let (snapshot, _) = map.read(buffer_snapshot.clone(), vec![]);
         assert_eq!(snapshot.text(), "aa…cccc\nd…eeeee");
 
-        let (buffer_snapshot, edits) = buffer.update(cx, |buffer, cx| {
-            let v0 = buffer.version();
+        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
             buffer.edit(Some(Point::new(2, 2)..Point::new(3, 1)), "", cx);
-            (buffer.snapshot(), buffer.edits_since(&v0).collect())
+            buffer.snapshot(cx)
         });
-        let (snapshot, _) = map.read(buffer_snapshot.clone(), edits);
+        let (snapshot, _) = map.read(buffer_snapshot.clone(), subscription.consume().into_inner());
         assert_eq!(snapshot.text(), "aa…eeeee");
     }
 
     #[gpui::test]
     fn test_folds_in_range(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(5, 6, 'a'), cx));
-        let buffer_snapshot = buffer.read(cx).snapshot();
+        let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let mut map = FoldMap::new(buffer_snapshot.clone()).0;
         let buffer = buffer.read(cx);
 
@@ -1230,7 +1232,9 @@ mod tests {
         let (snapshot, _) = map.read(buffer_snapshot.clone(), vec![]);
         let fold_ranges = snapshot
             .folds_in_range(Point::new(1, 0)..Point::new(1, 3))
-            .map(|fold| fold.start.to_point(buffer)..fold.end.to_point(buffer))
+            .map(|fold| {
+                fold.start.to_point(&buffer.as_snapshot())..fold.end.to_point(&buffer.as_snapshot())
+            })
             .collect::<Vec<_>>();
         assert_eq!(
             fold_ranges,
@@ -1247,12 +1251,10 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let buffer = cx.add_model(|cx| {
-            let len = rng.gen_range(0..10);
-            let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-            Buffer::new(0, text, cx)
-        });
-        let buffer_snapshot = buffer.read(cx).snapshot();
+        let len = rng.gen_range(0..10);
+        let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+        let buffer = MultiBuffer::build_simple(&text, cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let mut map = FoldMap::new(buffer_snapshot.clone()).0;
 
         let (mut initial_snapshot, _) = map.read(buffer_snapshot.clone(), vec![]);
@@ -1260,23 +1262,21 @@ mod tests {
 
         for _ in 0..operations {
             log::info!("text: {:?}", buffer.read(cx).text());
-            let buffer_edits = match rng.gen_range(0..=100) {
+            let mut buffer_edits = Vec::new();
+            match rng.gen_range(0..=100) {
                 0..=59 => {
                     snapshot_edits.extend(map.randomly_mutate(&mut rng));
-                    vec![]
                 }
                 _ => buffer.update(cx, |buffer, cx| {
-                    let start_version = buffer.version.clone();
+                    let subscription = buffer.subscribe();
                     let edit_count = rng.gen_range(1..=5);
                     buffer.randomly_edit(&mut rng, edit_count, cx);
-                    let edits = buffer
-                        .edits_since::<Point>(&start_version)
-                        .collect::<Vec<_>>();
+                    let edits = subscription.consume().into_inner();
                     log::info!("editing {:?}", edits);
-                    buffer.edits_since::<usize>(&start_version).collect()
+                    buffer_edits.extend(edits);
                 }),
             };
-            let buffer_snapshot = buffer.read(cx).snapshot();
+            let buffer_snapshot = buffer.read(cx).snapshot(cx);
 
             let (snapshot, edits) = map.read(buffer_snapshot.clone(), buffer_edits);
             snapshot_edits.push((snapshot.clone(), edits));
@@ -1285,8 +1285,8 @@ mod tests {
             let mut expected_buffer_rows = Vec::new();
             let mut next_row = buffer_snapshot.max_point().row;
             for fold_range in map.merged_fold_ranges().into_iter().rev() {
-                let fold_start = buffer_snapshot.point_for_offset(fold_range.start).unwrap();
-                let fold_end = buffer_snapshot.point_for_offset(fold_range.end).unwrap();
+                let fold_start = buffer_snapshot.offset_to_point(fold_range.start);
+                let fold_end = buffer_snapshot.offset_to_point(fold_range.end);
                 expected_buffer_rows.extend((fold_end.row + 1..=next_row).rev());
                 next_row = fold_start.row;
 
@@ -1458,9 +1458,9 @@ mod tests {
     #[gpui::test]
     fn test_buffer_rows(cx: &mut gpui::MutableAppContext) {
         let text = sample_text(6, 6, 'a') + "\n";
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+        let buffer = MultiBuffer::build_simple(&text, cx);
 
-        let buffer_snapshot = buffer.read(cx).snapshot();
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let mut map = FoldMap::new(buffer_snapshot.clone()).0;
 
         let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);

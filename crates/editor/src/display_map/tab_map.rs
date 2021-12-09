@@ -435,7 +435,7 @@ impl<'a> Iterator for TabChunks<'a> {
 mod tests {
     use super::*;
     use crate::display_map::fold_map::FoldMap;
-    use language::Buffer;
+    use language::multi_buffer::MultiBuffer;
     use rand::{prelude::StdRng, Rng};
     use text::{RandomCharIter, Rope};
 
@@ -449,12 +449,10 @@ mod tests {
     #[gpui::test(iterations = 100)]
     fn test_random(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
         let tab_size = rng.gen_range(1..=4);
-        let buffer = cx.add_model(|cx| {
-            let len = rng.gen_range(0..30);
-            let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-            Buffer::new(0, text, cx)
-        });
-        let buffer_snapshot = buffer.read(cx).snapshot();
+        let len = rng.gen_range(0..30);
+        let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+        let buffer = MultiBuffer::build_simple(&text, cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
         log::info!("Buffer text: {:?}", buffer.read(cx).text());
 
         let (mut fold_map, _) = FoldMap::new(buffer_snapshot.clone());

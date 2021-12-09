@@ -5,19 +5,24 @@ mod selection;
 use self::location::*;
 use crate::{
     buffer::{self, Buffer, Chunk, ToOffset as _, ToPoint as _},
-    BufferSnapshot,
+    BufferSnapshot, Diagnostic, File, Language,
 };
+use anyhow::Result;
+use clock::ReplicaId;
 use collections::HashMap;
-use gpui::{AppContext, Entity, ModelContext, ModelHandle};
-use parking_lot::Mutex;
-use std::{cmp, ops::Range};
+use gpui::{AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
+use parking_lot::{Mutex, MutexGuard};
+use std::{cmp, io, ops::Range, sync::Arc, time::SystemTime};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{
     rope::TextDimension,
     subscription::{Subscription, Topic},
-    AnchorRangeExt, Edit, Point, PointUtf16, TextSummary,
+    AnchorRangeExt as _, Edit, Point, PointUtf16, Selection, SelectionSetId, TextSummary,
 };
 use theme::SyntaxTheme;
+
+pub use anchor::{Anchor, AnchorRangeExt, AnchorRangeMap, AnchorRangeSet};
+pub use selection::SelectionSet;
 
 const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
 
@@ -28,11 +33,11 @@ pub struct MultiBuffer {
     subscriptions: Topic,
 }
 
-pub trait ToOffset {
+pub trait ToOffset: 'static {
     fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize;
 }
 
-pub trait ToPoint {
+pub trait ToPoint: 'static {
     fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point;
 }
 
@@ -69,7 +74,7 @@ struct ExcerptSummary {
     text: TextSummary,
 }
 
-pub struct Chunks<'a> {
+pub struct MultiBufferChunks<'a> {
     range: Range<usize>,
     cursor: Cursor<'a, Excerpt, usize>,
     header_height: u8,
@@ -77,9 +82,31 @@ pub struct Chunks<'a> {
     theme: Option<&'a SyntaxTheme>,
 }
 
+pub struct MultiBufferBytes<'a> {
+    chunks: MultiBufferChunks<'a>,
+}
+
 impl MultiBuffer {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn singleton(buffer: ModelHandle<Buffer>, cx: &mut ModelContext<Self>) -> Self {
+        let mut this = Self::new();
+        this.push(
+            ExcerptProperties {
+                buffer: &buffer,
+                range: text::Anchor::min()..text::Anchor::max(),
+                header_height: 0,
+            },
+            cx,
+        );
+        this
+    }
+
+    pub fn build_simple(text: &str, cx: &mut MutableAppContext) -> ModelHandle<Self> {
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+        cx.add_model(|cx| Self::singleton(buffer, cx))
     }
 
     pub fn snapshot(&self, cx: &AppContext) -> MultiBufferSnapshot {
@@ -87,8 +114,121 @@ impl MultiBuffer {
         self.snapshot.lock().clone()
     }
 
+    pub fn as_snapshot(&self) -> MutexGuard<MultiBufferSnapshot> {
+        self.snapshot.lock()
+    }
+
+    pub fn as_singleton(&self) -> Option<&ModelHandle<Buffer>> {
+        if self.buffers.len() == 1 {
+            return Some(&self.buffers.values().next().unwrap().buffer);
+        } else {
+            None
+        }
+    }
+
     pub fn subscribe(&mut self) -> Subscription {
         self.subscriptions.subscribe()
+    }
+
+    pub fn edit<I, S, T>(&mut self, ranges_iter: I, new_text: T, cx: &mut ModelContext<Self>)
+    where
+        I: IntoIterator<Item = Range<S>>,
+        S: ToOffset,
+        T: Into<String>,
+    {
+        self.edit_internal(ranges_iter, new_text, false, cx)
+    }
+
+    pub fn edit_with_autoindent<I, S, T>(
+        &mut self,
+        ranges_iter: I,
+        new_text: T,
+        cx: &mut ModelContext<Self>,
+    ) where
+        I: IntoIterator<Item = Range<S>>,
+        S: ToOffset,
+        T: Into<String>,
+    {
+        self.edit_internal(ranges_iter, new_text, true, cx)
+    }
+
+    pub fn edit_internal<I, S, T>(
+        &mut self,
+        ranges_iter: I,
+        new_text: T,
+        autoindent: bool,
+        cx: &mut ModelContext<Self>,
+    ) where
+        I: IntoIterator<Item = Range<S>>,
+        S: ToOffset,
+        T: Into<String>,
+    {
+        todo!()
+    }
+
+    pub fn start_transaction(
+        &mut self,
+        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    pub fn end_transaction(
+        &mut self,
+        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
+        todo!()
+    }
+
+    pub fn redo(&mut self, cx: &mut ModelContext<Self>) {
+        todo!()
+    }
+
+    pub fn selection_set(&self, set_id: SelectionSetId) -> Result<&SelectionSet> {
+        todo!()
+    }
+
+    pub fn add_selection_set<T: ToOffset>(
+        &mut self,
+        selections: &[Selection<T>],
+        cx: &mut ModelContext<Self>,
+    ) -> SelectionSetId {
+        todo!()
+    }
+
+    pub fn remove_selection_set(
+        &mut self,
+        set_id: SelectionSetId,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    pub fn update_selection_set<T: ToOffset>(
+        &mut self,
+        set_id: SelectionSetId,
+        selections: &[Selection<T>],
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    pub fn set_active_selection_set(
+        &mut self,
+        set_id: Option<SelectionSetId>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        todo!()
+    }
+
+    pub fn selection_sets(&self) -> impl Iterator<Item = (&SelectionSetId, &SelectionSet)> {
+        todo!();
+        None.into_iter()
     }
 
     pub fn push<O>(&mut self, props: ExcerptProperties<O>, cx: &mut ModelContext<Self>) -> ExcerptId
@@ -123,6 +263,30 @@ impl MultiBuffer {
         self.subscriptions.publish_mut([edit]);
 
         id
+    }
+
+    pub fn save(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<Task<Result<(clock::Global, SystemTime)>>> {
+        todo!()
+    }
+
+    pub fn file<'a>(&self, cx: &'a AppContext) -> Option<&'a dyn File> {
+        self.as_singleton()
+            .and_then(|buffer| buffer.read(cx).file())
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        todo!()
+    }
+
+    pub fn has_conflict(&self) -> bool {
+        todo!()
+    }
+
+    pub fn is_parsing(&self, _: &AppContext) -> bool {
+        todo!()
     }
 
     fn sync(&self, cx: &AppContext) {
@@ -194,15 +358,139 @@ impl MultiBuffer {
     }
 }
 
+// Methods delegating to the snapshot
+impl MultiBuffer {
+    pub fn replica_id(&self) -> ReplicaId {
+        self.snapshot.lock().replica_id()
+    }
+
+    pub fn text(&self) -> String {
+        self.snapshot.lock().text()
+    }
+
+    pub fn text_for_range<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = &'a str> {
+        todo!();
+        [].into_iter()
+    }
+
+    pub fn max_point(&self) -> Point {
+        self.snapshot.lock().max_point()
+    }
+
+    pub fn len(&self) -> usize {
+        self.snapshot.lock().len()
+    }
+
+    pub fn line_len(&self, row: u32) -> u32 {
+        self.snapshot.lock().line_len(row)
+    }
+
+    pub fn is_line_blank(&self, row: u32) -> bool {
+        self.snapshot.lock().is_line_blank(row)
+    }
+
+    pub fn indent_column_for_line(&self, row: u32) -> u32 {
+        self.snapshot.lock().indent_column_for_line(row)
+    }
+
+    pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
+        self.snapshot.lock().anchor_before(position)
+    }
+
+    pub fn anchor_after<T: ToOffset>(&self, position: T) -> Anchor {
+        self.snapshot.lock().anchor_after(position)
+    }
+
+    pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
+        self.snapshot.lock().anchor_at(position, bias)
+    }
+
+    pub fn anchor_range_set<E>(
+        &self,
+        start_bias: Bias,
+        end_bias: Bias,
+        entries: E,
+    ) -> AnchorRangeSet
+    where
+        E: IntoIterator<Item = Range<usize>>,
+    {
+        todo!()
+    }
+
+    pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
+        self.snapshot.lock().clip_offset(offset, bias)
+    }
+
+    pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
+        self.snapshot.lock().clip_point(point, bias)
+    }
+
+    pub fn language<'a>(&self) -> Option<&'a Arc<Language>> {
+        todo!()
+    }
+
+    pub fn parse_count(&self) -> usize {
+        self.snapshot.lock().parse_count()
+    }
+
+    pub fn diagnostics_update_count(&self) -> usize {
+        self.snapshot.lock().diagnostics_update_count()
+    }
+
+    pub fn diagnostics_in_range<'a, T, O>(
+        &'a self,
+        search_range: Range<T>,
+    ) -> impl Iterator<Item = (Range<O>, &Diagnostic)> + 'a
+    where
+        T: 'a + ToOffset,
+        O: 'a,
+    {
+        todo!();
+        None.into_iter()
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl MultiBuffer {
+    pub fn randomly_edit<R: rand::Rng>(&mut self, _: &mut R, _: usize, _: &mut ModelContext<Self>) {
+        todo!()
+    }
+
+    pub fn randomly_mutate<R: rand::Rng>(&mut self, rng: &mut R, cx: &mut ModelContext<Self>) {
+        todo!()
+    }
+}
+
 impl Entity for MultiBuffer {
-    type Event = ();
+    type Event = super::Event;
 }
 
 impl MultiBufferSnapshot {
+    pub fn replica_id(&self) -> ReplicaId {
+        todo!()
+    }
+
     pub fn text(&self) -> String {
         self.chunks(0..self.len(), None)
             .map(|chunk| chunk.text)
             .collect()
+    }
+
+    pub fn reversed_chars_at<'a, T: ToOffset>(
+        &'a self,
+        position: T,
+    ) -> impl Iterator<Item = char> + 'a {
+        todo!();
+        None.into_iter()
+    }
+
+    pub fn chars_at<'a, T: ToOffset>(&'a self, position: T) -> impl Iterator<Item = char> + 'a {
+        let offset = position.to_offset(self);
+        self.text_for_range(offset..self.len())
+            .flat_map(|chunk| chunk.chars())
     }
 
     pub fn text_for_range<'a, T: ToOffset>(
@@ -210,6 +498,18 @@ impl MultiBufferSnapshot {
         range: Range<T>,
     ) -> impl Iterator<Item = &'a str> {
         self.chunks(range, None).map(|chunk| chunk.text)
+    }
+
+    pub fn is_line_blank(&self, row: u32) -> bool {
+        self.text_for_range(Point::new(row, 0)..Point::new(row, self.line_len(row)))
+            .all(|chunk| chunk.matches(|c: char| !c.is_whitespace()).next().is_none())
+    }
+
+    pub fn contains_str_at<T>(&self, _: T, _: &str) -> bool
+    where
+        T: ToOffset,
+    {
+        todo!()
     }
 
     pub fn len(&self) -> usize {
@@ -291,11 +591,15 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn bytes_in_range<'a, T: ToOffset>(&'a self, range: Range<T>) -> MultiBufferBytes<'a> {
+        todo!()
+    }
+
     pub fn chunks<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
         theme: Option<&'a SyntaxTheme>,
-    ) -> Chunks<'a> {
+    ) -> MultiBufferChunks<'a> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut cursor = self.excerpts.cursor::<usize>();
         cursor.seek(&range.start, Bias::Right, &());
@@ -331,7 +635,7 @@ impl MultiBufferSnapshot {
             excerpt.buffer.chunks(buffer_start..buffer_end, theme)
         });
 
-        Chunks {
+        MultiBufferChunks {
             range,
             cursor,
             header_height,
@@ -411,6 +715,10 @@ impl MultiBufferSnapshot {
         } else {
             self.excerpts.summary().text.bytes
         }
+    }
+
+    pub fn indent_column_for_line(&self, row: u32) -> u32 {
+        todo!()
     }
 
     pub fn line_len(&self, row: u32) -> u32 {
@@ -534,18 +842,62 @@ impl MultiBufferSnapshot {
         summary
     }
 
-    fn resolve_excerpt<'a, D: TextDimension>(
+    pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
+        self.anchor_at(position, Bias::Left)
+    }
+
+    pub fn anchor_after<T: ToOffset>(&self, position: T) -> Anchor {
+        self.anchor_at(position, Bias::Right)
+    }
+
+    pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
+        todo!()
+    }
+
+    pub fn parse_count(&self) -> usize {
+        todo!()
+    }
+
+    pub fn enclosing_bracket_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Option<(Range<usize>, Range<usize>)> {
+        todo!()
+    }
+
+    pub fn diagnostics_update_count(&self) -> usize {
+        todo!()
+    }
+
+    pub fn language<'a>(&self) -> Option<&'a Arc<Language>> {
+        todo!()
+    }
+
+    pub fn diagnostic_group<'a, O>(
         &'a self,
-        excerpt_id: &ExcerptId,
-    ) -> Option<(D, &'a BufferSnapshot)> {
-        let mut cursor = self.excerpts.cursor::<(ExcerptId, TextSummary)>();
-        cursor.seek(excerpt_id, Bias::Left, &());
-        if let Some(excerpt) = cursor.item() {
-            if cursor.start().0 == *excerpt_id {
-                return Some((D::from_text_summary(&cursor.start().1), &excerpt.buffer));
-            }
-        }
-        None
+        group_id: usize,
+    ) -> impl Iterator<Item = (Range<O>, &Diagnostic)> + 'a
+    where
+        O: 'a,
+    {
+        todo!();
+        None.into_iter()
+    }
+
+    pub fn diagnostics_in_range<'a, T, O>(
+        &'a self,
+        search_range: Range<T>,
+    ) -> impl Iterator<Item = (Range<O>, &Diagnostic)> + 'a
+    where
+        T: 'a + ToOffset,
+        O: 'a,
+    {
+        todo!();
+        None.into_iter()
+    }
+
+    pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
+        todo!()
     }
 
     fn buffer_snapshot_for_excerpt<'a>(
@@ -672,7 +1024,17 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Location {
     }
 }
 
-impl<'a> Iterator for Chunks<'a> {
+impl<'a> MultiBufferChunks<'a> {
+    pub fn offset(&self) -> usize {
+        todo!()
+    }
+
+    pub fn seek(&mut self, offset: usize) {
+        todo!()
+    }
+}
+
+impl<'a> Iterator for MultiBufferChunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -723,6 +1085,20 @@ impl<'a> Iterator for Chunks<'a> {
                     .chunks(buffer_range.start..buffer_end, self.theme),
             );
         }
+    }
+}
+
+impl<'a> Iterator for MultiBufferBytes<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        todo!()
+    }
+}
+
+impl<'a> io::Read for MultiBufferBytes<'a> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        todo!()
     }
 }
 

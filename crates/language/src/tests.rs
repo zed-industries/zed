@@ -376,7 +376,7 @@ fn test_autoindent_moves_selections(cx: &mut MutableAppContext) {
             .selection_set(selection_set_id)
             .unwrap()
             .selections::<Point>(&buffer)
-            .map(|selection| selection.point_range(&buffer))
+            .map(|selection| selection.start.to_point(&buffer)..selection.end.to_point(&buffer))
             .collect::<Vec<_>>();
 
         assert_eq!(selection_ranges[0], empty(Point::new(1, 4)));

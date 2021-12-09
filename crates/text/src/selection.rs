@@ -1,6 +1,4 @@
-use crate::{
-    rope::TextDimension, AnchorRangeMap, Buffer, BufferSnapshot, Point, ToOffset, ToPoint,
-};
+use crate::{rope::TextDimension, AnchorRangeMap, BufferSnapshot, ToOffset, ToPoint};
 use std::{cmp::Ordering, ops::Range, sync::Arc};
 use sum_tree::Bias;
 
@@ -73,26 +71,6 @@ impl<T: ToOffset + ToPoint + Copy + Ord> Selection<T> {
                 self.reversed = false;
             }
             self.end = head;
-        }
-    }
-
-    pub fn point_range(&self, buffer: &Buffer) -> Range<Point> {
-        let start = self.start.to_point(buffer);
-        let end = self.end.to_point(buffer);
-        if self.reversed {
-            end..start
-        } else {
-            start..end
-        }
-    }
-
-    pub fn offset_range(&self, buffer: &Buffer) -> Range<usize> {
-        let start = self.start.to_offset(buffer);
-        let end = self.end.to_offset(buffer);
-        if self.reversed {
-            end..start
-        } else {
-            start..end
         }
     }
 }
