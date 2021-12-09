@@ -1672,6 +1672,56 @@ impl Snapshot {
         result
     }
 
+    pub fn summaries_for_anchors<'a, D, A>(&'a self, anchors: A) -> impl 'a + Iterator<Item = D>
+    where
+        D: 'a + TextDimension<'a>,
+        A: 'a + IntoIterator<Item = &'a Anchor>,
+    {
+        let anchors = anchors.into_iter();
+        let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>();
+        let mut fragment_cursor = self.fragments.cursor::<(Option<&Locator>, usize)>();
+        let mut text_cursor = self.visible_text.cursor(0);
+        let mut position = D::default();
+
+        anchors.map(move |anchor| {
+            if *anchor == Anchor::min() {
+                return D::default();
+            } else if *anchor == Anchor::max() {
+                return D::from_text_summary(&self.visible_text.summary());
+            }
+
+            let anchor_key = InsertionFragmentKey {
+                timestamp: anchor.timestamp,
+                split_offset: anchor.offset,
+            };
+            insertion_cursor.seek(&anchor_key, anchor.bias, &());
+            if let Some(insertion) = insertion_cursor.item() {
+                let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
+                if comparison == Ordering::Greater
+                    || (anchor.bias == Bias::Left
+                        && comparison == Ordering::Equal
+                        && anchor.offset > 0)
+                {
+                    insertion_cursor.prev(&());
+                }
+            } else {
+                insertion_cursor.prev(&());
+            }
+            let insertion = insertion_cursor.item().expect("invalid insertion");
+            debug_assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
+
+            fragment_cursor.seek_forward(&Some(&insertion.fragment_id), Bias::Left, &None);
+            let fragment = fragment_cursor.item().unwrap();
+            let mut fragment_offset = fragment_cursor.start().1;
+            if fragment.visible {
+                fragment_offset += anchor.offset - insertion.split_offset;
+            }
+
+            position.add_assign(&text_cursor.summary(fragment_offset));
+            position.clone()
+        })
+    }
+
     fn summary_for_anchor<'a, D>(&'a self, anchor: &Anchor) -> D
     where
         D: TextDimension<'a>,
@@ -1702,8 +1752,8 @@ impl Snapshot {
             let insertion = insertion_cursor.item().expect("invalid insertion");
             debug_assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
 
-            let mut fragment_cursor = self.fragments.cursor::<(Locator, usize)>();
-            fragment_cursor.seek(&insertion.fragment_id, Bias::Left, &None);
+            let mut fragment_cursor = self.fragments.cursor::<(Option<&Locator>, usize)>();
+            fragment_cursor.seek(&Some(&insertion.fragment_id), Bias::Left, &None);
             let fragment = fragment_cursor.item().unwrap();
             let mut fragment_offset = fragment_cursor.start().1;
             if fragment.visible {
@@ -1741,8 +1791,8 @@ impl Snapshot {
             let insertion = insertion_cursor.item().expect("invalid insertion");
             debug_assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
 
-            let mut fragment_cursor = self.fragments.cursor::<(Locator, FullOffset)>();
-            fragment_cursor.seek(&insertion.fragment_id, Bias::Left, &None);
+            let mut fragment_cursor = self.fragments.cursor::<(Option<&Locator>, FullOffset)>();
+            fragment_cursor.seek(&Some(&insertion.fragment_id), Bias::Left, &None);
             fragment_cursor.start().1 + (anchor.offset - insertion.split_offset)
         }
     }
@@ -1771,10 +1821,10 @@ impl Snapshot {
         } else if bias == Bias::Right && offset == self.len() {
             Anchor::max()
         } else {
-            let mut fragment_cursor = self.fragments.cursor::<(usize, Locator)>();
+            let mut fragment_cursor = self.fragments.cursor::<usize>();
             fragment_cursor.seek(&offset, bias, &None);
             let fragment = fragment_cursor.item().unwrap();
-            let overshoot = offset - fragment_cursor.start().0;
+            let overshoot = offset - *fragment_cursor.start();
             Anchor {
                 timestamp: fragment.insertion_timestamp.local(),
                 offset: fragment.insertion_offset + overshoot,
@@ -2111,9 +2161,9 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FullOffset {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, FragmentSummary> for Locator {
-    fn add_summary(&mut self, summary: &FragmentSummary, _: &Option<clock::Global>) {
-        self.assign(&summary.max_id);
+impl<'a> sum_tree::Dimension<'a, FragmentSummary> for Option<&'a Locator> {
+    fn add_summary(&mut self, summary: &'a FragmentSummary, _: &Option<clock::Global>) {
+        *self = Some(&summary.max_id);
     }
 }
 

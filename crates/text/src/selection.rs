@@ -125,7 +125,18 @@ impl SelectionSet {
     where
         D: 'a + TextDimension<'a>,
     {
-        self.selections.iter().map(|s| s.resolve(snapshot))
+        let anchors = self
+            .selections
+            .iter()
+            .flat_map(|selection| [&selection.start, &selection.end].into_iter());
+        let mut positions = snapshot.summaries_for_anchors::<D, _>(anchors);
+        self.selections.iter().map(move |selection| Selection {
+            start: positions.next().unwrap(),
+            end: positions.next().unwrap(),
+            goal: selection.goal,
+            reversed: selection.reversed,
+            id: selection.id,
+        })
     }
 
     pub fn intersecting_selections<'a, D, I>(

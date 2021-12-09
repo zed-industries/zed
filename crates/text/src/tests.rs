@@ -645,9 +645,9 @@ impl Buffer {
             assert_eq!(insertion_fragment.fragment_id, fragment.id);
         }
 
-        let mut cursor = self.snapshot.fragments.cursor::<Locator>();
+        let mut cursor = self.snapshot.fragments.cursor::<Option<&Locator>>();
         for insertion_fragment in self.snapshot.insertions.cursor::<()>() {
-            cursor.seek(&insertion_fragment.fragment_id, Bias::Left, &None);
+            cursor.seek(&Some(&insertion_fragment.fragment_id), Bias::Left, &None);
             let fragment = cursor.item().unwrap();
             assert_eq!(insertion_fragment.fragment_id, fragment.id);
             assert_eq!(insertion_fragment.split_offset, fragment.insertion_offset);
