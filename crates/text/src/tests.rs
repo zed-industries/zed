@@ -645,11 +645,13 @@ impl Buffer {
             assert_eq!(insertion_fragment.fragment_id, fragment.id);
         }
 
-        let insertions = self.snapshot.insertions.items(&());
-        assert_eq!(
-            HashSet::from_iter(insertions.iter().map(|i| &i.fragment_id)).len(),
-            insertions.len()
-        );
+        let mut cursor = self.snapshot.fragments.cursor::<Locator>();
+        for insertion_fragment in self.snapshot.insertions.cursor::<()>() {
+            cursor.seek(&insertion_fragment.fragment_id, Bias::Left, &None);
+            let fragment = cursor.item().unwrap();
+            assert_eq!(insertion_fragment.fragment_id, fragment.id);
+            assert_eq!(insertion_fragment.split_offset, fragment.insertion_offset);
+        }
     }
 }
 

@@ -1,8 +1,8 @@
 use sum_tree::Bias;
 
-use crate::{rope::TextDimension, Snapshot};
+use crate::{rope::TextDimension, Anchor, Snapshot};
 
-use super::{AnchorRangeMap, Buffer, Point, ToOffset, ToPoint};
+use super::{Buffer, Point, ToOffset, ToPoint};
 use std::{cmp::Ordering, ops::Range, sync::Arc};
 
 pub type SelectionSetId = clock::Lamport;
@@ -28,7 +28,7 @@ pub struct Selection<T> {
 pub struct SelectionSet {
     pub id: SelectionSetId,
     pub active: bool,
-    pub selections: Arc<AnchorRangeMap<SelectionState>>,
+    pub selections: Arc<[Selection<Anchor>]>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -98,6 +98,21 @@ impl<T: ToOffset + ToPoint + Copy + Ord> Selection<T> {
     }
 }
 
+impl Selection<Anchor> {
+    pub fn resolve<'a, D: 'a + TextDimension<'a>>(
+        &'a self,
+        snapshot: &'a Snapshot,
+    ) -> Selection<D> {
+        Selection {
+            id: self.id,
+            start: snapshot.summary_for_anchor(&self.start),
+            end: snapshot.summary_for_anchor(&self.end),
+            reversed: self.reversed,
+            goal: self.goal,
+        }
+    }
+}
+
 impl SelectionSet {
     pub fn len(&self) -> usize {
         self.selections.len()
@@ -105,69 +120,59 @@ impl SelectionSet {
 
     pub fn selections<'a, D>(
         &'a self,
-        content: &'a Snapshot,
+        snapshot: &'a Snapshot,
     ) -> impl 'a + Iterator<Item = Selection<D>>
     where
         D: 'a + TextDimension<'a>,
     {
-        self.selections
-            .ranges(content)
-            .map(|(range, state)| Selection {
-                id: state.id,
-                start: range.start,
-                end: range.end,
-                reversed: state.reversed,
-                goal: state.goal,
-            })
+        self.selections.iter().map(|s| s.resolve(snapshot))
     }
 
     pub fn intersecting_selections<'a, D, I>(
         &'a self,
         range: Range<(I, Bias)>,
-        content: &'a Snapshot,
+        snapshot: &'a Snapshot,
     ) -> impl 'a + Iterator<Item = Selection<D>>
     where
         D: 'a + TextDimension<'a>,
         I: 'a + ToOffset,
     {
-        self.selections
-            .intersecting_ranges(range, content)
-            .map(|(range, state)| Selection {
-                id: state.id,
-                start: range.start,
-                end: range.end,
-                reversed: state.reversed,
-                goal: state.goal,
-            })
+        let start = snapshot.anchor_at(range.start.0, range.start.1);
+        let end = snapshot.anchor_at(range.end.0, range.end.1);
+        let start_ix = match self
+            .selections
+            .binary_search_by(|probe| probe.start.cmp(&start, snapshot).unwrap())
+        {
+            Ok(ix) | Err(ix) => ix,
+        };
+        let end_ix = match self
+            .selections
+            .binary_search_by(|probe| probe.end.cmp(&end, snapshot).unwrap())
+        {
+            Ok(ix) | Err(ix) => ix,
+        };
+        self.selections[start_ix..end_ix]
+            .iter()
+            .map(|s| s.resolve(snapshot))
     }
 
-    pub fn oldest_selection<'a, D>(&'a self, content: &'a Snapshot) -> Option<Selection<D>>
+    pub fn oldest_selection<'a, D>(&'a self, snapshot: &'a Snapshot) -> Option<Selection<D>>
     where
         D: 'a + TextDimension<'a>,
     {
         self.selections
-            .min_by_key(content, |selection| selection.id)
-            .map(|(range, state)| Selection {
-                id: state.id,
-                start: range.start,
-                end: range.end,
-                reversed: state.reversed,
-                goal: state.goal,
-            })
+            .iter()
+            .min_by_key(|s| s.id)
+            .map(|s| s.resolve(snapshot))
     }
 
-    pub fn newest_selection<'a, D>(&'a self, content: &'a Snapshot) -> Option<Selection<D>>
+    pub fn newest_selection<'a, D>(&'a self, snapshot: &'a Snapshot) -> Option<Selection<D>>
     where
         D: 'a + TextDimension<'a>,
     {
         self.selections
-            .max_by_key(content, |selection| selection.id)
-            .map(|(range, state)| Selection {
-                id: state.id,
-                start: range.start,
-                end: range.end,
-                reversed: state.reversed,
-                goal: state.goal,
-            })
+            .iter()
+            .max_by_key(|s| s.id)
+            .map(|s| s.resolve(snapshot))
     }
 }
