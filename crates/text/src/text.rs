@@ -410,14 +410,14 @@ struct FragmentTextSummary {
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 struct InsertionFragment {
-    timestamp: InsertionTimestamp,
+    timestamp: clock::Local,
     split_offset: usize,
     fragment_id: Locator,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 struct InsertionFragmentKey {
-    timestamp: InsertionTimestamp,
+    timestamp: clock::Local,
     split_offset: usize,
 }
 
@@ -2178,7 +2178,7 @@ impl sum_tree::KeyedItem for InsertionFragment {
 impl InsertionFragment {
     fn new(fragment: &Fragment) -> Self {
         Self {
-            timestamp: fragment.insertion_timestamp,
+            timestamp: fragment.insertion_timestamp.local(),
             split_offset: fragment.insertion_offset,
             fragment_id: fragment.id.clone(),
         }

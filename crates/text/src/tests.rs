@@ -636,7 +636,7 @@ impl Buffer {
                 .insertions
                 .get(
                     &InsertionFragmentKey {
-                        timestamp: fragment.insertion_timestamp,
+                        timestamp: fragment.insertion_timestamp.local(),
                         split_offset: fragment.insertion_offset,
                     },
                     &(),
