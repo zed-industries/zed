@@ -12,6 +12,7 @@ use clock::ReplicaId;
 use collections::HashMap;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use parking_lot::{Mutex, MutexGuard};
+use smallvec::SmallVec;
 use std::{cmp, io, ops::Range, sync::Arc, time::SystemTime};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{
@@ -31,6 +32,7 @@ pub struct MultiBuffer {
     snapshot: Mutex<MultiBufferSnapshot>,
     buffers: HashMap<usize, BufferState>,
     subscriptions: Topic,
+    selection_sets: HashMap<SelectionSetId, SelectionSet>,
 }
 
 pub trait ToOffset: 'static {
@@ -409,12 +411,30 @@ impl MultiBuffer {
         self.snapshot.lock().anchor_at(position, bias)
     }
 
-    pub fn anchor_range_set<E>(
+    pub fn anchor_range_map<T, E>(
         &self,
         start_bias: Bias,
         end_bias: Bias,
         entries: E,
-    ) -> AnchorRangeSet
+    ) -> AnchorRangeMap<T>
+    where
+        E: IntoIterator<Item = (Range<usize>, T)>,
+    {
+        let entries = entries.into_iter().peekable();
+        let mut child_maps = SmallVec::new();
+        if let Some((range, _)) = entries.peek() {
+            let mut cursor = self.snapshot.lock().excerpts.cursor::<ExcerptSummary>();
+            cursor.seek(&range.start, Bias::Right, &());
+            let mut excerpt_end = cursor.end(&());
+
+            // child_maps.push
+
+            // for entry in entries {}
+        }
+        AnchorRangeMap { child_maps }
+    }
+
+    pub fn anchor_range_set<E>(&self, start_bias: Bias, end_bias: Bias, ranges: E) -> AnchorRangeSet
     where
         E: IntoIterator<Item = Range<usize>>,
     {

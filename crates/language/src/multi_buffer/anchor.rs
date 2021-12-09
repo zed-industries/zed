@@ -14,9 +14,9 @@ pub struct Anchor {
     text_anchor: text::Anchor,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AnchorRangeMap<T> {
-    entries: SmallVec<[(ExcerptId, text::AnchorRangeMap<T>); 1]>,
+    pub(crate) child_maps: SmallVec<[(ExcerptId, text::AnchorRangeMap<T>); 1]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -99,7 +99,7 @@ impl Anchor {
 
 impl<T> AnchorRangeMap<T> {
     pub fn len(&self) -> usize {
-        self.entries
+        self.child_maps
             .iter()
             .map(|(_, text_map)| text_map.len())
             .sum()
@@ -113,7 +113,7 @@ impl<T> AnchorRangeMap<T> {
         D: TextDimension + Clone,
     {
         let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>();
-        self.entries
+        self.child_maps
             .iter()
             .filter_map(move |(excerpt_id, text_map)| {
                 cursor.seek_forward(excerpt_id, Bias::Left, &());
@@ -154,14 +154,14 @@ impl<T> AnchorRangeMap<T> {
         cursor.seek(&start_offset, start_bias, &());
         let start_excerpt_id = &cursor.start().excerpt_id;
         let start_ix = match self
-            .entries
+            .child_maps
             .binary_search_by_key(&start_excerpt_id, |e| &e.0)
         {
             Ok(ix) | Err(ix) => ix,
         };
 
         let mut entry_ranges = None;
-        let mut entries = self.entries[start_ix..].iter();
+        let mut entries = self.child_maps[start_ix..].iter();
         std::iter::from_fn(move || loop {
             match &mut entry_ranges {
                 None => {
@@ -265,7 +265,7 @@ impl<T> AnchorRangeMap<T> {
     {
         let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>();
         let mut max = None;
-        for (excerpt_id, text_map) in &self.entries {
+        for (excerpt_id, text_map) in &self.child_maps {
             cursor.seek(excerpt_id, Bias::Left, &());
             if let Some(excerpt) = cursor.item() {
                 if excerpt.id == *excerpt_id {

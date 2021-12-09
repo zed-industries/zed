@@ -40,7 +40,7 @@ pub struct Buffer {
     snapshot: BufferSnapshot,
     last_edit: clock::Local,
     history: History,
-    selections: HashMap<SelectionSetId, SelectionSet>,
+    selection_sets: HashMap<SelectionSetId, SelectionSet>,
     deferred_ops: OperationQueue,
     deferred_replicas: HashSet<ReplicaId>,
     replica_id: ReplicaId,
@@ -482,7 +482,7 @@ impl Buffer {
             },
             last_edit: clock::Local::default(),
             history,
-            selections: Default::default(),
+            selection_sets: Default::default(),
             deferred_ops: OperationQueue::new(),
             deferred_replicas: HashSet::default(),
             replica_id,
@@ -735,10 +735,10 @@ impl Buffer {
                 selections,
                 lamport_timestamp,
             } => {
-                if let Some(set) = self.selections.get_mut(&set_id) {
+                if let Some(set) = self.selection_sets.get_mut(&set_id) {
                     set.selections = selections;
                 } else {
-                    self.selections.insert(
+                    self.selection_sets.insert(
                         set_id,
                         SelectionSet {
                             id: set_id,
@@ -753,14 +753,14 @@ impl Buffer {
                 set_id,
                 lamport_timestamp,
             } => {
-                self.selections.remove(&set_id);
+                self.selection_sets.remove(&set_id);
                 self.lamport_clock.observe(lamport_timestamp);
             }
             Operation::SetActiveSelections {
                 set_id,
                 lamport_timestamp,
             } => {
-                for (id, set) in &mut self.selections {
+                for (id, set) in &mut self.selection_sets {
                     if id.replica_id == lamport_timestamp.replica_id {
                         if Some(*id) == set_id {
                             set.active = true;
@@ -1063,7 +1063,7 @@ impl Buffer {
                 }
                 Operation::RemoveSelections { .. } => true,
                 Operation::SetActiveSelections { set_id, .. } => {
-                    set_id.map_or(true, |set_id| self.selections.contains_key(&set_id))
+                    set_id.map_or(true, |set_id| self.selection_sets.contains_key(&set_id))
                 }
                 #[cfg(test)]
                 Operation::Test(_) => true,
@@ -1091,7 +1091,7 @@ impl Buffer {
             .into_iter()
             .map(|set_id| {
                 let set = self
-                    .selections
+                    .selection_sets
                     .get(&set_id)
                     .expect("invalid selection set id");
                 (set_id, set.selections.clone())
@@ -1115,7 +1115,7 @@ impl Buffer {
             .into_iter()
             .map(|set_id| {
                 let set = self
-                    .selections
+                    .selection_sets
                     .get(&set_id)
                     .expect("invalid selection set id");
                 (set_id, set.selections.clone())
@@ -1132,7 +1132,7 @@ impl Buffer {
     }
 
     pub fn remove_peer(&mut self, replica_id: ReplicaId) {
-        self.selections
+        self.selection_sets
             .retain(|set_id, _| set_id.replica_id != replica_id)
     }
 
@@ -1194,13 +1194,13 @@ impl Buffer {
     }
 
     pub fn selection_set(&self, set_id: SelectionSetId) -> Result<&SelectionSet> {
-        self.selections
+        self.selection_sets
             .get(&set_id)
             .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))
     }
 
     pub fn selection_sets(&self) -> impl Iterator<Item = (&SelectionSetId, &SelectionSet)> {
-        self.selections.iter()
+        self.selection_sets.iter()
     }
 
     fn build_selection_anchor_range_map<T: ToOffset>(
@@ -1231,7 +1231,7 @@ impl Buffer {
     ) -> Result<Operation> {
         let selections = self.build_selection_anchor_range_map(selections);
         let set = self
-            .selections
+            .selection_sets
             .get_mut(&set_id)
             .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
         set.selections = selections.clone();
@@ -1248,7 +1248,7 @@ impl Buffer {
         selections: Arc<AnchorRangeMap<SelectionState>>,
     ) -> Result<Operation> {
         let set = self
-            .selections
+            .selection_sets
             .get_mut(&set_id)
             .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
         set.selections = selections.clone();
@@ -1262,7 +1262,7 @@ impl Buffer {
     pub fn add_selection_set<T: ToOffset>(&mut self, selections: &[Selection<T>]) -> Operation {
         let selections = self.build_selection_anchor_range_map(selections);
         let set_id = self.lamport_clock.tick();
-        self.selections.insert(
+        self.selection_sets.insert(
             set_id,
             SelectionSet {
                 id: set_id,
@@ -1278,7 +1278,7 @@ impl Buffer {
     }
 
     pub fn add_raw_selection_set(&mut self, id: SelectionSetId, selections: SelectionSet) {
-        self.selections.insert(id, selections);
+        self.selection_sets.insert(id, selections);
     }
 
     pub fn set_active_selection_set(
@@ -1289,7 +1289,7 @@ impl Buffer {
             assert_eq!(set_id.replica_id, self.replica_id());
         }
 
-        for (id, set) in &mut self.selections {
+        for (id, set) in &mut self.selection_sets {
             if id.replica_id == self.local_clock.replica_id {
                 if Some(*id) == set_id {
                     set.active = true;
@@ -1306,7 +1306,7 @@ impl Buffer {
     }
 
     pub fn remove_selection_set(&mut self, set_id: SelectionSetId) -> Result<Operation> {
-        self.selections
+        self.selection_sets
             .remove(&set_id)
             .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
         Ok(Operation::RemoveSelections {
@@ -1469,7 +1469,7 @@ impl Buffer {
     where
         D: TextDimension,
     {
-        self.selections
+        self.selection_sets
             .keys()
             .map(move |set_id| (*set_id, self.selection_ranges(*set_id).unwrap()))
     }
