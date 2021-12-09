@@ -2,29 +2,38 @@ use smallvec::{smallvec, SmallVec};
 use std::iter;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Locator(SmallVec<[u8; 4]>);
+pub struct Locator(SmallVec<[u64; 4]>);
 
 impl Locator {
     pub fn min() -> Self {
-        Self(smallvec![u8::MIN])
+        Self(smallvec![u64::MIN])
     }
 
     pub fn max() -> Self {
-        Self(smallvec![u8::MAX])
+        Self(smallvec![u64::MAX])
+    }
+
+    pub fn assign(&mut self, other: &Self) {
+        self.0.resize(other.0.len(), 0);
+        self.0.copy_from_slice(&other.0);
     }
 
     pub fn between(lhs: &Self, rhs: &Self) -> Self {
-        let lhs = lhs.0.iter().copied().chain(iter::repeat(u8::MIN));
-        let rhs = rhs.0.iter().copied().chain(iter::repeat(u8::MAX));
+        let lhs = lhs.0.iter().copied().chain(iter::repeat(u64::MIN));
+        let rhs = rhs.0.iter().copied().chain(iter::repeat(u64::MAX));
         let mut location = SmallVec::new();
         for (lhs, rhs) in lhs.zip(rhs) {
-            let mid = lhs + (rhs.saturating_sub(lhs)) / 2;
+            let mid = lhs + ((rhs.saturating_sub(lhs)) >> 48);
             location.push(mid);
             if mid > lhs {
                 break;
             }
         }
         Self(location)
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
     }
 }
 

@@ -2002,7 +2002,7 @@ impl sum_tree::Summary for FragmentSummary {
     type Context = Option<clock::Global>;
 
     fn add_summary(&mut self, other: &Self, _: &Self::Context) {
-        self.max_id = other.max_id.clone();
+        self.max_id.assign(&other.max_id);
         self.text.visible += &other.text.visible;
         self.text.deleted += &other.text.deleted;
         self.max_version.join(&other.max_version);
@@ -2113,7 +2113,7 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FullOffset {
 
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for Locator {
     fn add_summary(&mut self, summary: &FragmentSummary, _: &Option<clock::Global>) {
-        *self = summary.max_id.clone();
+        self.assign(&summary.max_id);
     }
 }
 
