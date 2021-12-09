@@ -359,7 +359,7 @@ impl Subscription {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, PartialOrd, Ord)]
 pub struct InsertionTimestamp {
     pub replica_id: ReplicaId,
     pub local: clock::Seq,
@@ -385,7 +385,8 @@ impl InsertionTimestamp {
 #[derive(Eq, PartialEq, Clone, Debug)]
 struct Fragment {
     id: Locator,
-    timestamp: InsertionTimestamp,
+    insertion_timestamp: InsertionTimestamp,
+    insertion_offset: usize,
     len: usize,
     visible: bool,
     deletions: HashSet<clock::Local>,
@@ -414,10 +415,10 @@ struct InsertionFragment {
     fragment_id: Locator,
 }
 
-#[derive(Clone, Debug, Default)]
-struct InsertionSummary {
-    max_timestamp: InsertionTimestamp,
-    max_split_offset: usize,
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+struct InsertionFragmentKey {
+    timestamp: InsertionTimestamp,
+    split_offset: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -470,34 +471,26 @@ impl Buffer {
         let mut version = clock::Global::new();
         let visible_text = Rope::from(history.base_text.as_ref());
         if visible_text.len() > 0 {
-            let timestamp = InsertionTimestamp {
+            let insertion_timestamp = InsertionTimestamp {
                 replica_id: 0,
                 local: 1,
                 lamport: 1,
             };
-            local_clock.observe(timestamp.local());
-            lamport_clock.observe(timestamp.lamport());
-            version.observe(timestamp.local());
+            local_clock.observe(insertion_timestamp.local());
+            lamport_clock.observe(insertion_timestamp.lamport());
+            version.observe(insertion_timestamp.local());
             let fragment_id = Locator::between(&Locator::min(), &Locator::max());
-            fragments.push(
-                Fragment {
-                    id: fragment_id,
-                    timestamp,
-                    len: visible_text.len(),
-                    visible: true,
-                    deletions: Default::default(),
-                    max_undos: Default::default(),
-                },
-                &None,
-            );
-            insertions.push(
-                InsertionFragment {
-                    timestamp,
-                    split_offset: 0,
-                    fragment_id,
-                },
-                &(),
-            );
+            let fragment = Fragment {
+                id: fragment_id,
+                insertion_timestamp,
+                insertion_offset: 0,
+                len: visible_text.len(),
+                visible: true,
+                deletions: Default::default(),
+                max_undos: Default::default(),
+            };
+            insertions.push(InsertionFragment::new(&fragment), &());
+            fragments.push(fragment, &None);
         }
 
         Buffer {
@@ -586,7 +579,7 @@ impl Buffer {
             ranges: Vec::with_capacity(ranges.len()),
             new_text: None,
         };
-        let mut insertions = Vec::new();
+        let mut new_insertions = Vec::new();
 
         let mut ranges = ranges
             .map(|range| range.start.to_offset(&*self)..range.end.to_offset(&*self))
@@ -612,6 +605,8 @@ impl Buffer {
                     if fragment_end > fragment_start {
                         let mut suffix = old_fragments.item().unwrap().clone();
                         suffix.len = fragment_end - fragment_start;
+                        suffix.insertion_offset += fragment_start - old_fragments.start().visible;
+                        new_insertions.push(InsertionFragment::insert_new(&suffix));
                         new_ropes.push_fragment(&suffix, suffix.visible);
                         new_fragments.push(suffix, &None);
                     }
@@ -630,6 +625,15 @@ impl Buffer {
             if fragment_start < range.start {
                 let mut prefix = old_fragments.item().unwrap().clone();
                 prefix.len = range.start - fragment_start;
+                prefix.insertion_offset += fragment_start - old_fragments.start().visible;
+
+                // log::info!(
+                //     "pushing prefix between {:?} and {:?}",
+                //     new_fragments.summary().max_id,
+                //     prefix.id
+                // );
+                prefix.id = Locator::between(&new_fragments.summary().max_id, &prefix.id);
+                new_insertions.push(InsertionFragment::insert_new(&prefix));
                 new_ropes.push_fragment(&prefix, prefix.visible);
                 new_fragments.push(prefix, &None);
                 fragment_start = range.start;
@@ -642,17 +646,32 @@ impl Buffer {
                     old: fragment_start..fragment_start,
                     new: new_start..new_start + new_text.len(),
                 });
+
+                // log::info!(
+                //     "pushing new fragment between {:?} and {:?}",
+                //     new_fragments.summary().max_id,
+                //     old_fragments
+                //         .item()
+                //         .map_or(&Locator::max(), |old_fragment| &old_fragment.id)
+                // );
+
+                let fragment = Fragment {
+                    id: Locator::between(
+                        &new_fragments.summary().max_id,
+                        old_fragments
+                            .item()
+                            .map_or(&Locator::max(), |old_fragment| &old_fragment.id),
+                    ),
+                    insertion_timestamp: timestamp,
+                    insertion_offset: 0,
+                    len: new_text.len(),
+                    deletions: Default::default(),
+                    max_undos: Default::default(),
+                    visible: true,
+                };
+                new_insertions.push(InsertionFragment::insert_new(&fragment));
                 new_ropes.push_str(new_text);
-                new_fragments.push(
-                    Fragment {
-                        timestamp,
-                        len: new_text.len(),
-                        deletions: Default::default(),
-                        max_undos: Default::default(),
-                        visible: true,
-                    },
-                    &None,
-                );
+                new_fragments.push(fragment, &None);
             }
 
             // Advance through every fragment that intersects this range, marking the intersecting
@@ -664,6 +683,8 @@ impl Buffer {
                 let intersection_end = cmp::min(range.end, fragment_end);
                 if fragment.visible {
                     intersection.len = intersection_end - fragment_start;
+                    intersection.id =
+                        Locator::between(&new_fragments.summary().max_id, &intersection.id);
                     intersection.deletions.insert(timestamp.local());
                     intersection.visible = false;
                 }
@@ -675,6 +696,7 @@ impl Buffer {
                             new: new_start..new_start,
                         });
                     }
+                    new_insertions.push(InsertionFragment::insert_new(&intersection));
                     new_ropes.push_fragment(&intersection, fragment.visible);
                     new_fragments.push(intersection, &None);
                     fragment_start = intersection_end;
@@ -695,6 +717,8 @@ impl Buffer {
             if fragment_end > fragment_start {
                 let mut suffix = old_fragments.item().unwrap().clone();
                 suffix.len = fragment_end - fragment_start;
+                suffix.insertion_offset += fragment_start - old_fragments.start().visible;
+                new_insertions.push(InsertionFragment::insert_new(&suffix));
                 new_ropes.push_fragment(&suffix, suffix.visible);
                 new_fragments.push(suffix, &None);
             }
@@ -708,6 +732,7 @@ impl Buffer {
         drop(old_fragments);
 
         self.snapshot.fragments = new_fragments;
+        self.snapshot.insertions.edit(new_insertions, &());
         self.snapshot.visible_text = visible_text;
         self.snapshot.deleted_text = deleted_text;
         self.update_subscriptions(edits);
@@ -865,7 +890,7 @@ impl Buffer {
             // timestamp.
             while let Some(fragment) = old_fragments.item() {
                 if fragment_start == range.start
-                    && fragment.timestamp.lamport() > timestamp.lamport()
+                    && fragment.insertion_timestamp.lamport() > timestamp.lamport()
                 {
                     new_ropes.push_fragment(fragment, fragment.visible);
                     new_fragments.push(fragment.clone(), &None);
@@ -900,7 +925,9 @@ impl Buffer {
                 new_ropes.push_str(new_text);
                 new_fragments.push(
                     Fragment {
-                        timestamp,
+                        id: todo!(),
+                        insertion_timestamp: timestamp,
+                        insertion_offset: todo!(),
                         len: new_text.len(),
                         deletions: Default::default(),
                         max_undos: Default::default(),
@@ -1008,7 +1035,9 @@ impl Buffer {
                     let fragment_was_visible = fragment.visible;
 
                     if fragment.was_visible(&undo.version, &self.undo_map)
-                        || undo.counts.contains_key(&fragment.timestamp.local())
+                        || undo
+                            .counts
+                            .contains_key(&fragment.insertion_timestamp.local())
                     {
                         fragment.visible = fragment.is_visible(&self.undo_map);
                         fragment.max_undos.observe(undo.id);
@@ -2028,13 +2057,13 @@ impl<'a, D: TextDimension<'a> + Ord, F: FnMut(&FragmentSummary) -> bool> Iterato
 
 impl Fragment {
     fn is_visible(&self, undos: &UndoMap) -> bool {
-        !undos.is_undone(self.timestamp.local())
+        !undos.is_undone(self.insertion_timestamp.local())
             && self.deletions.iter().all(|d| undos.is_undone(*d))
     }
 
     fn was_visible(&self, version: &clock::Global, undos: &UndoMap) -> bool {
-        (version.observed(self.timestamp.local())
-            && !undos.was_undone(self.timestamp.local(), version))
+        (version.observed(self.insertion_timestamp.local())
+            && !undos.was_undone(self.insertion_timestamp.local(), version))
             && self
                 .deletions
                 .iter()
@@ -2047,14 +2076,14 @@ impl sum_tree::Item for Fragment {
 
     fn summary(&self) -> Self::Summary {
         let mut max_version = clock::Global::new();
-        max_version.observe(self.timestamp.local());
+        max_version.observe(self.insertion_timestamp.local());
         for deletion in &self.deletions {
             max_version.observe(*deletion);
         }
         max_version.join(&self.max_undos);
 
         let mut min_insertion_version = clock::Global::new();
-        min_insertion_version.observe(self.timestamp.local());
+        min_insertion_version.observe(self.insertion_timestamp.local());
         let max_insertion_version = min_insertion_version.clone();
         if self.visible {
             FragmentSummary {
@@ -2086,6 +2115,7 @@ impl sum_tree::Summary for FragmentSummary {
     type Context = Option<clock::Global>;
 
     fn add_summary(&mut self, other: &Self, _: &Self::Context) {
+        self.max_id = other.max_id.clone();
         self.text.visible += &other.text.visible;
         self.text.deleted += &other.text.deleted;
         self.max_version.join(&other.max_version);
@@ -2116,22 +2146,43 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FragmentTextSummary {
 }
 
 impl sum_tree::Item for InsertionFragment {
-    type Summary = InsertionSummary;
+    type Summary = InsertionFragmentKey;
 
     fn summary(&self) -> Self::Summary {
-        InsertionSummary {
-            max_timestamp: self.timestamp,
-            max_split_offset: self.split_offset,
+        InsertionFragmentKey {
+            timestamp: self.timestamp,
+            split_offset: self.split_offset,
         }
     }
 }
 
-impl sum_tree::Summary for InsertionSummary {
+impl sum_tree::KeyedItem for InsertionFragment {
+    type Key = InsertionFragmentKey;
+
+    fn key(&self) -> Self::Key {
+        sum_tree::Item::summary(self)
+    }
+}
+
+impl InsertionFragment {
+    fn new(fragment: &Fragment) -> Self {
+        Self {
+            timestamp: fragment.insertion_timestamp,
+            split_offset: fragment.insertion_offset,
+            fragment_id: fragment.id.clone(),
+        }
+    }
+
+    fn insert_new(fragment: &Fragment) -> sum_tree::Edit<Self> {
+        sum_tree::Edit::Insert(Self::new(fragment))
+    }
+}
+
+impl sum_tree::Summary for InsertionFragmentKey {
     type Context = ();
 
-    fn add_summary(&mut self, summary: &Self, cx: &()) {
-        self.max_timestamp = summary.max_timestamp;
-        self.max_split_offset = summary.max_split_offset;
+    fn add_summary(&mut self, summary: &Self, _: &()) {
+        *self = *summary;
     }
 }
 

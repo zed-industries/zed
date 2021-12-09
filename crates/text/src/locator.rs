@@ -2,20 +2,20 @@ use smallvec::{smallvec, SmallVec};
 use std::iter;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Locator(SmallVec<[u32; 4]>);
+pub struct Locator(SmallVec<[u8; 4]>);
 
 impl Locator {
     pub fn min() -> Self {
-        Self(smallvec![u32::MIN])
+        Self(smallvec![u8::MIN])
     }
 
     pub fn max() -> Self {
-        Self(smallvec![u32::MAX])
+        Self(smallvec![u8::MAX])
     }
 
     pub fn between(lhs: &Self, rhs: &Self) -> Self {
-        let lhs = lhs.0.iter().copied().chain(iter::repeat(u32::MIN));
-        let rhs = rhs.0.iter().copied().chain(iter::repeat(u32::MAX));
+        let lhs = lhs.0.iter().copied().chain(iter::repeat(u8::MIN));
+        let rhs = rhs.0.iter().copied().chain(iter::repeat(u8::MAX));
         let mut location = SmallVec::new();
         for (lhs, rhs) in lhs.zip(rhs) {
             let mid = lhs + (rhs.saturating_sub(lhs)) / 2;
