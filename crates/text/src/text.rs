@@ -1136,11 +1136,9 @@ impl Buffer {
     }
 
     fn can_resolve(&self, anchor: &Anchor) -> bool {
-        match anchor {
-            Anchor::Min => true,
-            Anchor::Insertion { timestamp, .. } => self.version.observed(*timestamp),
-            Anchor::Max => true,
-        }
+        *anchor == Anchor::min()
+            || *anchor == Anchor::max()
+            || self.version.observed(anchor.timestamp)
     }
 
     pub fn peek_undo_stack(&self) -> Option<&Transaction> {
@@ -1680,80 +1678,74 @@ impl Snapshot {
     where
         D: TextDimension<'a>,
     {
-        match anchor {
-            Anchor::Min => D::default(),
-            Anchor::Insertion {
-                timestamp,
-                offset,
-                bias,
-            } => {
-                let anchor_key = InsertionFragmentKey {
-                    timestamp: *timestamp,
-                    split_offset: *offset,
-                };
-                let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>();
-                insertion_cursor.seek(&anchor_key, *bias, &());
-                if let Some(insertion) = insertion_cursor.item() {
-                    let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
-                    if comparison == Ordering::Greater
-                        || (*bias == Bias::Left && comparison == Ordering::Equal && *offset > 0)
-                    {
-                        insertion_cursor.prev(&());
-                    }
-                } else {
+        if *anchor == Anchor::min() {
+            D::default()
+        } else if *anchor == Anchor::max() {
+            D::from_text_summary(&self.visible_text.summary())
+        } else {
+            let anchor_key = InsertionFragmentKey {
+                timestamp: anchor.timestamp,
+                split_offset: anchor.offset,
+            };
+            let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>();
+            insertion_cursor.seek(&anchor_key, anchor.bias, &());
+            if let Some(insertion) = insertion_cursor.item() {
+                let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
+                if comparison == Ordering::Greater
+                    || (anchor.bias == Bias::Left
+                        && comparison == Ordering::Equal
+                        && anchor.offset > 0)
+                {
                     insertion_cursor.prev(&());
                 }
-                let insertion = insertion_cursor.item().expect("invalid insertion");
-                debug_assert_eq!(insertion.timestamp, *timestamp, "invalid insertion");
-
-                let mut fragment_cursor = self.fragments.cursor::<(Locator, usize)>();
-                fragment_cursor.seek(&insertion.fragment_id, Bias::Left, &None);
-                let fragment = fragment_cursor.item().unwrap();
-                let mut fragment_offset = fragment_cursor.start().1;
-                if fragment.visible {
-                    fragment_offset += *offset - insertion.split_offset;
-                }
-                self.text_summary_for_range(0..fragment_offset)
+            } else {
+                insertion_cursor.prev(&());
             }
-            Anchor::Max => D::from_text_summary(&self.visible_text.summary()),
+            let insertion = insertion_cursor.item().expect("invalid insertion");
+            debug_assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
+
+            let mut fragment_cursor = self.fragments.cursor::<(Locator, usize)>();
+            fragment_cursor.seek(&insertion.fragment_id, Bias::Left, &None);
+            let fragment = fragment_cursor.item().unwrap();
+            let mut fragment_offset = fragment_cursor.start().1;
+            if fragment.visible {
+                fragment_offset += anchor.offset - insertion.split_offset;
+            }
+            self.text_summary_for_range(0..fragment_offset)
         }
     }
 
     fn full_offset_for_anchor(&self, anchor: &Anchor) -> FullOffset {
-        match anchor {
-            Anchor::Min => Default::default(),
-            Anchor::Insertion {
-                timestamp,
-                offset,
-                bias,
-            } => {
-                let anchor_key = InsertionFragmentKey {
-                    timestamp: *timestamp,
-                    split_offset: *offset,
-                };
-                let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>();
-                insertion_cursor.seek(&anchor_key, *bias, &());
-                if let Some(insertion) = insertion_cursor.item() {
-                    let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
-                    if comparison == Ordering::Greater
-                        || (*bias == Bias::Left && comparison == Ordering::Equal && *offset > 0)
-                    {
-                        insertion_cursor.prev(&());
-                    }
-                } else {
+        if *anchor == Anchor::min() {
+            Default::default()
+        } else if *anchor == Anchor::max() {
+            let text = self.fragments.summary().text;
+            FullOffset(text.visible + text.deleted)
+        } else {
+            let anchor_key = InsertionFragmentKey {
+                timestamp: anchor.timestamp,
+                split_offset: anchor.offset,
+            };
+            let mut insertion_cursor = self.insertions.cursor::<InsertionFragmentKey>();
+            insertion_cursor.seek(&anchor_key, anchor.bias, &());
+            if let Some(insertion) = insertion_cursor.item() {
+                let comparison = sum_tree::KeyedItem::key(insertion).cmp(&anchor_key);
+                if comparison == Ordering::Greater
+                    || (anchor.bias == Bias::Left
+                        && comparison == Ordering::Equal
+                        && anchor.offset > 0)
+                {
                     insertion_cursor.prev(&());
                 }
-                let insertion = insertion_cursor.item().expect("invalid insertion");
-                debug_assert_eq!(insertion.timestamp, *timestamp, "invalid insertion");
+            } else {
+                insertion_cursor.prev(&());
+            }
+            let insertion = insertion_cursor.item().expect("invalid insertion");
+            debug_assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
 
-                let mut fragment_cursor = self.fragments.cursor::<(Locator, FullOffset)>();
-                fragment_cursor.seek(&insertion.fragment_id, Bias::Left, &None);
-                fragment_cursor.start().1 + (*offset - insertion.split_offset)
-            }
-            Anchor::Max => {
-                let text = self.fragments.summary().text;
-                FullOffset(text.visible + text.deleted)
-            }
+            let mut fragment_cursor = self.fragments.cursor::<(Locator, FullOffset)>();
+            fragment_cursor.seek(&insertion.fragment_id, Bias::Left, &None);
+            fragment_cursor.start().1 + (anchor.offset - insertion.split_offset)
         }
     }
 
@@ -1777,15 +1769,15 @@ impl Snapshot {
     pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
         let offset = position.to_offset(self);
         if bias == Bias::Left && offset == 0 {
-            Anchor::Min
+            Anchor::min()
         } else if bias == Bias::Right && offset == self.len() {
-            Anchor::Max
+            Anchor::max()
         } else {
             let mut fragment_cursor = self.fragments.cursor::<(usize, Locator)>();
             fragment_cursor.seek(&offset, bias, &None);
             let fragment = fragment_cursor.item().unwrap();
             let overshoot = offset - fragment_cursor.start().0;
-            Anchor::Insertion {
+            Anchor {
                 timestamp: fragment.insertion_timestamp.local(),
                 offset: fragment.insertion_offset + overshoot,
                 bias,

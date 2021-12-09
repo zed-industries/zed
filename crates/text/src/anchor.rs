@@ -1,88 +1,57 @@
-use crate::{rope::TextDimension, Snapshot};
-
-use super::{Buffer, ToOffset};
+use super::{rope::TextDimension, Buffer, Point, Snapshot, ToOffset};
 use anyhow::Result;
 use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::Bias;
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
-pub enum Anchor {
-    Min,
-    Insertion {
-        timestamp: clock::Local,
-        offset: usize,
-        bias: Bias,
-    },
-    Max,
+pub struct Anchor {
+    pub timestamp: clock::Local,
+    pub offset: usize,
+    pub bias: Bias,
 }
 
 impl Anchor {
     pub fn min() -> Self {
-        Self::Min
-    }
-
-    pub fn max() -> Self {
-        Self::Max
-    }
-
-    pub fn cmp<'a>(&self, other: &Anchor, buffer: &Snapshot) -> Result<Ordering> {
-        match (self, other) {
-            (Self::Min, Self::Min) => Ok(Ordering::Equal),
-            (Self::Min, _) => Ok(Ordering::Less),
-            (_, Self::Min) => Ok(Ordering::Greater),
-            (Self::Max, Self::Max) => Ok(Ordering::Equal),
-            (Self::Max, _) => Ok(Ordering::Greater),
-            (_, Self::Max) => Ok(Ordering::Less),
-            (
-                Self::Insertion {
-                    timestamp: lhs_id,
-                    bias: lhs_bias,
-                    offset: lhs_offset,
-                },
-                Self::Insertion {
-                    timestamp: rhs_id,
-                    bias: rhs_bias,
-                    offset: rhs_offset,
-                },
-            ) => {
-                let offset_comparison = if lhs_id == rhs_id {
-                    lhs_offset.cmp(&rhs_offset)
-                } else {
-                    buffer
-                        .full_offset_for_anchor(self)
-                        .cmp(&buffer.full_offset_for_anchor(other))
-                };
-
-                Ok(offset_comparison.then_with(|| lhs_bias.cmp(&rhs_bias)))
-            }
+        Self {
+            timestamp: clock::Local::MIN,
+            offset: usize::MIN,
+            bias: Bias::Left,
         }
     }
 
+    pub fn max() -> Self {
+        Self {
+            timestamp: clock::Local::MAX,
+            offset: usize::MAX,
+            bias: Bias::Right,
+        }
+    }
+
+    pub fn cmp<'a>(&self, other: &Anchor, buffer: &Snapshot) -> Result<Ordering> {
+        let offset_comparison = if self.timestamp == other.timestamp {
+            self.offset.cmp(&other.offset)
+        } else {
+            buffer
+                .full_offset_for_anchor(self)
+                .cmp(&buffer.full_offset_for_anchor(other))
+        };
+
+        Ok(offset_comparison.then_with(|| self.bias.cmp(&other.bias)))
+    }
+
     pub fn bias_left(&self, buffer: &Buffer) -> Anchor {
-        match self {
-            Anchor::Min => Anchor::Min,
-            Anchor::Insertion { bias, .. } => {
-                if *bias == Bias::Left {
-                    self.clone()
-                } else {
-                    buffer.anchor_before(self)
-                }
-            }
-            Anchor::Max => buffer.anchor_before(self),
+        if self.bias == Bias::Left {
+            self.clone()
+        } else {
+            buffer.anchor_before(self)
         }
     }
 
     pub fn bias_right(&self, buffer: &Buffer) -> Anchor {
-        match self {
-            Anchor::Min => buffer.anchor_after(self),
-            Anchor::Insertion { bias, .. } => {
-                if *bias == Bias::Right {
-                    self.clone()
-                } else {
-                    buffer.anchor_after(self)
-                }
-            }
-            Anchor::Max => Anchor::Max,
+        if self.bias == Bias::Right {
+            self.clone()
+        } else {
+            buffer.anchor_after(self)
         }
     }
 
@@ -97,6 +66,7 @@ impl Anchor {
 pub trait AnchorRangeExt {
     fn cmp(&self, b: &Range<Anchor>, buffer: &Snapshot) -> Result<Ordering>;
     fn to_offset(&self, content: &Snapshot) -> Range<usize>;
+    fn to_point(&self, content: &Snapshot) -> Range<Point>;
 }
 
 impl AnchorRangeExt for Range<Anchor> {
@@ -109,5 +79,9 @@ impl AnchorRangeExt for Range<Anchor> {
 
     fn to_offset(&self, content: &Snapshot) -> Range<usize> {
         self.start.to_offset(&content)..self.end.to_offset(&content)
+    }
+
+    fn to_point(&self, content: &Snapshot) -> Range<Point> {
+        self.start.summary::<Point>(&content)..self.end.summary::<Point>(&content)
     }
 }
