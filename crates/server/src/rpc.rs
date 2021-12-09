@@ -947,8 +947,8 @@ mod tests {
         editor::{Editor, EditorSettings, Input},
         fs::{FakeFs, Fs as _},
         language::{
-            tree_sitter_rust, Diagnostic, Language, LanguageConfig, LanguageRegistry,
-            LanguageServerConfig, Point,
+            tree_sitter_rust, AnchorRangeExt, Diagnostic, Language, LanguageConfig,
+            LanguageRegistry, LanguageServerConfig, Point,
         },
         lsp,
         project::{ProjectPath, Worktree},
@@ -1705,6 +1705,7 @@ mod tests {
             assert_eq!(
                 buffer
                     .diagnostics_in_range(0..buffer.len())
+                    .map(|entry| (entry.range.to_point(buffer), &entry.diagnostic))
                     .collect::<Vec<_>>(),
                 &[
                     (

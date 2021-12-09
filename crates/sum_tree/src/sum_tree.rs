@@ -1,8 +1,7 @@
 mod cursor;
 
 use arrayvec::ArrayVec;
-pub use cursor::Cursor;
-pub use cursor::FilterCursor;
+pub use cursor::{Cursor, FilterCursor, Iter};
 use std::marker::PhantomData;
 use std::{cmp::Ordering, fmt, iter::FromIterator, sync::Arc};
 
@@ -154,6 +153,10 @@ impl<T: Item> SumTree<T> {
             cursor.next(cx);
         }
         items
+    }
+
+    pub fn iter(&self) -> Iter<T> {
+        Iter::new(self)
     }
 
     pub fn cursor<'a, S>(&'a self) -> Cursor<T, S>
@@ -722,6 +725,10 @@ mod tests {
                 };
 
                 assert_eq!(tree.items(&()), reference_items);
+                assert_eq!(
+                    tree.iter().collect::<Vec<_>>(),
+                    tree.cursor::<()>().collect::<Vec<_>>()
+                );
 
                 let mut filter_cursor =
                     tree.filter::<_, Count>(|summary| summary.contains_even, &());

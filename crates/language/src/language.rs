@@ -1,4 +1,5 @@
 mod buffer;
+mod diagnostic_set;
 mod highlight_map;
 pub mod proto;
 #[cfg(test)]

@@ -141,13 +141,13 @@ impl SelectionSet {
         let end = snapshot.anchor_at(range.end.0, range.end.1);
         let start_ix = match self
             .selections
-            .binary_search_by(|probe| probe.start.cmp(&start, snapshot).unwrap())
+            .binary_search_by(|probe| probe.end.cmp(&start, snapshot).unwrap())
         {
             Ok(ix) | Err(ix) => ix,
         };
         let end_ix = match self
             .selections
-            .binary_search_by(|probe| probe.end.cmp(&end, snapshot).unwrap())
+            .binary_search_by(|probe| probe.start.cmp(&end, snapshot).unwrap())
         {
             Ok(ix) | Err(ix) => ix,
         };

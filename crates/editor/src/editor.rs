@@ -398,7 +398,7 @@ struct SelectNextState {
 
 #[derive(Debug)]
 struct BracketPairState {
-    ranges: AnchorRangeSet,
+    ranges: Vec<Range<Anchor>>,
     pair: BracketPair,
 }
 
@@ -1285,7 +1285,7 @@ impl Editor {
 
     fn autoclose_pairs(&mut self, cx: &mut ViewContext<Self>) {
         let selections = self.selections::<usize>(cx).collect::<Vec<_>>();
-        let new_autoclose_pair_state = self.buffer.update(cx, |buffer, cx| {
+        let new_autoclose_pair = self.buffer.update(cx, |buffer, cx| {
             let autoclose_pair = buffer.language().and_then(|language| {
                 let first_selection_start = selections.first().unwrap().start;
                 let pair = language.brackets().iter().find(|pair| {
@@ -1324,15 +1324,14 @@ impl Editor {
                 if pair.end.len() == 1 {
                     let mut delta = 0;
                     Some(BracketPairState {
-                        ranges: buffer.anchor_range_set(
-                            Bias::Left,
-                            Bias::Right,
-                            selections.iter().map(move |selection| {
+                        ranges: selections
+                            .iter()
+                            .map(move |selection| {
                                 let offset = selection.start + delta;
                                 delta += 1;
-                                offset..offset
-                            }),
-                        ),
+                                buffer.anchor_before(offset)..buffer.anchor_after(offset)
+                            })
+                            .collect(),
                         pair,
                     })
                 } else {
@@ -1340,26 +1339,26 @@ impl Editor {
                 }
             })
         });
-        self.autoclose_stack.extend(new_autoclose_pair_state);
+        self.autoclose_stack.extend(new_autoclose_pair);
     }
 
     fn skip_autoclose_end(&mut self, text: &str, cx: &mut ViewContext<Self>) -> bool {
         let old_selections = self.selections::<usize>(cx).collect::<Vec<_>>();
-        let autoclose_pair_state = if let Some(autoclose_pair_state) = self.autoclose_stack.last() {
-            autoclose_pair_state
+        let autoclose_pair = if let Some(autoclose_pair) = self.autoclose_stack.last() {
+            autoclose_pair
         } else {
             return false;
         };
-        if text != autoclose_pair_state.pair.end {
+        if text != autoclose_pair.pair.end {
             return false;
         }
 
-        debug_assert_eq!(old_selections.len(), autoclose_pair_state.ranges.len());
+        debug_assert_eq!(old_selections.len(), autoclose_pair.ranges.len());
 
         let buffer = self.buffer.read(cx);
         if old_selections
             .iter()
-            .zip(autoclose_pair_state.ranges.ranges::<usize>(buffer))
+            .zip(autoclose_pair.ranges.iter().map(|r| r.to_offset(buffer)))
             .all(|(selection, autoclose_range)| {
                 let autoclose_range_end = autoclose_range.end.to_offset(buffer);
                 selection.is_empty() && selection.start == autoclose_range_end
@@ -2826,13 +2825,14 @@ impl Editor {
 
         loop {
             let next_group = buffer
-                .diagnostics_in_range::<_, usize>(search_start..buffer.len())
-                .find_map(|(range, diagnostic)| {
-                    if diagnostic.is_primary
+                .diagnostics_in_range(search_start..buffer.len())
+                .find_map(|entry| {
+                    let range = entry.range.to_offset(buffer);
+                    if entry.diagnostic.is_primary
                         && !range.is_empty()
                         && Some(range.end) != active_primary_range.as_ref().map(|r| *r.end())
                     {
-                        Some((range, diagnostic.group_id))
+                        Some((range, entry.diagnostic.group_id))
                     } else {
                         None
                     }
@@ -2866,12 +2866,13 @@ impl Editor {
             let buffer = self.buffer.read(cx);
             let primary_range_start = active_diagnostics.primary_range.start.to_offset(buffer);
             let is_valid = buffer
-                .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone())
-                .any(|(range, diagnostic)| {
-                    diagnostic.is_primary
+                .diagnostics_in_range(active_diagnostics.primary_range.clone())
+                .any(|entry| {
+                    let range = entry.range.to_offset(buffer);
+                    entry.diagnostic.is_primary
                         && !range.is_empty()
                         && range.start == primary_range_start
-                        && diagnostic.message == active_diagnostics.primary_message
+                        && entry.diagnostic.message == active_diagnostics.primary_message
                 });
 
             if is_valid != active_diagnostics.is_valid {
@@ -2901,16 +2902,17 @@ impl Editor {
             let mut primary_message = None;
             let mut group_end = Point::zero();
             let diagnostic_group = buffer
-                .diagnostic_group::<Point>(group_id)
-                .map(|(range, diagnostic)| {
+                .diagnostic_group(group_id)
+                .map(|entry| {
+                    let range = entry.range.to_point(buffer);
                     if range.end > group_end {
                         group_end = range.end;
                     }
-                    if diagnostic.is_primary {
+                    if entry.diagnostic.is_primary {
                         primary_range = Some(range.clone());
-                        primary_message = Some(diagnostic.message.clone());
+                        primary_message = Some(entry.diagnostic.message.clone());
                     }
-                    (range, diagnostic.clone())
+                    (range, entry.diagnostic.clone())
                 })
                 .collect::<Vec<_>>();
             let primary_range = primary_range.unwrap();
@@ -3165,12 +3167,12 @@ impl Editor {
         self.add_selections_state = None;
         self.select_next_state = None;
         self.select_larger_syntax_node_stack.clear();
-        while let Some(autoclose_pair_state) = self.autoclose_stack.last() {
+        while let Some(autoclose_pair) = self.autoclose_stack.last() {
             let all_selections_inside_autoclose_ranges =
-                if selections.len() == autoclose_pair_state.ranges.len() {
+                if selections.len() == autoclose_pair.ranges.len() {
                     selections
                         .iter()
-                        .zip(autoclose_pair_state.ranges.ranges::<Point>(buffer))
+                        .zip(autoclose_pair.ranges.iter().map(|r| r.to_point(buffer)))
                         .all(|(selection, autoclose_range)| {
                             let head = selection.head().to_point(&*buffer);
                             autoclose_range.start <= head && autoclose_range.end >= head

@@ -3005,7 +3005,7 @@ mod tests {
     use anyhow::Result;
     use client::test::{FakeHttpClient, FakeServer};
     use fs::RealFs;
-    use language::{tree_sitter_rust, LanguageServerConfig};
+    use language::{tree_sitter_rust, AnchorRangeExt, LanguageServerConfig};
     use language::{Diagnostic, LanguageConfig};
     use lsp::Url;
     use rand::prelude::*;
@@ -3722,6 +3722,7 @@ mod tests {
         buffer.read_with(&cx, |buffer, _| {
             let diagnostics = buffer
                 .diagnostics_in_range(0..buffer.len())
+                .map(|entry| (entry.range.to_point(buffer), &entry.diagnostic))
                 .collect::<Vec<_>>();
             assert_eq!(
                 diagnostics,

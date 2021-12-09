@@ -229,32 +229,44 @@ message Buffer {
     string content = 2;
     repeated Operation.Edit history = 3;
     repeated SelectionSet selections = 4;
-    DiagnosticSet diagnostics = 5;
+    repeated Diagnostic diagnostics = 5;
 }
 
 message SelectionSet {
     uint32 replica_id = 1;
     uint32 lamport_timestamp = 2;
     bool is_active = 3;
-    repeated VectorClockEntry version = 4;
-    repeated Selection selections = 5;
+    repeated Selection selections = 4;
 }
 
 message Selection {
     uint64 id = 1;
-    uint64 start = 2;
-    uint64 end = 3;
+    Anchor start = 2;
+    Anchor end = 3;
     bool reversed = 4;
 }
 
-message DiagnosticSet {
-    repeated VectorClockEntry version = 1;
-    repeated Diagnostic diagnostics = 2;
+message Anchor {
+    uint32 replica_id = 1;
+    uint32 local_timestamp = 2;
+    uint64 offset = 3;
+    Bias bias = 4;
+}
+
+enum Bias {
+    Left = 0;
+    Right = 1;
+}
+
+message UpdateDiagnostics {
+    uint32 replica_id = 1;
+    uint32 lamport_timestamp = 2;
+    repeated Diagnostic diagnostics = 3;
 }
 
 message Diagnostic {
-    uint64 start = 1;
-    uint64 end = 2;
+    Anchor start = 1;
+    Anchor end = 2;
     Severity severity = 3;
     string message = 4;
     uint64 group_id = 5;
@@ -268,8 +280,6 @@ message Diagnostic {
     }
 }
 
-
-
 message Operation {
     oneof variant {
         Edit edit = 1;
@@ -277,7 +287,7 @@ message Operation {
         UpdateSelections update_selections = 3;
         RemoveSelections remove_selections = 4;
         SetActiveSelections set_active_selections = 5;
-        DiagnosticSet update_diagnostics = 6;
+        UpdateDiagnostics update_diagnostics = 6;
     }
 
     message Edit {
@@ -308,8 +318,7 @@ message Operation {
         uint32 replica_id = 1;
         uint32 local_timestamp = 2;
         uint32 lamport_timestamp = 3;
-        repeated VectorClockEntry version = 4;
-        repeated Selection selections = 5;
+        repeated Selection selections = 4;
     }
 
     message RemoveSelections {

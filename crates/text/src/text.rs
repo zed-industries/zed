@@ -1,6 +1,6 @@
 mod anchor;
 mod locator;
-mod operation_queue;
+pub mod operation_queue;
 mod patch;
 mod point;
 mod point_utf16;
@@ -42,7 +42,7 @@ pub struct Buffer {
     last_edit: clock::Local,
     history: History,
     selections: HashMap<SelectionSetId, SelectionSet>,
-    deferred_ops: OperationQueue,
+    deferred_ops: OperationQueue<Operation>,
     deferred_replicas: HashSet<ReplicaId>,
     replica_id: ReplicaId,
     remote_id: u64,
@@ -441,8 +441,6 @@ pub enum Operation {
         set_id: Option<SelectionSetId>,
         lamport_timestamp: clock::Lamport,
     },
-    #[cfg(test)]
-    Test(clock::Lamport),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -525,6 +523,10 @@ impl Buffer {
 
     pub fn replica_id(&self) -> ReplicaId {
         self.local_clock.replica_id
+    }
+
+    pub fn lamport_timestamp(&self) -> clock::Lamport {
+        self.lamport_clock
     }
 
     pub fn remote_id(&self) -> u64 {
@@ -808,8 +810,6 @@ impl Buffer {
                 }
                 self.lamport_clock.observe(lamport_timestamp);
             }
-            #[cfg(test)]
-            Operation::Test(_) => {}
         }
         Ok(())
     }
@@ -1103,7 +1103,7 @@ impl Buffer {
     fn flush_deferred_ops(&mut self) -> Result<()> {
         self.deferred_replicas.clear();
         let mut deferred_ops = Vec::new();
-        for op in self.deferred_ops.drain().cursor().cloned() {
+        for op in self.deferred_ops.drain().iter().cloned() {
             if self.can_apply_op(&op) {
                 self.apply_op(op)?;
             } else {
@@ -1129,13 +1129,11 @@ impl Buffer {
                 Operation::SetActiveSelections { set_id, .. } => {
                     set_id.map_or(true, |set_id| self.selections.contains_key(&set_id))
                 }
-                #[cfg(test)]
-                Operation::Test(_) => true,
             }
         }
     }
 
-    fn can_resolve(&self, anchor: &Anchor) -> bool {
+    pub fn can_resolve(&self, anchor: &Anchor) -> bool {
         *anchor == Anchor::min()
             || *anchor == Anchor::max()
             || self.version.observed(anchor.timestamp)
@@ -2176,9 +2174,18 @@ impl<'a> sum_tree::SeekTarget<'a, FragmentSummary, Self> for VersionedFullOffset
 
 impl Operation {
     fn replica_id(&self) -> ReplicaId {
-        self.lamport_timestamp().replica_id
+        operation_queue::Operation::lamport_timestamp(self).replica_id
     }
 
+    pub fn is_edit(&self) -> bool {
+        match self {
+            Operation::Edit { .. } => true,
+            _ => false,
+        }
+    }
+}
+
+impl operation_queue::Operation for Operation {
     fn lamport_timestamp(&self) -> clock::Lamport {
         match self {
             Operation::Edit(edit) => edit.timestamp.lamport(),
@@ -2194,15 +2201,6 @@ impl Operation {
             Operation::SetActiveSelections {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
-            #[cfg(test)]
-            Operation::Test(lamport_timestamp) => *lamport_timestamp,
-        }
-    }
-
-    pub fn is_edit(&self) -> bool {
-        match self {
-            Operation::Edit { .. } => true,
-            _ => false,
         }
     }
 }

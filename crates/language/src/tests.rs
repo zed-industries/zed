@@ -533,6 +533,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
         assert_eq!(
             buffer
                 .diagnostics_in_range(Point::new(3, 0)..Point::new(5, 0))
+                .map(|entry| (entry.range.to_point(buffer), &entry.diagnostic))
                 .collect::<Vec<_>>(),
             &[
                 (
@@ -600,6 +601,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
         assert_eq!(
             buffer
                 .diagnostics_in_range(Point::new(2, 0)..Point::new(3, 0))
+                .map(|entry| (entry.range.to_point(buffer), &entry.diagnostic))
                 .collect::<Vec<_>>(),
             &[
                 (
@@ -679,6 +681,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
         assert_eq!(
             buffer
                 .diagnostics_in_range(0..buffer.len())
+                .map(|entry| (entry.range.to_point(buffer), &entry.diagnostic))
                 .collect::<Vec<_>>(),
             &[
                 (
@@ -863,7 +866,8 @@ async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
         buffer.update_diagnostics(None, diagnostics, cx).unwrap();
         assert_eq!(
             buffer
-                .diagnostics_in_range::<_, Point>(0..buffer.len())
+                .diagnostics_in_range(0..buffer.len())
+                .map(|entry| (entry.range.to_point(&buffer), &entry.diagnostic))
                 .collect::<Vec<_>>(),
             &[
                 (
@@ -915,7 +919,10 @@ async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
         );
 
         assert_eq!(
-            buffer.diagnostic_group(0).collect::<Vec<_>>(),
+            buffer
+                .diagnostic_group(0)
+                .map(|entry| (entry.range.to_point(&buffer), &entry.diagnostic))
+                .collect::<Vec<_>>(),
             &[
                 (
                     Point::new(1, 8)..Point::new(1, 9),
@@ -938,7 +945,10 @@ async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
             ]
         );
         assert_eq!(
-            buffer.diagnostic_group(1).collect::<Vec<_>>(),
+            buffer
+                .diagnostic_group(1)
+                .map(|entry| (entry.range.to_point(&buffer), &entry.diagnostic))
+                .collect::<Vec<_>>(),
             &[
                 (
                     Point::new(1, 13)..Point::new(1, 15),
@@ -995,13 +1005,17 @@ fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
 #[test]
 fn test_contiguous_ranges() {
     assert_eq!(
-        contiguous_ranges([1, 2, 3, 5, 6, 9, 10, 11, 12], 100).collect::<Vec<_>>(),
+        contiguous_ranges([1, 2, 3, 5, 6, 9, 10, 11, 12].into_iter(), 100).collect::<Vec<_>>(),
         &[1..4, 5..7, 9..13]
     );
 
     // Respects the `max_len` parameter
     assert_eq!(
-        contiguous_ranges([2, 3, 4, 5, 6, 7, 8, 9, 23, 24, 25, 26, 30, 31], 3).collect::<Vec<_>>(),
+        contiguous_ranges(
+            [2, 3, 4, 5, 6, 7, 8, 9, 23, 24, 25, 26, 30, 31].into_iter(),
+            3
+        )
+        .collect::<Vec<_>>(),
         &[2..5, 5..8, 8..10, 23..26, 26..27, 30..32],
     );
 }

@@ -5,7 +5,7 @@ use gpui::{
     MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
     WeakModelHandle,
 };
-use language::{Buffer, Diagnostic, File as _};
+use language::{AnchorRangeExt, Buffer, Diagnostic, File as _};
 use postage::watch;
 use project::{ProjectPath, Worktree};
 use std::fmt::Write;
@@ -314,11 +314,11 @@ impl DiagnosticMessage {
 
     fn update(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
         let editor = editor.read(cx);
-        let cursor_position = editor.newest_selection(cx).head();
-        let new_diagnostic = editor
-            .buffer()
-            .read(cx)
-            .diagnostics_in_range::<usize, usize>(cursor_position..cursor_position)
+        let cursor_position = editor.newest_selection::<usize>(cx).head();
+        let buffer = editor.buffer().read(cx);
+        let new_diagnostic = buffer
+            .diagnostics_in_range(cursor_position..cursor_position)
+            .map(|entry| (entry.range.to_offset(buffer), &entry.diagnostic))
             .filter(|(range, _)| !range.is_empty())
             .min_by_key(|(range, diagnostic)| (diagnostic.severity, range.len()))
             .map(|(_, diagnostic)| diagnostic.clone());
