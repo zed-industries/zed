@@ -1,4 +1,6 @@
+use crate::diagnostic_set::DiagnosticEntry;
 pub use crate::{
+    diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
     proto, BracketPair, Grammar, Language, LanguageConfig, LanguageRegistry, LanguageServerConfig,
     PLAIN_TEXT,
@@ -21,6 +23,7 @@ use std::{
     ffi::OsString,
     future::Future,
     iter::{Iterator, Peekable},
+    mem,
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     str,
@@ -28,6 +31,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     vec,
 };
+use text::operation_queue::OperationQueue;
 pub use text::{Buffer as TextBuffer, Operation as _, *};
 use theme::SyntaxTheme;
 use tree_sitter::{InputEdit, Parser, QueryCursor, Tree};
@@ -61,9 +65,10 @@ pub struct Buffer {
     syntax_tree: Mutex<Option<SyntaxTree>>,
     parsing_in_background: bool,
     parse_count: usize,
-    diagnostics: AnchorRangeMultimap<Diagnostic>,
+    diagnostics: DiagnosticSet,
     diagnostics_update_count: usize,
     language_server: Option<LanguageServerState>,
+    deferred_ops: OperationQueue<Operation>,
     #[cfg(test)]
     pub(crate) operations: Vec<Operation>,
 }
@@ -71,7 +76,7 @@ pub struct Buffer {
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
     tree: Option<Tree>,
-    diagnostics: AnchorRangeMultimap<Diagnostic>,
+    diagnostics: DiagnosticSet,
     diagnostics_update_count: usize,
     is_parsing: bool,
     language: Option<Arc<Language>>,
@@ -101,10 +106,13 @@ struct LanguageServerSnapshot {
     path: Arc<Path>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Operation {
     Buffer(text::Operation),
-    UpdateDiagnostics(AnchorRangeMultimap<Diagnostic>),
+    UpdateDiagnostics {
+        diagnostics: Arc<[DiagnosticEntry<Anchor>]>,
+        lamport_timestamp: clock::Lamport,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -173,8 +181,8 @@ struct SyntaxTree {
 struct AutoindentRequest {
     selection_set_ids: HashSet<SelectionSetId>,
     before_edit: BufferSnapshot,
-    edited: AnchorSet,
-    inserted: Option<AnchorRangeSet>,
+    edited: Vec<Anchor>,
+    inserted: Option<Vec<Range<Anchor>>>,
 }
 
 #[derive(Debug)]
@@ -275,9 +283,11 @@ impl Buffer {
             buffer.add_raw_selection_set(set.id, set);
         }
         let mut this = Self::build(buffer, file);
-        if let Some(diagnostics) = message.diagnostics {
-            this.apply_diagnostic_update(proto::deserialize_diagnostics(diagnostics), cx);
-        }
+        this.apply_diagnostic_update(
+            Arc::from(proto::deserialize_diagnostics(message.diagnostics)),
+            cx,
+        );
+
         Ok(this)
     }
 
@@ -294,7 +304,7 @@ impl Buffer {
                 .selection_sets()
                 .map(|(_, set)| proto::serialize_selection_set(set))
                 .collect(),
-            diagnostics: Some(proto::serialize_diagnostics(&self.diagnostics)),
+            diagnostics: proto::serialize_diagnostics(self.diagnostics.iter()),
         }
     }
 
@@ -331,6 +341,7 @@ impl Buffer {
             diagnostics: Default::default(),
             diagnostics_update_count: 0,
             language_server: None,
+            deferred_ops: OperationQueue::new(),
             #[cfg(test)]
             operations: Default::default(),
         }
@@ -690,6 +701,8 @@ impl Buffer {
         mut diagnostics: Vec<lsp::Diagnostic>,
         cx: &mut ModelContext<Self>,
     ) -> Result<Operation> {
+        diagnostics.sort_unstable_by_key(|d| (d.range.start, d.range.end));
+
         let version = version.map(|version| version as usize);
         let content = if let Some(version) = version {
             let language_server = self.language_server.as_mut().unwrap();
@@ -710,91 +723,92 @@ impl Buffer {
             .and_then(|language| language.disk_based_diagnostic_sources())
             .unwrap_or(&empty_set);
 
-        diagnostics.sort_unstable_by_key(|d| (d.range.start, d.range.end));
-        self.diagnostics = {
-            let mut edits_since_save = content
-                .edits_since::<PointUtf16>(&self.saved_version)
-                .peekable();
-            let mut last_edit_old_end = PointUtf16::zero();
-            let mut last_edit_new_end = PointUtf16::zero();
-            let mut group_ids_by_diagnostic_range = HashMap::new();
-            let mut diagnostics_by_group_id = HashMap::new();
-            let mut next_group_id = 0;
-            'outer: for diagnostic in &diagnostics {
-                let mut start = diagnostic.range.start.to_point_utf16();
-                let mut end = diagnostic.range.end.to_point_utf16();
-                let source = diagnostic.source.as_ref();
-                let code = diagnostic.code.as_ref();
-                let group_id = diagnostic_ranges(&diagnostic, abs_path.as_deref())
-                    .find_map(|range| group_ids_by_diagnostic_range.get(&(source, code, range)))
-                    .copied()
-                    .unwrap_or_else(|| {
-                        let group_id = post_inc(&mut next_group_id);
-                        for range in diagnostic_ranges(&diagnostic, abs_path.as_deref()) {
-                            group_ids_by_diagnostic_range.insert((source, code, range), group_id);
-                        }
-                        group_id
-                    });
-
-                if diagnostic
-                    .source
-                    .as_ref()
-                    .map_or(false, |source| disk_based_sources.contains(source))
-                {
-                    while let Some(edit) = edits_since_save.peek() {
-                        if edit.old.end <= start {
-                            last_edit_old_end = edit.old.end;
-                            last_edit_new_end = edit.new.end;
-                            edits_since_save.next();
-                        } else if edit.old.start <= end && edit.old.end >= start {
-                            continue 'outer;
-                        } else {
-                            break;
-                        }
+        let mut edits_since_save = content
+            .edits_since::<PointUtf16>(&self.saved_version)
+            .peekable();
+        let mut last_edit_old_end = PointUtf16::zero();
+        let mut last_edit_new_end = PointUtf16::zero();
+        let mut group_ids_by_diagnostic_range = HashMap::new();
+        let mut diagnostics_by_group_id = HashMap::new();
+        let mut next_group_id = 0;
+        'outer: for diagnostic in &diagnostics {
+            let mut start = diagnostic.range.start.to_point_utf16();
+            let mut end = diagnostic.range.end.to_point_utf16();
+            let source = diagnostic.source.as_ref();
+            let code = diagnostic.code.as_ref();
+            let group_id = diagnostic_ranges(&diagnostic, abs_path.as_deref())
+                .find_map(|range| group_ids_by_diagnostic_range.get(&(source, code, range)))
+                .copied()
+                .unwrap_or_else(|| {
+                    let group_id = post_inc(&mut next_group_id);
+                    for range in diagnostic_ranges(&diagnostic, abs_path.as_deref()) {
+                        group_ids_by_diagnostic_range.insert((source, code, range), group_id);
                     }
+                    group_id
+                });
 
-                    start = last_edit_new_end + (start - last_edit_old_end);
-                    end = last_edit_new_end + (end - last_edit_old_end);
-                }
-
-                let mut range = content.clip_point_utf16(start, Bias::Left)
-                    ..content.clip_point_utf16(end, Bias::Right);
-                if range.start == range.end {
-                    range.end.column += 1;
-                    range.end = content.clip_point_utf16(range.end, Bias::Right);
-                    if range.start == range.end && range.end.column > 0 {
-                        range.start.column -= 1;
-                        range.start = content.clip_point_utf16(range.start, Bias::Left);
+            if diagnostic
+                .source
+                .as_ref()
+                .map_or(false, |source| disk_based_sources.contains(source))
+            {
+                while let Some(edit) = edits_since_save.peek() {
+                    if edit.old.end <= start {
+                        last_edit_old_end = edit.old.end;
+                        last_edit_new_end = edit.new.end;
+                        edits_since_save.next();
+                    } else if edit.old.start <= end && edit.old.end >= start {
+                        continue 'outer;
+                    } else {
+                        break;
                     }
                 }
 
-                diagnostics_by_group_id
-                    .entry(group_id)
-                    .or_insert(Vec::new())
-                    .push((
-                        range,
-                        Diagnostic {
-                            severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
-                            message: diagnostic.message.clone(),
-                            group_id,
-                            is_primary: false,
-                        },
-                    ));
+                start = last_edit_new_end + (start - last_edit_old_end);
+                end = last_edit_new_end + (end - last_edit_old_end);
             }
 
-            content.anchor_range_multimap(
-                Bias::Left,
-                Bias::Right,
-                diagnostics_by_group_id
-                    .into_values()
-                    .flat_map(|mut diagnostics| {
-                        let primary_diagnostic =
-                            diagnostics.iter_mut().min_by_key(|d| d.1.severity).unwrap();
-                        primary_diagnostic.1.is_primary = true;
-                        diagnostics
-                    }),
-            )
-        };
+            let mut range = content.clip_point_utf16(start, Bias::Left)
+                ..content.clip_point_utf16(end, Bias::Right);
+            if range.start == range.end {
+                range.end.column += 1;
+                range.end = content.clip_point_utf16(range.end, Bias::Right);
+                if range.start == range.end && range.end.column > 0 {
+                    range.start.column -= 1;
+                    range.start = content.clip_point_utf16(range.start, Bias::Left);
+                }
+            }
+
+            diagnostics_by_group_id
+                .entry(group_id)
+                .or_insert(Vec::new())
+                .push(DiagnosticEntry {
+                    range,
+                    diagnostic: Diagnostic {
+                        severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
+                        message: diagnostic.message.clone(),
+                        group_id,
+                        is_primary: false,
+                    },
+                });
+        }
+
+        drop(edits_since_save);
+        let mut diagnostics = mem::take(&mut self.diagnostics);
+        diagnostics.reset(
+            diagnostics_by_group_id
+                .into_values()
+                .flat_map(|mut diagnostics| {
+                    let primary = diagnostics
+                        .iter_mut()
+                        .min_by_key(|entry| entry.diagnostic.severity)
+                        .unwrap();
+                    primary.diagnostic.is_primary = true;
+                    diagnostics
+                }),
+            self,
+        );
+        self.diagnostics = diagnostics;
 
         if let Some(version) = version {
             let language_server = self.language_server.as_mut().unwrap();
@@ -811,32 +825,31 @@ impl Buffer {
         self.diagnostics_update_count += 1;
         cx.notify();
         cx.emit(Event::DiagnosticsUpdated);
-        Ok(Operation::UpdateDiagnostics(self.diagnostics.clone()))
+        Ok(Operation::UpdateDiagnostics {
+            diagnostics: Arc::from(self.diagnostics.iter().cloned().collect::<Vec<_>>()),
+            lamport_timestamp: self.lamport_timestamp(),
+        })
     }
 
     pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
         search_range: Range<T>,
-    ) -> impl Iterator<Item = (Range<O>, &Diagnostic)> + 'a
+    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
     where
         T: 'a + ToOffset,
         O: 'a + FromAnchor,
     {
-        self.diagnostics
-            .intersecting_ranges(search_range, self, true)
-            .map(move |(_, range, diagnostic)| (range, diagnostic))
+        self.diagnostics.range(search_range, self, true)
     }
 
     pub fn diagnostic_group<'a, O>(
         &'a self,
         group_id: usize,
-    ) -> impl Iterator<Item = (Range<O>, &Diagnostic)> + 'a
+    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
     where
         O: 'a + FromAnchor,
     {
-        self.diagnostics
-            .filter(self, move |diagnostic| diagnostic.group_id == group_id)
-            .map(move |(_, range, diagnostic)| (range, diagnostic))
+        self.diagnostics.group(group_id, self)
     }
 
     pub fn diagnostics_update_count(&self) -> usize {
@@ -879,13 +892,13 @@ impl Buffer {
             for request in autoindent_requests {
                 let old_to_new_rows = request
                     .edited
-                    .iter::<Point>(&request.before_edit)
-                    .map(|point| point.row)
+                    .iter()
+                    .map(|anchor| anchor.summary::<Point>(&request.before_edit).row)
                     .zip(
                         request
                             .edited
-                            .iter::<Point>(&snapshot)
-                            .map(|point| point.row),
+                            .iter()
+                            .map(|anchor| anchor.summary::<Point>(&snapshot).row),
                     )
                     .collect::<BTreeMap<u32, u32>>();
 
@@ -947,7 +960,8 @@ impl Buffer {
                 if let Some(inserted) = request.inserted.as_ref() {
                     let inserted_row_ranges = contiguous_ranges(
                         inserted
-                            .ranges::<Point>(&snapshot)
+                            .iter()
+                            .map(|range| range.to_point(&snapshot))
                             .flat_map(|range| range.start.row..range.end.row + 1),
                         max_rows_between_yields,
                     );
@@ -1264,17 +1278,17 @@ impl Buffer {
         self.pending_autoindent.take();
         let autoindent_request = if autoindent && self.language.is_some() {
             let before_edit = self.snapshot();
-            let edited = self.anchor_set(
-                Bias::Left,
-                ranges.iter().filter_map(|range| {
+            let edited = ranges
+                .iter()
+                .filter_map(|range| {
                     let start = range.start.to_point(self);
                     if new_text.starts_with('\n') && start.column == self.line_len(start.row) {
                         None
                     } else {
-                        Some(range.start)
+                        Some(self.anchor_before(range.start))
                     }
-                }),
-            );
+                })
+                .collect();
             Some((before_edit, edited))
         } else {
             None
@@ -1289,17 +1303,19 @@ impl Buffer {
             let mut inserted = None;
             if let Some(first_newline_ix) = first_newline_ix {
                 let mut delta = 0isize;
-                inserted = Some(self.anchor_range_set(
-                    Bias::Left,
-                    Bias::Right,
-                    ranges.iter().map(|range| {
-                        let start = (delta + range.start as isize) as usize + first_newline_ix + 1;
-                        let end = (delta + range.start as isize) as usize + new_text_len;
-                        delta +=
-                            (range.end as isize - range.start as isize) + new_text_len as isize;
-                        start..end
-                    }),
-                ));
+                inserted = Some(
+                    ranges
+                        .iter()
+                        .map(|range| {
+                            let start =
+                                (delta + range.start as isize) as usize + first_newline_ix + 1;
+                            let end = (delta + range.start as isize) as usize + new_text_len;
+                            delta +=
+                                (range.end as isize - range.start as isize) + new_text_len as isize;
+                            self.anchor_before(start)..self.anchor_after(end)
+                        })
+                        .collect(),
+                );
             }
 
             let selection_set_ids = self
@@ -1401,17 +1417,23 @@ impl Buffer {
         self.pending_autoindent.take();
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
+        let mut deferred_ops = Vec::new();
         let buffer_ops = ops
             .into_iter()
             .filter_map(|op| match op {
                 Operation::Buffer(op) => Some(op),
-                Operation::UpdateDiagnostics(diagnostics) => {
-                    self.apply_diagnostic_update(diagnostics, cx);
+                _ => {
+                    if self.can_apply_op(&op) {
+                        self.apply_op(op, cx);
+                    } else {
+                        deferred_ops.push(op);
+                    }
                     None
                 }
             })
             .collect::<Vec<_>>();
         self.text.apply_ops(buffer_ops)?;
+        self.flush_deferred_ops(cx);
         self.did_edit(&old_version, was_dirty, cx);
         // Notify independently of whether the buffer was edited as the operations could include a
         // selection update.
@@ -1419,12 +1441,49 @@ impl Buffer {
         Ok(())
     }
 
+    fn flush_deferred_ops(&mut self, cx: &mut ModelContext<Self>) {
+        let mut deferred_ops = Vec::new();
+        for op in self.deferred_ops.drain().iter().cloned() {
+            if self.can_apply_op(&op) {
+                self.apply_op(op, cx);
+            } else {
+                deferred_ops.push(op);
+            }
+        }
+        self.deferred_ops.insert(deferred_ops);
+    }
+
+    fn can_apply_op(&self, operation: &Operation) -> bool {
+        match operation {
+            Operation::Buffer(_) => {
+                unreachable!("buffer operations should never be applied at this layer")
+            }
+            Operation::UpdateDiagnostics { diagnostics, .. } => {
+                diagnostics.iter().all(|diagnostic| {
+                    self.text.can_resolve(&diagnostic.range.start)
+                        && self.text.can_resolve(&diagnostic.range.end)
+                })
+            }
+        }
+    }
+
+    fn apply_op(&mut self, operation: Operation, cx: &mut ModelContext<Self>) {
+        match operation {
+            Operation::Buffer(_) => {
+                unreachable!("buffer operations should never be applied at this layer")
+            }
+            Operation::UpdateDiagnostics { diagnostics, .. } => {
+                self.apply_diagnostic_update(diagnostics, cx);
+            }
+        }
+    }
+
     fn apply_diagnostic_update(
         &mut self,
-        diagnostics: AnchorRangeMultimap<Diagnostic>,
+        diagnostics: Arc<[DiagnosticEntry<Anchor>]>,
         cx: &mut ModelContext<Self>,
     ) {
-        self.diagnostics = diagnostics;
+        self.diagnostics = DiagnosticSet::from_sorted_entries(diagnostics.iter().cloned(), self);
         self.diagnostics_update_count += 1;
         cx.notify();
     }
@@ -1632,19 +1691,19 @@ impl BufferSnapshot {
         let mut highlights = None;
         let mut diagnostic_endpoints = Vec::<DiagnosticEndpoint>::new();
         if let Some(theme) = theme {
-            for (_, range, diagnostic) in
-                self.diagnostics
-                    .intersecting_ranges(range.clone(), self, true)
+            for entry in self
+                .diagnostics
+                .range::<_, usize>(range.clone(), self, true)
             {
                 diagnostic_endpoints.push(DiagnosticEndpoint {
-                    offset: range.start,
+                    offset: entry.range.start,
                     is_start: true,
-                    severity: diagnostic.severity,
+                    severity: entry.diagnostic.severity,
                 });
                 diagnostic_endpoints.push(DiagnosticEndpoint {
-                    offset: range.end,
+                    offset: entry.range.end,
                     is_start: false,
-                    severity: diagnostic.severity,
+                    severity: entry.diagnostic.severity,
                 });
             }
             diagnostic_endpoints
@@ -1939,6 +1998,19 @@ impl ToPointUtf16 for lsp::Position {
     }
 }
 
+impl operation_queue::Operation for Operation {
+    fn lamport_timestamp(&self) -> clock::Lamport {
+        match self {
+            Operation::Buffer(_) => {
+                unreachable!("buffer operations should never be deferred at this layer")
+            }
+            Operation::UpdateDiagnostics {
+                lamport_timestamp, ..
+            } => *lamport_timestamp,
+        }
+    }
+}
+
 fn diagnostic_ranges<'a>(
     diagnostic: &'a lsp::Diagnostic,
     abs_path: Option<&'a Path>,
@@ -1968,7 +2040,7 @@ fn diagnostic_ranges<'a>(
 }
 
 pub fn contiguous_ranges(
-    values: impl IntoIterator<Item = u32>,
+    values: impl Iterator<Item = u32>,
     max_len: usize,
 ) -> impl Iterator<Item = Range<u32>> {
     let mut values = values.into_iter();

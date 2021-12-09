@@ -539,27 +539,27 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
         // The diagnostics have moved down since they were created.
         assert_eq!(
             buffer
-                .diagnostics_in_range(Point::new(3, 0)..Point::new(5, 0))
+                .diagnostics_in_range::<_, Point>(Point::new(3, 0)..Point::new(5, 0))
                 .collect::<Vec<_>>(),
             &[
-                (
-                    Point::new(3, 9)..Point::new(3, 11),
-                    &Diagnostic {
+                DiagnosticEntry {
+                    range: Point::new(3, 9)..Point::new(3, 11),
+                    diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'BB'".to_string(),
                         group_id: 1,
                         is_primary: true,
                     },
-                ),
-                (
-                    Point::new(4, 9)..Point::new(4, 12),
-                    &Diagnostic {
+                },
+                DiagnosticEntry {
+                    range: Point::new(4, 9)..Point::new(4, 12),
+                    diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'CCC'".to_string(),
                         group_id: 2,
                         is_primary: true,
                     }
-                )
+                }
             ]
         );
         assert_eq!(
@@ -606,27 +606,27 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
             .unwrap();
         assert_eq!(
             buffer
-                .diagnostics_in_range(Point::new(2, 0)..Point::new(3, 0))
+                .diagnostics_in_range::<_, Point>(Point::new(2, 0)..Point::new(3, 0))
                 .collect::<Vec<_>>(),
             &[
-                (
-                    Point::new(2, 9)..Point::new(2, 12),
-                    &Diagnostic {
+                DiagnosticEntry {
+                    range: Point::new(2, 9)..Point::new(2, 12),
+                    diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::WARNING,
                         message: "unreachable statement".to_string(),
                         group_id: 1,
                         is_primary: true,
                     }
-                ),
-                (
-                    Point::new(2, 9)..Point::new(2, 10),
-                    &Diagnostic {
+                },
+                DiagnosticEntry {
+                    range: Point::new(2, 9)..Point::new(2, 10),
+                    diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'A'".to_string(),
                         group_id: 0,
                         is_primary: true,
                     },
-                )
+                }
             ]
         );
         assert_eq!(
@@ -685,27 +685,27 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
             .unwrap();
         assert_eq!(
             buffer
-                .diagnostics_in_range(0..buffer.len())
+                .diagnostics_in_range::<_, Point>(0..buffer.len())
                 .collect::<Vec<_>>(),
             &[
-                (
-                    Point::new(2, 21)..Point::new(2, 22),
-                    &Diagnostic {
+                DiagnosticEntry {
+                    range: Point::new(2, 21)..Point::new(2, 22),
+                    diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'A'".to_string(),
                         group_id: 0,
                         is_primary: true,
                     }
-                ),
-                (
-                    Point::new(3, 9)..Point::new(3, 11),
-                    &Diagnostic {
+                },
+                DiagnosticEntry {
+                    range: Point::new(3, 9)..Point::new(3, 11),
+                    diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'BB'".to_string(),
                         group_id: 1,
                         is_primary: true,
                     },
-                )
+                }
             ]
         );
     });
@@ -873,107 +873,107 @@ async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
                 .diagnostics_in_range::<_, Point>(0..buffer.len())
                 .collect::<Vec<_>>(),
             &[
-                (
-                    Point::new(1, 8)..Point::new(1, 9),
-                    &Diagnostic {
+                DiagnosticEntry {
+                    range: Point::new(1, 8)..Point::new(1, 9),
+                    diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::WARNING,
                         message: "error 1".to_string(),
                         group_id: 0,
                         is_primary: true,
                     }
-                ),
-                (
-                    Point::new(1, 8)..Point::new(1, 9),
-                    &Diagnostic {
+                },
+                DiagnosticEntry {
+                    range: Point::new(1, 8)..Point::new(1, 9),
+                    diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::HINT,
                         message: "error 1 hint 1".to_string(),
                         group_id: 0,
                         is_primary: false,
                     }
-                ),
-                (
-                    Point::new(1, 13)..Point::new(1, 15),
-                    &Diagnostic {
+                },
+                DiagnosticEntry {
+                    range: Point::new(1, 13)..Point::new(1, 15),
+                    diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::HINT,
                         message: "error 2 hint 1".to_string(),
                         group_id: 1,
                         is_primary: false,
                     }
-                ),
-                (
-                    Point::new(1, 13)..Point::new(1, 15),
-                    &Diagnostic {
+                },
+                DiagnosticEntry {
+                    range: Point::new(1, 13)..Point::new(1, 15),
+                    diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::HINT,
                         message: "error 2 hint 2".to_string(),
                         group_id: 1,
                         is_primary: false,
                     }
-                ),
-                (
-                    Point::new(2, 8)..Point::new(2, 17),
-                    &Diagnostic {
+                },
+                DiagnosticEntry {
+                    range: Point::new(2, 8)..Point::new(2, 17),
+                    diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "error 2".to_string(),
                         group_id: 1,
                         is_primary: true,
                     }
-                )
+                }
             ]
         );
 
         assert_eq!(
-            buffer.diagnostic_group(0).collect::<Vec<_>>(),
+            buffer.diagnostic_group::<Point>(0).collect::<Vec<_>>(),
             &[
-                (
-                    Point::new(1, 8)..Point::new(1, 9),
-                    &Diagnostic {
+                DiagnosticEntry {
+                    range: Point::new(1, 8)..Point::new(1, 9),
+                    diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::WARNING,
                         message: "error 1".to_string(),
                         group_id: 0,
                         is_primary: true,
                     }
-                ),
-                (
-                    Point::new(1, 8)..Point::new(1, 9),
-                    &Diagnostic {
+                },
+                DiagnosticEntry {
+                    range: Point::new(1, 8)..Point::new(1, 9),
+                    diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::HINT,
                         message: "error 1 hint 1".to_string(),
                         group_id: 0,
                         is_primary: false,
                     }
-                ),
+                },
             ]
         );
         assert_eq!(
-            buffer.diagnostic_group(1).collect::<Vec<_>>(),
+            buffer.diagnostic_group::<Point>(1).collect::<Vec<_>>(),
             &[
-                (
-                    Point::new(1, 13)..Point::new(1, 15),
-                    &Diagnostic {
+                DiagnosticEntry {
+                    range: Point::new(1, 13)..Point::new(1, 15),
+                    diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::HINT,
                         message: "error 2 hint 1".to_string(),
                         group_id: 1,
                         is_primary: false,
                     }
-                ),
-                (
-                    Point::new(1, 13)..Point::new(1, 15),
-                    &Diagnostic {
+                },
+                DiagnosticEntry {
+                    range: Point::new(1, 13)..Point::new(1, 15),
+                    diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::HINT,
                         message: "error 2 hint 2".to_string(),
                         group_id: 1,
                         is_primary: false,
                     }
-                ),
-                (
-                    Point::new(2, 8)..Point::new(2, 17),
-                    &Diagnostic {
+                },
+                DiagnosticEntry {
+                    range: Point::new(2, 8)..Point::new(2, 17),
+                    diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "error 2".to_string(),
                         group_id: 1,
                         is_primary: true,
                     }
-                )
+                }
             ]
         );
 
@@ -1002,13 +1002,17 @@ fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
 #[test]
 fn test_contiguous_ranges() {
     assert_eq!(
-        contiguous_ranges([1, 2, 3, 5, 6, 9, 10, 11, 12], 100).collect::<Vec<_>>(),
+        contiguous_ranges([1, 2, 3, 5, 6, 9, 10, 11, 12].into_iter(), 100).collect::<Vec<_>>(),
         &[1..4, 5..7, 9..13]
     );
 
     // Respects the `max_len` parameter
     assert_eq!(
-        contiguous_ranges([2, 3, 4, 5, 6, 7, 8, 9, 23, 24, 25, 26, 30, 31], 3).collect::<Vec<_>>(),
+        contiguous_ranges(
+            [2, 3, 4, 5, 6, 7, 8, 9, 23, 24, 25, 26, 30, 31].into_iter(),
+            3
+        )
+        .collect::<Vec<_>>(),
         &[2..5, 5..8, 8..10, 23..26, 26..27, 30..32],
     );
 }

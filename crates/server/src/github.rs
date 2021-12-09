@@ -208,8 +208,24 @@ impl RepoClient {
                 "Authorization",
                 self.installation_token_header(false).await?,
             );
-        let client = surf::client().with(surf::middleware::Redirect::new(5));
+
+        let client = surf::client();
         let mut response = client.send(request).await?;
+
+        // Avoid using `surf::middleware::Redirect` because that type forwards
+        // the original request headers to the redirect URI. In this case, the
+        // redirect will be to S3, which forbids us from supplying an
+        // `Authorization` header.
+        if response.status().is_redirection() {
+            if let Some(url) = response.header("location") {
+                let request = surf::get(url.as_str()).header("Accept", "application/octet-stream");
+                response = client.send(request).await?;
+            }
+        }
+
+        if !response.status().is_success() {
+            Err(anyhow!("failed to fetch release asset {} {}", tag, name))?;
+        }
 
         Ok(response.take_body())
     }

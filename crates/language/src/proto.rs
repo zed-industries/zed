@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{Diagnostic, Operation};
+use crate::{diagnostic_set::DiagnosticEntry, Diagnostic, Operation};
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use lsp::DiagnosticSeverity;
@@ -49,14 +49,13 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 replica_id: set_id.replica_id as u32,
                 local_timestamp: set_id.value,
                 lamport_timestamp: lamport_timestamp.value,
-                version: selections.version().into(),
                 selections: selections
-                    .full_offset_ranges()
-                    .map(|(range, state)| proto::Selection {
-                        id: state.id as u64,
-                        start: range.start.0 as u64,
-                        end: range.end.0 as u64,
-                        reversed: state.reversed,
+                    .iter()
+                    .map(|selection| proto::Selection {
+                        id: selection.id as u64,
+                        start: Some(serialize_anchor(&selection.start)),
+                        end: Some(serialize_anchor(&selection.end)),
+                        reversed: selection.reversed,
                     })
                     .collect(),
             }),
@@ -78,9 +77,14 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                     lamport_timestamp: lamport_timestamp.value,
                 },
             ),
-            Operation::UpdateDiagnostics(diagnostic_set) => {
-                proto::operation::Variant::UpdateDiagnostics(serialize_diagnostics(diagnostic_set))
-            }
+            Operation::UpdateDiagnostics {
+                diagnostics,
+                lamport_timestamp,
+            } => proto::operation::Variant::UpdateDiagnostics(proto::UpdateDiagnostics {
+                replica_id: lamport_timestamp.replica_id as u32,
+                lamport_timestamp: lamport_timestamp.value,
+                diagnostics: serialize_diagnostics(diagnostics.iter()),
+            }),
         }),
     }
 }
@@ -105,44 +109,54 @@ pub fn serialize_edit_operation(operation: &EditOperation) -> proto::operation::
 }
 
 pub fn serialize_selection_set(set: &SelectionSet) -> proto::SelectionSet {
-    let version = set.selections.version();
-    let entries = set.selections.full_offset_ranges();
     proto::SelectionSet {
         replica_id: set.id.replica_id as u32,
         lamport_timestamp: set.id.value as u32,
         is_active: set.active,
-        version: version.into(),
-        selections: entries
-            .map(|(range, state)| proto::Selection {
-                id: state.id as u64,
-                start: range.start.0 as u64,
-                end: range.end.0 as u64,
-                reversed: state.reversed,
+        selections: set
+            .selections
+            .iter()
+            .map(|selection| proto::Selection {
+                id: selection.id as u64,
+                start: Some(serialize_anchor(&selection.start)),
+                end: Some(serialize_anchor(&selection.end)),
+                reversed: selection.reversed,
             })
             .collect(),
     }
 }
 
-pub fn serialize_diagnostics(map: &AnchorRangeMultimap<Diagnostic>) -> proto::DiagnosticSet {
-    proto::DiagnosticSet {
-        version: map.version().into(),
-        diagnostics: map
-            .full_offset_ranges()
-            .map(|(range, diagnostic)| proto::Diagnostic {
-                start: range.start.0 as u64,
-                end: range.end.0 as u64,
-                message: diagnostic.message.clone(),
-                severity: match diagnostic.severity {
-                    DiagnosticSeverity::ERROR => proto::diagnostic::Severity::Error,
-                    DiagnosticSeverity::WARNING => proto::diagnostic::Severity::Warning,
-                    DiagnosticSeverity::INFORMATION => proto::diagnostic::Severity::Information,
-                    DiagnosticSeverity::HINT => proto::diagnostic::Severity::Hint,
-                    _ => proto::diagnostic::Severity::None,
-                } as i32,
-                group_id: diagnostic.group_id as u64,
-                is_primary: diagnostic.is_primary,
-            })
-            .collect(),
+pub fn serialize_diagnostics<'a>(
+    diagnostics: impl IntoIterator<Item = &'a DiagnosticEntry<Anchor>>,
+) -> Vec<proto::Diagnostic> {
+    diagnostics
+        .into_iter()
+        .map(|entry| proto::Diagnostic {
+            start: Some(serialize_anchor(&entry.range.start)),
+            end: Some(serialize_anchor(&entry.range.end)),
+            message: entry.diagnostic.message.clone(),
+            severity: match entry.diagnostic.severity {
+                DiagnosticSeverity::ERROR => proto::diagnostic::Severity::Error,
+                DiagnosticSeverity::WARNING => proto::diagnostic::Severity::Warning,
+                DiagnosticSeverity::INFORMATION => proto::diagnostic::Severity::Information,
+                DiagnosticSeverity::HINT => proto::diagnostic::Severity::Hint,
+                _ => proto::diagnostic::Severity::None,
+            } as i32,
+            group_id: entry.diagnostic.group_id as u64,
+            is_primary: entry.diagnostic.is_primary,
+        })
+        .collect()
+}
+
+fn serialize_anchor(anchor: &Anchor) -> proto::Anchor {
+    proto::Anchor {
+        replica_id: anchor.timestamp.replica_id as u32,
+        local_timestamp: anchor.timestamp.value,
+        offset: anchor.offset as u64,
+        bias: match anchor.bias {
+            Bias::Left => proto::Bias::Left as i32,
+            Bias::Right => proto::Bias::Right as i32,
+        },
     }
 }
 
@@ -187,27 +201,19 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                 },
             }),
             proto::operation::Variant::UpdateSelections(message) => {
-                let version = message.version.into();
-                let entries = message
+                let selections = message
                     .selections
-                    .iter()
-                    .map(|selection| {
-                        let range = FullOffset(selection.start as usize)
-                            ..FullOffset(selection.end as usize);
-                        let state = SelectionState {
+                    .into_iter()
+                    .filter_map(|selection| {
+                        Some(Selection {
                             id: selection.id as usize,
+                            start: deserialize_anchor(selection.start?)?,
+                            end: deserialize_anchor(selection.end?)?,
                             reversed: selection.reversed,
                             goal: SelectionGoal::None,
-                        };
-                        (range, state)
+                        })
                     })
-                    .collect();
-                let selections = AnchorRangeMap::from_full_offset_ranges(
-                    version,
-                    Bias::Left,
-                    Bias::Left,
-                    entries,
-                );
+                    .collect::<Vec<_>>();
 
                 Operation::Buffer(text::Operation::UpdateSelections {
                     set_id: clock::Lamport {
@@ -245,9 +251,13 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                     },
                 })
             }
-            proto::operation::Variant::UpdateDiagnostics(message) => {
-                Operation::UpdateDiagnostics(deserialize_diagnostics(message))
-            }
+            proto::operation::Variant::UpdateDiagnostics(message) => Operation::UpdateDiagnostics {
+                diagnostics: Arc::from(deserialize_diagnostics(message.diagnostics)),
+                lamport_timestamp: clock::Lamport {
+                    replica_id: message.replica_id as ReplicaId,
+                    value: message.lamport_timestamp,
+                },
+            },
         },
     )
 }
@@ -277,36 +287,32 @@ pub fn deserialize_selection_set(set: proto::SelectionSet) -> SelectionSet {
             value: set.lamport_timestamp,
         },
         active: set.is_active,
-        selections: Arc::new(AnchorRangeMap::from_full_offset_ranges(
-            set.version.into(),
-            Bias::Left,
-            Bias::Left,
+        selections: Arc::from(
             set.selections
                 .into_iter()
-                .map(|selection| {
-                    let range =
-                        FullOffset(selection.start as usize)..FullOffset(selection.end as usize);
-                    let state = SelectionState {
+                .filter_map(|selection| {
+                    Some(Selection {
                         id: selection.id as usize,
+                        start: deserialize_anchor(selection.start?)?,
+                        end: deserialize_anchor(selection.end?)?,
                         reversed: selection.reversed,
                         goal: SelectionGoal::None,
-                    };
-                    (range, state)
+                    })
                 })
-                .collect(),
-        )),
+                .collect::<Vec<_>>(),
+        ),
     }
 }
 
-pub fn deserialize_diagnostics(message: proto::DiagnosticSet) -> AnchorRangeMultimap<Diagnostic> {
-    AnchorRangeMultimap::from_full_offset_ranges(
-        message.version.into(),
-        Bias::Left,
-        Bias::Right,
-        message.diagnostics.into_iter().filter_map(|diagnostic| {
-            Some((
-                FullOffset(diagnostic.start as usize)..FullOffset(diagnostic.end as usize),
-                Diagnostic {
+pub fn deserialize_diagnostics(
+    diagnostics: Vec<proto::Diagnostic>,
+) -> Vec<DiagnosticEntry<Anchor>> {
+    diagnostics
+        .into_iter()
+        .filter_map(|diagnostic| {
+            Some(DiagnosticEntry {
+                range: deserialize_anchor(diagnostic.start?)?..deserialize_anchor(diagnostic.end?)?,
+                diagnostic: Diagnostic {
                     severity: match proto::diagnostic::Severity::from_i32(diagnostic.severity)? {
                         proto::diagnostic::Severity::Error => DiagnosticSeverity::ERROR,
                         proto::diagnostic::Severity::Warning => DiagnosticSeverity::WARNING,
@@ -318,7 +324,21 @@ pub fn deserialize_diagnostics(message: proto::DiagnosticSet) -> AnchorRangeMult
                     group_id: diagnostic.group_id as usize,
                     is_primary: diagnostic.is_primary,
                 },
-            ))
-        }),
-    )
+            })
+        })
+        .collect()
+}
+
+fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
+    Some(Anchor {
+        timestamp: clock::Local {
+            replica_id: anchor.replica_id as ReplicaId,
+            value: anchor.local_timestamp,
+        },
+        offset: anchor.offset as usize,
+        bias: match proto::Bias::from_i32(anchor.bias)? {
+            proto::Bias::Left => Bias::Left,
+            proto::Bias::Right => Bias::Right,
+        },
+    })
 }

@@ -3005,7 +3005,7 @@ mod tests {
     use anyhow::Result;
     use client::test::{FakeHttpClient, FakeServer};
     use fs::RealFs;
-    use language::{tree_sitter_rust, LanguageServerConfig};
+    use language::{tree_sitter_rust, DiagnosticEntry, LanguageServerConfig};
     use language::{Diagnostic, LanguageConfig};
     use lsp::Url;
     use rand::prelude::*;
@@ -3721,19 +3721,19 @@ mod tests {
 
         buffer.read_with(&cx, |buffer, _| {
             let diagnostics = buffer
-                .diagnostics_in_range(0..buffer.len())
+                .diagnostics_in_range::<_, Point>(0..buffer.len())
                 .collect::<Vec<_>>();
             assert_eq!(
                 diagnostics,
-                &[(
-                    Point::new(0, 9)..Point::new(0, 10),
-                    &Diagnostic {
+                &[DiagnosticEntry {
+                    range: Point::new(0, 9)..Point::new(0, 10),
+                    diagnostic: Diagnostic {
                         severity: lsp::DiagnosticSeverity::ERROR,
                         message: "undefined variable 'A'".to_string(),
                         group_id: 0,
                         is_primary: true
                     }
-                )]
+                }]
             )
         });
     }

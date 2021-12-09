@@ -1,4 +1,5 @@
-use crate::{rope::TextDimension, AnchorRangeMap, BufferSnapshot, ToOffset, ToPoint};
+use crate::Anchor;
+use crate::{rope::TextDimension, BufferSnapshot, ToOffset, ToPoint};
 use std::{cmp::Ordering, ops::Range, sync::Arc};
 use sum_tree::Bias;
 
@@ -25,7 +26,7 @@ pub struct Selection<T> {
 pub struct SelectionSet {
     pub id: SelectionSetId,
     pub active: bool,
-    pub selections: Arc<AnchorRangeMap<SelectionState>>,
+    pub selections: Arc<[Selection<Anchor>]>,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -75,6 +76,21 @@ impl<T: ToOffset + ToPoint + Copy + Ord> Selection<T> {
     }
 }
 
+impl Selection<Anchor> {
+    pub fn resolve<'a, D: 'a + TextDimension>(
+        &'a self,
+        snapshot: &'a BufferSnapshot,
+    ) -> Selection<D> {
+        Selection {
+            id: self.id,
+            start: snapshot.summary_for_anchor(&self.start),
+            end: snapshot.summary_for_anchor(&self.end),
+            reversed: self.reversed,
+            goal: self.goal,
+        }
+    }
+}
+
 impl SelectionSet {
     pub fn len(&self) -> usize {
         self.selections.len()
@@ -82,69 +98,70 @@ impl SelectionSet {
 
     pub fn selections<'a, D>(
         &'a self,
-        content: &'a BufferSnapshot,
+        snapshot: &'a BufferSnapshot,
     ) -> impl 'a + Iterator<Item = Selection<D>>
     where
         D: TextDimension,
     {
-        self.selections
-            .ranges(content)
-            .map(|(range, state)| Selection {
-                id: state.id,
-                start: range.start,
-                end: range.end,
-                reversed: state.reversed,
-                goal: state.goal,
-            })
+        let anchors = self
+            .selections
+            .iter()
+            .flat_map(|selection| [&selection.start, &selection.end].into_iter());
+        let mut positions = snapshot.summaries_for_anchors::<D, _>(anchors);
+        self.selections.iter().map(move |selection| Selection {
+            start: positions.next().unwrap(),
+            end: positions.next().unwrap(),
+            goal: selection.goal,
+            reversed: selection.reversed,
+            id: selection.id,
+        })
     }
 
     pub fn intersecting_selections<'a, D, I>(
         &'a self,
         range: Range<(I, Bias)>,
-        content: &'a BufferSnapshot,
+        snapshot: &'a BufferSnapshot,
     ) -> impl 'a + Iterator<Item = Selection<D>>
     where
         D: TextDimension,
         I: 'a + ToOffset,
     {
-        self.selections
-            .intersecting_ranges(range, content)
-            .map(|(range, state)| Selection {
-                id: state.id,
-                start: range.start,
-                end: range.end,
-                reversed: state.reversed,
-                goal: state.goal,
-            })
+        let start = snapshot.anchor_at(range.start.0, range.start.1);
+        let end = snapshot.anchor_at(range.end.0, range.end.1);
+        let start_ix = match self
+            .selections
+            .binary_search_by(|probe| probe.end.cmp(&start, snapshot).unwrap())
+        {
+            Ok(ix) | Err(ix) => ix,
+        };
+        let end_ix = match self
+            .selections
+            .binary_search_by(|probe| probe.start.cmp(&end, snapshot).unwrap())
+        {
+            Ok(ix) | Err(ix) => ix,
+        };
+        self.selections[start_ix..end_ix]
+            .iter()
+            .map(|s| s.resolve(snapshot))
     }
 
-    pub fn oldest_selection<'a, D>(&'a self, content: &'a BufferSnapshot) -> Option<Selection<D>>
+    pub fn oldest_selection<'a, D>(&'a self, snapshot: &'a BufferSnapshot) -> Option<Selection<D>>
     where
         D: TextDimension,
     {
         self.selections
-            .min_by_key(content, |selection| selection.id)
-            .map(|(range, state)| Selection {
-                id: state.id,
-                start: range.start,
-                end: range.end,
-                reversed: state.reversed,
-                goal: state.goal,
-            })
+            .iter()
+            .min_by_key(|s| s.id)
+            .map(|s| s.resolve(snapshot))
     }
 
-    pub fn newest_selection<'a, D>(&'a self, content: &'a BufferSnapshot) -> Option<Selection<D>>
+    pub fn newest_selection<'a, D>(&'a self, snapshot: &'a BufferSnapshot) -> Option<Selection<D>>
     where
         D: TextDimension,
     {
         self.selections
-            .max_by_key(content, |selection| selection.id)
-            .map(|(range, state)| Selection {
-                id: state.id,
-                start: range.start,
-                end: range.end,
-                reversed: state.reversed,
-                goal: state.goal,
-            })
+            .iter()
+            .max_by_key(|s| s.id)
+            .map(|s| s.resolve(snapshot))
     }
 }

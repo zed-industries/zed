@@ -1705,27 +1705,27 @@ mod tests {
         buffer_b.read_with(&cx_b, |buffer, _| {
             assert_eq!(
                 buffer
-                    .diagnostics_in_range(0..buffer.len())
+                    .diagnostics_in_range::<_, Point>(0..buffer.len())
                     .collect::<Vec<_>>(),
                 &[
-                    (
-                        Point::new(0, 4)..Point::new(0, 7),
-                        &Diagnostic {
+                    DiagnosticEntry {
+                        range: Point::new(0, 4)..Point::new(0, 7),
+                        diagnostic: Diagnostic {
                             group_id: 0,
                             message: "message 1".to_string(),
                             severity: lsp::DiagnosticSeverity::ERROR,
                             is_primary: true
                         }
-                    ),
-                    (
-                        Point::new(0, 10)..Point::new(0, 13),
-                        &Diagnostic {
+                    },
+                    DiagnosticEntry {
+                        range: Point::new(0, 10)..Point::new(0, 13),
+                        diagnostic: Diagnostic {
                             group_id: 1,
                             severity: lsp::DiagnosticSeverity::WARNING,
                             message: "message 2".to_string(),
                             is_primary: true
                         }
-                    )
+                    }
                 ]
             );
         });

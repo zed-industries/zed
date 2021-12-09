@@ -78,6 +78,8 @@ fn test_random_edits(mut rng: StdRng) {
             TextSummary::from(&reference_string[range])
         );
 
+        buffer.check_invariants();
+
         if rng.gen_bool(0.3) {
             buffer_versions.push((buffer.clone(), buffer.subscribe()));
         }
@@ -603,6 +605,7 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
             }
             _ => {}
         }
+        buffer.check_invariants();
 
         if mutation_count == 0 && network.is_idle() {
             break;
@@ -629,6 +632,7 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
                 .all_selection_ranges::<usize>()
                 .collect::<HashMap<_, _>>()
         );
+        buffer.check_invariants();
     }
 }
 
@@ -642,6 +646,39 @@ struct Network<T: Clone, R: rand::Rng> {
     inboxes: std::collections::BTreeMap<ReplicaId, Vec<Envelope<T>>>,
     all_messages: Vec<T>,
     rng: R,
+}
+
+impl Buffer {
+    fn check_invariants(&self) {
+        // Ensure every fragment is ordered by locator in the fragment tree and corresponds
+        // to an insertion fragment in the insertions tree.
+        let mut prev_fragment_id = Locator::min();
+        for fragment in self.snapshot.fragments.items(&None) {
+            assert!(fragment.id > prev_fragment_id);
+            prev_fragment_id = fragment.id.clone();
+
+            let insertion_fragment = self
+                .snapshot
+                .insertions
+                .get(
+                    &InsertionFragmentKey {
+                        timestamp: fragment.insertion_timestamp.local(),
+                        split_offset: fragment.insertion_offset,
+                    },
+                    &(),
+                )
+                .unwrap();
+            assert_eq!(insertion_fragment.fragment_id, fragment.id);
+        }
+
+        let mut cursor = self.snapshot.fragments.cursor::<Option<&Locator>>();
+        for insertion_fragment in self.snapshot.insertions.cursor::<()>() {
+            cursor.seek(&Some(&insertion_fragment.fragment_id), Bias::Left, &None);
+            let fragment = cursor.item().unwrap();
+            assert_eq!(insertion_fragment.fragment_id, fragment.id);
+            assert_eq!(insertion_fragment.split_offset, fragment.insertion_offset);
+        }
+    }
 }
 
 impl<T: Clone, R: rand::Rng> Network<T, R> {
