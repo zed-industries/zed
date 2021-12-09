@@ -580,6 +580,7 @@ impl Buffer {
             new_text: None,
         };
         let mut new_insertions = Vec::new();
+        let mut insertion_offset = 0;
 
         let mut ranges = ranges
             .map(|range| range.start.to_offset(&*self)..range.end.to_offset(&*self))
@@ -626,12 +627,6 @@ impl Buffer {
                 let mut prefix = old_fragments.item().unwrap().clone();
                 prefix.len = range.start - fragment_start;
                 prefix.insertion_offset += fragment_start - old_fragments.start().visible;
-
-                // log::info!(
-                //     "pushing prefix between {:?} and {:?}",
-                //     new_fragments.summary().max_id,
-                //     prefix.id
-                // );
                 prefix.id = Locator::between(&new_fragments.summary().max_id, &prefix.id);
                 new_insertions.push(InsertionFragment::insert_new(&prefix));
                 new_ropes.push_fragment(&prefix, prefix.visible);
@@ -646,15 +641,6 @@ impl Buffer {
                     old: fragment_start..fragment_start,
                     new: new_start..new_start + new_text.len(),
                 });
-
-                // log::info!(
-                //     "pushing new fragment between {:?} and {:?}",
-                //     new_fragments.summary().max_id,
-                //     old_fragments
-                //         .item()
-                //         .map_or(&Locator::max(), |old_fragment| &old_fragment.id)
-                // );
-
                 let fragment = Fragment {
                     id: Locator::between(
                         &new_fragments.summary().max_id,
@@ -663,7 +649,7 @@ impl Buffer {
                             .map_or(&Locator::max(), |old_fragment| &old_fragment.id),
                     ),
                     insertion_timestamp: timestamp,
-                    insertion_offset: 0,
+                    insertion_offset,
                     len: new_text.len(),
                     deletions: Default::default(),
                     max_undos: Default::default(),
@@ -672,6 +658,7 @@ impl Buffer {
                 new_insertions.push(InsertionFragment::insert_new(&fragment));
                 new_ropes.push_str(new_text);
                 new_fragments.push(fragment, &None);
+                insertion_offset += new_text.len();
             }
 
             // Advance through every fragment that intersects this range, marking the intersecting
@@ -683,6 +670,7 @@ impl Buffer {
                 let intersection_end = cmp::min(range.end, fragment_end);
                 if fragment.visible {
                     intersection.len = intersection_end - fragment_start;
+                    intersection.insertion_offset += fragment_start - old_fragments.start().visible;
                     intersection.id =
                         Locator::between(&new_fragments.summary().max_id, &intersection.id);
                     intersection.deletions.insert(timestamp.local());

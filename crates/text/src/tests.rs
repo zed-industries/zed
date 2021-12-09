@@ -51,7 +51,7 @@ fn test_random_edits(mut rng: StdRng) {
     );
 
     for _i in 0..operations {
-        let (old_ranges, new_text, _) = buffer.randomly_edit(&mut rng, 1);
+        let (old_ranges, new_text, _) = buffer.randomly_edit(&mut rng, 5);
         for old_range in old_ranges.iter().rev() {
             reference_string.replace_range(old_range.clone(), &new_text);
         }
@@ -78,26 +78,7 @@ fn test_random_edits(mut rng: StdRng) {
             TextSummary::from(&reference_string[range])
         );
 
-        // Ensure every fragment is ordered by locator in the fragment tree and corresponds
-        // to an insertion fragment in the insertions tree.
-        let mut prev_fragment_id = Locator::min();
-        for fragment in buffer.snapshot.fragments.items(&None) {
-            assert!(fragment.id > prev_fragment_id);
-            prev_fragment_id = fragment.id.clone();
-
-            let insertion_fragment = buffer
-                .snapshot
-                .insertions
-                .get(
-                    &InsertionFragmentKey {
-                        timestamp: fragment.insertion_timestamp,
-                        split_offset: fragment.insertion_offset,
-                    },
-                    &(),
-                )
-                .unwrap();
-            assert_eq!(insertion_fragment.fragment_id, fragment.id);
-        }
+        buffer.check_invariants();
 
         if rng.gen_bool(0.3) {
             buffer_versions.push((buffer.clone(), buffer.subscribe()));
@@ -637,6 +618,37 @@ struct Network<T: Clone, R: rand::Rng> {
     inboxes: std::collections::BTreeMap<ReplicaId, Vec<Envelope<T>>>,
     all_messages: Vec<T>,
     rng: R,
+}
+
+impl Buffer {
+    fn check_invariants(&self) {
+        // Ensure every fragment is ordered by locator in the fragment tree and corresponds
+        // to an insertion fragment in the insertions tree.
+        let mut prev_fragment_id = Locator::min();
+        for fragment in self.snapshot.fragments.items(&None) {
+            assert!(fragment.id > prev_fragment_id);
+            prev_fragment_id = fragment.id.clone();
+
+            let insertion_fragment = self
+                .snapshot
+                .insertions
+                .get(
+                    &InsertionFragmentKey {
+                        timestamp: fragment.insertion_timestamp,
+                        split_offset: fragment.insertion_offset,
+                    },
+                    &(),
+                )
+                .unwrap();
+            assert_eq!(insertion_fragment.fragment_id, fragment.id);
+        }
+
+        let insertions = self.snapshot.insertions.items(&());
+        assert_eq!(
+            HashSet::from_iter(insertions.iter().map(|i| &i.fragment_id)).len(),
+            insertions.len()
+        );
+    }
 }
 
 impl<T: Clone, R: rand::Rng> Network<T, R> {
