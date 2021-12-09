@@ -579,6 +579,7 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
             }
             _ => {}
         }
+        buffer.check_invariants();
 
         if mutation_count == 0 && network.is_idle() {
             break;
@@ -605,6 +606,7 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
                 .all_selection_ranges::<usize>()
                 .collect::<HashMap<_, _>>()
         );
+        buffer.check_invariants();
     }
 }
 

@@ -827,6 +827,8 @@ impl Buffer {
 
         let mut edits = Patch::default();
         let cx = Some(version.clone());
+        let mut new_insertions = Vec::new();
+        let mut insertion_offset = 0;
         let mut new_ropes =
             RopeBuilder::new(self.visible_text.cursor(0), self.deleted_text.cursor(0));
         let mut old_fragments = self.fragments.cursor::<(VersionedFullOffset, usize)>();
@@ -850,6 +852,9 @@ impl Buffer {
                     if fragment_end > fragment_start {
                         let mut suffix = old_fragments.item().unwrap().clone();
                         suffix.len = fragment_end.0 - fragment_start.0;
+                        suffix.insertion_offset +=
+                            fragment_start - old_fragments.start().0.full_offset();
+                        new_insertions.push(InsertionFragment::insert_new(&suffix));
                         new_ropes.push_fragment(&suffix, suffix.visible);
                         new_fragments.push(suffix, &None);
                     }
@@ -868,6 +873,8 @@ impl Buffer {
             if fragment_end == range.start && fragment_end > fragment_start {
                 let mut fragment = old_fragments.item().unwrap().clone();
                 fragment.len = fragment_end.0 - fragment_start.0;
+                fragment.insertion_offset += fragment_start - old_fragments.start().0.full_offset();
+                new_insertions.push(InsertionFragment::insert_new(&fragment));
                 new_ropes.push_fragment(&fragment, fragment.visible);
                 new_fragments.push(fragment, &None);
                 old_fragments.next(&cx);
@@ -894,6 +901,9 @@ impl Buffer {
             if fragment_start < range.start {
                 let mut prefix = old_fragments.item().unwrap().clone();
                 prefix.len = range.start.0 - fragment_start.0;
+                prefix.insertion_offset += fragment_start - old_fragments.start().0.full_offset();
+                prefix.id = Locator::between(&new_fragments.summary().max_id, &prefix.id);
+                new_insertions.push(InsertionFragment::insert_new(&prefix));
                 fragment_start = range.start;
                 new_ropes.push_fragment(&prefix, prefix.visible);
                 new_fragments.push(prefix, &None);
@@ -910,19 +920,24 @@ impl Buffer {
                     old: old_start..old_start,
                     new: new_start..new_start + new_text.len(),
                 });
+                let fragment = Fragment {
+                    id: Locator::between(
+                        &new_fragments.summary().max_id,
+                        old_fragments
+                            .item()
+                            .map_or(&Locator::max(), |old_fragment| &old_fragment.id),
+                    ),
+                    insertion_timestamp: timestamp,
+                    insertion_offset,
+                    len: new_text.len(),
+                    deletions: Default::default(),
+                    max_undos: Default::default(),
+                    visible: true,
+                };
+                new_insertions.push(InsertionFragment::insert_new(&fragment));
                 new_ropes.push_str(new_text);
-                new_fragments.push(
-                    Fragment {
-                        id: todo!(),
-                        insertion_timestamp: timestamp,
-                        insertion_offset: todo!(),
-                        len: new_text.len(),
-                        deletions: Default::default(),
-                        max_undos: Default::default(),
-                        visible: true,
-                    },
-                    &None,
-                );
+                new_fragments.push(fragment, &None);
+                insertion_offset += new_text.len();
             }
 
             // Advance through every fragment that intersects this range, marking the intersecting
@@ -934,6 +949,10 @@ impl Buffer {
                 let intersection_end = cmp::min(range.end, fragment_end);
                 if fragment.was_visible(version, &self.undo_map) {
                     intersection.len = intersection_end.0 - fragment_start.0;
+                    intersection.insertion_offset +=
+                        fragment_start - old_fragments.start().0.full_offset();
+                    intersection.id =
+                        Locator::between(&new_fragments.summary().max_id, &intersection.id);
                     intersection.deletions.insert(timestamp.local());
                     intersection.visible = false;
                 }
@@ -947,6 +966,7 @@ impl Buffer {
                             new: new_start..new_start,
                         });
                     }
+                    new_insertions.push(InsertionFragment::insert_new(&intersection));
                     new_ropes.push_fragment(&intersection, fragment.visible);
                     new_fragments.push(intersection, &None);
                     fragment_start = intersection_end;
@@ -964,6 +984,8 @@ impl Buffer {
             if fragment_end > fragment_start {
                 let mut suffix = old_fragments.item().unwrap().clone();
                 suffix.len = fragment_end.0 - fragment_start.0;
+                suffix.insertion_offset += fragment_start - old_fragments.start().0.full_offset();
+                new_insertions.push(InsertionFragment::insert_new(&suffix));
                 new_ropes.push_fragment(&suffix, suffix.visible);
                 new_fragments.push(suffix, &None);
             }
@@ -979,6 +1001,7 @@ impl Buffer {
         self.snapshot.fragments = new_fragments;
         self.snapshot.visible_text = visible_text;
         self.snapshot.deleted_text = deleted_text;
+        self.snapshot.insertions.edit(new_insertions, &());
         self.local_clock.observe(timestamp.local());
         self.lamport_clock.observe(timestamp.lamport());
         self.update_subscriptions(edits);
