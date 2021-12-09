@@ -169,6 +169,7 @@ impl MultiBuffer {
     pub fn start_transaction(
         &mut self,
         selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
+        cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         todo!()
     }

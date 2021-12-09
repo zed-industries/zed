@@ -3211,18 +3211,16 @@ impl Editor {
 
     fn start_transaction(&mut self, cx: &mut ViewContext<Self>) {
         self.end_selection(cx);
-        self.buffer.update(cx, |buffer, _| {
+        self.buffer.update(cx, |buffer, cx| {
             buffer
-                .start_transaction(Some(self.selection_set_id))
+                .start_transaction([self.selection_set_id], cx)
                 .unwrap()
         });
     }
 
     fn end_transaction(&self, cx: &mut ViewContext<Self>) {
         self.buffer.update(cx, |buffer, cx| {
-            buffer
-                .end_transaction(Some(self.selection_set_id), cx)
-                .unwrap()
+            buffer.end_transaction([self.selection_set_id], cx).unwrap()
         });
     }
 
