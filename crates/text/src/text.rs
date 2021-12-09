@@ -1,4 +1,5 @@
 mod anchor;
+mod locator;
 mod operation_queue;
 mod patch;
 mod point;
@@ -14,6 +15,7 @@ pub use anchor::*;
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
+use locator::Locator;
 use operation_queue::OperationQueue;
 use parking_lot::Mutex;
 pub use patch::Patch;
@@ -55,6 +57,7 @@ pub struct Snapshot {
     deleted_text: Rope,
     undo_map: UndoMap,
     fragments: SumTree<Fragment>,
+    insertions: SumTree<InsertionFragment>,
     pub version: clock::Global,
 }
 
@@ -381,6 +384,7 @@ impl InsertionTimestamp {
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 struct Fragment {
+    id: Locator,
     timestamp: InsertionTimestamp,
     len: usize,
     visible: bool,
@@ -391,6 +395,7 @@ struct Fragment {
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub struct FragmentSummary {
     text: FragmentTextSummary,
+    max_id: Locator,
     max_version: clock::Global,
     min_insertion_version: clock::Global,
     max_insertion_version: clock::Global,
@@ -402,11 +407,17 @@ struct FragmentTextSummary {
     deleted: usize,
 }
 
-impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FragmentTextSummary {
-    fn add_summary(&mut self, summary: &'a FragmentSummary, _: &Option<clock::Global>) {
-        self.visible += summary.text.visible;
-        self.deleted += summary.text.deleted;
-    }
+#[derive(Eq, PartialEq, Clone, Debug)]
+struct InsertionFragment {
+    timestamp: InsertionTimestamp,
+    split_offset: usize,
+    fragment_id: Locator,
+}
+
+#[derive(Clone, Debug, Default)]
+struct InsertionSummary {
+    max_timestamp: InsertionTimestamp,
+    max_split_offset: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -452,6 +463,7 @@ pub struct UndoOperation {
 impl Buffer {
     pub fn new(replica_id: u16, remote_id: u64, history: History) -> Buffer {
         let mut fragments = SumTree::new();
+        let mut insertions = SumTree::new();
 
         let mut local_clock = clock::Local::new(replica_id);
         let mut lamport_clock = clock::Lamport::new(replica_id);
@@ -466,8 +478,10 @@ impl Buffer {
             local_clock.observe(timestamp.local());
             lamport_clock.observe(timestamp.lamport());
             version.observe(timestamp.local());
+            let fragment_id = Locator::between(&Locator::min(), &Locator::max());
             fragments.push(
                 Fragment {
+                    id: fragment_id,
                     timestamp,
                     len: visible_text.len(),
                     visible: true,
@@ -476,6 +490,14 @@ impl Buffer {
                 },
                 &None,
             );
+            insertions.push(
+                InsertionFragment {
+                    timestamp,
+                    split_offset: 0,
+                    fragment_id,
+                },
+                &(),
+            );
         }
 
         Buffer {
@@ -483,6 +505,7 @@ impl Buffer {
                 visible_text,
                 deleted_text: Rope::new(),
                 fragments,
+                insertions,
                 version,
                 undo_map: Default::default(),
             },
@@ -504,13 +527,7 @@ impl Buffer {
     }
 
     pub fn snapshot(&self) -> Snapshot {
-        Snapshot {
-            visible_text: self.visible_text.clone(),
-            deleted_text: self.deleted_text.clone(),
-            undo_map: self.undo_map.clone(),
-            fragments: self.fragments.clone(),
-            version: self.version.clone(),
-        }
+        self.snapshot.clone()
     }
 
     pub fn replica_id(&self) -> ReplicaId {
@@ -569,6 +586,7 @@ impl Buffer {
             ranges: Vec::with_capacity(ranges.len()),
             new_text: None,
         };
+        let mut insertions = Vec::new();
 
         let mut ranges = ranges
             .map(|range| range.start.to_offset(&*self)..range.end.to_offset(&*self))
@@ -2040,6 +2058,7 @@ impl sum_tree::Item for Fragment {
         let max_insertion_version = min_insertion_version.clone();
         if self.visible {
             FragmentSummary {
+                max_id: self.id.clone(),
                 text: FragmentTextSummary {
                     visible: self.len,
                     deleted: 0,
@@ -2050,6 +2069,7 @@ impl sum_tree::Item for Fragment {
             }
         } else {
             FragmentSummary {
+                max_id: self.id.clone(),
                 text: FragmentTextSummary {
                     visible: 0,
                     deleted: self.len,
@@ -2079,11 +2099,39 @@ impl sum_tree::Summary for FragmentSummary {
 impl Default for FragmentSummary {
     fn default() -> Self {
         FragmentSummary {
+            max_id: Locator::min(),
             text: FragmentTextSummary::default(),
             max_version: clock::Global::new(),
             min_insertion_version: clock::Global::new(),
             max_insertion_version: clock::Global::new(),
         }
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FragmentTextSummary {
+    fn add_summary(&mut self, summary: &'a FragmentSummary, _: &Option<clock::Global>) {
+        self.visible += summary.text.visible;
+        self.deleted += summary.text.deleted;
+    }
+}
+
+impl sum_tree::Item for InsertionFragment {
+    type Summary = InsertionSummary;
+
+    fn summary(&self) -> Self::Summary {
+        InsertionSummary {
+            max_timestamp: self.timestamp,
+            max_split_offset: self.split_offset,
+        }
+    }
+}
+
+impl sum_tree::Summary for InsertionSummary {
+    type Context = ();
+
+    fn add_summary(&mut self, summary: &Self, cx: &()) {
+        self.max_timestamp = summary.max_timestamp;
+        self.max_split_offset = summary.max_split_offset;
     }
 }
 
