@@ -127,7 +127,7 @@ pub fn serialize_selection_set(set: &SelectionSet) -> proto::SelectionSet {
 }
 
 pub fn serialize_diagnostics<'a>(
-    diagnostics: impl IntoIterator<Item = &'a DiagnosticEntry>,
+    diagnostics: impl IntoIterator<Item = &'a DiagnosticEntry<Anchor>>,
 ) -> Vec<proto::Diagnostic> {
     diagnostics
         .into_iter()
@@ -304,7 +304,9 @@ pub fn deserialize_selection_set(set: proto::SelectionSet) -> SelectionSet {
     }
 }
 
-pub fn deserialize_diagnostics(diagnostics: Vec<proto::Diagnostic>) -> Vec<DiagnosticEntry> {
+pub fn deserialize_diagnostics(
+    diagnostics: Vec<proto::Diagnostic>,
+) -> Vec<DiagnosticEntry<Anchor>> {
     diagnostics
         .into_iter()
         .filter_map(|diagnostic| {

@@ -5,16 +5,16 @@ use std::{
     ops::Range,
 };
 use sum_tree::{self, Bias, SumTree};
-use text::{Anchor, PointUtf16, ToOffset};
+use text::{Anchor, FromAnchor, PointUtf16, ToOffset};
 
 #[derive(Clone, Default)]
 pub struct DiagnosticSet {
-    diagnostics: SumTree<DiagnosticEntry>,
+    diagnostics: SumTree<DiagnosticEntry<Anchor>>,
 }
 
-#[derive(Clone, Debug)]
-pub struct DiagnosticEntry {
-    pub range: Range<Anchor>,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiagnosticEntry<T> {
+    pub range: Range<T>,
     pub diagnostic: Diagnostic,
 }
 
@@ -30,33 +30,42 @@ pub struct Summary {
 impl DiagnosticSet {
     pub fn from_sorted_entries<I>(iter: I, buffer: &text::Snapshot) -> Self
     where
-        I: IntoIterator<Item = DiagnosticEntry>,
+        I: IntoIterator<Item = DiagnosticEntry<Anchor>>,
     {
         Self {
             diagnostics: SumTree::from_iter(iter, buffer),
         }
     }
 
-    pub fn reset<I>(&mut self, iter: I)
+    pub fn reset<I>(&mut self, iter: I, buffer: &text::Snapshot)
     where
-        I: IntoIterator<Item = (Range<PointUtf16>, Diagnostic)>,
+        I: IntoIterator<Item = DiagnosticEntry<PointUtf16>>,
     {
         let mut entries = iter.into_iter().collect::<Vec<_>>();
-        entries.sort_unstable_by_key(|(range, _)| (range.start, Reverse(range.end)));
+        entries.sort_unstable_by_key(|entry| (entry.range.start, Reverse(entry.range.end)));
+        self.diagnostics = SumTree::from_iter(
+            entries.into_iter().map(|entry| DiagnosticEntry {
+                range: buffer.anchor_before(entry.range.start)
+                    ..buffer.anchor_after(entry.range.end),
+                diagnostic: entry.diagnostic,
+            }),
+            buffer,
+        );
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &DiagnosticEntry> {
+    pub fn iter(&self) -> impl Iterator<Item = &DiagnosticEntry<Anchor>> {
         self.diagnostics.iter()
     }
 
-    pub fn range<'a, T>(
+    pub fn range<'a, T, O>(
         &'a self,
         range: Range<T>,
         buffer: &'a text::Snapshot,
         inclusive: bool,
-    ) -> impl Iterator<Item = &'a DiagnosticEntry>
+    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
     where
         T: 'a + ToOffset,
+        O: FromAnchor,
     {
         let end_bias = if inclusive { Bias::Right } else { Bias::Left };
         let range = buffer.anchor_before(range.start)..buffer.anchor_at(range.end, end_bias);
@@ -79,7 +88,7 @@ impl DiagnosticSet {
             move || {
                 if let Some(diagnostic) = cursor.item() {
                     cursor.next(buffer);
-                    Some(diagnostic)
+                    Some(diagnostic.resolve(buffer))
                 } else {
                     None
                 }
@@ -87,13 +96,18 @@ impl DiagnosticSet {
         })
     }
 
-    pub fn group(&self, group_id: usize) -> impl Iterator<Item = &DiagnosticEntry> {
+    pub fn group<'a, O: FromAnchor>(
+        &'a self,
+        group_id: usize,
+        buffer: &'a text::Snapshot,
+    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>> {
         self.iter()
             .filter(move |entry| entry.diagnostic.group_id == group_id)
+            .map(|entry| entry.resolve(buffer))
     }
 }
 
-impl sum_tree::Item for DiagnosticEntry {
+impl sum_tree::Item for DiagnosticEntry<Anchor> {
     type Summary = Summary;
 
     fn summary(&self) -> Self::Summary {
@@ -103,6 +117,16 @@ impl sum_tree::Item for DiagnosticEntry {
             min_start: self.range.start.clone(),
             max_end: self.range.end.clone(),
             count: 1,
+        }
+    }
+}
+
+impl DiagnosticEntry<Anchor> {
+    pub fn resolve<O: FromAnchor>(&self, buffer: &text::Snapshot) -> DiagnosticEntry<O> {
+        DiagnosticEntry {
+            range: O::from_anchor(&self.range.start, buffer)
+                ..O::from_anchor(&self.range.end, buffer),
+            diagnostic: self.diagnostic.clone(),
         }
     }
 }

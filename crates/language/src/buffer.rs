@@ -23,6 +23,7 @@ use std::{
     ffi::OsString,
     future::Future,
     iter::{Iterator, Peekable},
+    mem,
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     str,
@@ -109,7 +110,7 @@ struct LanguageServerSnapshot {
 pub enum Operation {
     Buffer(text::Operation),
     UpdateDiagnostics {
-        diagnostics: Arc<[DiagnosticEntry]>,
+        diagnostics: Arc<[DiagnosticEntry<Anchor>]>,
         lamport_timestamp: clock::Lamport,
     },
 }
@@ -781,29 +782,33 @@ impl Buffer {
             diagnostics_by_group_id
                 .entry(group_id)
                 .or_insert(Vec::new())
-                .push((
+                .push(DiagnosticEntry {
                     range,
-                    Diagnostic {
+                    diagnostic: Diagnostic {
                         severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
                         message: diagnostic.message.clone(),
                         group_id,
                         is_primary: false,
                     },
-                ));
+                });
         }
 
         drop(edits_since_save);
-        self.diagnostics
-            .reset(
-                diagnostics_by_group_id
-                    .into_values()
-                    .flat_map(|mut diagnostics| {
-                        let primary_diagnostic =
-                            diagnostics.iter_mut().min_by_key(|d| d.1.severity).unwrap();
-                        primary_diagnostic.1.is_primary = true;
-                        diagnostics
-                    }),
-            );
+        let mut diagnostics = mem::take(&mut self.diagnostics);
+        diagnostics.reset(
+            diagnostics_by_group_id
+                .into_values()
+                .flat_map(|mut diagnostics| {
+                    let primary = diagnostics
+                        .iter_mut()
+                        .min_by_key(|entry| entry.diagnostic.severity)
+                        .unwrap();
+                    primary.diagnostic.is_primary = true;
+                    diagnostics
+                }),
+            self,
+        );
+        self.diagnostics = diagnostics;
 
         if let Some(version) = version {
             let language_server = self.language_server.as_mut().unwrap();
@@ -826,18 +831,25 @@ impl Buffer {
         })
     }
 
-    pub fn diagnostics_in_range<'a, T>(
+    pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
         search_range: Range<T>,
-    ) -> impl Iterator<Item = &DiagnosticEntry>
+    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
     where
         T: 'a + ToOffset,
+        O: 'a + FromAnchor,
     {
         self.diagnostics.range(search_range, self, true)
     }
 
-    pub fn diagnostic_group(&self, group_id: usize) -> impl Iterator<Item = &DiagnosticEntry> {
-        self.diagnostics.group(group_id)
+    pub fn diagnostic_group<'a, O>(
+        &'a self,
+        group_id: usize,
+    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
+    where
+        O: 'a + FromAnchor,
+    {
+        self.diagnostics.group(group_id, self)
     }
 
     pub fn diagnostics_update_count(&self) -> usize {
@@ -1468,7 +1480,7 @@ impl Buffer {
 
     fn apply_diagnostic_update(
         &mut self,
-        diagnostics: Arc<[DiagnosticEntry]>,
+        diagnostics: Arc<[DiagnosticEntry<Anchor>]>,
         cx: &mut ModelContext<Self>,
     ) {
         self.diagnostics = DiagnosticSet::from_sorted_entries(diagnostics.iter().cloned(), self);
@@ -1679,14 +1691,17 @@ impl Snapshot {
         let mut highlights = None;
         let mut diagnostic_endpoints = Vec::<DiagnosticEndpoint>::new();
         if let Some(theme) = theme {
-            for entry in self.diagnostics.range(range.clone(), self, true) {
+            for entry in self
+                .diagnostics
+                .range::<_, usize>(range.clone(), self, true)
+            {
                 diagnostic_endpoints.push(DiagnosticEndpoint {
-                    offset: entry.range.start.to_offset(self),
+                    offset: entry.range.start,
                     is_start: true,
                     severity: entry.diagnostic.severity,
                 });
                 diagnostic_endpoints.push(DiagnosticEndpoint {
-                    offset: entry.range.end.to_offset(self),
+                    offset: entry.range.end,
                     is_start: false,
                     severity: entry.diagnostic.severity,
                 });

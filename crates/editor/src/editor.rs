@@ -2825,14 +2825,13 @@ impl Editor {
 
         loop {
             let next_group = buffer
-                .diagnostics_in_range(search_start..buffer.len())
+                .diagnostics_in_range::<_, usize>(search_start..buffer.len())
                 .find_map(|entry| {
-                    let range = entry.range.to_offset(buffer);
                     if entry.diagnostic.is_primary
-                        && !range.is_empty()
-                        && Some(range.end) != active_primary_range.as_ref().map(|r| *r.end())
+                        && !entry.range.is_empty()
+                        && Some(entry.range.end) != active_primary_range.as_ref().map(|r| *r.end())
                     {
-                        Some((range, entry.diagnostic.group_id))
+                        Some((entry.range, entry.diagnostic.group_id))
                     } else {
                         None
                     }
@@ -2866,12 +2865,11 @@ impl Editor {
             let buffer = self.buffer.read(cx);
             let primary_range_start = active_diagnostics.primary_range.start.to_offset(buffer);
             let is_valid = buffer
-                .diagnostics_in_range(active_diagnostics.primary_range.clone())
+                .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone())
                 .any(|entry| {
-                    let range = entry.range.to_offset(buffer);
                     entry.diagnostic.is_primary
-                        && !range.is_empty()
-                        && range.start == primary_range_start
+                        && !entry.range.is_empty()
+                        && entry.range.start == primary_range_start
                         && entry.diagnostic.message == active_diagnostics.primary_message
                 });
 
@@ -2902,17 +2900,16 @@ impl Editor {
             let mut primary_message = None;
             let mut group_end = Point::zero();
             let diagnostic_group = buffer
-                .diagnostic_group(group_id)
+                .diagnostic_group::<Point>(group_id)
                 .map(|entry| {
-                    let range = entry.range.to_point(buffer);
-                    if range.end > group_end {
-                        group_end = range.end;
+                    if entry.range.end > group_end {
+                        group_end = entry.range.end;
                     }
                     if entry.diagnostic.is_primary {
-                        primary_range = Some(range.clone());
+                        primary_range = Some(entry.range.clone());
                         primary_message = Some(entry.diagnostic.message.clone());
                     }
-                    (range, entry.diagnostic.clone())
+                    entry
                 })
                 .collect::<Vec<_>>();
             let primary_range = primary_range.unwrap();
@@ -2922,13 +2919,13 @@ impl Editor {
 
             let blocks = display_map
                 .insert_blocks(
-                    diagnostic_group.iter().map(|(range, diagnostic)| {
+                    diagnostic_group.iter().map(|entry| {
                         let build_settings = self.build_settings.clone();
-                        let diagnostic = diagnostic.clone();
+                        let diagnostic = entry.diagnostic.clone();
                         let message_height = diagnostic.message.lines().count() as u8;
 
                         BlockProperties {
-                            position: range.start,
+                            position: entry.range.start,
                             height: message_height,
                             render: Arc::new(move |cx| {
                                 let settings = build_settings.borrow()(cx.cx);
@@ -2941,11 +2938,7 @@ impl Editor {
                     cx,
                 )
                 .into_iter()
-                .zip(
-                    diagnostic_group
-                        .into_iter()
-                        .map(|(_, diagnostic)| diagnostic),
-                )
+                .zip(diagnostic_group.into_iter().map(|entry| entry.diagnostic))
                 .collect();
 
             Some(ActiveDiagnosticGroup {

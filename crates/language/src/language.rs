@@ -8,6 +8,7 @@ mod tests;
 use anyhow::{anyhow, Result};
 pub use buffer::Operation;
 pub use buffer::*;
+pub use diagnostic_set::DiagnosticEntry;
 use gpui::{executor::Background, AppContext};
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;

@@ -5,7 +5,7 @@ use gpui::{
     MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
     WeakModelHandle,
 };
-use language::{AnchorRangeExt, Buffer, Diagnostic, File as _};
+use language::{Buffer, Diagnostic, File as _};
 use postage::watch;
 use project::{ProjectPath, Worktree};
 use std::fmt::Write;
@@ -317,11 +317,10 @@ impl DiagnosticMessage {
         let cursor_position = editor.newest_selection::<usize>(cx).head();
         let buffer = editor.buffer().read(cx);
         let new_diagnostic = buffer
-            .diagnostics_in_range(cursor_position..cursor_position)
-            .map(|entry| (entry.range.to_offset(buffer), &entry.diagnostic))
-            .filter(|(range, _)| !range.is_empty())
-            .min_by_key(|(range, diagnostic)| (diagnostic.severity, range.len()))
-            .map(|(_, diagnostic)| diagnostic.clone());
+            .diagnostics_in_range::<_, usize>(cursor_position..cursor_position)
+            .filter(|entry| !entry.range.is_empty())
+            .min_by_key(|entry| (entry.diagnostic.severity, entry.range.len()))
+            .map(|entry| entry.diagnostic);
         if new_diagnostic != self.diagnostic {
             self.diagnostic = new_diagnostic;
             cx.notify();
