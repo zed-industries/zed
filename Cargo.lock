@@ -4853,6 +4853,7 @@ dependencies = [
  "ctor",
  "env_logger",
  "gpui",
+ "lazy_static",
  "log",
  "parking_lot",
  "rand 0.8.3",
