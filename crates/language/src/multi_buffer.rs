@@ -3,7 +3,7 @@ mod selection;
 
 use crate::{
     buffer::{self, Buffer, Chunk, ToOffset as _, ToPoint as _},
-    BufferSnapshot, Diagnostic, File, Language,
+    BufferSnapshot, Diagnostic, DiagnosticEntry, File, Language,
 };
 pub use anchor::{Anchor, AnchorRangeExt};
 use anyhow::Result;
@@ -383,6 +383,13 @@ impl MultiBuffer {
         [].into_iter()
     }
 
+    pub fn contains_str_at<T>(&self, _: T, _: &str) -> bool
+    where
+        T: ToOffset,
+    {
+        todo!()
+    }
+
     pub fn max_point(&self) -> Point {
         self.snapshot.lock().max_point()
     }
@@ -438,7 +445,7 @@ impl MultiBuffer {
     pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
         search_range: Range<T>,
-    ) -> impl Iterator<Item = (Range<O>, &Diagnostic)> + 'a
+    ) -> impl Iterator<Item = DiagnosticEntry<O>> + 'a
     where
         T: 'a + ToOffset,
         O: 'a,

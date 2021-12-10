@@ -22,8 +22,7 @@ use gpui::{
 use items::BufferItemHandle;
 use language::{
     multi_buffer::{
-        Anchor, AnchorRangeExt, AnchorRangeSet, MultiBuffer, MultiBufferSnapshot, SelectionSet,
-        ToOffset, ToPoint,
+        Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, SelectionSet, ToOffset, ToPoint,
     },
     BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point, Selection, SelectionGoal,
     SelectionSetId,
@@ -1292,19 +1291,19 @@ impl Editor {
     }
 
     fn autoclose_pairs(&mut self, cx: &mut ViewContext<Self>) {
-        let selections = self.selections::<usize>(cx).collect::<Vec<_>>();
+        let selections = self.selections::<usize>(cx);
         let new_autoclose_pair = self.buffer.update(cx, |buffer, cx| {
             let autoclose_pair = buffer.language().and_then(|language| {
                 let first_selection_start = selections.first().unwrap().start;
                 let pair = language.brackets().iter().find(|pair| {
-                    buffer_snapshot.contains_str_at(
+                    buffer.contains_str_at(
                         first_selection_start.saturating_sub(pair.start.len()),
                         &pair.start,
                     )
                 });
                 pair.and_then(|pair| {
                     let should_autoclose = selections[1..].iter().all(|selection| {
-                        buffer_snapshot.contains_str_at(
+                        buffer.contains_str_at(
                             selection.start.saturating_sub(pair.start.len()),
                             &pair.start,
                         )
@@ -1322,7 +1321,7 @@ impl Editor {
                 let selection_ranges = selections
                     .iter()
                     .map(|selection| {
-                        let start = selection.start.to_offset(&buffer_snapshot);
+                        let start = selection.start.to_offset(buffer);
                         start..start
                     })
                     .collect::<SmallVec<[_; 32]>>();
