@@ -2403,8 +2403,9 @@ impl Editor {
         let mut to_unfold = Vec::new();
         let mut new_selections = Vec::new();
         {
+            let selections = self.selections::<Point>(cx);
             let buffer = self.buffer.read(cx).read(cx);
-            for selection in self.selections::<Point>(cx) {
+            for selection in selections {
                 for row in selection.start.row..selection.end.row {
                     let cursor = Point::new(row, buffer.line_len(row));
                     new_selections.push(Selection {
