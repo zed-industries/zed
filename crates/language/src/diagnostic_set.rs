@@ -28,7 +28,7 @@ pub struct Summary {
 }
 
 impl DiagnosticSet {
-    pub fn from_sorted_entries<I>(iter: I, buffer: &text::Snapshot) -> Self
+    pub fn from_sorted_entries<I>(iter: I, buffer: &text::BufferSnapshot) -> Self
     where
         I: IntoIterator<Item = DiagnosticEntry<Anchor>>,
     {
@@ -37,7 +37,7 @@ impl DiagnosticSet {
         }
     }
 
-    pub fn new<I>(iter: I, buffer: &text::Snapshot) -> Self
+    pub fn new<I>(iter: I, buffer: &text::BufferSnapshot) -> Self
     where
         I: IntoIterator<Item = DiagnosticEntry<PointUtf16>>,
     {
@@ -62,7 +62,7 @@ impl DiagnosticSet {
     pub fn range<'a, T, O>(
         &'a self,
         range: Range<T>,
-        buffer: &'a text::Snapshot,
+        buffer: &'a text::BufferSnapshot,
         inclusive: bool,
     ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
     where
@@ -101,7 +101,7 @@ impl DiagnosticSet {
     pub fn group<'a, O: FromAnchor>(
         &'a self,
         group_id: usize,
-        buffer: &'a text::Snapshot,
+        buffer: &'a text::BufferSnapshot,
     ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>> {
         self.iter()
             .filter(move |entry| entry.diagnostic.group_id == group_id)
@@ -124,7 +124,7 @@ impl sum_tree::Item for DiagnosticEntry<Anchor> {
 }
 
 impl DiagnosticEntry<Anchor> {
-    pub fn resolve<O: FromAnchor>(&self, buffer: &text::Snapshot) -> DiagnosticEntry<O> {
+    pub fn resolve<O: FromAnchor>(&self, buffer: &text::BufferSnapshot) -> DiagnosticEntry<O> {
         DiagnosticEntry {
             range: O::from_anchor(&self.range.start, buffer)
                 ..O::from_anchor(&self.range.end, buffer),
@@ -146,7 +146,7 @@ impl Default for Summary {
 }
 
 impl sum_tree::Summary for Summary {
-    type Context = text::Snapshot;
+    type Context = text::BufferSnapshot;
 
     fn add_summary(&mut self, other: &Self, buffer: &Self::Context) {
         if other

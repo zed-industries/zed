@@ -1,5 +1,5 @@
 mod anchor;
-mod locator;
+pub mod locator;
 pub mod operation_queue;
 mod patch;
 mod point;

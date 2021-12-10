@@ -1,26 +1,17 @@
-use super::{location::*, ExcerptSummary, MultiBufferSnapshot, ToOffset, ToPoint};
+use super::{ExcerptId, MultiBufferSnapshot, ToOffset, ToPoint};
 use anyhow::{anyhow, Result};
-use smallvec::SmallVec;
 use std::{
     cmp::Ordering,
     ops::{Range, Sub},
 };
 use sum_tree::Bias;
-use text::{rope::TextDimension, AnchorRangeExt as _, Point};
+use text::{rope::TextDimension, Point};
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
 pub struct Anchor {
-    excerpt_id: ExcerptId,
-    text_anchor: text::Anchor,
+    pub(crate) excerpt_id: ExcerptId,
+    pub(crate) text_anchor: text::Anchor,
 }
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct AnchorRangeMap<T> {
-    pub(crate) child_maps: SmallVec<[(ExcerptId, text::AnchorRangeMap<T>); 1]>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AnchorRangeSet(AnchorRangeMap<()>);
 
 impl Anchor {
     pub fn min() -> Self {
@@ -75,234 +66,11 @@ impl Anchor {
         self.clone()
     }
 
-    pub fn summary<'a, D>(&self, snapshot: &'a MultiBufferSnapshot) -> D
+    pub fn summary<D>(&self, snapshot: &MultiBufferSnapshot) -> D
     where
         D: TextDimension + Ord + Sub<D, Output = D>,
     {
-        let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>();
-        cursor.seek(&self.excerpt_id, Bias::Left, &());
-        if let Some(excerpt) = cursor.item() {
-            if excerpt.id == self.excerpt_id {
-                let mut excerpt_start = D::from_text_summary(&cursor.start().text);
-                excerpt_start.add_summary(&excerpt.header_summary(), &());
-                let excerpt_buffer_start = excerpt.range.start.summary::<D>(&excerpt.buffer);
-                let buffer_point = self.text_anchor.summary::<D>(&excerpt.buffer);
-                if buffer_point > excerpt_buffer_start {
-                    excerpt_start.add_assign(&(buffer_point - excerpt_buffer_start));
-                }
-                return excerpt_start;
-            }
-        }
-        D::from_text_summary(&cursor.start().text)
-    }
-}
-
-impl<T> AnchorRangeMap<T> {
-    pub fn len(&self) -> usize {
-        self.child_maps
-            .iter()
-            .map(|(_, text_map)| text_map.len())
-            .sum()
-    }
-
-    pub fn ranges<'a, D>(
-        &'a self,
-        snapshot: &'a MultiBufferSnapshot,
-    ) -> impl Iterator<Item = (Range<D>, &'a T)> + 'a
-    where
-        D: TextDimension + Clone,
-    {
-        let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>();
-        self.child_maps
-            .iter()
-            .filter_map(move |(excerpt_id, text_map)| {
-                cursor.seek_forward(excerpt_id, Bias::Left, &());
-                if let Some(excerpt) = cursor.item() {
-                    if excerpt.id == *excerpt_id {
-                        let mut excerpt_start = D::from_text_summary(&cursor.start().text);
-                        excerpt_start.add_summary(&excerpt.header_summary(), &());
-                        return Some(text_map.ranges::<D>(&excerpt.buffer).map(
-                            move |(range, value)| {
-                                let mut full_range = excerpt_start.clone()..excerpt_start.clone();
-                                full_range.start.add_assign(&range.start);
-                                full_range.end.add_assign(&range.end);
-                                (full_range, value)
-                            },
-                        ));
-                    }
-                }
-                None
-            })
-            .flatten()
-    }
-
-    pub fn intersecting_ranges<'a, D, I>(
-        &'a self,
-        range: Range<(I, Bias)>,
-        snapshot: &'a MultiBufferSnapshot,
-    ) -> impl Iterator<Item = (Range<D>, &'a T)> + 'a
-    where
-        D: TextDimension,
-        I: ToOffset,
-    {
-        let start_bias = range.start.1;
-        let end_bias = range.end.1;
-        let start_offset = range.start.0.to_offset(snapshot);
-        let end_offset = range.end.0.to_offset(snapshot);
-
-        let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>();
-        cursor.seek(&start_offset, start_bias, &());
-        let start_excerpt_id = &cursor.start().excerpt_id;
-        let start_ix = match self
-            .child_maps
-            .binary_search_by_key(&start_excerpt_id, |e| &e.0)
-        {
-            Ok(ix) | Err(ix) => ix,
-        };
-
-        let mut entry_ranges = None;
-        let mut entries = self.child_maps[start_ix..].iter();
-        std::iter::from_fn(move || loop {
-            match &mut entry_ranges {
-                None => {
-                    let (excerpt_id, text_map) = entries.next()?;
-                    cursor.seek(excerpt_id, Bias::Left, &());
-                    if cursor.start().text.bytes >= end_offset {
-                        return None;
-                    }
-
-                    if let Some(excerpt) = cursor.item() {
-                        if excerpt.id == *excerpt_id {
-                            let mut excerpt_start = D::from_text_summary(&cursor.start().text);
-                            excerpt_start.add_summary(&excerpt.header_summary(), &());
-
-                            let excerpt_start_offset = cursor.start().text.bytes;
-                            let excerpt_end_offset = cursor.end(&()).text.bytes;
-                            let excerpt_buffer_range = excerpt.range.to_offset(&excerpt.buffer);
-
-                            let start;
-                            if start_offset >= excerpt_start_offset {
-                                start = (
-                                    excerpt_buffer_range.start + start_offset
-                                        - excerpt_start_offset,
-                                    start_bias,
-                                );
-                            } else {
-                                start = (excerpt_buffer_range.start, Bias::Left);
-                            }
-
-                            let end;
-                            if end_offset <= excerpt_end_offset {
-                                end = (
-                                    excerpt_buffer_range.start + end_offset - excerpt_start_offset,
-                                    end_bias,
-                                );
-                            } else {
-                                end = (excerpt_buffer_range.end, Bias::Right);
-                            }
-
-                            entry_ranges = Some(
-                                text_map
-                                    .intersecting_ranges(start..end, &excerpt.buffer)
-                                    .map(move |(range, value)| {
-                                        let mut full_range =
-                                            excerpt_start.clone()..excerpt_start.clone();
-                                        full_range.start.add_assign(&range.start);
-                                        full_range.end.add_assign(&range.end);
-                                        (full_range, value)
-                                    }),
-                            );
-                        }
-                    }
-                }
-                Some(ranges) => {
-                    if let Some(item) = ranges.next() {
-                        return Some(item);
-                    } else {
-                        entry_ranges.take();
-                    }
-                }
-            }
-        })
-    }
-
-    pub fn min_by_key<'a, D, F, K>(
-        &self,
-        snapshot: &'a MultiBufferSnapshot,
-        extract_key: F,
-    ) -> Option<(Range<D>, &T)>
-    where
-        D: TextDimension,
-        F: FnMut(&T) -> K,
-        K: Ord,
-    {
-        self.min_or_max_by_key(snapshot, Ordering::Less, extract_key)
-    }
-
-    pub fn max_by_key<'a, D, F, K>(
-        &self,
-        snapshot: &'a MultiBufferSnapshot,
-        extract_key: F,
-    ) -> Option<(Range<D>, &T)>
-    where
-        D: TextDimension,
-        F: FnMut(&T) -> K,
-        K: Ord,
-    {
-        self.min_or_max_by_key(snapshot, Ordering::Greater, extract_key)
-    }
-
-    fn min_or_max_by_key<'a, D, F, K>(
-        &self,
-        snapshot: &'a MultiBufferSnapshot,
-        target_ordering: Ordering,
-        mut extract_key: F,
-    ) -> Option<(Range<D>, &T)>
-    where
-        D: TextDimension,
-        F: FnMut(&T) -> K,
-        K: Ord,
-    {
-        let mut cursor = snapshot.excerpts.cursor::<ExcerptSummary>();
-        let mut max = None;
-        for (excerpt_id, text_map) in &self.child_maps {
-            cursor.seek(excerpt_id, Bias::Left, &());
-            if let Some(excerpt) = cursor.item() {
-                if excerpt.id == *excerpt_id {
-                    if let Some((range, value)) =
-                        text_map.max_by_key(&excerpt.buffer, &mut extract_key)
-                    {
-                        if max.as_ref().map_or(true, |(_, max_value)| {
-                            extract_key(value).cmp(&extract_key(*max_value)) == target_ordering
-                        }) {
-                            let mut excerpt_start = D::from_text_summary(&cursor.start().text);
-                            excerpt_start.add_summary(&excerpt.header_summary(), &());
-                            let mut full_range = excerpt_start.clone()..excerpt_start.clone();
-                            full_range.start.add_assign(&range.start);
-                            full_range.end.add_assign(&range.end);
-                            max = Some((full_range, value));
-                        }
-                    }
-                }
-            }
-        }
-        max
-    }
-}
-
-impl AnchorRangeSet {
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
-
-    pub fn ranges<'a, D>(
-        &'a self,
-        content: &'a MultiBufferSnapshot,
-    ) -> impl 'a + Iterator<Item = Range<Point>>
-    where
-        D: TextDimension,
-    {
-        self.0.ranges(content).map(|(range, _)| range)
+        snapshot.summary_for_anchor(self)
     }
 }
 

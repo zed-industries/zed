@@ -1,31 +1,35 @@
 mod anchor;
-mod location;
 mod selection;
 
-use self::location::*;
 use crate::{
     buffer::{self, Buffer, Chunk, ToOffset as _, ToPoint as _},
     BufferSnapshot, Diagnostic, File, Language,
 };
+pub use anchor::{Anchor, AnchorRangeExt};
 use anyhow::Result;
 use clock::ReplicaId;
 use collections::HashMap;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use parking_lot::{Mutex, MutexGuard};
-use smallvec::SmallVec;
-use std::{cmp, io, ops::Range, sync::Arc, time::SystemTime};
+pub use selection::SelectionSet;
+use std::{
+    cmp, io,
+    ops::{Range, Sub},
+    sync::Arc,
+    time::SystemTime,
+};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{
+    locator::Locator,
     rope::TextDimension,
     subscription::{Subscription, Topic},
     AnchorRangeExt as _, Edit, Point, PointUtf16, Selection, SelectionSetId, TextSummary,
 };
 use theme::SyntaxTheme;
 
-pub use anchor::{Anchor, AnchorRangeExt, AnchorRangeMap, AnchorRangeSet};
-pub use selection::SelectionSet;
-
 const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
+
+pub type ExcerptId = Locator;
 
 #[derive(Default)]
 pub struct MultiBuffer {
@@ -314,10 +318,10 @@ impl MultiBuffer {
 
         let mut edits = Vec::new();
         let mut new_excerpts = SumTree::new();
-        let mut cursor = snapshot.excerpts.cursor::<(ExcerptId, usize)>();
+        let mut cursor = snapshot.excerpts.cursor::<(Option<&ExcerptId>, usize)>();
 
         for (id, buffer_state) in excerpts_to_edit {
-            new_excerpts.push_tree(cursor.slice(id, Bias::Left, &()), &());
+            new_excerpts.push_tree(cursor.slice(&Some(id), Bias::Left, &()), &());
             let old_excerpt = cursor.item().unwrap();
             let buffer = buffer_state.buffer.read(cx);
 
@@ -409,36 +413,6 @@ impl MultiBuffer {
 
     pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
         self.snapshot.lock().anchor_at(position, bias)
-    }
-
-    pub fn anchor_range_map<T, E>(
-        &self,
-        start_bias: Bias,
-        end_bias: Bias,
-        entries: E,
-    ) -> AnchorRangeMap<T>
-    where
-        E: IntoIterator<Item = (Range<usize>, T)>,
-    {
-        let entries = entries.into_iter().peekable();
-        let mut child_maps = SmallVec::new();
-        if let Some((range, _)) = entries.peek() {
-            let mut cursor = self.snapshot.lock().excerpts.cursor::<ExcerptSummary>();
-            cursor.seek(&range.start, Bias::Right, &());
-            let mut excerpt_end = cursor.end(&());
-
-            // child_maps.push
-
-            // for entry in entries {}
-        }
-        AnchorRangeMap { child_maps }
-    }
-
-    pub fn anchor_range_set<E>(&self, start_bias: Bias, end_bias: Bias, ranges: E) -> AnchorRangeSet
-    where
-        E: IntoIterator<Item = Range<usize>>,
-    {
-        todo!()
     }
 
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
@@ -863,6 +837,77 @@ impl MultiBufferSnapshot {
         summary
     }
 
+    fn summary_for_anchor<D>(&self, anchor: &Anchor) -> D
+    where
+        D: TextDimension + Ord + Sub<D, Output = D>,
+    {
+        let mut cursor = self.excerpts.cursor::<ExcerptSummary>();
+        cursor.seek(&Some(&anchor.excerpt_id), Bias::Left, &());
+        if let Some(excerpt) = cursor.item() {
+            if excerpt.id == anchor.excerpt_id {
+                let mut excerpt_start = D::from_text_summary(&cursor.start().text);
+                excerpt_start.add_summary(&excerpt.header_summary(), &());
+                let excerpt_buffer_start = excerpt.range.start.summary::<D>(&excerpt.buffer);
+                let buffer_point = anchor.text_anchor.summary::<D>(&excerpt.buffer);
+                if buffer_point > excerpt_buffer_start {
+                    excerpt_start.add_assign(&(buffer_point - excerpt_buffer_start));
+                }
+                return excerpt_start;
+            }
+        }
+        D::from_text_summary(&cursor.start().text)
+    }
+
+    fn summaries_for_anchors<'a, D, I>(&'a self, anchors: I) -> Vec<D>
+    where
+        D: TextDimension + Ord + Sub<D, Output = D>,
+        I: 'a + IntoIterator<Item = &'a Anchor>,
+    {
+        let mut anchors = anchors.into_iter().peekable();
+        let mut cursor = self.excerpts.cursor::<ExcerptSummary>();
+        let mut summaries = Vec::new();
+        while let Some(anchor) = anchors.peek() {
+            let excerpt_id = &anchor.excerpt_id;
+            cursor.seek(&Some(excerpt_id), Bias::Left, &());
+            if let Some(excerpt) = cursor.item() {
+                let excerpt_exists = excerpt.id == *excerpt_id;
+                let excerpt_anchors = std::iter::from_fn(|| {
+                    let anchor = anchors.peek()?;
+                    if anchor.excerpt_id == *excerpt_id {
+                        Some(&anchors.next().unwrap().text_anchor)
+                    } else {
+                        None
+                    }
+                });
+
+                if excerpt_exists {
+                    let mut excerpt_start = D::from_text_summary(&cursor.start().text);
+                    excerpt_start.add_summary(&excerpt.header_summary(), &());
+                    let excerpt_buffer_start = excerpt.range.start.summary::<D>(&excerpt.buffer);
+                    summaries.extend(
+                        excerpt
+                            .buffer
+                            .summaries_for_anchors::<D, _>(excerpt_anchors)
+                            .map(move |summary| {
+                                let mut excerpt_start = excerpt_start.clone();
+                                let excerpt_buffer_start = excerpt_buffer_start.clone();
+                                if summary > excerpt_buffer_start {
+                                    excerpt_start.add_assign(&(summary - excerpt_buffer_start));
+                                }
+                                excerpt_start
+                            }),
+                    );
+                } else {
+                    excerpt_anchors.for_each(drop);
+                }
+            } else {
+                break;
+            }
+        }
+
+        summaries
+    }
+
     pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
         self.anchor_at(position, Bias::Left)
     }
@@ -923,12 +968,12 @@ impl MultiBufferSnapshot {
 
     fn buffer_snapshot_for_excerpt<'a>(
         &'a self,
-        excerpt_id: &ExcerptId,
+        excerpt_id: &'a ExcerptId,
     ) -> Option<&'a BufferSnapshot> {
-        let mut cursor = self.excerpts.cursor::<ExcerptId>();
-        cursor.seek(excerpt_id, Bias::Left, &());
+        let mut cursor = self.excerpts.cursor::<Option<&ExcerptId>>();
+        cursor.seek(&Some(excerpt_id), Bias::Left, &());
         if let Some(excerpt) = cursor.item() {
-            if cursor.start() == excerpt_id {
+            if *cursor.start() == Some(excerpt_id) {
                 return Some(&excerpt.buffer);
             }
         }
@@ -1020,9 +1065,9 @@ impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for usize {
     }
 }
 
-impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for Location {
+impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for Option<&'a ExcerptId> {
     fn cmp(&self, cursor_location: &ExcerptSummary, _: &()) -> cmp::Ordering {
-        Ord::cmp(self, &cursor_location.excerpt_id)
+        Ord::cmp(self, &Some(&cursor_location.excerpt_id))
     }
 }
 
@@ -1038,10 +1083,9 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for PointUtf16 {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Location {
+impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Option<&'a ExcerptId> {
     fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
-        debug_assert!(summary.excerpt_id > *self);
-        *self = summary.excerpt_id.clone();
+        *self = Some(&summary.excerpt_id);
     }
 }
 
