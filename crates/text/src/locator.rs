@@ -1,5 +1,11 @@
+use lazy_static::lazy_static;
 use smallvec::{smallvec, SmallVec};
 use std::iter;
+
+lazy_static! {
+    pub static ref MIN: Locator = Locator::min();
+    pub static ref MAX: Locator = Locator::max();
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Locator(SmallVec<[u64; 4]>);

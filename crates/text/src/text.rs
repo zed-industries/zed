@@ -1768,12 +1768,11 @@ impl BufferSnapshot {
         }
     }
 
-    fn full_offset_for_anchor(&self, anchor: &Anchor) -> FullOffset {
+    fn fragment_id_for_anchor(&self, anchor: &Anchor) -> &Locator {
         if *anchor == Anchor::min() {
-            Default::default()
+            &locator::MIN
         } else if *anchor == Anchor::max() {
-            let text = self.fragments.summary().text;
-            FullOffset(text.visible + text.deleted)
+            &locator::MAX
         } else {
             let anchor_key = InsertionFragmentKey {
                 timestamp: anchor.timestamp,
@@ -1795,10 +1794,7 @@ impl BufferSnapshot {
             }
             let insertion = insertion_cursor.item().expect("invalid insertion");
             debug_assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
-
-            let mut fragment_cursor = self.fragments.cursor::<(Option<&Locator>, FullOffset)>();
-            fragment_cursor.seek(&Some(&insertion.fragment_id), Bias::Left, &None);
-            fragment_cursor.start().1 + (anchor.offset - insertion.split_offset)
+            &insertion.fragment_id
         }
     }
 

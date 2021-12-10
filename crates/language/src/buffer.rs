@@ -23,7 +23,6 @@ use std::{
     ffi::OsString,
     future::Future,
     iter::{Iterator, Peekable},
-    mem,
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     str,
@@ -794,8 +793,7 @@ impl Buffer {
         }
 
         drop(edits_since_save);
-        let mut diagnostics = mem::take(&mut self.diagnostics);
-        diagnostics.reset(
+        let new_diagnostics = DiagnosticSet::new(
             diagnostics_by_group_id
                 .into_values()
                 .flat_map(|mut diagnostics| {
@@ -806,9 +804,9 @@ impl Buffer {
                     primary.diagnostic.is_primary = true;
                     diagnostics
                 }),
-            self,
+            content,
         );
-        self.diagnostics = diagnostics;
+        self.diagnostics = new_diagnostics;
 
         if let Some(version) = version {
             let language_server = self.language_server.as_mut().unwrap();

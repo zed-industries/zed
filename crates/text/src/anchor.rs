@@ -28,16 +28,18 @@ impl Anchor {
         }
     }
 
-    pub fn cmp<'a>(&self, other: &Anchor, buffer: &BufferSnapshot) -> Result<Ordering> {
-        let offset_comparison = if self.timestamp == other.timestamp {
-            self.offset.cmp(&other.offset)
+    pub fn cmp(&self, other: &Anchor, buffer: &BufferSnapshot) -> Result<Ordering> {
+        let fragment_id_comparison = if self.timestamp == other.timestamp {
+            Ordering::Equal
         } else {
             buffer
-                .full_offset_for_anchor(self)
-                .cmp(&buffer.full_offset_for_anchor(other))
+                .fragment_id_for_anchor(self)
+                .cmp(&buffer.fragment_id_for_anchor(other))
         };
 
-        Ok(offset_comparison.then_with(|| self.bias.cmp(&other.bias)))
+        Ok(fragment_id_comparison
+            .then_with(|| self.offset.cmp(&other.offset))
+            .then_with(|| self.bias.cmp(&other.bias)))
     }
 
     pub fn bias_left(&self, buffer: &BufferSnapshot) -> Anchor {

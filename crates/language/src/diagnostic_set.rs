@@ -37,20 +37,22 @@ impl DiagnosticSet {
         }
     }
 
-    pub fn reset<I>(&mut self, iter: I, buffer: &text::Snapshot)
+    pub fn new<I>(iter: I, buffer: &text::Snapshot) -> Self
     where
         I: IntoIterator<Item = DiagnosticEntry<PointUtf16>>,
     {
         let mut entries = iter.into_iter().collect::<Vec<_>>();
         entries.sort_unstable_by_key(|entry| (entry.range.start, Reverse(entry.range.end)));
-        self.diagnostics = SumTree::from_iter(
-            entries.into_iter().map(|entry| DiagnosticEntry {
-                range: buffer.anchor_before(entry.range.start)
-                    ..buffer.anchor_after(entry.range.end),
-                diagnostic: entry.diagnostic,
-            }),
-            buffer,
-        );
+        Self {
+            diagnostics: SumTree::from_iter(
+                entries.into_iter().map(|entry| DiagnosticEntry {
+                    range: buffer.anchor_before(entry.range.start)
+                        ..buffer.anchor_after(entry.range.end),
+                    diagnostic: entry.diagnostic,
+                }),
+                buffer,
+            ),
+        }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &DiagnosticEntry<Anchor>> {
