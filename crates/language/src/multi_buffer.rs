@@ -37,6 +37,7 @@ pub struct MultiBuffer {
     buffers: HashMap<usize, BufferState>,
     subscriptions: Topic,
     selection_sets: HashMap<SelectionSetId, SelectionSet>,
+    singleton: bool,
     replica_id: ReplicaId,
 }
 
@@ -73,6 +74,7 @@ struct Excerpt {
     range: Range<text::Anchor>,
     text_summary: TextSummary,
     header_height: u8,
+    has_trailing_newline: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -85,6 +87,7 @@ pub struct MultiBufferChunks<'a> {
     range: Range<usize>,
     cursor: Cursor<'a, Excerpt, usize>,
     header_height: u8,
+    has_trailing_newline: bool,
     excerpt_chunks: Option<buffer::BufferChunks<'a>>,
     theme: Option<&'a SyntaxTheme>,
 }
@@ -100,12 +103,14 @@ impl MultiBuffer {
             buffers: Default::default(),
             subscriptions: Default::default(),
             selection_sets: Default::default(),
+            singleton: false,
             replica_id,
         }
     }
 
     pub fn singleton(buffer: ModelHandle<Buffer>, cx: &mut ModelContext<Self>) -> Self {
         let mut this = Self::new(buffer.read(cx).replica_id());
+        this.singleton = true;
         this.push(
             ExcerptProperties {
                 buffer: &buffer,
@@ -390,7 +395,13 @@ impl MultiBuffer {
         let id = ExcerptId::between(prev_id.unwrap_or(&ExcerptId::min()), &ExcerptId::max());
 
         let edit_start = snapshot.excerpts.summary().text.bytes;
-        let excerpt = Excerpt::new(id.clone(), buffer.snapshot(), range, props.header_height);
+        let excerpt = Excerpt::new(
+            id.clone(),
+            buffer.snapshot(),
+            range,
+            props.header_height,
+            !self.singleton,
+        );
         let edit = Edit {
             old: edit_start..edit_start,
             new: edit_start..edit_start + excerpt.text_summary.bytes,
@@ -495,6 +506,7 @@ impl MultiBuffer {
                     buffer.snapshot(),
                     old_excerpt.range.clone(),
                     old_excerpt.header_height,
+                    !self.singleton,
                 ),
                 &(),
             );
@@ -520,13 +532,15 @@ impl MultiBuffer {
     ) {
         self.as_singleton()
             .unwrap()
-            .update(cx, |buffer, cx| buffer.randomly_edit(rng, count, cx))
+            .update(cx, |buffer, cx| buffer.randomly_edit(rng, count, cx));
+        self.sync(cx);
     }
 
     pub fn randomly_mutate<R: rand::Rng>(&mut self, rng: &mut R, cx: &mut ModelContext<Self>) {
         self.as_singleton()
             .unwrap()
-            .update(cx, |buffer, cx| buffer.randomly_mutate(rng, cx))
+            .update(cx, |buffer, cx| buffer.randomly_mutate(rng, cx));
+        self.sync(cx);
     }
 }
 
@@ -681,6 +695,7 @@ impl MultiBufferSnapshot {
             cursor: self.excerpts.cursor::<usize>(),
             header_height: 0,
             excerpt_chunks: None,
+            has_trailing_newline: false,
             theme,
         };
         result.seek(range.start.to_offset(self));
@@ -834,7 +849,11 @@ impl MultiBufferSnapshot {
                 range.end = cmp::max(range.start, range.end);
             }
 
-            let end_before_newline = cursor.end(&()) - 1;
+            let mut end_before_newline = cursor.end(&());
+            if excerpt.has_trailing_newline {
+                end_before_newline -= 1;
+            }
+
             let excerpt_start = excerpt.range.start.to_offset(&excerpt.buffer);
             let start_in_excerpt = excerpt_start + (range.start - start_after_header);
             let end_in_excerpt =
@@ -1063,6 +1082,7 @@ impl Excerpt {
         buffer: buffer::BufferSnapshot,
         range: Range<text::Anchor>,
         header_height: u8,
+        has_trailing_newline: bool,
     ) -> Self {
         let mut text_summary =
             buffer.text_summary_for_range::<TextSummary, _>(range.to_offset(&buffer));
@@ -1073,12 +1093,14 @@ impl Excerpt {
             text_summary.bytes += header_height as usize;
             text_summary.longest_row += header_height as u32;
         }
-        text_summary.last_line_chars = 0;
-        text_summary.lines.row += 1;
-        text_summary.lines.column = 0;
-        text_summary.lines_utf16.row += 1;
-        text_summary.lines_utf16.column = 0;
-        text_summary.bytes += 1;
+        if has_trailing_newline {
+            text_summary.last_line_chars = 0;
+            text_summary.lines.row += 1;
+            text_summary.lines.column = 0;
+            text_summary.lines_utf16.row += 1;
+            text_summary.lines_utf16.column = 0;
+            text_summary.bytes += 1;
+        }
 
         Excerpt {
             id,
@@ -1086,6 +1108,7 @@ impl Excerpt {
             range,
             text_summary,
             header_height,
+            has_trailing_newline,
         }
     }
 
@@ -1178,6 +1201,7 @@ impl<'a> MultiBufferChunks<'a> {
         if let Some(excerpt) = self.cursor.item() {
             let buffer_range = excerpt.range.to_offset(&excerpt.buffer);
             self.header_height = excerpt.header_height;
+            self.has_trailing_newline = excerpt.has_trailing_newline;
 
             let buffer_start;
             let start_overshoot = self.range.start - self.cursor.start();
@@ -1230,7 +1254,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                     return Some(chunk);
                 }
                 self.excerpt_chunks.take();
-                if self.cursor.end(&()) <= self.range.end {
+                if self.has_trailing_newline && self.cursor.end(&()) <= self.range.end {
                     self.range.start += 1;
                     return Some(Chunk {
                         text: "\n",
@@ -1255,6 +1279,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
             );
 
             self.header_height = excerpt.header_height;
+            self.has_trailing_newline = excerpt.has_trailing_newline;
             self.excerpt_chunks = Some(
                 excerpt
                     .buffer
@@ -1273,7 +1298,7 @@ impl<'a> Iterator for MultiBufferBytes<'a> {
 }
 
 impl<'a> io::Read for MultiBufferBytes<'a> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+    fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
         todo!()
     }
 }
@@ -1320,15 +1345,31 @@ mod tests {
     use util::test::sample_text;
 
     #[gpui::test]
+    fn test_singleton_multibuffer(cx: &mut MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'a'), cx));
+        let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+        assert_eq!(
+            multibuffer.read(cx).snapshot(cx).text(),
+            buffer.read(cx).text()
+        );
+
+        buffer.update(cx, |buffer, cx| buffer.edit([1..3], "XXX", cx));
+        assert_eq!(
+            multibuffer.read(cx).snapshot(cx).text(),
+            buffer.read(cx).text()
+        );
+    }
+
+    #[gpui::test]
     fn test_excerpt_buffer(cx: &mut MutableAppContext) {
         let buffer_1 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'a'), cx));
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'g'), cx));
 
-        let list = cx.add_model(|_| MultiBuffer::new(0));
+        let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
 
-        let subscription = list.update(cx, |list, cx| {
-            let subscription = list.subscribe();
-            list.push(
+        let subscription = multibuffer.update(cx, |multibuffer, cx| {
+            let subscription = multibuffer.subscribe();
+            multibuffer.push(
                 ExcerptProperties {
                     buffer: &buffer_1,
                     range: Point::new(1, 2)..Point::new(2, 5),
@@ -1344,7 +1385,7 @@ mod tests {
                 }]
             );
 
-            list.push(
+            multibuffer.push(
                 ExcerptProperties {
                     buffer: &buffer_1,
                     range: Point::new(3, 3)..Point::new(4, 4),
@@ -1352,7 +1393,7 @@ mod tests {
                 },
                 cx,
             );
-            list.push(
+            multibuffer.push(
                 ExcerptProperties {
                     buffer: &buffer_2,
                     range: Point::new(3, 1)..Point::new(3, 3),
@@ -1372,7 +1413,7 @@ mod tests {
         });
 
         assert_eq!(
-            list.read(cx).snapshot(cx).text(),
+            multibuffer.read(cx).snapshot(cx).text(),
             concat!(
                 "\n",      // Preserve newlines
                 "\n",      //
@@ -1400,7 +1441,7 @@ mod tests {
         });
 
         assert_eq!(
-            list.read(cx).snapshot(cx).text(),
+            multibuffer.read(cx).snapshot(cx).text(),
             concat!(
                 "\n",     // Preserve newlines
                 "\n",     //
