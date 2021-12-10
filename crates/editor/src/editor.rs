@@ -3035,7 +3035,7 @@ impl Editor {
         let range = (range.start.to_offset(&display_map, Bias::Left), Bias::Left)
             ..(range.end.to_offset(&display_map, Bias::Left), Bias::Right);
         buffer
-            .selection_set(set_id)
+            .selection_set(set_id, cx)
             .unwrap()
             .intersecting_selections::<Point, _>(range, &buffer.read(cx))
             .map(move |s| Selection {
@@ -3131,7 +3131,7 @@ impl Editor {
     fn selection_set<'a>(&self, cx: &'a AppContext) -> &'a SelectionSet {
         self.buffer
             .read(cx)
-            .selection_set(self.selection_set_id)
+            .selection_set(self.selection_set_id, cx)
             .unwrap()
     }
 

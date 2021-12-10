@@ -3,14 +3,14 @@ mod selection;
 
 use crate::{
     buffer::{self, Buffer, Chunk, ToOffset as _, ToPoint as _},
-    BufferSnapshot, Diagnostic, DiagnosticEntry, File, Language,
+    BufferSnapshot, DiagnosticEntry, File, Language,
 };
 pub use anchor::{Anchor, AnchorRangeExt};
+use anyhow::anyhow;
 use anyhow::Result;
 use clock::ReplicaId;
 use collections::HashMap;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
-use parking_lot::{Mutex, MutexGuard};
 pub use selection::SelectionSet;
 use std::{
     cell::{Ref, RefCell},
@@ -32,12 +32,12 @@ const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
 
 pub type ExcerptId = Locator;
 
-#[derive(Default)]
 pub struct MultiBuffer {
     snapshot: RefCell<MultiBufferSnapshot>,
     buffers: HashMap<usize, BufferState>,
     subscriptions: Topic,
     selection_sets: HashMap<SelectionSetId, SelectionSet>,
+    replica_id: ReplicaId,
 }
 
 pub trait ToOffset: 'static {
@@ -58,6 +58,7 @@ struct BufferState {
 #[derive(Clone, Default)]
 pub struct MultiBufferSnapshot {
     excerpts: SumTree<Excerpt>,
+    replica_id: ReplicaId,
 }
 
 pub struct ExcerptProperties<'a, T> {
@@ -94,12 +95,18 @@ pub struct MultiBufferBytes<'a> {
 }
 
 impl MultiBuffer {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(replica_id: ReplicaId) -> Self {
+        Self {
+            snapshot: Default::default(),
+            buffers: Default::default(),
+            subscriptions: Default::default(),
+            selection_sets: Default::default(),
+            replica_id,
+        }
     }
 
     pub fn singleton(buffer: ModelHandle<Buffer>, cx: &mut ModelContext<Self>) -> Self {
-        let mut this = Self::new();
+        let mut this = Self::new(buffer.read(cx).replica_id());
         this.push(
             ExcerptProperties {
                 buffer: &buffer,
@@ -116,8 +123,8 @@ impl MultiBuffer {
         cx.add_model(|cx| Self::singleton(buffer, cx))
     }
 
-    pub fn replica_id(&self) -> clock::ReplicaId {
-        todo!()
+    pub fn replica_id(&self) -> ReplicaId {
+        self.replica_id
     }
 
     pub fn snapshot(&self, cx: &AppContext) -> MultiBufferSnapshot {
@@ -175,7 +182,18 @@ impl MultiBuffer {
         S: ToOffset,
         T: Into<String>,
     {
-        todo!()
+        // TODO
+        let snapshot = self.read(cx);
+        let ranges_iter = ranges_iter
+            .into_iter()
+            .map(|range| range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot));
+        self.as_singleton().unwrap().update(cx, |buffer, cx| {
+            if autoindent {
+                buffer.edit_with_autoindent(ranges_iter, new_text, cx);
+            } else {
+                buffer.edit(ranges_iter, new_text, cx);
+            }
+        });
     }
 
     pub fn start_transaction(
@@ -183,7 +201,10 @@ impl MultiBuffer {
         selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        todo!()
+        // TODO
+        self.as_singleton()
+            .unwrap()
+            .update(cx, |buffer, _| buffer.start_transaction(selection_set_ids))
     }
 
     pub fn end_transaction(
@@ -191,19 +212,62 @@ impl MultiBuffer {
         selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        todo!()
+        // TODO
+        self.as_singleton().unwrap().update(cx, |buffer, cx| {
+            buffer.end_transaction(selection_set_ids, cx)
+        })
     }
 
     pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
-        todo!()
+        // TODO
+        self.as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| buffer.undo(cx))
     }
 
     pub fn redo(&mut self, cx: &mut ModelContext<Self>) {
-        todo!()
+        // TODO
+        self.as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| buffer.redo(cx))
     }
 
-    pub fn selection_set(&self, set_id: SelectionSetId) -> Result<&SelectionSet> {
-        todo!()
+    pub fn selection_set(&self, set_id: SelectionSetId, cx: &AppContext) -> Result<&SelectionSet> {
+        // TODO
+        let set = self
+            .as_singleton()
+            .unwrap()
+            .read(cx)
+            .selection_set(set_id)?;
+        let excerpt_id = self.snapshot.borrow().excerpts.first().unwrap().id.clone();
+
+        let selection_sets: &mut HashMap<SelectionSetId, SelectionSet> =
+            unsafe { &mut *(&self.selection_sets as *const _ as *mut _) };
+        selection_sets.insert(
+            set_id,
+            SelectionSet {
+                id: set.id,
+                active: set.active,
+                selections: set
+                    .selections
+                    .iter()
+                    .map(|selection| Selection {
+                        id: selection.id,
+                        start: Anchor {
+                            excerpt_id: excerpt_id.clone(),
+                            text_anchor: selection.start.clone(),
+                        },
+                        end: Anchor {
+                            excerpt_id: excerpt_id.clone(),
+                            text_anchor: selection.end.clone(),
+                        },
+                        reversed: selection.reversed,
+                        goal: selection.goal,
+                    })
+                    .collect(),
+            },
+        );
+        Ok(self.selection_sets.get(&set.id).unwrap())
     }
 
     pub fn add_selection_set<T: ToOffset>(
@@ -211,7 +275,23 @@ impl MultiBuffer {
         selections: &[Selection<T>],
         cx: &mut ModelContext<Self>,
     ) -> SelectionSetId {
-        todo!()
+        // TODO
+        let snapshot = self.read(cx);
+        self.as_singleton().unwrap().update(cx, |buffer, cx| {
+            buffer.add_selection_set(
+                &selections
+                    .iter()
+                    .map(|selection| Selection {
+                        id: selection.id,
+                        start: selection.start.to_offset(&snapshot),
+                        end: selection.end.to_offset(&snapshot),
+                        reversed: selection.reversed,
+                        goal: selection.goal,
+                    })
+                    .collect::<Vec<_>>(),
+                cx,
+            )
+        })
     }
 
     pub fn remove_selection_set(
@@ -219,7 +299,10 @@ impl MultiBuffer {
         set_id: SelectionSetId,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        todo!()
+        // TODO
+        self.as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| buffer.remove_selection_set(set_id, cx))
     }
 
     pub fn update_selection_set<T: ToOffset>(
@@ -228,7 +311,24 @@ impl MultiBuffer {
         selections: &[Selection<T>],
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        todo!()
+        // TODO
+        let snapshot = self.read(cx);
+        self.as_singleton().unwrap().update(cx, |buffer, cx| {
+            buffer.update_selection_set(
+                set_id,
+                &selections
+                    .iter()
+                    .map(|selection| Selection {
+                        id: selection.id,
+                        start: selection.start.to_offset(&snapshot),
+                        end: selection.end.to_offset(&snapshot),
+                        reversed: selection.reversed,
+                        goal: selection.goal,
+                    })
+                    .collect::<Vec<_>>(),
+                cx,
+            )
+        })
     }
 
     pub fn set_active_selection_set(
@@ -1136,7 +1236,7 @@ mod tests {
         let buffer_1 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'a'), cx));
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'g'), cx));
 
-        let list = cx.add_model(|_| MultiBuffer::new());
+        let list = cx.add_model(|_| MultiBuffer::new(0));
 
         let subscription = list.update(cx, |list, cx| {
             let subscription = list.subscribe();
@@ -1245,7 +1345,7 @@ mod tests {
             .unwrap_or(10);
 
         let mut buffers: Vec<ModelHandle<Buffer>> = Vec::new();
-        let list = cx.add_model(|_| MultiBuffer::new());
+        let list = cx.add_model(|_| MultiBuffer::new(0));
         let mut excerpt_ids = Vec::new();
         let mut expected_excerpts = Vec::new();
         let mut old_versions = Vec::new();
