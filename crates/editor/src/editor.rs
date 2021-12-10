@@ -559,7 +559,7 @@ impl Editor {
     }
 
     pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
-        self.buffer.read(cx).language()
+        self.buffer.read(cx).read(cx).language()
     }
 
     pub fn set_placeholder_text(
@@ -575,9 +575,8 @@ impl Editor {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let scroll_top_buffer_offset =
             DisplayPoint::new(scroll_position.y() as u32, 0).to_offset(&map, Bias::Right);
-        self.scroll_top_anchor = self
-            .buffer
-            .read(cx)
+        self.scroll_top_anchor = map
+            .buffer_snapshot
             .anchor_at(scroll_top_buffer_offset, Bias::Right);
         self.scroll_position = vec2f(
             scroll_position.x(),
@@ -771,9 +770,8 @@ impl Editor {
         let tail = self.newest_selection::<usize>(cx).tail();
         self.begin_selection(position, false, click_count, cx);
 
-        let buffer = self.buffer.read(cx);
         let position = position.to_offset(&display_map, Bias::Left);
-        let tail_anchor = buffer.anchor_before(tail);
+        let tail_anchor = display_map.buffer_snapshot.anchor_before(tail);
         let pending = self.pending_selection.as_mut().unwrap();
 
         if position >= tail {
@@ -804,7 +802,7 @@ impl Editor {
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx);
+        let buffer = &display_map.buffer_snapshot;
         let start;
         let end;
         let mode;
@@ -874,10 +872,8 @@ impl Editor {
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx);
-
         let tail = self.newest_selection::<Point>(cx).tail();
-        self.columnar_selection_tail = Some(buffer.anchor_before(tail));
+        self.columnar_selection_tail = Some(display_map.buffer_snapshot.anchor_before(tail));
 
         self.select_columns(
             tail.to_display_point(&display_map),
@@ -1293,17 +1289,18 @@ impl Editor {
     fn autoclose_pairs(&mut self, cx: &mut ViewContext<Self>) {
         let selections = self.selections::<usize>(cx);
         let new_autoclose_pair = self.buffer.update(cx, |buffer, cx| {
-            let autoclose_pair = buffer.language().and_then(|language| {
+            let snapshot = buffer.snapshot(cx);
+            let autoclose_pair = snapshot.language().and_then(|language| {
                 let first_selection_start = selections.first().unwrap().start;
                 let pair = language.brackets().iter().find(|pair| {
-                    buffer.contains_str_at(
+                    snapshot.contains_str_at(
                         first_selection_start.saturating_sub(pair.start.len()),
                         &pair.start,
                     )
                 });
                 pair.and_then(|pair| {
                     let should_autoclose = selections[1..].iter().all(|selection| {
-                        buffer.contains_str_at(
+                        snapshot.contains_str_at(
                             selection.start.saturating_sub(pair.start.len()),
                             &pair.start,
                         )
@@ -1321,12 +1318,13 @@ impl Editor {
                 let selection_ranges = selections
                     .iter()
                     .map(|selection| {
-                        let start = selection.start.to_offset(buffer);
+                        let start = selection.start.to_offset(&snapshot);
                         start..start
                     })
                     .collect::<SmallVec<[_; 32]>>();
 
                 buffer.edit(selection_ranges, &pair.end, cx);
+                let snapshot = buffer.snapshot(cx);
 
                 if pair.end.len() == 1 {
                     let mut delta = 0;
@@ -1336,7 +1334,7 @@ impl Editor {
                             .map(move |selection| {
                                 let offset = selection.start + delta;
                                 delta += 1;
-                                buffer.anchor_before(offset)..buffer.anchor_after(offset)
+                                snapshot.anchor_before(offset)..snapshot.anchor_after(offset)
                             })
                             .collect(),
                         pair,
@@ -1350,7 +1348,7 @@ impl Editor {
     }
 
     fn skip_autoclose_end(&mut self, text: &str, cx: &mut ViewContext<Self>) -> bool {
-        let old_selections = self.selections::<usize>(cx).collect::<Vec<_>>();
+        let old_selections = self.selections::<usize>(cx);
         let autoclose_pair = if let Some(autoclose_pair) = self.autoclose_stack.last() {
             autoclose_pair
         } else {
@@ -1446,7 +1444,7 @@ impl Editor {
             for selection in &mut selections {
                 if selection.is_empty() {
                     let char_column = buffer
-                        .as_snapshot()
+                        .read(cx)
                         .text_for_range(Point::new(selection.start.row, 0)..selection.start)
                         .flat_map(str::chars)
                         .count();
@@ -1482,7 +1480,7 @@ impl Editor {
                     }
 
                     for row in start_row..end_row {
-                        let indent_column = buffer.indent_column_for_line(row) as usize;
+                        let indent_column = buffer.read(cx).indent_column_for_line(row) as usize;
                         let columns_to_next_tab_stop = tab_size - (indent_column % tab_size);
                         let row_start = Point::new(row, 0);
                         buffer.edit(
@@ -1515,7 +1513,8 @@ impl Editor {
         let selections = self.selections::<Point>(cx);
         let mut deletion_ranges = Vec::new();
         let mut last_outdent = None;
-        self.buffer.update(cx, |buffer, cx| {
+        {
+            let buffer = self.buffer.read(cx).read(cx);
             for selection in &selections {
                 let mut start_row = selection.start.row;
                 let mut end_row = selection.end.row + 1;
@@ -1546,6 +1545,8 @@ impl Editor {
                     }
                 }
             }
+        }
+        self.buffer.update(cx, |buffer, cx| {
             buffer.edit(deletion_ranges, "", cx);
         });
 
@@ -1627,7 +1628,7 @@ impl Editor {
 
         let mut selections = self.selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx);
+        let buffer = &display_map.buffer_snapshot;
 
         let mut edits = Vec::new();
         let mut selections_iter = selections.iter().peekable();
@@ -1863,7 +1864,7 @@ impl Editor {
         let mut selections = self.selections::<Point>(cx);
         let mut clipboard_selections = Vec::with_capacity(selections.len());
         {
-            let buffer = self.buffer.read(cx);
+            let buffer = self.buffer.read(cx).read(cx);
             let max_point = buffer.max_point();
             for selection in &mut selections {
                 let is_entire_line = selection.is_empty();
@@ -1892,27 +1893,29 @@ impl Editor {
 
     pub fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
         let selections = self.selections::<Point>(cx);
-        let buffer = self.buffer.read(cx);
-        let max_point = buffer.max_point();
         let mut text = String::new();
         let mut clipboard_selections = Vec::with_capacity(selections.len());
-        for selection in selections.iter() {
-            let mut start = selection.start;
-            let mut end = selection.end;
-            let is_entire_line = selection.is_empty();
-            if is_entire_line {
-                start = Point::new(start.row, 0);
-                end = cmp::min(max_point, Point::new(start.row + 1, 0));
+        {
+            let buffer = self.buffer.read(cx).read(cx);
+            let max_point = buffer.max_point();
+            for selection in selections.iter() {
+                let mut start = selection.start;
+                let mut end = selection.end;
+                let is_entire_line = selection.is_empty();
+                if is_entire_line {
+                    start = Point::new(start.row, 0);
+                    end = cmp::min(max_point, Point::new(start.row + 1, 0));
+                }
+                let mut len = 0;
+                for chunk in buffer.text_for_range(start..end) {
+                    text.push_str(chunk);
+                    len += chunk.len();
+                }
+                clipboard_selections.push(ClipboardSelection {
+                    len,
+                    is_entire_line,
+                });
             }
-            let mut len = 0;
-            for chunk in buffer.text_for_range(start..end) {
-                text.push_str(chunk);
-                len += chunk.len();
-            }
-            clipboard_selections.push(ClipboardSelection {
-                len,
-                is_entire_line,
-            });
         }
 
         cx.as_mut()
@@ -1954,8 +1957,7 @@ impl Editor {
                         // selection was copied. If this selection is also currently empty,
                         // then paste the line before the current line of the buffer.
                         let range = if selection.is_empty() && entire_line {
-                            let column =
-                                selection.start.to_point(&*buffer.as_snapshot()).column as usize;
+                            let column = selection.start.to_point(&buffer.read(cx)).column as usize;
                             let line_start = selection.start - column;
                             line_start..line_start
                         } else {
@@ -2352,8 +2354,7 @@ impl Editor {
     }
 
     pub fn move_to_end(&mut self, _: &MoveToEnd, cx: &mut ViewContext<Self>) {
-        let buffer = self.buffer.read(cx);
-        let cursor = buffer.len();
+        let cursor = self.buffer.read(cx).read(cx).len();
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
             start: cursor,
@@ -2365,8 +2366,8 @@ impl Editor {
     }
 
     pub fn select_to_end(&mut self, _: &SelectToEnd, cx: &mut ViewContext<Self>) {
-        let mut selection = self.selections::<usize>(cx).last().unwrap().clone();
-        selection.set_head(self.buffer.read(cx).len());
+        let mut selection = self.selections::<usize>(cx).first().unwrap().clone();
+        selection.set_head(self.buffer.read(cx).read(cx).len());
         self.update_selections(vec![selection], Some(Autoscroll::Fit), cx);
     }
 
@@ -2374,7 +2375,7 @@ impl Editor {
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
             start: 0,
-            end: self.buffer.read(cx).len(),
+            end: self.buffer.read(cx).read(cx).len(),
             reversed: false,
             goal: SelectionGoal::None,
         };
@@ -2384,8 +2385,7 @@ impl Editor {
     pub fn select_line(&mut self, _: &SelectLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.selections::<Point>(cx);
-        let buffer = self.buffer.read(cx);
-        let max_point = buffer.max_point();
+        let max_point = display_map.buffer_snapshot.max_point();
         for selection in &mut selections {
             let rows = selection.spanned_rows(true, &display_map).buffer_rows;
             selection.start = Point::new(rows.start, 0);
@@ -2400,30 +2400,30 @@ impl Editor {
         _: &SplitSelectionIntoLines,
         cx: &mut ViewContext<Self>,
     ) {
-        let selections = self.selections::<Point>(cx);
-        let buffer = self.buffer.read(cx);
-
         let mut to_unfold = Vec::new();
         let mut new_selections = Vec::new();
-        for selection in selections.iter() {
-            for row in selection.start.row..selection.end.row {
-                let cursor = Point::new(row, buffer.line_len(row));
+        {
+            let buffer = self.buffer.read(cx).read(cx);
+            for selection in self.selections::<Point>(cx) {
+                for row in selection.start.row..selection.end.row {
+                    let cursor = Point::new(row, buffer.line_len(row));
+                    new_selections.push(Selection {
+                        id: post_inc(&mut self.next_selection_id),
+                        start: cursor,
+                        end: cursor,
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    });
+                }
                 new_selections.push(Selection {
-                    id: post_inc(&mut self.next_selection_id),
-                    start: cursor,
-                    end: cursor,
+                    id: selection.id,
+                    start: selection.end,
+                    end: selection.end,
                     reversed: false,
                     goal: SelectionGoal::None,
                 });
+                to_unfold.push(selection.start..selection.end);
             }
-            new_selections.push(Selection {
-                id: selection.id,
-                start: selection.end,
-                end: selection.end,
-                reversed: false,
-                goal: SelectionGoal::None,
-            });
-            to_unfold.push(selection.start..selection.end);
         }
         self.unfold_ranges(to_unfold, cx);
         self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
@@ -2646,9 +2646,9 @@ impl Editor {
         let mut edit_ranges = Vec::new();
         let mut last_toggled_row = None;
         self.buffer.update(cx, |buffer, cx| {
-            let buffer_snapshot = buffer.snapshot(cx);
             for selection in &mut selections {
                 edit_ranges.clear();
+                let snapshot = buffer.snapshot(cx);
 
                 let end_row =
                     if selection.end.row > selection.start.row && selection.end.column == 0 {
@@ -2666,13 +2666,13 @@ impl Editor {
                         last_toggled_row = Some(row);
                     }
 
-                    if buffer_snapshot.is_line_blank(row) {
+                    if snapshot.is_line_blank(row) {
                         continue;
                     }
 
-                    let start = Point::new(row, buffer_snapshot.indent_column_for_line(row));
-                    let mut line_bytes = buffer_snapshot
-                        .bytes_in_range(start..buffer.max_point())
+                    let start = Point::new(row, snapshot.indent_column_for_line(row));
+                    let mut line_bytes = snapshot
+                        .bytes_in_range(start..snapshot.max_point())
                         .flatten()
                         .copied();
 
@@ -3037,7 +3037,7 @@ impl Editor {
         buffer
             .selection_set(set_id)
             .unwrap()
-            .intersecting_selections::<Point, _>(range, &buffer.as_snapshot())
+            .intersecting_selections::<Point, _>(range, &buffer.read(cx))
             .map(move |s| Selection {
                 id: s.id,
                 start: s.start.to_display_point(&display_map),
@@ -3087,7 +3087,7 @@ impl Editor {
         &self,
         cx: &AppContext,
     ) -> Option<Selection<D>> {
-        let buffer = self.buffer.read(cx).as_snapshot();
+        let buffer = self.buffer.read(cx).read(cx);
         self.pending_selection.as_ref().map(|pending| Selection {
             id: pending.selection.id,
             start: pending.selection.start.summary::<D>(&buffer),
@@ -3123,7 +3123,7 @@ impl Editor {
         self.pending_selection(cx)
             .or_else(|| {
                 self.selection_set(cx)
-                    .newest_selection(&self.buffer.read(cx).as_snapshot())
+                    .newest_selection(&self.buffer.read(cx).read(cx))
             })
             .unwrap()
     }
@@ -3169,7 +3169,7 @@ impl Editor {
                 if selections.len() == autoclose_pair.ranges.len() {
                     selections
                         .iter()
-                        .zip(autoclose_pair.ranges.iter().map(|r| r.to_point(buffer)))
+                        .zip(autoclose_pair.ranges.iter().map(|r| r.to_point(&buffer)))
                         .all(|(selection, autoclose_range)| {
                             let head = selection.head().to_point(&buffer);
                             autoclose_range.start <= head && autoclose_range.end >= head
@@ -3253,7 +3253,7 @@ impl Editor {
     pub fn unfold(&mut self, _: &Unfold, cx: &mut ViewContext<Self>) {
         let selections = self.selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx);
+        let buffer = &display_map.buffer_snapshot;
         let ranges = selections
             .iter()
             .map(|s| {
@@ -3351,7 +3351,7 @@ impl Editor {
     }
 
     pub fn text(&self, cx: &AppContext) -> String {
-        self.buffer.read(cx).text()
+        self.buffer.read(cx).read(cx).text()
     }
 
     pub fn display_text(&self, cx: &mut MutableAppContext) -> String {
@@ -3938,7 +3938,7 @@ mod tests {
             );
 
             view.unfold(&Unfold, cx);
-            assert_eq!(view.display_text(cx), buffer.read(cx).text());
+            assert_eq!(view.display_text(cx), buffer.read(cx).read(cx).text());
         });
     }
 
@@ -4465,7 +4465,7 @@ mod tests {
             view.delete_to_previous_word_boundary(&DeleteToPreviousWordBoundary, cx);
         });
 
-        assert_eq!(buffer.read(cx).text(), "e two te four");
+        assert_eq!(buffer.read(cx).read(cx).text(), "e two te four");
 
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -4481,7 +4481,7 @@ mod tests {
             view.delete_to_next_word_boundary(&DeleteToNextWordBoundary, cx);
         });
 
-        assert_eq!(buffer.read(cx).text(), "e t te our");
+        assert_eq!(buffer.read(cx).read(cx).text(), "e t te our");
     }
 
     #[gpui::test]
@@ -4595,7 +4595,7 @@ mod tests {
         });
 
         assert_eq!(
-            buffer.read(cx).text(),
+            buffer.read(cx).read(cx).text(),
             "oe two three\nfou five six\nseven ten\n"
         );
     }
@@ -4626,7 +4626,7 @@ mod tests {
         });
 
         assert_eq!(
-            buffer.read(cx).text(),
+            buffer.read(cx).read(cx).text(),
             "on two three\nfou five six\nseven ten\n"
         );
     }
@@ -5650,7 +5650,7 @@ mod tests {
             view.newline(&Newline, cx);
 
             assert_eq!(
-                view.buffer().read(cx).text(),
+                view.buffer().read(cx).read(cx).text(),
                 concat!(
                     "{ \n",    // Suppress rustfmt
                     "\n",      //

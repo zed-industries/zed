@@ -74,7 +74,7 @@ impl DisplayMap {
         let (wraps_snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(tabs_snapshot.clone(), edits, cx));
-        let blocks_snapshot = self.block_map.read(wraps_snapshot.clone(), edits, cx);
+        let blocks_snapshot = self.block_map.read(wraps_snapshot.clone(), edits);
 
         DisplaySnapshot {
             buffer_snapshot: self.buffer.read(cx).snapshot(cx),
@@ -97,13 +97,13 @@ impl DisplayMap {
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits, cx);
+        self.block_map.read(snapshot, edits);
         let (snapshot, edits) = fold_map.fold(ranges);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits, cx);
+        self.block_map.read(snapshot, edits);
     }
 
     pub fn unfold<T: ToOffset>(
@@ -118,13 +118,13 @@ impl DisplayMap {
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits, cx);
+        self.block_map.read(snapshot, edits);
         let (snapshot, edits) = fold_map.unfold(ranges);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits, cx);
+        self.block_map.read(snapshot, edits);
     }
 
     pub fn insert_blocks<P>(
@@ -142,8 +142,8 @@ impl DisplayMap {
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        let mut block_map = self.block_map.write(snapshot, edits, cx);
-        block_map.insert(blocks, cx)
+        let mut block_map = self.block_map.write(snapshot, edits);
+        block_map.insert(blocks)
     }
 
     pub fn replace_blocks<F>(&mut self, styles: HashMap<BlockId, F>)
@@ -161,8 +161,8 @@ impl DisplayMap {
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        let mut block_map = self.block_map.write(snapshot, edits, cx);
-        block_map.remove(ids, cx);
+        let mut block_map = self.block_map.write(snapshot, edits);
+        block_map.remove(ids);
     }
 
     pub fn set_font(&self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) {
@@ -518,7 +518,8 @@ mod tests {
                 20..=80 => {
                     let mut ranges = Vec::new();
                     for _ in 0..rng.gen_range(1..=3) {
-                        buffer.read_with(&cx, |buffer, _| {
+                        buffer.read_with(&cx, |buffer, cx| {
+                            let buffer = buffer.read(cx);
                             let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
                             let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
                             ranges.push(start..end);
@@ -548,7 +549,7 @@ mod tests {
 
             let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
             fold_count = snapshot.fold_count();
-            log::info!("buffer text: {:?}", buffer.read_with(&cx, |b, _| b.text()));
+            log::info!("buffer text: {:?}", snapshot.buffer_snapshot.text());
             log::info!("display text: {:?}", snapshot.text());
 
             // Line boundaries
@@ -566,12 +567,9 @@ mod tests {
                 assert_eq!(prev_display_bound.column(), 0);
                 if next_display_bound < snapshot.max_point() {
                     assert_eq!(
-                        buffer.read_with(&cx, |buffer, _| buffer
-                            .as_snapshot()
-                            .chars_at(next_buffer_bound)
-                            .next()),
+                        snapshot.buffer_snapshot.chars_at(next_buffer_bound).next(),
                         Some('\n')
-                    )
+                    );
                 }
 
                 assert_eq!(
@@ -705,8 +703,8 @@ mod tests {
             (DisplayPoint::new(2, 4), SelectionGoal::Column(10))
         );
 
+        let ix = snapshot.buffer_snapshot.text().find("seven").unwrap();
         buffer.update(cx, |buffer, cx| {
-            let ix = buffer.text().find("seven").unwrap();
             buffer.edit(vec![ix..ix], "and ", cx);
         });
 

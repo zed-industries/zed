@@ -6,7 +6,7 @@ use gpui::{
     fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
 };
-use language::{Chunk, Point};
+use language::{multi_buffer::MultiBufferSnapshot, Chunk, Point};
 use lazy_static::lazy_static;
 use smol::future::yield_now;
 use std::{collections::VecDeque, mem, ops::Range, time::Duration};
@@ -303,6 +303,10 @@ impl WrapSnapshot {
             tab_snapshot,
             interpolated: true,
         }
+    }
+
+    pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
+        self.tab_snapshot.buffer_snapshot()
     }
 
     fn interpolate(&mut self, new_tab_snapshot: TabSnapshot, tab_edits: &[TabEdit]) -> Patch<u32> {
@@ -1012,10 +1016,7 @@ mod tests {
         let buffer_snapshot = buffer.read_with(&cx, |buffer, cx| buffer.snapshot(cx));
         let (mut fold_map, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
-        log::info!(
-            "Unwrapped text (no folds): {:?}",
-            buffer.read_with(&cx, |buf, _| buf.text())
-        );
+        log::info!("Unwrapped text (no folds): {:?}", buffer_snapshot.text());
         log::info!(
             "Unwrapped text (unexpanded tabs): {:?}",
             folds_snapshot.text()

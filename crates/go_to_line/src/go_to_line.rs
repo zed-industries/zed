@@ -73,7 +73,7 @@ impl GoToLine {
             (
                 restore_state,
                 editor.newest_selection(cx).head(),
-                editor.buffer().read(cx).max_point(),
+                editor.buffer().read(cx).read(cx).max_point(),
             )
         });
 
@@ -127,7 +127,7 @@ impl GoToLine {
         match event {
             editor::Event::Blurred => cx.emit(Event::Dismissed),
             editor::Event::Edited => {
-                let line_editor = self.line_editor.read(cx).buffer().read(cx).text();
+                let line_editor = self.line_editor.read(cx).buffer().read(cx).read(cx).text();
                 let mut components = line_editor.trim().split(&[',', ':'][..]);
                 let row = components.next().and_then(|row| row.parse::<u32>().ok());
                 let column = components.next().and_then(|row| row.parse::<u32>().ok());

@@ -89,6 +89,7 @@ impl ToPoint for Anchor {
 pub trait AnchorRangeExt {
     fn cmp(&self, b: &Range<Anchor>, buffer: &MultiBufferSnapshot) -> Result<Ordering>;
     fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<usize>;
+    fn to_point(&self, content: &MultiBufferSnapshot) -> Range<Point>;
 }
 
 impl AnchorRangeExt for Range<Anchor> {
@@ -101,5 +102,9 @@ impl AnchorRangeExt for Range<Anchor> {
 
     fn to_offset(&self, content: &MultiBufferSnapshot) -> Range<usize> {
         self.start.to_offset(&content)..self.end.to_offset(&content)
+    }
+
+    fn to_point(&self, content: &MultiBufferSnapshot) -> Range<Point> {
+        self.start.to_point(&content)..self.end.to_point(&content)
     }
 }

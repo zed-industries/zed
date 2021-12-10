@@ -482,6 +482,10 @@ pub struct FoldSnapshot {
 }
 
 impl FoldSnapshot {
+    pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
+        &self.buffer_snapshot
+    }
+
     #[cfg(test)]
     pub fn text(&self) -> String {
         self.chunks(FoldOffset(0)..self.len(), None)
@@ -1232,9 +1236,7 @@ mod tests {
         let (snapshot, _) = map.read(buffer_snapshot.clone(), vec![]);
         let fold_ranges = snapshot
             .folds_in_range(Point::new(1, 0)..Point::new(1, 3))
-            .map(|fold| {
-                fold.start.to_point(&buffer.as_snapshot())..fold.end.to_point(&buffer.as_snapshot())
-            })
+            .map(|fold| fold.start.to_point(&buffer_snapshot)..fold.end.to_point(&buffer_snapshot))
             .collect::<Vec<_>>();
         assert_eq!(
             fold_ranges,
@@ -1254,14 +1256,14 @@ mod tests {
         let len = rng.gen_range(0..10);
         let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
         let buffer = MultiBuffer::build_simple(&text, cx);
-        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
         let mut map = FoldMap::new(buffer_snapshot.clone()).0;
 
         let (mut initial_snapshot, _) = map.read(buffer_snapshot.clone(), vec![]);
         let mut snapshot_edits = Vec::new();
 
         for _ in 0..operations {
-            log::info!("text: {:?}", buffer.read(cx).text());
+            log::info!("text: {:?}", buffer_snapshot.text());
             let mut buffer_edits = Vec::new();
             match rng.gen_range(0..=100) {
                 0..=59 => {
@@ -1276,7 +1278,7 @@ mod tests {
                     buffer_edits.extend(edits);
                 }),
             };
-            let buffer_snapshot = buffer.read(cx).snapshot(cx);
+            buffer_snapshot = buffer.read(cx).snapshot(cx);
 
             let (snapshot, edits) = map.read(buffer_snapshot.clone(), buffer_edits);
             snapshot_edits.push((snapshot.clone(), edits));

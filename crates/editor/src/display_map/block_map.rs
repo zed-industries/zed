@@ -125,13 +125,8 @@ impl BlockMap {
         }
     }
 
-    pub fn read(
-        &self,
-        wrap_snapshot: WrapSnapshot,
-        edits: Vec<WrapEdit>,
-        cx: &AppContext,
-    ) -> BlockSnapshot {
-        self.sync(&wrap_snapshot, edits, cx);
+    pub fn read(&self, wrap_snapshot: WrapSnapshot, edits: Vec<WrapEdit>) -> BlockSnapshot {
+        self.sync(&wrap_snapshot, edits);
         *self.wrap_snapshot.lock() = wrap_snapshot.clone();
         BlockSnapshot {
             wrap_snapshot,
@@ -139,24 +134,18 @@ impl BlockMap {
         }
     }
 
-    pub fn write(
-        &mut self,
-        wrap_snapshot: WrapSnapshot,
-        edits: Vec<WrapEdit>,
-        cx: &AppContext,
-    ) -> BlockMapWriter {
-        self.sync(&wrap_snapshot, edits, cx);
+    pub fn write(&mut self, wrap_snapshot: WrapSnapshot, edits: Vec<WrapEdit>) -> BlockMapWriter {
+        self.sync(&wrap_snapshot, edits);
         *self.wrap_snapshot.lock() = wrap_snapshot;
         BlockMapWriter(self)
     }
 
-    fn sync(&self, wrap_snapshot: &WrapSnapshot, edits: Vec<WrapEdit>, cx: &AppContext) {
+    fn sync(&self, wrap_snapshot: &WrapSnapshot, edits: Vec<WrapEdit>) {
         if edits.is_empty() {
             return;
         }
 
-        let buffer = self.buffer.read(cx);
-        let buffer = buffer.as_snapshot();
+        let buffer = wrap_snapshot.buffer_snapshot();
         let mut transforms = self.transforms.lock();
         let mut new_transforms = SumTree::new();
         let old_row_count = transforms.summary().input_rows;
@@ -378,16 +367,14 @@ impl<'a> BlockMapWriter<'a> {
     pub fn insert<P>(
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<P>>,
-        cx: &AppContext,
     ) -> Vec<BlockId>
     where
         P: ToOffset + Clone,
     {
-        let buffer = self.0.buffer.read(cx);
-        let buffer = buffer.as_snapshot();
         let mut ids = Vec::new();
         let mut edits = Vec::<Edit<u32>>::new();
         let wrap_snapshot = &*self.0.wrap_snapshot.lock();
+        let buffer = wrap_snapshot.buffer_snapshot();
 
         for block in blocks {
             let id = BlockId(self.0.next_block_id.fetch_add(1, SeqCst));
@@ -435,14 +422,13 @@ impl<'a> BlockMapWriter<'a> {
             }
         }
 
-        self.0.sync(wrap_snapshot, edits, cx);
+        self.0.sync(wrap_snapshot, edits);
         ids
     }
 
-    pub fn remove(&mut self, block_ids: HashSet<BlockId>, cx: &AppContext) {
-        let buffer = self.0.buffer.read(cx);
-        let buffer = buffer.as_snapshot();
+    pub fn remove(&mut self, block_ids: HashSet<BlockId>) {
         let wrap_snapshot = &*self.0.wrap_snapshot.lock();
+        let buffer = wrap_snapshot.buffer_snapshot();
         let mut edits = Vec::new();
         let mut last_block_buffer_row = None;
         self.0.blocks.retain(|block| {
@@ -470,7 +456,7 @@ impl<'a> BlockMapWriter<'a> {
                 true
             }
         });
-        self.0.sync(wrap_snapshot, edits, cx);
+        self.0.sync(wrap_snapshot, edits);
     }
 }
 
@@ -918,32 +904,29 @@ mod tests {
         let (wrap_map, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, None, cx);
         let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot.clone());
 
-        let mut writer = block_map.write(wraps_snapshot.clone(), vec![], cx);
-        writer.insert(
-            vec![
-                BlockProperties {
-                    position: Point::new(1, 0),
-                    height: 1,
-                    disposition: BlockDisposition::Above,
-                    render: Arc::new(|_| Empty::new().named("block 1")),
-                },
-                BlockProperties {
-                    position: Point::new(1, 2),
-                    height: 2,
-                    disposition: BlockDisposition::Above,
-                    render: Arc::new(|_| Empty::new().named("block 2")),
-                },
-                BlockProperties {
-                    position: Point::new(3, 3),
-                    height: 3,
-                    disposition: BlockDisposition::Below,
-                    render: Arc::new(|_| Empty::new().named("block 3")),
-                },
-            ],
-            cx,
-        );
+        let mut writer = block_map.write(wraps_snapshot.clone(), vec![]);
+        writer.insert(vec![
+            BlockProperties {
+                position: Point::new(1, 0),
+                height: 1,
+                disposition: BlockDisposition::Above,
+                render: Arc::new(|_| Empty::new().named("block 1")),
+            },
+            BlockProperties {
+                position: Point::new(1, 2),
+                height: 2,
+                disposition: BlockDisposition::Above,
+                render: Arc::new(|_| Empty::new().named("block 2")),
+            },
+            BlockProperties {
+                position: Point::new(3, 3),
+                height: 3,
+                disposition: BlockDisposition::Below,
+                render: Arc::new(|_| Empty::new().named("block 3")),
+            },
+        ]);
 
-        let mut snapshot = block_map.read(wraps_snapshot, vec![], cx);
+        let mut snapshot = block_map.read(wraps_snapshot, vec![]);
         assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n");
 
         let blocks = snapshot
@@ -1068,7 +1051,7 @@ mod tests {
         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
             wrap_map.sync(tabs_snapshot, tab_edits, cx)
         });
-        let mut snapshot = block_map.read(wraps_snapshot, wrap_edits, cx);
+        let mut snapshot = block_map.read(wraps_snapshot, wrap_edits);
         assert_eq!(snapshot.text(), "aaa\n\nb!!!\n\n\nbb\nccc\nddd\n\n\n");
     }
 
@@ -1088,28 +1071,25 @@ mod tests {
         let (_, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, Some(60.), cx);
         let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot.clone());
 
-        let mut writer = block_map.write(wraps_snapshot.clone(), vec![], cx);
-        writer.insert(
-            vec![
-                BlockProperties {
-                    position: Point::new(1, 12),
-                    disposition: BlockDisposition::Above,
-                    render: Arc::new(|_| Empty::new().named("block 1")),
-                    height: 1,
-                },
-                BlockProperties {
-                    position: Point::new(1, 1),
-                    disposition: BlockDisposition::Below,
-                    render: Arc::new(|_| Empty::new().named("block 2")),
-                    height: 1,
-                },
-            ],
-            cx,
-        );
+        let mut writer = block_map.write(wraps_snapshot.clone(), vec![]);
+        writer.insert(vec![
+            BlockProperties {
+                position: Point::new(1, 12),
+                disposition: BlockDisposition::Above,
+                render: Arc::new(|_| Empty::new().named("block 1")),
+                height: 1,
+            },
+            BlockProperties {
+                position: Point::new(1, 1),
+                disposition: BlockDisposition::Below,
+                render: Arc::new(|_| Empty::new().named("block 2")),
+                height: 1,
+            },
+        ]);
 
         // Blocks with an 'above' disposition go above their corresponding buffer line.
         // Blocks with a 'below' disposition go below their corresponding buffer line.
-        let mut snapshot = block_map.read(wraps_snapshot, vec![], cx);
+        let mut snapshot = block_map.read(wraps_snapshot, vec![]);
         assert_eq!(
             snapshot.text(),
             "one two \nthree\n\nfour five \nsix\n\nseven \neight"
@@ -1166,7 +1146,7 @@ mod tests {
                     let block_count = rng.gen_range(1..=1);
                     let block_properties = (0..block_count)
                         .map(|_| {
-                            let buffer = buffer.read(cx);
+                            let buffer = buffer.read(cx).read(cx);
                             let position = buffer.anchor_after(
                                 buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Left),
                             );
@@ -1180,7 +1160,7 @@ mod tests {
                             log::info!(
                                 "inserting block {:?} {:?} with height {}",
                                 disposition,
-                                position.to_point(&buffer.as_snapshot()),
+                                position.to_point(&buffer),
                                 height
                             );
                             BlockProperties {
@@ -1198,8 +1178,8 @@ mod tests {
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tabs_snapshot, tab_edits, cx)
                     });
-                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits, cx);
-                    let block_ids = block_map.insert(block_properties.clone(), cx);
+                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
+                    let block_ids = block_map.insert(block_properties.clone());
                     for (block_id, props) in block_ids.into_iter().zip(block_properties) {
                         expected_blocks.push((block_id, props));
                     }
@@ -1220,17 +1200,17 @@ mod tests {
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tabs_snapshot, tab_edits, cx)
                     });
-                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits, cx);
-                    block_map.remove(block_ids_to_remove, cx);
+                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
+                    block_map.remove(block_ids_to_remove);
                 }
                 _ => {
                     buffer.update(cx, |buffer, cx| {
                         let edit_count = rng.gen_range(1..=5);
                         let subscription = buffer.subscribe();
                         buffer.randomly_edit(&mut rng, edit_count, cx);
-                        log::info!("buffer text: {:?}", buffer.text());
                         buffer_edits.extend(subscription.consume());
                         buffer_snapshot = buffer.snapshot(cx);
+                        log::info!("buffer text: {:?}", buffer_snapshot.text());
                     });
                 }
             }
@@ -1240,26 +1220,25 @@ mod tests {
             let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                 wrap_map.sync(tabs_snapshot, tab_edits, cx)
             });
-            let mut blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits, cx);
+            let mut blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
             assert_eq!(
                 blocks_snapshot.transforms.summary().input_rows,
                 wraps_snapshot.max_point().row() + 1
             );
             log::info!("blocks text: {:?}", blocks_snapshot.text());
 
-            let buffer = buffer.read(cx);
             let mut sorted_blocks = expected_blocks
                 .iter()
                 .cloned()
                 .map(|(id, block)| {
-                    let mut position = block.position.to_point(&buffer.as_snapshot());
+                    let mut position = block.position.to_point(&buffer_snapshot);
                     let column = wraps_snapshot.from_point(position, Bias::Left).column();
                     match block.disposition {
                         BlockDisposition::Above => {
                             position.column = 0;
                         }
                         BlockDisposition::Below => {
-                            position.column = buffer.line_len(position.row);
+                            position.column = buffer_snapshot.line_len(position.row);
                         }
                     };
                     let row = wraps_snapshot.from_point(position, Bias::Left).row();

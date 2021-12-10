@@ -76,7 +76,9 @@ impl ItemHandle for BufferItemHandle {
                         font_properties,
                         underline: None,
                     };
-                    let language = buffer.upgrade(cx).and_then(|buf| buf.read(cx).language());
+                    let language = buffer
+                        .upgrade(cx)
+                        .and_then(|buf| buf.read(cx).read(cx).language());
                     let soft_wrap = match settings.soft_wrap(language) {
                         settings::SoftWrap::None => crate::SoftWrap::None,
                         settings::SoftWrap::EditorWidth => crate::SoftWrap::EditorWidth,
@@ -327,6 +329,7 @@ impl DiagnosticMessage {
         let cursor_position = editor.newest_selection::<usize>(cx).head();
         let buffer = editor.buffer().read(cx);
         let new_diagnostic = buffer
+            .read(cx)
             .diagnostics_in_range::<_, usize>(cursor_position..cursor_position)
             .filter(|entry| !entry.range.is_empty())
             .min_by_key(|entry| (entry.diagnostic.severity, entry.range.len()))

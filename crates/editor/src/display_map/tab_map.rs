@@ -1,5 +1,5 @@
 use super::fold_map::{self, FoldEdit, FoldPoint, FoldSnapshot, ToFoldPoint};
-use language::{rope, Chunk};
+use language::{multi_buffer::MultiBufferSnapshot, rope, Chunk};
 use parking_lot::Mutex;
 use std::{cmp, mem, ops::Range};
 use sum_tree::Bias;
@@ -87,6 +87,10 @@ pub struct TabSnapshot {
 }
 
 impl TabSnapshot {
+    pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
+        self.fold_snapshot.buffer_snapshot()
+    }
+
     pub fn text_summary(&self) -> TextSummary {
         self.text_summary_for_range(TabPoint::zero()..self.max_point())
     }
@@ -453,7 +457,7 @@ mod tests {
         let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
         let buffer = MultiBuffer::build_simple(&text, cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
-        log::info!("Buffer text: {:?}", buffer.read(cx).text());
+        log::info!("Buffer text: {:?}", buffer_snapshot.text());
 
         let (mut fold_map, _) = FoldMap::new(buffer_snapshot.clone());
         fold_map.randomly_mutate(&mut rng);

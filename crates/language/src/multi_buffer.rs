@@ -13,6 +13,7 @@ use gpui::{AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Tas
 use parking_lot::{Mutex, MutexGuard};
 pub use selection::SelectionSet;
 use std::{
+    cell::{Ref, RefCell},
     cmp, io,
     ops::{Range, Sub},
     sync::Arc,
@@ -33,7 +34,7 @@ pub type ExcerptId = Locator;
 
 #[derive(Default)]
 pub struct MultiBuffer {
-    snapshot: Mutex<MultiBufferSnapshot>,
+    snapshot: RefCell<MultiBufferSnapshot>,
     buffers: HashMap<usize, BufferState>,
     subscriptions: Topic,
     selection_sets: HashMap<SelectionSetId, SelectionSet>,
@@ -115,13 +116,18 @@ impl MultiBuffer {
         cx.add_model(|cx| Self::singleton(buffer, cx))
     }
 
-    pub fn snapshot(&self, cx: &AppContext) -> MultiBufferSnapshot {
-        self.sync(cx);
-        self.snapshot.lock().clone()
+    pub fn replica_id(&self) -> clock::ReplicaId {
+        todo!()
     }
 
-    pub fn as_snapshot(&self) -> MutexGuard<MultiBufferSnapshot> {
-        self.snapshot.lock()
+    pub fn snapshot(&self, cx: &AppContext) -> MultiBufferSnapshot {
+        self.sync(cx);
+        self.snapshot.borrow().clone()
+    }
+
+    pub fn read(&self, cx: &AppContext) -> Ref<MultiBufferSnapshot> {
+        self.sync(cx);
+        self.snapshot.borrow()
     }
 
     pub fn as_singleton(&self) -> Option<&ModelHandle<Buffer>> {
@@ -246,7 +252,7 @@ impl MultiBuffer {
 
         let buffer = props.buffer.read(cx);
         let range = buffer.anchor_before(props.range.start)..buffer.anchor_after(props.range.end);
-        let mut snapshot = self.snapshot.lock();
+        let mut snapshot = self.snapshot.borrow_mut();
         let prev_id = snapshot.excerpts.last().map(|e| &e.id);
         let id = ExcerptId::between(prev_id.unwrap_or(&ExcerptId::min()), &ExcerptId::max());
 
@@ -297,7 +303,7 @@ impl MultiBuffer {
     }
 
     fn sync(&self, cx: &AppContext) {
-        let mut snapshot = self.snapshot.lock();
+        let mut snapshot = self.snapshot.borrow_mut();
         let mut excerpts_to_edit = Vec::new();
         for buffer_state in self.buffers.values() {
             if buffer_state
@@ -362,96 +368,6 @@ impl MultiBuffer {
         snapshot.excerpts = new_excerpts;
 
         self.subscriptions.publish(edits);
-    }
-}
-
-// Methods delegating to the snapshot
-impl MultiBuffer {
-    pub fn replica_id(&self) -> ReplicaId {
-        self.snapshot.lock().replica_id()
-    }
-
-    pub fn text(&self) -> String {
-        self.snapshot.lock().text()
-    }
-
-    pub fn text_for_range<'a, T: ToOffset>(
-        &'a self,
-        range: Range<T>,
-    ) -> impl Iterator<Item = &'a str> {
-        todo!();
-        [].into_iter()
-    }
-
-    pub fn contains_str_at<T>(&self, _: T, _: &str) -> bool
-    where
-        T: ToOffset,
-    {
-        todo!()
-    }
-
-    pub fn max_point(&self) -> Point {
-        self.snapshot.lock().max_point()
-    }
-
-    pub fn len(&self) -> usize {
-        self.snapshot.lock().len()
-    }
-
-    pub fn line_len(&self, row: u32) -> u32 {
-        self.snapshot.lock().line_len(row)
-    }
-
-    pub fn is_line_blank(&self, row: u32) -> bool {
-        self.snapshot.lock().is_line_blank(row)
-    }
-
-    pub fn indent_column_for_line(&self, row: u32) -> u32 {
-        self.snapshot.lock().indent_column_for_line(row)
-    }
-
-    pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
-        self.snapshot.lock().anchor_before(position)
-    }
-
-    pub fn anchor_after<T: ToOffset>(&self, position: T) -> Anchor {
-        self.snapshot.lock().anchor_after(position)
-    }
-
-    pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
-        self.snapshot.lock().anchor_at(position, bias)
-    }
-
-    pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
-        self.snapshot.lock().clip_offset(offset, bias)
-    }
-
-    pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
-        self.snapshot.lock().clip_point(point, bias)
-    }
-
-    pub fn language<'a>(&self) -> Option<&'a Arc<Language>> {
-        todo!()
-    }
-
-    pub fn parse_count(&self) -> usize {
-        self.snapshot.lock().parse_count()
-    }
-
-    pub fn diagnostics_update_count(&self) -> usize {
-        self.snapshot.lock().diagnostics_update_count()
-    }
-
-    pub fn diagnostics_in_range<'a, T, O>(
-        &'a self,
-        search_range: Range<T>,
-    ) -> impl Iterator<Item = DiagnosticEntry<O>> + 'a
-    where
-        T: 'a + ToOffset,
-        O: 'a,
-    {
-        todo!();
-        None.into_iter()
     }
 }
 
@@ -949,7 +865,7 @@ impl MultiBufferSnapshot {
     pub fn diagnostic_group<'a, O>(
         &'a self,
         group_id: usize,
-    ) -> impl Iterator<Item = (Range<O>, &Diagnostic)> + 'a
+    ) -> impl Iterator<Item = DiagnosticEntry<O>> + 'a
     where
         O: 'a,
     {
@@ -960,7 +876,7 @@ impl MultiBufferSnapshot {
     pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
         search_range: Range<T>,
-    ) -> impl Iterator<Item = (Range<O>, &Diagnostic)> + 'a
+    ) -> impl Iterator<Item = DiagnosticEntry<O>> + 'a
     where
         T: 'a + ToOffset,
         O: 'a,
