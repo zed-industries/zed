@@ -3721,6 +3721,7 @@ mod tests {
 
         buffer.read_with(&cx, |buffer, _| {
             let diagnostics = buffer
+                .snapshot()
                 .diagnostics_in_range::<_, Point>(0..buffer.len())
                 .collect::<Vec<_>>();
             assert_eq!(

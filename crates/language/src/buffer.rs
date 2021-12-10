@@ -829,31 +829,6 @@ impl Buffer {
         })
     }
 
-    pub fn diagnostics_in_range<'a, T, O>(
-        &'a self,
-        search_range: Range<T>,
-    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
-    where
-        T: 'a + ToOffset,
-        O: 'a + FromAnchor,
-    {
-        self.diagnostics.range(search_range, self, true)
-    }
-
-    pub fn diagnostic_group<'a, O>(
-        &'a self,
-        group_id: usize,
-    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
-    where
-        O: 'a + FromAnchor,
-    {
-        self.diagnostics.group(group_id, self)
-    }
-
-    pub fn diagnostics_update_count(&self) -> usize {
-        self.diagnostics_update_count
-    }
-
     fn request_autoindent(&mut self, cx: &mut ModelContext<Self>) {
         if let Some(indent_columns) = self.compute_autoindents() {
             let indent_columns = cx.background().spawn(indent_columns);
@@ -1055,47 +1030,6 @@ impl Buffer {
                 cx,
             );
         }
-    }
-
-    pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
-        if let Some(tree) = self.syntax_tree() {
-            let root = tree.root_node();
-            let range = range.start.to_offset(self)..range.end.to_offset(self);
-            let mut node = root.descendant_for_byte_range(range.start, range.end);
-            while node.map_or(false, |n| n.byte_range() == range) {
-                node = node.unwrap().parent();
-            }
-            node.map(|n| n.byte_range())
-        } else {
-            None
-        }
-    }
-
-    pub fn enclosing_bracket_ranges<T: ToOffset>(
-        &self,
-        range: Range<T>,
-    ) -> Option<(Range<usize>, Range<usize>)> {
-        let (grammar, tree) = self.grammar().zip(self.syntax_tree())?;
-        let open_capture_ix = grammar.brackets_query.capture_index_for_name("open")?;
-        let close_capture_ix = grammar.brackets_query.capture_index_for_name("close")?;
-
-        // Find bracket pairs that *inclusively* contain the given range.
-        let range = range.start.to_offset(self).saturating_sub(1)..range.end.to_offset(self) + 1;
-        let mut cursor = QueryCursorHandle::new();
-        let matches = cursor.set_byte_range(range).matches(
-            &grammar.brackets_query,
-            tree.root_node(),
-            TextProvider(self.as_rope()),
-        );
-
-        // Get the ranges of the innermost pair of brackets.
-        matches
-            .filter_map(|mat| {
-                let open = mat.nodes_for_capture_index(open_capture_ix).next()?;
-                let close = mat.nodes_for_capture_index(close_capture_ix).next()?;
-                Some((open.byte_range(), close.byte_range()))
-            })
-            .min_by_key(|(open_range, close_range)| close_range.end - open_range.start)
     }
 
     pub(crate) fn diff(&self, new_text: Arc<str>, cx: &AppContext) -> Task<Diff> {
@@ -1745,10 +1679,76 @@ impl BufferSnapshot {
         }
     }
 
+    pub fn language(&self) -> Option<&Arc<Language>> {
+        self.language.as_ref()
+    }
+
     fn grammar(&self) -> Option<&Arc<Grammar>> {
         self.language
             .as_ref()
             .and_then(|language| language.grammar.as_ref())
+    }
+
+    pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
+        if let Some(tree) = self.tree.as_ref() {
+            let root = tree.root_node();
+            let range = range.start.to_offset(self)..range.end.to_offset(self);
+            let mut node = root.descendant_for_byte_range(range.start, range.end);
+            while node.map_or(false, |n| n.byte_range() == range) {
+                node = node.unwrap().parent();
+            }
+            node.map(|n| n.byte_range())
+        } else {
+            None
+        }
+    }
+
+    pub fn enclosing_bracket_ranges<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Option<(Range<usize>, Range<usize>)> {
+        let (grammar, tree) = self.grammar().zip(self.tree.as_ref())?;
+        let open_capture_ix = grammar.brackets_query.capture_index_for_name("open")?;
+        let close_capture_ix = grammar.brackets_query.capture_index_for_name("close")?;
+
+        // Find bracket pairs that *inclusively* contain the given range.
+        let range = range.start.to_offset(self).saturating_sub(1)..range.end.to_offset(self) + 1;
+        let mut cursor = QueryCursorHandle::new();
+        let matches = cursor.set_byte_range(range).matches(
+            &grammar.brackets_query,
+            tree.root_node(),
+            TextProvider(self.as_rope()),
+        );
+
+        // Get the ranges of the innermost pair of brackets.
+        matches
+            .filter_map(|mat| {
+                let open = mat.nodes_for_capture_index(open_capture_ix).next()?;
+                let close = mat.nodes_for_capture_index(close_capture_ix).next()?;
+                Some((open.byte_range(), close.byte_range()))
+            })
+            .min_by_key(|(open_range, close_range)| close_range.end - open_range.start)
+    }
+
+    pub fn diagnostics_in_range<'a, T, O>(
+        &'a self,
+        search_range: Range<T>,
+    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
+    where
+        T: 'a + ToOffset,
+        O: 'a + FromAnchor,
+    {
+        self.diagnostics.range(search_range, self, true)
+    }
+
+    pub fn diagnostic_group<'a, O>(
+        &'a self,
+        group_id: usize,
+    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
+    where
+        O: 'a + FromAnchor,
+    {
+        self.diagnostics.group(group_id, self)
     }
 
     pub fn diagnostics_update_count(&self) -> usize {

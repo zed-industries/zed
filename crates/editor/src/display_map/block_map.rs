@@ -1,7 +1,7 @@
 use super::wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot};
-use gpui::{AppContext, ElementBox, ModelHandle};
+use gpui::{AppContext, ElementBox};
 use language::{
-    multi_buffer::{Anchor, MultiBuffer, ToOffset, ToPoint as _},
+    multi_buffer::{Anchor, ToOffset, ToPoint as _},
     Chunk,
 };
 use parking_lot::Mutex;
@@ -22,7 +22,6 @@ use theme::SyntaxTheme;
 const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
 
 pub struct BlockMap {
-    buffer: ModelHandle<MultiBuffer>,
     next_block_id: AtomicUsize,
     wrap_snapshot: Mutex<WrapSnapshot>,
     blocks: Vec<Arc<Block>>,
@@ -112,9 +111,8 @@ pub struct BlockBufferRows<'a> {
 }
 
 impl BlockMap {
-    pub fn new(buffer: ModelHandle<MultiBuffer>, wrap_snapshot: WrapSnapshot) -> Self {
+    pub fn new(wrap_snapshot: WrapSnapshot) -> Self {
         Self {
-            buffer,
             next_block_id: AtomicUsize::new(0),
             blocks: Vec::new(),
             transforms: Mutex::new(SumTree::from_item(
@@ -869,6 +867,7 @@ mod tests {
     use super::*;
     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
     use gpui::{elements::Empty, Element};
+    use language::multi_buffer::MultiBuffer;
     use rand::prelude::*;
     use std::env;
     use text::RandomCharIter;
@@ -902,7 +901,7 @@ mod tests {
         let (fold_map, folds_snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
         let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), 1);
         let (wrap_map, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, None, cx);
-        let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot.clone());
+        let mut block_map = BlockMap::new(wraps_snapshot.clone());
 
         let mut writer = block_map.write(wraps_snapshot.clone(), vec![]);
         writer.insert(vec![
@@ -1069,7 +1068,7 @@ mod tests {
         let (_, folds_snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
         let (_, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), 1);
         let (_, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, Some(60.), cx);
-        let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot.clone());
+        let mut block_map = BlockMap::new(wraps_snapshot.clone());
 
         let mut writer = block_map.write(wraps_snapshot.clone(), vec![]);
         writer.insert(vec![
@@ -1127,7 +1126,7 @@ mod tests {
         let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
         let (wrap_map, wraps_snapshot) =
             WrapMap::new(tabs_snapshot, font_id, font_size, wrap_width, cx);
-        let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot);
+        let mut block_map = BlockMap::new(wraps_snapshot);
         let mut expected_blocks = Vec::new();
 
         for _ in 0..operations {

@@ -539,6 +539,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
         // The diagnostics have moved down since they were created.
         assert_eq!(
             buffer
+                .snapshot()
                 .diagnostics_in_range::<_, Point>(Point::new(3, 0)..Point::new(5, 0))
                 .collect::<Vec<_>>(),
             &[
@@ -606,6 +607,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
             .unwrap();
         assert_eq!(
             buffer
+                .snapshot()
                 .diagnostics_in_range::<_, Point>(Point::new(2, 0)..Point::new(3, 0))
                 .collect::<Vec<_>>(),
             &[
@@ -685,6 +687,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
             .unwrap();
         assert_eq!(
             buffer
+                .snapshot()
                 .diagnostics_in_range::<_, Point>(0..buffer.len())
                 .collect::<Vec<_>>(),
             &[
@@ -870,6 +873,7 @@ async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
         buffer.update_diagnostics(None, diagnostics, cx).unwrap();
         assert_eq!(
             buffer
+                .snapshot()
                 .diagnostics_in_range::<_, Point>(0..buffer.len())
                 .collect::<Vec<_>>(),
             &[
@@ -922,7 +926,10 @@ async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
         );
 
         assert_eq!(
-            buffer.diagnostic_group::<Point>(0).collect::<Vec<_>>(),
+            buffer
+                .snapshot()
+                .diagnostic_group::<Point>(0)
+                .collect::<Vec<_>>(),
             &[
                 DiagnosticEntry {
                     range: Point::new(1, 8)..Point::new(1, 9),
@@ -945,7 +952,10 @@ async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
             ]
         );
         assert_eq!(
-            buffer.diagnostic_group::<Point>(1).collect::<Vec<_>>(),
+            buffer
+                .snapshot()
+                .diagnostic_group::<Point>(1)
+                .collect::<Vec<_>>(),
             &[
                 DiagnosticEntry {
                     range: Point::new(1, 13)..Point::new(1, 15),
@@ -1022,11 +1032,13 @@ impl Buffer {
         &self,
         range: Range<T>,
     ) -> Option<(Range<Point>, Range<Point>)> {
-        self.enclosing_bracket_ranges(range).map(|(start, end)| {
-            let point_start = start.start.to_point(self)..start.end.to_point(self);
-            let point_end = end.start.to_point(self)..end.end.to_point(self);
-            (point_start, point_end)
-        })
+        self.snapshot()
+            .enclosing_bracket_ranges(range)
+            .map(|(start, end)| {
+                let point_start = start.start.to_point(self)..start.end.to_point(self);
+                let point_end = end.start.to_point(self)..end.end.to_point(self);
+                (point_start, point_end)
+            })
     }
 }
 

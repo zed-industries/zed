@@ -559,7 +559,7 @@ impl Editor {
     }
 
     pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
-        self.buffer.read(cx).read(cx).language()
+        self.buffer.read(cx).language(cx)
     }
 
     pub fn set_placeholder_text(
@@ -2996,7 +2996,7 @@ impl Editor {
         let buffer = self.buffer.read(cx);
         let replica_id = buffer.replica_id();
         buffer
-            .selection_sets()
+            .selection_sets(cx)
             .filter(move |(set_id, set)| {
                 set.active && (set_id.replica_id != replica_id || **set_id == self.selection_set_id)
             })

@@ -1224,7 +1224,6 @@ mod tests {
         let buffer = MultiBuffer::build_simple(&sample_text(5, 6, 'a'), cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let mut map = FoldMap::new(buffer_snapshot.clone()).0;
-        let buffer = buffer.read(cx);
 
         let (mut writer, _, _) = map.write(buffer_snapshot.clone(), vec![]);
         writer.fold(vec![

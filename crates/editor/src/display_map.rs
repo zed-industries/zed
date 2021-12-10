@@ -54,7 +54,7 @@ impl DisplayMap {
         let (fold_map, snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font_id, font_size, wrap_width, cx);
-        let block_map = BlockMap::new(buffer.clone(), snapshot);
+        let block_map = BlockMap::new(snapshot);
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
         DisplayMap {
             buffer,

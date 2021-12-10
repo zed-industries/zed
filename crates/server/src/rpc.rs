@@ -1707,6 +1707,7 @@ mod tests {
         buffer_b.read_with(&cx_b, |buffer, _| {
             assert_eq!(
                 buffer
+                    .snapshot()
                     .diagnostics_in_range::<_, Point>(0..buffer.len())
                     .collect::<Vec<_>>(),
                 &[

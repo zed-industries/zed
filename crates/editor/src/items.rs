@@ -76,9 +76,7 @@ impl ItemHandle for BufferItemHandle {
                         font_properties,
                         underline: None,
                     };
-                    let language = buffer
-                        .upgrade(cx)
-                        .and_then(|buf| buf.read(cx).read(cx).language());
+                    let language = buffer.upgrade(cx).and_then(|buf| buf.read(cx).language(cx));
                     let soft_wrap = match settings.soft_wrap(language) {
                         settings::SoftWrap::None => crate::SoftWrap::None,
                         settings::SoftWrap::EditorWidth => crate::SoftWrap::EditorWidth,
@@ -222,11 +220,11 @@ impl ItemView for Editor {
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.buffer().read(cx).is_dirty()
+        self.buffer().read(cx).is_dirty(cx)
     }
 
     fn has_conflict(&self, cx: &AppContext) -> bool {
-        self.buffer().read(cx).has_conflict()
+        self.buffer().read(cx).has_conflict(cx)
     }
 }
 
