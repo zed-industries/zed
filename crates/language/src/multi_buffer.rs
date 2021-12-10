@@ -3,7 +3,7 @@ mod selection;
 
 use crate::{
     buffer::{self, Buffer, Chunk, ToOffset as _, ToPoint as _},
-    BufferSnapshot, DiagnosticEntry, File, Language,
+    BufferSnapshot, DiagnosticEntry, Event, File, Language,
 };
 pub use anchor::{Anchor, AnchorRangeExt};
 use anyhow::Result;
@@ -52,7 +52,9 @@ pub trait ToPoint: 'static {
 #[derive(Debug)]
 struct BufferState {
     buffer: ModelHandle<Buffer>,
-    last_sync: clock::Global,
+    last_version: clock::Global,
+    last_parse_count: usize,
+    last_diagnostics_update_count: usize,
     excerpts: Vec<ExcerptId>,
 }
 
@@ -388,6 +390,9 @@ impl MultiBuffer {
     {
         self.sync(cx);
 
+        let buffer = &props.buffer;
+        cx.subscribe(buffer, Self::on_buffer_event).detach();
+
         let buffer = props.buffer.read(cx);
         let range = buffer.anchor_before(props.range.start)..buffer.anchor_after(props.range.end);
         let mut snapshot = self.snapshot.borrow_mut();
@@ -411,7 +416,9 @@ impl MultiBuffer {
             .entry(props.buffer.id())
             .or_insert_with(|| BufferState {
                 buffer: props.buffer.clone(),
-                last_sync: buffer.version(),
+                last_version: buffer.version(),
+                last_parse_count: buffer.parse_count(),
+                last_diagnostics_update_count: buffer.diagnostics_update_count(),
                 excerpts: Default::default(),
             })
             .excerpts
@@ -420,6 +427,15 @@ impl MultiBuffer {
         self.subscriptions.publish_mut([edit]);
 
         id
+    }
+
+    fn on_buffer_event(
+        &mut self,
+        _: ModelHandle<Buffer>,
+        event: &Event,
+        cx: &mut ModelContext<Self>,
+    ) {
+        cx.emit(event.clone());
     }
 
     pub fn save(
@@ -456,61 +472,65 @@ impl MultiBuffer {
         let mut snapshot = self.snapshot.borrow_mut();
         let mut excerpts_to_edit = Vec::new();
         for buffer_state in self.buffers.values() {
-            if buffer_state
-                .buffer
-                .read(cx)
-                .version()
-                .gt(&buffer_state.last_sync)
+            let buffer = buffer_state.buffer.read(cx);
+            let buffer_changed = buffer.version().gt(&buffer_state.last_version);
+            if buffer_changed
+                || buffer.parse_count() > buffer_state.last_parse_count
+                || buffer.diagnostics_update_count() > buffer_state.last_diagnostics_update_count
             {
                 excerpts_to_edit.extend(
                     buffer_state
                         .excerpts
                         .iter()
-                        .map(|excerpt_id| (excerpt_id, buffer_state)),
+                        .map(|excerpt_id| (excerpt_id, buffer_state, buffer_changed)),
                 );
             }
         }
-        excerpts_to_edit.sort_unstable_by_key(|(excerpt_id, _)| *excerpt_id);
+        excerpts_to_edit.sort_unstable_by_key(|(excerpt_id, _, _)| *excerpt_id);
 
         let mut edits = Vec::new();
         let mut new_excerpts = SumTree::new();
         let mut cursor = snapshot.excerpts.cursor::<(Option<&ExcerptId>, usize)>();
 
-        for (id, buffer_state) in excerpts_to_edit {
+        for (id, buffer_state, buffer_changed) in excerpts_to_edit {
             new_excerpts.push_tree(cursor.slice(&Some(id), Bias::Left, &()), &());
             let old_excerpt = cursor.item().unwrap();
             let buffer = buffer_state.buffer.read(cx);
 
-            edits.extend(
-                buffer
-                    .edits_since_in_range::<usize>(
-                        old_excerpt.buffer.version(),
-                        old_excerpt.range.clone(),
-                    )
-                    .map(|mut edit| {
-                        let excerpt_old_start =
-                            cursor.start().1 + old_excerpt.header_height as usize;
-                        let excerpt_new_start =
-                            new_excerpts.summary().text.bytes + old_excerpt.header_height as usize;
-                        edit.old.start += excerpt_old_start;
-                        edit.old.end += excerpt_old_start;
-                        edit.new.start += excerpt_new_start;
-                        edit.new.end += excerpt_new_start;
-                        edit
-                    }),
-            );
+            let mut new_excerpt;
+            if buffer_changed {
+                edits.extend(
+                    buffer
+                        .edits_since_in_range::<usize>(
+                            old_excerpt.buffer.version(),
+                            old_excerpt.range.clone(),
+                        )
+                        .map(|mut edit| {
+                            let excerpt_old_start =
+                                cursor.start().1 + old_excerpt.header_height as usize;
+                            let excerpt_new_start = new_excerpts.summary().text.bytes
+                                + old_excerpt.header_height as usize;
+                            edit.old.start += excerpt_old_start;
+                            edit.old.end += excerpt_old_start;
+                            edit.new.start += excerpt_new_start;
+                            edit.new.end += excerpt_new_start;
+                            edit
+                        }),
+                );
 
-            new_excerpts.push(
-                Excerpt::new(
+                new_excerpt = Excerpt::new(
                     id.clone(),
                     buffer.snapshot(),
                     old_excerpt.range.clone(),
                     old_excerpt.header_height,
                     !self.singleton,
-                ),
-                &(),
-            );
+                );
+            } else {
+                new_excerpt = old_excerpt.clone();
+                new_excerpt.buffer = buffer.snapshot();
+            }
 
+            new_excerpts.push(new_excerpt, &());
             cursor.next(&());
         }
         new_excerpts.push_tree(cursor.suffix(&()), &());

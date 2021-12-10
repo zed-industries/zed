@@ -580,6 +580,10 @@ impl Buffer {
         self.parse_count
     }
 
+    pub fn diagnostics_update_count(&self) -> usize {
+        self.diagnostics_update_count
+    }
+
     pub(crate) fn syntax_tree(&self) -> Option<Tree> {
         if let Some(syntax_tree) = self.syntax_tree.lock().as_mut() {
             self.interpolate_tree(syntax_tree);
