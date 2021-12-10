@@ -306,7 +306,7 @@ struct Edits<'a, D: TextDimension, F: FnMut(&FragmentSummary) -> bool> {
     since: &'a clock::Global,
     old_end: D,
     new_end: D,
-    range: Range<FullOffset>,
+    range: Range<(&'a Locator, usize)>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -394,12 +394,6 @@ pub struct FragmentSummary {
 struct FragmentTextSummary {
     visible: usize,
     deleted: usize,
-}
-
-impl FragmentTextSummary {
-    pub fn full_offset(&self) -> FullOffset {
-        FullOffset(self.visible + self.deleted)
-    }
 }
 
 impl<'a> sum_tree::Dimension<'a, FragmentSummary> for FragmentTextSummary {
@@ -1871,28 +1865,24 @@ impl BufferSnapshot {
                     .filter(move |summary| !since.ge(&summary.max_version), &None),
             )
         };
-
         let mut cursor = self
             .fragments
-            .cursor::<(VersionedFullOffset, FragmentTextSummary)>();
-        cursor.seek(
-            &VersionedFullOffset::Offset(range.start.full_offset),
-            range.start.bias,
-            &Some(range.start.version),
-        );
+            .cursor::<(Option<&Locator>, FragmentTextSummary)>();
+
+        let start_fragment_id = self.fragment_id_for_anchor(&range.start);
+        cursor.seek(&Some(start_fragment_id), Bias::Left, &None);
         let mut visible_start = cursor.start().1.visible;
         let mut deleted_start = cursor.start().1.deleted;
         if let Some(fragment) = cursor.item() {
-            let overshoot = range.start.full_offset.0 - cursor.start().0.full_offset().0;
+            let overshoot = range.start.offset - fragment.insertion_offset;
             if fragment.visible {
                 visible_start += overshoot;
             } else {
                 deleted_start += overshoot;
             }
         }
+        let end_fragment_id = self.fragment_id_for_anchor(&range.end);
 
-        let full_offset_start = FullOffset(visible_start + deleted_start);
-        let full_offset_end = range.end.to_full_offset(self, range.end.bias);
         Edits {
             visible_cursor: self.visible_text.cursor(visible_start),
             deleted_cursor: self.deleted_text.cursor(deleted_start),
@@ -1901,7 +1891,7 @@ impl BufferSnapshot {
             since,
             old_end: Default::default(),
             new_end: Default::default(),
-            range: full_offset_start..full_offset_end,
+            range: (start_fragment_id, range.start.offset)..(end_fragment_id, range.end.offset),
         }
     }
 }
@@ -1967,10 +1957,10 @@ impl<'a, D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator fo
         let cursor = self.fragments_cursor.as_mut()?;
 
         while let Some(fragment) = cursor.item() {
-            if cursor.end(&None).full_offset() < self.range.start {
+            if fragment.id < *self.range.start.0 {
                 cursor.next(&None);
                 continue;
-            } else if cursor.start().full_offset() >= self.range.end {
+            } else if fragment.id > *self.range.end.0 {
                 break;
             }
 
@@ -1988,10 +1978,13 @@ impl<'a, D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator fo
             }
 
             if !fragment.was_visible(&self.since, &self.undos) && fragment.visible {
-                let visible_end = cmp::min(
-                    cursor.end(&None).visible,
-                    cursor.start().visible + (self.range.end - cursor.start().full_offset()),
-                );
+                let mut visible_end = cursor.end(&None).visible;
+                if fragment.id == *self.range.end.0 {
+                    visible_end = cmp::min(
+                        visible_end,
+                        cursor.start().visible + (self.range.end.1 - fragment.insertion_offset),
+                    );
+                }
 
                 let fragment_summary = self.visible_cursor.summary(visible_end);
                 let mut new_end = self.new_end.clone();
@@ -2007,10 +2000,13 @@ impl<'a, D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator fo
 
                 self.new_end = new_end;
             } else if fragment.was_visible(&self.since, &self.undos) && !fragment.visible {
-                let deleted_end = cmp::min(
-                    cursor.end(&None).deleted,
-                    cursor.start().deleted + (self.range.end - cursor.start().full_offset()),
-                );
+                let mut deleted_end = cursor.end(&None).deleted;
+                if fragment.id == *self.range.end.0 {
+                    deleted_end = cmp::min(
+                        deleted_end,
+                        cursor.start().deleted + (self.range.end.1 - fragment.insertion_offset),
+                    );
+                }
 
                 if cursor.start().deleted > self.deleted_cursor.offset() {
                     self.deleted_cursor.seek_forward(cursor.start().deleted);
@@ -2295,13 +2291,6 @@ impl operation_queue::Operation for Operation {
 
 pub trait ToOffset {
     fn to_offset<'a>(&self, snapshot: &BufferSnapshot) -> usize;
-
-    fn to_full_offset<'a>(&self, snapshot: &BufferSnapshot, bias: Bias) -> FullOffset {
-        let offset = self.to_offset(&snapshot);
-        let mut cursor = snapshot.fragments.cursor::<FragmentTextSummary>();
-        cursor.seek(&offset, bias, &None);
-        FullOffset(offset + cursor.start().deleted)
-    }
 }
 
 impl ToOffset for Point {
