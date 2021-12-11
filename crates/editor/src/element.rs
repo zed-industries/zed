@@ -733,34 +733,37 @@ impl Element for EditorElement {
         let scroll_top = scroll_position.y() * line_height;
         let end_row = ((scroll_top + size.y()) / line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
 
-        let mut selections = HashMap::new();
-        let mut active_rows = BTreeMap::new();
+        let selections = HashMap::new();
+        let active_rows = BTreeMap::new();
         let mut highlighted_row = None;
         self.update_view(cx.app, |view, cx| {
             highlighted_row = view.highlighted_row();
-            for selection_set_id in view.active_selection_sets(cx).collect::<Vec<_>>() {
-                let replica_selections = view.intersecting_selections(
-                    selection_set_id,
-                    DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
-                    cx,
-                );
-                for selection in &replica_selections {
-                    if selection_set_id == view.selection_set_id {
-                        let is_empty = selection.start == selection.end;
-                        let selection_start = snapshot.prev_row_boundary(selection.start).0;
-                        let selection_end = snapshot.next_row_boundary(selection.end).0;
-                        for row in cmp::max(selection_start.row(), start_row)
-                            ..=cmp::min(selection_end.row(), end_row)
-                        {
-                            let contains_non_empty_selection =
-                                active_rows.entry(row).or_insert(!is_empty);
-                            *contains_non_empty_selection |= !is_empty;
-                        }
-                    }
-                }
 
-                selections.insert(selection_set_id.replica_id, replica_selections);
-            }
+            // TODO: Get this working with editors owning their own selections
+
+            // for selection_set_id in view.active_selection_sets(cx).collect::<Vec<_>>() {
+            //     let replica_selections = view.intersecting_selections(
+            //         selection_set_id,
+            //         DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
+            //         cx,
+            //     );
+            //     for selection in &replica_selections {
+            //         if selection_set_id == view.selection_set_id {
+            //             let is_empty = selection.start == selection.end;
+            //             let selection_start = snapshot.prev_row_boundary(selection.start).0;
+            //             let selection_end = snapshot.next_row_boundary(selection.end).0;
+            //             for row in cmp::max(selection_start.row(), start_row)
+            //                 ..=cmp::min(selection_end.row(), end_row)
+            //             {
+            //                 let contains_non_empty_selection =
+            //                     active_rows.entry(row).or_insert(!is_empty);
+            //                 *contains_non_empty_selection |= !is_empty;
+            //             }
+            //         }
+            //     }
+
+            //     selections.insert(selection_set_id.replica_id, replica_selections);
+            // }
         });
 
         let line_number_layouts = self.layout_rows(start_row..end_row, &active_rows, &snapshot, cx);

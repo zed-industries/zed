@@ -460,63 +460,41 @@ fn test_history() {
     let mut now = Instant::now();
     let mut buffer = Buffer::new(0, 0, History::new("123456".into()));
 
-    let set_id = if let Operation::UpdateSelections { set_id, .. } =
-        buffer.add_selection_set(&buffer.selections_from_ranges(vec![4..4]).unwrap())
-    {
-        set_id
-    } else {
-        unreachable!()
-    };
-    buffer.start_transaction_at(Some(set_id), now);
+    buffer.start_transaction_at(now);
     buffer.edit(vec![2..4], "cd");
-    buffer.end_transaction_at(Some(set_id), now);
+    buffer.end_transaction_at(now);
     assert_eq!(buffer.text(), "12cd56");
-    assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![4..4]);
 
-    buffer.start_transaction_at(Some(set_id), now);
-    buffer
-        .update_selection_set(set_id, &buffer.selections_from_ranges(vec![1..3]).unwrap())
-        .unwrap();
+    buffer.start_transaction_at(now);
     buffer.edit(vec![4..5], "e");
-    buffer.end_transaction_at(Some(set_id), now).unwrap();
+    buffer.end_transaction_at(now).unwrap();
     assert_eq!(buffer.text(), "12cde6");
-    assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![1..3]);
 
     now += buffer.history.group_interval + Duration::from_millis(1);
-    buffer.start_transaction_at(Some(set_id), now);
-    buffer
-        .update_selection_set(set_id, &buffer.selections_from_ranges(vec![2..2]).unwrap())
-        .unwrap();
+    buffer.start_transaction_at(now);
     buffer.edit(vec![0..1], "a");
     buffer.edit(vec![1..1], "b");
-    buffer.end_transaction_at(Some(set_id), now).unwrap();
+    buffer.end_transaction_at(now).unwrap();
     assert_eq!(buffer.text(), "ab2cde6");
-    assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![3..3]);
 
-    // Last transaction happened past the group interval, undo it on its
-    // own.
+    // Last transaction happened past the group interval, undo it on its own.
     buffer.undo();
     assert_eq!(buffer.text(), "12cde6");
-    assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![1..3]);
 
-    // First two transactions happened within the group interval, undo them
-    // together.
+    // First two transactions happened within the group interval, undo them together.
     buffer.undo();
     assert_eq!(buffer.text(), "123456");
-    assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![4..4]);
 
     // Redo the first two transactions together.
     buffer.redo();
     assert_eq!(buffer.text(), "12cde6");
-    assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![1..3]);
 
     // Redo the last transaction on its own.
     buffer.redo();
     assert_eq!(buffer.text(), "ab2cde6");
-    assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![3..3]);
 
-    buffer.start_transaction_at(None, now);
-    assert!(buffer.end_transaction_at(None, now).is_none());
+    buffer.start_transaction_at(now);
+    assert!(buffer.end_transaction_at(now).is_none());
     buffer.undo();
     assert_eq!(buffer.text(), "12cde6");
 }
@@ -582,8 +560,8 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
         let buffer = &mut buffers[replica_index];
         match rng.gen_range(0..=100) {
             0..=50 if mutation_count != 0 => {
-                let ops = buffer.randomly_mutate(&mut rng);
-                network.broadcast(buffer.replica_id, ops);
+                let op = buffer.randomly_edit(&mut rng, 5).2;
+                network.broadcast(buffer.replica_id, vec!(op));
                 log::info!("buffer {} text: {:?}", buffer.replica_id, buffer.text());
                 mutation_count -= 1;
             }
@@ -619,18 +597,6 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
             first_buffer.text(),
             "Replica {} text != Replica 0 text",
             buffer.replica_id
-        );
-        assert_eq!(
-            buffer.selection_sets().collect::<HashMap<_, _>>(),
-            first_buffer.selection_sets().collect::<HashMap<_, _>>()
-        );
-        assert_eq!(
-            buffer
-                .all_selection_ranges::<usize>()
-                .collect::<HashMap<_, _>>(),
-            first_buffer
-                .all_selection_ranges::<usize>()
-                .collect::<HashMap<_, _>>()
         );
         buffer.check_invariants();
     }

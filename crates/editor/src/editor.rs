@@ -23,11 +23,11 @@ use gpui::{
 use items::BufferItemHandle;
 use language::{
     BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point, Selection, SelectionGoal,
-    SelectionSetId,
+    SelectionSetId, TransactionId,
 };
 pub use multi_buffer::MultiBuffer;
 use multi_buffer::{
-    Anchor, AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, SelectionSet, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, ToOffset, ToPoint,
 };
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -36,7 +36,8 @@ use std::{
     cell::RefCell,
     cmp,
     collections::HashMap,
-    iter, mem,
+    iter::{self, FromIterator},
+    mem,
     ops::{Deref, Range, RangeInclusive, Sub},
     rc::Rc,
     sync::Arc,
@@ -359,12 +360,14 @@ pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<MultiBuffer>,
     display_map: ModelHandle<DisplayMap>,
-    selection_set_id: SelectionSetId,
+    next_selection_id: usize,
+    selections: Arc<[Selection<Anchor>]>,
     pending_selection: Option<PendingSelection>,
     columnar_selection_tail: Option<Anchor>,
-    next_selection_id: usize,
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
+    selection_history:
+        HashMap<TransactionId, (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)>,
     autoclose_stack: Vec<BracketPairState>,
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
@@ -487,28 +490,27 @@ impl Editor {
             .detach();
 
         let mut next_selection_id = 0;
-        let selection_set_id = buffer.update(cx, |buffer, cx| {
-            buffer.add_selection_set(
-                &[Selection {
-                    id: post_inc(&mut next_selection_id),
-                    start: 0,
-                    end: 0,
-                    reversed: false,
-                    goal: SelectionGoal::None,
-                }],
-                cx,
-            )
-        });
+        let selections = Arc::from(
+            &[Selection {
+                id: post_inc(&mut next_selection_id),
+                start: Anchor::min(),
+                end: Anchor::min(),
+                reversed: false,
+                goal: SelectionGoal::None,
+            }][..],
+        );
+
         Self {
             handle: cx.weak_handle(),
             buffer,
             display_map,
-            selection_set_id,
+            selections,
             pending_selection: None,
             columnar_selection_tail: None,
             next_selection_id,
             add_selections_state: None,
             select_next_state: None,
+            selection_history: Default::default(),
             autoclose_stack: Default::default(),
             select_larger_syntax_node_stack: Vec::new(),
             active_diagnostics: None,
@@ -636,7 +638,7 @@ impl Editor {
         let first_cursor_top;
         let last_cursor_bottom;
         if autoscroll == Autoscroll::Newest {
-            let newest_selection = self.newest_selection::<Point>(cx);
+            let newest_selection = self.newest_selection::<Point>(&display_map.buffer_snapshot, cx);
             first_cursor_top = newest_selection.head().to_display_point(&display_map).row() as f32;
             last_cursor_bottom = first_cursor_top + 1.;
         } else {
@@ -769,7 +771,9 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let tail = self.newest_selection::<usize>(cx).tail();
+        let tail = self
+            .newest_selection::<usize>(&display_map.buffer_snapshot, cx)
+            .tail();
         self.begin_selection(position, false, click_count, cx);
 
         let position = position.to_offset(&display_map, Bias::Left);
@@ -851,7 +855,7 @@ impl Editor {
             self.update_selections::<usize>(Vec::new(), None, cx);
         } else if click_count > 1 {
             // Remove the newest selection since it was only added as part of this multi-click.
-            let newest_selection = self.newest_selection::<usize>(cx);
+            let newest_selection = self.newest_selection::<usize>(buffer, cx);
             let mut selections = self.selections(cx);
             selections.retain(|selection| selection.id != newest_selection.id);
             self.update_selections::<usize>(selections, None, cx)
@@ -874,7 +878,9 @@ impl Editor {
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let tail = self.newest_selection::<Point>(cx).tail();
+        let tail = self
+            .newest_selection::<Point>(&display_map.buffer_snapshot, cx)
+            .tail();
         self.columnar_selection_tail = Some(display_map.buffer_snapshot.anchor_before(tail));
 
         self.select_columns(
@@ -2812,7 +2818,7 @@ impl Editor {
 
     pub fn show_next_diagnostic(&mut self, _: &ShowNextDiagnostic, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let selection = self.newest_selection::<usize>(cx);
+        let selection = self.newest_selection::<usize>(&buffer, cx);
         let active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
             active_diagnostics
                 .primary_range
@@ -2992,120 +2998,119 @@ impl Editor {
         }
     }
 
-    pub fn active_selection_sets<'a>(
-        &'a self,
-        cx: &'a AppContext,
-    ) -> impl 'a + Iterator<Item = SelectionSetId> {
-        let buffer = self.buffer.read(cx);
-        let replica_id = buffer.replica_id();
-        buffer
-            .selection_sets(cx)
-            .filter(move |(set_id, set)| {
-                set.active && (set_id.replica_id != replica_id || **set_id == self.selection_set_id)
-            })
-            .map(|(set_id, _)| *set_id)
-    }
-
     pub fn intersecting_selections<'a>(
         &'a self,
         set_id: SelectionSetId,
         range: Range<DisplayPoint>,
         cx: &'a mut MutableAppContext,
     ) -> Vec<Selection<DisplayPoint>> {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx);
+        todo!()
+        // let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        // let buffer = self.buffer.read(cx);
 
-        let pending_selection = if set_id == self.selection_set_id {
-            self.pending_selection.as_ref().and_then(|pending| {
-                let selection_start = pending.selection.start.to_display_point(&display_map);
-                let selection_end = pending.selection.end.to_display_point(&display_map);
-                if selection_start <= range.end || selection_end <= range.end {
-                    Some(Selection {
-                        id: pending.selection.id,
-                        start: selection_start,
-                        end: selection_end,
-                        reversed: pending.selection.reversed,
-                        goal: pending.selection.goal,
-                    })
-                } else {
-                    None
-                }
-            })
-        } else {
-            None
-        };
+        // let pending_selection = if set_id == self.selection_set_id {
+        //     self.pending_selection.as_ref().and_then(|pending| {
+        //         let selection_start = pending.selection.start.to_display_point(&display_map);
+        //         let selection_end = pending.selection.end.to_display_point(&display_map);
+        //         if selection_start <= range.end || selection_end <= range.end {
+        //             Some(Selection {
+        //                 id: pending.selection.id,
+        //                 start: selection_start,
+        //                 end: selection_end,
+        //                 reversed: pending.selection.reversed,
+        //                 goal: pending.selection.goal,
+        //             })
+        //         } else {
+        //             None
+        //         }
+        //     })
+        // } else {
+        //     None
+        // };
 
-        let range = (range.start.to_offset(&display_map, Bias::Left), Bias::Left)
-            ..(range.end.to_offset(&display_map, Bias::Left), Bias::Right);
-        buffer
-            .selection_set(set_id, cx)
-            .unwrap()
-            .intersecting_selections::<Point, _>(range, &buffer.read(cx))
-            .map(move |s| Selection {
-                id: s.id,
-                start: s.start.to_display_point(&display_map),
-                end: s.end.to_display_point(&display_map),
-                reversed: s.reversed,
-                goal: s.goal,
-            })
-            .chain(pending_selection)
-            .collect()
+        // let range = (range.start.to_offset(&display_map, Bias::Left), Bias::Left)
+        //     ..(range.end.to_offset(&display_map, Bias::Left), Bias::Right);
+        // buffer
+        //     .selection_set(set_id, cx)
+        //     .unwrap()
+        //     .intersecting_selections::<Point, _>(range, &buffer.read(cx))
+        //     .map(move |s| Selection {
+        //         id: s.id,
+        //         start: s.start.to_display_point(&display_map),
+        //         end: s.end.to_display_point(&display_map),
+        //         reversed: s.reversed,
+        //         goal: s.goal,
+        //     })
+        //     .chain(pending_selection)
+        //     .collect()
     }
 
     pub fn selections<'a, D>(&self, cx: &'a AppContext) -> Vec<Selection<D>>
     where
         D: 'a + TextDimension + Ord + Sub<D, Output = D>,
     {
-        let buffer = self.buffer.read(cx).snapshot(cx);
-        let mut selections = self.selection_set(cx).selections::<D>(&buffer).peekable();
-        let mut pending_selection = self.pending_selection(cx);
+        // let buffer = self.buffer.read(cx).snapshot(cx);
+        // let mut selections = self.selection_set(cx).selections::<D>(&buffer).peekable();
+        // let mut pending_selection = self.pending_selection(cx);
 
-        iter::from_fn(move || {
-            if let Some(pending) = pending_selection.as_mut() {
-                while let Some(next_selection) = selections.peek() {
-                    if pending.start <= next_selection.end && pending.end >= next_selection.start {
-                        let next_selection = selections.next().unwrap();
-                        if next_selection.start < pending.start {
-                            pending.start = next_selection.start;
-                        }
-                        if next_selection.end > pending.end {
-                            pending.end = next_selection.end;
-                        }
-                    } else if next_selection.end < pending.start {
-                        return selections.next();
-                    } else {
-                        break;
-                    }
-                }
+        // iter::from_fn(move || {
+        //     if let Some(pending) = pending_selection.as_mut() {
+        //         while let Some(next_selection) = selections.peek() {
+        //             if pending.start <= next_selection.end && pending.end >= next_selection.start {
+        //                 let next_selection = selections.next().unwrap();
+        //                 if next_selection.start < pending.start {
+        //                     pending.start = next_selection.start;
+        //                 }
+        //                 if next_selection.end > pending.end {
+        //                     pending.end = next_selection.end;
+        //                 }
+        //             } else if next_selection.end < pending.start {
+        //                 return selections.next();
+        //             } else {
+        //                 break;
+        //             }
+        //         }
 
-                pending_selection.take()
-            } else {
-                selections.next()
-            }
-        })
-        .collect()
+        //         pending_selection.take()
+        //     } else {
+        //         selections.next()
+        //     }
+        // })
+        // .collect()
+        todo!()
     }
 
     fn pending_selection<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
+        snapshot: &MultiBufferSnapshot,
         cx: &AppContext,
     ) -> Option<Selection<D>> {
-        let buffer = self.buffer.read(cx).read(cx);
-        self.pending_selection.as_ref().map(|pending| Selection {
-            id: pending.selection.id,
-            start: pending.selection.start.summary::<D>(&buffer),
-            end: pending.selection.end.summary::<D>(&buffer),
-            reversed: pending.selection.reversed,
-            goal: pending.selection.goal,
-        })
+        self.pending_selection
+            .as_ref()
+            .map(|pending| self.resolve_selection(&pending.selection, &snapshot, cx))
+    }
+
+    fn resolve_selection<D: TextDimension + Ord + Sub<D, Output = D>>(
+        &self,
+        selection: &Selection<Anchor>,
+        buffer: &MultiBufferSnapshot,
+        cx: &AppContext,
+    ) -> Selection<D> {
+        Selection {
+            id: selection.id,
+            start: selection.start.summary::<D>(&buffer),
+            end: selection.end.summary::<D>(&buffer),
+            reversed: selection.reversed,
+            goal: selection.goal,
+        }
     }
 
     fn selection_count<'a>(&self, cx: &'a AppContext) -> usize {
-        let mut selection_count = self.selection_set(cx).len();
+        let mut count = self.selections.len();
         if self.pending_selection.is_some() {
-            selection_count += 1;
+            count += 1;
         }
-        selection_count
+        count
     }
 
     pub fn oldest_selection<D: TextDimension + Ord + Sub<D, Output = D>>(
@@ -3113,28 +3118,26 @@ impl Editor {
         snapshot: &MultiBufferSnapshot,
         cx: &AppContext,
     ) -> Selection<D> {
-        self.selection_set(cx)
-            .oldest_selection(snapshot)
-            .or_else(|| self.pending_selection(cx))
+        self.selections
+            .iter()
+            .min_by_key(|s| s.id)
+            .map(|selection| self.resolve_selection(selection, snapshot, cx))
+            .or_else(|| self.pending_selection(snapshot, cx))
             .unwrap()
     }
 
     pub fn newest_selection<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
+        snapshot: &MultiBufferSnapshot,
         cx: &AppContext,
     ) -> Selection<D> {
-        self.pending_selection(cx)
+        self.pending_selection(snapshot, cx)
             .or_else(|| {
-                self.selection_set(cx)
-                    .newest_selection(&self.buffer.read(cx).read(cx))
+                self.selections
+                    .iter()
+                    .min_by_key(|s| s.id)
+                    .map(|selection| self.resolve_selection(selection, snapshot, cx))
             })
-            .unwrap()
-    }
-
-    fn selection_set<'a>(&self, cx: &'a AppContext) -> &'a SelectionSet {
-        self.buffer
-            .read(cx)
-            .selection_set(self.selection_set_id, cx)
             .unwrap()
     }
 
@@ -3193,11 +3196,13 @@ impl Editor {
         }
         self.pause_cursor_blinking(cx);
 
-        self.buffer.update(cx, |buffer, cx| {
-            buffer
-                .update_selection_set(self.selection_set_id, &selections, cx)
-                .unwrap();
-        });
+        self.selections = Arc::from_iter(selections.into_iter().map(|selection| Selection {
+            id: selection.id,
+            start: buffer.anchor_before(selection.start),
+            end: buffer.anchor_before(selection.end),
+            reversed: selection.reversed,
+            goal: selection.goal,
+        }));
     }
 
     fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
@@ -3208,13 +3213,13 @@ impl Editor {
     fn start_transaction(&mut self, cx: &mut ViewContext<Self>) {
         self.end_selection(cx);
         self.buffer.update(cx, |buffer, cx| {
-            buffer.start_transaction([self.selection_set_id], cx);
+            buffer.start_transaction(cx);
         });
     }
 
     fn end_transaction(&self, cx: &mut ViewContext<Self>) {
         self.buffer.update(cx, |buffer, cx| {
-            buffer.end_transaction([self.selection_set_id], cx);
+            buffer.end_transaction(cx);
         });
     }
 
@@ -3549,14 +3554,6 @@ pub enum Event {
 
 impl Entity for Editor {
     type Event = Event;
-
-    fn release(&mut self, cx: &mut MutableAppContext) {
-        self.buffer.update(cx, |buffer, cx| {
-            buffer
-                .remove_selection_set(self.selection_set_id, cx)
-                .unwrap();
-        });
-    }
 }
 
 impl View for Editor {
@@ -3579,19 +3576,11 @@ impl View for Editor {
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
         self.focused = true;
         self.blink_cursors(self.blink_epoch, cx);
-        self.buffer.update(cx, |buffer, cx| {
-            buffer
-                .set_active_selection_set(Some(self.selection_set_id), cx)
-                .unwrap();
-        });
     }
 
     fn on_blur(&mut self, cx: &mut ViewContext<Self>) {
         self.focused = false;
         self.show_local_cursors = false;
-        self.buffer.update(cx, |buffer, cx| {
-            buffer.set_active_selection_set(None, cx).unwrap();
-        });
         cx.emit(Event::Blurred);
         cx.notify();
     }
@@ -3710,6 +3699,8 @@ pub fn diagnostic_style(
 
 #[cfg(test)]
 mod tests {
+    use std::mem;
+
     use super::*;
     use language::LanguageConfig;
     use text::Point;
@@ -5670,20 +5661,18 @@ mod tests {
 
     impl Editor {
         fn selection_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
-            self.intersecting_selections(
-                self.selection_set_id,
-                DisplayPoint::zero()..self.max_point(cx),
-                cx,
-            )
-            .into_iter()
-            .map(|s| {
-                if s.reversed {
-                    s.end..s.start
-                } else {
-                    s.start..s.end
-                }
-            })
-            .collect()
+            let snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+            self.selections
+                .iter()
+                .map(|s| {
+                    let mut range =
+                        s.start.to_display_point(&snapshot)..s.end.to_display_point(&snapshot);
+                    if s.reversed {
+                        mem::swap(&mut range.start, &mut range.end);
+                    }
+                    range
+                })
+                .collect()
         }
     }
 

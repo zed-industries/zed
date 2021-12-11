@@ -1045,13 +1045,14 @@ mod tests {
             .await
             .unwrap();
 
-        // Create a selection set as client B and see that selection set as client A.
         let editor_b = cx_b.add_view(window_b, |cx| {
             Editor::for_buffer(buffer_b, |cx| EditorSettings::test(cx), cx)
         });
-        buffer_a
-            .condition(&cx_a, |buffer, _| buffer.selection_sets().count() == 1)
-            .await;
+        // TODO
+        // // Create a selection set as client B and see that selection set as client A.
+        // buffer_a
+        //     .condition(&cx_a, |buffer, _| buffer.selection_sets().count() == 1)
+        //     .await;
 
         // Edit the buffer as client B and see that edit as client A.
         editor_b.update(&mut cx_b, |editor, cx| {
@@ -1061,11 +1062,12 @@ mod tests {
             .condition(&cx_a, |buffer, _| buffer.text() == "ok, b-contents")
             .await;
 
-        // Remove the selection set as client B, see those selections disappear as client A.
-        cx_b.update(move |_| drop(editor_b));
-        buffer_a
-            .condition(&cx_a, |buffer, _| buffer.selection_sets().count() == 0)
-            .await;
+        // TODO
+        // // Remove the selection set as client B, see those selections disappear as client A.
+        // cx_b.update(move |_| drop(editor_b));
+        // buffer_a
+        //     .condition(&cx_a, |buffer, _| buffer.selection_sets().count() == 0)
+        //     .await;
 
         // Close the buffer as client A, see that the buffer is closed.
         cx_a.update(move |_| drop(buffer_a));

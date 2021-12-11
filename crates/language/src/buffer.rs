@@ -178,7 +178,6 @@ struct SyntaxTree {
 
 #[derive(Clone)]
 struct AutoindentRequest {
-    selection_set_ids: HashSet<SelectionSetId>,
     before_edit: BufferSnapshot,
     edited: Vec<Anchor>,
     inserted: Option<Vec<Range<Anchor>>>,
@@ -277,10 +276,6 @@ impl Buffer {
             .into_iter()
             .map(|op| text::Operation::Edit(proto::deserialize_edit_operation(op)));
         buffer.apply_ops(ops)?;
-        for set in message.selections {
-            let set = proto::deserialize_selection_set(set);
-            buffer.add_raw_selection_set(set.id, set);
-        }
         let mut this = Self::build(buffer, file);
         this.apply_diagnostic_update(
             Arc::from(proto::deserialize_diagnostics(message.diagnostics)),
@@ -299,10 +294,7 @@ impl Buffer {
                 .history()
                 .map(proto::serialize_edit_operation)
                 .collect(),
-            selections: self
-                .selection_sets()
-                .map(|(_, set)| proto::serialize_selection_set(set))
-                .collect(),
+            selections: Vec::new(),
             diagnostics: proto::serialize_diagnostics(self.diagnostics.iter()),
         }
     }
@@ -971,49 +963,11 @@ impl Buffer {
         indent_columns: BTreeMap<u32, u32>,
         cx: &mut ModelContext<Self>,
     ) {
-        let selection_set_ids = self
-            .autoindent_requests
-            .drain(..)
-            .flat_map(|req| req.selection_set_ids.clone())
-            .collect::<HashSet<_>>();
-
-        self.start_transaction(selection_set_ids.iter().copied());
+        self.start_transaction();
         for (row, indent_column) in &indent_columns {
             self.set_indent_column_for_line(*row, *indent_column, cx);
         }
-
-        for selection_set_id in &selection_set_ids {
-            if let Ok(set) = self.selection_set(*selection_set_id) {
-                let new_selections = set
-                    .selections::<Point>(&*self)
-                    .map(|selection| {
-                        if selection.start.column == 0 {
-                            let delta = Point::new(
-                                0,
-                                indent_columns
-                                    .get(&selection.start.row)
-                                    .copied()
-                                    .unwrap_or(0),
-                            );
-                            if delta.column > 0 {
-                                return Selection {
-                                    id: selection.id,
-                                    goal: selection.goal,
-                                    reversed: selection.reversed,
-                                    start: selection.start + delta,
-                                    end: selection.end + delta,
-                                };
-                            }
-                        }
-                        selection
-                    })
-                    .collect::<Vec<_>>();
-                self.update_selection_set(*selection_set_id, &new_selections, cx)
-                    .unwrap();
-            }
-        }
-
-        self.end_transaction(selection_set_ids.iter().copied(), cx);
+        self.end_transaction(cx);
     }
 
     fn set_indent_column_for_line(&mut self, row: u32, column: u32, cx: &mut ModelContext<Self>) {
@@ -1053,7 +1007,7 @@ impl Buffer {
 
     pub(crate) fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> bool {
         if self.version == diff.base_version {
-            self.start_transaction(None);
+            self.start_transaction();
             let mut offset = 0;
             for (tag, len) in diff.changes {
                 let range = offset..(offset + len);
@@ -1066,7 +1020,7 @@ impl Buffer {
                     }
                 }
             }
-            self.end_transaction(None, cx);
+            self.end_transaction(cx);
             true
         } else {
             false
@@ -1090,38 +1044,24 @@ impl Buffer {
         self.text.subscribe()
     }
 
-    pub fn start_transaction(
-        &mut self,
-        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
-    ) -> Option<TransactionId> {
-        self.start_transaction_at(selection_set_ids, Instant::now())
+    pub fn start_transaction(&mut self) -> Option<TransactionId> {
+        self.start_transaction_at(Instant::now())
     }
 
-    pub(crate) fn start_transaction_at(
-        &mut self,
-        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
-        now: Instant,
-    ) -> Option<TransactionId> {
-        self.text.start_transaction_at(selection_set_ids, now)
+    pub(crate) fn start_transaction_at(&mut self, now: Instant) -> Option<TransactionId> {
+        self.text.start_transaction_at(now)
     }
 
-    pub fn end_transaction(
-        &mut self,
-        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<TransactionId> {
-        self.end_transaction_at(selection_set_ids, Instant::now(), cx)
+    pub fn end_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
+        self.end_transaction_at(Instant::now(), cx)
     }
 
     pub(crate) fn end_transaction_at(
         &mut self,
-        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
         now: Instant,
         cx: &mut ModelContext<Self>,
     ) -> Option<TransactionId> {
-        if let Some((transaction_id, start_version)) =
-            self.text.end_transaction_at(selection_set_ids, now)
-        {
+        if let Some((transaction_id, start_version)) = self.text.end_transaction_at(now) {
             let was_dirty = start_version != self.saved_version;
             self.did_edit(&start_version, was_dirty, cx);
             Some(transaction_id)
@@ -1212,7 +1152,7 @@ impl Buffer {
             return;
         }
 
-        self.start_transaction(None);
+        self.start_transaction();
         self.pending_autoindent.take();
         let autoindent_request = if autoindent && self.language.is_some() {
             let before_edit = self.snapshot();
@@ -1256,21 +1196,14 @@ impl Buffer {
                 );
             }
 
-            let selection_set_ids = self
-                .text
-                .peek_undo_stack()
-                .unwrap()
-                .starting_selection_set_ids()
-                .collect();
             self.autoindent_requests.push(Arc::new(AutoindentRequest {
-                selection_set_ids,
                 before_edit,
                 edited,
                 inserted,
             }));
         }
 
-        self.end_transaction(None, cx);
+        self.end_transaction(cx);
         self.send_operation(Operation::Buffer(text::Operation::Edit(edit)), cx);
     }
 
@@ -1296,55 +1229,6 @@ impl Buffer {
 
     fn grammar(&self) -> Option<&Arc<Grammar>> {
         self.language.as_ref().and_then(|l| l.grammar.as_ref())
-    }
-
-    pub fn add_selection_set<T: ToOffset>(
-        &mut self,
-        selections: &[Selection<T>],
-        cx: &mut ModelContext<Self>,
-    ) -> SelectionSetId {
-        let operation = self.text.add_selection_set(selections);
-        if let text::Operation::UpdateSelections { set_id, .. } = &operation {
-            let set_id = *set_id;
-            cx.notify();
-            self.send_operation(Operation::Buffer(operation), cx);
-            set_id
-        } else {
-            unreachable!()
-        }
-    }
-
-    pub fn update_selection_set<T: ToOffset>(
-        &mut self,
-        set_id: SelectionSetId,
-        selections: &[Selection<T>],
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
-        let operation = self.text.update_selection_set(set_id, selections)?;
-        cx.notify();
-        self.send_operation(Operation::Buffer(operation), cx);
-        Ok(())
-    }
-
-    pub fn set_active_selection_set(
-        &mut self,
-        set_id: Option<SelectionSetId>,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
-        let operation = self.text.set_active_selection_set(set_id)?;
-        self.send_operation(Operation::Buffer(operation), cx);
-        Ok(())
-    }
-
-    pub fn remove_selection_set(
-        &mut self,
-        set_id: SelectionSetId,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
-        let operation = self.text.remove_selection_set(set_id)?;
-        cx.notify();
-        self.send_operation(Operation::Buffer(operation), cx);
-        Ok(())
     }
 
     pub fn apply_ops<I: IntoIterator<Item = Operation>>(
@@ -1447,10 +1331,8 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
-        if let Some((transaction_id, operations)) = self.text.undo() {
-            for operation in operations {
-                self.send_operation(Operation::Buffer(operation), cx);
-            }
+        if let Some((transaction_id, operation)) = self.text.undo() {
+            self.send_operation(Operation::Buffer(operation), cx);
             self.did_edit(&old_version, was_dirty, cx);
             Some(transaction_id)
         } else {
@@ -1462,10 +1344,8 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
-        if let Some((transaction_id, operations)) = self.text.redo() {
-            for operation in operations {
-                self.send_operation(Operation::Buffer(operation), cx);
-            }
+        if let Some((transaction_id, operation)) = self.text.redo() {
+            self.send_operation(Operation::Buffer(operation), cx);
             self.did_edit(&old_version, was_dirty, cx);
             Some(transaction_id)
         } else {
@@ -1484,18 +1364,9 @@ impl Buffer {
     ) where
         T: rand::Rng,
     {
-        self.start_transaction(None);
+        self.start_transaction();
         self.text.randomly_edit(rng, old_range_count);
-        self.end_transaction(None, cx);
-    }
-
-    pub fn randomly_mutate<T>(&mut self, rng: &mut T, cx: &mut ModelContext<Self>)
-    where
-        T: rand::Rng,
-    {
-        self.start_transaction(None);
-        self.text.randomly_mutate(rng);
-        self.end_transaction(None, cx);
+        self.end_transaction(cx);
     }
 }
 

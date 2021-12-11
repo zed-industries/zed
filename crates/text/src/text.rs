@@ -13,7 +13,7 @@ pub mod subscription;
 mod tests;
 
 pub use anchor::*;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use locator::Locator;
@@ -71,17 +71,11 @@ pub struct Transaction {
     end: clock::Global,
     edits: Vec<clock::Local>,
     ranges: Vec<Range<FullOffset>>,
-    selections_before: HashMap<SelectionSetId, Arc<[Selection<Anchor>]>>,
-    selections_after: HashMap<SelectionSetId, Arc<[Selection<Anchor>]>>,
     first_edit_at: Instant,
     last_edit_at: Instant,
 }
 
 impl Transaction {
-    pub fn starting_selection_set_ids<'a>(&'a self) -> impl Iterator<Item = SelectionSetId> + 'a {
-        self.selections_before.keys().copied()
-    }
-
     fn push_edit(&mut self, edit: &EditOperation) {
         self.edits.push(edit.timestamp.local());
         self.end.observe(edit.timestamp.local());
@@ -158,12 +152,7 @@ impl History {
         self.ops.insert(op.timestamp.local(), op);
     }
 
-    fn start_transaction(
-        &mut self,
-        start: clock::Global,
-        selections_before: HashMap<SelectionSetId, Arc<[Selection<Anchor>]>>,
-        now: Instant,
-    ) -> Option<TransactionId> {
+    fn start_transaction(&mut self, start: clock::Global, now: Instant) -> Option<TransactionId> {
         self.transaction_depth += 1;
         if self.transaction_depth == 1 {
             let id = self.next_transaction_id;
@@ -174,8 +163,6 @@ impl History {
                 end: start,
                 edits: Vec::new(),
                 ranges: Vec::new(),
-                selections_before,
-                selections_after: Default::default(),
                 first_edit_at: now,
                 last_edit_at: now,
             });
@@ -185,11 +172,7 @@ impl History {
         }
     }
 
-    fn end_transaction(
-        &mut self,
-        selections_after: HashMap<SelectionSetId, Arc<[Selection<Anchor>]>>,
-        now: Instant,
-    ) -> Option<&Transaction> {
+    fn end_transaction(&mut self, now: Instant) -> Option<&Transaction> {
         assert_ne!(self.transaction_depth, 0);
         self.transaction_depth -= 1;
         if self.transaction_depth == 0 {
@@ -198,7 +181,6 @@ impl History {
                 None
             } else {
                 let transaction = self.undo_stack.last_mut().unwrap();
-                transaction.selections_after = selections_after;
                 transaction.last_edit_at = now;
                 Some(transaction)
             }
@@ -234,9 +216,6 @@ impl History {
 
             if let Some(transaction) = transactions_to_merge.last_mut() {
                 last_transaction.last_edit_at = transaction.last_edit_at;
-                last_transaction
-                    .selections_after
-                    .extend(transaction.selections_after.drain());
                 last_transaction.end = transaction.end.clone();
             }
         }
@@ -558,7 +537,7 @@ impl Buffer {
             None
         };
 
-        self.start_transaction(None);
+        self.start_transaction();
         let timestamp = InsertionTimestamp {
             replica_id: self.replica_id,
             local: self.local_clock.tick().value,
@@ -570,7 +549,7 @@ impl Buffer {
         self.history.push_undo(edit.timestamp.local());
         self.last_edit = edit.timestamp.local();
         self.snapshot.version.observe(edit.timestamp.local());
-        self.end_transaction(None);
+        self.end_transaction();
         edit
     }
 
@@ -1149,56 +1128,20 @@ impl Buffer {
         self.history.undo_stack.last()
     }
 
-    pub fn start_transaction(
-        &mut self,
-        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
-    ) -> Option<TransactionId> {
-        self.start_transaction_at(selection_set_ids, Instant::now())
+    pub fn start_transaction(&mut self) -> Option<TransactionId> {
+        self.start_transaction_at(Instant::now())
     }
 
-    pub fn start_transaction_at(
-        &mut self,
-        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
-        now: Instant,
-    ) -> Option<TransactionId> {
-        let selections = selection_set_ids
-            .into_iter()
-            .map(|set_id| {
-                let set = self
-                    .selection_sets
-                    .get(&set_id)
-                    .expect("invalid selection set id");
-                (set_id, set.selections.clone())
-            })
-            .collect();
-        self.history
-            .start_transaction(self.version.clone(), selections, now)
+    pub fn start_transaction_at(&mut self, now: Instant) -> Option<TransactionId> {
+        self.history.start_transaction(self.version.clone(), now)
     }
 
-    pub fn end_transaction(
-        &mut self,
-        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
-    ) -> Option<(TransactionId, clock::Global)> {
-        self.end_transaction_at(selection_set_ids, Instant::now())
+    pub fn end_transaction(&mut self) -> Option<(TransactionId, clock::Global)> {
+        self.end_transaction_at(Instant::now())
     }
 
-    pub fn end_transaction_at(
-        &mut self,
-        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
-        now: Instant,
-    ) -> Option<(TransactionId, clock::Global)> {
-        let selections = selection_set_ids
-            .into_iter()
-            .map(|set_id| {
-                let set = self
-                    .selection_sets
-                    .get(&set_id)
-                    .expect("invalid selection set id");
-                (set_id, set.selections.clone())
-            })
-            .collect();
-
-        if let Some(transaction) = self.history.end_transaction(selections, now) {
+    pub fn end_transaction_at(&mut self, now: Instant) -> Option<(TransactionId, clock::Global)> {
+        if let Some(transaction) = self.history.end_transaction(now) {
             let id = transaction.id;
             let since = transaction.start.clone();
             self.history.group();
@@ -1221,31 +1164,21 @@ impl Buffer {
         self.history.ops.values()
     }
 
-    pub fn undo(&mut self) -> Option<(TransactionId, Vec<Operation>)> {
+    pub fn undo(&mut self) -> Option<(TransactionId, Operation)> {
         if let Some(transaction) = self.history.pop_undo().cloned() {
             let transaction_id = transaction.id;
-            let selections = transaction.selections_before.clone();
-            let mut ops = Vec::new();
-            ops.push(self.undo_or_redo(transaction).unwrap());
-            for (set_id, selections) in selections {
-                ops.extend(self.restore_selection_set(set_id, selections));
-            }
-            Some((transaction_id, ops))
+            let op = self.undo_or_redo(transaction).unwrap();
+            Some((transaction_id, op))
         } else {
             None
         }
     }
 
-    pub fn redo(&mut self) -> Option<(TransactionId, Vec<Operation>)> {
+    pub fn redo(&mut self) -> Option<(TransactionId, Operation)> {
         if let Some(transaction) = self.history.pop_redo().cloned() {
             let transaction_id = transaction.id;
-            let selections = transaction.selections_after.clone();
-            let mut ops = Vec::new();
-            ops.push(self.undo_or_redo(transaction).unwrap());
-            for (set_id, selections) in selections {
-                ops.extend(self.restore_selection_set(set_id, selections));
-            }
-            Some((transaction_id, ops))
+            let op = self.undo_or_redo(transaction).unwrap();
+            Some((transaction_id, op))
         } else {
             None
         }
@@ -1274,125 +1207,6 @@ impl Buffer {
 
     pub fn subscribe(&mut self) -> Subscription {
         self.subscriptions.subscribe()
-    }
-
-    pub fn selection_set(&self, set_id: SelectionSetId) -> Result<&SelectionSet> {
-        self.selection_sets
-            .get(&set_id)
-            .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))
-    }
-
-    pub fn selection_sets(&self) -> impl Iterator<Item = (&SelectionSetId, &SelectionSet)> {
-        self.selection_sets.iter()
-    }
-
-    fn build_anchor_selection_set<T: ToOffset>(
-        &self,
-        selections: &[Selection<T>],
-    ) -> Arc<[Selection<Anchor>]> {
-        Arc::from(
-            selections
-                .iter()
-                .map(|selection| Selection {
-                    id: selection.id,
-                    start: self.anchor_before(&selection.start),
-                    end: self.anchor_before(&selection.end),
-                    reversed: selection.reversed,
-                    goal: selection.goal,
-                })
-                .collect::<Vec<_>>(),
-        )
-    }
-
-    pub fn update_selection_set<T: ToOffset>(
-        &mut self,
-        set_id: SelectionSetId,
-        selections: &[Selection<T>],
-    ) -> Result<Operation> {
-        let selections = self.build_anchor_selection_set(selections);
-        let set = self
-            .selection_sets
-            .get_mut(&set_id)
-            .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
-        set.selections = selections.clone();
-        Ok(Operation::UpdateSelections {
-            set_id,
-            selections,
-            lamport_timestamp: self.lamport_clock.tick(),
-        })
-    }
-
-    pub fn restore_selection_set(
-        &mut self,
-        set_id: SelectionSetId,
-        selections: Arc<[Selection<Anchor>]>,
-    ) -> Result<Operation> {
-        let set = self
-            .selection_sets
-            .get_mut(&set_id)
-            .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
-        set.selections = selections.clone();
-        Ok(Operation::UpdateSelections {
-            set_id,
-            selections,
-            lamport_timestamp: self.lamport_clock.tick(),
-        })
-    }
-
-    pub fn add_selection_set<T: ToOffset>(&mut self, selections: &[Selection<T>]) -> Operation {
-        let selections = self.build_anchor_selection_set(selections);
-        let set_id = self.lamport_clock.tick();
-        self.selection_sets.insert(
-            set_id,
-            SelectionSet {
-                id: set_id,
-                selections: selections.clone(),
-                active: false,
-            },
-        );
-        Operation::UpdateSelections {
-            set_id,
-            selections,
-            lamport_timestamp: set_id,
-        }
-    }
-
-    pub fn add_raw_selection_set(&mut self, id: SelectionSetId, selections: SelectionSet) {
-        self.selection_sets.insert(id, selections);
-    }
-
-    pub fn set_active_selection_set(
-        &mut self,
-        set_id: Option<SelectionSetId>,
-    ) -> Result<Operation> {
-        if let Some(set_id) = set_id {
-            assert_eq!(set_id.replica_id, self.replica_id());
-        }
-
-        for (id, set) in &mut self.selection_sets {
-            if id.replica_id == self.local_clock.replica_id {
-                if Some(*id) == set_id {
-                    set.active = true;
-                } else {
-                    set.active = false;
-                }
-            }
-        }
-
-        Ok(Operation::SetActiveSelections {
-            set_id,
-            lamport_timestamp: self.lamport_clock.tick(),
-        })
-    }
-
-    pub fn remove_selection_set(&mut self, set_id: SelectionSetId) -> Result<Operation> {
-        self.selection_sets
-            .remove(&set_id)
-            .ok_or_else(|| anyhow!("invalid selection set id {:?}", set_id))?;
-        Ok(Operation::RemoveSelections {
-            set_id,
-            lamport_timestamp: self.lamport_clock.tick(),
-        })
     }
 }
 
@@ -1434,42 +1248,6 @@ impl Buffer {
         (old_ranges, new_text, Operation::Edit(op))
     }
 
-    pub fn randomly_mutate<T>(&mut self, rng: &mut T) -> Vec<Operation>
-    where
-        T: rand::Rng,
-    {
-        use rand::prelude::*;
-
-        let mut ops = vec![self.randomly_edit(rng, 5).2];
-
-        // Randomly add, remove or mutate selection sets.
-        let replica_selection_sets = &self
-            .selection_sets()
-            .map(|(set_id, _)| *set_id)
-            .filter(|set_id| self.replica_id == set_id.replica_id)
-            .collect::<Vec<_>>();
-        let set_id = replica_selection_sets.choose(rng);
-        if set_id.is_some() && rng.gen_bool(1.0 / 6.0) {
-            ops.push(self.remove_selection_set(*set_id.unwrap()).unwrap());
-        } else {
-            let mut ranges = Vec::new();
-            for _ in 0..5 {
-                ranges.push(self.random_byte_range(0, rng));
-            }
-            let new_selections = self.selections_from_ranges(ranges).unwrap();
-
-            let op = if set_id.is_none() || rng.gen_bool(1.0 / 5.0) {
-                self.add_selection_set(&new_selections)
-            } else {
-                self.update_selection_set(*set_id.unwrap(), &new_selections)
-                    .unwrap()
-            };
-            ops.push(op);
-        }
-
-        ops
-    }
-
     pub fn randomly_undo_redo(&mut self, rng: &mut impl rand::Rng) -> Vec<Operation> {
         use rand::prelude::*;
 
@@ -1485,73 +1263,6 @@ impl Buffer {
             }
         }
         ops
-    }
-
-    fn selections_from_ranges<I>(&self, ranges: I) -> Result<Vec<Selection<usize>>>
-    where
-        I: IntoIterator<Item = Range<usize>>,
-    {
-        use std::sync::atomic::{self, AtomicUsize};
-
-        static NEXT_SELECTION_ID: AtomicUsize = AtomicUsize::new(0);
-
-        let mut ranges = ranges.into_iter().collect::<Vec<_>>();
-        ranges.sort_unstable_by_key(|range| range.start);
-
-        let mut selections = Vec::<Selection<usize>>::with_capacity(ranges.len());
-        for mut range in ranges {
-            let mut reversed = false;
-            if range.start > range.end {
-                reversed = true;
-                std::mem::swap(&mut range.start, &mut range.end);
-            }
-
-            if let Some(selection) = selections.last_mut() {
-                if selection.end >= range.start {
-                    selection.end = range.end;
-                    continue;
-                }
-            }
-
-            selections.push(Selection {
-                id: NEXT_SELECTION_ID.fetch_add(1, atomic::Ordering::SeqCst),
-                start: range.start,
-                end: range.end,
-                reversed,
-                goal: SelectionGoal::None,
-            });
-        }
-        Ok(selections)
-    }
-
-    #[cfg(test)]
-    pub fn selection_ranges<'a, D>(&'a self, set_id: SelectionSetId) -> Result<Vec<Range<D>>>
-    where
-        D: TextDimension,
-    {
-        Ok(self
-            .selection_set(set_id)?
-            .selections(self)
-            .map(move |selection| {
-                if selection.reversed {
-                    selection.end..selection.start
-                } else {
-                    selection.start..selection.end
-                }
-            })
-            .collect())
-    }
-
-    #[cfg(test)]
-    pub fn all_selection_ranges<'a, D>(
-        &'a self,
-    ) -> impl 'a + Iterator<Item = (SelectionSetId, Vec<Range<usize>>)>
-    where
-        D: TextDimension,
-    {
-        self.selection_sets
-            .keys()
-            .map(move |set_id| (*set_id, self.selection_ranges(*set_id).unwrap()))
     }
 }
 

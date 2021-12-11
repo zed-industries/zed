@@ -24,7 +24,7 @@ use text::{
     locator::Locator,
     rope::TextDimension,
     subscription::{Subscription, Topic},
-    AnchorRangeExt as _, Edit, Point, PointUtf16, Selection, SelectionSetId, TextSummary,
+    AnchorRangeExt as _, Edit, Point, PointUtf16, SelectionSetId, TextSummary,
 };
 use theme::SyntaxTheme;
 
@@ -113,7 +113,7 @@ impl MultiBuffer {
     pub fn singleton(buffer: ModelHandle<Buffer>, cx: &mut ModelContext<Self>) -> Self {
         let mut this = Self::new(buffer.read(cx).replica_id());
         this.singleton = true;
-        this.push(
+        this.push_excerpt(
             ExcerptProperties {
                 buffer: &buffer,
                 range: text::Anchor::min()..text::Anchor::max(),
@@ -202,26 +202,18 @@ impl MultiBuffer {
         });
     }
 
-    pub fn start_transaction(
-        &mut self,
-        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<TransactionId> {
+    pub fn start_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         // TODO
         self.as_singleton()
             .unwrap()
-            .update(cx, |buffer, _| buffer.start_transaction(selection_set_ids))
+            .update(cx, |buffer, _| buffer.start_transaction())
     }
 
-    pub fn end_transaction(
-        &mut self,
-        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<TransactionId> {
+    pub fn end_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         // TODO
-        self.as_singleton().unwrap().update(cx, |buffer, cx| {
-            buffer.end_transaction(selection_set_ids, cx)
-        })
+        self.as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| buffer.end_transaction(cx))
     }
 
     pub fn undo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
@@ -238,153 +230,11 @@ impl MultiBuffer {
             .update(cx, |buffer, cx| buffer.redo(cx))
     }
 
-    pub fn selection_set(&self, set_id: SelectionSetId, cx: &AppContext) -> Result<&SelectionSet> {
-        // TODO
-        let set = self
-            .as_singleton()
-            .unwrap()
-            .read(cx)
-            .selection_set(set_id)?;
-        let excerpt_id = self.snapshot.borrow().excerpts.first().unwrap().id.clone();
-
-        let selection_sets: &mut HashMap<SelectionSetId, SelectionSet> =
-            unsafe { &mut *(&self.selection_sets as *const _ as *mut _) };
-        selection_sets.insert(
-            set_id,
-            SelectionSet {
-                id: set.id,
-                active: set.active,
-                selections: set
-                    .selections
-                    .iter()
-                    .map(|selection| Selection {
-                        id: selection.id,
-                        start: Anchor {
-                            excerpt_id: excerpt_id.clone(),
-                            text_anchor: selection.start.clone(),
-                        },
-                        end: Anchor {
-                            excerpt_id: excerpt_id.clone(),
-                            text_anchor: selection.end.clone(),
-                        },
-                        reversed: selection.reversed,
-                        goal: selection.goal,
-                    })
-                    .collect(),
-            },
-        );
-        Ok(self.selection_sets.get(&set.id).unwrap())
-    }
-
-    pub fn add_selection_set<T: ToOffset>(
+    pub fn push_excerpt<O>(
         &mut self,
-        selections: &[Selection<T>],
+        props: ExcerptProperties<O>,
         cx: &mut ModelContext<Self>,
-    ) -> SelectionSetId {
-        // TODO
-        let snapshot = self.read(cx);
-        self.as_singleton().unwrap().update(cx, |buffer, cx| {
-            buffer.add_selection_set(
-                &selections
-                    .iter()
-                    .map(|selection| Selection {
-                        id: selection.id,
-                        start: selection.start.to_offset(&snapshot),
-                        end: selection.end.to_offset(&snapshot),
-                        reversed: selection.reversed,
-                        goal: selection.goal,
-                    })
-                    .collect::<Vec<_>>(),
-                cx,
-            )
-        })
-    }
-
-    pub fn remove_selection_set(
-        &mut self,
-        set_id: SelectionSetId,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
-        // TODO
-        self.as_singleton()
-            .unwrap()
-            .update(cx, |buffer, cx| buffer.remove_selection_set(set_id, cx))
-    }
-
-    pub fn update_selection_set<T: ToOffset>(
-        &mut self,
-        set_id: SelectionSetId,
-        selections: &[Selection<T>],
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
-        // TODO
-        let snapshot = self.read(cx);
-        self.as_singleton().unwrap().update(cx, |buffer, cx| {
-            buffer.update_selection_set(
-                set_id,
-                &selections
-                    .iter()
-                    .map(|selection| Selection {
-                        id: selection.id,
-                        start: selection.start.to_offset(&snapshot),
-                        end: selection.end.to_offset(&snapshot),
-                        reversed: selection.reversed,
-                        goal: selection.goal,
-                    })
-                    .collect::<Vec<_>>(),
-                cx,
-            )
-        })
-    }
-
-    pub fn set_active_selection_set(
-        &mut self,
-        set_id: Option<SelectionSetId>,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
-        self.as_singleton()
-            .unwrap()
-            .update(cx, |buffer, cx| buffer.set_active_selection_set(set_id, cx))
-    }
-
-    pub fn selection_sets(
-        &self,
-        cx: &AppContext,
-    ) -> impl Iterator<Item = (&SelectionSetId, &SelectionSet)> {
-        let excerpt_id = self.snapshot.borrow().excerpts.first().unwrap().id.clone();
-        let selection_sets: &mut HashMap<SelectionSetId, SelectionSet> =
-            unsafe { &mut *(&self.selection_sets as *const _ as *mut _) };
-        selection_sets.clear();
-        for (selection_set_id, set) in self.as_singleton().unwrap().read(cx).selection_sets() {
-            selection_sets.insert(
-                *selection_set_id,
-                SelectionSet {
-                    id: set.id,
-                    active: set.active,
-                    selections: set
-                        .selections
-                        .iter()
-                        .map(|selection| Selection {
-                            id: selection.id,
-                            start: Anchor {
-                                excerpt_id: excerpt_id.clone(),
-                                text_anchor: selection.start.clone(),
-                            },
-                            end: Anchor {
-                                excerpt_id: excerpt_id.clone(),
-                                text_anchor: selection.end.clone(),
-                            },
-                            reversed: selection.reversed,
-                            goal: selection.goal,
-                        })
-                        .collect(),
-                },
-            );
-        }
-        self.selection_sets.iter()
-    }
-
-    pub fn push<O>(&mut self, props: ExcerptProperties<O>, cx: &mut ModelContext<Self>) -> ExcerptId
+    ) -> ExcerptId
     where
         O: text::ToOffset,
     {
@@ -553,13 +403,6 @@ impl MultiBuffer {
         self.as_singleton()
             .unwrap()
             .update(cx, |buffer, cx| buffer.randomly_edit(rng, count, cx));
-        self.sync(cx);
-    }
-
-    pub fn randomly_mutate<R: rand::Rng>(&mut self, rng: &mut R, cx: &mut ModelContext<Self>) {
-        self.as_singleton()
-            .unwrap()
-            .update(cx, |buffer, cx| buffer.randomly_mutate(rng, cx));
         self.sync(cx);
     }
 }
@@ -1389,7 +1232,7 @@ mod tests {
 
         let subscription = multibuffer.update(cx, |multibuffer, cx| {
             let subscription = multibuffer.subscribe();
-            multibuffer.push(
+            multibuffer.push_excerpt(
                 ExcerptProperties {
                     buffer: &buffer_1,
                     range: Point::new(1, 2)..Point::new(2, 5),
@@ -1405,7 +1248,7 @@ mod tests {
                 }]
             );
 
-            multibuffer.push(
+            multibuffer.push_excerpt(
                 ExcerptProperties {
                     buffer: &buffer_1,
                     range: Point::new(3, 3)..Point::new(4, 4),
@@ -1413,7 +1256,7 @@ mod tests {
                 },
                 cx,
             );
-            multibuffer.push(
+            multibuffer.push_excerpt(
                 ExcerptProperties {
                     buffer: &buffer_2,
                     range: Point::new(3, 1)..Point::new(3, 3),
@@ -1529,7 +1372,7 @@ mod tests {
                     );
 
                     let excerpt_id = list.update(cx, |list, cx| {
-                        list.push(
+                        list.push_excerpt(
                             ExcerptProperties {
                                 buffer: &buffer_handle,
                                 range: start_ix..end_ix,

@@ -322,8 +322,10 @@ impl DiagnosticMessage {
 
     fn update(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
         let editor = editor.read(cx);
-        let cursor_position = editor.newest_selection::<usize>(cx).head();
         let buffer = editor.buffer().read(cx);
+        let cursor_position = editor
+            .newest_selection::<usize>(&buffer.read(cx), cx)
+            .head();
         let new_diagnostic = buffer
             .read(cx)
             .diagnostics_in_range::<_, usize>(cursor_position..cursor_position)
