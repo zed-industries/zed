@@ -41,13 +41,12 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                     .collect(),
                 version: From::from(&undo.version),
             }),
-            Operation::Buffer(text::Operation::UpdateSelections {
-                set_id,
+            Operation::UpdateSelections {
+                replica_id,
                 selections,
                 lamport_timestamp,
-            }) => proto::operation::Variant::UpdateSelections(proto::operation::UpdateSelections {
-                replica_id: set_id.replica_id as u32,
-                local_timestamp: set_id.value,
+            } => proto::operation::Variant::UpdateSelections(proto::operation::UpdateSelections {
+                replica_id: *replica_id as u32,
                 lamport_timestamp: lamport_timestamp.value,
                 selections: selections
                     .iter()
@@ -59,24 +58,13 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                     })
                     .collect(),
             }),
-            Operation::Buffer(text::Operation::RemoveSelections {
-                set_id,
+            Operation::RemoveSelections {
+                replica_id,
                 lamport_timestamp,
-            }) => proto::operation::Variant::RemoveSelections(proto::operation::RemoveSelections {
-                replica_id: set_id.replica_id as u32,
-                local_timestamp: set_id.value,
+            } => proto::operation::Variant::RemoveSelections(proto::operation::RemoveSelections {
+                replica_id: *replica_id as u32,
                 lamport_timestamp: lamport_timestamp.value,
             }),
-            Operation::Buffer(text::Operation::SetActiveSelections {
-                set_id,
-                lamport_timestamp,
-            }) => proto::operation::Variant::SetActiveSelections(
-                proto::operation::SetActiveSelections {
-                    replica_id: lamport_timestamp.replica_id as u32,
-                    local_timestamp: set_id.map(|set_id| set_id.value),
-                    lamport_timestamp: lamport_timestamp.value,
-                },
-            ),
             Operation::UpdateDiagnostics {
                 diagnostics,
                 lamport_timestamp,
@@ -108,22 +96,16 @@ pub fn serialize_edit_operation(operation: &EditOperation) -> proto::operation::
     }
 }
 
-pub fn serialize_selection_set(set: &SelectionSet) -> proto::SelectionSet {
-    proto::SelectionSet {
-        replica_id: set.id.replica_id as u32,
-        lamport_timestamp: set.id.value as u32,
-        is_active: set.active,
-        selections: set
-            .selections
-            .iter()
-            .map(|selection| proto::Selection {
-                id: selection.id as u64,
-                start: Some(serialize_anchor(&selection.start)),
-                end: Some(serialize_anchor(&selection.end)),
-                reversed: selection.reversed,
-            })
-            .collect(),
-    }
+pub fn serialize_selections(selections: &Arc<[Selection<Anchor>]>) -> Vec<proto::Selection> {
+    selections
+        .iter()
+        .map(|selection| proto::Selection {
+            id: selection.id as u64,
+            start: Some(serialize_anchor(&selection.start)),
+            end: Some(serialize_anchor(&selection.end)),
+            reversed: selection.reversed,
+        })
+        .collect()
 }
 
 pub fn serialize_diagnostics<'a>(
@@ -215,42 +197,22 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                     })
                     .collect::<Vec<_>>();
 
-                Operation::Buffer(text::Operation::UpdateSelections {
-                    set_id: clock::Lamport {
-                        replica_id: message.replica_id as ReplicaId,
-                        value: message.local_timestamp,
-                    },
+                Operation::UpdateSelections {
+                    replica_id: message.replica_id as ReplicaId,
                     lamport_timestamp: clock::Lamport {
                         replica_id: message.replica_id as ReplicaId,
                         value: message.lamport_timestamp,
                     },
                     selections: Arc::from(selections),
-                })
+                }
             }
-            proto::operation::Variant::RemoveSelections(message) => {
-                Operation::Buffer(text::Operation::RemoveSelections {
-                    set_id: clock::Lamport {
-                        replica_id: message.replica_id as ReplicaId,
-                        value: message.local_timestamp,
-                    },
-                    lamport_timestamp: clock::Lamport {
-                        replica_id: message.replica_id as ReplicaId,
-                        value: message.lamport_timestamp,
-                    },
-                })
-            }
-            proto::operation::Variant::SetActiveSelections(message) => {
-                Operation::Buffer(text::Operation::SetActiveSelections {
-                    set_id: message.local_timestamp.map(|value| clock::Lamport {
-                        replica_id: message.replica_id as ReplicaId,
-                        value,
-                    }),
-                    lamport_timestamp: clock::Lamport {
-                        replica_id: message.replica_id as ReplicaId,
-                        value: message.lamport_timestamp,
-                    },
-                })
-            }
+            proto::operation::Variant::RemoveSelections(message) => Operation::RemoveSelections {
+                replica_id: message.replica_id as ReplicaId,
+                lamport_timestamp: clock::Lamport {
+                    replica_id: message.replica_id as ReplicaId,
+                    value: message.lamport_timestamp,
+                },
+            },
             proto::operation::Variant::UpdateDiagnostics(message) => Operation::UpdateDiagnostics {
                 diagnostics: Arc::from(deserialize_diagnostics(message.diagnostics)),
                 lamport_timestamp: clock::Lamport {
@@ -280,28 +242,21 @@ pub fn deserialize_edit_operation(edit: proto::operation::Edit) -> EditOperation
     }
 }
 
-pub fn deserialize_selection_set(set: proto::SelectionSet) -> SelectionSet {
-    SelectionSet {
-        id: clock::Lamport {
-            replica_id: set.replica_id as u16,
-            value: set.lamport_timestamp,
-        },
-        active: set.is_active,
-        selections: Arc::from(
-            set.selections
-                .into_iter()
-                .filter_map(|selection| {
-                    Some(Selection {
-                        id: selection.id as usize,
-                        start: deserialize_anchor(selection.start?)?,
-                        end: deserialize_anchor(selection.end?)?,
-                        reversed: selection.reversed,
-                        goal: SelectionGoal::None,
-                    })
+pub fn deserialize_selections(selections: Vec<proto::Selection>) -> Arc<[Selection<Anchor>]> {
+    Arc::from(
+        selections
+            .into_iter()
+            .filter_map(|selection| {
+                Some(Selection {
+                    id: selection.id as usize,
+                    start: deserialize_anchor(selection.start?)?,
+                    end: deserialize_anchor(selection.end?)?,
+                    reversed: selection.reversed,
+                    goal: SelectionGoal::None,
                 })
-                .collect::<Vec<_>>(),
-        ),
-    }
+            })
+            .collect::<Vec<_>>(),
+    )
 }
 
 pub fn deserialize_diagnostics(

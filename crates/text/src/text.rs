@@ -44,7 +44,6 @@ pub struct Buffer {
     snapshot: BufferSnapshot,
     last_edit: clock::Local,
     history: History,
-    selection_sets: HashMap<SelectionSetId, SelectionSet>,
     deferred_ops: OperationQueue<Operation>,
     deferred_replicas: HashSet<ReplicaId>,
     replica_id: ReplicaId,
@@ -413,19 +412,6 @@ pub enum Operation {
         undo: UndoOperation,
         lamport_timestamp: clock::Lamport,
     },
-    UpdateSelections {
-        set_id: SelectionSetId,
-        selections: Arc<[Selection<Anchor>]>,
-        lamport_timestamp: clock::Lamport,
-    },
-    RemoveSelections {
-        set_id: SelectionSetId,
-        lamport_timestamp: clock::Lamport,
-    },
-    SetActiveSelections {
-        set_id: Option<SelectionSetId>,
-        lamport_timestamp: clock::Lamport,
-    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -487,7 +473,6 @@ impl Buffer {
             },
             last_edit: clock::Local::default(),
             history,
-            selection_sets: Default::default(),
             deferred_ops: OperationQueue::new(),
             deferred_replicas: HashSet::default(),
             replica_id,
@@ -512,6 +497,10 @@ impl Buffer {
 
     pub fn lamport_timestamp(&self) -> clock::Lamport {
         self.lamport_clock
+    }
+
+    pub fn observe_lamport_timestamp(&mut self, timestamp: clock::Lamport) {
+        self.lamport_clock.observe(timestamp);
     }
 
     pub fn remote_id(&self) -> u64 {
@@ -753,47 +742,6 @@ impl Buffer {
                     self.snapshot.version.observe(undo.id);
                     self.lamport_clock.observe(lamport_timestamp);
                 }
-            }
-            Operation::UpdateSelections {
-                set_id,
-                selections,
-                lamport_timestamp,
-            } => {
-                if let Some(set) = self.selection_sets.get_mut(&set_id) {
-                    set.selections = selections;
-                } else {
-                    self.selection_sets.insert(
-                        set_id,
-                        SelectionSet {
-                            id: set_id,
-                            selections,
-                            active: false,
-                        },
-                    );
-                }
-                self.lamport_clock.observe(lamport_timestamp);
-            }
-            Operation::RemoveSelections {
-                set_id,
-                lamport_timestamp,
-            } => {
-                self.selection_sets.remove(&set_id);
-                self.lamport_clock.observe(lamport_timestamp);
-            }
-            Operation::SetActiveSelections {
-                set_id,
-                lamport_timestamp,
-            } => {
-                for (id, set) in &mut self.selection_sets {
-                    if id.replica_id == lamport_timestamp.replica_id {
-                        if Some(*id) == set_id {
-                            set.active = true;
-                        } else {
-                            set.active = false;
-                        }
-                    }
-                }
-                self.lamport_clock.observe(lamport_timestamp);
             }
         }
         Ok(())
@@ -1107,13 +1055,6 @@ impl Buffer {
             match op {
                 Operation::Edit(edit) => self.version.ge(&edit.version),
                 Operation::Undo { undo, .. } => self.version.ge(&undo.version),
-                Operation::UpdateSelections { selections, .. } => selections
-                    .iter()
-                    .all(|s| self.can_resolve(&s.start) && self.can_resolve(&s.end)),
-                Operation::RemoveSelections { .. } => true,
-                Operation::SetActiveSelections { set_id, .. } => {
-                    set_id.map_or(true, |set_id| self.selection_sets.contains_key(&set_id))
-                }
             }
         }
     }
@@ -1149,11 +1090,6 @@ impl Buffer {
         } else {
             None
         }
-    }
-
-    pub fn remove_peer(&mut self, replica_id: ReplicaId) {
-        self.selection_sets
-            .retain(|set_id, _| set_id.replica_id != replica_id)
     }
 
     pub fn base_text(&self) -> &Arc<str> {
@@ -2005,15 +1941,6 @@ impl operation_queue::Operation for Operation {
         match self {
             Operation::Edit(edit) => edit.timestamp.lamport(),
             Operation::Undo {
-                lamport_timestamp, ..
-            } => *lamport_timestamp,
-            Operation::UpdateSelections {
-                lamport_timestamp, ..
-            } => *lamport_timestamp,
-            Operation::RemoveSelections {
-                lamport_timestamp, ..
-            } => *lamport_timestamp,
-            Operation::SetActiveSelections {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
         }

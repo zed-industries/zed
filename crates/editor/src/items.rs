@@ -249,7 +249,7 @@ impl CursorPosition {
 
         self.selected_count = 0;
         let mut last_selection: Option<Selection<usize>> = None;
-        for selection in editor.selections::<usize>(cx) {
+        for selection in editor.local_selections::<usize>(cx) {
             self.selected_count += selection.end - selection.start;
             if last_selection
                 .as_ref()
@@ -323,9 +323,7 @@ impl DiagnosticMessage {
     fn update(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
         let editor = editor.read(cx);
         let buffer = editor.buffer().read(cx);
-        let cursor_position = editor
-            .newest_selection::<usize>(&buffer.read(cx), cx)
-            .head();
+        let cursor_position = editor.newest_selection::<usize>(&buffer.read(cx)).head();
         let new_diagnostic = buffer
             .read(cx)
             .diagnostics_in_range::<_, usize>(cursor_position..cursor_position)

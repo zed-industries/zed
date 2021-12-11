@@ -30,7 +30,8 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     vec,
 };
-use text::operation_queue::OperationQueue;
+use sum_tree::TreeMap;
+use text::{operation_queue::OperationQueue, rope::TextDimension};
 pub use text::{Buffer as TextBuffer, Operation as _, *};
 use theme::SyntaxTheme;
 use tree_sitter::{InputEdit, Parser, QueryCursor, Tree};
@@ -64,6 +65,7 @@ pub struct Buffer {
     syntax_tree: Mutex<Option<SyntaxTree>>,
     parsing_in_background: bool,
     parse_count: usize,
+    remote_selections: TreeMap<ReplicaId, Arc<[Selection<Anchor>]>>,
     diagnostics: DiagnosticSet,
     diagnostics_update_count: usize,
     language_server: Option<LanguageServerState>,
@@ -76,6 +78,7 @@ pub struct BufferSnapshot {
     text: text::BufferSnapshot,
     tree: Option<Tree>,
     diagnostics: DiagnosticSet,
+    remote_selections: TreeMap<ReplicaId, Arc<[Selection<Anchor>]>>,
     diagnostics_update_count: usize,
     is_parsing: bool,
     language: Option<Arc<Language>>,
@@ -110,6 +113,15 @@ pub enum Operation {
     Buffer(text::Operation),
     UpdateDiagnostics {
         diagnostics: Arc<[DiagnosticEntry<Anchor>]>,
+        lamport_timestamp: clock::Lamport,
+    },
+    UpdateSelections {
+        replica_id: ReplicaId,
+        selections: Arc<[Selection<Anchor>]>,
+        lamport_timestamp: clock::Lamport,
+    },
+    RemoveSelections {
+        replica_id: ReplicaId,
         lamport_timestamp: clock::Lamport,
     },
 }
@@ -329,6 +341,7 @@ impl Buffer {
             autoindent_requests: Default::default(),
             pending_autoindent: Default::default(),
             language: None,
+            remote_selections: Default::default(),
             diagnostics: Default::default(),
             diagnostics_update_count: 0,
             language_server: None,
@@ -342,6 +355,7 @@ impl Buffer {
         BufferSnapshot {
             text: self.text.snapshot(),
             tree: self.syntax_tree(),
+            remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
             diagnostics_update_count: self.diagnostics_update_count,
             is_parsing: self.parsing_in_background,
@@ -1286,6 +1300,10 @@ impl Buffer {
                         && self.text.can_resolve(&diagnostic.range.end)
                 })
             }
+            Operation::UpdateSelections { selections, .. } => selections
+                .iter()
+                .all(|s| self.can_resolve(&s.start) && self.can_resolve(&s.end)),
+            Operation::RemoveSelections { .. } => true,
         }
     }
 
@@ -1296,6 +1314,21 @@ impl Buffer {
             }
             Operation::UpdateDiagnostics { diagnostics, .. } => {
                 self.apply_diagnostic_update(diagnostics, cx);
+            }
+            Operation::UpdateSelections {
+                replica_id,
+                selections,
+                lamport_timestamp,
+            } => {
+                self.remote_selections.insert(replica_id, selections);
+                self.text.observe_lamport_timestamp(lamport_timestamp);
+            }
+            Operation::RemoveSelections {
+                replica_id: set_id,
+                lamport_timestamp,
+            } => {
+                self.remote_selections.remove(&set_id);
+                self.text.observe_lamport_timestamp(lamport_timestamp);
             }
         }
     }
@@ -1323,7 +1356,7 @@ impl Buffer {
     }
 
     pub fn remove_peer(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Self>) {
-        self.text.remove_peer(replica_id);
+        self.remote_selections.remove(&replica_id);
         cx.notify();
     }
 
@@ -1615,6 +1648,43 @@ impl BufferSnapshot {
             .min_by_key(|(open_range, close_range)| close_range.end - open_range.start)
     }
 
+    pub fn remote_selections_in_range<'a, I, O>(
+        &'a self,
+        range: Range<I>,
+    ) -> impl 'a + Iterator<Item = (ReplicaId, impl 'a + Iterator<Item = Selection<O>>)>
+    where
+        I: ToOffset,
+        O: TextDimension,
+    {
+        let range = self.anchor_before(range.start)..self.anchor_after(range.end);
+        self.remote_selections
+            .iter()
+            .map(move |(replica_id, selections)| {
+                let start_ix = match selections
+                    .binary_search_by(|probe| probe.end.cmp(&range.start, self).unwrap())
+                {
+                    Ok(ix) | Err(ix) => ix,
+                };
+                let end_ix = match selections
+                    .binary_search_by(|probe| probe.start.cmp(&range.end, self).unwrap())
+                {
+                    Ok(ix) | Err(ix) => ix,
+                };
+
+                let selections = &selections[start_ix..end_ix];
+                let mut summaries =
+                    self.summaries_for_anchors(selections.iter().flat_map(|s| [&s.start, &s.end]));
+                let resolved = selections.iter().map(move |s| Selection {
+                    id: s.id,
+                    start: summaries.next().unwrap(),
+                    end: summaries.next().unwrap(),
+                    reversed: s.reversed,
+                    goal: s.goal,
+                });
+                (*replica_id, resolved)
+            })
+    }
+
     pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
         search_range: Range<T>,
@@ -1650,6 +1720,7 @@ impl Clone for BufferSnapshot {
         Self {
             text: self.text.clone(),
             tree: self.tree.clone(),
+            remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
             diagnostics_update_count: self.diagnostics_update_count,
             is_parsing: self.is_parsing,
@@ -1888,6 +1959,12 @@ impl operation_queue::Operation for Operation {
                 unreachable!("buffer operations should never be deferred at this layer")
             }
             Operation::UpdateDiagnostics {
+                lamport_timestamp, ..
+            }
+            | Operation::UpdateSelections {
+                lamport_timestamp, ..
+            }
+            | Operation::RemoveSelections {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
         }

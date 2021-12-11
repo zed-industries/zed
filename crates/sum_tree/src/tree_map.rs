@@ -2,6 +2,7 @@ use std::{cmp::Ordering, fmt::Debug};
 
 use crate::{Bias, Dimension, Item, KeyedItem, SeekTarget, SumTree, Summary};
 
+#[derive(Clone)]
 pub struct TreeMap<K, V>(SumTree<MapEntry<K, V>>)
 where
     K: Clone + Debug + Default,
@@ -19,7 +20,7 @@ pub struct MapKey<K>(K);
 #[derive(Clone, Debug, Default)]
 pub struct MapKeyRef<'a, K>(Option<&'a K>);
 
-impl<K: Clone + Debug + Default + Ord, V: Clone + Debug + Default> TreeMap<K, V> {
+impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
     pub fn get<'a>(&self, key: &'a K) -> Option<&V> {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
         let key = MapKeyRef(Some(key));
@@ -48,6 +49,20 @@ impl<K: Clone + Debug + Default + Ord, V: Clone + Debug + Default> TreeMap<K, V>
         drop(cursor);
         self.0 = new_tree;
         removed
+    }
+
+    pub fn iter<'a>(&'a self) -> impl 'a + Iterator<Item = (&'a K, &'a V)> {
+        self.0.iter().map(|entry| (&entry.key, &entry.value))
+    }
+}
+
+impl<K, V> Default for TreeMap<K, V>
+where
+    K: Clone + Debug + Default,
+    V: Clone + Debug,
+{
+    fn default() -> Self {
+        Self(Default::default())
     }
 }
 

@@ -67,13 +67,14 @@ impl GoToLine {
         let (restore_state, cursor_point, max_point) = active_editor.update(cx, |editor, cx| {
             let restore_state = Some(RestoreState {
                 scroll_position: editor.scroll_position(cx),
-                selections: editor.selections::<usize>(cx),
+                selections: editor.local_selections::<usize>(cx),
             });
 
+            let buffer = editor.buffer().read(cx).read(cx);
             (
                 restore_state,
-                editor.newest_selection(cx).head(),
-                editor.buffer().read(cx).read(cx).max_point(),
+                editor.newest_selection(&buffer).head(),
+                buffer.max_point(),
             )
         });
 
@@ -143,7 +144,7 @@ impl GoToLine {
                         let display_point = point.to_display_point(&snapshot);
                         active_editor.select_ranges([point..point], Some(Autoscroll::Center), cx);
                         active_editor.set_highlighted_row(Some(display_point.row()));
-                        Some(active_editor.newest_selection(cx))
+                        Some(active_editor.newest_selection(&snapshot.buffer_snapshot))
                     });
                     cx.notify();
                 }
@@ -162,7 +163,9 @@ impl Entity for GoToLine {
         self.active_editor.update(cx, |editor, cx| {
             editor.set_highlighted_row(None);
             if let Some((line_selection, restore_state)) = line_selection.zip(restore_state) {
-                if line_selection.id == editor.newest_selection::<usize>(cx).id {
+                let newest_selection =
+                    editor.newest_selection::<usize>(&editor.buffer().read(cx).read(cx));
+                if line_selection.id == newest_selection.id {
                     editor.set_scroll_position(restore_state.scroll_position, cx);
                     editor.update_selections(restore_state.selections, None, cx);
                 }

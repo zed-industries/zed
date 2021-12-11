@@ -7,10 +7,9 @@ use clock::ReplicaId;
 use collections::HashMap;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use language::{
-    Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language,
+    Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Selection,
     ToOffset as _, ToPoint as _, TransactionId,
 };
-pub use selection::SelectionSet;
 use std::{
     cell::{Ref, RefCell},
     cmp, io,
@@ -24,7 +23,7 @@ use text::{
     locator::Locator,
     rope::TextDimension,
     subscription::{Subscription, Topic},
-    AnchorRangeExt as _, Edit, Point, PointUtf16, SelectionSetId, TextSummary,
+    AnchorRangeExt as _, Edit, Point, PointUtf16, TextSummary,
 };
 use theme::SyntaxTheme;
 
@@ -36,7 +35,6 @@ pub struct MultiBuffer {
     snapshot: RefCell<MultiBufferSnapshot>,
     buffers: HashMap<usize, BufferState>,
     subscriptions: Topic,
-    selection_sets: HashMap<SelectionSetId, SelectionSet>,
     singleton: bool,
     replica_id: ReplicaId,
 }
@@ -104,7 +102,6 @@ impl MultiBuffer {
             snapshot: Default::default(),
             buffers: Default::default(),
             subscriptions: Default::default(),
-            selection_sets: Default::default(),
             singleton: false,
             replica_id,
         }
@@ -936,6 +933,19 @@ impl MultiBufferSnapshot {
             }
         }
         None
+    }
+
+    pub fn remote_selections_in_range<'a, I, O>(
+        &'a self,
+        range: Range<I>,
+    ) -> impl 'a + Iterator<Item = (ReplicaId, impl 'a + Iterator<Item = Selection<O>>)>
+    where
+        I: ToOffset,
+        O: TextDimension,
+    {
+        self.as_singleton()
+            .unwrap()
+            .remote_selections_in_range(range.start.to_offset(self)..range.end.to_offset(self))
     }
 }
 

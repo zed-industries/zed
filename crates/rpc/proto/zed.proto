@@ -286,8 +286,7 @@ message Operation {
         Undo undo = 2;
         UpdateSelections update_selections = 3;
         RemoveSelections remove_selections = 4;
-        SetActiveSelections set_active_selections = 5;
-        UpdateDiagnostics update_diagnostics = 6;
+        UpdateDiagnostics update_diagnostics = 5;
     }
 
     message Edit {
@@ -316,20 +315,12 @@ message Operation {
 
     message UpdateSelections {
         uint32 replica_id = 1;
-        uint32 local_timestamp = 2;
         uint32 lamport_timestamp = 3;
         repeated Selection selections = 4;
     }
 
     message RemoveSelections {
         uint32 replica_id = 1;
-        uint32 local_timestamp = 2;
-        uint32 lamport_timestamp = 3;
-    }
-
-    message SetActiveSelections {
-        uint32 replica_id = 1;
-        optional uint32 local_timestamp = 2;
         uint32 lamport_timestamp = 3;
     }
 }
