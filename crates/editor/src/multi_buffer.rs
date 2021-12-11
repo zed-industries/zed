@@ -777,7 +777,7 @@ impl MultiBufferSnapshot {
         summary
     }
 
-    fn summary_for_anchor<D>(&self, anchor: &Anchor) -> D
+    pub fn summary_for_anchor<D>(&self, anchor: &Anchor) -> D
     where
         D: TextDimension + Ord + Sub<D, Output = D>,
     {
@@ -798,7 +798,7 @@ impl MultiBufferSnapshot {
         D::from_text_summary(&cursor.start().text)
     }
 
-    fn summaries_for_anchors<'a, D, I>(&'a self, anchors: I) -> Vec<D>
+    pub fn summaries_for_anchors<'a, D, I>(&'a self, anchors: I) -> Vec<D>
     where
         D: TextDimension + Ord + Sub<D, Output = D>,
         I: 'a + IntoIterator<Item = &'a Anchor>,

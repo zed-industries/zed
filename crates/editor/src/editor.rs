@@ -3049,35 +3049,50 @@ impl Editor {
     where
         D: 'a + TextDimension + Ord + Sub<D, Output = D>,
     {
-        // let buffer = self.buffer.read(cx).snapshot(cx);
-        // let mut selections = self.selection_set(cx).selections::<D>(&buffer).peekable();
-        // let mut pending_selection = self.pending_selection(cx);
+        let buffer = self.buffer.read(cx).snapshot(cx);
 
-        // iter::from_fn(move || {
-        //     if let Some(pending) = pending_selection.as_mut() {
-        //         while let Some(next_selection) = selections.peek() {
-        //             if pending.start <= next_selection.end && pending.end >= next_selection.start {
-        //                 let next_selection = selections.next().unwrap();
-        //                 if next_selection.start < pending.start {
-        //                     pending.start = next_selection.start;
-        //                 }
-        //                 if next_selection.end > pending.end {
-        //                     pending.end = next_selection.end;
-        //                 }
-        //             } else if next_selection.end < pending.start {
-        //                 return selections.next();
-        //             } else {
-        //                 break;
-        //             }
-        //         }
+        let mut summaries = buffer
+            .summaries_for_anchors::<D, _>(self.selections.iter().flat_map(|s| [&s.start, &s.end]))
+            .into_iter();
 
-        //         pending_selection.take()
-        //     } else {
-        //         selections.next()
-        //     }
-        // })
-        // .collect()
-        todo!()
+        let mut selections = self
+            .selections
+            .iter()
+            .map(|s| Selection {
+                id: s.id,
+                start: summaries.next().unwrap(),
+                end: summaries.next().unwrap(),
+                reversed: s.reversed,
+                goal: s.goal,
+            })
+            .peekable();
+
+        let mut pending_selection = self.pending_selection::<D>(&buffer, cx);
+
+        iter::from_fn(move || {
+            if let Some(pending) = pending_selection.as_mut() {
+                while let Some(next_selection) = selections.peek() {
+                    if pending.start <= next_selection.end && pending.end >= next_selection.start {
+                        let next_selection = selections.next().unwrap();
+                        if next_selection.start < pending.start {
+                            pending.start = next_selection.start;
+                        }
+                        if next_selection.end > pending.end {
+                            pending.end = next_selection.end;
+                        }
+                    } else if next_selection.end < pending.start {
+                        return selections.next();
+                    } else {
+                        break;
+                    }
+                }
+
+                pending_selection.take()
+            } else {
+                selections.next()
+            }
+        })
+        .collect()
     }
 
     fn pending_selection<D: TextDimension + Ord + Sub<D, Output = D>>(
