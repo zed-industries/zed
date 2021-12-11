@@ -1,14 +1,12 @@
 use crate::{Editor, EditorSettings, Event};
+use crate::{MultiBuffer, ToPoint as _};
 use anyhow::Result;
 use gpui::{
     elements::*, fonts::TextStyle, AppContext, Entity, ModelContext, ModelHandle,
     MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
     WeakModelHandle,
 };
-use language::{
-    multi_buffer::{MultiBuffer, ToPoint as _},
-    Diagnostic, File as _,
-};
+use language::{Diagnostic, File as _};
 use postage::watch;
 use project::{ProjectPath, Worktree};
 use std::fmt::Write;

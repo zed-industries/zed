@@ -1527,6 +1527,7 @@ dependencies = [
  "aho-corasick",
  "anyhow",
  "clock",
+ "collections",
  "ctor",
  "env_logger",
  "gpui",

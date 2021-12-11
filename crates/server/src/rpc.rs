@@ -944,11 +944,11 @@ mod tests {
             EstablishConnectionError, UserStore,
         },
         contacts_panel::JoinWorktree,
-        editor::{Editor, EditorSettings, Input},
+        editor::{Editor, EditorSettings, Input, MultiBuffer},
         fs::{FakeFs, Fs as _},
         language::{
             tree_sitter_rust, Diagnostic, DiagnosticEntry, Language, LanguageConfig,
-            LanguageRegistry, LanguageServerConfig, MultiBuffer, Point,
+            LanguageRegistry, LanguageServerConfig, Point,
         },
         lsp,
         project::{ProjectPath, Worktree},

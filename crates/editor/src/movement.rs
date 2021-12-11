@@ -1,6 +1,6 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
+use crate::ToPoint;
 use anyhow::Result;
-use language::multi_buffer::ToPoint;
 use std::{cmp, ops::Range};
 
 pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> Result<DisplayPoint> {
@@ -244,8 +244,7 @@ fn char_kind(c: char) -> CharKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::display_map::DisplayMap;
-    use language::MultiBuffer;
+    use crate::{DisplayMap, MultiBuffer};
 
     #[gpui::test]
     fn test_prev_next_word_boundary_multibyte(cx: &mut gpui::MutableAppContext) {

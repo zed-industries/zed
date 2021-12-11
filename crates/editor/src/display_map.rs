@@ -3,13 +3,11 @@ mod fold_map;
 mod tab_map;
 mod wrap_map;
 
+use crate::{Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 use block_map::{BlockMap, BlockPoint};
 use fold_map::{FoldMap, ToFoldPoint as _};
 use gpui::{fonts::FontId, ElementBox, Entity, ModelContext, ModelHandle};
-use language::{
-    multi_buffer::{Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint},
-    Point, Subscription as BufferSubscription,
-};
+use language::{Point, Subscription as BufferSubscription};
 use std::{
     collections::{HashMap, HashSet},
     ops::Range,

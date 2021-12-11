@@ -1,5 +1,6 @@
 use super::fold_map::{self, FoldEdit, FoldPoint, FoldSnapshot, ToFoldPoint};
-use language::{multi_buffer::MultiBufferSnapshot, rope, Chunk};
+use crate::MultiBufferSnapshot;
+use language::{rope, Chunk};
 use parking_lot::Mutex;
 use std::{cmp, mem, ops::Range};
 use sum_tree::Bias;
@@ -438,8 +439,7 @@ impl<'a> Iterator for TabChunks<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::display_map::fold_map::FoldMap;
-    use language::multi_buffer::MultiBuffer;
+    use crate::{display_map::fold_map::FoldMap, MultiBuffer};
     use rand::{prelude::StdRng, Rng};
     use text::{RandomCharIter, Rope};
 

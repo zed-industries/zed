@@ -1,15 +1,15 @@
 mod anchor;
 mod selection;
 
-use crate::{
-    buffer::{self, Buffer, Chunk, ToOffset as _, ToPoint as _},
-    BufferSnapshot, DiagnosticEntry, Event, File, Language,
-};
 pub use anchor::{Anchor, AnchorRangeExt};
 use anyhow::Result;
 use clock::ReplicaId;
 use collections::HashMap;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
+use language::{
+    Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language,
+    ToOffset as _, ToPoint as _,
+};
 pub use selection::SelectionSet;
 use std::{
     cell::{Ref, RefCell},
@@ -72,7 +72,7 @@ pub struct ExcerptProperties<'a, T> {
 #[derive(Clone)]
 struct Excerpt {
     id: ExcerptId,
-    buffer: buffer::BufferSnapshot,
+    buffer: BufferSnapshot,
     range: Range<text::Anchor>,
     text_summary: TextSummary,
     header_height: u8,
@@ -90,7 +90,7 @@ pub struct MultiBufferChunks<'a> {
     cursor: Cursor<'a, Excerpt, usize>,
     header_height: u8,
     has_trailing_newline: bool,
-    excerpt_chunks: Option<buffer::BufferChunks<'a>>,
+    excerpt_chunks: Option<BufferChunks<'a>>,
     theme: Option<&'a SyntaxTheme>,
 }
 
@@ -394,7 +394,7 @@ impl MultiBuffer {
         cx.subscribe(buffer, Self::on_buffer_event).detach();
 
         let buffer = props.buffer.read(cx);
-        let range = buffer.anchor_before(props.range.start)..buffer.anchor_after(props.range.end);
+        let range = buffer.anchor_before(&props.range.start)..buffer.anchor_after(&props.range.end);
         let mut snapshot = self.snapshot.borrow_mut();
         let prev_id = snapshot.excerpts.last().map(|e| &e.id);
         let id = ExcerptId::between(prev_id.unwrap_or(&ExcerptId::min()), &ExcerptId::max());
@@ -565,7 +565,7 @@ impl MultiBuffer {
 }
 
 impl Entity for MultiBuffer {
-    type Event = super::Event;
+    type Event = language::Event;
 }
 
 impl MultiBufferSnapshot {
@@ -1099,7 +1099,7 @@ impl MultiBufferSnapshot {
 impl Excerpt {
     fn new(
         id: ExcerptId,
-        buffer: buffer::BufferSnapshot,
+        buffer: BufferSnapshot,
         range: Range<text::Anchor>,
         header_height: u8,
         has_trailing_newline: bool,
@@ -1357,8 +1357,8 @@ impl ToPoint for Point {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::buffer::Buffer;
     use gpui::MutableAppContext;
+    use language::Buffer;
     use rand::prelude::*;
     use std::env;
     use text::{Point, RandomCharIter};

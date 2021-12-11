@@ -2,11 +2,12 @@ use super::{
     fold_map,
     tab_map::{self, TabEdit, TabPoint, TabSnapshot},
 };
+use crate::{MultiBufferSnapshot, Point};
 use gpui::{
     fonts::FontId, text_layout::LineWrapper, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
 };
-use language::{multi_buffer::MultiBufferSnapshot, Chunk, Point};
+use language::Chunk;
 use lazy_static::lazy_static;
 use smol::future::yield_now;
 use std::{collections::VecDeque, mem, ops::Range, time::Duration};
@@ -977,8 +978,9 @@ mod tests {
     use crate::{
         display_map::{fold_map::FoldMap, tab_map::TabMap},
         test::Observer,
+        MultiBuffer,
     };
-    use language::{multi_buffer::MultiBuffer, RandomCharIter};
+    use language::RandomCharIter;
     use rand::prelude::*;
     use std::{cmp, env};
     use text::Rope;

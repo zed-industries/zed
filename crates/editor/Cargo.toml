@@ -8,6 +8,7 @@ path = "src/editor.rs"
 
 [features]
 test-support = [
+    "rand",
     "text/test-support",
     "language/test-support",
     "gpui/test-support",
@@ -17,6 +18,7 @@ test-support = [
 [dependencies]
 text = { path = "../text" }
 clock = { path = "../clock" }
+collections = { path = "../collections" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 project = { path = "../project" }
@@ -30,6 +32,7 @@ lazy_static = "1.4"
 log = "0.4"
 parking_lot = "0.11"
 postage = { version = "0.4", features = ["futures-traits"] }
+rand = { version = "0.8.3", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"

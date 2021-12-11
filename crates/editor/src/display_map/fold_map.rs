@@ -1,7 +1,5 @@
-use language::{
-    multi_buffer::{Anchor, AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, ToOffset},
-    Chunk, Edit, Point, PointUtf16, TextSummary,
-};
+use crate::{Anchor, AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, ToOffset};
+use language::{Chunk, Edit, Point, PointUtf16, TextSummary};
 use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
@@ -1057,8 +1055,7 @@ pub type FoldEdit = Edit<FoldOffset>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ToPoint;
-    use language::multi_buffer::MultiBuffer;
+    use crate::{MultiBuffer, ToPoint};
     use rand::prelude::*;
     use std::{env, mem};
     use text::RandomCharIter;

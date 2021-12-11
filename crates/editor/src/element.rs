@@ -4,6 +4,7 @@ use super::{
     DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, Input, Scroll,
     Select, SelectPhase, SoftWrap, MAX_LINE_LEN,
 };
+use crate::ToPoint;
 use clock::ReplicaId;
 use gpui::{
     color::Color,
@@ -19,7 +20,7 @@ use gpui::{
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
-use language::{multi_buffer::ToPoint, Chunk};
+use language::Chunk;
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
@@ -1162,8 +1163,7 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Editor, EditorSettings};
-    use language::{MultiBuffer};
+    use crate::{Editor, EditorSettings, MultiBuffer};
     use util::test::sample_text;
 
     #[gpui::test]

@@ -1,9 +1,7 @@
 use super::wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot};
+use crate::{Anchor, ToOffset, ToPoint as _};
 use gpui::{AppContext, ElementBox};
-use language::{
-    multi_buffer::{Anchor, ToOffset, ToPoint as _},
-    Chunk,
-};
+use language::Chunk;
 use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
@@ -866,8 +864,8 @@ fn offset_for_row(s: &str, target: u32) -> (u32, usize) {
 mod tests {
     use super::*;
     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
+    use crate::multi_buffer::MultiBuffer;
     use gpui::{elements::Empty, Element};
-    use language::multi_buffer::MultiBuffer;
     use rand::prelude::*;
     use std::env;
     use text::RandomCharIter;

@@ -2,6 +2,7 @@ pub mod display_map;
 mod element;
 pub mod items;
 pub mod movement;
+mod multi_buffer;
 
 #[cfg(test)]
 mod test;
@@ -21,12 +22,14 @@ use gpui::{
 };
 use items::BufferItemHandle;
 use language::{
-    multi_buffer::{
-        Anchor, AnchorRangeExt, MultiBuffer, MultiBufferSnapshot, SelectionSet, ToOffset, ToPoint,
-    },
     BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point, Selection, SelectionGoal,
     SelectionSetId,
 };
+use multi_buffer::{
+    Anchor, AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot,
+    SelectionSet, ToOffset, ToPoint,
+};
+pub use multi_buffer::MultiBuffer;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
