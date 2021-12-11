@@ -8,7 +8,7 @@ use collections::HashMap;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use language::{
     Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language,
-    ToOffset as _, ToPoint as _,
+    ToOffset as _, ToPoint as _, TransactionId,
 };
 pub use selection::SelectionSet;
 use std::{
@@ -206,7 +206,7 @@ impl MultiBuffer {
         &mut self,
         selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
         cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
+    ) -> Option<TransactionId> {
         // TODO
         self.as_singleton()
             .unwrap()
@@ -217,7 +217,7 @@ impl MultiBuffer {
         &mut self,
         selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
         cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
+    ) -> Option<TransactionId> {
         // TODO
         self.as_singleton().unwrap().update(cx, |buffer, cx| {
             buffer.end_transaction(selection_set_ids, cx)

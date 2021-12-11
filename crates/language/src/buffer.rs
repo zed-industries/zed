@@ -977,8 +977,7 @@ impl Buffer {
             .flat_map(|req| req.selection_set_ids.clone())
             .collect::<HashSet<_>>();
 
-        self.start_transaction(selection_set_ids.iter().copied())
-            .unwrap();
+        self.start_transaction(selection_set_ids.iter().copied());
         for (row, indent_column) in &indent_columns {
             self.set_indent_column_for_line(*row, *indent_column, cx);
         }
@@ -1014,8 +1013,7 @@ impl Buffer {
             }
         }
 
-        self.end_transaction(selection_set_ids.iter().copied(), cx)
-            .unwrap();
+        self.end_transaction(selection_set_ids.iter().copied(), cx);
     }
 
     fn set_indent_column_for_line(&mut self, row: u32, column: u32, cx: &mut ModelContext<Self>) {
@@ -1055,7 +1053,7 @@ impl Buffer {
 
     pub(crate) fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> bool {
         if self.version == diff.base_version {
-            self.start_transaction(None).unwrap();
+            self.start_transaction(None);
             let mut offset = 0;
             for (tag, len) in diff.changes {
                 let range = offset..(offset + len);
@@ -1068,7 +1066,7 @@ impl Buffer {
                     }
                 }
             }
-            self.end_transaction(None, cx).unwrap();
+            self.end_transaction(None, cx);
             true
         } else {
             false
@@ -1095,7 +1093,7 @@ impl Buffer {
     pub fn start_transaction(
         &mut self,
         selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
-    ) -> Result<()> {
+    ) -> Option<TransactionId> {
         self.start_transaction_at(selection_set_ids, Instant::now())
     }
 
@@ -1103,7 +1101,7 @@ impl Buffer {
         &mut self,
         selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
         now: Instant,
-    ) -> Result<()> {
+    ) -> Option<TransactionId> {
         self.text.start_transaction_at(selection_set_ids, now)
     }
 
@@ -1111,7 +1109,7 @@ impl Buffer {
         &mut self,
         selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
         cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
+    ) -> Option<TransactionId> {
         self.end_transaction_at(selection_set_ids, Instant::now(), cx)
     }
 
@@ -1120,12 +1118,16 @@ impl Buffer {
         selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
         now: Instant,
         cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
-        if let Some(start_version) = self.text.end_transaction_at(selection_set_ids, now) {
+    ) -> Option<TransactionId> {
+        if let Some((transaction_id, start_version)) =
+            self.text.end_transaction_at(selection_set_ids, now)
+        {
             let was_dirty = start_version != self.saved_version;
             self.did_edit(&start_version, was_dirty, cx);
+            Some(transaction_id)
+        } else {
+            None
         }
-        Ok(())
     }
 
     fn update_language_server(&mut self) {
@@ -1210,7 +1212,7 @@ impl Buffer {
             return;
         }
 
-        self.start_transaction(None).unwrap();
+        self.start_transaction(None);
         self.pending_autoindent.take();
         let autoindent_request = if autoindent && self.language.is_some() {
             let before_edit = self.snapshot();
@@ -1268,7 +1270,7 @@ impl Buffer {
             }));
         }
 
-        self.end_transaction(None, cx).unwrap();
+        self.end_transaction(None, cx);
         self.send_operation(Operation::Buffer(text::Operation::Edit(edit)), cx);
     }
 
@@ -1474,18 +1476,18 @@ impl Buffer {
     ) where
         T: rand::Rng,
     {
-        self.start_transaction(None).unwrap();
+        self.start_transaction(None);
         self.text.randomly_edit(rng, old_range_count);
-        self.end_transaction(None, cx).unwrap();
+        self.end_transaction(None, cx);
     }
 
     pub fn randomly_mutate<T>(&mut self, rng: &mut T, cx: &mut ModelContext<Self>)
     where
         T: rand::Rng,
     {
-        self.start_transaction(None).unwrap();
+        self.start_transaction(None);
         self.text.randomly_mutate(rng);
-        self.end_transaction(None, cx).unwrap();
+        self.end_transaction(None, cx);
     }
 }
 

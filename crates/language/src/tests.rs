@@ -92,15 +92,15 @@ fn test_edit_events(cx: &mut gpui::MutableAppContext) {
         buffer.edit(Some(2..4), "XYZ", cx);
 
         // An empty transaction does not emit any events.
-        buffer.start_transaction(None).unwrap();
-        buffer.end_transaction(None, cx).unwrap();
+        buffer.start_transaction(None);
+        buffer.end_transaction(None, cx);
 
         // A transaction containing two edits emits one edited event.
         now += Duration::from_secs(1);
-        buffer.start_transaction_at(None, now).unwrap();
+        buffer.start_transaction_at(None, now);
         buffer.edit(Some(5..5), "u", cx);
         buffer.edit(Some(6..6), "w", cx);
-        buffer.end_transaction_at(None, now, cx).unwrap();
+        buffer.end_transaction_at(None, now, cx);
 
         // Undoing a transaction emits one edited event.
         buffer.undo(cx);
@@ -167,7 +167,7 @@ async fn test_reparse(mut cx: gpui::TestAppContext) {
     // Perform some edits (add parameter and variable reference)
     // Parsing doesn't begin until the transaction is complete
     buffer.update(&mut cx, |buf, cx| {
-        buf.start_transaction(None).unwrap();
+        buf.start_transaction(None);
 
         let offset = buf.text().find(")").unwrap();
         buf.edit(vec![offset..offset], "b: C", cx);
@@ -177,7 +177,7 @@ async fn test_reparse(mut cx: gpui::TestAppContext) {
         buf.edit(vec![offset..offset], " d; ", cx);
         assert!(!buf.is_parsing());
 
-        buf.end_transaction(None, cx).unwrap();
+        buf.end_transaction(None, cx);
         assert_eq!(buf.text(), "fn a(b: C) { d; }");
         assert!(buf.is_parsing());
     });
@@ -342,7 +342,7 @@ fn test_autoindent_moves_selections(cx: &mut MutableAppContext) {
             Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx);
 
         let selection_set_id = buffer.add_selection_set::<usize>(&[], cx);
-        buffer.start_transaction(Some(selection_set_id)).unwrap();
+        buffer.start_transaction(Some(selection_set_id));
         buffer.edit_with_autoindent([5..5, 9..9], "\n\n", cx);
         buffer
             .update_selection_set(
@@ -370,7 +370,7 @@ fn test_autoindent_moves_selections(cx: &mut MutableAppContext) {
 
         // Ending the transaction runs the auto-indent. The selection
         // at the start of the auto-indented row is pushed to the right.
-        buffer.end_transaction(Some(selection_set_id), cx).unwrap();
+        buffer.end_transaction(Some(selection_set_id), cx);
         assert_eq!(buffer.text(), "fn a(\n    \n) {}\n\n");
         let selection_ranges = buffer
             .selection_set(selection_set_id)

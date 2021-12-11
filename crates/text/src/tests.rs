@@ -467,13 +467,13 @@ fn test_history() {
     } else {
         unreachable!()
     };
-    buffer.start_transaction_at(Some(set_id), now).unwrap();
+    buffer.start_transaction_at(Some(set_id), now);
     buffer.edit(vec![2..4], "cd");
-    buffer.end_transaction_at(Some(set_id), now).unwrap();
+    buffer.end_transaction_at(Some(set_id), now);
     assert_eq!(buffer.text(), "12cd56");
     assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![4..4]);
 
-    buffer.start_transaction_at(Some(set_id), now).unwrap();
+    buffer.start_transaction_at(Some(set_id), now);
     buffer
         .update_selection_set(set_id, &buffer.selections_from_ranges(vec![1..3]).unwrap())
         .unwrap();
@@ -483,7 +483,7 @@ fn test_history() {
     assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![1..3]);
 
     now += buffer.history.group_interval + Duration::from_millis(1);
-    buffer.start_transaction_at(Some(set_id), now).unwrap();
+    buffer.start_transaction_at(Some(set_id), now);
     buffer
         .update_selection_set(set_id, &buffer.selections_from_ranges(vec![2..2]).unwrap())
         .unwrap();
@@ -515,7 +515,7 @@ fn test_history() {
     assert_eq!(buffer.text(), "ab2cde6");
     assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![3..3]);
 
-    buffer.start_transaction_at(None, now).unwrap();
+    buffer.start_transaction_at(None, now);
     assert!(buffer.end_transaction_at(None, now).is_none());
     buffer.undo();
     assert_eq!(buffer.text(), "12cde6");

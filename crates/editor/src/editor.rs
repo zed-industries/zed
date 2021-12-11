@@ -25,11 +25,10 @@ use language::{
     BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point, Selection, SelectionGoal,
     SelectionSetId,
 };
-use multi_buffer::{
-    Anchor, AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot,
-    SelectionSet, ToOffset, ToPoint,
-};
 pub use multi_buffer::MultiBuffer;
+use multi_buffer::{
+    Anchor, AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, SelectionSet, ToOffset, ToPoint,
+};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
@@ -3209,15 +3208,13 @@ impl Editor {
     fn start_transaction(&mut self, cx: &mut ViewContext<Self>) {
         self.end_selection(cx);
         self.buffer.update(cx, |buffer, cx| {
-            buffer
-                .start_transaction([self.selection_set_id], cx)
-                .unwrap()
+            buffer.start_transaction([self.selection_set_id], cx);
         });
     }
 
     fn end_transaction(&self, cx: &mut ViewContext<Self>) {
         self.buffer.update(cx, |buffer, cx| {
-            buffer.end_transaction([self.selection_set_id], cx).unwrap()
+            buffer.end_transaction([self.selection_set_id], cx);
         });
     }
 

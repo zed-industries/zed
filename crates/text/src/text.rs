@@ -38,6 +38,8 @@ pub use subscription::*;
 pub use sum_tree::Bias;
 use sum_tree::{FilterCursor, SumTree};
 
+pub type TransactionId = usize;
+
 pub struct Buffer {
     snapshot: BufferSnapshot,
     last_edit: clock::Local,
@@ -64,6 +66,7 @@ pub struct BufferSnapshot {
 
 #[derive(Clone, Debug)]
 pub struct Transaction {
+    id: TransactionId,
     start: clock::Global,
     end: clock::Global,
     edits: Vec<clock::Local>,
@@ -135,6 +138,7 @@ pub struct History {
     redo_stack: Vec<Transaction>,
     transaction_depth: usize,
     group_interval: Duration,
+    next_transaction_id: TransactionId,
 }
 
 impl History {
@@ -146,6 +150,7 @@ impl History {
             redo_stack: Vec::new(),
             transaction_depth: 0,
             group_interval: Duration::from_millis(300),
+            next_transaction_id: 0,
         }
     }
 
@@ -158,10 +163,13 @@ impl History {
         start: clock::Global,
         selections_before: HashMap<SelectionSetId, Arc<[Selection<Anchor>]>>,
         now: Instant,
-    ) {
+    ) -> Option<TransactionId> {
         self.transaction_depth += 1;
         if self.transaction_depth == 1 {
+            let id = self.next_transaction_id;
+            self.next_transaction_id += 1;
             self.undo_stack.push(Transaction {
+                id,
                 start: start.clone(),
                 end: start,
                 edits: Vec::new(),
@@ -171,6 +179,9 @@ impl History {
                 first_edit_at: now,
                 last_edit_at: now,
             });
+            Some(id)
+        } else {
+            None
         }
     }
 
@@ -547,7 +558,7 @@ impl Buffer {
             None
         };
 
-        self.start_transaction(None).unwrap();
+        self.start_transaction(None);
         let timestamp = InsertionTimestamp {
             replica_id: self.replica_id,
             local: self.local_clock.tick().value,
@@ -1141,7 +1152,7 @@ impl Buffer {
     pub fn start_transaction(
         &mut self,
         selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
-    ) -> Result<()> {
+    ) -> Option<TransactionId> {
         self.start_transaction_at(selection_set_ids, Instant::now())
     }
 
@@ -1149,7 +1160,7 @@ impl Buffer {
         &mut self,
         selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
         now: Instant,
-    ) -> Result<()> {
+    ) -> Option<TransactionId> {
         let selections = selection_set_ids
             .into_iter()
             .map(|set_id| {
@@ -1161,19 +1172,21 @@ impl Buffer {
             })
             .collect();
         self.history
-            .start_transaction(self.version.clone(), selections, now);
-        Ok(())
+            .start_transaction(self.version.clone(), selections, now)
     }
 
-    pub fn end_transaction(&mut self, selection_set_ids: impl IntoIterator<Item = SelectionSetId>) {
-        self.end_transaction_at(selection_set_ids, Instant::now());
+    pub fn end_transaction(
+        &mut self,
+        selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
+    ) -> Option<(TransactionId, clock::Global)> {
+        self.end_transaction_at(selection_set_ids, Instant::now())
     }
 
     pub fn end_transaction_at(
         &mut self,
         selection_set_ids: impl IntoIterator<Item = SelectionSetId>,
         now: Instant,
-    ) -> Option<clock::Global> {
+    ) -> Option<(TransactionId, clock::Global)> {
         let selections = selection_set_ids
             .into_iter()
             .map(|set_id| {
@@ -1186,9 +1199,10 @@ impl Buffer {
             .collect();
 
         if let Some(transaction) = self.history.end_transaction(selections, now) {
+            let id = transaction.id;
             let since = transaction.start.clone();
             self.history.group();
-            Some(since)
+            Some((id, since))
         } else {
             None
         }
