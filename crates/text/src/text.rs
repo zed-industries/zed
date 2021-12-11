@@ -1221,28 +1221,34 @@ impl Buffer {
         self.history.ops.values()
     }
 
-    pub fn undo(&mut self) -> Vec<Operation> {
-        let mut ops = Vec::new();
+    pub fn undo(&mut self) -> Option<(TransactionId, Vec<Operation>)> {
         if let Some(transaction) = self.history.pop_undo().cloned() {
+            let transaction_id = transaction.id;
             let selections = transaction.selections_before.clone();
+            let mut ops = Vec::new();
             ops.push(self.undo_or_redo(transaction).unwrap());
             for (set_id, selections) in selections {
                 ops.extend(self.restore_selection_set(set_id, selections));
             }
+            Some((transaction_id, ops))
+        } else {
+            None
         }
-        ops
     }
 
-    pub fn redo(&mut self) -> Vec<Operation> {
-        let mut ops = Vec::new();
+    pub fn redo(&mut self) -> Option<(TransactionId, Vec<Operation>)> {
         if let Some(transaction) = self.history.pop_redo().cloned() {
+            let transaction_id = transaction.id;
             let selections = transaction.selections_after.clone();
+            let mut ops = Vec::new();
             ops.push(self.undo_or_redo(transaction).unwrap());
             for (set_id, selections) in selections {
                 ops.extend(self.restore_selection_set(set_id, selections));
             }
+            Some((transaction_id, ops))
+        } else {
+            None
         }
-        ops
     }
 
     fn undo_or_redo(&mut self, transaction: Transaction) -> Result<Operation> {

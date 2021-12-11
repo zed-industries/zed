@@ -224,14 +224,14 @@ impl MultiBuffer {
         })
     }
 
-    pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn undo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         // TODO
         self.as_singleton()
             .unwrap()
             .update(cx, |buffer, cx| buffer.undo(cx))
     }
 
-    pub fn redo(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn redo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         // TODO
         self.as_singleton()
             .unwrap()

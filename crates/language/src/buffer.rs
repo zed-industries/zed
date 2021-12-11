@@ -1443,26 +1443,34 @@ impl Buffer {
         cx.notify();
     }
 
-    pub fn undo(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn undo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
-        for operation in self.text.undo() {
-            self.send_operation(Operation::Buffer(operation), cx);
+        if let Some((transaction_id, operations)) = self.text.undo() {
+            for operation in operations {
+                self.send_operation(Operation::Buffer(operation), cx);
+            }
+            self.did_edit(&old_version, was_dirty, cx);
+            Some(transaction_id)
+        } else {
+            None
         }
-
-        self.did_edit(&old_version, was_dirty, cx);
     }
 
-    pub fn redo(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn redo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
-        for operation in self.text.redo() {
-            self.send_operation(Operation::Buffer(operation), cx);
+        if let Some((transaction_id, operations)) = self.text.redo() {
+            for operation in operations {
+                self.send_operation(Operation::Buffer(operation), cx);
+            }
+            self.did_edit(&old_version, was_dirty, cx);
+            Some(transaction_id)
+        } else {
+            None
         }
-
-        self.did_edit(&old_version, was_dirty, cx);
     }
 }
 
