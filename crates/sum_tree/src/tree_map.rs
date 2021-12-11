@@ -5,7 +5,7 @@ use crate::{Bias, Dimension, Item, KeyedItem, SeekTarget, SumTree, Summary};
 pub struct TreeMap<K, V>(SumTree<MapEntry<K, V>>)
 where
     K: Clone + Debug + Default,
-    V: Clone + Debug + Default;
+    V: Clone + Debug;
 
 #[derive(Clone)]
 pub struct MapEntry<K, V> {
@@ -81,7 +81,7 @@ where
 {
     type Context = ();
 
-    fn add_summary(&mut self, summary: &Self, cx: &()) {
+    fn add_summary(&mut self, summary: &Self, _: &()) {
         *self = summary.clone()
     }
 }
@@ -99,11 +99,7 @@ impl<'a, K> SeekTarget<'a, MapKey<K>, MapKeyRef<'a, K>> for MapKeyRef<'_, K>
 where
     K: Clone + Debug + Default + Ord,
 {
-    fn cmp(&self, cursor_location: &MapKeyRef<K>, cx: &()) -> Ordering {
-        if let Some(key) = cursor_location.0 {
-            self.0.cmp(&cursor_location.0)
-        } else {
-            Ordering::Greater
-        }
+    fn cmp(&self, cursor_location: &MapKeyRef<K>, _: &()) -> Ordering {
+        self.0.cmp(&cursor_location.0)
     }
 }
