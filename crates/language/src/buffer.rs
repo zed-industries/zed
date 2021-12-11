@@ -1648,15 +1648,11 @@ impl BufferSnapshot {
             .min_by_key(|(open_range, close_range)| close_range.end - open_range.start)
     }
 
-    pub fn remote_selections_in_range<'a, I, O>(
+    pub fn remote_selections_in_range<'a>(
         &'a self,
-        range: Range<I>,
-    ) -> impl 'a + Iterator<Item = (ReplicaId, impl 'a + Iterator<Item = Selection<O>>)>
-    where
-        I: ToOffset,
-        O: TextDimension,
+        range: Range<Anchor>,
+    ) -> impl 'a + Iterator<Item = (ReplicaId, impl 'a + Iterator<Item = &'a Selection<Anchor>>)>
     {
-        let range = self.anchor_before(range.start)..self.anchor_after(range.end);
         self.remote_selections
             .iter()
             .map(move |(replica_id, selections)| {
@@ -1671,17 +1667,7 @@ impl BufferSnapshot {
                     Ok(ix) | Err(ix) => ix,
                 };
 
-                let selections = &selections[start_ix..end_ix];
-                let mut summaries =
-                    self.summaries_for_anchors(selections.iter().flat_map(|s| [&s.start, &s.end]));
-                let resolved = selections.iter().map(move |s| Selection {
-                    id: s.id,
-                    start: summaries.next().unwrap(),
-                    end: summaries.next().unwrap(),
-                    reversed: s.reversed,
-                    goal: s.goal,
-                });
-                (*replica_id, resolved)
+                (*replica_id, selections[start_ix..end_ix].iter())
             })
     }
 

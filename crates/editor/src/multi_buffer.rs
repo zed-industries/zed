@@ -7,8 +7,8 @@ use clock::ReplicaId;
 use collections::HashMap;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use language::{
-    Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Selection,
-    ToOffset as _, ToPoint as _, TransactionId,
+    Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, FromAnchor,
+    Language, Selection, ToOffset as _, ToPoint as _, TransactionId,
 };
 use std::{
     cell::{Ref, RefCell},
@@ -805,19 +805,18 @@ impl MultiBufferSnapshot {
         let mut summaries = Vec::new();
         while let Some(anchor) = anchors.peek() {
             let excerpt_id = &anchor.excerpt_id;
-            cursor.seek(&Some(excerpt_id), Bias::Left, &());
-            if let Some(excerpt) = cursor.item() {
-                let excerpt_exists = excerpt.id == *excerpt_id;
-                let excerpt_anchors = std::iter::from_fn(|| {
-                    let anchor = anchors.peek()?;
-                    if anchor.excerpt_id == *excerpt_id {
-                        Some(&anchors.next().unwrap().text_anchor)
-                    } else {
-                        None
-                    }
-                });
+            let excerpt_anchors = std::iter::from_fn(|| {
+                let anchor = anchors.peek()?;
+                if anchor.excerpt_id == *excerpt_id {
+                    Some(&anchors.next().unwrap().text_anchor)
+                } else {
+                    None
+                }
+            });
 
-                if excerpt_exists {
+            cursor.seek_forward(&Some(excerpt_id), Bias::Left, &());
+            if let Some(excerpt) = cursor.item() {
+                if excerpt.id == *excerpt_id {
                     let mut excerpt_start = D::from_text_summary(&cursor.start().text);
                     excerpt_start.add_summary(&excerpt.header_summary(), &());
                     let excerpt_buffer_start = excerpt.range.start.summary::<D>(&excerpt.buffer);
@@ -834,12 +833,12 @@ impl MultiBufferSnapshot {
                                 excerpt_start
                             }),
                     );
-                } else {
-                    excerpt_anchors.for_each(drop);
+                    continue;
                 }
-            } else {
-                break;
             }
+
+            let summary = D::from_text_summary(&cursor.start().text);
+            summaries.extend(excerpt_anchors.map(|_| summary.clone()));
         }
 
         summaries
@@ -935,17 +934,34 @@ impl MultiBufferSnapshot {
         None
     }
 
-    pub fn remote_selections_in_range<'a, I, O>(
+    pub fn remote_selections_in_range<'a>(
         &'a self,
-        range: Range<I>,
-    ) -> impl 'a + Iterator<Item = (ReplicaId, impl 'a + Iterator<Item = Selection<O>>)>
-    where
-        I: ToOffset,
-        O: TextDimension,
-    {
+        range: Range<Anchor>,
+    ) -> impl 'a + Iterator<Item = (ReplicaId, impl 'a + Iterator<Item = Selection<Anchor>>)> {
+        // TODO
+        let excerpt_id = self.excerpts.first().unwrap().id.clone();
         self.as_singleton()
             .unwrap()
-            .remote_selections_in_range(range.start.to_offset(self)..range.end.to_offset(self))
+            .remote_selections_in_range(range.start.text_anchor..range.end.text_anchor)
+            .map(move |(replica_id, selections)| {
+                let excerpt_id = excerpt_id.clone();
+                (
+                    replica_id,
+                    selections.map(move |s| Selection {
+                        id: s.id,
+                        start: Anchor {
+                            excerpt_id: excerpt_id.clone(),
+                            text_anchor: s.start.clone(),
+                        },
+                        end: Anchor {
+                            excerpt_id: excerpt_id.clone(),
+                            text_anchor: s.end.clone(),
+                        },
+                        reversed: s.reversed,
+                        goal: s.goal,
+                    }),
+                )
+            })
     }
 }
 

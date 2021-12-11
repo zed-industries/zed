@@ -1531,6 +1531,7 @@ dependencies = [
  "ctor",
  "env_logger",
  "gpui",
+ "itertools",
  "language",
  "lazy_static",
  "log",

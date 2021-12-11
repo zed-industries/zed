@@ -28,6 +28,7 @@ util = { path = "../util" }
 workspace = { path = "../workspace" }
 aho-corasick = "0.7"
 anyhow = "1.0"
+itertools = "0.10"
 lazy_static = "1.4"
 log = "0.4"
 parking_lot = "0.11"

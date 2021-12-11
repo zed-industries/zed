@@ -3006,60 +3006,89 @@ impl Editor {
         }
     }
 
-    pub fn all_selections_in_range<'a, D>(
+    pub fn visible_selections<'a>(
         &'a self,
-        range: Range<DisplayPoint>,
+        display_rows: Range<u32>,
         cx: &'a mut MutableAppContext,
-    ) -> HashMap<ReplicaId, Vec<Selection<D>>>
-    where
-        D: TextDimension + Ord + Sub<D, Output = D>,
-    {
-        let mut result = HashMap::new();
-
+    ) -> HashMap<ReplicaId, Vec<Selection<DisplayPoint>>> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
-        let range = range.start.to_offset(&display_map, Bias::Left)
-            ..range.end.to_offset(&display_map, Bias::Left);
 
-        let anchor_range = buffer.anchor_before(range.start)..buffer.anchor_after(range.end);
+        let start = if display_rows.start == 0 {
+            Anchor::min()
+        } else {
+            buffer.anchor_before(
+                DisplayPoint::new(display_rows.start, 0).to_offset(&display_map, Bias::Left),
+            )
+        };
+        let end = if display_rows.end > display_map.max_point().row() {
+            Anchor::max()
+        } else {
+            buffer.anchor_before(
+                DisplayPoint::new(display_rows.end, 0).to_offset(&display_map, Bias::Right),
+            )
+        };
+
+        dbg!(&start, &end);
+        dbg!(&self.selections);
+
         let start_ix = match self
             .selections
-            .binary_search_by(|probe| probe.end.cmp(&anchor_range.start, &buffer).unwrap())
+            .binary_search_by(|probe| probe.end.cmp(&start, &buffer).unwrap())
         {
             Ok(ix) | Err(ix) => ix,
         };
         let end_ix = match self
             .selections
-            .binary_search_by(|probe| probe.start.cmp(&anchor_range.end, &buffer).unwrap())
+            .binary_search_by(|probe| probe.start.cmp(&end, &buffer).unwrap())
         {
-            Ok(ix) | Err(ix) => ix,
+            Ok(ix) => ix + 1,
+            Err(ix) => ix,
         };
 
-        let selections = &self.selections[start_ix..end_ix];
-        let mut summaries = buffer
-            .summaries_for_anchors::<D, _>(selections.iter().flat_map(|s| [&s.start, &s.end]))
-            .into_iter();
+        dbg!(start_ix, end_ix);
+
+        fn display_selection(
+            selection: &Selection<Anchor>,
+            display_map: &DisplaySnapshot,
+        ) -> Selection<DisplayPoint> {
+            Selection {
+                id: selection.id,
+                start: selection.start.to_display_point(&display_map),
+                end: selection.end.to_display_point(&display_map),
+                reversed: selection.reversed,
+                goal: selection.goal,
+            }
+        }
+
+        let mut result = HashMap::new();
 
         result.insert(
             self.replica_id(cx),
-            selections
+            self.selections[start_ix..end_ix]
                 .iter()
-                .map(|s| Selection {
-                    id: s.id,
-                    start: summaries.next().unwrap(),
-                    end: summaries.next().unwrap(),
-                    reversed: s.reversed,
-                    goal: s.goal,
-                })
+                .chain(
+                    self.pending_selection
+                        .as_ref()
+                        .map(|pending| &pending.selection),
+                )
+                .map(|s| display_selection(s, &display_map))
                 .collect(),
         );
 
         for (replica_id, selections) in display_map
             .buffer_snapshot
-            .remote_selections_in_range(range)
+            .remote_selections_in_range(start..end)
         {
-            result.insert(replica_id, selections.collect());
+            result.insert(
+                replica_id,
+                selections
+                    .map(|s| display_selection(&s, &display_map))
+                    .collect(),
+            );
         }
+
+        dbg!(&result);
 
         result
     }
@@ -3135,6 +3164,31 @@ impl Editor {
             reversed: selection.reversed,
             goal: selection.goal,
         }
+    }
+
+    fn resolve_selections<
+        'a,
+        D: TextDimension + Ord + Sub<D, Output = D>,
+        I: 'a + Iterator<Item = &'a Selection<Anchor>>,
+    >(
+        &self,
+        selections: I,
+        buffer: &MultiBufferSnapshot,
+    ) -> impl 'a + Iterator<Item = Selection<D>> {
+        use itertools::Itertools as _;
+
+        let (to_map, to_summarize) = selections.tee();
+        let mut summaries = buffer
+            .summaries_for_anchors::<D, _>(to_summarize.flat_map(|s| [&s.start, &s.end]))
+            .into_iter();
+
+        to_map.map(move |s| Selection {
+            id: s.id,
+            start: summaries.next().unwrap(),
+            end: summaries.next().unwrap(),
+            reversed: s.reversed,
+            goal: s.goal,
+        })
     }
 
     fn selection_count<'a>(&self) -> usize {
@@ -3729,8 +3783,6 @@ pub fn diagnostic_style(
 
 #[cfg(test)]
 mod tests {
-    use std::mem;
-
     use super::*;
     use language::LanguageConfig;
     use text::Point;
@@ -3786,6 +3838,7 @@ mod tests {
             view.update_selection(DisplayPoint::new(0, 0), 0, Vector2F::zero(), cx);
         });
 
+        eprintln!(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
         assert_eq!(
             editor.update(cx, |view, cx| view.selection_ranges(cx)),
             [
@@ -3984,6 +4037,8 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
+            dbg!(&view.selections);
+
             assert_eq!(
                 view.selection_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
@@ -5691,16 +5746,16 @@ mod tests {
 
     impl Editor {
         fn selection_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
-            let snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-            self.selections
-                .iter()
+            self.visible_selections(0..self.max_point(cx).row() + 1, cx)
+                .get(&self.replica_id(cx))
+                .unwrap()
+                .into_iter()
                 .map(|s| {
-                    let mut range =
-                        s.start.to_display_point(&snapshot)..s.end.to_display_point(&snapshot);
                     if s.reversed {
-                        mem::swap(&mut range.start, &mut range.end);
+                        s.end..s.start
+                    } else {
+                        s.start..s.end
                     }
-                    range
                 })
                 .collect()
         }

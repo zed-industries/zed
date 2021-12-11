@@ -31,15 +31,16 @@ impl Anchor {
     pub fn cmp<'a>(&self, other: &Anchor, snapshot: &MultiBufferSnapshot) -> Result<Ordering> {
         let excerpt_id_cmp = self.excerpt_id.cmp(&other.excerpt_id);
         if excerpt_id_cmp.is_eq() {
-            if self.excerpt_id == ExcerptId::max() {
-                return Ok(Ordering::Equal);
+            if self.excerpt_id == ExcerptId::min() || self.excerpt_id == ExcerptId::max() {
+                Ok(Ordering::Equal)
+            } else {
+                self.text_anchor.cmp(
+                    &other.text_anchor,
+                    snapshot
+                        .buffer_snapshot_for_excerpt(&self.excerpt_id)
+                        .ok_or_else(|| anyhow!("excerpt {:?} not found", self.excerpt_id))?,
+                )
             }
-            self.text_anchor.cmp(
-                &other.text_anchor,
-                snapshot
-                    .buffer_snapshot_for_excerpt(&self.excerpt_id)
-                    .ok_or_else(|| anyhow!("excerpt {:?} not found", self.excerpt_id))?,
-            )
         } else {
             return Ok(excerpt_id_cmp);
         }
