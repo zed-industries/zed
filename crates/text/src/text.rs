@@ -511,6 +511,10 @@ impl Buffer {
         self.deferred_ops.len()
     }
 
+    pub fn transaction_group_interval(&self) -> Duration {
+        self.history.group_interval
+    }
+
     pub fn edit<R, I, S, T>(&mut self, ranges: R, new_text: T) -> EditOperation
     where
         R: IntoIterator<IntoIter = I>,

@@ -41,7 +41,7 @@ use std::{
     ops::{Deref, Range, RangeInclusive, Sub},
     rc::Rc,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use sum_tree::Bias;
 use text::rope::TextDimension;
@@ -3091,8 +3091,6 @@ impl Editor {
             );
         }
 
-        dbg!(&result);
-
         result
     }
 
@@ -3273,10 +3271,14 @@ impl Editor {
     }
 
     fn start_transaction(&mut self, cx: &mut ViewContext<Self>) {
+        self.start_transaction_at(Instant::now(), cx);
+    }
+
+    fn start_transaction_at(&mut self, now: Instant, cx: &mut ViewContext<Self>) {
         self.end_selection(cx);
         if let Some(tx_id) = self
             .buffer
-            .update(cx, |buffer, cx| buffer.start_transaction(cx))
+            .update(cx, |buffer, cx| buffer.start_transaction_at(now, cx))
         {
             self.selection_history
                 .insert(tx_id, (self.selections.clone(), None));
@@ -3284,9 +3286,13 @@ impl Editor {
     }
 
     fn end_transaction(&mut self, cx: &mut ViewContext<Self>) {
+        self.end_transaction_at(Instant::now(), cx);
+    }
+
+    fn end_transaction_at(&mut self, now: Instant, cx: &mut ViewContext<Self>) {
         if let Some(tx_id) = self
             .buffer
-            .update(cx, |buffer, cx| buffer.end_transaction(cx))
+            .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
         {
             self.selection_history.get_mut(&tx_id).unwrap().1 = Some(self.selections.clone());
         }
@@ -3770,9 +3776,79 @@ pub fn diagnostic_style(
 mod tests {
     use super::*;
     use language::LanguageConfig;
+    use std::time::Instant;
     use text::Point;
     use unindent::Unindent;
     use util::test::sample_text;
+
+    #[gpui::test]
+    fn test_undo_redo_with_selection_restoration(cx: &mut MutableAppContext) {
+        let mut now = Instant::now();
+        let buffer = MultiBuffer::build_simple("123456", cx);
+        let settings = EditorSettings::test(cx);
+        let (_, editor) = cx.add_window(Default::default(), |cx| {
+            build_editor(buffer.clone(), settings, cx)
+        });
+
+        editor.update(cx, |editor, cx| {
+            editor.start_transaction_at(now, cx);
+            editor.select_ranges([2..4], None, cx);
+            editor.insert("cd", cx);
+            editor.end_transaction_at(now, cx);
+            assert_eq!(editor.text(cx), "12cd56");
+            assert_eq!(editor.selected_ranges(cx), vec![4..4]);
+
+            editor.start_transaction_at(now, cx);
+            editor.select_ranges([4..5], None, cx);
+            editor.insert("e", cx);
+            editor.end_transaction_at(now, cx);
+            assert_eq!(editor.text(cx), "12cde6");
+            assert_eq!(editor.selected_ranges(cx), vec![5..5]);
+
+            now += buffer.read(cx).transaction_group_interval(cx) + Duration::from_millis(1);
+            editor.select_ranges([2..2], None, cx);
+
+            // Simulate an edit in another editor
+            buffer.update(cx, |buffer, cx| {
+                buffer.start_transaction_at(now, cx);
+                buffer.edit([0..1], "a", cx);
+                buffer.edit([1..1], "b", cx);
+                buffer.end_transaction_at(now, cx);
+            });
+
+            assert_eq!(editor.text(cx), "ab2cde6");
+            assert_eq!(editor.selected_ranges(cx), vec![3..3]);
+
+            // Last transaction happened past the group interval in a different editor.
+            // Undo it individually and don't restore selections.
+            editor.undo(&Undo, cx);
+            assert_eq!(editor.text(cx), "12cde6");
+            assert_eq!(editor.selected_ranges(cx), vec![2..2]);
+
+            // First two transactions happened within the group interval in this editor.
+            // Undo them together and restore selections.
+            editor.undo(&Undo, cx);
+            editor.undo(&Undo, cx); // Undo stack is empty here, so this is a no-op.
+            assert_eq!(editor.text(cx), "123456");
+            assert_eq!(editor.selected_ranges(cx), vec![0..0]);
+
+            // Redo the first two transactions together.
+            editor.redo(&Redo, cx);
+            assert_eq!(editor.text(cx), "12cde6");
+            assert_eq!(editor.selected_ranges(cx), vec![4..4]);
+
+            // Redo the last transaction on its own.
+            editor.redo(&Redo, cx);
+            assert_eq!(editor.text(cx), "ab2cde6");
+            assert_eq!(editor.selected_ranges(cx), vec![5..5]);
+
+            // Test empty transactions.
+            editor.start_transaction_at(now, cx);
+            editor.end_transaction_at(now, cx);
+            editor.undo(&Undo, cx);
+            assert_eq!(editor.text(cx), "12cde6");
+        });
+    }
 
     #[gpui::test]
     fn test_selection_with_mouse(cx: &mut gpui::MutableAppContext) {
@@ -3786,7 +3862,7 @@ mod tests {
         });
 
         assert_eq!(
-            editor.update(cx, |view, cx| view.selection_ranges(cx)),
+            editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
         );
 
@@ -3795,7 +3871,7 @@ mod tests {
         });
 
         assert_eq!(
-            editor.update(cx, |view, cx| view.selection_ranges(cx)),
+            editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
         );
 
@@ -3804,7 +3880,7 @@ mod tests {
         });
 
         assert_eq!(
-            editor.update(cx, |view, cx| view.selection_ranges(cx)),
+            editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
         );
 
@@ -3814,7 +3890,7 @@ mod tests {
         });
 
         assert_eq!(
-            editor.update(cx, |view, cx| view.selection_ranges(cx)),
+            editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
         );
 
@@ -3825,7 +3901,7 @@ mod tests {
 
         eprintln!(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
         assert_eq!(
-            editor.update(cx, |view, cx| view.selection_ranges(cx)),
+            editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
             [
                 DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1),
                 DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)
@@ -3837,7 +3913,7 @@ mod tests {
         });
 
         assert_eq!(
-            editor.update(cx, |view, cx| view.selection_ranges(cx)),
+            editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
             [DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)]
         );
     }
@@ -3851,7 +3927,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.begin_selection(DisplayPoint::new(2, 2), false, 1, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
             );
         });
@@ -3859,7 +3935,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.update_selection(DisplayPoint::new(3, 3), 0, Vector2F::zero(), cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
             );
         });
@@ -3868,7 +3944,7 @@ mod tests {
             view.cancel(&Cancel, cx);
             view.update_selection(DisplayPoint::new(1, 1), 0, Vector2F::zero(), cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
             );
         });
@@ -3889,7 +3965,7 @@ mod tests {
             view.update_selection(DisplayPoint::new(0, 3), 0, Vector2F::zero(), cx);
             view.end_selection(cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 [
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1),
@@ -3900,7 +3976,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.cancel(&Cancel, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 [DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1)]
             );
         });
@@ -3908,7 +3984,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.cancel(&Cancel, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 [DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1)]
             );
         });
@@ -4022,46 +4098,44 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            dbg!(&view.selections);
-
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
             );
 
             view.move_down(&MoveDown, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
             );
 
             view.move_right(&MoveRight, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4)]
             );
 
             view.move_left(&MoveLeft, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
             );
 
             view.move_up(&MoveUp, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
             );
 
             view.move_to_end(&MoveToEnd, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(5, 6)..DisplayPoint::new(5, 6)]
             );
 
             view.move_to_beginning(&MoveToBeginning, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
             );
 
@@ -4069,13 +4143,13 @@ mod tests {
                 .unwrap();
             view.select_to_beginning(&SelectToBeginning, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 0)]
             );
 
             view.select_to_end(&SelectToEnd, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(0, 1)..DisplayPoint::new(5, 6)]
             );
         });
@@ -4104,38 +4178,83 @@ mod tests {
             assert_eq!(view.display_text(cx), "ⓐⓑ…ⓔ\nab…e\nαβ…ε\n");
 
             view.move_right(&MoveRight, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐ".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(0, "ⓐ".len())]
+            );
             view.move_right(&MoveRight, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(0, "ⓐⓑ".len())]
+            );
             view.move_right(&MoveRight, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ…".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(0, "ⓐⓑ…".len())]
+            );
 
             view.move_down(&MoveDown, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "ab…".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(1, "ab…".len())]
+            );
             view.move_left(&MoveLeft, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "ab".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(1, "ab".len())]
+            );
             view.move_left(&MoveLeft, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "a".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(1, "a".len())]
+            );
 
             view.move_down(&MoveDown, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "α".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(2, "α".len())]
+            );
             view.move_right(&MoveRight, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβ".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(2, "αβ".len())]
+            );
             view.move_right(&MoveRight, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβ…".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(2, "αβ…".len())]
+            );
             view.move_right(&MoveRight, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβ…ε".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(2, "αβ…ε".len())]
+            );
 
             view.move_up(&MoveUp, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "ab…e".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(1, "ab…e".len())]
+            );
             view.move_up(&MoveUp, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ…ⓔ".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(0, "ⓐⓑ…ⓔ".len())]
+            );
             view.move_left(&MoveLeft, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ…".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(0, "ⓐⓑ…".len())]
+            );
             view.move_left(&MoveLeft, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(0, "ⓐⓑ".len())]
+            );
             view.move_left(&MoveLeft, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐ".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(0, "ⓐ".len())]
+            );
         });
     }
 
@@ -4151,22 +4270,40 @@ mod tests {
                 .unwrap();
 
             view.move_down(&MoveDown, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "abcd".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(1, "abcd".len())]
+            );
 
             view.move_down(&MoveDown, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβγ".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(2, "αβγ".len())]
+            );
 
             view.move_down(&MoveDown, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(3, "abcd".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(3, "abcd".len())]
+            );
 
             view.move_down(&MoveDown, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(4, "ⓐⓑⓒⓓⓔ".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(4, "ⓐⓑⓒⓓⓔ".len())]
+            );
 
             view.move_up(&MoveUp, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(3, "abcd".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(3, "abcd".len())]
+            );
 
             view.move_up(&MoveUp, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβγ".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(2, "αβγ".len())]
+            );
         });
     }
 
@@ -4189,7 +4326,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
@@ -4200,7 +4337,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
@@ -4211,7 +4348,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
@@ -4222,7 +4359,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_end_of_line(&MoveToEndOfLine, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
@@ -4234,7 +4371,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_end_of_line(&MoveToEndOfLine, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
@@ -4246,7 +4383,7 @@ mod tests {
             view.move_left(&MoveLeft, cx);
             view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
@@ -4257,7 +4394,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 0),
@@ -4268,7 +4405,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
@@ -4279,7 +4416,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_to_end_of_line(&SelectToEndOfLine, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 5),
@@ -4291,7 +4428,7 @@ mod tests {
             view.delete_to_end_of_line(&DeleteToEndOfLine, cx);
             assert_eq!(view.display_text(cx), "ab\n  de");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4),
@@ -4303,7 +4440,7 @@ mod tests {
             view.delete_to_beginning_of_line(&DeleteToBeginningOfLine, cx);
             assert_eq!(view.display_text(cx), "\n");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
@@ -4331,7 +4468,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
                     DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
@@ -4342,7 +4479,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
                     DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
@@ -4353,7 +4490,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4),
                     DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
@@ -4364,7 +4501,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
@@ -4375,7 +4512,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(0, 23)..DisplayPoint::new(0, 23),
@@ -4386,7 +4523,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(0, 24)..DisplayPoint::new(0, 24),
@@ -4397,7 +4534,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
@@ -4408,7 +4545,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
                     DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
@@ -4420,7 +4557,7 @@ mod tests {
             view.move_right(&MoveRight, cx);
             view.select_to_previous_word_boundary(&SelectToPreviousWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
                     DisplayPoint::new(2, 4)..DisplayPoint::new(2, 3),
@@ -4431,7 +4568,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_to_previous_word_boundary(&SelectToPreviousWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 10)..DisplayPoint::new(0, 7),
                     DisplayPoint::new(2, 4)..DisplayPoint::new(2, 2),
@@ -4442,7 +4579,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_to_next_word_boundary(&SelectToNextWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
                     DisplayPoint::new(2, 4)..DisplayPoint::new(2, 3),
@@ -4469,37 +4606,37 @@ mod tests {
 
             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 9)..DisplayPoint::new(1, 9)]
             );
 
             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
             );
 
             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
             );
 
             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(2, 8)..DisplayPoint::new(2, 8)]
             );
 
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
             );
 
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
             );
         });
@@ -4593,7 +4730,7 @@ mod tests {
             view.tab(&Tab, cx);
             assert_eq!(view.text(cx), "    one two\nthree\n four");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 4)..DisplayPoint::new(0, 7),
                     DisplayPoint::new(0, 8)..DisplayPoint::new(0, 11),
@@ -4604,7 +4741,7 @@ mod tests {
             view.outdent(&Outdent, cx);
             assert_eq!(view.text(cx), "one two\nthree\n four");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(0, 4)..DisplayPoint::new(0, 7),
@@ -4619,13 +4756,13 @@ mod tests {
             view.tab(&Tab, cx);
             assert_eq!(view.text(cx), "one two\n    three\n four");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 5)..DisplayPoint::new(2, 0)]
             );
             view.outdent(&Outdent, cx);
             assert_eq!(view.text(cx), "one two\nthree\n four");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 1)..DisplayPoint::new(2, 0)]
             );
         });
@@ -4711,7 +4848,7 @@ mod tests {
             view.delete_line(&DeleteLine, cx);
             assert_eq!(view.display_text(cx), "ghi");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)
@@ -4728,7 +4865,7 @@ mod tests {
             view.delete_line(&DeleteLine, cx);
             assert_eq!(view.display_text(cx), "ghi\n");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)]
             );
         });
@@ -4753,7 +4890,7 @@ mod tests {
             view.duplicate_line(&DuplicateLine, cx);
             assert_eq!(view.display_text(cx), "abc\nabc\ndef\ndef\nghi\n\n");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
@@ -4778,7 +4915,7 @@ mod tests {
             view.duplicate_line(&DuplicateLine, cx);
             assert_eq!(view.display_text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(3, 1)..DisplayPoint::new(4, 1),
                     DisplayPoint::new(4, 2)..DisplayPoint::new(5, 1),
@@ -4822,7 +4959,7 @@ mod tests {
                 "aa…bbb\nccc…eeee\nggggg\n…i\njjjjj\nfffff"
             );
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
@@ -4839,7 +4976,7 @@ mod tests {
                 "ccc…eeee\naa…bbb\nfffff\nggggg\n…i\njjjjj"
             );
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
@@ -4856,7 +4993,7 @@ mod tests {
                 "ccc…eeee\nfffff\naa…bbb\nggggg\n…i\njjjjj"
             );
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
                     DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
@@ -4873,7 +5010,7 @@ mod tests {
                 "ccc…eeee\naa…bbb\nggggg\n…i\njjjjj\nfffff"
             );
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
@@ -4907,7 +5044,7 @@ mod tests {
             view.paste(&Paste, cx);
             assert_eq!(view.display_text(cx), "two one✅ four three six five ");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 11)..DisplayPoint::new(0, 11),
                     DisplayPoint::new(0, 22)..DisplayPoint::new(0, 22),
@@ -4975,7 +5112,7 @@ mod tests {
                 "123\n4567\n9\n( 8ne✅ three five ) two one✅ four three six five ( one✅ three five ) "
             );
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
@@ -5009,7 +5146,7 @@ mod tests {
                 "123\n123\n123\n67\n123\n9\n( 8ne✅ three five ) two one✅ four three six five ( one✅ three five ) "
             );
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
@@ -5027,7 +5164,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_all(&SelectAll, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(2, 3)]
             );
         });
@@ -5051,7 +5188,7 @@ mod tests {
             .unwrap();
             view.select_line(&SelectLine, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 0)..DisplayPoint::new(2, 0),
                     DisplayPoint::new(4, 0)..DisplayPoint::new(5, 0),
@@ -5062,7 +5199,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_line(&SelectLine, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 0)..DisplayPoint::new(3, 0),
                     DisplayPoint::new(4, 0)..DisplayPoint::new(5, 5),
@@ -5073,7 +5210,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_line(&SelectLine, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![DisplayPoint::new(0, 0)..DisplayPoint::new(5, 5)]
             );
         });
@@ -5113,7 +5250,7 @@ mod tests {
                 "aaaaa\nbbbbb\nccc…eeee\nfffff\nggggg\n…i"
             );
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 [
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
@@ -5132,7 +5269,7 @@ mod tests {
                 "aaaaa\nbbbbb\nccccc\nddddd\neeeee\nfffff\nggggg\nhhhhh\niiiii"
             );
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 [
                     DisplayPoint::new(0, 5)..DisplayPoint::new(0, 5),
                     DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
@@ -5160,7 +5297,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
@@ -5171,7 +5308,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
@@ -5182,7 +5319,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)]
             );
         });
@@ -5190,7 +5327,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
                     DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
@@ -5201,7 +5338,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
                     DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
@@ -5216,7 +5353,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
                     DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
@@ -5227,7 +5364,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
                     DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
@@ -5238,7 +5375,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
             );
         });
@@ -5246,7 +5383,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
             );
         });
@@ -5256,7 +5393,7 @@ mod tests {
                 .unwrap();
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
@@ -5268,7 +5405,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
@@ -5281,7 +5418,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
@@ -5297,7 +5434,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
@@ -5310,7 +5447,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
@@ -5356,7 +5493,7 @@ mod tests {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
                 DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
@@ -5368,7 +5505,7 @@ mod tests {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
                 DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
@@ -5379,7 +5516,7 @@ mod tests {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
             &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
         );
 
@@ -5388,7 +5525,7 @@ mod tests {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
             &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
         );
 
@@ -5396,7 +5533,7 @@ mod tests {
             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
                 DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
@@ -5407,7 +5544,7 @@ mod tests {
             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
                 DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
@@ -5419,7 +5556,7 @@ mod tests {
             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
                 DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
@@ -5432,7 +5569,7 @@ mod tests {
             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
                 DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
@@ -5453,7 +5590,7 @@ mod tests {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
                 DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
@@ -5730,16 +5867,33 @@ mod tests {
     }
 
     impl Editor {
-        fn selection_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
-            self.visible_selections(0..self.max_point(cx).row() + 1, cx)
-                .get(&self.replica_id(cx))
-                .unwrap()
-                .into_iter()
+        fn selected_ranges<D: TextDimension + Ord + Sub<D, Output = D>>(
+            &self,
+            cx: &mut MutableAppContext,
+        ) -> Vec<Range<D>> {
+            self.local_selections::<D>(cx)
+                .iter()
                 .map(|s| {
                     if s.reversed {
-                        s.end..s.start
+                        s.end.clone()..s.start.clone()
                     } else {
-                        s.start..s.end
+                        s.start.clone()..s.end.clone()
+                    }
+                })
+                .collect()
+        }
+
+        fn selected_display_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
+            let display_map = self
+                .display_map
+                .update(cx, |display_map, cx| display_map.snapshot(cx));
+            self.selections
+                .iter()
+                .map(|s| {
+                    if s.reversed {
+                        s.end.to_display_point(&display_map)..s.start.to_display_point(&display_map)
+                    } else {
+                        s.start.to_display_point(&display_map)..s.end.to_display_point(&display_map)
                     }
                 })
                 .collect()

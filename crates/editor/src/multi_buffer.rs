@@ -1,5 +1,4 @@
 mod anchor;
-mod selection;
 
 pub use anchor::{Anchor, AnchorRangeExt};
 use anyhow::Result;
@@ -7,8 +6,8 @@ use clock::ReplicaId;
 use collections::HashMap;
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use language::{
-    Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, FromAnchor,
-    Language, Selection, ToOffset as _, ToPoint as _, TransactionId,
+    Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Selection,
+    ToOffset as _, ToPoint as _, TransactionId,
 };
 use std::{
     cell::{Ref, RefCell},
@@ -16,7 +15,7 @@ use std::{
     iter::Peekable,
     ops::{Range, Sub},
     sync::Arc,
-    time::SystemTime,
+    time::{Duration, Instant, SystemTime},
 };
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{
@@ -40,11 +39,15 @@ pub struct MultiBuffer {
 }
 
 pub trait ToOffset: 'static {
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize;
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> usize;
 }
 
 pub trait ToPoint: 'static {
-    fn to_point<'a>(&self, snapshot: &MultiBufferSnapshot) -> Point;
+    fn to_point(&self, snapshot: &MultiBufferSnapshot) -> Point;
+}
+
+pub trait FromAnchor: 'static {
+    fn from_anchor(anchor: &Anchor, snapshot: &MultiBufferSnapshot) -> Self;
 }
 
 #[derive(Debug)]
@@ -130,6 +133,13 @@ impl MultiBuffer {
         self.replica_id
     }
 
+    pub fn transaction_group_interval(&self, cx: &AppContext) -> Duration {
+        self.as_singleton()
+            .unwrap()
+            .read(cx)
+            .transaction_group_interval()
+    }
+
     pub fn snapshot(&self, cx: &AppContext) -> MultiBufferSnapshot {
         self.sync(cx);
         self.snapshot.borrow().clone()
@@ -200,10 +210,18 @@ impl MultiBuffer {
     }
 
     pub fn start_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
+        self.start_transaction_at(Instant::now(), cx)
+    }
+
+    pub(crate) fn start_transaction_at(
+        &mut self,
+        now: Instant,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<TransactionId> {
         // TODO
         self.as_singleton()
             .unwrap()
-            .update(cx, |buffer, _| buffer.start_transaction())
+            .update(cx, |buffer, _| buffer.start_transaction_at(now))
     }
 
     pub fn end_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
@@ -211,6 +229,17 @@ impl MultiBuffer {
         self.as_singleton()
             .unwrap()
             .update(cx, |buffer, cx| buffer.end_transaction(cx))
+    }
+
+    pub(crate) fn end_transaction_at(
+        &mut self,
+        now: Instant,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<TransactionId> {
+        // TODO
+        self.as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
     }
 
     pub fn undo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {

@@ -31,7 +31,7 @@ use std::{
     vec,
 };
 use sum_tree::TreeMap;
-use text::{operation_queue::OperationQueue, rope::TextDimension};
+use text::operation_queue::OperationQueue;
 pub use text::{Buffer as TextBuffer, Operation as _, *};
 use theme::SyntaxTheme;
 use tree_sitter::{InputEdit, Parser, QueryCursor, Tree};
@@ -1062,7 +1062,7 @@ impl Buffer {
         self.start_transaction_at(Instant::now())
     }
 
-    pub(crate) fn start_transaction_at(&mut self, now: Instant) -> Option<TransactionId> {
+    pub fn start_transaction_at(&mut self, now: Instant) -> Option<TransactionId> {
         self.text.start_transaction_at(now)
     }
 
@@ -1070,7 +1070,7 @@ impl Buffer {
         self.end_transaction_at(Instant::now(), cx)
     }
 
-    pub(crate) fn end_transaction_at(
+    pub fn end_transaction_at(
         &mut self,
         now: Instant,
         cx: &mut ModelContext<Self>,
