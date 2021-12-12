@@ -1990,13 +1990,21 @@ impl Editor {
     }
 
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
-        self.buffer.update(cx, |buffer, cx| buffer.undo(cx));
-        self.request_autoscroll(Autoscroll::Fit, cx);
+        if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
+            if let Some((selections, _)) = self.selection_history.get(&tx_id) {
+                self.selections = selections.clone();
+            }
+            self.request_autoscroll(Autoscroll::Fit, cx);
+        }
     }
 
     pub fn redo(&mut self, _: &Redo, cx: &mut ViewContext<Self>) {
-        self.buffer.update(cx, |buffer, cx| buffer.redo(cx));
-        self.request_autoscroll(Autoscroll::Fit, cx);
+        if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
+            if let Some((_, Some(selections))) = self.selection_history.get(&tx_id) {
+                self.selections = selections.clone();
+            }
+            self.request_autoscroll(Autoscroll::Fit, cx);
+        }
     }
 
     pub fn move_left(&mut self, _: &MoveLeft, cx: &mut ViewContext<Self>) {
@@ -3029,9 +3037,6 @@ impl Editor {
             )
         };
 
-        dbg!(&start, &end);
-        dbg!(&self.selections);
-
         let start_ix = match self
             .selections
             .binary_search_by(|probe| probe.end.cmp(&start, &buffer).unwrap())
@@ -3045,8 +3050,6 @@ impl Editor {
             Ok(ix) => ix + 1,
             Err(ix) => ix,
         };
-
-        dbg!(start_ix, end_ix);
 
         fn display_selection(
             selection: &Selection<Anchor>,
@@ -3166,31 +3169,6 @@ impl Editor {
         }
     }
 
-    fn resolve_selections<
-        'a,
-        D: TextDimension + Ord + Sub<D, Output = D>,
-        I: 'a + Iterator<Item = &'a Selection<Anchor>>,
-    >(
-        &self,
-        selections: I,
-        buffer: &MultiBufferSnapshot,
-    ) -> impl 'a + Iterator<Item = Selection<D>> {
-        use itertools::Itertools as _;
-
-        let (to_map, to_summarize) = selections.tee();
-        let mut summaries = buffer
-            .summaries_for_anchors::<D, _>(to_summarize.flat_map(|s| [&s.start, &s.end]))
-            .into_iter();
-
-        to_map.map(move |s| Selection {
-            id: s.id,
-            start: summaries.next().unwrap(),
-            end: summaries.next().unwrap(),
-            reversed: s.reversed,
-            goal: s.goal,
-        })
-    }
-
     fn selection_count<'a>(&self) -> usize {
         let mut count = self.selections.len();
         if self.pending_selection.is_some() {
@@ -3296,15 +3274,22 @@ impl Editor {
 
     fn start_transaction(&mut self, cx: &mut ViewContext<Self>) {
         self.end_selection(cx);
-        self.buffer.update(cx, |buffer, cx| {
-            buffer.start_transaction(cx);
-        });
+        if let Some(tx_id) = self
+            .buffer
+            .update(cx, |buffer, cx| buffer.start_transaction(cx))
+        {
+            self.selection_history
+                .insert(tx_id, (self.selections.clone(), None));
+        }
     }
 
-    fn end_transaction(&self, cx: &mut ViewContext<Self>) {
-        self.buffer.update(cx, |buffer, cx| {
-            buffer.end_transaction(cx);
-        });
+    fn end_transaction(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(tx_id) = self
+            .buffer
+            .update(cx, |buffer, cx| buffer.end_transaction(cx))
+        {
+            self.selection_history.get_mut(&tx_id).unwrap().1 = Some(self.selections.clone());
+        }
     }
 
     pub fn page_up(&mut self, _: &PageUp, _: &mut ViewContext<Self>) {
