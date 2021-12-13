@@ -73,6 +73,7 @@ pub struct ExcerptProperties<'a, T> {
 #[derive(Clone)]
 struct Excerpt {
     id: ExcerptId,
+    buffer_id: usize,
     buffer: BufferSnapshot,
     range: Range<text::Anchor>,
     text_summary: TextSummary,
@@ -195,18 +196,100 @@ impl MultiBuffer {
         S: ToOffset,
         T: Into<String>,
     {
-        // TODO
         let snapshot = self.read(cx);
-        let ranges_iter = ranges_iter
-            .into_iter()
-            .map(|range| range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot));
-        self.as_singleton().unwrap().update(cx, |buffer, cx| {
-            if autoindent {
-                buffer.edit_with_autoindent(ranges_iter, new_text, cx);
+        let mut buffer_edits: HashMap<usize, Vec<(Range<usize>, bool)>> = Default::default();
+        let mut cursor = snapshot.excerpts.cursor::<usize>();
+        for range in ranges_iter {
+            let start = range.start.to_offset(&snapshot);
+            let end = range.end.to_offset(&snapshot);
+            cursor.seek(&start, Bias::Right, &());
+            let start_excerpt = cursor.item().expect("start offset out of bounds");
+            let start_overshoot =
+                (start - cursor.start()).saturating_sub(start_excerpt.header_height as usize);
+            let buffer_start =
+                start_excerpt.range.start.to_offset(&start_excerpt.buffer) + start_overshoot;
+
+            cursor.seek(&end, Bias::Right, &());
+            let end_excerpt = cursor.item().expect("end offset out of bounds");
+            let end_overshoot =
+                (end - cursor.start()).saturating_sub(end_excerpt.header_height as usize);
+            let buffer_end = end_excerpt.range.start.to_offset(&end_excerpt.buffer) + end_overshoot;
+
+            if start_excerpt.id == end_excerpt.id {
+                buffer_edits
+                    .entry(start_excerpt.buffer_id)
+                    .or_insert(Vec::new())
+                    .push((buffer_start..buffer_end, true));
             } else {
-                buffer.edit(ranges_iter, new_text, cx);
+                let start_excerpt_range =
+                    buffer_start..start_excerpt.range.end.to_offset(&start_excerpt.buffer);
+                let end_excerpt_range =
+                    end_excerpt.range.start.to_offset(&end_excerpt.buffer)..buffer_end;
+                buffer_edits
+                    .entry(start_excerpt.buffer_id)
+                    .or_insert(Vec::new())
+                    .push((start_excerpt_range, true));
+                buffer_edits
+                    .entry(end_excerpt.buffer_id)
+                    .or_insert(Vec::new())
+                    .push((end_excerpt_range, false));
+
+                cursor.seek(&start, Bias::Right, &());
+                cursor.next(&());
+                while let Some(excerpt) = cursor.item() {
+                    if excerpt.id == end_excerpt.id {
+                        break;
+                    }
+
+                    let excerpt_range = start_excerpt.range.end.to_offset(&start_excerpt.buffer)
+                        ..start_excerpt.range.end.to_offset(&start_excerpt.buffer);
+                    buffer_edits
+                        .entry(excerpt.buffer_id)
+                        .or_insert(Vec::new())
+                        .push((excerpt_range, false));
+                    cursor.next(&());
+                }
             }
-        });
+        }
+
+        let new_text = new_text.into();
+        for (buffer_id, mut edits) in buffer_edits {
+            edits.sort_unstable_by_key(|(range, _)| range.start);
+            self.buffers[&buffer_id].buffer.update(cx, |buffer, cx| {
+                let mut edits = edits.into_iter().peekable();
+                let mut insertions = Vec::new();
+                let mut deletions = Vec::new();
+                while let Some((mut range, mut is_insertion)) = edits.next() {
+                    while let Some((next_range, next_is_insertion)) = edits.peek() {
+                        if range.end >= next_range.start {
+                            range.end = cmp::max(next_range.end, range.end);
+                            is_insertion |= *next_is_insertion;
+                            edits.next();
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if is_insertion {
+                        insertions.push(
+                            buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
+                        );
+                    } else {
+                        deletions.push(
+                            buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
+                        );
+                    }
+                }
+
+                if autoindent {
+                    buffer.edit_with_autoindent(deletions, "", cx);
+                    buffer.edit_with_autoindent(insertions, new_text.clone(), cx);
+                } else {
+                    buffer.edit(deletions, "", cx);
+                    buffer.edit(insertions, new_text.clone(), cx);
+                }
+            })
+        }
     }
 
     pub fn start_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
@@ -306,6 +389,7 @@ impl MultiBuffer {
         let edit_start = snapshot.excerpts.summary().text.bytes;
         let excerpt = Excerpt::new(
             id.clone(),
+            props.buffer.id(),
             buffer.snapshot(),
             range,
             props.header_height,
@@ -424,6 +508,7 @@ impl MultiBuffer {
 
                 new_excerpt = Excerpt::new(
                     id.clone(),
+                    buffer_state.buffer.id(),
                     buffer.snapshot(),
                     old_excerpt.range.clone(),
                     old_excerpt.header_height,
@@ -1025,6 +1110,7 @@ impl MultiBufferSnapshot {
 impl Excerpt {
     fn new(
         id: ExcerptId,
+        buffer_id: usize,
         buffer: BufferSnapshot,
         range: Range<text::Anchor>,
         header_height: u8,
@@ -1050,6 +1136,7 @@ impl Excerpt {
 
         Excerpt {
             id,
+            buffer_id,
             buffer,
             range,
             text_summary,
