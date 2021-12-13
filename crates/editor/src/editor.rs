@@ -5948,6 +5948,11 @@ mod tests {
                 .update(cx, |display_map, cx| display_map.snapshot(cx));
             self.selections
                 .iter()
+                .chain(
+                    self.pending_selection
+                        .as_ref()
+                        .map(|pending| &pending.selection),
+                )
                 .map(|s| {
                     if s.reversed {
                         s.end.to_display_point(&display_map)..s.start.to_display_point(&display_map)

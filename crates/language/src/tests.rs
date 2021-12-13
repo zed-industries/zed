@@ -518,6 +518,8 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'A'".to_string(),
+                            group_id: 0,
+                            is_primary: true,
                             ..Default::default()
                         },
                     },
@@ -526,6 +528,8 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'BB'".to_string(),
+                            group_id: 1,
+                            is_primary: true,
                             ..Default::default()
                         },
                     },
@@ -534,6 +538,8 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'CCC'".to_string(),
+                            group_id: 2,
+                            is_primary: true,
                             ..Default::default()
                         },
                     },
@@ -602,6 +608,8 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'A'".to_string(),
+                            group_id: 0,
+                            is_primary: true,
                             ..Default::default()
                         },
                     },
@@ -610,6 +618,8 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::WARNING,
                             message: "unreachable statement".to_string(),
+                            group_id: 1,
+                            is_primary: true,
                             ..Default::default()
                         },
                     },
@@ -687,6 +697,8 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'BB'".to_string(),
                             source: Some("disk".to_string()),
+                            group_id: 1,
+                            is_primary: true,
                             ..Default::default()
                         },
                     },
@@ -696,6 +708,8 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'A'".to_string(),
                             source: Some("disk".to_string()),
+                            group_id: 0,
+                            is_primary: true,
                             ..Default::default()
                         },
                     },
@@ -714,6 +728,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'A'".to_string(),
+                        source: Some("disk".to_string()),
                         group_id: 0,
                         is_primary: true,
                         ..Default::default()
@@ -724,6 +739,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'BB'".to_string(),
+                        source: Some("disk".to_string()),
                         group_id: 1,
                         is_primary: true,
                         ..Default::default()

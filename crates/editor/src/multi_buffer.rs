@@ -163,18 +163,18 @@ impl MultiBuffer {
         self.subscriptions.subscribe()
     }
 
-    pub fn edit<I, S, T>(&mut self, ranges_iter: I, new_text: T, cx: &mut ModelContext<Self>)
+    pub fn edit<I, S, T>(&mut self, ranges: I, new_text: T, cx: &mut ModelContext<Self>)
     where
         I: IntoIterator<Item = Range<S>>,
         S: ToOffset,
         T: Into<String>,
     {
-        self.edit_internal(ranges_iter, new_text, false, cx)
+        self.edit_internal(ranges, new_text, false, cx)
     }
 
     pub fn edit_with_autoindent<I, S, T>(
         &mut self,
-        ranges_iter: I,
+        ranges: I,
         new_text: T,
         cx: &mut ModelContext<Self>,
     ) where
@@ -182,7 +182,7 @@ impl MultiBuffer {
         S: ToOffset,
         T: Into<String>,
     {
-        self.edit_internal(ranges_iter, new_text, true, cx)
+        self.edit_internal(ranges, new_text, true, cx)
     }
 
     pub fn edit_internal<I, S, T>(
@@ -196,6 +196,20 @@ impl MultiBuffer {
         S: ToOffset,
         T: Into<String>,
     {
+        if let Some(buffer) = self.as_singleton() {
+            let snapshot = self.read(cx);
+            let ranges = ranges_iter
+                .into_iter()
+                .map(|range| range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot));
+            return buffer.update(cx, |buffer, cx| {
+                if autoindent {
+                    buffer.edit_with_autoindent(ranges, new_text, cx)
+                } else {
+                    buffer.edit(ranges, new_text, cx)
+                }
+            });
+        }
+
         let snapshot = self.read(cx);
         let mut buffer_edits: HashMap<usize, Vec<(Range<usize>, bool)>> = Default::default();
         let mut cursor = snapshot.excerpts.cursor::<usize>();
