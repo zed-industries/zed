@@ -87,6 +87,8 @@ pub struct BufferSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diagnostic {
+    pub source: Option<String>,
+    pub code: Option<String>,
     pub severity: DiagnosticSeverity,
     pub message: String,
     pub group_id: usize,
@@ -720,7 +722,7 @@ impl Buffer {
     pub fn update_diagnostics(
         &mut self,
         version: Option<i32>,
-        mut diagnostics: Vec<lsp::Diagnostic>,
+        mut diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<Operation> {
         diagnostics.sort_unstable_by_key(|d| (d.range.start, d.range.end));
@@ -736,7 +738,6 @@ impl Buffer {
         } else {
             self.deref()
         };
-        let abs_path = self.file.as_ref().and_then(|f| f.abs_path());
 
         let empty_set = HashSet::new();
         let disk_based_sources = self
@@ -750,26 +751,11 @@ impl Buffer {
             .peekable();
         let mut last_edit_old_end = PointUtf16::zero();
         let mut last_edit_new_end = PointUtf16::zero();
-        let mut group_ids_by_diagnostic_range = HashMap::new();
-        let mut diagnostics_by_group_id = HashMap::new();
-        let mut next_group_id = 0;
-        'outer: for diagnostic in &diagnostics {
-            let mut start = diagnostic.range.start.to_point_utf16();
-            let mut end = diagnostic.range.end.to_point_utf16();
-            let source = diagnostic.source.as_ref();
-            let code = diagnostic.code.as_ref();
-            let group_id = diagnostic_ranges(&diagnostic, abs_path.as_deref())
-                .find_map(|range| group_ids_by_diagnostic_range.get(&(source, code, range)))
-                .copied()
-                .unwrap_or_else(|| {
-                    let group_id = post_inc(&mut next_group_id);
-                    for range in diagnostic_ranges(&diagnostic, abs_path.as_deref()) {
-                        group_ids_by_diagnostic_range.insert((source, code, range), group_id);
-                    }
-                    group_id
-                });
-
-            if diagnostic
+        'outer: for entry in &mut diagnostics {
+            let mut start = entry.range.start;
+            let mut end = entry.range.end;
+            if entry
+                .diagnostic
                 .source
                 .as_ref()
                 .map_or(false, |source| disk_based_sources.contains(source))
@@ -790,46 +776,20 @@ impl Buffer {
                 end = last_edit_new_end + (end - last_edit_old_end);
             }
 
-            let mut range = content.clip_point_utf16(start, Bias::Left)
+            entry.range = content.clip_point_utf16(start, Bias::Left)
                 ..content.clip_point_utf16(end, Bias::Right);
-            if range.start == range.end {
-                range.end.column += 1;
-                range.end = content.clip_point_utf16(range.end, Bias::Right);
-                if range.start == range.end && range.end.column > 0 {
-                    range.start.column -= 1;
-                    range.start = content.clip_point_utf16(range.start, Bias::Left);
+            if entry.range.start == entry.range.end {
+                entry.range.end.column += 1;
+                entry.range.end = content.clip_point_utf16(entry.range.end, Bias::Right);
+                if entry.range.start == entry.range.end && entry.range.end.column > 0 {
+                    entry.range.start.column -= 1;
+                    entry.range.start = content.clip_point_utf16(entry.range.start, Bias::Left);
                 }
             }
-
-            diagnostics_by_group_id
-                .entry(group_id)
-                .or_insert(Vec::new())
-                .push(DiagnosticEntry {
-                    range,
-                    diagnostic: Diagnostic {
-                        severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
-                        message: diagnostic.message.clone(),
-                        group_id,
-                        is_primary: false,
-                    },
-                });
         }
 
         drop(edits_since_save);
-        let new_diagnostics = DiagnosticSet::new(
-            diagnostics_by_group_id
-                .into_values()
-                .flat_map(|mut diagnostics| {
-                    let primary = diagnostics
-                        .iter_mut()
-                        .min_by_key(|entry| entry.diagnostic.severity)
-                        .unwrap();
-                    primary.diagnostic.is_primary = true;
-                    diagnostics
-                }),
-            content,
-        );
-        self.diagnostics = new_diagnostics;
+        self.diagnostics = DiagnosticSet::new(diagnostics, content);
 
         if let Some(version) = version {
             let language_server = self.language_server.as_mut().unwrap();
@@ -1971,16 +1931,6 @@ impl ToTreeSitterPoint for Point {
     }
 }
 
-trait ToPointUtf16 {
-    fn to_point_utf16(self) -> PointUtf16;
-}
-
-impl ToPointUtf16 for lsp::Position {
-    fn to_point_utf16(self) -> PointUtf16 {
-        PointUtf16::new(self.line, self.character)
-    }
-}
-
 impl operation_queue::Operation for Operation {
     fn lamport_timestamp(&self) -> clock::Lamport {
         match self {
@@ -2000,32 +1950,17 @@ impl operation_queue::Operation for Operation {
     }
 }
 
-fn diagnostic_ranges<'a>(
-    diagnostic: &'a lsp::Diagnostic,
-    abs_path: Option<&'a Path>,
-) -> impl 'a + Iterator<Item = Range<PointUtf16>> {
-    diagnostic
-        .related_information
-        .iter()
-        .flatten()
-        .filter_map(move |info| {
-            if info.location.uri.to_file_path().ok()? == abs_path? {
-                let info_start = PointUtf16::new(
-                    info.location.range.start.line,
-                    info.location.range.start.character,
-                );
-                let info_end = PointUtf16::new(
-                    info.location.range.end.line,
-                    info.location.range.end.character,
-                );
-                Some(info_start..info_end)
-            } else {
-                None
-            }
-        })
-        .chain(Some(
-            diagnostic.range.start.to_point_utf16()..diagnostic.range.end.to_point_utf16(),
-        ))
+impl Default for Diagnostic {
+    fn default() -> Self {
+        Self {
+            source: Default::default(),
+            code: Default::default(),
+            severity: DiagnosticSeverity::ERROR,
+            message: Default::default(),
+            group_id: Default::default(),
+            is_primary: Default::default(),
+        }
+    }
 }
 
 pub fn contiguous_ranges(

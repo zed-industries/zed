@@ -269,6 +269,8 @@ message Diagnostic {
     string message = 4;
     uint64 group_id = 5;
     bool is_primary = 6;
+    optional string code = 7;
+    optional string source = 8;
     enum Severity {
         None = 0;
         Error = 1;

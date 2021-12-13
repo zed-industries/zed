@@ -4,10 +4,11 @@ mod worktree;
 
 use anyhow::Result;
 use client::{Client, UserStore};
+use clock::ReplicaId;
 use futures::Future;
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
-use language::LanguageRegistry;
+use language::{DiagnosticEntry, LanguageRegistry, PointUtf16};
 use std::{
     path::Path,
     sync::{atomic::AtomicBool, Arc},
@@ -60,6 +61,11 @@ impl Project {
             user_store,
             fs,
         }
+    }
+
+    pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {
+        // TODO
+        self.worktrees.first().unwrap().read(cx).replica_id()
     }
 
     pub fn worktrees(&self) -> &[ModelHandle<Worktree>] {
@@ -157,6 +163,13 @@ impl Project {
             self.active_entry = new_active_entry;
             cx.emit(Event::ActiveEntryChanged(new_active_entry));
         }
+    }
+
+    pub fn diagnostics<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl Iterator<Item = (&'a Path, &'a [DiagnosticEntry<PointUtf16>])> {
+        std::iter::empty()
     }
 
     pub fn active_entry(&self) -> Option<ProjectEntry> {

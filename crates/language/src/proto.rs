@@ -117,6 +117,8 @@ pub fn serialize_diagnostics<'a>(
             } as i32,
             group_id: entry.diagnostic.group_id as u64,
             is_primary: entry.diagnostic.is_primary,
+            code: entry.diagnostic.code.clone(),
+            source: entry.diagnostic.source.clone(),
         })
         .collect()
 }
@@ -269,6 +271,8 @@ pub fn deserialize_diagnostics(
                     message: diagnostic.message,
                     group_id: diagnostic.group_id as usize,
                     is_primary: diagnostic.is_primary,
+                    code: diagnostic.code,
+                    source: diagnostic.source,
                 },
             })
         })

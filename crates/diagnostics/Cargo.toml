@@ -1,0 +1,14 @@
+[package]
+name = "diagnostics"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/diagnostics.rs"
+
+[dependencies]
+editor = { path = "../editor" }
+gpui = { path = "../gpui" }
+project = { path = "../project" }
+workspace = { path = "../workspace" }
+postage = { version = "0.4", features = ["futures-traits"] }

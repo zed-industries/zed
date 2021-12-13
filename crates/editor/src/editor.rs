@@ -15,10 +15,11 @@ pub use element::*;
 use gpui::{
     action,
     elements::Text,
+    fonts::TextStyle,
     geometry::vector::{vec2f, Vector2F},
     keymap::Binding,
     text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
-    MutableAppContext, RenderContext, View, ViewContext, WeakViewHandle,
+    MutableAppContext, RenderContext, View, ViewContext, WeakModelHandle, WeakViewHandle,
 };
 use items::BufferItemHandle;
 use language::{
@@ -29,6 +30,7 @@ pub use multi_buffer::MultiBuffer;
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, ToOffset, ToPoint,
 };
+use postage::watch;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
@@ -3784,6 +3786,48 @@ pub fn diagnostic_style(
         (DiagnosticSeverity::HINT, true) => style.hint_diagnostic,
         (DiagnosticSeverity::HINT, false) => style.invalid_hint_diagnostic,
         _ => Default::default(),
+    }
+}
+
+pub fn settings_builder(
+    buffer: WeakModelHandle<MultiBuffer>,
+    settings: watch::Receiver<workspace::Settings>,
+) -> impl Fn(&AppContext) -> EditorSettings {
+    move |cx| {
+        let settings = settings.borrow();
+        let font_cache = cx.font_cache();
+        let font_family_id = settings.buffer_font_family;
+        let font_family_name = cx.font_cache().family_name(font_family_id).unwrap();
+        let font_properties = Default::default();
+        let font_id = font_cache
+            .select_font(font_family_id, &font_properties)
+            .unwrap();
+        let font_size = settings.buffer_font_size;
+
+        let mut theme = settings.theme.editor.clone();
+        theme.text = TextStyle {
+            color: theme.text.color,
+            font_family_name,
+            font_family_id,
+            font_id,
+            font_size,
+            font_properties,
+            underline: None,
+        };
+        let language = buffer.upgrade(cx).and_then(|buf| buf.read(cx).language(cx));
+        let soft_wrap = match settings.soft_wrap(language) {
+            workspace::settings::SoftWrap::None => SoftWrap::None,
+            workspace::settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
+            workspace::settings::SoftWrap::PreferredLineLength => {
+                SoftWrap::Column(settings.preferred_line_length(language).saturating_sub(1))
+            }
+        };
+
+        EditorSettings {
+            tab_size: settings.tab_size,
+            soft_wrap,
+            style: theme,
+        }
     }
 }
 

@@ -1,10 +1,9 @@
-use crate::{Editor, EditorSettings, Event};
+use crate::{Editor, Event};
 use crate::{MultiBuffer, ToPoint as _};
 use anyhow::Result;
 use gpui::{
-    elements::*, fonts::TextStyle, AppContext, Entity, ModelContext, ModelHandle,
-    MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
-    WeakModelHandle,
+    elements::*, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, RenderContext,
+    Subscription, Task, View, ViewContext, ViewHandle, WeakModelHandle,
 };
 use language::{Diagnostic, File as _};
 use postage::watch;
@@ -13,8 +12,7 @@ use std::fmt::Write;
 use std::path::Path;
 use text::{Point, Selection};
 use workspace::{
-    settings, EntryOpener, ItemHandle, ItemView, ItemViewHandle, Settings, StatusItemView,
-    WeakItemHandle,
+    EntryOpener, ItemHandle, ItemView, ItemViewHandle, Settings, StatusItemView, WeakItemHandle,
 };
 
 pub struct BufferOpener;
@@ -53,42 +51,7 @@ impl ItemHandle for BufferItemHandle {
         Box::new(cx.add_view(window_id, |cx| {
             Editor::for_buffer(
                 self.0.clone(),
-                move |cx| {
-                    let settings = settings.borrow();
-                    let font_cache = cx.font_cache();
-                    let font_family_id = settings.buffer_font_family;
-                    let font_family_name = cx.font_cache().family_name(font_family_id).unwrap();
-                    let font_properties = Default::default();
-                    let font_id = font_cache
-                        .select_font(font_family_id, &font_properties)
-                        .unwrap();
-                    let font_size = settings.buffer_font_size;
-
-                    let mut theme = settings.theme.editor.clone();
-                    theme.text = TextStyle {
-                        color: theme.text.color,
-                        font_family_name,
-                        font_family_id,
-                        font_id,
-                        font_size,
-                        font_properties,
-                        underline: None,
-                    };
-                    let language = buffer.upgrade(cx).and_then(|buf| buf.read(cx).language(cx));
-                    let soft_wrap = match settings.soft_wrap(language) {
-                        settings::SoftWrap::None => crate::SoftWrap::None,
-                        settings::SoftWrap::EditorWidth => crate::SoftWrap::EditorWidth,
-                        settings::SoftWrap::PreferredLineLength => crate::SoftWrap::Column(
-                            settings.preferred_line_length(language).saturating_sub(1),
-                        ),
-                    };
-
-                    EditorSettings {
-                        tab_size: settings.tab_size,
-                        soft_wrap,
-                        style: theme,
-                    }
-                },
+                crate::settings_builder(buffer, settings),
                 cx,
             )
         }))
