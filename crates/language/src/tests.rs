@@ -1,14 +1,11 @@
 use super::*;
-use gpui::{ModelHandle, MutableAppContext, Task};
+use gpui::{ModelHandle, MutableAppContext};
 use std::{
-    any::Any,
     cell::RefCell,
-    ffi::OsString,
     iter::FromIterator,
     ops::Range,
-    path::PathBuf,
     rc::Rc,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 use unindent::Unindent as _;
 
@@ -870,81 +867,4 @@ fn rust_lang() -> Language {
 
 fn empty(point: Point) -> Range<Point> {
     point..point
-}
-
-#[derive(Clone)]
-struct FakeFile {
-    abs_path: PathBuf,
-}
-
-impl FakeFile {
-    fn new(abs_path: impl Into<PathBuf>) -> Self {
-        Self {
-            abs_path: abs_path.into(),
-        }
-    }
-}
-
-impl File for FakeFile {
-    fn worktree_id(&self) -> usize {
-        todo!()
-    }
-
-    fn entry_id(&self) -> Option<usize> {
-        todo!()
-    }
-
-    fn mtime(&self) -> SystemTime {
-        SystemTime::now()
-    }
-
-    fn path(&self) -> &Arc<Path> {
-        todo!()
-    }
-
-    fn abs_path(&self) -> Option<PathBuf> {
-        Some(self.abs_path.clone())
-    }
-
-    fn full_path(&self) -> PathBuf {
-        todo!()
-    }
-
-    fn file_name(&self) -> Option<OsString> {
-        todo!()
-    }
-
-    fn is_deleted(&self) -> bool {
-        todo!()
-    }
-
-    fn save(
-        &self,
-        _: u64,
-        _: Rope,
-        _: clock::Global,
-        _: &mut MutableAppContext,
-    ) -> Task<Result<(clock::Global, SystemTime)>> {
-        todo!()
-    }
-
-    fn load_local(&self, _: &AppContext) -> Option<Task<Result<String>>> {
-        todo!()
-    }
-
-    fn buffer_updated(&self, _: u64, _: super::Operation, _: &mut MutableAppContext) {
-        todo!()
-    }
-
-    fn buffer_removed(&self, _: u64, _: &mut MutableAppContext) {
-        todo!()
-    }
-
-    fn boxed_clone(&self) -> Box<dyn File> {
-        todo!()
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        todo!()
-    }
 }

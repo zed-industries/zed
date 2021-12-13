@@ -1,6 +1,7 @@
 use super::{
     fs::{self, Fs},
     ignore::IgnoreStack,
+    DiagnosticSummary,
 };
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context, Result};
@@ -306,6 +307,7 @@ impl Worktree {
                     updates_tx,
                     client: client.clone(),
                     open_buffers: Default::default(),
+                    diagnostics: Vec::new(),
                     collaborators,
                     queued_operations: Default::default(),
                     languages,
@@ -465,6 +467,13 @@ impl Worktree {
             Worktree::Local(worktree) => &worktree.collaborators,
             Worktree::Remote(worktree) => &worktree.collaborators,
         }
+    }
+
+    pub fn diagnostic_summaries<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl Iterator<Item = DiagnosticSummary> {
+        std::iter::empty()
     }
 
     pub fn open_buffer(
@@ -754,10 +763,11 @@ impl Worktree {
             .uri
             .to_file_path()
             .map_err(|_| anyhow!("URI is not a file"))?;
-        let worktree_path = abs_path
-            .strip_prefix(&this.abs_path)
-            .context("path is not within worktree")?
-            .to_owned();
+        let worktree_path = Arc::from(
+            abs_path
+                .strip_prefix(&this.abs_path)
+                .context("path is not within worktree")?,
+        );
 
         let mut group_ids_by_diagnostic_range = HashMap::new();
         let mut diagnostics_by_group_id = HashMap::new();
@@ -784,7 +794,10 @@ impl Worktree {
                         ..diagnostic.range.end.to_point_utf16(),
                     diagnostic: Diagnostic {
                         source: diagnostic.source.clone(),
-                        code: diagnostic.code.clone(),
+                        code: diagnostic.code.clone().map(|code| match code {
+                            lsp::NumberOrString::Number(code) => code.to_string(),
+                            lsp::NumberOrString::String(code) => code,
+                        }),
                         severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
                         message: diagnostic.message.clone(),
                         group_id,
@@ -810,12 +823,12 @@ impl Worktree {
                 if buffer
                     .read(cx)
                     .file()
-                    .map_or(false, |file| file.path().as_ref() == worktree_path)
+                    .map_or(false, |file| *file.path() == worktree_path)
                 {
                     let (remote_id, operation) = buffer.update(cx, |buffer, cx| {
                         (
                             buffer.remote_id(),
-                            buffer.update_diagnostics(params.version, params.diagnostics, cx),
+                            buffer.update_diagnostics(params.version, diagnostics, cx),
                         )
                     });
                     self.send_buffer_update(remote_id, operation?, cx);
@@ -888,7 +901,7 @@ pub struct LocalWorktree {
     share: Option<ShareState>,
     open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
-    diagnostics: HashMap<PathBuf, Vec<DiagnosticEntry<PointUtf16>>>,
+    diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<PointUtf16>>>,
     collaborators: HashMap<PeerId, Collaborator>,
     queued_operations: Vec<(u64, Operation)>,
     languages: Arc<LanguageRegistry>,
@@ -1488,6 +1501,7 @@ pub struct RemoteWorktree {
     replica_id: ReplicaId,
     open_buffers: HashMap<usize, RemoteBuffer>,
     collaborators: HashMap<PeerId, Collaborator>,
+    diagnostics: Vec<DiagnosticSummary>,
     languages: Arc<LanguageRegistry>,
     user_store: ModelHandle<UserStore>,
     queued_operations: Vec<(u64, Operation)>,
@@ -3105,6 +3119,7 @@ mod tests {
         time::{SystemTime, UNIX_EPOCH},
     };
     use text::Point;
+    use unindent::Unindent as _;
     use util::test::temp_tree;
 
     #[gpui::test]
@@ -3821,7 +3836,8 @@ mod tests {
                         severity: lsp::DiagnosticSeverity::ERROR,
                         message: "undefined variable 'A'".to_string(),
                         group_id: 0,
-                        is_primary: true
+                        is_primary: true,
+                        ..Default::default()
                     }
                 }]
             )
@@ -3830,220 +3846,265 @@ mod tests {
 
     #[gpui::test]
     async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
-        cx.add_model(|cx| {
-            let text = "
-            fn foo(mut v: Vec<usize>) {
-                for x in &v {
-                    v.push(1);
-                }
-            }
-        "
-            .unindent();
+        let fs = Arc::new(FakeFs::new());
+        let client = Client::new();
+        let http_client = FakeHttpClient::with_404_response();
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
 
-            let file = FakeFile::new("/example.rs");
-            let mut buffer = Buffer::from_file(0, text, Box::new(file.clone()), cx);
-            buffer.set_language(Some(Arc::new(rust_lang())), None, cx);
-            let diagnostics = vec![
-                DiagnosticEntry {
-                    range: PointUtf16::new(1, 8)..PointUtf16::new(1, 9),
-                    diagnostic: Diagnostic {
-                        severity: Some(DiagnosticSeverity::WARNING),
-                        message: "error 1".to_string(),
-                        related_information: Some(vec![lsp::DiagnosticRelatedInformation {
-                            location: lsp::Location {
-                                uri: lsp::Url::from_file_path(&file.abs_path).unwrap(),
-                                range: PointUtf16::new(1, 8)..PointUtf16::new(1, 9),
-                            },
-                            message: "error 1 hint 1".to_string(),
-                        }]),
-                        ..Default::default()
-                    },
+        fs.insert_tree(
+            "/the-dir",
+            json!({
+                "a.rs": "
+                    fn foo(mut v: Vec<usize>) {
+                        for x in &v {
+                            v.push(1);
+                        }
+                    }
+                "
+                .unindent(),
+            }),
+        )
+        .await;
+
+        let worktree = Worktree::open_local(
+            client.clone(),
+            user_store,
+            "/the-dir".as_ref(),
+            fs,
+            Default::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
+
+        let buffer = worktree
+            .update(&mut cx, |tree, cx| tree.open_buffer("a.rs", cx))
+            .await
+            .unwrap();
+
+        let buffer_uri = Url::from_file_path("/the-dir/a.rs").unwrap();
+        let message = lsp::PublishDiagnosticsParams {
+            uri: buffer_uri.clone(),
+            diagnostics: vec![
+                lsp::Diagnostic {
+                    range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
+                    severity: Some(DiagnosticSeverity::WARNING),
+                    message: "error 1".to_string(),
+                    related_information: Some(vec![lsp::DiagnosticRelatedInformation {
+                        location: lsp::Location {
+                            uri: buffer_uri.clone(),
+                            range: lsp::Range::new(
+                                lsp::Position::new(1, 8),
+                                lsp::Position::new(1, 9),
+                            ),
+                        },
+                        message: "error 1 hint 1".to_string(),
+                    }]),
+                    ..Default::default()
                 },
-                DiagnosticEntry {
-                    range: PointUtf16::new(1, 8)..PointUtf16::new(1, 9),
-                    diagnostic: Diagnostic {},
+                lsp::Diagnostic {
+                    range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
                     severity: Some(DiagnosticSeverity::HINT),
                     message: "error 1 hint 1".to_string(),
                     related_information: Some(vec![lsp::DiagnosticRelatedInformation {
                         location: lsp::Location {
-                            uri: lsp::Url::from_file_path(&file.abs_path).unwrap(),
-                            range: PointUtf16::new(1, 8)..PointUtf16::new(1, 9),
+                            uri: buffer_uri.clone(),
+                            range: lsp::Range::new(
+                                lsp::Position::new(1, 8),
+                                lsp::Position::new(1, 9),
+                            ),
                         },
                         message: "original diagnostic".to_string(),
                     }]),
                     ..Default::default()
                 },
-                DiagnosticEntry {
-                    range: PointUtf16::new(2, 8)..PointUtf16::new(2, 17),
-                    diagnostic: Diagnostic {},
+                lsp::Diagnostic {
+                    range: lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 17)),
                     severity: Some(DiagnosticSeverity::ERROR),
                     message: "error 2".to_string(),
                     related_information: Some(vec![
                         lsp::DiagnosticRelatedInformation {
                             location: lsp::Location {
-                                uri: lsp::Url::from_file_path(&file.abs_path).unwrap(),
-                                range: PointUtf16::new(1, 13)..PointUtf16::new(1, 15),
+                                uri: buffer_uri.clone(),
+                                range: lsp::Range::new(
+                                    lsp::Position::new(1, 13),
+                                    lsp::Position::new(1, 15),
+                                ),
                             },
                             message: "error 2 hint 1".to_string(),
                         },
                         lsp::DiagnosticRelatedInformation {
                             location: lsp::Location {
-                                uri: lsp::Url::from_file_path(&file.abs_path).unwrap(),
-                                range: PointUtf16::new(1, 13)..PointUtf16::new(1, 15),
+                                uri: buffer_uri.clone(),
+                                range: lsp::Range::new(
+                                    lsp::Position::new(1, 13),
+                                    lsp::Position::new(1, 15),
+                                ),
                             },
                             message: "error 2 hint 2".to_string(),
                         },
                     ]),
                     ..Default::default()
                 },
-                DiagnosticEntry {
-                    range: PointUtf16::new(1, 13)..PointUtf16::new(1, 15),
-                    diagnostic: Diagnostic {},
+                lsp::Diagnostic {
+                    range: lsp::Range::new(lsp::Position::new(1, 13), lsp::Position::new(1, 15)),
                     severity: Some(DiagnosticSeverity::HINT),
                     message: "error 2 hint 1".to_string(),
                     related_information: Some(vec![lsp::DiagnosticRelatedInformation {
                         location: lsp::Location {
-                            uri: lsp::Url::from_file_path(&file.abs_path).unwrap(),
-                            range: PointUtf16::new(2, 8)..PointUtf16::new(2, 17),
+                            uri: buffer_uri.clone(),
+                            range: lsp::Range::new(
+                                lsp::Position::new(2, 8),
+                                lsp::Position::new(2, 17),
+                            ),
                         },
                         message: "original diagnostic".to_string(),
                     }]),
                     ..Default::default()
                 },
-                DiagnosticEntry {
-                    range: PointUtf16::new(1, 13)..PointUtf16::new(1, 15),
-                    diagnostic: Diagnostic {},
+                lsp::Diagnostic {
+                    range: lsp::Range::new(lsp::Position::new(1, 13), lsp::Position::new(1, 15)),
                     severity: Some(DiagnosticSeverity::HINT),
                     message: "error 2 hint 2".to_string(),
                     related_information: Some(vec![lsp::DiagnosticRelatedInformation {
                         location: lsp::Location {
-                            uri: lsp::Url::from_file_path(&file.abs_path).unwrap(),
-                            range: PointUtf16::new(2, 8)..PointUtf16::new(2, 17),
+                            uri: buffer_uri.clone(),
+                            range: lsp::Range::new(
+                                lsp::Position::new(2, 8),
+                                lsp::Position::new(2, 17),
+                            ),
                         },
                         message: "original diagnostic".to_string(),
                     }]),
                     ..Default::default()
                 },
-            ];
-            buffer.update_diagnostics(None, diagnostics, cx).unwrap();
-            assert_eq!(
-                buffer
-                    .snapshot()
-                    .diagnostics_in_range::<_, Point>(0..buffer.len())
-                    .collect::<Vec<_>>(),
-                &[
-                    DiagnosticEntry {
-                        range: Point::new(1, 8)..Point::new(1, 9),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::WARNING,
-                            message: "error 1".to_string(),
-                            group_id: 0,
-                            is_primary: true,
-                        }
-                    },
-                    DiagnosticEntry {
-                        range: Point::new(1, 8)..Point::new(1, 9),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::HINT,
-                            message: "error 1 hint 1".to_string(),
-                            group_id: 0,
-                            is_primary: false,
-                        }
-                    },
-                    DiagnosticEntry {
-                        range: Point::new(1, 13)..Point::new(1, 15),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::HINT,
-                            message: "error 2 hint 1".to_string(),
-                            group_id: 1,
-                            is_primary: false,
-                        }
-                    },
-                    DiagnosticEntry {
-                        range: Point::new(1, 13)..Point::new(1, 15),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::HINT,
-                            message: "error 2 hint 2".to_string(),
-                            group_id: 1,
-                            is_primary: false,
-                        }
-                    },
-                    DiagnosticEntry {
-                        range: Point::new(2, 8)..Point::new(2, 17),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "error 2".to_string(),
-                            group_id: 1,
-                            is_primary: true,
-                        }
-                    }
-                ]
-            );
+            ],
+            version: None,
+        };
 
-            assert_eq!(
-                buffer
-                    .snapshot()
-                    .diagnostic_group::<Point>(0)
-                    .collect::<Vec<_>>(),
-                &[
-                    DiagnosticEntry {
-                        range: Point::new(1, 8)..Point::new(1, 9),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::WARNING,
-                            message: "error 1".to_string(),
-                            group_id: 0,
-                            is_primary: true,
-                        }
-                    },
-                    DiagnosticEntry {
-                        range: Point::new(1, 8)..Point::new(1, 9),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::HINT,
-                            message: "error 1 hint 1".to_string(),
-                            group_id: 0,
-                            is_primary: false,
-                        }
-                    },
-                ]
-            );
-            assert_eq!(
-                buffer
-                    .snapshot()
-                    .diagnostic_group::<Point>(1)
-                    .collect::<Vec<_>>(),
-                &[
-                    DiagnosticEntry {
-                        range: Point::new(1, 13)..Point::new(1, 15),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::HINT,
-                            message: "error 2 hint 1".to_string(),
-                            group_id: 1,
-                            is_primary: false,
-                        }
-                    },
-                    DiagnosticEntry {
-                        range: Point::new(1, 13)..Point::new(1, 15),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::HINT,
-                            message: "error 2 hint 2".to_string(),
-                            group_id: 1,
-                            is_primary: false,
-                        }
-                    },
-                    DiagnosticEntry {
-                        range: Point::new(2, 8)..Point::new(2, 17),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "error 2".to_string(),
-                            group_id: 1,
-                            is_primary: true,
-                        }
-                    }
-                ]
-            );
+        worktree
+            .update(&mut cx, |tree, cx| tree.update_diagnostics(message, cx))
+            .unwrap();
+        let buffer = buffer.read_with(&cx, |buffer, cx| buffer.snapshot());
 
+        assert_eq!(
             buffer
-        });
+                .diagnostics_in_range::<_, Point>(0..buffer.len())
+                .collect::<Vec<_>>(),
+            &[
+                DiagnosticEntry {
+                    range: Point::new(1, 8)..Point::new(1, 9),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::WARNING,
+                        message: "error 1".to_string(),
+                        group_id: 0,
+                        is_primary: true,
+                        ..Default::default()
+                    }
+                },
+                DiagnosticEntry {
+                    range: Point::new(1, 8)..Point::new(1, 9),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 1 hint 1".to_string(),
+                        group_id: 0,
+                        is_primary: false,
+                        ..Default::default()
+                    }
+                },
+                DiagnosticEntry {
+                    range: Point::new(1, 13)..Point::new(1, 15),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 2 hint 1".to_string(),
+                        group_id: 1,
+                        is_primary: false,
+                        ..Default::default()
+                    }
+                },
+                DiagnosticEntry {
+                    range: Point::new(1, 13)..Point::new(1, 15),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 2 hint 2".to_string(),
+                        group_id: 1,
+                        is_primary: false,
+                        ..Default::default()
+                    }
+                },
+                DiagnosticEntry {
+                    range: Point::new(2, 8)..Point::new(2, 17),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "error 2".to_string(),
+                        group_id: 1,
+                        is_primary: true,
+                        ..Default::default()
+                    }
+                }
+            ]
+        );
+
+        assert_eq!(
+            buffer.diagnostic_group::<Point>(0).collect::<Vec<_>>(),
+            &[
+                DiagnosticEntry {
+                    range: Point::new(1, 8)..Point::new(1, 9),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::WARNING,
+                        message: "error 1".to_string(),
+                        group_id: 0,
+                        is_primary: true,
+                        ..Default::default()
+                    }
+                },
+                DiagnosticEntry {
+                    range: Point::new(1, 8)..Point::new(1, 9),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 1 hint 1".to_string(),
+                        group_id: 0,
+                        is_primary: false,
+                        ..Default::default()
+                    }
+                },
+            ]
+        );
+        assert_eq!(
+            buffer.diagnostic_group::<Point>(1).collect::<Vec<_>>(),
+            &[
+                DiagnosticEntry {
+                    range: Point::new(1, 13)..Point::new(1, 15),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 2 hint 1".to_string(),
+                        group_id: 1,
+                        is_primary: false,
+                        ..Default::default()
+                    }
+                },
+                DiagnosticEntry {
+                    range: Point::new(1, 13)..Point::new(1, 15),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 2 hint 2".to_string(),
+                        group_id: 1,
+                        is_primary: false,
+                        ..Default::default()
+                    }
+                },
+                DiagnosticEntry {
+                    range: Point::new(2, 8)..Point::new(2, 17),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "error 2".to_string(),
+                        group_id: 1,
+                        is_primary: true,
+                        ..Default::default()
+                    }
+                }
+            ]
+        );
     }
 
     #[gpui::test(iterations = 100)]

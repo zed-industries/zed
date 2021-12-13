@@ -40,6 +40,7 @@ message Envelope {
         UnshareWorktree unshare_worktree = 35;
         UpdateContacts update_contacts = 36;
         LeaveWorktree leave_worktree = 37;
+        UpdateDiagnosticSummary update_diagnostic_summary = 38;
     }
 }
 
@@ -136,6 +137,13 @@ message BufferSaved {
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
     Timestamp mtime = 4;
+}
+
+message UpdateDiagnosticSummary {
+    uint64 worktree_id = 1;
+    string path = 2;
+    uint32 error_count = 3;
+    uint32 warning_count = 4;
 }
 
 message GetChannels {}

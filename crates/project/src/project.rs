@@ -8,7 +8,7 @@ use clock::ReplicaId;
 use futures::Future;
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
-use language::{DiagnosticEntry, LanguageRegistry, PointUtf16};
+use language::LanguageRegistry;
 use std::{
     path::Path,
     sync::{atomic::AtomicBool, Arc},
@@ -37,6 +37,14 @@ pub enum Event {
 pub struct ProjectPath {
     pub worktree_id: usize,
     pub path: Arc<Path>,
+}
+
+pub struct DiagnosticSummary {
+    pub project_path: ProjectPath,
+    pub error_count: usize,
+    pub warning_count: usize,
+    pub info_count: usize,
+    pub hint_count: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -165,10 +173,10 @@ impl Project {
         }
     }
 
-    pub fn diagnostics<'a>(
+    pub fn diagnostic_summaries<'a>(
         &'a self,
         cx: &'a AppContext,
-    ) -> impl Iterator<Item = (&'a Path, &'a [DiagnosticEntry<PointUtf16>])> {
+    ) -> impl Iterator<Item = DiagnosticSummary> {
         std::iter::empty()
     }
 
