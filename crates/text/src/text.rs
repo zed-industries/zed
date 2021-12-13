@@ -49,12 +49,13 @@ pub struct Buffer {
     replica_id: ReplicaId,
     remote_id: u64,
     local_clock: clock::Local,
-    lamport_clock: clock::Lamport,
+    pub lamport_clock: clock::Lamport,
     subscriptions: Topic,
 }
 
 #[derive(Clone, Debug)]
 pub struct BufferSnapshot {
+    replica_id: ReplicaId,
     visible_text: Rope,
     deleted_text: Rope,
     undo_map: UndoMap,
@@ -464,6 +465,7 @@ impl Buffer {
 
         Buffer {
             snapshot: BufferSnapshot {
+                replica_id,
                 visible_text,
                 deleted_text: Rope::new(),
                 fragments,
@@ -493,14 +495,6 @@ impl Buffer {
 
     pub fn replica_id(&self) -> ReplicaId {
         self.local_clock.replica_id
-    }
-
-    pub fn lamport_timestamp(&self) -> clock::Lamport {
-        self.lamport_clock
-    }
-
-    pub fn observe_lamport_timestamp(&mut self, timestamp: clock::Lamport) {
-        self.lamport_clock.observe(timestamp);
     }
 
     pub fn remote_id(&self) -> u64 {
@@ -1217,6 +1211,10 @@ impl Deref for Buffer {
 impl BufferSnapshot {
     pub fn as_rope(&self) -> &Rope {
         &self.visible_text
+    }
+
+    pub fn replica_id(&self) -> ReplicaId {
+        self.replica_id
     }
 
     pub fn row_count(&self) -> u32 {

@@ -1,13 +1,12 @@
-use std::sync::Arc;
-
 use crate::{diagnostic_set::DiagnosticEntry, Diagnostic, Operation};
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use lsp::DiagnosticSeverity;
 use rpc::proto;
+use std::sync::Arc;
 use text::*;
 
-pub use proto::Buffer;
+pub use proto::{Buffer, SelectionSet};
 
 pub fn serialize_operation(operation: &Operation) -> proto::Operation {
     proto::Operation {
@@ -48,15 +47,7 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
             } => proto::operation::Variant::UpdateSelections(proto::operation::UpdateSelections {
                 replica_id: *replica_id as u32,
                 lamport_timestamp: lamport_timestamp.value,
-                selections: selections
-                    .iter()
-                    .map(|selection| proto::Selection {
-                        id: selection.id as u64,
-                        start: Some(serialize_anchor(&selection.start)),
-                        end: Some(serialize_anchor(&selection.end)),
-                        reversed: selection.reversed,
-                    })
-                    .collect(),
+                selections: serialize_selections(selections),
             }),
             Operation::RemoveSelections {
                 replica_id,

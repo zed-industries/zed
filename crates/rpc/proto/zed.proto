@@ -234,9 +234,7 @@ message Buffer {
 
 message SelectionSet {
     uint32 replica_id = 1;
-    uint32 lamport_timestamp = 2;
-    bool is_active = 3;
-    repeated Selection selections = 4;
+    repeated Selection selections = 2;
 }
 
 message Selection {

@@ -12,7 +12,7 @@ use language::{
 use std::{
     cell::{Ref, RefCell},
     cmp, io,
-    iter::Peekable,
+    iter::{FromIterator, Peekable},
     ops::{Range, Sub},
     sync::Arc,
     time::{Duration, Instant, SystemTime},
@@ -240,6 +240,34 @@ impl MultiBuffer {
         self.as_singleton()
             .unwrap()
             .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
+    }
+
+    pub fn set_active_selections(
+        &mut self,
+        selections: &[Selection<Anchor>],
+        cx: &mut ModelContext<Self>,
+    ) {
+        // TODO
+        let this = self.read(cx);
+        self.as_singleton().unwrap().update(cx, |buffer, cx| {
+            let buffer_snapshot = buffer.snapshot();
+            let selections = selections.iter().map(|selection| Selection {
+                id: selection.id,
+                start: buffer_snapshot.anchor_before(selection.start.to_offset(&this)),
+                end: buffer_snapshot.anchor_before(selection.end.to_offset(&this)),
+                reversed: selection.reversed,
+                goal: selection.goal,
+            });
+            buffer.set_active_selections(Arc::from_iter(selections), cx);
+        });
+    }
+
+    pub fn remove_active_selections(&mut self, cx: &mut ModelContext<Self>) {
+        for buffer in self.buffers.values() {
+            buffer
+                .buffer
+                .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
+        }
     }
 
     pub fn undo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {

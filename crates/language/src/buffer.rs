@@ -289,6 +289,12 @@ impl Buffer {
             .map(|op| text::Operation::Edit(proto::deserialize_edit_operation(op)));
         buffer.apply_ops(ops)?;
         let mut this = Self::build(buffer, file);
+        for selection_set in message.selections {
+            this.remote_selections.insert(
+                selection_set.replica_id as ReplicaId,
+                proto::deserialize_selections(selection_set.selections),
+            );
+        }
         this.apply_diagnostic_update(
             Arc::from(proto::deserialize_diagnostics(message.diagnostics)),
             cx,
@@ -306,7 +312,14 @@ impl Buffer {
                 .history()
                 .map(proto::serialize_edit_operation)
                 .collect(),
-            selections: Vec::new(),
+            selections: self
+                .remote_selections
+                .iter()
+                .map(|(replica_id, selections)| proto::SelectionSet {
+                    replica_id: *replica_id as u32,
+                    selections: proto::serialize_selections(selections),
+                })
+                .collect(),
             diagnostics: proto::serialize_diagnostics(self.diagnostics.iter()),
         }
     }
@@ -835,7 +848,7 @@ impl Buffer {
         cx.emit(Event::DiagnosticsUpdated);
         Ok(Operation::UpdateDiagnostics {
             diagnostics: Arc::from(self.diagnostics.iter().cloned().collect::<Vec<_>>()),
-            lamport_timestamp: self.lamport_timestamp(),
+            lamport_timestamp: self.text.lamport_clock.tick(),
         })
     }
 
@@ -1084,6 +1097,35 @@ impl Buffer {
         }
     }
 
+    pub fn set_active_selections(
+        &mut self,
+        selections: Arc<[Selection<Anchor>]>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let lamport_timestamp = self.text.lamport_clock.tick();
+        self.remote_selections
+            .insert(self.text.replica_id(), selections.clone());
+        self.send_operation(
+            Operation::UpdateSelections {
+                replica_id: self.text.replica_id(),
+                selections,
+                lamport_timestamp,
+            },
+            cx,
+        );
+    }
+
+    pub fn remove_active_selections(&mut self, cx: &mut ModelContext<Self>) {
+        let lamport_timestamp = self.text.lamport_clock.tick();
+        self.send_operation(
+            Operation::RemoveSelections {
+                replica_id: self.text.replica_id(),
+                lamport_timestamp,
+            },
+            cx,
+        );
+    }
+
     fn update_language_server(&mut self) {
         let language_server = if let Some(language_server) = self.language_server.as_mut() {
             language_server
@@ -1321,14 +1363,14 @@ impl Buffer {
                 lamport_timestamp,
             } => {
                 self.remote_selections.insert(replica_id, selections);
-                self.text.observe_lamport_timestamp(lamport_timestamp);
+                self.text.lamport_clock.observe(lamport_timestamp);
             }
             Operation::RemoveSelections {
-                replica_id: set_id,
+                replica_id,
                 lamport_timestamp,
             } => {
-                self.remote_selections.remove(&set_id);
-                self.text.observe_lamport_timestamp(lamport_timestamp);
+                self.remote_selections.remove(&replica_id);
+                self.text.lamport_clock.observe(lamport_timestamp);
             }
         }
     }
@@ -1655,6 +1697,7 @@ impl BufferSnapshot {
     {
         self.remote_selections
             .iter()
+            .filter(|(replica_id, _)| **replica_id != self.text.replica_id())
             .map(move |(replica_id, selections)| {
                 let start_ix = match selections
                     .binary_search_by(|probe| probe.end.cmp(&range.start, self).unwrap())

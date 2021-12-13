@@ -1991,8 +1991,8 @@ impl Editor {
 
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
-            if let Some((selections, _)) = self.selection_history.get(&tx_id) {
-                self.selections = selections.clone();
+            if let Some((selections, _)) = self.selection_history.get(&tx_id).cloned() {
+                self.set_selections(selections, cx);
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
         }
@@ -2000,8 +2000,8 @@ impl Editor {
 
     pub fn redo(&mut self, _: &Redo, cx: &mut ViewContext<Self>) {
         if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
-            if let Some((_, Some(selections))) = self.selection_history.get(&tx_id) {
-                self.selections = selections.clone();
+            if let Some((_, Some(selections))) = self.selection_history.get(&tx_id).cloned() {
+                self.set_selections(selections, cx);
             }
             self.request_autoscroll(Autoscroll::Fit, cx);
         }
@@ -3256,13 +3256,23 @@ impl Editor {
         }
         self.pause_cursor_blinking(cx);
 
-        self.selections = Arc::from_iter(selections.into_iter().map(|selection| Selection {
-            id: selection.id,
-            start: buffer.anchor_before(selection.start),
-            end: buffer.anchor_before(selection.end),
-            reversed: selection.reversed,
-            goal: selection.goal,
-        }));
+        self.set_selections(
+            Arc::from_iter(selections.into_iter().map(|selection| Selection {
+                id: selection.id,
+                start: buffer.anchor_before(selection.start),
+                end: buffer.anchor_before(selection.end),
+                reversed: selection.reversed,
+                goal: selection.goal,
+            })),
+            cx,
+        );
+    }
+
+    fn set_selections(&mut self, selections: Arc<[Selection<Anchor>]>, cx: &mut ViewContext<Self>) {
+        self.selections = selections;
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.set_active_selections(&self.selections, cx)
+        });
     }
 
     fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
@@ -3651,11 +3661,16 @@ impl View for Editor {
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
         self.focused = true;
         self.blink_cursors(self.blink_epoch, cx);
+        self.buffer.update(cx, |buffer, cx| {
+            buffer.set_active_selections(&self.selections, cx)
+        });
     }
 
     fn on_blur(&mut self, cx: &mut ViewContext<Self>) {
         self.focused = false;
         self.show_local_cursors = false;
+        self.buffer
+            .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
         cx.emit(Event::Blurred);
         cx.notify();
     }
