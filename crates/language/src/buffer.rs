@@ -1375,6 +1375,23 @@ impl Buffer {
         }
     }
 
+    pub fn undo_transaction(
+        &mut self,
+        transaction_id: TransactionId,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
+        let was_dirty = self.is_dirty();
+        let old_version = self.version.clone();
+
+        if let Some(operation) = self.text.undo_transaction(transaction_id) {
+            self.send_operation(Operation::Buffer(operation), cx);
+            self.did_edit(&old_version, was_dirty, cx);
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn redo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
@@ -1385,6 +1402,23 @@ impl Buffer {
             Some(transaction_id)
         } else {
             None
+        }
+    }
+
+    pub fn redo_transaction(
+        &mut self,
+        transaction_id: TransactionId,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
+        let was_dirty = self.is_dirty();
+        let old_version = self.version.clone();
+
+        if let Some(operation) = self.text.redo_transaction(transaction_id) {
+            self.send_operation(Operation::Buffer(operation), cx);
+            self.did_edit(&old_version, was_dirty, cx);
+            true
+        } else {
+            false
         }
     }
 }

@@ -3,7 +3,7 @@ mod anchor;
 pub use anchor::{Anchor, AnchorRangeExt};
 use anyhow::Result;
 use clock::ReplicaId;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use language::{
     Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Selection,
@@ -15,7 +15,7 @@ use std::{
     iter::{self, FromIterator, Peekable},
     ops::{Range, Sub},
     sync::Arc,
-    time::{Instant, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{
@@ -25,6 +25,7 @@ use text::{
     AnchorRangeExt as _, Edit, Point, PointUtf16, TextSummary,
 };
 use theme::SyntaxTheme;
+use util::post_inc;
 
 const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
 
@@ -36,6 +37,22 @@ pub struct MultiBuffer {
     subscriptions: Topic,
     singleton: bool,
     replica_id: ReplicaId,
+    history: History,
+}
+
+struct History {
+    next_transaction_id: usize,
+    undo_stack: Vec<Transaction>,
+    redo_stack: Vec<Transaction>,
+    transaction_depth: usize,
+    group_interval: Duration,
+}
+
+struct Transaction {
+    id: usize,
+    buffer_transactions: HashSet<(usize, text::TransactionId)>,
+    first_edit_at: Instant,
+    last_edit_at: Instant,
 }
 
 pub trait ToOffset: 'static {
@@ -110,6 +127,13 @@ impl MultiBuffer {
             subscriptions: Default::default(),
             singleton: false,
             replica_id,
+            history: History {
+                next_transaction_id: Default::default(),
+                undo_stack: Default::default(),
+                redo_stack: Default::default(),
+                transaction_depth: 0,
+                group_interval: Duration::from_millis(300),
+            },
         }
     }
 
@@ -310,17 +334,18 @@ impl MultiBuffer {
         now: Instant,
         cx: &mut ModelContext<Self>,
     ) -> Option<TransactionId> {
-        // TODO
-        self.as_singleton()
-            .unwrap()
-            .update(cx, |buffer, _| buffer.start_transaction_at(now))
+        if let Some(buffer) = self.as_singleton() {
+            return buffer.update(cx, |buffer, _| buffer.start_transaction_at(now));
+        }
+
+        for BufferState { buffer, .. } in self.buffers.values() {
+            buffer.update(cx, |buffer, _| buffer.start_transaction_at(now));
+        }
+        self.history.start_transaction(now)
     }
 
     pub fn end_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
-        // TODO
-        self.as_singleton()
-            .unwrap()
-            .update(cx, |buffer, cx| buffer.end_transaction(cx))
+        self.end_transaction_at(Instant::now(), cx)
     }
 
     pub(crate) fn end_transaction_at(
@@ -328,10 +353,25 @@ impl MultiBuffer {
         now: Instant,
         cx: &mut ModelContext<Self>,
     ) -> Option<TransactionId> {
-        // TODO
-        self.as_singleton()
-            .unwrap()
-            .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
+        if let Some(buffer) = self.as_singleton() {
+            return buffer.update(cx, |buffer, cx| buffer.end_transaction_at(now, cx));
+        }
+
+        let mut buffer_transactions = HashSet::default();
+        for BufferState { buffer, .. } in self.buffers.values() {
+            if let Some(transaction_id) =
+                buffer.update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
+            {
+                buffer_transactions.insert((buffer.id(), transaction_id));
+            }
+        }
+
+        if self.history.end_transaction(now, buffer_transactions) {
+            let transaction_id = self.history.group().unwrap();
+            Some(transaction_id)
+        } else {
+            None
+        }
     }
 
     pub fn set_active_selections(
@@ -415,17 +455,49 @@ impl MultiBuffer {
     }
 
     pub fn undo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
-        // TODO
-        self.as_singleton()
-            .unwrap()
-            .update(cx, |buffer, cx| buffer.undo(cx))
+        if let Some(buffer) = self.as_singleton() {
+            return buffer.update(cx, |buffer, cx| buffer.undo(cx));
+        }
+
+        while let Some(transaction) = self.history.pop_undo() {
+            let mut undone = false;
+            for (buffer_id, buffer_transaction_id) in &transaction.buffer_transactions {
+                if let Some(BufferState { buffer, .. }) = self.buffers.get(&buffer_id) {
+                    undone |= buffer.update(cx, |buf, cx| {
+                        buf.undo_transaction(*buffer_transaction_id, cx)
+                    });
+                }
+            }
+
+            if undone {
+                return Some(transaction.id);
+            }
+        }
+
+        None
     }
 
     pub fn redo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
-        // TODO
-        self.as_singleton()
-            .unwrap()
-            .update(cx, |buffer, cx| buffer.redo(cx))
+        if let Some(buffer) = self.as_singleton() {
+            return buffer.update(cx, |buffer, cx| buffer.redo(cx));
+        }
+
+        while let Some(transaction) = self.history.pop_redo() {
+            let mut redone = false;
+            for (buffer_id, buffer_transaction_id) in &transaction.buffer_transactions {
+                if let Some(BufferState { buffer, .. }) = self.buffers.get(&buffer_id) {
+                    redone |= buffer.update(cx, |buf, cx| {
+                        buf.redo_transaction(*buffer_transaction_id, cx)
+                    });
+                }
+            }
+
+            if redone {
+                return Some(transaction.id);
+            }
+        }
+
+        None
     }
 
     pub fn push_excerpt<O>(
@@ -436,6 +508,7 @@ impl MultiBuffer {
     where
         O: text::ToOffset,
     {
+        assert_eq!(self.history.transaction_depth, 0);
         self.sync(cx);
 
         let buffer = &props.buffer;
@@ -1211,6 +1284,93 @@ impl MultiBufferSnapshot {
     }
 }
 
+impl History {
+    fn start_transaction(&mut self, now: Instant) -> Option<TransactionId> {
+        self.transaction_depth += 1;
+        if self.transaction_depth == 1 {
+            let id = post_inc(&mut self.next_transaction_id);
+            self.undo_stack.push(Transaction {
+                id,
+                buffer_transactions: Default::default(),
+                first_edit_at: now,
+                last_edit_at: now,
+            });
+            Some(id)
+        } else {
+            None
+        }
+    }
+
+    fn end_transaction(
+        &mut self,
+        now: Instant,
+        buffer_transactions: HashSet<(usize, TransactionId)>,
+    ) -> bool {
+        assert_ne!(self.transaction_depth, 0);
+        self.transaction_depth -= 1;
+        if self.transaction_depth == 0 {
+            if buffer_transactions.is_empty() {
+                self.undo_stack.pop();
+                false
+            } else {
+                let transaction = self.undo_stack.last_mut().unwrap();
+                transaction.last_edit_at = now;
+                transaction.buffer_transactions.extend(buffer_transactions);
+                true
+            }
+        } else {
+            false
+        }
+    }
+
+    fn pop_undo(&mut self) -> Option<&Transaction> {
+        assert_eq!(self.transaction_depth, 0);
+        if let Some(transaction) = self.undo_stack.pop() {
+            self.redo_stack.push(transaction);
+            self.redo_stack.last()
+        } else {
+            None
+        }
+    }
+
+    fn pop_redo(&mut self) -> Option<&Transaction> {
+        assert_eq!(self.transaction_depth, 0);
+        if let Some(transaction) = self.redo_stack.pop() {
+            self.undo_stack.push(transaction);
+            self.undo_stack.last()
+        } else {
+            None
+        }
+    }
+
+    fn group(&mut self) -> Option<TransactionId> {
+        let mut new_len = self.undo_stack.len();
+        let mut transactions = self.undo_stack.iter_mut();
+
+        if let Some(mut transaction) = transactions.next_back() {
+            while let Some(prev_transaction) = transactions.next_back() {
+                if transaction.first_edit_at - prev_transaction.last_edit_at <= self.group_interval
+                {
+                    transaction = prev_transaction;
+                    new_len -= 1;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        let (transactions_to_keep, transactions_to_merge) = self.undo_stack.split_at_mut(new_len);
+        if let Some(last_transaction) = transactions_to_keep.last_mut() {
+            if let Some(transaction) = transactions_to_merge.last() {
+                last_transaction.last_edit_at = transaction.last_edit_at;
+            }
+        }
+
+        self.undo_stack.truncate(new_len);
+        self.undo_stack.last().map(|t| t.id)
+    }
+}
+
 impl Excerpt {
     fn new(
         id: ExcerptId,
@@ -1847,5 +2007,94 @@ mod tests {
             }
             assert_eq!(text.to_string(), snapshot.text());
         }
+    }
+
+    #[gpui::test]
+    fn test_history(cx: &mut MutableAppContext) {
+        let buffer_1 = cx.add_model(|cx| Buffer::new(0, "1234", cx));
+        let buffer_2 = cx.add_model(|cx| Buffer::new(0, "5678", cx));
+        let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
+        let group_interval = multibuffer.read(cx).history.group_interval;
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.push_excerpt(
+                ExcerptProperties {
+                    buffer: &buffer_1,
+                    range: 0..buffer_1.read(cx).len(),
+                    header_height: 0,
+                },
+                cx,
+            );
+            multibuffer.push_excerpt(
+                ExcerptProperties {
+                    buffer: &buffer_2,
+                    range: 0..buffer_2.read(cx).len(),
+                    header_height: 0,
+                },
+                cx,
+            );
+        });
+
+        let mut now = Instant::now();
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.start_transaction_at(now, cx);
+            multibuffer.edit(
+                [
+                    Point::new(0, 0)..Point::new(0, 0),
+                    Point::new(1, 0)..Point::new(1, 0),
+                ],
+                "A",
+                cx,
+            );
+            multibuffer.edit(
+                [
+                    Point::new(0, 1)..Point::new(0, 1),
+                    Point::new(1, 1)..Point::new(1, 1),
+                ],
+                "B",
+                cx,
+            );
+            multibuffer.end_transaction_at(now, cx);
+            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678\n");
+
+            now += 2 * group_interval;
+            multibuffer.start_transaction_at(now, cx);
+            multibuffer.edit([2..2], "C", cx);
+            multibuffer.end_transaction_at(now, cx);
+            assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678\n");
+
+            multibuffer.undo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678\n");
+
+            multibuffer.undo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "1234\n5678\n");
+
+            multibuffer.redo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678\n");
+
+            multibuffer.redo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678\n");
+
+            buffer_1.update(cx, |buffer_1, cx| buffer_1.undo(cx));
+            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678\n");
+
+            multibuffer.undo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "1234\n5678\n");
+
+            multibuffer.redo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678\n");
+
+            multibuffer.redo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678\n");
+
+            multibuffer.undo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678\n");
+
+            buffer_1.update(cx, |buffer_1, cx| buffer_1.redo(cx));
+            assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678\n");
+
+            multibuffer.undo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678\n");
+        });
     }
 }

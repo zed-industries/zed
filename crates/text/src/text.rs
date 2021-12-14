@@ -240,9 +240,31 @@ impl History {
         }
     }
 
+    fn remove_from_undo(&mut self, transaction_id: TransactionId) -> Option<&Transaction> {
+        assert_eq!(self.transaction_depth, 0);
+        if let Some(transaction_ix) = self.undo_stack.iter().rposition(|t| t.id == transaction_id) {
+            let transaction = self.undo_stack.remove(transaction_ix);
+            self.redo_stack.push(transaction);
+            self.redo_stack.last()
+        } else {
+            None
+        }
+    }
+
     fn pop_redo(&mut self) -> Option<&Transaction> {
         assert_eq!(self.transaction_depth, 0);
         if let Some(transaction) = self.redo_stack.pop() {
+            self.undo_stack.push(transaction);
+            self.undo_stack.last()
+        } else {
+            None
+        }
+    }
+
+    fn remove_from_redo(&mut self, transaction_id: TransactionId) -> Option<&Transaction> {
+        assert_eq!(self.transaction_depth, 0);
+        if let Some(transaction_ix) = self.redo_stack.iter().rposition(|t| t.id == transaction_id) {
+            let transaction = self.redo_stack.remove(transaction_ix);
             self.undo_stack.push(transaction);
             self.undo_stack.last()
         } else {
@@ -1108,11 +1130,29 @@ impl Buffer {
         }
     }
 
+    pub fn undo_transaction(&mut self, transaction_id: TransactionId) -> Option<Operation> {
+        if let Some(transaction) = self.history.remove_from_undo(transaction_id).cloned() {
+            let op = self.undo_or_redo(transaction).unwrap();
+            Some(op)
+        } else {
+            None
+        }
+    }
+
     pub fn redo(&mut self) -> Option<(TransactionId, Operation)> {
         if let Some(transaction) = self.history.pop_redo().cloned() {
             let transaction_id = transaction.id;
             let op = self.undo_or_redo(transaction).unwrap();
             Some((transaction_id, op))
+        } else {
+            None
+        }
+    }
+
+    pub fn redo_transaction(&mut self, transaction_id: TransactionId) -> Option<Operation> {
+        if let Some(transaction) = self.history.remove_from_redo(transaction_id).cloned() {
+            let op = self.undo_or_redo(transaction).unwrap();
+            Some(op)
         } else {
             None
         }
