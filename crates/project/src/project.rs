@@ -2,13 +2,13 @@ pub mod fs;
 mod ignore;
 mod worktree;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use client::{Client, UserStore};
 use clock::ReplicaId;
 use futures::Future;
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
-use language::{DiagnosticEntry, LanguageRegistry};
+use language::{Buffer, DiagnosticEntry, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use std::{
     path::Path,
@@ -111,6 +111,18 @@ impl Project {
             .iter()
             .find(|worktree| worktree.id() == id)
             .cloned()
+    }
+
+    pub fn open_buffer(
+        &self,
+        path: ProjectPath,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<Buffer>>> {
+        if let Some(worktree) = self.worktree_for_id(path.worktree_id) {
+            worktree.update(cx, |worktree, cx| worktree.open_buffer(path.path, cx))
+        } else {
+            cx.spawn(|_, _| async move { Err(anyhow!("no such worktree")) })
+        }
     }
 
     pub fn add_local_worktree(
