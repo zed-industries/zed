@@ -22,6 +22,7 @@ use gpui::{
     MutableAppContext, RenderContext, View, ViewContext, WeakModelHandle, WeakViewHandle,
 };
 use items::BufferItemHandle;
+use itertools::Itertools as _;
 use language::{
     BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point, Selection, SelectionGoal,
     TransactionId,
@@ -1267,29 +1268,26 @@ impl Editor {
     fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         let old_selections = self.local_selections::<usize>(cx);
-        let mut new_selections = Vec::new();
-        self.buffer.update(cx, |buffer, cx| {
+        let new_selections = self.buffer.update(cx, |buffer, cx| {
+            let snapshot = buffer.read(cx);
+            let new_selections = old_selections
+                .iter()
+                .map(|selection| Selection {
+                    id: selection.id,
+                    start: snapshot.anchor_after(selection.start),
+                    end: snapshot.anchor_after(selection.end),
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                })
+                .collect::<Vec<_>>();
+
+            drop(snapshot);
             let edit_ranges = old_selections.iter().map(|s| s.start..s.end);
             buffer.edit_with_autoindent(edit_ranges, text, cx);
-            let text_len = text.len() as isize;
-            let mut delta = 0_isize;
-            new_selections = old_selections
-                .into_iter()
-                .map(|selection| {
-                    let start = selection.start as isize;
-                    let end = selection.end as isize;
-                    let cursor = (start + delta + text_len) as usize;
-                    let deleted_count = end - start;
-                    delta += text_len - deleted_count;
-                    Selection {
-                        id: selection.id,
-                        start: cursor,
-                        end: cursor,
-                        reversed: false,
-                        goal: SelectionGoal::None,
-                    }
-                })
-                .collect();
+
+            let snapshot = buffer.read(cx);
+            self.resolve_selections::<usize, _>(new_selections.iter(), &snapshot)
+                .collect()
         });
 
         self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
@@ -3099,21 +3097,8 @@ impl Editor {
         D: 'a + TextDimension + Ord + Sub<D, Output = D>,
     {
         let buffer = self.buffer.read(cx).snapshot(cx);
-
-        let mut summaries = buffer
-            .summaries_for_anchors::<D, _>(self.selections.iter().flat_map(|s| [&s.start, &s.end]))
-            .into_iter();
-
         let mut selections = self
-            .selections
-            .iter()
-            .map(|s| Selection {
-                id: s.id,
-                start: summaries.next().unwrap(),
-                end: summaries.next().unwrap(),
-                reversed: s.reversed,
-                goal: s.goal,
-            })
+            .resolve_selections::<D, _>(self.selections.iter(), &buffer)
             .peekable();
 
         let mut pending_selection = self.pending_selection::<D>(&buffer);
@@ -3142,6 +3127,28 @@ impl Editor {
             }
         })
         .collect()
+    }
+
+    fn resolve_selections<'a, D, I>(
+        &self,
+        selections: I,
+        snapshot: &MultiBufferSnapshot,
+    ) -> impl 'a + Iterator<Item = Selection<D>>
+    where
+        D: TextDimension + Ord + Sub<D, Output = D>,
+        I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
+    {
+        let (to_summarize, selections) = selections.into_iter().tee();
+        let mut summaries = snapshot
+            .summaries_for_anchors::<D, _>(to_summarize.flat_map(|s| [&s.start, &s.end]))
+            .into_iter();
+        selections.map(move |s| Selection {
+            id: s.id,
+            start: summaries.next().unwrap(),
+            end: summaries.next().unwrap(),
+            reversed: s.reversed,
+            goal: s.goal,
+        })
     }
 
     fn pending_selection<D: TextDimension + Ord + Sub<D, Output = D>>(
@@ -5857,7 +5864,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_multi_buffer_editing(cx: &mut gpui::MutableAppContext) {
+    fn test_editing_disjoint_excerpts(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(cx);
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
         let multibuffer = cx.add_model(|cx| {
@@ -5903,6 +5910,61 @@ mod tests {
                 &[
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                ]
+            )
+        });
+    }
+
+    #[gpui::test]
+    fn test_editing_overlapping_excerpts(cx: &mut gpui::MutableAppContext) {
+        let settings = EditorSettings::test(cx);
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
+        let multibuffer = cx.add_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(0);
+            multibuffer.push_excerpt(
+                ExcerptProperties {
+                    buffer: &buffer,
+                    range: Point::new(0, 0)..Point::new(1, 4),
+                    header_height: 0,
+                },
+                cx,
+            );
+            multibuffer.push_excerpt(
+                ExcerptProperties {
+                    buffer: &buffer,
+                    range: Point::new(1, 0)..Point::new(2, 4),
+                    header_height: 0,
+                },
+                cx,
+            );
+            multibuffer
+        });
+
+        assert_eq!(
+            multibuffer.read(cx).read(cx).text(),
+            "aaaa\nbbbb\nbbbb\ncccc\n"
+        );
+
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            build_editor(multibuffer, settings, cx)
+        });
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
+                ],
+                cx,
+            )
+            .unwrap();
+
+            view.handle_input(&Input("X".to_string()), cx);
+            assert_eq!(view.text(cx), "aaaa\nbXbbXb\nbXbbXb\ncccc\n");
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[
+                    DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                    DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
                 ]
             )
         });
