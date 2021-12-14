@@ -104,7 +104,6 @@ impl View for ProjectDiagnosticsEditor {
 
 impl ProjectDiagnosticsEditor {
     fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
-        dbg!("HEY!!!!");
         let diagnostics =
             cx.add_model(|cx| ProjectDiagnostics::new(workspace.project().clone(), cx));
         workspace.add_item(diagnostics, cx);
