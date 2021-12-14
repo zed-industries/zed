@@ -15,7 +15,7 @@ use std::{
     iter::{self, FromIterator, Peekable},
     ops::{Range, Sub},
     sync::Arc,
-    time::{Duration, Instant, SystemTime},
+    time::{Instant, SystemTime},
 };
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{
@@ -134,13 +134,6 @@ impl MultiBuffer {
 
     pub fn replica_id(&self) -> ReplicaId {
         self.replica_id
-    }
-
-    pub fn transaction_group_interval(&self, cx: &AppContext) -> Duration {
-        self.as_singleton()
-            .unwrap()
-            .read(cx)
-            .transaction_group_interval()
     }
 
     pub fn snapshot(&self, cx: &AppContext) -> MultiBufferSnapshot {

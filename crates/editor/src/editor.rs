@@ -3841,7 +3841,9 @@ mod tests {
     #[gpui::test]
     fn test_undo_redo_with_selection_restoration(cx: &mut MutableAppContext) {
         let mut now = Instant::now();
-        let buffer = MultiBuffer::build_simple("123456", cx);
+        let buffer = cx.add_model(|cx| language::Buffer::new(0, "123456", cx));
+        let group_interval = buffer.read(cx).transaction_group_interval();
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let settings = EditorSettings::test(cx);
         let (_, editor) = cx.add_window(Default::default(), |cx| {
             build_editor(buffer.clone(), settings, cx)
@@ -3862,7 +3864,7 @@ mod tests {
             assert_eq!(editor.text(cx), "12cde6");
             assert_eq!(editor.selected_ranges(cx), vec![5..5]);
 
-            now += buffer.read(cx).transaction_group_interval(cx) + Duration::from_millis(1);
+            now += group_interval + Duration::from_millis(1);
             editor.select_ranges([2..2], None, cx);
 
             // Simulate an edit in another editor
