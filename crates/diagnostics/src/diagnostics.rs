@@ -15,7 +15,7 @@ impl ProjectDiagnostics {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let mut buffer = cx.add_model(|cx| MultiBuffer::new(project.read(cx).replica_id(cx)));
-        for diagnostic_summary in project.read(cx).diagnostic_summaries(cx) {
+        for (project_path, diagnostic_summary) in project.read(cx).diagnostic_summaries(cx) {
             //
         }
 

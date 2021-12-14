@@ -472,9 +472,13 @@ impl Worktree {
 
     pub fn diagnostic_summaries<'a>(
         &'a self,
-        cx: &'a AppContext,
-    ) -> impl Iterator<Item = DiagnosticSummary> {
-        std::iter::empty()
+    ) -> impl Iterator<Item = (Arc<Path>, DiagnosticSummary)> + 'a {
+        match self {
+            Worktree::Local(worktree) => &worktree.diagnostic_summaries,
+            Worktree::Remote(worktree) => &worktree.diagnostic_summaries,
+        }
+        .iter()
+        .map(|(path, summary)| (path.clone(), summary.clone()))
     }
 
     pub fn loading_buffers<'a>(&'a mut self) -> &'a mut LoadingBuffers {
@@ -879,16 +883,19 @@ impl Worktree {
                     let (remote_id, operation) = buffer.update(cx, |buffer, cx| {
                         (
                             buffer.remote_id(),
-                            buffer.update_diagnostics(params.version, diagnostics, cx),
+                            buffer.update_diagnostics(params.version, diagnostics.clone(), cx),
                         )
                     });
                     self.send_buffer_update(remote_id, operation?, cx);
-                    return Ok(());
+                    break;
                 }
             }
         }
 
-        this.diagnostics.insert(worktree_path, diagnostics);
+        let this = self.as_local_mut().unwrap();
+        this.diagnostic_summaries
+            .insert(worktree_path.clone(), DiagnosticSummary::new(&diagnostics));
+        this.diagnostics.insert(worktree_path.clone(), diagnostics);
         Ok(())
     }
 

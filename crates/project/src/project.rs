@@ -8,7 +8,8 @@ use clock::ReplicaId;
 use futures::Future;
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
-use language::LanguageRegistry;
+use language::{DiagnosticEntry, LanguageRegistry};
+use lsp::DiagnosticSeverity;
 use std::{
     path::Path,
     sync::{atomic::AtomicBool, Arc},
@@ -39,12 +40,37 @@ pub struct ProjectPath {
     pub path: Arc<Path>,
 }
 
+#[derive(Clone)]
 pub struct DiagnosticSummary {
-    pub project_path: ProjectPath,
     pub error_count: usize,
     pub warning_count: usize,
     pub info_count: usize,
     pub hint_count: usize,
+}
+
+impl DiagnosticSummary {
+    fn new<T>(diagnostics: &[DiagnosticEntry<T>]) -> Self {
+        let mut this = Self {
+            error_count: 0,
+            warning_count: 0,
+            info_count: 0,
+            hint_count: 0,
+        };
+
+        for entry in diagnostics {
+            if entry.diagnostic.is_primary {
+                match entry.diagnostic.severity {
+                    DiagnosticSeverity::ERROR => this.error_count += 1,
+                    DiagnosticSeverity::WARNING => this.warning_count += 1,
+                    DiagnosticSeverity::INFORMATION => this.info_count += 1,
+                    DiagnosticSeverity::HINT => this.hint_count += 1,
+                    _ => {}
+                }
+            }
+        }
+
+        this
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -176,8 +202,14 @@ impl Project {
     pub fn diagnostic_summaries<'a>(
         &'a self,
         cx: &'a AppContext,
-    ) -> impl Iterator<Item = DiagnosticSummary> {
-        std::iter::empty()
+    ) -> impl Iterator<Item = (ProjectPath, DiagnosticSummary)> + 'a {
+        self.worktrees.iter().flat_map(move |worktree| {
+            let worktree_id = worktree.id();
+            worktree
+                .read(cx)
+                .diagnostic_summaries()
+                .map(move |(path, summary)| (ProjectPath { worktree_id, path }, summary))
+        })
     }
 
     pub fn active_entry(&self) -> Option<ProjectEntry> {
