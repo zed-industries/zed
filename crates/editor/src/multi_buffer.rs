@@ -62,6 +62,8 @@ struct BufferState {
 #[derive(Clone, Default)]
 pub struct MultiBufferSnapshot {
     excerpts: SumTree<Excerpt>,
+    parse_count: usize,
+    diagnostics_update_count: usize,
 }
 
 pub struct ExcerptProperties<'a, T> {
@@ -473,20 +475,31 @@ impl MultiBuffer {
     fn sync(&self, cx: &AppContext) {
         let mut snapshot = self.snapshot.borrow_mut();
         let mut excerpts_to_edit = Vec::new();
+        let mut reparsed = false;
+        let mut diagnostics_updated = false;
         for buffer_state in self.buffers.values() {
             let buffer = buffer_state.buffer.read(cx);
-            let buffer_changed = buffer.version().gt(&buffer_state.last_version);
-            if buffer_changed
-                || buffer.parse_count() > buffer_state.last_parse_count
-                || buffer.diagnostics_update_count() > buffer_state.last_diagnostics_update_count
-            {
+            let buffer_edited = buffer.version().gt(&buffer_state.last_version);
+            let buffer_reparsed = buffer.parse_count() > buffer_state.last_parse_count;
+            let buffer_diagnostics_updated =
+                buffer.diagnostics_update_count() > buffer_state.last_diagnostics_update_count;
+            if buffer_edited || buffer_reparsed || buffer_diagnostics_updated {
                 excerpts_to_edit.extend(
                     buffer_state
                         .excerpts
                         .iter()
-                        .map(|excerpt_id| (excerpt_id, buffer_state, buffer_changed)),
+                        .map(|excerpt_id| (excerpt_id, buffer_state, buffer_edited)),
                 );
             }
+
+            reparsed |= buffer_reparsed;
+            diagnostics_updated |= buffer_diagnostics_updated;
+        }
+        if reparsed {
+            snapshot.parse_count += 1;
+        }
+        if diagnostics_updated {
+            snapshot.diagnostics_update_count += 1;
         }
         excerpts_to_edit.sort_unstable_by_key(|(excerpt_id, _, _)| *excerpt_id);
 
@@ -494,13 +507,13 @@ impl MultiBuffer {
         let mut new_excerpts = SumTree::new();
         let mut cursor = snapshot.excerpts.cursor::<(Option<&ExcerptId>, usize)>();
 
-        for (id, buffer_state, buffer_changed) in excerpts_to_edit {
+        for (id, buffer_state, buffer_edited) in excerpts_to_edit {
             new_excerpts.push_tree(cursor.slice(&Some(id), Bias::Left, &()), &());
             let old_excerpt = cursor.item().unwrap();
             let buffer = buffer_state.buffer.read(cx);
 
             let mut new_excerpt;
-            if buffer_changed {
+            if buffer_edited {
                 edits.extend(
                     buffer
                         .edits_since_in_range::<usize>(
@@ -1028,7 +1041,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn parse_count(&self) -> usize {
-        self.as_singleton().unwrap().parse_count()
+        self.parse_count
     }
 
     pub fn enclosing_bracket_ranges<T: ToOffset>(
@@ -1040,7 +1053,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn diagnostics_update_count(&self) -> usize {
-        self.as_singleton().unwrap().diagnostics_update_count()
+        self.diagnostics_update_count
     }
 
     pub fn language(&self) -> Option<&Arc<Language>> {
