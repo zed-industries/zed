@@ -12,7 +12,7 @@ use language::{
 use std::{
     cell::{Ref, RefCell},
     cmp, io,
-    iter::{FromIterator, Peekable},
+    iter::{self, FromIterator, Peekable},
     ops::{Range, Sub},
     sync::Arc,
     time::{Duration, Instant, SystemTime},
@@ -346,19 +346,71 @@ impl MultiBuffer {
         selections: &[Selection<Anchor>],
         cx: &mut ModelContext<Self>,
     ) {
-        // TODO
-        let this = self.read(cx);
-        self.as_singleton().unwrap().update(cx, |buffer, cx| {
-            let buffer_snapshot = buffer.snapshot();
-            let selections = selections.iter().map(|selection| Selection {
-                id: selection.id,
-                start: buffer_snapshot.anchor_before(selection.start.to_offset(&this)),
-                end: buffer_snapshot.anchor_before(selection.end.to_offset(&this)),
-                reversed: selection.reversed,
-                goal: selection.goal,
+        let mut selections_by_buffer: HashMap<usize, Vec<Selection<text::Anchor>>> =
+            Default::default();
+        let snapshot = self.read(cx);
+        let mut cursor = snapshot.excerpts.cursor::<Option<&ExcerptId>>();
+        for selection in selections {
+            cursor.seek(&Some(&selection.start.excerpt_id), Bias::Left, &());
+            while let Some(excerpt) = cursor.item() {
+                if excerpt.id > selection.end.excerpt_id {
+                    break;
+                }
+
+                let mut start = excerpt.range.start.clone();
+                let mut end = excerpt.range.end.clone();
+                if excerpt.id == selection.start.excerpt_id {
+                    start = selection.start.text_anchor.clone();
+                }
+                if excerpt.id == selection.end.excerpt_id {
+                    end = selection.end.text_anchor.clone();
+                }
+                selections_by_buffer
+                    .entry(excerpt.buffer_id)
+                    .or_default()
+                    .push(Selection {
+                        id: selection.id,
+                        start,
+                        end,
+                        reversed: selection.reversed,
+                        goal: selection.goal,
+                    });
+
+                cursor.next(&());
+            }
+        }
+
+        for (buffer_id, mut selections) in selections_by_buffer {
+            self.buffers[&buffer_id].buffer.update(cx, |buffer, cx| {
+                selections.sort_unstable_by(|a, b| a.start.cmp(&b.start, buffer).unwrap());
+                let mut selections = selections.into_iter().peekable();
+                let merged_selections = Arc::from_iter(iter::from_fn(|| {
+                    let mut selection = selections.next()?;
+                    while let Some(next_selection) = selections.peek() {
+                        if selection
+                            .end
+                            .cmp(&next_selection.start, buffer)
+                            .unwrap()
+                            .is_ge()
+                        {
+                            let next_selection = selections.next().unwrap();
+                            if next_selection
+                                .end
+                                .cmp(&selection.end, buffer)
+                                .unwrap()
+                                .is_ge()
+                            {
+                                selection.end = next_selection.end;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    Some(selection)
+                }));
+                buffer.set_active_selections(merged_selections, cx);
             });
-            buffer.set_active_selections(Arc::from_iter(selections), cx);
-        });
+        }
     }
 
     pub fn remove_active_selections(&mut self, cx: &mut ModelContext<Self>) {
@@ -976,7 +1028,7 @@ impl MultiBufferSnapshot {
         let mut summaries = Vec::new();
         while let Some(anchor) = anchors.peek() {
             let excerpt_id = &anchor.excerpt_id;
-            let excerpt_anchors = std::iter::from_fn(|| {
+            let excerpt_anchors = iter::from_fn(|| {
                 let anchor = anchors.peek()?;
                 if anchor.excerpt_id == *excerpt_id {
                     Some(&anchors.next().unwrap().text_anchor)
