@@ -452,12 +452,14 @@ impl MultiBuffer {
     }
 
     pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
-        self.as_singleton().unwrap().read(cx).language()
+        self.buffers
+            .values()
+            .next()
+            .and_then(|state| state.buffer.read(cx).language())
     }
 
     pub fn file<'a>(&self, cx: &'a AppContext) -> Option<&'a dyn File> {
-        self.as_singleton()
-            .and_then(|buffer| buffer.read(cx).file())
+        self.as_singleton().unwrap().read(cx).file()
     }
 
     pub fn is_dirty(&self, cx: &AppContext) -> bool {
@@ -1057,7 +1059,10 @@ impl MultiBufferSnapshot {
     }
 
     pub fn language(&self) -> Option<&Arc<Language>> {
-        self.as_singleton().unwrap().language()
+        self.excerpts
+            .iter()
+            .next()
+            .and_then(|excerpt| excerpt.buffer.language())
     }
 
     pub fn diagnostic_group<'a, O>(
