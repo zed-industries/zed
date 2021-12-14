@@ -189,7 +189,7 @@ impl History {
         }
     }
 
-    fn group(&mut self) {
+    fn group(&mut self) -> Option<TransactionId> {
         let mut new_len = self.undo_stack.len();
         let mut transactions = self.undo_stack.iter_mut();
 
@@ -221,6 +221,7 @@ impl History {
         }
 
         self.undo_stack.truncate(new_len);
+        self.undo_stack.last().map(|t| t.id)
     }
 
     fn push_undo(&mut self, edit_id: clock::Local) {
@@ -1081,9 +1082,8 @@ impl Buffer {
 
     pub fn end_transaction_at(&mut self, now: Instant) -> Option<(TransactionId, clock::Global)> {
         if let Some(transaction) = self.history.end_transaction(now) {
-            let id = transaction.id;
             let since = transaction.start.clone();
-            self.history.group();
+            let id = self.history.group().unwrap();
             Some((id, since))
         } else {
             None
