@@ -55,11 +55,11 @@ struct Transaction {
     last_edit_at: Instant,
 }
 
-pub trait ToOffset: 'static {
+pub trait ToOffset: 'static + std::fmt::Debug {
     fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> usize;
 }
 
-pub trait ToPoint: 'static {
+pub trait ToPoint: 'static + std::fmt::Debug {
     fn to_point(&self, snapshot: &MultiBufferSnapshot) -> Point;
 }
 
@@ -171,7 +171,7 @@ impl MultiBuffer {
     }
 
     pub fn as_singleton(&self) -> Option<&ModelHandle<Buffer>> {
-        if self.buffers.len() == 1 {
+        if self.singleton {
             return Some(&self.buffers.values().next().unwrap().buffer);
         } else {
             None
@@ -1150,16 +1150,11 @@ impl MultiBufferSnapshot {
     pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
         let offset = position.to_offset(self);
         let mut cursor = self.excerpts.cursor::<(usize, Option<&ExcerptId>)>();
-        cursor.seek(&offset, bias, &());
+        cursor.seek(&offset, Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
             let start_after_header = cursor.start().0 + excerpt.header_height as usize;
-            let mut end_before_newline = cursor.end(&()).0;
-            if excerpt.has_trailing_newline {
-                end_before_newline -= 1;
-            }
-
             let buffer_start = excerpt.range.start.to_offset(&excerpt.buffer);
-            let overshoot = cmp::min(offset, end_before_newline).saturating_sub(start_after_header);
+            let overshoot = offset.saturating_sub(start_after_header);
             Anchor {
                 excerpt_id: excerpt.id.clone(),
                 text_anchor: excerpt.buffer.anchor_at(buffer_start + overshoot, bias),

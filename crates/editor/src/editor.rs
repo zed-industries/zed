@@ -3958,7 +3958,6 @@ mod tests {
             view.update_selection(DisplayPoint::new(0, 0), 0, Vector2F::zero(), cx);
         });
 
-        eprintln!(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
         assert_eq!(
             editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
             [
@@ -5854,6 +5853,58 @@ mod tests {
                     "
                 .unindent()
             );
+        });
+    }
+
+    #[gpui::test]
+    fn test_multi_buffer_editing(cx: &mut gpui::MutableAppContext) {
+        let settings = EditorSettings::test(cx);
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
+        let multibuffer = cx.add_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(0);
+            multibuffer.push_excerpt(
+                ExcerptProperties {
+                    buffer: &buffer,
+                    range: Point::new(0, 0)..Point::new(0, 4),
+                    header_height: 0,
+                },
+                cx,
+            );
+            multibuffer.push_excerpt(
+                ExcerptProperties {
+                    buffer: &buffer,
+                    range: Point::new(1, 0)..Point::new(1, 4),
+                    header_height: 0,
+                },
+                cx,
+            );
+            multibuffer
+        });
+
+        assert_eq!(multibuffer.read(cx).read(cx).text(), "aaaa\nbbbb\n");
+
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            build_editor(multibuffer, settings, cx)
+        });
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                ],
+                cx,
+            )
+            .unwrap();
+
+            view.handle_input(&Input("X".to_string()), cx);
+            assert_eq!(view.text(cx), "Xaaaa\nXbbbb\n");
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                ]
+            )
         });
     }
 
