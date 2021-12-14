@@ -2095,7 +2095,7 @@ mod tests {
             assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678\n");
 
             multibuffer.undo(cx);
-            assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678\n");
+            assert_eq!(multibuffer.read(cx).text(), "C1234\n5678\n");
         });
     }
 }
