@@ -4,7 +4,7 @@ pub mod settings;
 pub mod sidebar;
 mod status_bar;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use client::{Authenticate, ChannelList, Client, User, UserStore};
 use gpui::{
     action,
@@ -28,7 +28,6 @@ use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItem
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
-    collections::{hash_map::Entry, HashMap},
     future::Future,
     path::{Path, PathBuf},
     sync::Arc,
@@ -342,10 +341,6 @@ pub struct Workspace {
     project: ModelHandle<Project>,
     entry_openers: Arc<[Box<dyn EntryOpener>]>,
     items: Vec<Box<dyn WeakItemHandle>>,
-    loading_items: HashMap<
-        ProjectPath,
-        postage::watch::Receiver<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>,
-    >,
     _observe_current_user: Task<()>,
 }
 
@@ -408,7 +403,6 @@ impl Workspace {
             project,
             entry_openers: params.entry_openers.clone(),
             items: Default::default(),
-            loading_items: Default::default(),
             _observe_current_user,
         }
     }
@@ -606,43 +600,22 @@ impl Workspace {
             }
         };
 
-        if let Entry::Vacant(entry) = self.loading_items.entry(project_path.clone()) {
-            let (mut tx, rx) = postage::watch::channel();
-            entry.insert(rx);
-
-            let project_path = project_path.clone();
-            let entry_openers = self.entry_openers.clone();
-            cx.as_mut()
-                .spawn(|mut cx| async move {
-                    let item = worktree.update(&mut cx, move |worktree, cx| {
-                        for opener in entry_openers.iter() {
-                            if let Some(task) = opener.open(worktree, project_path.clone(), cx) {
-                                return task;
-                            }
-                        }
-
-                        cx.spawn(|_, _| async move {
-                            Err(anyhow!("no opener for path {:?} found", project_path))
-                        })
-                    });
-                    *tx.borrow_mut() = Some(item.await.map_err(Arc::new));
-                })
-                .detach();
-        }
+        let project_path = project_path.clone();
+        let entry_openers = self.entry_openers.clone();
+        let task = worktree.update(cx, |worktree, cx| {
+            for opener in entry_openers.iter() {
+                if let Some(task) = opener.open(worktree, project_path.clone(), cx) {
+                    return Some(task);
+                }
+            }
+            log::error!("no opener for path {:?} found", project_path);
+            None
+        })?;
 
         let pane = pane.downgrade();
-        let mut watch = self.loading_items.get(&project_path).unwrap().clone();
-
         Some(cx.spawn(|this, mut cx| async move {
-            let load_result = loop {
-                if let Some(load_result) = watch.borrow().as_ref() {
-                    break load_result.clone();
-                }
-                watch.recv().await;
-            };
-
+            let load_result = task.await;
             this.update(&mut cx, |this, cx| {
-                this.loading_items.remove(&project_path);
                 if let Some(pane) = pane.upgrade(&cx) {
                     match load_result {
                         Ok(item) => {

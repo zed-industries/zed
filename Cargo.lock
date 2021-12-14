@@ -3456,6 +3456,7 @@ dependencies = [
  "async-trait",
  "client",
  "clock",
+ "collections",
  "fsevent",
  "futures",
  "fuzzy",

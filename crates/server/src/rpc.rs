@@ -1064,7 +1064,7 @@ mod tests {
 
         // TODO
         // // Remove the selection set as client B, see those selections disappear as client A.
-        // cx_b.update(move |_| drop(editor_b));
+        cx_b.update(move |_| drop(editor_b));
         // buffer_a
         //     .condition(&cx_a, |buffer, _| buffer.selection_sets().count() == 0)
         //     .await;
