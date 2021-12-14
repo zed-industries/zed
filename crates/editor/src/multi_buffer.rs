@@ -1151,6 +1151,9 @@ impl MultiBufferSnapshot {
         let offset = position.to_offset(self);
         let mut cursor = self.excerpts.cursor::<(usize, Option<&ExcerptId>)>();
         cursor.seek(&offset, Bias::Right, &());
+        if cursor.item().is_none() && offset == cursor.start().0 && bias == Bias::Left {
+            cursor.prev(&());
+        }
         if let Some(excerpt) = cursor.item() {
             let start_after_header = cursor.start().0 + excerpt.header_height as usize;
             let buffer_start = excerpt.range.start.to_offset(&excerpt.buffer);
@@ -1662,7 +1665,6 @@ mod tests {
     fn test_excerpt_buffer(cx: &mut MutableAppContext) {
         let buffer_1 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'a'), cx));
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'g'), cx));
-
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
 
         let subscription = multibuffer.update(cx, |multibuffer, cx| {
@@ -1763,6 +1765,73 @@ mod tests {
                 new: 8..9
             }]
         );
+    }
+
+    #[gpui::test]
+    fn test_singleton_multibuffer_anchors(cx: &mut MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, "abcd", cx));
+        let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+        let old_snapshot = multibuffer.read(cx).snapshot(cx);
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([0..0], "X", cx);
+            buffer.edit([5..5], "Y", cx);
+        });
+        let new_snapshot = multibuffer.read(cx).snapshot(cx);
+
+        assert_eq!(old_snapshot.text(), "abcd");
+        assert_eq!(new_snapshot.text(), "XabcdY");
+
+        assert_eq!(old_snapshot.anchor_before(0).to_offset(&new_snapshot), 0);
+        assert_eq!(old_snapshot.anchor_after(0).to_offset(&new_snapshot), 1);
+        assert_eq!(old_snapshot.anchor_before(4).to_offset(&new_snapshot), 5);
+        assert_eq!(old_snapshot.anchor_after(4).to_offset(&new_snapshot), 6);
+    }
+
+    #[gpui::test]
+    fn test_multibuffer_anchors(cx: &mut MutableAppContext) {
+        let buffer_1 = cx.add_model(|cx| Buffer::new(0, "abcd", cx));
+        let buffer_2 = cx.add_model(|cx| Buffer::new(0, "efghi", cx));
+        let multibuffer = cx.add_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(0);
+            multibuffer.push_excerpt(
+                ExcerptProperties {
+                    buffer: &buffer_1,
+                    range: 0..4,
+                    header_height: 1,
+                },
+                cx,
+            );
+            multibuffer.push_excerpt(
+                ExcerptProperties {
+                    buffer: &buffer_2,
+                    range: 0..5,
+                    header_height: 1,
+                },
+                cx,
+            );
+            multibuffer
+        });
+        let old_snapshot = multibuffer.read(cx).snapshot(cx);
+
+        buffer_1.update(cx, |buffer, cx| {
+            buffer.edit([0..0], "W", cx);
+            buffer.edit([5..5], "X", cx);
+        });
+        buffer_2.update(cx, |buffer, cx| {
+            buffer.edit([0..0], "Y", cx);
+            buffer.edit([6..0], "Z", cx);
+        });
+        let new_snapshot = multibuffer.read(cx).snapshot(cx);
+
+        assert_eq!(old_snapshot.text(), "\nabcd\n\nefghi\n");
+        assert_eq!(new_snapshot.text(), "\nWabcdX\n\nYefghiZ\n");
+
+        assert_eq!(old_snapshot.anchor_before(0).to_offset(&new_snapshot), 0);
+        assert_eq!(old_snapshot.anchor_after(0).to_offset(&new_snapshot), 1);
+        assert_eq!(old_snapshot.anchor_before(1).to_offset(&new_snapshot), 0);
+        assert_eq!(old_snapshot.anchor_after(1).to_offset(&new_snapshot), 1);
+        assert_eq!(old_snapshot.anchor_before(7).to_offset(&new_snapshot), 9);
+        assert_eq!(old_snapshot.anchor_after(7).to_offset(&new_snapshot), 10);
     }
 
     #[gpui::test(iterations = 100)]
