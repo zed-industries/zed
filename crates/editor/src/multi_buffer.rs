@@ -735,8 +735,14 @@ impl MultiBufferSnapshot {
     where
         T: ToOffset,
     {
-        let offset = position.to_offset(self);
-        self.as_singleton().unwrap().contains_str_at(offset, needle)
+        let position = position.to_offset(self);
+        position == self.clip_offset(position, Bias::Left)
+            && self
+                .bytes_in_range(position..self.len())
+                .flatten()
+                .copied()
+                .take(needle.len())
+                .eq(needle.bytes())
     }
 
     fn as_singleton(&self) -> Option<&BufferSnapshot> {
