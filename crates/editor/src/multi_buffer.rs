@@ -65,9 +65,9 @@ pub struct MultiBufferSnapshot {
 }
 
 pub struct ExcerptProperties<'a, T> {
-    buffer: &'a ModelHandle<Buffer>,
-    range: Range<T>,
-    header_height: u8,
+    pub buffer: &'a ModelHandle<Buffer>,
+    pub range: Range<T>,
+    pub header_height: u8,
 }
 
 #[derive(Clone)]

@@ -26,10 +26,10 @@ use language::{
     BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point, Selection, SelectionGoal,
     TransactionId,
 };
-pub use multi_buffer::MultiBuffer;
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, ToOffset, ToPoint,
 };
+pub use multi_buffer::{ExcerptProperties, MultiBuffer};
 use postage::watch;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;

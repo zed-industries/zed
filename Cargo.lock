@@ -1414,8 +1414,11 @@ dependencies = [
 name = "diagnostics"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "collections",
  "editor",
  "gpui",
+ "language",
  "postage",
  "project",
  "workspace",

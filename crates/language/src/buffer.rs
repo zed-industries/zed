@@ -1674,6 +1674,15 @@ impl BufferSnapshot {
             })
     }
 
+    pub fn all_diagnostics<'a, O>(&'a self) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
+    where
+        O: 'a + FromAnchor,
+    {
+        self.diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.resolve(self))
+    }
+
     pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
         search_range: Range<T>,
