@@ -1,23 +1,32 @@
 use collections::HashMap;
 use editor::{Editor, ExcerptProperties, MultiBuffer};
-use gpui::{elements::*, Entity, ModelHandle, RenderContext, View, ViewContext, ViewHandle};
+use gpui::{
+    action, elements::*, keymap::Binding, AppContext, Entity, ModelContext, ModelHandle,
+    MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
+};
 use language::Point;
 use postage::watch;
 use project::Project;
+use workspace::Workspace;
+
+action!(Toggle);
+
+pub fn init(cx: &mut MutableAppContext) {
+    cx.add_bindings([Binding::new("alt-shift-D", Toggle, None)]);
+    cx.add_action(ProjectDiagnosticsEditor::toggle);
+}
 
 struct ProjectDiagnostics {
-    editor: ViewHandle<Editor>,
+    excerpts: ModelHandle<MultiBuffer>,
     project: ModelHandle<Project>,
 }
 
-impl ProjectDiagnostics {
-    fn new(
-        project: ModelHandle<Project>,
-        settings: watch::Receiver<workspace::Settings>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
-        let buffer = cx.add_model(|cx| MultiBuffer::new(project.read(cx).replica_id(cx)));
+struct ProjectDiagnosticsEditor {
+    editor: ViewHandle<Editor>,
+}
 
+impl ProjectDiagnostics {
+    fn new(project: ModelHandle<Project>, cx: &mut ModelContext<Self>) -> Self {
         let project_paths = project
             .read(cx)
             .diagnostic_summaries(cx)
@@ -27,7 +36,6 @@ impl ProjectDiagnostics {
         cx.spawn(|this, mut cx| {
             let project = project.clone();
             async move {
-                let mut excerpts = Vec::new();
                 for project_path in project_paths {
                     let buffer = project
                         .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))
@@ -48,14 +56,20 @@ impl ProjectDiagnostics {
                         grouped_diagnostics.into_values().collect::<Vec<_>>();
                     sorted_diagnostic_groups.sort_by_key(|group| group.0);
 
-                    let mut prev_end_row = None;
-                    let mut pending_excerpt = None;
                     for diagnostic in snapshot.all_diagnostics::<Point>() {
-                        excerpts.push(ExcerptProperties {
-                            buffer: &buffer,
-                            range: todo!(),
-                            header_height: todo!(),
-                        });
+                        this.update(&mut cx, |this, cx| {
+                            this.excerpts.update(cx, |excerpts, cx| {
+                                excerpts.push_excerpt(
+                                    ExcerptProperties {
+                                        buffer: &buffer,
+                                        range: diagnostic.range,
+                                        header_height: 1,
+                                    },
+                                    cx,
+                                );
+                                cx.notify();
+                            });
+                        })
                     }
                 }
                 Result::Ok::<_, anyhow::Error>(())
@@ -64,13 +78,7 @@ impl ProjectDiagnostics {
         .detach();
 
         Self {
-            editor: cx.add_view(|cx| {
-                Editor::for_buffer(
-                    buffer.clone(),
-                    editor::settings_builder(buffer.downgrade(), settings),
-                    cx,
-                )
-            }),
+            excerpts: cx.add_model(|cx| MultiBuffer::new(project.read(cx).replica_id(cx))),
             project,
         }
     }
@@ -80,12 +88,75 @@ impl Entity for ProjectDiagnostics {
     type Event = ();
 }
 
-impl View for ProjectDiagnostics {
+impl Entity for ProjectDiagnosticsEditor {
+    type Event = ();
+}
+
+impl View for ProjectDiagnosticsEditor {
     fn ui_name() -> &'static str {
-        "ProjectDiagnostics"
+        "ProjectDiagnosticsEditor"
     }
 
-    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
+    fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         ChildView::new(self.editor.id()).boxed()
+    }
+}
+
+impl ProjectDiagnosticsEditor {
+    fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
+        dbg!("HEY!!!!");
+        let diagnostics =
+            cx.add_model(|cx| ProjectDiagnostics::new(workspace.project().clone(), cx));
+        workspace.add_item(diagnostics, cx);
+    }
+}
+
+impl workspace::Item for ProjectDiagnostics {
+    type View = ProjectDiagnosticsEditor;
+
+    fn build_view(
+        handle: ModelHandle<Self>,
+        settings: watch::Receiver<workspace::Settings>,
+        cx: &mut ViewContext<Self::View>,
+    ) -> Self::View {
+        let excerpts = handle.read(cx).excerpts.clone();
+        let editor = cx.add_view(|cx| {
+            Editor::for_buffer(
+                excerpts.clone(),
+                editor::settings_builder(excerpts.downgrade(), settings),
+                cx,
+            )
+        });
+        ProjectDiagnosticsEditor { editor }
+    }
+
+    fn project_path(&self) -> Option<project::ProjectPath> {
+        None
+    }
+}
+
+impl workspace::ItemView for ProjectDiagnosticsEditor {
+    fn title(&self, _: &AppContext) -> String {
+        "Project Diagnostics".to_string()
+    }
+
+    fn project_path(&self, cx: &AppContext) -> Option<project::ProjectPath> {
+        None
+    }
+
+    fn save(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> anyhow::Result<gpui::Task<anyhow::Result<()>>> {
+        todo!()
+    }
+
+    fn save_as(
+        &mut self,
+        worktree: ModelHandle<project::Worktree>,
+        path: &std::path::Path,
+        cx: &mut ViewContext<Self>,
+    ) -> gpui::Task<anyhow::Result<()>> {
+        todo!()
     }
 }

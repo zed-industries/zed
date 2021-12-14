@@ -59,6 +59,7 @@ fn main() {
         contacts_panel::init(cx);
         chat_panel::init(cx);
         project_panel::init(cx);
+        diagnostics::init(cx);
 
         let app_state = Arc::new(AppState {
             languages: languages.clone(),

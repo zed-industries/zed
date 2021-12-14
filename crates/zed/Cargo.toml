@@ -32,6 +32,7 @@ text = { path = "../text" }
 chat_panel = { path = "../chat_panel" }
 client = { path = "../client" }
 clock = { path = "../clock" }
+diagnostics = { path = "../diagnostics" }
 fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
 editor = { path = "../editor" }

@@ -5716,6 +5716,7 @@ dependencies = [
  "contacts_panel",
  "crossbeam-channel",
  "ctor",
+ "diagnostics",
  "dirs",
  "easy-parallel",
  "editor",
