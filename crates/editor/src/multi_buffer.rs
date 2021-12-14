@@ -1110,31 +1110,53 @@ impl MultiBufferSnapshot {
 
     pub fn remote_selections_in_range<'a>(
         &'a self,
-        range: Range<Anchor>,
-    ) -> impl 'a + Iterator<Item = (ReplicaId, impl 'a + Iterator<Item = Selection<Anchor>>)> {
-        // TODO
-        let excerpt_id = self.excerpts.first().unwrap().id.clone();
-        self.as_singleton()
-            .unwrap()
-            .remote_selections_in_range(range.start.text_anchor..range.end.text_anchor)
-            .map(move |(replica_id, selections)| {
-                let excerpt_id = excerpt_id.clone();
-                (
-                    replica_id,
-                    selections.map(move |s| Selection {
-                        id: s.id,
-                        start: Anchor {
-                            excerpt_id: excerpt_id.clone(),
-                            text_anchor: s.start.clone(),
-                        },
-                        end: Anchor {
-                            excerpt_id: excerpt_id.clone(),
-                            text_anchor: s.end.clone(),
-                        },
-                        reversed: s.reversed,
-                        goal: s.goal,
-                    }),
-                )
+        range: &'a Range<Anchor>,
+    ) -> impl 'a + Iterator<Item = (ReplicaId, Selection<Anchor>)> {
+        let mut cursor = self.excerpts.cursor::<Option<&ExcerptId>>();
+        cursor.seek(&Some(&range.start.excerpt_id), Bias::Left, &());
+        cursor
+            .take_while(move |excerpt| excerpt.id <= range.end.excerpt_id)
+            .flat_map(move |excerpt| {
+                let mut query_range = excerpt.range.start.clone()..excerpt.range.end.clone();
+                if excerpt.id == range.start.excerpt_id {
+                    query_range.start = range.start.text_anchor.clone();
+                }
+                if excerpt.id == range.end.excerpt_id {
+                    query_range.end = range.end.text_anchor.clone();
+                }
+
+                excerpt
+                    .buffer
+                    .remote_selections_in_range(query_range)
+                    .flat_map(move |(replica_id, selections)| {
+                        selections.map(move |selection| {
+                            let mut start = Anchor {
+                                excerpt_id: excerpt.id.clone(),
+                                text_anchor: selection.start.clone(),
+                            };
+                            let mut end = Anchor {
+                                excerpt_id: excerpt.id.clone(),
+                                text_anchor: selection.end.clone(),
+                            };
+                            if range.start.cmp(&start, self).unwrap().is_gt() {
+                                start = range.start.clone();
+                            }
+                            if range.end.cmp(&end, self).unwrap().is_lt() {
+                                end = range.end.clone();
+                            }
+
+                            (
+                                replica_id,
+                                Selection {
+                                    id: selection.id,
+                                    start,
+                                    end,
+                                    reversed: selection.reversed,
+                                    goal: selection.goal,
+                                },
+                            )
+                        })
+                    })
             })
     }
 }

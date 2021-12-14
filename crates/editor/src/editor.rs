@@ -3081,16 +3081,14 @@ impl Editor {
                 .collect(),
         );
 
-        for (replica_id, selections) in display_map
+        for (replica_id, selection) in display_map
             .buffer_snapshot
-            .remote_selections_in_range(start..end)
+            .remote_selections_in_range(&(start..end))
         {
-            result.insert(
-                replica_id,
-                selections
-                    .map(|s| display_selection(&s, &display_map))
-                    .collect(),
-            );
+            result
+                .entry(replica_id)
+                .or_insert(Vec::new())
+                .push(display_selection(&selection, &display_map));
         }
 
         result
