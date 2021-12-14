@@ -3901,12 +3901,12 @@ mod tests {
             // Redo the first two transactions together.
             editor.redo(&Redo, cx);
             assert_eq!(editor.text(cx), "12cde6");
-            assert_eq!(editor.selected_ranges(cx), vec![4..4]);
+            assert_eq!(editor.selected_ranges(cx), vec![5..5]);
 
             // Redo the last transaction on its own.
             editor.redo(&Redo, cx);
             assert_eq!(editor.text(cx), "ab2cde6");
-            assert_eq!(editor.selected_ranges(cx), vec![5..5]);
+            assert_eq!(editor.selected_ranges(cx), vec![6..6]);
 
             // Test empty transactions.
             editor.start_transaction_at(now, cx);
