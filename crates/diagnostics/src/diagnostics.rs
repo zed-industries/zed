@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use collections::HashMap;
 use editor::{Editor, ExcerptProperties, MultiBuffer};
 use gpui::{
@@ -64,6 +66,13 @@ impl ProjectDiagnostics {
                                         buffer: &buffer,
                                         range: diagnostic.range,
                                         header_height: 1,
+                                        render_header: Some(Arc::new({
+                                            let message = diagnostic.diagnostic.message.clone();
+                                            move |_| {
+                                                Text::new(message.clone(), Default::default())
+                                                    .boxed()
+                                            }
+                                        })),
                                     },
                                     cx,
                                 );

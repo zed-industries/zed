@@ -4,7 +4,7 @@ pub use anchor::{Anchor, AnchorRangeExt};
 use anyhow::Result;
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
-use gpui::{AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
+use gpui::{AppContext, ElementBox, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
 use language::{
     Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Selection,
     ToOffset as _, ToPoint as _, TransactionId,
@@ -83,10 +83,13 @@ pub struct MultiBufferSnapshot {
     diagnostics_update_count: usize,
 }
 
+pub type RenderHeaderFn = Arc<dyn 'static + Send + Sync + Fn(&AppContext) -> ElementBox>;
+
 pub struct ExcerptProperties<'a, T> {
     pub buffer: &'a ModelHandle<Buffer>,
     pub range: Range<T>,
     pub header_height: u8,
+    pub render_header: Option<RenderHeaderFn>,
 }
 
 #[derive(Clone)]
@@ -95,6 +98,7 @@ struct Excerpt {
     buffer_id: usize,
     buffer: BufferSnapshot,
     range: Range<text::Anchor>,
+    render_header: Option<RenderHeaderFn>,
     text_summary: TextSummary,
     header_height: u8,
     has_trailing_newline: bool,
@@ -145,6 +149,7 @@ impl MultiBuffer {
                 buffer: &buffer,
                 range: text::Anchor::min()..text::Anchor::max(),
                 header_height: 0,
+                render_header: None,
             },
             cx,
         );
@@ -511,11 +516,16 @@ impl MultiBuffer {
         assert_eq!(self.history.transaction_depth, 0);
         self.sync(cx);
 
-        let buffer = &props.buffer;
-        cx.subscribe(buffer, Self::on_buffer_event).detach();
+        let buffer = props.buffer.clone();
+        cx.subscribe(&buffer, Self::on_buffer_event).detach();
 
-        let buffer = props.buffer.read(cx);
-        let range = buffer.anchor_before(&props.range.start)..buffer.anchor_after(&props.range.end);
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let range = buffer_snapshot.anchor_before(&props.range.start)
+            ..buffer_snapshot.anchor_after(&props.range.end);
+        let last_version = buffer_snapshot.version().clone();
+        let last_parse_count = buffer_snapshot.parse_count();
+        let last_diagnostics_update_count = buffer_snapshot.diagnostics_update_count();
+
         let mut snapshot = self.snapshot.borrow_mut();
         let prev_id = snapshot.excerpts.last().map(|e| &e.id);
         let id = ExcerptId::between(prev_id.unwrap_or(&ExcerptId::min()), &ExcerptId::max());
@@ -523,10 +533,11 @@ impl MultiBuffer {
         let edit_start = snapshot.excerpts.summary().text.bytes;
         let excerpt = Excerpt::new(
             id.clone(),
-            props.buffer.id(),
-            buffer.snapshot(),
+            buffer.id(),
+            buffer_snapshot,
             range,
             props.header_height,
+            props.render_header,
             !self.singleton,
         );
         let edit = Edit {
@@ -537,10 +548,10 @@ impl MultiBuffer {
         self.buffers
             .entry(props.buffer.id())
             .or_insert_with(|| BufferState {
-                buffer: props.buffer.clone(),
-                last_version: buffer.version(),
-                last_parse_count: buffer.parse_count(),
-                last_diagnostics_update_count: buffer.diagnostics_update_count(),
+                buffer,
+                last_version,
+                last_parse_count,
+                last_diagnostics_update_count,
                 excerpts: Default::default(),
             })
             .excerpts
@@ -659,6 +670,7 @@ impl MultiBuffer {
                     buffer.snapshot(),
                     old_excerpt.range.clone(),
                     old_excerpt.header_height,
+                    old_excerpt.render_header.clone(),
                     !self.singleton,
                 );
             } else {
@@ -702,6 +714,38 @@ impl MultiBufferSnapshot {
         self.chunks(0..self.len(), None)
             .map(|chunk| chunk.text)
             .collect()
+    }
+
+    pub fn excerpt_headers_in_range<'a>(
+        &'a self,
+        range: Range<u32>,
+    ) -> impl 'a + Iterator<Item = (Range<u32>, RenderHeaderFn)> {
+        let mut cursor = self.excerpts.cursor::<Point>();
+        cursor.seek(&Point::new(range.start, 0), Bias::Right, &());
+
+        if let Some(excerpt) = cursor.item() {
+            if range.start >= cursor.start().row + excerpt.header_height as u32 {
+                cursor.next(&());
+            }
+        }
+
+        iter::from_fn(move || {
+            while let Some(excerpt) = cursor.item() {
+                if cursor.start().row >= range.end {
+                    break;
+                }
+
+                if let Some(render) = excerpt.render_header.clone() {
+                    let start = cursor.start().row;
+                    let end = start + excerpt.header_height as u32;
+                    cursor.next(&());
+                    return Some((start..end, render));
+                } else {
+                    cursor.next(&());
+                }
+            }
+            None
+        })
     }
 
     pub fn reversed_chars_at<'a, T: ToOffset>(
@@ -1382,6 +1426,7 @@ impl Excerpt {
         buffer: BufferSnapshot,
         range: Range<text::Anchor>,
         header_height: u8,
+        render_header: Option<RenderHeaderFn>,
         has_trailing_newline: bool,
     ) -> Self {
         let mut text_summary =
@@ -1409,6 +1454,7 @@ impl Excerpt {
             range,
             text_summary,
             header_height,
+            render_header,
             has_trailing_newline,
         }
     }
@@ -1638,7 +1684,7 @@ impl ToPoint for Point {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::MutableAppContext;
+    use gpui::{elements::Empty, Element, MutableAppContext};
     use language::Buffer;
     use rand::prelude::*;
     use std::env;
@@ -1674,6 +1720,7 @@ mod tests {
                     buffer: &buffer_1,
                     range: Point::new(1, 2)..Point::new(2, 5),
                     header_height: 2,
+                    render_header: Some(Arc::new(|_| Empty::new().named("header 1"))),
                 },
                 cx,
             );
@@ -1690,6 +1737,7 @@ mod tests {
                     buffer: &buffer_1,
                     range: Point::new(3, 3)..Point::new(4, 4),
                     header_height: 1,
+                    render_header: Some(Arc::new(|_| Empty::new().named("header 2"))),
                 },
                 cx,
             );
@@ -1698,6 +1746,7 @@ mod tests {
                     buffer: &buffer_2,
                     range: Point::new(3, 1)..Point::new(3, 3),
                     header_height: 3,
+                    render_header: Some(Arc::new(|_| Empty::new().named("header 3"))),
                 },
                 cx,
             );
@@ -1728,6 +1777,37 @@ mod tests {
                 "jj\n"     //
             )
         );
+
+        {
+            let snapshot = multibuffer.read(cx).read(cx);
+            assert_eq!(
+                snapshot
+                    .excerpt_headers_in_range(0..snapshot.max_point().row + 1)
+                    .map(|(rows, render)| (rows, render(cx).name().unwrap().to_string()))
+                    .collect::<Vec<_>>(),
+                &[
+                    (0..2, "header 1".into()),
+                    (4..5, "header 2".into()),
+                    (7..10, "header 3".into())
+                ]
+            );
+
+            assert_eq!(
+                snapshot
+                    .excerpt_headers_in_range(1..5)
+                    .map(|(rows, render)| (rows, render(cx).name().unwrap().to_string()))
+                    .collect::<Vec<_>>(),
+                &[(0..2, "header 1".into()), (4..5, "header 2".into())]
+            );
+
+            assert_eq!(
+                snapshot
+                    .excerpt_headers_in_range(2..8)
+                    .map(|(rows, render)| (rows, render(cx).name().unwrap().to_string()))
+                    .collect::<Vec<_>>(),
+                &[(4..5, "header 2".into()), (7..10, "header 3".into())]
+            );
+        }
 
         buffer_1.update(cx, |buffer, cx| {
             buffer.edit(
@@ -1798,6 +1878,7 @@ mod tests {
                     buffer: &buffer_1,
                     range: 0..4,
                     header_height: 1,
+                    render_header: None,
                 },
                 cx,
             );
@@ -1806,6 +1887,7 @@ mod tests {
                     buffer: &buffer_2,
                     range: 0..5,
                     header_height: 1,
+                    render_header: None,
                 },
                 cx,
             );
@@ -1881,6 +1963,7 @@ mod tests {
                                 buffer: &buffer_handle,
                                 range: start_ix..end_ix,
                                 header_height,
+                                render_header: None,
                             },
                             cx,
                         )
@@ -2091,6 +2174,7 @@ mod tests {
                     buffer: &buffer_1,
                     range: 0..buffer_1.read(cx).len(),
                     header_height: 0,
+                    render_header: None,
                 },
                 cx,
             );
@@ -2099,6 +2183,7 @@ mod tests {
                     buffer: &buffer_2,
                     range: 0..buffer_2.read(cx).len(),
                     header_height: 0,
+                    render_header: None,
                 },
                 cx,
             );

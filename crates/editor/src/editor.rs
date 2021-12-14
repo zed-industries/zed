@@ -5874,6 +5874,7 @@ mod tests {
                     buffer: &buffer,
                     range: Point::new(0, 0)..Point::new(0, 4),
                     header_height: 0,
+                    render_header: None,
                 },
                 cx,
             );
@@ -5882,6 +5883,7 @@ mod tests {
                     buffer: &buffer,
                     range: Point::new(1, 0)..Point::new(1, 4),
                     header_height: 0,
+                    render_header: None,
                 },
                 cx,
             );
@@ -5926,6 +5928,7 @@ mod tests {
                     buffer: &buffer,
                     range: Point::new(0, 0)..Point::new(1, 4),
                     header_height: 0,
+                    render_header: None,
                 },
                 cx,
             );
@@ -5934,6 +5937,7 @@ mod tests {
                     buffer: &buffer,
                     range: Point::new(1, 0)..Point::new(2, 4),
                     header_height: 0,
+                    render_header: None,
                 },
                 cx,
             );
