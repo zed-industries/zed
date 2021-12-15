@@ -166,9 +166,63 @@ impl MultiBuffer {
         this
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn build_simple(text: &str, cx: &mut MutableAppContext) -> ModelHandle<Self> {
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
         cx.add_model(|cx| Self::singleton(buffer, cx))
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn build_random(
+        excerpts: usize,
+        mut rng: &mut impl rand::Rng,
+        cx: &mut MutableAppContext,
+    ) -> ModelHandle<Self> {
+        use rand::prelude::*;
+        use text::RandomCharIter;
+
+        cx.add_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(0);
+            let mut buffers = Vec::new();
+            for _ in 0..excerpts {
+                let buffer_handle = if rng.gen() || buffers.is_empty() {
+                    let text = RandomCharIter::new(&mut rng).take(10).collect::<String>();
+                    buffers.push(cx.add_model(|cx| Buffer::new(0, text, cx)));
+                    let buffer = buffers.last().unwrap();
+                    log::info!(
+                        "Creating new buffer {} with text: {:?}",
+                        buffer.id(),
+                        buffer.read(cx).text()
+                    );
+                    buffers.last().unwrap()
+                } else {
+                    buffers.choose(rng).unwrap()
+                };
+
+                let buffer = buffer_handle.read(cx);
+                let end_ix = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Right);
+                let start_ix = buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
+                let header_height = rng.gen_range(0..=5);
+                log::info!(
+                    "Inserting excerpt from buffer {} with header height {} and range {:?}: {:?}",
+                    buffer_handle.id(),
+                    header_height,
+                    start_ix..end_ix,
+                    &buffer.text()[start_ix..end_ix]
+                );
+
+                multibuffer.push_excerpt(
+                    ExcerptProperties {
+                        buffer: buffer_handle,
+                        range: start_ix..end_ix,
+                        header_height,
+                        render_header: None,
+                    },
+                    cx,
+                );
+            }
+            multibuffer
+        })
     }
 
     pub fn replica_id(&self) -> ReplicaId {
@@ -705,16 +759,31 @@ impl MultiBuffer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl MultiBuffer {
-    pub fn randomly_edit<R: rand::Rng>(
+    pub fn randomly_edit(
         &mut self,
-        rng: &mut R,
+        rng: &mut impl rand::Rng,
         count: usize,
         cx: &mut ModelContext<Self>,
     ) {
-        self.as_singleton()
-            .unwrap()
-            .update(cx, |buffer, cx| buffer.randomly_edit(rng, count, cx));
-        self.sync(cx);
+        use text::RandomCharIter;
+
+        let snapshot = self.read(cx);
+        let mut old_ranges: Vec<Range<usize>> = Vec::new();
+        for _ in 0..count {
+            let last_end = old_ranges.last().map_or(0, |last_range| last_range.end + 1);
+            if last_end > snapshot.len() {
+                break;
+            }
+            let end_ix = snapshot.clip_offset(rng.gen_range(0..=last_end), Bias::Right);
+            let start_ix = snapshot.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
+            old_ranges.push(start_ix..end_ix);
+        }
+        let new_text_len = rng.gen_range(0..10);
+        let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
+        log::info!("mutating multi-buffer at {:?}: {:?}", old_ranges, new_text);
+        drop(snapshot);
+
+        self.edit(old_ranges.iter().cloned(), new_text.as_str(), cx);
     }
 }
 
@@ -858,20 +927,20 @@ impl MultiBufferSnapshot {
         let mut cursor = self.excerpts.cursor::<usize>();
         cursor.seek(&offset, Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
-            let start_after_header = *cursor.start() + excerpt.header_height as usize;
-            if offset < start_after_header {
-                *cursor.start()
+            let header_end = *cursor.start() + excerpt.header_height as usize;
+            if offset < header_end {
+                header_end
             } else {
                 let excerpt_start = excerpt.range.start.to_offset(&excerpt.buffer);
                 let buffer_offset = excerpt
                     .buffer
-                    .clip_offset(excerpt_start + (offset - start_after_header), bias);
+                    .clip_offset(excerpt_start + (offset - header_end), bias);
                 let offset_in_excerpt = if buffer_offset > excerpt_start {
                     buffer_offset - excerpt_start
                 } else {
                     0
                 };
-                start_after_header + offset_in_excerpt
+                header_end + offset_in_excerpt
             }
         } else {
             self.excerpts.summary().text.bytes
@@ -882,20 +951,20 @@ impl MultiBufferSnapshot {
         let mut cursor = self.excerpts.cursor::<Point>();
         cursor.seek(&point, Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
-            let start_after_header = *cursor.start() + Point::new(excerpt.header_height as u32, 0);
-            if point < start_after_header {
-                *cursor.start()
+            let header_end = *cursor.start() + Point::new(excerpt.header_height as u32, 0);
+            if point < header_end {
+                header_end
             } else {
                 let excerpt_start = excerpt.range.start.to_point(&excerpt.buffer);
                 let buffer_point = excerpt
                     .buffer
-                    .clip_point(excerpt_start + (point - start_after_header), bias);
+                    .clip_point(excerpt_start + (point - header_end), bias);
                 let point_in_excerpt = if buffer_point > excerpt_start {
                     buffer_point - excerpt_start
                 } else {
                     Point::zero()
                 };
-                start_after_header + point_in_excerpt
+                header_end + point_in_excerpt
             }
         } else {
             self.excerpts.summary().text.lines
@@ -906,23 +975,22 @@ impl MultiBufferSnapshot {
         let mut cursor = self.excerpts.cursor::<PointUtf16>();
         cursor.seek(&point, Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
-            let start_after_header =
-                *cursor.start() + PointUtf16::new(excerpt.header_height as u32, 0);
-            if point < start_after_header {
-                *cursor.start()
+            let header_end = *cursor.start() + PointUtf16::new(excerpt.header_height as u32, 0);
+            if point < header_end {
+                header_end
             } else {
                 let excerpt_start = excerpt
                     .buffer
                     .offset_to_point_utf16(excerpt.range.start.to_offset(&excerpt.buffer));
                 let buffer_point = excerpt
                     .buffer
-                    .clip_point_utf16(excerpt_start + (point - start_after_header), bias);
+                    .clip_point_utf16(excerpt_start + (point - header_end), bias);
                 let point_in_excerpt = if buffer_point > excerpt_start {
                     buffer_point - excerpt_start
                 } else {
                     PointUtf16::new(0, 0)
                 };
-                start_after_header + point_in_excerpt
+                header_end + point_in_excerpt
             }
         } else {
             self.excerpts.summary().text.lines_utf16
@@ -979,7 +1047,7 @@ impl MultiBufferSnapshot {
             let overshoot = offset - start_offset;
             let header_height = excerpt.header_height as usize;
             if overshoot < header_height {
-                *start_point
+                *start_point + Point::new(overshoot as u32, 0)
             } else {
                 let excerpt_start_offset = excerpt.range.start.to_offset(&excerpt.buffer);
                 let excerpt_start_point = excerpt.range.start.to_point(&excerpt.buffer);
@@ -1003,7 +1071,7 @@ impl MultiBufferSnapshot {
             let overshoot = point - start_point;
             let header_height = Point::new(excerpt.header_height as u32, 0);
             if overshoot < header_height {
-                *start_offset
+                start_offset + overshoot.row as usize
             } else {
                 let excerpt_start_offset = excerpt.range.start.to_offset(&excerpt.buffer);
                 let excerpt_start_point = excerpt.range.start.to_point(&excerpt.buffer);
@@ -1026,7 +1094,7 @@ impl MultiBufferSnapshot {
             let overshoot = point - start_point;
             let header_height = PointUtf16::new(excerpt.header_height as u32, 0);
             if overshoot < header_height {
-                *start_offset
+                start_offset + overshoot.row as usize
             } else {
                 let excerpt_start_offset = excerpt.range.start.to_offset(&excerpt.buffer);
                 let excerpt_start_point = excerpt

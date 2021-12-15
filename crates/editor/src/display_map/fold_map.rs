@@ -1251,7 +1251,11 @@ mod tests {
 
         let len = rng.gen_range(0..10);
         let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-        let buffer = MultiBuffer::build_simple(&text, cx);
+        let buffer = if rng.gen() {
+            MultiBuffer::build_simple(&text, cx)
+        } else {
+            MultiBuffer::build_random(1, &mut rng, cx)
+        };
         let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
         let mut map = FoldMap::new(buffer_snapshot.clone()).0;
 
