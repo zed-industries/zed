@@ -123,8 +123,14 @@ pub struct MultiBufferChunks<'a> {
 pub struct MultiBufferBytes<'a> {
     range: Range<usize>,
     excerpts: Cursor<'a, Excerpt, usize>,
-    excerpt_chunks: Option<language::rope::Bytes<'a>>,
-    excerpt_chunk: &'a [u8],
+    excerpt_bytes: Option<ExcerptBytes<'a>>,
+    chunk: &'a [u8],
+}
+
+struct ExcerptBytes<'a> {
+    header_height: usize,
+    content_bytes: language::rope::Bytes<'a>,
+    footer_height: usize,
 }
 
 impl MultiBuffer {
@@ -926,14 +932,25 @@ impl MultiBufferSnapshot {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut excerpts = self.excerpts.cursor::<usize>();
         excerpts.seek(&range.start, Bias::Right, &());
-        let mut bytes = MultiBufferBytes {
+
+        let mut chunk = &[][..];
+        let excerpt_bytes = if let Some(excerpt) = excerpts.item() {
+            let mut excerpt_bytes = excerpt.bytes_in_range(
+                range.start - excerpts.start()
+                    ..cmp::min(range.end - excerpts.start(), excerpt.text_summary.bytes),
+            );
+            chunk = excerpt_bytes.next().unwrap_or(&[][..]);
+            Some(excerpt_bytes)
+        } else {
+            None
+        };
+
+        MultiBufferBytes {
             range,
             excerpts,
-            excerpt_chunks: None,
-            excerpt_chunk: &[],
-        };
-        bytes.reset_excerpt_bytes();
-        bytes
+            excerpt_bytes,
+            chunk,
+        }
     }
 
     pub fn chunks<'a, T: ToOffset>(
@@ -1527,6 +1544,34 @@ impl Excerpt {
             longest_row_chars: 0,
         }
     }
+
+    fn bytes_in_range(&self, range: Range<usize>) -> ExcerptBytes {
+        let content_start = self.range.start.to_offset(&self.buffer);
+        let bytes_start = content_start + range.start.saturating_sub(self.header_height as usize);
+        let mut bytes_end = content_start
+            + cmp::min(range.end, self.text_summary.bytes)
+                .saturating_sub(self.header_height as usize);
+
+        let header_height = cmp::min(
+            (self.header_height as usize).saturating_sub(range.start),
+            range.len(),
+        );
+        let mut footer_height = 0;
+        if self.has_trailing_newline && range.end == self.text_summary.bytes {
+            bytes_end -= 1;
+            if !range.is_empty() {
+                footer_height = 1;
+            }
+        }
+
+        let content_bytes = self.buffer.bytes_in_range(bytes_start..bytes_end);
+
+        ExcerptBytes {
+            header_height,
+            content_bytes,
+            footer_height,
+        }
+    }
 }
 
 impl fmt::Debug for Excerpt {
@@ -1707,61 +1752,29 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
 }
 
 impl<'a> MultiBufferBytes<'a> {
-    fn peek(&mut self) -> Option<&'a [u8]> {
-        if self.range.is_empty() {
-            return None;
-        }
-
-        let excerpt = self.excerpts.item()?;
-        let header_end = self.excerpts.start() + excerpt.header_height as usize;
-        let mut footer_start = self.excerpts.start() + excerpt.text_summary.bytes;
-        if excerpt.has_trailing_newline {
-            footer_start -= 1;
-        }
-
-        dbg!(self.range.start, header_end, footer_start);
-        if self.range.start < header_end {
-            let header_height = cmp::min(header_end - self.range.start, self.range.len());
-            Some(&NEWLINES[..header_height])
-        } else if self.range.start == footer_start {
-            Some(&NEWLINES[..1])
-        } else {
-            Some(self.excerpt_chunk)
-        }
-    }
-
     fn consume(&mut self, len: usize) {
+        assert!(len > 0);
+
         self.range.start += len;
-        if self.range.is_empty() {
-            return;
-        }
+        self.chunk = &self.chunk[len..];
 
-        if let Some(excerpt) = self.excerpts.item() {
-            let header_end = self.excerpts.start() + excerpt.header_height as usize;
-
-            if self.range.start == self.excerpts.end(&()) {
+        if !self.range.is_empty() && self.chunk.is_empty() {
+            if let Some(chunk) = self.excerpt_bytes.as_mut().and_then(|bytes| bytes.next()) {
+                self.chunk = chunk;
+            } else {
                 self.excerpts.next(&());
-                self.reset_excerpt_bytes();
-            } else if self.range.start > header_end {
-                self.excerpt_chunks.as_mut().unwrap().next();
+                if let Some(excerpt) = self.excerpts.item() {
+                    let mut excerpt_bytes = excerpt.bytes_in_range(
+                        0..cmp::min(
+                            self.range.end - self.excerpts.start(),
+                            excerpt.text_summary.bytes,
+                        ),
+                    );
+                    self.chunk = excerpt_bytes.next().unwrap();
+                    self.excerpt_bytes = Some(excerpt_bytes);
+                }
             }
         }
-    }
-
-    fn reset_excerpt_bytes(&mut self) {
-        self.excerpt_chunks = self.excerpts.item().map(|excerpt| {
-            let start_after_header = self.excerpts.start() + excerpt.header_height as usize;
-            let mut end_before_footer = self.excerpts.start() + excerpt.text_summary.bytes;
-            if excerpt.has_trailing_newline {
-                end_before_footer -= 1;
-            }
-
-            let buffer_start = excerpt.range.start.to_offset(&excerpt.buffer);
-            let start = buffer_start + self.range.start.saturating_sub(start_after_header);
-            let end = buffer_start
-                + cmp::min(self.range.end, end_before_footer).saturating_sub(start_after_header);
-            excerpt.buffer.bytes_in_range(start..end)
-        });
     }
 }
 
@@ -1769,22 +1782,48 @@ impl<'a> Iterator for MultiBufferBytes<'a> {
     type Item = &'a [u8];
 
     fn next(&mut self) -> Option<Self::Item> {
-        let result = self.peek()?;
-        self.consume(result.len());
-        Some(result)
+        let chunk = self.chunk;
+        if chunk.is_empty() {
+            None
+        } else {
+            self.consume(chunk.len());
+            Some(chunk)
+        }
     }
 }
 
 impl<'a> io::Read for MultiBufferBytes<'a> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        if let Some(chunk) = self.peek() {
-            let len = cmp::min(buf.len(), chunk.len());
-            buf[..len].copy_from_slice(&chunk[..len]);
-            self.consume(len);
-            Ok(len)
-        } else {
-            Ok(0)
+        let len = cmp::min(buf.len(), self.chunk.len());
+        buf[..len].copy_from_slice(&self.chunk[..len]);
+        self.consume(len);
+        Ok(len)
+    }
+}
+
+impl<'a> Iterator for ExcerptBytes<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.header_height > 0 {
+            let result = &NEWLINES[..self.header_height];
+            self.header_height = 0;
+            return Some(result);
         }
+
+        if let Some(chunk) = self.content_bytes.next() {
+            if !chunk.is_empty() {
+                return Some(chunk);
+            }
+        }
+
+        if self.footer_height > 0 {
+            let result = &NEWLINES[..self.footer_height];
+            self.footer_height = 0;
+            return Some(result);
+        }
+
+        None
     }
 }
 
@@ -2295,7 +2334,6 @@ mod tests {
             for _ in 0..10 {
                 let end_ix = rng.gen_range(0..=snapshot.len());
                 let start_ix = rng.gen_range(0..=end_ix);
-                dbg!(&expected_text);
                 assert_eq!(
                     snapshot
                         .bytes_in_range(start_ix..end_ix)
