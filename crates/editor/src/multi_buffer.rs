@@ -14,6 +14,7 @@ use std::{
     cmp, io,
     iter::{self, FromIterator, Peekable},
     ops::{Range, Sub},
+    str,
     sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
@@ -754,9 +755,47 @@ impl MultiBufferSnapshot {
         &'a self,
         position: T,
     ) -> impl Iterator<Item = char> + 'a {
-        // TODO
-        let offset = position.to_offset(self);
-        self.as_singleton().unwrap().reversed_chars_at(offset)
+        let mut offset = position.to_offset(self);
+        let mut cursor = self.excerpts.cursor::<usize>();
+        cursor.seek(&offset, Bias::Left, &());
+        let mut excerpt_chunks = cursor.item().map(|excerpt| {
+            let start_after_header = cursor.start() + excerpt.header_height as usize;
+            let mut end_before_footer = cursor.start() + excerpt.text_summary.bytes;
+            if excerpt.has_trailing_newline {
+                end_before_footer -= 1;
+            }
+
+            let start = excerpt.range.start.to_offset(&excerpt.buffer);
+            let end =
+                start + (cmp::min(offset, end_before_footer).saturating_sub(start_after_header));
+            excerpt.buffer.reversed_chunks_in_range(start..end)
+        });
+        iter::from_fn(move || {
+            if offset == *cursor.start() {
+                cursor.prev(&());
+                let excerpt = cursor.item()?;
+                excerpt_chunks = Some(
+                    excerpt
+                        .buffer
+                        .reversed_chunks_in_range(excerpt.range.clone()),
+                );
+            }
+
+            let excerpt = cursor.item().unwrap();
+            if offset <= cursor.start() + excerpt.header_height as usize {
+                let header_height = offset - cursor.start();
+                offset -= header_height;
+                Some(unsafe { str::from_utf8_unchecked(&NEWLINES[..header_height]) })
+            } else if offset == cursor.end(&()) && excerpt.has_trailing_newline {
+                offset -= 1;
+                Some("\n")
+            } else {
+                let chunk = excerpt_chunks.as_mut().unwrap().next().unwrap();
+                offset -= chunk.len();
+                Some(chunk)
+            }
+        })
+        .flat_map(|c| c.chars().rev())
     }
 
     pub fn chars_at<'a, T: ToOffset>(&'a self, position: T) -> impl Iterator<Item = char> + 'a {
@@ -1593,7 +1632,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
             if self.header_height > 0 {
                 let chunk = Chunk {
                     text: unsafe {
-                        std::str::from_utf8_unchecked(&NEWLINES[..self.header_height as usize])
+                        str::from_utf8_unchecked(&NEWLINES[..self.header_height as usize])
                     },
                     ..Default::default()
                 };
@@ -2150,6 +2189,14 @@ mod tests {
                     expected_summary,
                     "incorrect summary for range {:?}",
                     start_ix..end_ix
+                );
+            }
+
+            for _ in 0..10 {
+                let end_ix = snapshot.clip_offset(rng.gen_range(0..=snapshot.len()), Bias::Right);
+                assert_eq!(
+                    expected_text[..end_ix].chars().rev().collect::<String>(),
+                    snapshot.reversed_chars_at(end_ix).collect::<String>()
                 );
             }
         }
