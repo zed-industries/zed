@@ -305,6 +305,9 @@ impl MultiBuffer {
             let start = range.start.to_offset(&snapshot);
             let end = range.end.to_offset(&snapshot);
             cursor.seek(&start, Bias::Right, &());
+            if cursor.item().is_none() && start == *cursor.start() {
+                cursor.prev(&());
+            }
             let start_excerpt = cursor.item().expect("start offset out of bounds");
             let start_overshoot =
                 (start - cursor.start()).saturating_sub(start_excerpt.header_height as usize);
@@ -312,6 +315,9 @@ impl MultiBuffer {
                 start_excerpt.range.start.to_offset(&start_excerpt.buffer) + start_overshoot;
 
             cursor.seek(&end, Bias::Right, &());
+            if cursor.item().is_none() && end == *cursor.start() {
+                cursor.prev(&());
+            }
             let end_excerpt = cursor.item().expect("end offset out of bounds");
             let end_overshoot =
                 (end - cursor.start()).saturating_sub(end_excerpt.header_height as usize);
