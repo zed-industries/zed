@@ -592,10 +592,18 @@ impl MultiBuffer {
         let last_diagnostics_update_count = buffer_snapshot.diagnostics_update_count();
 
         let mut snapshot = self.snapshot.borrow_mut();
-        let prev_id = snapshot.excerpts.last().map(|e| &e.id);
-        let id = ExcerptId::between(prev_id.unwrap_or(&ExcerptId::min()), &ExcerptId::max());
-
+        let mut prev_id = None;
         let edit_start = snapshot.excerpts.summary().text.bytes;
+        snapshot.excerpts.update_last(
+            |excerpt| {
+                excerpt.has_trailing_newline = true;
+                excerpt.text_summary += TextSummary::from("\n");
+                prev_id = Some(excerpt.id.clone());
+            },
+            &(),
+        );
+
+        let id = ExcerptId::between(&prev_id.unwrap_or(ExcerptId::min()), &ExcerptId::max());
         let excerpt = Excerpt::new(
             id.clone(),
             buffer.id(),
@@ -603,12 +611,8 @@ impl MultiBuffer {
             range,
             props.header_height,
             props.render_header,
-            !self.singleton,
+            false,
         );
-        let edit = Edit {
-            old: edit_start..edit_start,
-            new: edit_start..edit_start + excerpt.text_summary.bytes,
-        };
         snapshot.excerpts.push(excerpt, &());
         self.buffers
             .entry(props.buffer.id())
@@ -621,8 +625,10 @@ impl MultiBuffer {
             })
             .excerpts
             .push(id.clone());
-
-        self.subscriptions.publish_mut([edit]);
+        self.subscriptions.publish_mut([Edit {
+            old: edit_start..edit_start,
+            new: edit_start..snapshot.excerpts.summary().text.bytes,
+        }]);
 
         cx.notify();
 
@@ -738,7 +744,7 @@ impl MultiBuffer {
                     old_excerpt.range.clone(),
                     old_excerpt.header_height,
                     old_excerpt.render_header.clone(),
-                    !self.singleton,
+                    old_excerpt.has_trailing_newline,
                 );
             } else {
                 new_excerpt = old_excerpt.clone();
@@ -2245,6 +2251,10 @@ mod tests {
                 expected_text.extend(buffer.text_for_range(buffer_range.clone()));
                 expected_text.push('\n');
             }
+            // Remove final trailing newline.
+            if !expected_excerpts.is_empty() {
+                expected_text.pop();
+            }
 
             assert_eq!(snapshot.text(), expected_text);
 
@@ -2421,7 +2431,7 @@ mod tests {
             let edits = subscription.consume().into_inner();
 
             log::info!(
-                "applying edits since old text: {:?}: {:?}",
+                "applying subscription edits to old text: {:?}: {:?}",
                 old_snapshot.text(),
                 edits,
             );

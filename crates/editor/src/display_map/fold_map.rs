@@ -1273,12 +1273,12 @@ mod tests {
                     let subscription = buffer.subscribe();
                     let edit_count = rng.gen_range(1..=5);
                     buffer.randomly_edit(&mut rng, edit_count, cx);
+                    buffer_snapshot = buffer.snapshot(cx);
                     let edits = subscription.consume().into_inner();
                     log::info!("editing {:?}", edits);
                     buffer_edits.extend(edits);
                 }),
             };
-            buffer_snapshot = buffer.read(cx).snapshot(cx);
 
             let (snapshot, edits) = map.read(buffer_snapshot.clone(), buffer_edits);
             snapshot_edits.push((snapshot.clone(), edits));
