@@ -113,10 +113,8 @@ struct ExcerptSummary {
 
 pub struct MultiBufferChunks<'a> {
     range: Range<usize>,
-    cursor: Cursor<'a, Excerpt, usize>,
-    header_height: u8,
-    has_trailing_newline: bool,
-    excerpt_chunks: Option<BufferChunks<'a>>,
+    excerpts: Cursor<'a, Excerpt, usize>,
+    excerpt_chunks: Option<ExcerptChunks<'a>>,
     theme: Option<&'a SyntaxTheme>,
 }
 
@@ -125,6 +123,12 @@ pub struct MultiBufferBytes<'a> {
     excerpts: Cursor<'a, Excerpt, usize>,
     excerpt_bytes: Option<ExcerptBytes<'a>>,
     chunk: &'a [u8],
+}
+
+struct ExcerptChunks<'a> {
+    header_height: usize,
+    content_chunks: BufferChunks<'a>,
+    footer_height: usize,
 }
 
 struct ExcerptBytes<'a> {
@@ -1039,16 +1043,15 @@ impl MultiBufferSnapshot {
         range: Range<T>,
         theme: Option<&'a SyntaxTheme>,
     ) -> MultiBufferChunks<'a> {
-        let mut result = MultiBufferChunks {
-            range: 0..range.end.to_offset(self),
-            cursor: self.excerpts.cursor::<usize>(),
-            header_height: 0,
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut chunks = MultiBufferChunks {
+            range: range.clone(),
+            excerpts: self.excerpts.cursor(),
             excerpt_chunks: None,
-            has_trailing_newline: false,
             theme,
         };
-        result.seek(range.start.to_offset(self));
-        result
+        chunks.seek(range.start);
+        chunks
     }
 
     pub fn offset_to_point(&self, offset: usize) -> Point {
@@ -1626,6 +1629,38 @@ impl Excerpt {
         }
     }
 
+    fn chunks_in_range<'a>(
+        &'a self,
+        range: Range<usize>,
+        theme: Option<&'a SyntaxTheme>,
+    ) -> ExcerptChunks<'a> {
+        let content_start = self.range.start.to_offset(&self.buffer);
+        let chunks_start = content_start + range.start.saturating_sub(self.header_height as usize);
+        let mut chunks_end = content_start
+            + cmp::min(range.end, self.text_summary.bytes)
+                .saturating_sub(self.header_height as usize);
+
+        let header_height = cmp::min(
+            (self.header_height as usize).saturating_sub(range.start),
+            range.len(),
+        );
+        let mut footer_height = 0;
+        if self.has_trailing_newline && range.end == self.text_summary.bytes {
+            chunks_end -= 1;
+            if !range.is_empty() {
+                footer_height = 1;
+            }
+        }
+
+        let content_chunks = self.buffer.chunks(chunks_start..chunks_end, theme);
+
+        ExcerptChunks {
+            header_height,
+            content_chunks,
+            footer_height,
+        }
+    }
+
     fn bytes_in_range(&self, range: Range<usize>) -> ExcerptBytes {
         let content_start = self.range.start.to_offset(&self.buffer);
         let bytes_start = content_start + range.start.saturating_sub(self.header_height as usize);
@@ -1738,38 +1773,18 @@ impl<'a> MultiBufferChunks<'a> {
 
     pub fn seek(&mut self, offset: usize) {
         self.range.start = offset;
-        self.cursor.seek_forward(&offset, Bias::Right, &());
-        self.header_height = 0;
-        self.excerpt_chunks = None;
-        if let Some(excerpt) = self.cursor.item() {
-            let buffer_range = excerpt.range.to_offset(&excerpt.buffer);
-            self.header_height = excerpt.header_height;
-            self.has_trailing_newline = excerpt.has_trailing_newline;
-
-            let buffer_start;
-            let start_overshoot = self.range.start - self.cursor.start();
-            if start_overshoot < excerpt.header_height as usize {
-                self.header_height -= start_overshoot as u8;
-                buffer_start = buffer_range.start;
-            } else {
-                buffer_start =
-                    buffer_range.start + start_overshoot - excerpt.header_height as usize;
-                self.header_height = 0;
-            }
-
-            let buffer_end;
-            let end_overshoot = self.range.end - self.cursor.start();
-            if end_overshoot < excerpt.header_height as usize {
-                self.header_height -= excerpt.header_height - end_overshoot as u8;
-                buffer_end = buffer_start;
-            } else {
-                buffer_end = cmp::min(
-                    buffer_range.end,
-                    buffer_range.start + end_overshoot - excerpt.header_height as usize,
-                );
-            }
-
-            self.excerpt_chunks = Some(excerpt.buffer.chunks(buffer_start..buffer_end, self.theme));
+        self.excerpts.seek(&offset, Bias::Right, &());
+        if let Some(excerpt) = self.excerpts.item() {
+            self.excerpt_chunks = Some(excerpt.chunks_in_range(
+                self.range.start - self.excerpts.start()
+                    ..cmp::min(
+                        self.range.end - self.excerpts.start(),
+                        excerpt.text_summary.bytes,
+                    ),
+                self.theme,
+            ));
+        } else {
+            self.excerpt_chunks = None;
         }
     }
 }
@@ -1778,56 +1793,22 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            if self.header_height > 0 {
-                let chunk = Chunk {
-                    text: unsafe {
-                        str::from_utf8_unchecked(&NEWLINES[..self.header_height as usize])
-                    },
-                    ..Default::default()
-                };
-                self.range.start += self.header_height as usize;
-                self.header_height = 0;
-                return Some(chunk);
-            }
-
-            if let Some(excerpt_chunks) = self.excerpt_chunks.as_mut() {
-                if let Some(chunk) = excerpt_chunks.next() {
-                    self.range.start += chunk.text.len();
-                    return Some(chunk);
-                }
-                self.excerpt_chunks.take();
-                if self.has_trailing_newline && self.cursor.end(&()) <= self.range.end {
-                    self.range.start += 1;
-                    return Some(Chunk {
-                        text: "\n",
-                        ..Default::default()
-                    });
-                }
-            }
-
-            self.cursor.next(&());
-            if *self.cursor.start() >= self.range.end {
-                return None;
-            }
-
-            let excerpt = self.cursor.item()?;
-            let buffer_range = excerpt.range.to_offset(&excerpt.buffer);
-
-            let buffer_end = cmp::min(
-                buffer_range.end,
-                buffer_range.start + self.range.end
-                    - excerpt.header_height as usize
-                    - self.cursor.start(),
-            );
-
-            self.header_height = excerpt.header_height;
-            self.has_trailing_newline = excerpt.has_trailing_newline;
-            self.excerpt_chunks = Some(
-                excerpt
-                    .buffer
-                    .chunks(buffer_range.start..buffer_end, self.theme),
-            );
+        if self.range.is_empty() {
+            None
+        } else if let Some(chunk) = self.excerpt_chunks.as_mut()?.next() {
+            self.range.start += chunk.text.len();
+            Some(chunk)
+        } else {
+            self.excerpts.next(&());
+            let excerpt = self.excerpts.item()?;
+            self.excerpt_chunks = Some(excerpt.chunks_in_range(
+                0..cmp::min(
+                    self.range.end - self.excerpts.start(),
+                    excerpt.text_summary.bytes,
+                ),
+                self.theme,
+            ));
+            self.next()
         }
     }
 }
@@ -1908,6 +1889,38 @@ impl<'a> Iterator for ExcerptBytes<'a> {
     }
 }
 
+impl<'a> Iterator for ExcerptChunks<'a> {
+    type Item = Chunk<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.header_height > 0 {
+            let text = unsafe { str::from_utf8_unchecked(&NEWLINES[..self.header_height]) };
+            self.header_height = 0;
+            return Some(Chunk {
+                text,
+                ..Default::default()
+            });
+        }
+
+        if let Some(chunk) = self.content_chunks.next() {
+            if !chunk.text.is_empty() {
+                return Some(chunk);
+            }
+        }
+
+        if self.footer_height > 0 {
+            let text = unsafe { str::from_utf8_unchecked(&NEWLINES[..self.footer_height]) };
+            self.footer_height = 0;
+            return Some(Chunk {
+                text,
+                ..Default::default()
+            });
+        }
+
+        None
+    }
+}
+
 impl ToOffset for Point {
     fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
         snapshot.point_to_offset(*self)
@@ -1943,7 +1956,7 @@ impl ToPoint for Point {
 mod tests {
     use super::*;
     use gpui::{elements::Empty, Element, MutableAppContext};
-    use language::Buffer;
+    use language::{Buffer, Rope};
     use rand::prelude::*;
     use std::env;
     use text::{Point, RandomCharIter};
@@ -2386,9 +2399,10 @@ mod tests {
                 );
             }
 
+            let text_rope = Rope::from(expected_text.as_str());
             for _ in 0..10 {
-                let end_ix = snapshot.clip_offset(rng.gen_range(0..=snapshot.len()), Bias::Right);
-                let start_ix = snapshot.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
+                let end_ix = text_rope.clip_offset(rng.gen_range(0..=text_rope.len()), Bias::Right);
+                let start_ix = text_rope.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
 
                 assert_eq!(
                     snapshot
@@ -2409,7 +2423,7 @@ mod tests {
             }
 
             for _ in 0..10 {
-                let end_ix = snapshot.clip_offset(rng.gen_range(0..=snapshot.len()), Bias::Right);
+                let end_ix = text_rope.clip_offset(rng.gen_range(0..=text_rope.len()), Bias::Right);
                 assert_eq!(
                     snapshot.reversed_chars_at(end_ix).collect::<String>(),
                     expected_text[..end_ix].chars().rev().collect::<String>(),
@@ -2417,7 +2431,7 @@ mod tests {
             }
 
             for _ in 0..10 {
-                let end_ix = rng.gen_range(0..=snapshot.len());
+                let end_ix = rng.gen_range(0..=text_rope.len());
                 let start_ix = rng.gen_range(0..=end_ix);
                 assert_eq!(
                     snapshot

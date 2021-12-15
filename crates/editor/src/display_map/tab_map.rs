@@ -451,11 +451,15 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
+    fn test_random_tabs(cx: &mut gpui::MutableAppContext, mut rng: StdRng) {
         let tab_size = rng.gen_range(1..=4);
         let len = rng.gen_range(0..30);
-        let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-        let buffer = MultiBuffer::build_simple(&text, cx);
+        let buffer = if rng.gen() {
+            let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+            MultiBuffer::build_simple(&text, cx)
+        } else {
+            MultiBuffer::build_random(rng.gen_range(1..=5), &mut rng, cx)
+        };
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         log::info!("Buffer text: {:?}", buffer_snapshot.text());
 
@@ -488,13 +492,15 @@ mod tests {
                 .chunks_in_range(text.point_to_offset(start.0)..text.point_to_offset(end.0))
                 .collect::<String>();
             let expected_summary = TextSummary::from(expected_text.as_str());
-            log::info!("slicing {:?}..{:?} (text: {:?})", start, end, text);
             assert_eq!(
                 expected_text,
                 tabs_snapshot
                     .chunks(start..end, None)
                     .map(|c| c.text)
-                    .collect::<String>()
+                    .collect::<String>(),
+                "chunks({:?}..{:?})",
+                start,
+                end
             );
 
             let mut actual_summary = tabs_snapshot.text_summary_for_range(start..end);
