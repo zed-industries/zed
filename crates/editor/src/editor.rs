@@ -590,11 +590,6 @@ impl Editor {
             scroll_position.y() - self.scroll_top_anchor.to_display_point(&map).row() as f32,
         );
 
-        debug_assert_eq!(
-            compute_scroll_position(&map, self.scroll_position, &self.scroll_top_anchor),
-            scroll_position
-        );
-
         cx.notify();
     }
 

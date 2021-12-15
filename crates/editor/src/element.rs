@@ -631,34 +631,55 @@ impl EditorElement {
         line_layouts: &[text_layout::Line],
         cx: &mut LayoutContext,
     ) -> Vec<(u32, ElementBox)> {
-        snapshot
-            .blocks_in_range(rows.clone())
-            .map(|(start_row, block)| {
-                let anchor_row = block
-                    .position()
-                    .to_point(&snapshot.buffer_snapshot)
-                    .to_display_point(snapshot)
-                    .row();
+        let mut blocks = Vec::new();
 
-                let anchor_x = if rows.contains(&anchor_row) {
-                    line_layouts[(anchor_row - rows.start) as usize]
-                        .x_for_index(block.column() as usize)
-                } else {
-                    layout_line(anchor_row, snapshot, style, cx.text_layout_cache)
-                        .x_for_index(block.column() as usize)
-                };
+        blocks.extend(
+            snapshot
+                .blocks_in_range(rows.clone())
+                .map(|(start_row, block)| {
+                    let anchor_row = block
+                        .position()
+                        .to_point(&snapshot.buffer_snapshot)
+                        .to_display_point(snapshot)
+                        .row();
 
-                let mut element = block.render(&BlockContext { cx, anchor_x });
-                element.layout(
-                    SizeConstraint {
-                        min: Vector2F::zero(),
-                        max: vec2f(text_width, block.height() as f32 * line_height),
-                    },
-                    cx,
-                );
-                (start_row, element)
-            })
-            .collect()
+                    let anchor_x = if rows.contains(&anchor_row) {
+                        line_layouts[(anchor_row - rows.start) as usize]
+                            .x_for_index(block.column() as usize)
+                    } else {
+                        layout_line(anchor_row, snapshot, style, cx.text_layout_cache)
+                            .x_for_index(block.column() as usize)
+                    };
+
+                    let mut element = block.render(&BlockContext { cx, anchor_x });
+                    element.layout(
+                        SizeConstraint {
+                            min: Vector2F::zero(),
+                            max: vec2f(text_width, block.height() as f32 * line_height),
+                        },
+                        cx,
+                    );
+                    (start_row, element)
+                }),
+        );
+
+        blocks.extend(
+            snapshot
+                .excerpt_headers_in_range(rows.clone())
+                .map(|(rows, render)| {
+                    let mut element = render(cx);
+                    element.layout(
+                        SizeConstraint {
+                            min: Vector2F::zero(),
+                            max: vec2f(text_width, rows.len() as f32 * line_height),
+                        },
+                        cx,
+                    );
+                    (rows.start, element)
+                }),
+        );
+
+        blocks
     }
 }
 

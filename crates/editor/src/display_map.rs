@@ -3,7 +3,9 @@ mod fold_map;
 mod tab_map;
 mod wrap_map;
 
-use crate::{Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
+use crate::{
+    multi_buffer::RenderHeaderFn, Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint,
+};
 use block_map::{BlockMap, BlockPoint};
 use fold_map::{FoldMap, ToFoldPoint as _};
 use gpui::{fonts::FontId, ElementBox, Entity, ModelContext, ModelHandle};
@@ -325,6 +327,21 @@ impl DisplaySnapshot {
         rows: Range<u32>,
     ) -> impl Iterator<Item = (u32, &'a AlignedBlock)> {
         self.blocks_snapshot.blocks_in_range(rows)
+    }
+
+    pub fn excerpt_headers_in_range<'a>(
+        &'a self,
+        rows: Range<u32>,
+    ) -> impl 'a + Iterator<Item = (Range<u32>, RenderHeaderFn)> {
+        let start_row = DisplayPoint::new(rows.start, 0).to_point(self).row;
+        let end_row = DisplayPoint::new(rows.end, 0).to_point(self).row;
+        self.buffer_snapshot
+            .excerpt_headers_in_range(start_row..end_row)
+            .map(move |(rows, render)| {
+                let start_row = Point::new(rows.start, 0).to_display_point(self).row();
+                let end_row = Point::new(rows.end, 0).to_display_point(self).row();
+                (start_row..end_row, render)
+            })
     }
 
     pub fn intersects_fold<T: ToOffset>(&self, offset: T) -> bool {
