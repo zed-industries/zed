@@ -208,11 +208,18 @@ impl DisplaySnapshot {
         loop {
             *display_point.column_mut() = 0;
             let mut point = display_point.to_point(self);
+            point = self.buffer_snapshot.clip_point(point, Bias::Left);
             point.column = 0;
             let next_display_point = self.point_to_display_point(point, Bias::Left);
             if next_display_point == display_point {
                 return (display_point, point);
             }
+            debug_assert!(
+                next_display_point < display_point,
+                "{:?} > {:?}",
+                next_display_point,
+                display_point
+            );
             display_point = next_display_point;
         }
     }
@@ -220,12 +227,19 @@ impl DisplaySnapshot {
     pub fn next_row_boundary(&self, mut display_point: DisplayPoint) -> (DisplayPoint, Point) {
         loop {
             *display_point.column_mut() = self.line_len(display_point.row());
-            let mut point = display_point.to_point(self);
+            let mut point = self.display_point_to_point(display_point, Bias::Right);
+            point = self.buffer_snapshot.clip_point(point, Bias::Right);
             point.column = self.buffer_snapshot.line_len(point.row);
             let next_display_point = self.point_to_display_point(point, Bias::Right);
             if next_display_point == display_point {
                 return (display_point, point);
             }
+            debug_assert!(
+                next_display_point > display_point,
+                "{:?} < {:?}",
+                next_display_point,
+                display_point
+            );
             display_point = next_display_point;
         }
     }
