@@ -352,13 +352,10 @@ impl MultiBuffer {
                     if excerpt.id == end_excerpt.id {
                         break;
                     }
-
-                    let excerpt_range = start_excerpt.range.end.to_offset(&start_excerpt.buffer)
-                        ..start_excerpt.range.end.to_offset(&start_excerpt.buffer);
                     buffer_edits
                         .entry(excerpt.buffer_id)
                         .or_insert(Vec::new())
-                        .push((excerpt_range, false));
+                        .push((excerpt.range.to_offset(&excerpt.buffer), false));
                     cursor.next(&());
                 }
             }
@@ -386,7 +383,7 @@ impl MultiBuffer {
                         insertions.push(
                             buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
                         );
-                    } else {
+                    } else if !range.is_empty() {
                         deletions.push(
                             buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
                         );
