@@ -751,7 +751,9 @@ impl Buffer {
             .peekable();
         let mut last_edit_old_end = PointUtf16::zero();
         let mut last_edit_new_end = PointUtf16::zero();
-        'outer: for entry in &mut diagnostics {
+        let mut ix = 0;
+        'outer: while ix < diagnostics.len() {
+            let entry = &mut diagnostics[ix];
             let mut start = entry.range.start;
             let mut end = entry.range.end;
             if entry
@@ -766,6 +768,7 @@ impl Buffer {
                         last_edit_new_end = edit.new.end;
                         edits_since_save.next();
                     } else if edit.old.start <= end && edit.old.end >= start {
+                        diagnostics.remove(ix);
                         continue 'outer;
                     } else {
                         break;
@@ -786,6 +789,7 @@ impl Buffer {
                     entry.range.start = content.clip_point_utf16(entry.range.start, Bias::Left);
                 }
             }
+            ix += 1;
         }
 
         drop(edits_since_save);

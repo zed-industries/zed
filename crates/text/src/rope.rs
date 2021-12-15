@@ -958,6 +958,22 @@ mod tests {
                 }
             }
 
+            let mut point_utf16 = PointUtf16::zero();
+            for unit in expected.encode_utf16() {
+                let left_point = actual.clip_point_utf16(point_utf16, Bias::Left);
+                let right_point = actual.clip_point_utf16(point_utf16, Bias::Right);
+                assert!(right_point >= left_point);
+                // Ensure translating UTF-16 points to offsets doesn't panic.
+                actual.point_utf16_to_offset(left_point);
+                actual.point_utf16_to_offset(right_point);
+
+                if unit == b'\n' as u16 {
+                    point_utf16 += PointUtf16::new(1, 0);
+                } else {
+                    point_utf16 += PointUtf16::new(0, 1);
+                }
+            }
+
             for _ in 0..5 {
                 let end_ix = clip_offset(&expected, rng.gen_range(0..=expected.len()), Right);
                 let start_ix = clip_offset(&expected, rng.gen_range(0..=end_ix), Left);
