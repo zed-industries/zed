@@ -1753,8 +1753,6 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
 
 impl<'a> MultiBufferBytes<'a> {
     fn consume(&mut self, len: usize) {
-        assert!(len > 0);
-
         self.range.start += len;
         self.chunk = &self.chunk[len..];
 
@@ -1796,7 +1794,9 @@ impl<'a> io::Read for MultiBufferBytes<'a> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let len = cmp::min(buf.len(), self.chunk.len());
         buf[..len].copy_from_slice(&self.chunk[..len]);
-        self.consume(len);
+        if len > 0 {
+            self.consume(len);
+        }
         Ok(len)
     }
 }
