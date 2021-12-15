@@ -1193,7 +1193,7 @@ impl MultiBufferSnapshot {
         self.anchor_at(position, Bias::Right)
     }
 
-    pub fn anchor_at<T: ToOffset>(&self, position: T, bias: Bias) -> Anchor {
+    pub fn anchor_at<T: ToOffset>(&self, position: T, mut bias: Bias) -> Anchor {
         let offset = position.to_offset(self);
         let mut cursor = self.excerpts.cursor::<(usize, Option<&ExcerptId>)>();
         cursor.seek(&offset, Bias::Right, &());
@@ -1202,8 +1202,13 @@ impl MultiBufferSnapshot {
         }
         if let Some(excerpt) = cursor.item() {
             let start_after_header = cursor.start().0 + excerpt.header_height as usize;
+            let mut overshoot = offset.saturating_sub(start_after_header);
+            if excerpt.has_trailing_newline && offset == cursor.end(&()).0 {
+                overshoot -= 1;
+                bias = Bias::Right;
+            }
+
             let buffer_start = excerpt.range.start.to_offset(&excerpt.buffer);
-            let overshoot = offset.saturating_sub(start_after_header);
             Anchor {
                 excerpt_id: excerpt.id.clone(),
                 text_anchor: excerpt.buffer.anchor_at(buffer_start + overshoot, bias),
@@ -1910,12 +1915,16 @@ mod tests {
         assert_eq!(old_snapshot.text(), "\nabcd\n\nefghi\n");
         assert_eq!(new_snapshot.text(), "\nWabcdX\n\nYefghiZ\n");
 
-        assert_eq!(old_snapshot.anchor_before(0).to_offset(&new_snapshot), 0);
-        assert_eq!(old_snapshot.anchor_after(0).to_offset(&new_snapshot), 1);
-        assert_eq!(old_snapshot.anchor_before(1).to_offset(&new_snapshot), 0);
-        assert_eq!(old_snapshot.anchor_after(1).to_offset(&new_snapshot), 1);
+        assert_eq!(old_snapshot.anchor_before(0).to_offset(&new_snapshot), 1);
+        assert_eq!(old_snapshot.anchor_after(0).to_offset(&new_snapshot), 2);
+        assert_eq!(old_snapshot.anchor_before(1).to_offset(&new_snapshot), 1);
+        assert_eq!(old_snapshot.anchor_after(1).to_offset(&new_snapshot), 2);
+        assert_eq!(old_snapshot.anchor_before(2).to_offset(&new_snapshot), 3);
+        assert_eq!(old_snapshot.anchor_after(2).to_offset(&new_snapshot), 3);
         assert_eq!(old_snapshot.anchor_before(7).to_offset(&new_snapshot), 9);
         assert_eq!(old_snapshot.anchor_after(7).to_offset(&new_snapshot), 10);
+        assert_eq!(old_snapshot.anchor_before(13).to_offset(&new_snapshot), 16);
+        assert_eq!(old_snapshot.anchor_after(13).to_offset(&new_snapshot), 17);
     }
 
     #[gpui::test(iterations = 100)]
@@ -1934,7 +1943,7 @@ mod tests {
             match rng.gen_range(0..100) {
                 0..=19 if !buffers.is_empty() => {
                     let buffer = buffers.choose(&mut rng).unwrap();
-                    buffer.update(cx, |buf, cx| buf.randomly_edit(&mut rng, 1, cx));
+                    buffer.update(cx, |buf, cx| buf.randomly_edit(&mut rng, 5, cx));
                 }
                 _ => {
                     let buffer_handle = if buffers.is_empty() || rng.gen_bool(0.4) {
