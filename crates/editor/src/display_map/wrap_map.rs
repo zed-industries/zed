@@ -1011,11 +1011,15 @@ mod tests {
         log::info!("Wrap width: {:?}", wrap_width);
 
         let buffer = cx.update(|cx| {
-            let len = rng.gen_range(0..10);
-            let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-            MultiBuffer::build_simple(&text, cx)
+            if rng.gen() {
+                MultiBuffer::build_random(rng.gen_range(1..=5), &mut rng, cx)
+            } else {
+                let len = rng.gen_range(0..10);
+                let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+                MultiBuffer::build_simple(&text, cx)
+            }
         });
-        let buffer_snapshot = buffer.read_with(&cx, |buffer, cx| buffer.snapshot(cx));
+        let mut buffer_snapshot = buffer.read_with(&cx, |buffer, cx| buffer.snapshot(cx));
         let (mut fold_map, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
         log::info!("Unwrapped text (no folds): {:?}", buffer_snapshot.text());
@@ -1080,14 +1084,14 @@ mod tests {
                         let subscription = buffer.subscribe();
                         let edit_count = rng.gen_range(1..=5);
                         buffer.randomly_edit(&mut rng, edit_count, cx);
+                        buffer_snapshot = buffer.snapshot(cx);
                         buffer_edits.extend(subscription.consume());
                     });
                 }
             }
 
-            let buffer_snapshot = buffer.read_with(&cx, |buffer, cx| buffer.snapshot(cx));
             log::info!("Unwrapped text (no folds): {:?}", buffer_snapshot.text());
-            let (folds_snapshot, fold_edits) = fold_map.read(buffer_snapshot, buffer_edits);
+            let (folds_snapshot, fold_edits) = fold_map.read(buffer_snapshot.clone(), buffer_edits);
             log::info!(
                 "Unwrapped text (unexpanded tabs): {:?}",
                 folds_snapshot.text()

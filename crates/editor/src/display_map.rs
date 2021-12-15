@@ -505,9 +505,13 @@ mod tests {
         log::info!("wrap width: {:?}", wrap_width);
 
         let buffer = cx.update(|cx| {
-            let len = rng.gen_range(0..10);
-            let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-            MultiBuffer::build_simple(&text, cx)
+            if rng.gen() {
+                let len = rng.gen_range(0..10);
+                let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+                MultiBuffer::build_simple(&text, cx)
+            } else {
+                MultiBuffer::build_random(rng.gen_range(1..=5), &mut rng, cx)
+            }
         });
 
         let map = cx.add_model(|cx| {
