@@ -1,4 +1,5 @@
 use crate::Diagnostic;
+use collections::HashMap;
 use std::{
     cmp::{Ordering, Reverse},
     iter,
@@ -16,6 +17,11 @@ pub struct DiagnosticSet {
 pub struct DiagnosticEntry<T> {
     pub range: Range<T>,
     pub diagnostic: Diagnostic,
+}
+
+pub struct DiagnosticGroup<T> {
+    pub primary: DiagnosticEntry<T>,
+    pub supporting: Vec<DiagnosticEntry<T>>,
 }
 
 #[derive(Clone, Debug)]
@@ -96,6 +102,40 @@ impl DiagnosticSet {
                 }
             }
         })
+    }
+
+    pub fn groups<O>(&self, buffer: &text::BufferSnapshot) -> Vec<DiagnosticGroup<O>>
+    where
+        O: FromAnchor + Ord + Copy,
+    {
+        let mut groups =
+            HashMap::<usize, (Option<DiagnosticEntry<O>>, Vec<DiagnosticEntry<O>>)>::default();
+
+        for entry in self.diagnostics.iter() {
+            let entry = entry.resolve(buffer);
+            let (ref mut primary, ref mut supporting) = groups
+                .entry(entry.diagnostic.group_id)
+                .or_insert((None, Vec::new()));
+            if entry.diagnostic.is_primary {
+                *primary = Some(entry);
+            } else {
+                supporting.push(entry);
+            }
+        }
+
+        let mut groups = groups
+            .into_values()
+            .map(|(primary, mut supporting)| {
+                supporting.sort_unstable_by_key(|entry| entry.range.start);
+                DiagnosticGroup {
+                    primary: primary.unwrap(),
+                    supporting,
+                }
+            })
+            .collect::<Vec<_>>();
+        groups.sort_unstable_by_key(|group| group.primary.range.start);
+
+        groups
     }
 
     pub fn group<'a, O: FromAnchor>(

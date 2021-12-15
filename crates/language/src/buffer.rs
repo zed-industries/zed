@@ -1,4 +1,4 @@
-use crate::diagnostic_set::DiagnosticEntry;
+use crate::diagnostic_set::{DiagnosticEntry, DiagnosticGroup};
 pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
@@ -1726,6 +1726,13 @@ impl BufferSnapshot {
         O: 'a + FromAnchor,
     {
         self.diagnostics.range(search_range, self, true)
+    }
+
+    pub fn diagnostic_groups<O>(&self) -> Vec<DiagnosticGroup<O>>
+    where
+        O: FromAnchor + Ord + Copy,
+    {
+        self.diagnostics.groups(self)
     }
 
     pub fn diagnostic_group<'a, O>(

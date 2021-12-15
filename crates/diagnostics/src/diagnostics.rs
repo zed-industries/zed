@@ -1,7 +1,10 @@
-use std::sync::Arc;
+use std::{cmp, sync::Arc};
 
-use collections::HashMap;
-use editor::{diagnostic_style, Editor, ExcerptProperties, MultiBuffer};
+use editor::{
+    diagnostic_block_renderer, diagnostic_style,
+    display_map::{BlockDisposition, BlockProperties},
+    Anchor, Editor, ExcerptProperties, MultiBuffer,
+};
 use gpui::{
     action, elements::*, keymap::Binding, AppContext, Entity, ModelHandle, MutableAppContext,
     RenderContext, View, ViewContext, ViewHandle,
@@ -68,13 +71,9 @@ impl workspace::Item for ProjectDiagnostics {
     ) -> Self::View {
         let project = handle.read(cx).project.clone();
         let excerpts = cx.add_model(|cx| MultiBuffer::new(project.read(cx).replica_id(cx)));
-        let editor = cx.add_view(|cx| {
-            Editor::for_buffer(
-                excerpts.clone(),
-                editor::settings_builder(excerpts.downgrade(), settings.clone()),
-                cx,
-            )
-        });
+        let build_settings = editor::settings_builder(excerpts.downgrade(), settings.clone());
+        let editor =
+            cx.add_view(|cx| Editor::for_buffer(excerpts.clone(), build_settings.clone(), cx));
 
         let project_paths = project
             .read(cx)
@@ -91,58 +90,85 @@ impl workspace::Item for ProjectDiagnostics {
                         .await?;
                     let snapshot = buffer.read_with(&cx, |b, _| b.snapshot());
 
-                    let mut grouped_diagnostics = HashMap::default();
-                    for entry in snapshot.all_diagnostics() {
-                        let mut group = grouped_diagnostics
-                            .entry(entry.diagnostic.group_id)
-                            .or_insert((Point::zero(), Vec::new()));
-                        if entry.diagnostic.is_primary {
-                            group.0 = entry.range.start;
-                        }
-                        group.1.push(entry);
-                    }
-                    let mut sorted_diagnostic_groups =
-                        grouped_diagnostics.into_values().collect::<Vec<_>>();
-                    sorted_diagnostic_groups.sort_by_key(|group| group.0);
+                    this.update(&mut cx, |this, cx| {
+                        let mut blocks = Vec::new();
+                        this.excerpts.update(cx, |excerpts, excerpts_cx| {
+                            for group in snapshot.diagnostic_groups::<Point>() {
+                                let excerpt_start = cmp::min(
+                                    group.primary.range.start.row,
+                                    group
+                                        .supporting
+                                        .first()
+                                        .map_or(u32::MAX, |entry| entry.range.start.row),
+                                );
+                                let excerpt_end = cmp::max(
+                                    group.primary.range.end.row,
+                                    group
+                                        .supporting
+                                        .last()
+                                        .map_or(0, |entry| entry.range.end.row),
+                                );
 
-                    for entry in snapshot.all_diagnostics::<Point>() {
-                        this.update(&mut cx, |this, cx| {
-                            this.excerpts.update(cx, |excerpts, cx| {
-                                excerpts.push_excerpt(
+                                let primary_diagnostic = group.primary.diagnostic;
+                                let excerpt_id = excerpts.push_excerpt(
                                     ExcerptProperties {
                                         buffer: &buffer,
-                                        range: entry.range,
-                                        header_height: entry
-                                            .diagnostic
+                                        range: Point::new(excerpt_start, 0)
+                                            ..Point::new(
+                                                excerpt_end,
+                                                snapshot.line_len(excerpt_end),
+                                            ),
+                                        header_height: primary_diagnostic
                                             .message
                                             .matches('\n')
                                             .count()
                                             as u8
                                             + 1,
                                         render_header: Some(Arc::new({
-                                            let message = entry.diagnostic.message.clone();
                                             let settings = settings.clone();
 
                                             move |_| {
                                                 let editor_style = &settings.borrow().theme.editor;
                                                 let mut text_style = editor_style.text.clone();
                                                 text_style.color = diagnostic_style(
-                                                    entry.diagnostic.severity,
+                                                    primary_diagnostic.severity,
                                                     true,
                                                     &editor_style,
                                                 )
                                                 .text;
 
-                                                Text::new(message.clone(), text_style).boxed()
+                                                Text::new(
+                                                    primary_diagnostic.message.clone(),
+                                                    text_style,
+                                                )
+                                                .boxed()
                                             }
                                         })),
                                     },
-                                    cx,
+                                    excerpts_cx,
                                 );
-                                cx.notify();
-                            });
-                        })
-                    }
+
+                                for entry in group.supporting {
+                                    let buffer_anchor = snapshot.anchor_before(entry.range.start);
+                                    blocks.push(BlockProperties {
+                                        position: Anchor::new(excerpt_id.clone(), buffer_anchor),
+                                        height: entry.diagnostic.message.matches('\n').count()
+                                            as u8
+                                            + 1,
+                                        render: diagnostic_block_renderer(
+                                            entry.diagnostic,
+                                            true,
+                                            build_settings.clone(),
+                                        ),
+                                        disposition: BlockDisposition::Below,
+                                    });
+                                }
+                            }
+                        });
+                        this.editor.update(cx, |editor, cx| {
+                            editor.insert_blocks(blocks, cx);
+                        });
+                    })
                 }
                 Result::Ok::<_, anyhow::Error>(())
             }

@@ -559,6 +559,8 @@ impl MultiBuffer {
 
         self.subscriptions.publish_mut([edit]);
 
+        cx.notify();
+
         id
     }
 

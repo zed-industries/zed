@@ -8,7 +8,7 @@ use crate::{
 };
 use block_map::{BlockMap, BlockPoint};
 use fold_map::{FoldMap, ToFoldPoint as _};
-use gpui::{fonts::FontId, ElementBox, Entity, ModelContext, ModelHandle};
+use gpui::{fonts::FontId, Entity, ModelContext, ModelHandle};
 use language::{Point, Subscription as BufferSubscription};
 use std::{
     collections::{HashMap, HashSet},
@@ -21,7 +21,7 @@ use wrap_map::WrapMap;
 
 pub use block_map::{
     AlignedBlock, BlockBufferRows as DisplayBufferRows, BlockChunks as DisplayChunks, BlockContext,
-    BlockDisposition, BlockId, BlockProperties,
+    BlockDisposition, BlockId, BlockProperties, RenderBlock,
 };
 
 pub trait ToDisplayPoint {
@@ -146,10 +146,7 @@ impl DisplayMap {
         block_map.insert(blocks)
     }
 
-    pub fn replace_blocks<F>(&mut self, styles: HashMap<BlockId, F>)
-    where
-        F: 'static + Fn(&BlockContext) -> ElementBox,
-    {
+    pub fn replace_blocks(&mut self, styles: HashMap<BlockId, RenderBlock>) {
         self.block_map.replace(styles);
     }
 

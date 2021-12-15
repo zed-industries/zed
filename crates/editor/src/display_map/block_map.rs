@@ -45,11 +45,13 @@ struct BlockRow(u32);
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 struct WrapRow(u32);
 
+pub type RenderBlock = Arc<dyn Fn(&BlockContext) -> ElementBox>;
+
 pub struct Block {
     id: BlockId,
     position: Anchor,
     height: u8,
-    render: Mutex<Arc<dyn Fn(&BlockContext) -> ElementBox>>,
+    render: Mutex<RenderBlock>,
     disposition: BlockDisposition,
 }
 
@@ -306,13 +308,10 @@ impl BlockMap {
         *transforms = new_transforms;
     }
 
-    pub fn replace<F>(&mut self, mut element_builders: HashMap<BlockId, F>)
-    where
-        F: 'static + Fn(&BlockContext) -> ElementBox,
-    {
+    pub fn replace(&mut self, mut renderers: HashMap<BlockId, RenderBlock>) {
         for block in &self.blocks {
-            if let Some(build_element) = element_builders.remove(&block.id) {
-                *block.render.lock() = Arc::new(build_element);
+            if let Some(render) = renderers.remove(&block.id) {
+                *block.render.lock() = render;
             }
         }
     }
@@ -829,6 +828,14 @@ impl Deref for AlignedBlock {
 
     fn deref(&self) -> &Self::Target {
         self.block.as_ref()
+    }
+}
+
+impl<'a> Deref for BlockContext<'a> {
+    type Target = AppContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.cx
     }
 }
 

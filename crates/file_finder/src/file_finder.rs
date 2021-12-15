@@ -16,6 +16,7 @@ use project::{Project, ProjectPath};
 use std::{
     cmp,
     path::Path,
+    rc::Rc,
     sync::{
         atomic::{self, AtomicBool},
         Arc,
@@ -270,14 +271,14 @@ impl FileFinder {
             Editor::single_line(
                 {
                     let settings = settings.clone();
-                    move |_| {
+                    Rc::new(move |_| {
                         let settings = settings.borrow();
                         EditorSettings {
                             style: settings.theme.selector.input_editor.as_editor(),
                             tab_size: settings.tab_size,
                             soft_wrap: editor::SoftWrap::None,
                         }
-                    }
+                    })
                 },
                 cx,
             )

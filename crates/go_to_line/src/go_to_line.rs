@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use editor::{display_map::ToDisplayPoint, Autoscroll, Editor, EditorSettings};
 use gpui::{
     action, elements::*, geometry::vector::Vector2F, keymap::Binding, Axis, Entity,
@@ -49,14 +51,14 @@ impl GoToLine {
             Editor::single_line(
                 {
                     let settings = settings.clone();
-                    move |_| {
+                    Rc::new(move |_| {
                         let settings = settings.borrow();
                         EditorSettings {
                             tab_size: settings.tab_size,
                             style: settings.theme.selector.input_editor.as_editor(),
                             soft_wrap: editor::SoftWrap::None,
                         }
-                    }
+                    })
                 },
                 cx,
             )

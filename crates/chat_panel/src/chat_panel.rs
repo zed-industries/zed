@@ -13,7 +13,7 @@ use gpui::{
     ViewContext, ViewHandle,
 };
 use postage::{prelude::Stream, watch};
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 use time::{OffsetDateTime, UtcOffset};
 use util::{ResultExt, TryFutureExt};
 use workspace::Settings;
@@ -56,14 +56,14 @@ impl ChatPanel {
                 4,
                 {
                     let settings = settings.clone();
-                    move |_| {
+                    Rc::new(move |_| {
                         let settings = settings.borrow();
                         EditorSettings {
                             tab_size: settings.tab_size,
                             style: settings.theme.chat_panel.input_editor.as_editor(),
                             soft_wrap: editor::SoftWrap::EditorWidth,
                         }
-                    }
+                    })
                 },
                 cx,
             )

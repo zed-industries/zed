@@ -27,16 +27,13 @@ use language::{
     BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point, Selection, SelectionGoal,
     TransactionId,
 };
-use multi_buffer::{
-    Anchor, AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, ToOffset, ToPoint,
-};
-pub use multi_buffer::{ExcerptProperties, MultiBuffer};
+pub use multi_buffer::{Anchor, ExcerptProperties, MultiBuffer};
+use multi_buffer::{AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, ToOffset, ToPoint};
 use postage::watch;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
 use std::{
-    cell::RefCell,
     cmp,
     collections::HashMap,
     iter::{self, FromIterator},
@@ -359,6 +356,8 @@ pub enum SoftWrap {
     Column(u32),
 }
 
+type BuildSettings = Rc<dyn Fn(&AppContext) -> EditorSettings>;
+
 pub struct Editor {
     handle: WeakViewHandle<Self>,
     buffer: ModelHandle<MultiBuffer>,
@@ -377,7 +376,7 @@ pub struct Editor {
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
     autoscroll_request: Option<Autoscroll>,
-    build_settings: Rc<RefCell<dyn Fn(&AppContext) -> EditorSettings>>,
+    build_settings: BuildSettings,
     focused: bool,
     show_local_cursors: bool,
     blink_epoch: usize,
@@ -433,10 +432,7 @@ struct ClipboardSelection {
 }
 
 impl Editor {
-    pub fn single_line(
-        build_settings: impl 'static + Fn(&AppContext) -> EditorSettings,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    pub fn single_line(build_settings: BuildSettings, cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let mut view = Self::for_buffer(buffer, build_settings, cx);
@@ -446,7 +442,7 @@ impl Editor {
 
     pub fn auto_height(
         max_lines: usize,
-        build_settings: impl 'static + Fn(&AppContext) -> EditorSettings,
+        build_settings: BuildSettings,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
@@ -458,10 +454,10 @@ impl Editor {
 
     pub fn for_buffer(
         buffer: ModelHandle<MultiBuffer>,
-        build_settings: impl 'static + Fn(&AppContext) -> EditorSettings,
+        build_settings: BuildSettings,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        Self::new(buffer, Rc::new(RefCell::new(build_settings)), cx)
+        Self::new(buffer, build_settings, cx)
     }
 
     pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
@@ -473,10 +469,10 @@ impl Editor {
 
     pub fn new(
         buffer: ModelHandle<MultiBuffer>,
-        build_settings: Rc<RefCell<dyn Fn(&AppContext) -> EditorSettings>>,
+        build_settings: BuildSettings,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let settings = build_settings.borrow_mut()(cx);
+        let settings = build_settings(cx);
         let display_map = cx.add_model(|cx| {
             DisplayMap::new(
                 buffer.clone(),
@@ -1440,7 +1436,7 @@ impl Editor {
 
     pub fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
-        let tab_size = self.build_settings.borrow()(cx).tab_size;
+        let tab_size = (self.build_settings)(cx).tab_size;
         let mut selections = self.local_selections::<Point>(cx);
         let mut last_indent = None;
         self.buffer.update(cx, |buffer, cx| {
@@ -1512,7 +1508,7 @@ impl Editor {
 
     pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
-        let tab_size = self.build_settings.borrow()(cx).tab_size;
+        let tab_size = (self.build_settings)(cx).tab_size;
         let selections = self.local_selections::<Point>(cx);
         let mut deletion_ranges = Vec::new();
         let mut last_outdent = None;
@@ -2900,13 +2896,14 @@ impl Editor {
                 active_diagnostics.is_valid = is_valid;
                 let mut new_styles = HashMap::new();
                 for (block_id, diagnostic) in &active_diagnostics.blocks {
-                    let build_settings = self.build_settings.clone();
-                    let diagnostic = diagnostic.clone();
-                    new_styles.insert(*block_id, move |cx: &BlockContext| {
-                        let diagnostic = diagnostic.clone();
-                        let settings = build_settings.borrow()(cx.cx);
-                        render_diagnostic(diagnostic, &settings.style, is_valid, cx.anchor_x)
-                    });
+                    new_styles.insert(
+                        *block_id,
+                        diagnostic_block_renderer(
+                            diagnostic.clone(),
+                            is_valid,
+                            self.build_settings.clone(),
+                        ),
+                    );
                 }
                 self.display_map
                     .update(cx, |display_map, _| display_map.replace_blocks(new_styles));
@@ -2950,11 +2947,7 @@ impl Editor {
                         BlockProperties {
                             position: entry.range.start,
                             height: message_height,
-                            render: Arc::new(move |cx| {
-                                let settings = build_settings.borrow()(cx.cx);
-                                let diagnostic = diagnostic.clone();
-                                render_diagnostic(diagnostic, &settings.style, true, cx.anchor_x)
-                            }),
+                            render: diagnostic_block_renderer(diagnostic, true, build_settings),
                             disposition: BlockDisposition::Below,
                         }
                     }),
@@ -3431,6 +3424,18 @@ impl Editor {
         }
     }
 
+    pub fn insert_blocks<P>(
+        &mut self,
+        blocks: impl IntoIterator<Item = BlockProperties<P>>,
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<BlockId>
+    where
+        P: ToOffset + Clone,
+    {
+        self.display_map
+            .update(cx, |display_map, cx| display_map.insert_blocks(blocks, cx))
+    }
+
     pub fn longest_row(&self, cx: &mut MutableAppContext) -> u32 {
         self.display_map
             .update(cx, |map, cx| map.snapshot(cx))
@@ -3645,7 +3650,7 @@ impl Entity for Editor {
 
 impl View for Editor {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let settings = self.build_settings.borrow_mut()(cx);
+        let settings = (self.build_settings)(cx);
         self.display_map.update(cx, |map, cx| {
             map.set_font(
                 settings.style.text.font_id,
@@ -3757,6 +3762,18 @@ impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
     }
 }
 
+pub fn diagnostic_block_renderer(
+    diagnostic: Diagnostic,
+    is_valid: bool,
+    build_settings: BuildSettings,
+) -> RenderBlock {
+    Arc::new(move |cx: &BlockContext| {
+        let diagnostic = diagnostic.clone();
+        let settings = build_settings(cx);
+        render_diagnostic(diagnostic, &settings.style, is_valid, cx.anchor_x)
+    })
+}
+
 fn render_diagnostic(
     diagnostic: Diagnostic,
     style: &EditorStyle,
@@ -3792,8 +3809,8 @@ pub fn diagnostic_style(
 pub fn settings_builder(
     buffer: WeakModelHandle<MultiBuffer>,
     settings: watch::Receiver<workspace::Settings>,
-) -> impl Fn(&AppContext) -> EditorSettings {
-    move |cx| {
+) -> BuildSettings {
+    Rc::new(move |cx| {
         let settings = settings.borrow();
         let font_cache = cx.font_cache();
         let font_family_id = settings.buffer_font_family;
@@ -3828,7 +3845,7 @@ pub fn settings_builder(
             soft_wrap,
             style: theme,
         }
-    }
+    })
 }
 
 #[cfg(test)]
@@ -6086,7 +6103,7 @@ mod tests {
         settings: EditorSettings,
         cx: &mut ViewContext<Editor>,
     ) -> Editor {
-        Editor::for_buffer(buffer, move |_| settings.clone(), cx)
+        Editor::for_buffer(buffer, Rc::new(move |_| settings.clone()), cx)
     }
 }
 
