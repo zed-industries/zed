@@ -1121,10 +1121,14 @@ mod tests {
 
         log::info!("Wrap width: {:?}", wrap_width);
 
-        let len = rng.gen_range(0..10);
-        let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-        log::info!("initial buffer text: {:?}", text);
-        let buffer = MultiBuffer::build_simple(&text, cx);
+        let buffer = if rng.gen() {
+            let len = rng.gen_range(0..10);
+            let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+            log::info!("initial buffer text: {:?}", text);
+            MultiBuffer::build_simple(&text, cx)
+        } else {
+            MultiBuffer::build_random(rng.gen_range(1..=5), &mut rng, cx)
+        };
 
         let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (fold_map, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
@@ -1212,8 +1216,8 @@ mod tests {
                         let edit_count = rng.gen_range(1..=5);
                         let subscription = buffer.subscribe();
                         buffer.randomly_edit(&mut rng, edit_count, cx);
-                        buffer_edits.extend(subscription.consume());
                         buffer_snapshot = buffer.snapshot(cx);
+                        buffer_edits.extend(subscription.consume());
                         log::info!("buffer text: {:?}", buffer_snapshot.text());
                     });
                 }
