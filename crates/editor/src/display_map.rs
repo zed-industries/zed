@@ -245,21 +245,19 @@ impl DisplaySnapshot {
     }
 
     fn point_to_display_point(&self, point: Point, bias: Bias) -> DisplayPoint {
-        DisplayPoint(
-            self.blocks_snapshot.to_block_point(
-                self.wraps_snapshot.from_tab_point(
-                    self.tabs_snapshot
-                        .to_tab_point(point.to_fold_point(&self.folds_snapshot, bias)),
-                ),
-            ),
-        )
+        let fold_point = point.to_fold_point(&self.folds_snapshot, bias);
+        let tab_point = self.tabs_snapshot.to_tab_point(fold_point);
+        let wrap_point = self.wraps_snapshot.from_tab_point(tab_point);
+        let block_point = self.blocks_snapshot.to_block_point(wrap_point);
+        DisplayPoint(block_point)
     }
 
     fn display_point_to_point(&self, point: DisplayPoint, bias: Bias) -> Point {
-        let unblocked_point = self.blocks_snapshot.to_wrap_point(point.0);
-        let unwrapped_point = self.wraps_snapshot.to_tab_point(unblocked_point);
-        let unexpanded_point = self.tabs_snapshot.to_fold_point(unwrapped_point, bias).0;
-        unexpanded_point.to_buffer_point(&self.folds_snapshot)
+        let block_point = point.0;
+        let wrap_point = self.blocks_snapshot.to_wrap_point(block_point);
+        let tab_point = self.wraps_snapshot.to_tab_point(wrap_point);
+        let fold_point = self.tabs_snapshot.to_fold_point(tab_point, bias).0;
+        fold_point.to_buffer_point(&self.folds_snapshot)
     }
 
     pub fn max_point(&self) -> DisplayPoint {
