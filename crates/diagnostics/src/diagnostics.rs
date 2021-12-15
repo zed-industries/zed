@@ -92,81 +92,99 @@ impl workspace::Item for ProjectDiagnostics {
 
                     this.update(&mut cx, |this, cx| {
                         let mut blocks = Vec::new();
-                        this.excerpts.update(cx, |excerpts, excerpts_cx| {
-                            for group in snapshot.diagnostic_groups::<Point>() {
-                                let excerpt_start = cmp::min(
-                                    group.primary.range.start.row,
-                                    group
-                                        .supporting
-                                        .first()
-                                        .map_or(u32::MAX, |entry| entry.range.start.row),
-                                );
-                                let excerpt_end = cmp::max(
-                                    group.primary.range.end.row,
-                                    group
-                                        .supporting
-                                        .last()
-                                        .map_or(0, |entry| entry.range.end.row),
-                                );
+                        let excerpts_snapshot =
+                            this.excerpts.update(cx, |excerpts, excerpts_cx| {
+                                for group in snapshot.diagnostic_groups::<Point>() {
+                                    let excerpt_start = cmp::min(
+                                        group.primary.range.start.row,
+                                        group
+                                            .supporting
+                                            .first()
+                                            .map_or(u32::MAX, |entry| entry.range.start.row),
+                                    );
+                                    let excerpt_end = cmp::max(
+                                        group.primary.range.end.row,
+                                        group
+                                            .supporting
+                                            .last()
+                                            .map_or(0, |entry| entry.range.end.row),
+                                    );
 
-                                let primary_diagnostic = group.primary.diagnostic;
-                                let excerpt_id = excerpts.push_excerpt(
-                                    ExcerptProperties {
-                                        buffer: &buffer,
-                                        range: Point::new(excerpt_start, 0)
-                                            ..Point::new(
-                                                excerpt_end,
-                                                snapshot.line_len(excerpt_end),
+                                    let primary_diagnostic = group.primary.diagnostic;
+                                    let excerpt_id = excerpts.push_excerpt(
+                                        ExcerptProperties {
+                                            buffer: &buffer,
+                                            range: Point::new(excerpt_start, 0)
+                                                ..Point::new(
+                                                    excerpt_end,
+                                                    snapshot.line_len(excerpt_end),
+                                                ),
+                                            header_height: primary_diagnostic
+                                                .message
+                                                .matches('\n')
+                                                .count()
+                                                as u8
+                                                + 1,
+                                            render_header: Some(Arc::new({
+                                                let settings = settings.clone();
+
+                                                move |_| {
+                                                    let editor_style =
+                                                        &settings.borrow().theme.editor;
+                                                    let mut text_style = editor_style.text.clone();
+                                                    text_style.color = diagnostic_style(
+                                                        primary_diagnostic.severity,
+                                                        true,
+                                                        &editor_style,
+                                                    )
+                                                    .text;
+
+                                                    Text::new(
+                                                        primary_diagnostic.message.clone(),
+                                                        text_style,
+                                                    )
+                                                    .boxed()
+                                                }
+                                            })),
+                                        },
+                                        excerpts_cx,
+                                    );
+
+                                    for entry in group.supporting {
+                                        let buffer_anchor =
+                                            snapshot.anchor_before(entry.range.start);
+                                        blocks.push(BlockProperties {
+                                            position: (excerpt_id.clone(), buffer_anchor),
+                                            height: entry.diagnostic.message.matches('\n').count()
+                                                as u8
+                                                + 1,
+                                            render: diagnostic_block_renderer(
+                                                entry.diagnostic,
+                                                true,
+                                                build_settings.clone(),
                                             ),
-                                        header_height: primary_diagnostic
-                                            .message
-                                            .matches('\n')
-                                            .count()
-                                            as u8
-                                            + 1,
-                                        render_header: Some(Arc::new({
-                                            let settings = settings.clone();
-
-                                            move |_| {
-                                                let editor_style = &settings.borrow().theme.editor;
-                                                let mut text_style = editor_style.text.clone();
-                                                text_style.color = diagnostic_style(
-                                                    primary_diagnostic.severity,
-                                                    true,
-                                                    &editor_style,
-                                                )
-                                                .text;
-
-                                                Text::new(
-                                                    primary_diagnostic.message.clone(),
-                                                    text_style,
-                                                )
-                                                .boxed()
-                                            }
-                                        })),
-                                    },
-                                    excerpts_cx,
-                                );
-
-                                for entry in group.supporting {
-                                    let buffer_anchor = snapshot.anchor_before(entry.range.start);
-                                    blocks.push(BlockProperties {
-                                        position: Anchor::new(excerpt_id.clone(), buffer_anchor),
-                                        height: entry.diagnostic.message.matches('\n').count()
-                                            as u8
-                                            + 1,
-                                        render: diagnostic_block_renderer(
-                                            entry.diagnostic,
-                                            true,
-                                            build_settings.clone(),
-                                        ),
-                                        disposition: BlockDisposition::Below,
-                                    });
+                                            disposition: BlockDisposition::Below,
+                                        });
+                                    }
                                 }
-                            }
-                        });
+
+                                excerpts.snapshot(excerpts_cx)
+                            });
+
                         this.editor.update(cx, |editor, cx| {
-                            editor.insert_blocks(blocks, cx);
+                            editor.insert_blocks(
+                                blocks.into_iter().map(|block| {
+                                    let (excerpt_id, text_anchor) = block.position;
+                                    BlockProperties {
+                                        position: excerpts_snapshot
+                                            .anchor_in_excerpt(excerpt_id, text_anchor),
+                                        height: block.height,
+                                        render: block.render,
+                                        disposition: block.disposition,
+                                    }
+                                }),
+                                cx,
+                            );
                         });
                     })
                 }

@@ -14,13 +14,6 @@ pub struct Anchor {
 }
 
 impl Anchor {
-    pub fn new(excerpt_id: ExcerptId, text_anchor: text::Anchor) -> Self {
-        Self {
-            excerpt_id,
-            text_anchor,
-        }
-    }
-
     pub fn min() -> Self {
         Self {
             excerpt_id: ExcerptId::min(),

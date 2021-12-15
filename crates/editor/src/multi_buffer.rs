@@ -1360,15 +1360,33 @@ impl MultiBufferSnapshot {
             }
 
             let buffer_start = excerpt.range.start.to_offset(&excerpt.buffer);
+            let text_anchor =
+                excerpt.clip_anchor(excerpt.buffer.anchor_at(buffer_start + overshoot, bias));
             Anchor {
                 excerpt_id: excerpt.id.clone(),
-                text_anchor: excerpt.buffer.anchor_at(buffer_start + overshoot, bias),
+                text_anchor,
             }
         } else if offset == 0 && bias == Bias::Left {
             Anchor::min()
         } else {
             Anchor::max()
         }
+    }
+
+    pub fn anchor_in_excerpt(&self, excerpt_id: ExcerptId, text_anchor: text::Anchor) -> Anchor {
+        let mut cursor = self.excerpts.cursor::<Option<&ExcerptId>>();
+        cursor.seek(&Some(&excerpt_id), Bias::Left, &());
+        if let Some(excerpt) = cursor.item() {
+            if excerpt.id == excerpt_id {
+                let text_anchor = excerpt.clip_anchor(text_anchor);
+                drop(cursor);
+                return Anchor {
+                    excerpt_id,
+                    text_anchor,
+                };
+            }
+        }
+        panic!("excerpt not found");
     }
 
     pub fn parse_count(&self) -> usize {
@@ -1686,6 +1704,24 @@ impl Excerpt {
             header_height,
             content_bytes,
             footer_height,
+        }
+    }
+
+    fn clip_anchor(&self, text_anchor: text::Anchor) -> text::Anchor {
+        if text_anchor
+            .cmp(&self.range.start, &self.buffer)
+            .unwrap()
+            .is_lt()
+        {
+            self.range.start.clone()
+        } else if text_anchor
+            .cmp(&self.range.end, &self.buffer)
+            .unwrap()
+            .is_gt()
+        {
+            self.range.end.clone()
+        } else {
+            text_anchor
         }
     }
 }
