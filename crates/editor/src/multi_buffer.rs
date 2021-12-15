@@ -2276,6 +2276,7 @@ mod tests {
             }
 
             assert_eq!(snapshot.text(), expected_text);
+            log::info!("MultiBuffer text: {:?}", expected_text);
 
             let mut excerpt_starts = excerpt_starts.into_iter();
             for (buffer, range, _) in &expected_excerpts {
@@ -2293,99 +2294,111 @@ mod tests {
                 let mut buffer_point = buffer_start_point;
                 let mut point_utf16 = excerpt_start.lines_utf16;
                 let mut buffer_point_utf16 = buffer_start_point_utf16;
-                for byte in buffer.bytes_in_range(buffer_range.clone()).flatten() {
-                    let left_offset = snapshot.clip_offset(offset, Bias::Left);
-                    let right_offset = snapshot.clip_offset(offset, Bias::Right);
-                    let buffer_left_offset = buffer.clip_offset(buffer_offset, Bias::Left);
-                    let buffer_right_offset = buffer.clip_offset(buffer_offset, Bias::Right);
-                    assert_eq!(
-                        left_offset,
-                        excerpt_start.bytes + (buffer_left_offset - buffer_range.start),
-                        "clip_offset({:?}, Left). buffer: {:?}, buffer offset: {:?}",
-                        offset,
-                        buffer_id,
-                        buffer_offset,
-                    );
-                    assert_eq!(
-                        right_offset,
-                        excerpt_start.bytes + (buffer_right_offset - buffer_range.start),
-                        "clip_offset({:?}, Right). buffer: {:?}, buffer offset: {:?}",
-                        offset,
-                        buffer_id,
-                        buffer_offset,
-                    );
+                for ch in buffer
+                    .snapshot()
+                    .chunks(buffer_range.clone(), None)
+                    .flat_map(|c| c.text.chars())
+                {
+                    for _ in 0..ch.len_utf8() {
+                        let left_offset = snapshot.clip_offset(offset, Bias::Left);
+                        let right_offset = snapshot.clip_offset(offset, Bias::Right);
+                        let buffer_left_offset = buffer.clip_offset(buffer_offset, Bias::Left);
+                        let buffer_right_offset = buffer.clip_offset(buffer_offset, Bias::Right);
+                        assert_eq!(
+                            left_offset,
+                            excerpt_start.bytes + (buffer_left_offset - buffer_range.start),
+                            "clip_offset({:?}, Left). buffer: {:?}, buffer offset: {:?}",
+                            offset,
+                            buffer_id,
+                            buffer_offset,
+                        );
+                        assert_eq!(
+                            right_offset,
+                            excerpt_start.bytes + (buffer_right_offset - buffer_range.start),
+                            "clip_offset({:?}, Right). buffer: {:?}, buffer offset: {:?}",
+                            offset,
+                            buffer_id,
+                            buffer_offset,
+                        );
 
-                    let left_point = snapshot.clip_point(point, Bias::Left);
-                    let right_point = snapshot.clip_point(point, Bias::Right);
-                    let buffer_left_point = buffer.clip_point(buffer_point, Bias::Left);
-                    let buffer_right_point = buffer.clip_point(buffer_point, Bias::Right);
-                    assert_eq!(
-                        left_point,
-                        excerpt_start.lines + (buffer_left_point - buffer_start_point),
-                        "clip_point({:?}, Left). buffer: {:?}, buffer point: {:?}",
-                        point,
-                        buffer_id,
-                        buffer_point,
-                    );
-                    assert_eq!(
-                        right_point,
-                        excerpt_start.lines + (buffer_right_point - buffer_start_point),
-                        "clip_point({:?}, Right). buffer: {:?}, buffer point: {:?}",
-                        point,
-                        buffer_id,
-                        buffer_point,
-                    );
+                        let left_point = snapshot.clip_point(point, Bias::Left);
+                        let right_point = snapshot.clip_point(point, Bias::Right);
+                        let buffer_left_point = buffer.clip_point(buffer_point, Bias::Left);
+                        let buffer_right_point = buffer.clip_point(buffer_point, Bias::Right);
+                        assert_eq!(
+                            left_point,
+                            excerpt_start.lines + (buffer_left_point - buffer_start_point),
+                            "clip_point({:?}, Left). buffer: {:?}, buffer point: {:?}",
+                            point,
+                            buffer_id,
+                            buffer_point,
+                        );
+                        assert_eq!(
+                            right_point,
+                            excerpt_start.lines + (buffer_right_point - buffer_start_point),
+                            "clip_point({:?}, Right). buffer: {:?}, buffer point: {:?}",
+                            point,
+                            buffer_id,
+                            buffer_point,
+                        );
 
-                    let left_point_utf16 = snapshot.clip_point_utf16(point_utf16, Bias::Left);
-                    let right_point_utf16 = snapshot.clip_point_utf16(point_utf16, Bias::Right);
-                    let buffer_left_point_utf16 =
-                        buffer.clip_point_utf16(buffer_point_utf16, Bias::Left);
-                    let buffer_right_point_utf16 =
-                        buffer.clip_point_utf16(buffer_point_utf16, Bias::Right);
-                    assert_eq!(
-                        left_point_utf16,
-                        excerpt_start.lines_utf16
-                            + (buffer_left_point_utf16 - buffer_start_point_utf16),
-                        "clip_point_utf16({:?}, Left). buffer: {:?}, buffer point_utf16: {:?}",
-                        point_utf16,
-                        buffer_id,
-                        buffer_point_utf16,
-                    );
-                    assert_eq!(
-                        right_point_utf16,
-                        excerpt_start.lines_utf16
-                            + (buffer_right_point_utf16 - buffer_start_point_utf16),
-                        "clip_point_utf16({:?}, Right). buffer: {:?}, buffer point_utf16: {:?}",
-                        point_utf16,
-                        buffer_id,
-                        buffer_point_utf16,
-                    );
+                        assert_eq!(
+                            snapshot.point_to_offset(left_point),
+                            left_offset,
+                            "point_to_offset({:?})",
+                            left_point,
+                        );
+                        assert_eq!(
+                            snapshot.offset_to_point(left_offset),
+                            left_point,
+                            "offset_to_point({:?})",
+                            left_offset,
+                        );
 
-                    assert_eq!(
-                        snapshot.point_to_offset(left_point),
-                        left_offset,
-                        "point_to_offset({:?})",
-                        left_point,
-                    );
-                    assert_eq!(
-                        snapshot.offset_to_point(left_offset),
-                        left_point,
-                        "offset_to_point({:?})",
-                        left_offset,
-                    );
+                        offset += 1;
+                        buffer_offset += 1;
+                        if ch == '\n' {
+                            point += Point::new(1, 0);
+                            buffer_point += Point::new(1, 0);
+                        } else {
+                            point += Point::new(0, 1);
+                            buffer_point += Point::new(0, 1);
+                        }
+                    }
 
-                    offset += 1;
-                    buffer_offset += 1;
-                    if *byte == b'\n' {
-                        point += Point::new(1, 0);
-                        point_utf16 += PointUtf16::new(1, 0);
-                        buffer_point += Point::new(1, 0);
-                        buffer_point_utf16 += PointUtf16::new(1, 0);
-                    } else {
-                        point += Point::new(0, 1);
-                        point_utf16 += PointUtf16::new(0, 1);
-                        buffer_point += Point::new(0, 1);
-                        buffer_point_utf16 += PointUtf16::new(0, 1);
+                    for _ in 0..ch.len_utf16() {
+                        let left_point_utf16 = snapshot.clip_point_utf16(point_utf16, Bias::Left);
+                        let right_point_utf16 = snapshot.clip_point_utf16(point_utf16, Bias::Right);
+                        let buffer_left_point_utf16 =
+                            buffer.clip_point_utf16(buffer_point_utf16, Bias::Left);
+                        let buffer_right_point_utf16 =
+                            buffer.clip_point_utf16(buffer_point_utf16, Bias::Right);
+                        assert_eq!(
+                            left_point_utf16,
+                            excerpt_start.lines_utf16
+                                + (buffer_left_point_utf16 - buffer_start_point_utf16),
+                            "clip_point_utf16({:?}, Left). buffer: {:?}, buffer point_utf16: {:?}",
+                            point_utf16,
+                            buffer_id,
+                            buffer_point_utf16,
+                        );
+                        assert_eq!(
+                            right_point_utf16,
+                            excerpt_start.lines_utf16
+                                + (buffer_right_point_utf16 - buffer_start_point_utf16),
+                            "clip_point_utf16({:?}, Right). buffer: {:?}, buffer point_utf16: {:?}",
+                            point_utf16,
+                            buffer_id,
+                            buffer_point_utf16,
+                        );
+
+                        if ch == '\n' {
+                            point_utf16 += PointUtf16::new(1, 0);
+                            buffer_point_utf16 += PointUtf16::new(1, 0);
+                        } else {
+                            point_utf16 += PointUtf16::new(0, 1);
+                            buffer_point_utf16 += PointUtf16::new(0, 1);
+                        }
                     }
                 }
             }
