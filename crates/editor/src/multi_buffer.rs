@@ -527,6 +527,7 @@ impl MultiBuffer {
         self.sync(cx);
 
         let buffer = props.buffer.clone();
+        cx.observe(&buffer, |_, _, cx| cx.notify()).detach();
         cx.subscribe(&buffer, Self::on_buffer_event).detach();
 
         let buffer_snapshot = buffer.read(cx).snapshot();
