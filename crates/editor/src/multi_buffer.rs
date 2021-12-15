@@ -11,8 +11,8 @@ use language::{
 };
 use std::{
     cell::{Ref, RefCell},
-    cmp, io,
-    iter::{self, FromIterator, Peekable},
+    cmp, fmt, io,
+    iter::{self, FromIterator},
     ops::{Range, Sub},
     str,
     sync::Arc,
@@ -56,11 +56,11 @@ struct Transaction {
     last_edit_at: Instant,
 }
 
-pub trait ToOffset: 'static + std::fmt::Debug {
+pub trait ToOffset: 'static + fmt::Debug {
     fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> usize;
 }
 
-pub trait ToPoint: 'static + std::fmt::Debug {
+pub trait ToPoint: 'static + fmt::Debug {
     fn to_point(&self, snapshot: &MultiBufferSnapshot) -> Point;
 }
 
@@ -121,7 +121,10 @@ pub struct MultiBufferChunks<'a> {
 }
 
 pub struct MultiBufferBytes<'a> {
-    chunks: Peekable<MultiBufferChunks<'a>>,
+    range: Range<usize>,
+    excerpts: Cursor<'a, Excerpt, usize>,
+    excerpt_chunks: Option<language::rope::Bytes<'a>>,
+    excerpt_chunk: &'a [u8],
 }
 
 impl MultiBuffer {
@@ -920,9 +923,17 @@ impl MultiBufferSnapshot {
     }
 
     pub fn bytes_in_range<'a, T: ToOffset>(&'a self, range: Range<T>) -> MultiBufferBytes<'a> {
-        MultiBufferBytes {
-            chunks: self.chunks(range, None).peekable(),
-        }
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut excerpts = self.excerpts.cursor::<usize>();
+        excerpts.seek(&range.start, Bias::Right, &());
+        let mut bytes = MultiBufferBytes {
+            range,
+            excerpts,
+            excerpt_chunks: None,
+            excerpt_chunk: &[],
+        };
+        bytes.reset_excerpt_bytes();
+        bytes
     }
 
     pub fn chunks<'a, T: ToOffset>(
@@ -1518,6 +1529,19 @@ impl Excerpt {
     }
 }
 
+impl fmt::Debug for Excerpt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Excerpt")
+            .field("id", &self.id)
+            .field("buffer_id", &self.buffer_id)
+            .field("range", &self.range)
+            .field("text_summary", &self.text_summary)
+            .field("header_height", &self.header_height)
+            .field("has_trailing_newline", &self.has_trailing_newline)
+            .finish()
+    }
+}
+
 impl sum_tree::Item for Excerpt {
     type Summary = ExcerptSummary;
 
@@ -1682,17 +1706,85 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
     }
 }
 
+impl<'a> MultiBufferBytes<'a> {
+    fn peek(&mut self) -> Option<&'a [u8]> {
+        if self.range.is_empty() {
+            return None;
+        }
+
+        let excerpt = self.excerpts.item()?;
+        let header_end = self.excerpts.start() + excerpt.header_height as usize;
+        let mut footer_start = self.excerpts.start() + excerpt.text_summary.bytes;
+        if excerpt.has_trailing_newline {
+            footer_start -= 1;
+        }
+
+        dbg!(self.range.start, header_end, footer_start);
+        if self.range.start < header_end {
+            let header_height = cmp::min(header_end - self.range.start, self.range.len());
+            Some(&NEWLINES[..header_height])
+        } else if self.range.start == footer_start {
+            Some(&NEWLINES[..1])
+        } else {
+            Some(self.excerpt_chunk)
+        }
+    }
+
+    fn consume(&mut self, len: usize) {
+        self.range.start += len;
+        if self.range.is_empty() {
+            return;
+        }
+
+        if let Some(excerpt) = self.excerpts.item() {
+            let header_end = self.excerpts.start() + excerpt.header_height as usize;
+
+            if self.range.start == self.excerpts.end(&()) {
+                self.excerpts.next(&());
+                self.reset_excerpt_bytes();
+            } else if self.range.start > header_end {
+                self.excerpt_chunks.as_mut().unwrap().next();
+            }
+        }
+    }
+
+    fn reset_excerpt_bytes(&mut self) {
+        self.excerpt_chunks = self.excerpts.item().map(|excerpt| {
+            let start_after_header = self.excerpts.start() + excerpt.header_height as usize;
+            let mut end_before_footer = self.excerpts.start() + excerpt.text_summary.bytes;
+            if excerpt.has_trailing_newline {
+                end_before_footer -= 1;
+            }
+
+            let buffer_start = excerpt.range.start.to_offset(&excerpt.buffer);
+            let start = buffer_start + self.range.start.saturating_sub(start_after_header);
+            let end = buffer_start
+                + cmp::min(self.range.end, end_before_footer).saturating_sub(start_after_header);
+            excerpt.buffer.bytes_in_range(start..end)
+        });
+    }
+}
+
 impl<'a> Iterator for MultiBufferBytes<'a> {
     type Item = &'a [u8];
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.chunks.next().map(|chunk| chunk.text.as_bytes())
+        let result = self.peek()?;
+        self.consume(result.len());
+        Some(result)
     }
 }
 
 impl<'a> io::Read for MultiBufferBytes<'a> {
-    fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
-        todo!()
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if let Some(chunk) = self.peek() {
+            let len = cmp::min(buf.len(), chunk.len());
+            buf[..len].copy_from_slice(&chunk[..len]);
+            self.consume(len);
+            Ok(len)
+        } else {
+            Ok(0)
+        }
     }
 }
 
@@ -2195,8 +2287,24 @@ mod tests {
             for _ in 0..10 {
                 let end_ix = snapshot.clip_offset(rng.gen_range(0..=snapshot.len()), Bias::Right);
                 assert_eq!(
+                    snapshot.reversed_chars_at(end_ix).collect::<String>(),
                     expected_text[..end_ix].chars().rev().collect::<String>(),
-                    snapshot.reversed_chars_at(end_ix).collect::<String>()
+                );
+            }
+
+            for _ in 0..10 {
+                let end_ix = rng.gen_range(0..=snapshot.len());
+                let start_ix = rng.gen_range(0..=end_ix);
+                dbg!(&expected_text);
+                assert_eq!(
+                    snapshot
+                        .bytes_in_range(start_ix..end_ix)
+                        .flatten()
+                        .copied()
+                        .collect::<Vec<_>>(),
+                    expected_text.as_bytes()[start_ix..end_ix].to_vec(),
+                    "bytes_in_range({:?})",
+                    start_ix..end_ix,
                 );
             }
         }
