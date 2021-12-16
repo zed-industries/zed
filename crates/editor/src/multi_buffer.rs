@@ -1286,19 +1286,22 @@ impl MultiBufferSnapshot {
     {
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>();
         cursor.seek(&Some(&anchor.excerpt_id), Bias::Left, &());
+        if cursor.item().is_none() {
+            cursor.next(&());
+        }
+
+        let mut position = D::from_text_summary(&cursor.start().text);
         if let Some(excerpt) = cursor.item() {
+            position.add_summary(&excerpt.header_summary(), &());
             if excerpt.id == anchor.excerpt_id {
-                let mut excerpt_start = D::from_text_summary(&cursor.start().text);
-                excerpt_start.add_summary(&excerpt.header_summary(), &());
                 let excerpt_buffer_start = excerpt.range.start.summary::<D>(&excerpt.buffer);
-                let buffer_point = anchor.text_anchor.summary::<D>(&excerpt.buffer);
-                if buffer_point > excerpt_buffer_start {
-                    excerpt_start.add_assign(&(buffer_point - excerpt_buffer_start));
+                let buffer_position = anchor.text_anchor.summary::<D>(&excerpt.buffer);
+                if buffer_position > excerpt_buffer_start {
+                    position.add_assign(&(buffer_position - excerpt_buffer_start));
                 }
-                return excerpt_start;
             }
         }
-        D::from_text_summary(&cursor.start().text)
+        position
     }
 
     pub fn summaries_for_anchors<'a, D, I>(&'a self, anchors: I) -> Vec<D>
@@ -1321,30 +1324,33 @@ impl MultiBufferSnapshot {
             });
 
             cursor.seek_forward(&Some(excerpt_id), Bias::Left, &());
+            if cursor.item().is_none() {
+                cursor.next(&());
+            }
+
+            let mut position = D::from_text_summary(&cursor.start().text);
             if let Some(excerpt) = cursor.item() {
+                position.add_summary(&excerpt.header_summary(), &());
                 if excerpt.id == *excerpt_id {
-                    let mut excerpt_start = D::from_text_summary(&cursor.start().text);
-                    excerpt_start.add_summary(&excerpt.header_summary(), &());
                     let excerpt_buffer_start = excerpt.range.start.summary::<D>(&excerpt.buffer);
                     summaries.extend(
                         excerpt
                             .buffer
                             .summaries_for_anchors::<D, _>(excerpt_anchors)
                             .map(move |summary| {
-                                let mut excerpt_start = excerpt_start.clone();
+                                let mut position = position.clone();
                                 let excerpt_buffer_start = excerpt_buffer_start.clone();
                                 if summary > excerpt_buffer_start {
-                                    excerpt_start.add_assign(&(summary - excerpt_buffer_start));
+                                    position.add_assign(&(summary - excerpt_buffer_start));
                                 }
-                                excerpt_start
+                                position
                             }),
                     );
                     continue;
                 }
             }
 
-            let summary = D::from_text_summary(&cursor.start().text);
-            summaries.extend(excerpt_anchors.map(|_| summary.clone()));
+            summaries.extend(excerpt_anchors.map(|_| position.clone()));
         }
 
         summaries
@@ -2236,6 +2242,13 @@ mod tests {
             multibuffer
         });
         let old_snapshot = multibuffer.read(cx).snapshot(cx);
+
+        assert_eq!(old_snapshot.anchor_before(0).to_offset(&old_snapshot), 1);
+        assert_eq!(old_snapshot.anchor_after(0).to_offset(&old_snapshot), 1);
+        assert_eq!(Anchor::min().to_offset(&old_snapshot), 1);
+        assert_eq!(Anchor::min().to_offset(&old_snapshot), 1);
+        assert_eq!(Anchor::max().to_offset(&old_snapshot), 12);
+        assert_eq!(Anchor::max().to_offset(&old_snapshot), 12);
 
         buffer_1.update(cx, |buffer, cx| {
             buffer.edit([0..0], "W", cx);
