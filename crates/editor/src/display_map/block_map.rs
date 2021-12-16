@@ -1155,7 +1155,7 @@ mod tests {
                     wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
                 }
                 20..=39 => {
-                    let block_count = rng.gen_range(1..=1);
+                    let block_count = rng.gen_range(1..=5);
                     let block_properties = (0..block_count)
                         .map(|_| {
                             let buffer = buffer.read(cx).read(cx);
