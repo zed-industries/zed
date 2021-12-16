@@ -493,9 +493,9 @@ impl ToDisplayPoint for Anchor {
 mod tests {
     use super::*;
     use crate::{movement, test::*};
-    use gpui::{color::Color, MutableAppContext};
+    use gpui::{color::Color, elements::*, MutableAppContext};
     use language::{Buffer, Language, LanguageConfig, RandomCharIter, SelectionGoal};
-    use rand::{prelude::StdRng, Rng};
+    use rand::{prelude::*, Rng};
     use std::{env, sync::Arc};
     use theme::SyntaxTheme;
     use util::test::sample_text;
@@ -541,6 +541,15 @@ mod tests {
         });
         let (_observer, notifications) = Observer::new(&map, &mut cx);
         let mut fold_count = 0;
+        let mut blocks = Vec::new();
+
+        let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
+        log::info!("buffer text: {:?}", snapshot.buffer_snapshot.text());
+        log::info!("fold text: {:?}", snapshot.folds_snapshot.text());
+        log::info!("tab text: {:?}", snapshot.tabs_snapshot.text());
+        log::info!("wrap text: {:?}", snapshot.wraps_snapshot.text());
+        log::info!("block text: {:?}", snapshot.blocks_snapshot.text());
+        log::info!("display text: {:?}", snapshot.text());
 
         for _i in 0..operations {
             match rng.gen_range(0..100) {
@@ -553,7 +562,51 @@ mod tests {
                     log::info!("setting wrap width to {:?}", wrap_width);
                     map.update(&mut cx, |map, cx| map.set_wrap_width(wrap_width, cx));
                 }
-                20..=80 => {
+                20..=44 => {
+                    map.update(&mut cx, |map, cx| {
+                        if rng.gen() || blocks.is_empty() {
+                            let buffer = map.snapshot(cx).buffer_snapshot;
+                            let block_properties = (0..rng.gen_range(1..=1))
+                                .map(|_| {
+                                    let position =
+                                        buffer.anchor_after(buffer.clip_offset(
+                                            rng.gen_range(0..=buffer.len()),
+                                            Bias::Left,
+                                        ));
+
+                                    let disposition = if rng.gen() {
+                                        BlockDisposition::Above
+                                    } else {
+                                        BlockDisposition::Below
+                                    };
+                                    let height = rng.gen_range(1..5);
+                                    log::info!(
+                                        "inserting block {:?} {:?} with height {}",
+                                        disposition,
+                                        position.to_point(&buffer),
+                                        height
+                                    );
+                                    BlockProperties {
+                                        position,
+                                        height,
+                                        disposition,
+                                        render: Arc::new(|_| Empty::new().boxed()),
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                            blocks.extend(map.insert_blocks(block_properties, cx));
+                        } else {
+                            blocks.shuffle(&mut rng);
+                            let remove_count = rng.gen_range(1..=4.min(blocks.len()));
+                            let block_ids_to_remove = (0..remove_count)
+                                .map(|_| blocks.remove(rng.gen_range(0..blocks.len())))
+                                .collect();
+                            log::info!("removing block ids {:?}", block_ids_to_remove);
+                            map.remove_blocks(block_ids_to_remove, cx);
+                        }
+                    });
+                }
+                45..=79 => {
                     let mut ranges = Vec::new();
                     for _ in 0..rng.gen_range(1..=3) {
                         buffer.read_with(&cx, |buffer, cx| {
@@ -588,6 +641,10 @@ mod tests {
             let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
             fold_count = snapshot.fold_count();
             log::info!("buffer text: {:?}", snapshot.buffer_snapshot.text());
+            log::info!("fold text: {:?}", snapshot.folds_snapshot.text());
+            log::info!("tab text: {:?}", snapshot.tabs_snapshot.text());
+            log::info!("wrap text: {:?}", snapshot.wraps_snapshot.text());
+            log::info!("block text: {:?}", snapshot.blocks_snapshot.text());
             log::info!("display text: {:?}", snapshot.text());
 
             // Line boundaries
@@ -603,7 +660,7 @@ mod tests {
                 assert!(next_display_bound >= point);
                 assert_eq!(prev_buffer_bound.column, 0);
                 assert_eq!(prev_display_bound.column(), 0);
-                if next_display_bound < snapshot.max_point() {
+                if next_buffer_bound < snapshot.buffer_snapshot.max_point() {
                     assert_eq!(
                         snapshot.buffer_snapshot.chars_at(next_buffer_bound).next(),
                         Some('\n')
