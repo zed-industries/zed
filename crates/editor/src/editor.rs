@@ -5902,7 +5902,7 @@ mod tests {
             multibuffer
         });
 
-        assert_eq!(multibuffer.read(cx).read(cx).text(), "aaaa\nbbbb\n");
+        assert_eq!(multibuffer.read(cx).read(cx).text(), "aaaa\nbbbb");
 
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(multibuffer, settings, cx)
@@ -5918,7 +5918,7 @@ mod tests {
             .unwrap();
 
             view.handle_input(&Input("X".to_string()), cx);
-            assert_eq!(view.text(cx), "Xaaaa\nXbbbb\n");
+            assert_eq!(view.text(cx), "Xaaaa\nXbbbb");
             assert_eq!(
                 view.selected_display_ranges(cx),
                 &[
@@ -5958,7 +5958,7 @@ mod tests {
 
         assert_eq!(
             multibuffer.read(cx).read(cx).text(),
-            "aaaa\nbbbb\nbbbb\ncccc\n"
+            "aaaa\nbbbb\nbbbb\ncccc"
         );
 
         let (_, view) = cx.add_window(Default::default(), |cx| {
@@ -5975,7 +5975,7 @@ mod tests {
             .unwrap();
 
             view.handle_input(&Input("X".to_string()), cx);
-            assert_eq!(view.text(cx), "aaaa\nbXbbXb\nbXbbXb\ncccc\n");
+            assert_eq!(view.text(cx), "aaaa\nbXbbXb\nbXbbXb\ncccc");
             assert_eq!(
                 view.selected_display_ranges(cx),
                 &[

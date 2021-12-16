@@ -2032,7 +2032,7 @@ mod tests {
                 subscription.consume().into_inner(),
                 [Edit {
                     old: 0..0,
-                    new: 0..13
+                    new: 0..12
                 }]
             );
 
@@ -2057,8 +2057,8 @@ mod tests {
             assert_eq!(
                 subscription.consume().into_inner(),
                 [Edit {
-                    old: 13..13,
-                    new: 13..29
+                    old: 12..12,
+                    new: 12..28
                 }]
             );
 
@@ -2078,7 +2078,7 @@ mod tests {
                 "\n",      //
                 "\n",      //
                 "\n",      //
-                "jj\n"     //
+                "jj"       //
             )
         );
 
@@ -2138,7 +2138,7 @@ mod tests {
                 "\n",     //
                 "\n",     //
                 "\n",     //
-                "jj\n"    //
+                "jj"      //
             )
         );
 
@@ -2209,8 +2209,8 @@ mod tests {
         });
         let new_snapshot = multibuffer.read(cx).snapshot(cx);
 
-        assert_eq!(old_snapshot.text(), "\nabcd\n\nefghi\n");
-        assert_eq!(new_snapshot.text(), "\nWabcdX\n\nYefghiZ\n");
+        assert_eq!(old_snapshot.text(), "\nabcd\n\nefghi");
+        assert_eq!(new_snapshot.text(), "\nWabcdX\n\nYefghiZ");
 
         assert_eq!(old_snapshot.anchor_before(0).to_offset(&new_snapshot), 1);
         assert_eq!(old_snapshot.anchor_after(0).to_offset(&new_snapshot), 2);
@@ -2220,8 +2220,8 @@ mod tests {
         assert_eq!(old_snapshot.anchor_after(2).to_offset(&new_snapshot), 3);
         assert_eq!(old_snapshot.anchor_before(7).to_offset(&new_snapshot), 9);
         assert_eq!(old_snapshot.anchor_after(7).to_offset(&new_snapshot), 10);
-        assert_eq!(old_snapshot.anchor_before(13).to_offset(&new_snapshot), 16);
-        assert_eq!(old_snapshot.anchor_after(13).to_offset(&new_snapshot), 17);
+        assert_eq!(old_snapshot.anchor_before(12).to_offset(&new_snapshot), 15);
+        assert_eq!(old_snapshot.anchor_after(12).to_offset(&new_snapshot), 16);
     }
 
     #[gpui::test(iterations = 100)]
@@ -2559,46 +2559,46 @@ mod tests {
                 cx,
             );
             multibuffer.end_transaction_at(now, cx);
-            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678\n");
+            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678");
 
             now += 2 * group_interval;
             multibuffer.start_transaction_at(now, cx);
             multibuffer.edit([2..2], "C", cx);
             multibuffer.end_transaction_at(now, cx);
-            assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678\n");
+            assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678");
 
             multibuffer.undo(cx);
-            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678\n");
+            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678");
 
             multibuffer.undo(cx);
-            assert_eq!(multibuffer.read(cx).text(), "1234\n5678\n");
+            assert_eq!(multibuffer.read(cx).text(), "1234\n5678");
 
             multibuffer.redo(cx);
-            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678\n");
+            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678");
 
             multibuffer.redo(cx);
-            assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678\n");
+            assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678");
 
             buffer_1.update(cx, |buffer_1, cx| buffer_1.undo(cx));
-            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678\n");
+            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678");
 
             multibuffer.undo(cx);
-            assert_eq!(multibuffer.read(cx).text(), "1234\n5678\n");
+            assert_eq!(multibuffer.read(cx).text(), "1234\n5678");
 
             multibuffer.redo(cx);
-            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678\n");
+            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678");
 
             multibuffer.redo(cx);
-            assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678\n");
+            assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678");
 
             multibuffer.undo(cx);
-            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678\n");
+            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678");
 
             buffer_1.update(cx, |buffer_1, cx| buffer_1.redo(cx));
-            assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678\n");
+            assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678");
 
             multibuffer.undo(cx);
-            assert_eq!(multibuffer.read(cx).text(), "C1234\n5678\n");
+            assert_eq!(multibuffer.read(cx).text(), "C1234\n5678");
         });
     }
 }
