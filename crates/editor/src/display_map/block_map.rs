@@ -581,37 +581,45 @@ impl BlockSnapshot {
         cursor.seek(&BlockRow(point.row), Bias::Right, &());
 
         let max_input_row = WrapRow(self.transforms.summary().input_rows);
-        let search_left =
+        let mut search_left =
             (bias == Bias::Left && cursor.start().1 .0 > 0) || cursor.end(&()).1 == max_input_row;
+        let mut reversed = false;
 
         loop {
             if let Some(transform) = cursor.item() {
                 if transform.is_isomorphic() {
                     let (output_start_row, input_start_row) = cursor.start();
                     let (output_end_row, input_end_row) = cursor.end(&());
-
-                    if point.row >= output_end_row.0 {
-                        return BlockPoint::new(
-                            output_end_row.0 - 1,
-                            self.wrap_snapshot.line_len(input_end_row.0 - 1),
-                        );
-                    }
-
                     let output_start = Point::new(output_start_row.0, 0);
-                    let output_overshoot = point.0 - output_start;
                     let input_start = Point::new(input_start_row.0, 0);
-                    let input_point = self
-                        .wrap_snapshot
-                        .clip_point(WrapPoint(input_start + output_overshoot), bias);
-                    let input_overshoot = input_point.0 - input_start;
-                    return BlockPoint(output_start + input_overshoot);
-                } else if search_left {
+                    let input_end = Point::new(input_end_row.0, 0);
+                    let input_point = if point.row >= output_end_row.0 {
+                        let line_len = self.wrap_snapshot.line_len(input_end_row.0 - 1);
+                        self.wrap_snapshot
+                            .clip_point(WrapPoint::new(input_end_row.0 - 1, line_len), bias)
+                    } else {
+                        let output_overshoot = point.0.saturating_sub(output_start);
+                        self.wrap_snapshot
+                            .clip_point(WrapPoint(input_start + output_overshoot), bias)
+                    };
+
+                    if (input_start..input_end).contains(&input_point.0) {
+                        let input_overshoot = input_point.0.saturating_sub(input_start);
+                        return BlockPoint(output_start + input_overshoot);
+                    }
+                }
+
+                if search_left {
                     cursor.prev(&());
                 } else {
                     cursor.next(&());
                 }
-            } else {
+            } else if reversed {
                 return self.max_point();
+            } else {
+                reversed = true;
+                search_left = !search_left;
+                cursor.seek(&BlockRow(point.row), Bias::Right, &());
             }
         }
     }
@@ -1368,14 +1376,28 @@ mod tests {
             let mut block_point = BlockPoint::new(0, 0);
             for c in expected_text.chars() {
                 let left_point = blocks_snapshot.clip_point(block_point, Bias::Left);
-                let right_point = blocks_snapshot.clip_point(block_point, Bias::Right);
-
+                let left_buffer_point = blocks_snapshot.to_point(left_point, Bias::Left);
                 assert_eq!(
                     blocks_snapshot.to_block_point(blocks_snapshot.to_wrap_point(left_point)),
                     left_point
                 );
                 assert_eq!(
+                    left_buffer_point,
+                    buffer_snapshot.clip_point(left_buffer_point, Bias::Right),
+                    "{:?} is not valid in buffer coordinates",
+                    left_point
+                );
+
+                let right_point = blocks_snapshot.clip_point(block_point, Bias::Right);
+                let right_buffer_point = blocks_snapshot.to_point(right_point, Bias::Right);
+                assert_eq!(
                     blocks_snapshot.to_block_point(blocks_snapshot.to_wrap_point(right_point)),
+                    right_point
+                );
+                assert_eq!(
+                    right_buffer_point,
+                    buffer_snapshot.clip_point(right_buffer_point, Bias::Left),
+                    "{:?} is not valid in buffer coordinates",
                     right_point
                 );
 
@@ -1385,6 +1407,12 @@ mod tests {
                     block_point.column += c.len_utf8() as u32;
                 }
             }
+        }
+    }
+
+    impl BlockSnapshot {
+        fn to_point(&self, point: BlockPoint, bias: Bias) -> Point {
+            self.wrap_snapshot.to_point(self.to_wrap_point(point), bias)
         }
     }
 }
