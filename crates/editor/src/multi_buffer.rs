@@ -111,6 +111,12 @@ struct ExcerptSummary {
     text: TextSummary,
 }
 
+pub struct MultiBufferRows<'a> {
+    header_height: u32,
+    buffer_row_range: Range<u32>,
+    excerpts: Cursor<'a, Excerpt, Point>,
+}
+
 pub struct MultiBufferChunks<'a> {
     range: Range<usize>,
     excerpts: Cursor<'a, Excerpt, usize>,
@@ -1052,6 +1058,32 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn buffer_rows<'a>(&'a self, start_row: u32) -> MultiBufferRows<'a> {
+        let mut excerpts = self.excerpts.cursor::<Point>();
+        excerpts.seek(&Point::new(start_row, 0), Bias::Right, &());
+        if excerpts.item().is_none() {
+            excerpts.prev(&());
+        }
+
+        let mut header_height = 0;
+        let mut buffer_row_range = 0..0;
+        if let Some(excerpt) = excerpts.item() {
+            let overshoot = start_row - excerpts.start().row;
+            let excerpt_start = excerpt.range.start.to_point(&excerpt.buffer).row;
+            let excerpt_header_height = excerpt.header_height as u32;
+            header_height = excerpt_header_height.saturating_sub(overshoot);
+            buffer_row_range.start =
+                excerpt_start + overshoot.saturating_sub(excerpt_header_height);
+            buffer_row_range.end =
+                excerpt_start + excerpt.text_summary.lines.row + 1 - excerpt_header_height;
+        }
+        MultiBufferRows {
+            header_height,
+            buffer_row_range,
+            excerpts,
+        }
+    }
+
     pub fn chunks<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
@@ -1821,6 +1853,34 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Option<&'a ExcerptId> {
     }
 }
 
+impl<'a> Iterator for MultiBufferRows<'a> {
+    type Item = Option<u32>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if self.header_height > 0 {
+                self.header_height -= 1;
+                return Some(None);
+            }
+            if !self.buffer_row_range.is_empty() {
+                let row = Some(self.buffer_row_range.start);
+                self.buffer_row_range.start += 1;
+                return Some(row);
+            }
+            self.excerpts.next(&());
+            if let Some(excerpt) = self.excerpts.item() {
+                self.header_height = excerpt.header_height as u32;
+                self.buffer_row_range.start = excerpt.range.start.to_point(&excerpt.buffer).row;
+                self.buffer_row_range.end =
+                    self.buffer_row_range.start + excerpt.text_summary.lines.row + 1
+                        - self.header_height;
+            } else {
+                return None;
+            }
+        }
+    }
+}
+
 impl<'a> MultiBufferChunks<'a> {
     pub fn offset(&self) -> usize {
         self.range.start
@@ -2009,15 +2069,26 @@ mod tests {
     fn test_singleton_multibuffer(cx: &mut MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6, 'a'), cx));
         let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+        assert_eq!(snapshot.text(), buffer.read(cx).text());
+
         assert_eq!(
-            multibuffer.read(cx).snapshot(cx).text(),
-            buffer.read(cx).text()
+            snapshot.buffer_rows(0).collect::<Vec<_>>(),
+            (0..buffer.read(cx).row_count())
+                .map(Some)
+                .collect::<Vec<_>>()
         );
 
-        buffer.update(cx, |buffer, cx| buffer.edit([1..3], "XXX", cx));
+        buffer.update(cx, |buffer, cx| buffer.edit([1..3], "XXX\n", cx));
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+
+        assert_eq!(snapshot.text(), buffer.read(cx).text());
         assert_eq!(
-            multibuffer.read(cx).snapshot(cx).text(),
-            buffer.read(cx).text()
+            snapshot.buffer_rows(0).collect::<Vec<_>>(),
+            (0..buffer.read(cx).row_count())
+                .map(Some)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -2075,8 +2146,9 @@ mod tests {
             subscription
         });
 
+        let snapshot = multibuffer.read(cx).snapshot(cx);
         assert_eq!(
-            multibuffer.read(cx).snapshot(cx).text(),
+            snapshot.text(),
             concat!(
                 "\n",      // Preserve newlines
                 "\n",      //
@@ -2090,6 +2162,22 @@ mod tests {
                 "\n",      //
                 "jj"       //
             )
+        );
+        assert_eq!(
+            snapshot.buffer_rows(0).collect::<Vec<_>>(),
+            &[
+                None,
+                None,
+                Some(1),
+                Some(2),
+                None,
+                Some(3),
+                Some(4),
+                None,
+                None,
+                None,
+                Some(3)
+            ]
         );
 
         {
@@ -2342,17 +2430,25 @@ mod tests {
 
             let mut excerpt_starts = Vec::new();
             let mut expected_text = String::new();
+            let mut expected_buffer_rows = Vec::new();
             for (buffer, range, header_height) in &expected_excerpts {
                 let buffer = buffer.read(cx);
                 let buffer_range = range.to_offset(buffer);
 
                 for _ in 0..*header_height {
                     expected_text.push('\n');
+                    expected_buffer_rows.push(None);
                 }
 
                 excerpt_starts.push(TextSummary::from(expected_text.as_str()));
                 expected_text.extend(buffer.text_for_range(buffer_range.clone()));
                 expected_text.push('\n');
+
+                let buffer_row_range = buffer.offset_to_point(buffer_range.start).row
+                    ..=buffer.offset_to_point(buffer_range.end).row;
+                for row in buffer_row_range {
+                    expected_buffer_rows.push(Some(row));
+                }
             }
             // Remove final trailing newline.
             if !expected_excerpts.is_empty() {
@@ -2361,6 +2457,21 @@ mod tests {
 
             assert_eq!(snapshot.text(), expected_text);
             log::info!("MultiBuffer text: {:?}", expected_text);
+
+            assert_eq!(
+                snapshot.buffer_rows(0).collect::<Vec<_>>(),
+                expected_buffer_rows,
+            );
+
+            for _ in 0..5 {
+                let start_row = rng.gen_range(0..=expected_buffer_rows.len());
+                assert_eq!(
+                    snapshot.buffer_rows(start_row as u32).collect::<Vec<_>>(),
+                    &expected_buffer_rows[start_row..],
+                    "buffer_rows({})",
+                    start_row
+                );
+            }
 
             let mut excerpt_starts = excerpt_starts.into_iter();
             for (buffer, range, _) in &expected_excerpts {
