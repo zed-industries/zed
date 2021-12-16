@@ -204,7 +204,8 @@ impl DisplaySnapshot {
         self.buffer_snapshot.max_point().row + 1
     }
 
-    pub fn prev_row_boundary(&self, mut display_point: DisplayPoint) -> (DisplayPoint, Point) {
+    pub fn prev_row_boundary(&self, input_display_point: DisplayPoint) -> (DisplayPoint, Point) {
+        let mut display_point = input_display_point;
         loop {
             *display_point.column_mut() = 0;
             let mut point = display_point.to_point(self);
@@ -214,17 +215,15 @@ impl DisplaySnapshot {
             if next_display_point == display_point {
                 return (display_point, point);
             }
-            debug_assert!(
-                next_display_point < display_point,
-                "{:?} > {:?}",
-                next_display_point,
-                display_point
-            );
+            if next_display_point > display_point {
+                panic!("invalid display point {:?}", input_display_point);
+            }
             display_point = next_display_point;
         }
     }
 
-    pub fn next_row_boundary(&self, mut display_point: DisplayPoint) -> (DisplayPoint, Point) {
+    pub fn next_row_boundary(&self, input_display_point: DisplayPoint) -> (DisplayPoint, Point) {
+        let mut display_point = input_display_point;
         loop {
             *display_point.column_mut() = self.line_len(display_point.row());
             let mut point = self.display_point_to_point(display_point, Bias::Right);
@@ -234,12 +233,9 @@ impl DisplaySnapshot {
             if next_display_point == display_point {
                 return (display_point, point);
             }
-            debug_assert!(
-                next_display_point > display_point,
-                "{:?} < {:?}",
-                next_display_point,
-                display_point
-            );
+            if next_display_point < display_point {
+                panic!("invalid display point {:?}", input_display_point);
+            }
             display_point = next_display_point;
         }
     }
