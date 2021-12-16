@@ -52,6 +52,10 @@ impl View for ProjectDiagnosticsEditor {
     fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
         ChildView::new(self.editor.id()).boxed()
     }
+
+    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+        cx.focus(&self.editor);
+    }
 }
 
 impl ProjectDiagnosticsEditor {
