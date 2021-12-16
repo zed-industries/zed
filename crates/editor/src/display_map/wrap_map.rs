@@ -10,7 +10,7 @@ use gpui::{
 use language::Chunk;
 use lazy_static::lazy_static;
 use smol::future::yield_now;
-use std::{collections::VecDeque, mem, ops::Range, time::Duration};
+use std::{cmp, collections::VecDeque, mem, ops::Range, time::Duration};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::Patch;
 use theme::SyntaxTheme;
@@ -692,6 +692,46 @@ impl WrapSnapshot {
         }
 
         self.from_tab_point(self.tab_snapshot.clip_point(self.to_tab_point(point), bias))
+    }
+
+    pub fn prev_row_boundary(&self, mut point: WrapPoint) -> u32 {
+        if self.transforms.is_empty() {
+            return 0;
+        }
+
+        *point.column_mut() = 0;
+
+        let mut cursor = self.transforms.cursor::<(WrapPoint, TabPoint)>();
+        cursor.seek(&point, Bias::Right, &());
+        if cursor.item().is_none() {
+            cursor.prev(&());
+        }
+
+        while let Some(transform) = cursor.item() {
+            if transform.is_isomorphic() && cursor.start().1.column() == 0 {
+                return cmp::min(cursor.end(&()).0.row(), point.row());
+            } else {
+                cursor.prev(&());
+            }
+        }
+
+        unreachable!()
+    }
+
+    pub fn next_row_boundary(&self, mut point: WrapPoint) -> Option<u32> {
+        point.0 += Point::new(1, 0);
+
+        let mut cursor = self.transforms.cursor::<(WrapPoint, TabPoint)>();
+        cursor.seek(&point, Bias::Right, &());
+        while let Some(transform) = cursor.item() {
+            if transform.is_isomorphic() && cursor.start().1.column() == 0 {
+                return Some(cmp::max(cursor.start().0.row(), point.row()));
+            } else {
+                cursor.next(&());
+            }
+        }
+
+        None
     }
 
     fn check_invariants(&self) {

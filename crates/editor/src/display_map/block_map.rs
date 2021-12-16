@@ -377,16 +377,13 @@ impl<'a> BlockMapWriter<'a> {
 
             let position = buffer.anchor_after(block.position);
             let point = position.to_point(&buffer);
-            let start_row = wrap_snapshot
+            let wrap_row = wrap_snapshot
                 .from_point(Point::new(point.row, 0), Bias::Left)
                 .row();
-            let end_row = if point.row == buffer.max_point().row {
-                wrap_snapshot.max_point().row() + 1
-            } else {
-                wrap_snapshot
-                    .from_point(Point::new(point.row + 1, 0), Bias::Left)
-                    .row()
-            };
+            let start_row = wrap_snapshot.prev_row_boundary(WrapPoint::new(wrap_row, 0));
+            let end_row = wrap_snapshot
+                .next_row_boundary(WrapPoint::new(wrap_row, 0))
+                .unwrap_or(wrap_snapshot.max_point().row() + 1);
 
             let block_ix = match self
                 .0
@@ -431,16 +428,13 @@ impl<'a> BlockMapWriter<'a> {
                 let buffer_row = block.position.to_point(&buffer).row;
                 if last_block_buffer_row != Some(buffer_row) {
                     last_block_buffer_row = Some(buffer_row);
-                    let start_row = wrap_snapshot
+                    let wrap_row = wrap_snapshot
                         .from_point(Point::new(buffer_row, 0), Bias::Left)
                         .row();
+                    let start_row = wrap_snapshot.prev_row_boundary(WrapPoint::new(wrap_row, 0));
                     let end_row = wrap_snapshot
-                        .from_point(
-                            Point::new(buffer_row, buffer.line_len(buffer_row)),
-                            Bias::Left,
-                        )
-                        .row()
-                        + 1;
+                        .next_row_boundary(WrapPoint::new(wrap_row, 0))
+                        .unwrap_or(wrap_snapshot.max_point().row() + 1);
                     edits.push(Edit {
                         old: start_row..end_row,
                         new: start_row..end_row,
@@ -457,7 +451,7 @@ impl<'a> BlockMapWriter<'a> {
 
 impl BlockSnapshot {
     #[cfg(test)]
-    fn text(&mut self) -> String {
+    pub fn text(&self) -> String {
         self.chunks(0..self.transforms.summary().output_rows, None)
             .map(|chunk| chunk.text)
             .collect()
@@ -934,7 +928,7 @@ mod tests {
             },
         ]);
 
-        let mut snapshot = block_map.read(wraps_snapshot, vec![]);
+        let snapshot = block_map.read(wraps_snapshot, vec![]);
         assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n");
 
         let blocks = snapshot
@@ -1059,7 +1053,7 @@ mod tests {
         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
             wrap_map.sync(tabs_snapshot, tab_edits, cx)
         });
-        let mut snapshot = block_map.read(wraps_snapshot, wrap_edits);
+        let snapshot = block_map.read(wraps_snapshot, wrap_edits);
         assert_eq!(snapshot.text(), "aaa\n\nb!!!\n\n\nbb\nccc\nddd\n\n\n");
     }
 
@@ -1097,7 +1091,7 @@ mod tests {
 
         // Blocks with an 'above' disposition go above their corresponding buffer line.
         // Blocks with a 'below' disposition go below their corresponding buffer line.
-        let mut snapshot = block_map.read(wraps_snapshot, vec![]);
+        let snapshot = block_map.read(wraps_snapshot, vec![]);
         assert_eq!(
             snapshot.text(),
             "one two \nthree\n\nfour five \nsix\n\nseven \neight"
@@ -1232,7 +1226,7 @@ mod tests {
             let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                 wrap_map.sync(tabs_snapshot, tab_edits, cx)
             });
-            let mut blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
+            let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
             assert_eq!(
                 blocks_snapshot.transforms.summary().input_rows,
                 wraps_snapshot.max_point().row() + 1
