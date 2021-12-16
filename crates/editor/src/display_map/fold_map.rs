@@ -152,10 +152,12 @@ impl<'a> FoldMapWriter<'a> {
             let mut folds_cursor = intersecting_folds(&buffer, &self.0.folds, range, true);
             while let Some(fold) = folds_cursor.item() {
                 let offset_range = fold.0.start.to_offset(&buffer)..fold.0.end.to_offset(&buffer);
-                edits.push(text::Edit {
-                    old: offset_range.clone(),
-                    new: offset_range,
-                });
+                if offset_range.end > offset_range.start {
+                    edits.push(text::Edit {
+                        old: offset_range.clone(),
+                        new: offset_range,
+                    });
+                }
                 fold_ixs_to_delete.push(*folds_cursor.start());
                 folds_cursor.next(&buffer);
             }
@@ -1366,7 +1368,6 @@ mod tests {
                 }
 
                 let text = &expected_text[start.0..end.0];
-                log::info!("slicing {:?}..{:?} (text: {:?})", start, end, text);
                 assert_eq!(
                     snapshot
                         .chunks(start..end, None)
