@@ -598,17 +598,13 @@ impl BlockSnapshot {
                     }
 
                     let output_start = Point::new(output_start_row.0, 0);
-                    if point.0 > output_start {
-                        let output_overshoot = point.0 - output_start;
-                        let input_start = Point::new(input_start_row.0, 0);
-                        let input_point = self
-                            .wrap_snapshot
-                            .clip_point(WrapPoint(input_start + output_overshoot), bias);
-                        let input_overshoot = input_point.0 - input_start;
-                        return BlockPoint(output_start + input_overshoot);
-                    } else {
-                        return BlockPoint(output_start);
-                    }
+                    let output_overshoot = point.0 - output_start;
+                    let input_start = Point::new(input_start_row.0, 0);
+                    let input_point = self
+                        .wrap_snapshot
+                        .clip_point(WrapPoint(input_start + output_overshoot), bias);
+                    let input_overshoot = input_point.0 - input_start;
+                    return BlockPoint(output_start + input_overshoot);
                 } else if search_left {
                     cursor.prev(&());
                 } else {

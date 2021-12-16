@@ -691,11 +691,7 @@ impl FoldSnapshot {
                 let buffer_position = cursor.start().1 + overshoot;
                 let clipped_buffer_position =
                     self.buffer_snapshot.clip_point(buffer_position, bias);
-                FoldPoint::new(
-                    point.row(),
-                    ((point.column() as i32) + clipped_buffer_position.column as i32
-                        - buffer_position.column as i32) as u32,
-                )
+                FoldPoint(cursor.start().0 .0 + (clipped_buffer_position - cursor.start().1))
             }
         } else {
             FoldPoint(self.transforms.summary().output.lines)
