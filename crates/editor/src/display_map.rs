@@ -210,7 +210,7 @@ impl DisplaySnapshot {
             let mut point = display_point.to_point(self);
             point = self.buffer_snapshot.clip_point(point, Bias::Left);
             point.column = 0;
-            let next_display_point = self.point_to_display_point(point, Bias::Left);
+            let next_display_point = self.point_to_display_point_with_clipping(point, Bias::Left);
             if next_display_point == display_point {
                 return (display_point, point);
             }
@@ -248,6 +248,16 @@ impl DisplaySnapshot {
         let fold_point = point.to_fold_point(&self.folds_snapshot, bias);
         let tab_point = self.tabs_snapshot.to_tab_point(fold_point);
         let wrap_point = self.wraps_snapshot.from_tab_point(tab_point);
+        let block_point = self.blocks_snapshot.to_block_point(wrap_point);
+        DisplayPoint(block_point)
+    }
+
+    fn point_to_display_point_with_clipping(&self, point: Point, bias: Bias) -> DisplayPoint {
+        let fold_point = point.to_fold_point(&self.folds_snapshot, bias);
+        let tab_point = self.tabs_snapshot.to_tab_point(fold_point);
+        let wrap_point = self
+            .wraps_snapshot
+            .from_tab_point_with_clipping(tab_point, bias);
         let block_point = self.blocks_snapshot.to_block_point(wrap_point);
         DisplayPoint(block_point)
     }
@@ -492,7 +502,7 @@ mod tests {
     use Bias::*;
 
     #[gpui::test(iterations = 100)]
-    async fn test_random(mut cx: gpui::TestAppContext, mut rng: StdRng) {
+    async fn test_random_display_map(mut cx: gpui::TestAppContext, mut rng: StdRng) {
         cx.foreground().set_block_on_ticks(0..=50);
         cx.foreground().forbid_parking();
         let operations = env::var("OPERATIONS")

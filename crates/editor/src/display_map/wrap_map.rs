@@ -672,6 +672,15 @@ impl WrapSnapshot {
         WrapPoint(cursor.start().1 .0 + (point.0 - cursor.start().0 .0))
     }
 
+    pub fn from_tab_point_with_clipping(&self, point: TabPoint, bias: Bias) -> WrapPoint {
+        let mut cursor = self.transforms.cursor::<(TabPoint, WrapPoint)>();
+        cursor.seek(&point, bias, &());
+        self.clip_point(
+            WrapPoint(cursor.start().1 .0 + (point.0 - cursor.start().0 .0)),
+            bias,
+        )
+    }
+
     pub fn clip_point(&self, mut point: WrapPoint, bias: Bias) -> WrapPoint {
         if bias == Bias::Left {
             let mut cursor = self.transforms.cursor::<WrapPoint>();
