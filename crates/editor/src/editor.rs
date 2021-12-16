@@ -3432,8 +3432,11 @@ impl Editor {
     where
         P: ToOffset + Clone,
     {
-        self.display_map
-            .update(cx, |display_map, cx| display_map.insert_blocks(blocks, cx))
+        let blocks = self
+            .display_map
+            .update(cx, |display_map, cx| display_map.insert_blocks(blocks, cx));
+        self.request_autoscroll(Autoscroll::Fit, cx);
+        blocks
     }
 
     pub fn longest_row(&self, cx: &mut MutableAppContext) -> u32 {
