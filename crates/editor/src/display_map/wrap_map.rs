@@ -1021,7 +1021,7 @@ mod tests {
 
         let buffer = cx.update(|cx| {
             if rng.gen() {
-                MultiBuffer::build_random(rng.gen_range(1..=5), &mut rng, cx)
+                MultiBuffer::build_random(&mut rng, cx)
             } else {
                 let len = rng.gen_range(0..10);
                 let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();

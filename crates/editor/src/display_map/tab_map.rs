@@ -458,7 +458,7 @@ mod tests {
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
             MultiBuffer::build_simple(&text, cx)
         } else {
-            MultiBuffer::build_random(rng.gen_range(1..=5), &mut rng, cx)
+            MultiBuffer::build_random(&mut rng, cx)
         };
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         log::info!("Buffer text: {:?}", buffer_snapshot.text());

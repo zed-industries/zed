@@ -178,12 +178,17 @@ impl MultiBuffer {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn build_random(
-        excerpts: usize,
         mut rng: &mut impl rand::Rng,
         cx: &mut gpui::MutableAppContext,
     ) -> ModelHandle<Self> {
         use rand::prelude::*;
+        use std::env;
         use text::RandomCharIter;
+
+        let max_excerpts = env::var("MAX_EXCERPTS")
+            .map(|i| i.parse().expect("invalid `MAX_EXCERPTS` variable"))
+            .unwrap_or(5);
+        let excerpts = rng.gen_range(1..=max_excerpts);
 
         cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);

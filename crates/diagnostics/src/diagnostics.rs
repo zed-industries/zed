@@ -3,7 +3,7 @@ use std::{cmp, sync::Arc};
 use editor::{
     diagnostic_block_renderer, diagnostic_style,
     display_map::{BlockDisposition, BlockProperties},
-    Anchor, Editor, ExcerptProperties, MultiBuffer,
+    Editor, ExcerptProperties, MultiBuffer,
 };
 use gpui::{
     action, elements::*, keymap::Binding, AppContext, Entity, ModelHandle, MutableAppContext,

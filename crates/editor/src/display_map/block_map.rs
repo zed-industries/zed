@@ -1123,7 +1123,7 @@ mod tests {
             log::info!("initial buffer text: {:?}", text);
             MultiBuffer::build_simple(&text, cx)
         } else {
-            MultiBuffer::build_random(rng.gen_range(1..=5), &mut rng, cx)
+            MultiBuffer::build_random(&mut rng, cx)
         };
 
         let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
