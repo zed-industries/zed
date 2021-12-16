@@ -4,7 +4,7 @@ pub use anchor::{Anchor, AnchorRangeExt};
 use anyhow::Result;
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
-use gpui::{AppContext, ElementBox, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
+use gpui::{AppContext, ElementBox, Entity, ModelContext, ModelHandle, Task};
 use language::{
     Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Selection,
     ToOffset as _, ToPoint as _, TransactionId,
@@ -171,7 +171,7 @@ impl MultiBuffer {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn build_simple(text: &str, cx: &mut MutableAppContext) -> ModelHandle<Self> {
+    pub fn build_simple(text: &str, cx: &mut gpui::MutableAppContext) -> ModelHandle<Self> {
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
         cx.add_model(|cx| Self::singleton(buffer, cx))
     }
@@ -180,7 +180,7 @@ impl MultiBuffer {
     pub fn build_random(
         excerpts: usize,
         mut rng: &mut impl rand::Rng,
-        cx: &mut MutableAppContext,
+        cx: &mut gpui::MutableAppContext,
     ) -> ModelHandle<Self> {
         use rand::prelude::*;
         use text::RandomCharIter;
@@ -604,7 +604,6 @@ impl MultiBuffer {
         snapshot.excerpts.update_last(
             |excerpt| {
                 excerpt.has_trailing_newline = true;
-                excerpt.text_summary += TextSummary::from("\n");
                 prev_id = Some(excerpt.id.clone());
             },
             &(),
@@ -852,10 +851,7 @@ impl MultiBufferSnapshot {
         cursor.seek(&offset, Bias::Left, &());
         let mut excerpt_chunks = cursor.item().map(|excerpt| {
             let start_after_header = cursor.start() + excerpt.header_height as usize;
-            let mut end_before_footer = cursor.start() + excerpt.text_summary.bytes;
-            if excerpt.has_trailing_newline {
-                end_before_footer -= 1;
-            }
+            let end_before_footer = cursor.start() + excerpt.text_summary.bytes;
 
             let start = excerpt.range.start.to_offset(&excerpt.buffer);
             let end =
@@ -942,6 +938,12 @@ impl MultiBufferSnapshot {
         if let Some(excerpt) = cursor.item() {
             let header_end = *cursor.start() + excerpt.header_height as usize;
             if offset < header_end {
+                if bias == Bias::Left {
+                    cursor.prev(&());
+                    if let Some(excerpt) = cursor.item() {
+                        return *cursor.start() + excerpt.text_summary.bytes;
+                    }
+                }
                 header_end
             } else {
                 let excerpt_start = excerpt.range.start.to_offset(&excerpt.buffer);
@@ -966,6 +968,12 @@ impl MultiBufferSnapshot {
         if let Some(excerpt) = cursor.item() {
             let header_end = *cursor.start() + Point::new(excerpt.header_height as u32, 0);
             if point < header_end {
+                if bias == Bias::Left {
+                    cursor.prev(&());
+                    if let Some(excerpt) = cursor.item() {
+                        return *cursor.start() + excerpt.text_summary.lines;
+                    }
+                }
                 header_end
             } else {
                 let excerpt_start = excerpt.range.start.to_point(&excerpt.buffer);
@@ -990,6 +998,12 @@ impl MultiBufferSnapshot {
         if let Some(excerpt) = cursor.item() {
             let header_end = *cursor.start() + PointUtf16::new(excerpt.header_height as u32, 0);
             if point < header_end {
+                if bias == Bias::Left {
+                    cursor.prev(&());
+                    if let Some(excerpt) = cursor.item() {
+                        return *cursor.start() + excerpt.text_summary.lines_utf16;
+                    }
+                }
                 header_end
             } else {
                 let excerpt_start = excerpt
@@ -1017,10 +1031,8 @@ impl MultiBufferSnapshot {
 
         let mut chunk = &[][..];
         let excerpt_bytes = if let Some(excerpt) = excerpts.item() {
-            let mut excerpt_bytes = excerpt.bytes_in_range(
-                range.start - excerpts.start()
-                    ..cmp::min(range.end - excerpts.start(), excerpt.text_summary.bytes),
-            );
+            let mut excerpt_bytes = excerpt
+                .bytes_in_range(range.start - excerpts.start()..range.end - excerpts.start());
             chunk = excerpt_bytes.next().unwrap_or(&[][..]);
             Some(excerpt_bytes)
         } else {
@@ -1611,15 +1623,6 @@ impl Excerpt {
             text_summary.bytes += header_height as usize;
             text_summary.longest_row += header_height as u32;
         }
-        if has_trailing_newline {
-            text_summary.last_line_chars = 0;
-            text_summary.lines.row += 1;
-            text_summary.lines.column = 0;
-            text_summary.lines_utf16.row += 1;
-            text_summary.lines_utf16.column = 0;
-            text_summary.bytes += 1;
-        }
-
         Excerpt {
             id,
             buffer_id,
@@ -1651,7 +1654,7 @@ impl Excerpt {
     ) -> ExcerptChunks<'a> {
         let content_start = self.range.start.to_offset(&self.buffer);
         let chunks_start = content_start + range.start.saturating_sub(self.header_height as usize);
-        let mut chunks_end = content_start
+        let chunks_end = content_start
             + cmp::min(range.end, self.text_summary.bytes)
                 .saturating_sub(self.header_height as usize);
 
@@ -1659,13 +1662,15 @@ impl Excerpt {
             (self.header_height as usize).saturating_sub(range.start),
             range.len(),
         );
-        let mut footer_height = 0;
-        if self.has_trailing_newline && range.end == self.text_summary.bytes {
-            chunks_end -= 1;
-            if !range.is_empty() {
-                footer_height = 1;
-            }
-        }
+
+        let footer_height = if self.has_trailing_newline
+            && range.start <= self.text_summary.bytes
+            && range.end > self.text_summary.bytes
+        {
+            1
+        } else {
+            0
+        };
 
         let content_chunks = self.buffer.chunks(chunks_start..chunks_end, theme);
 
@@ -1679,7 +1684,7 @@ impl Excerpt {
     fn bytes_in_range(&self, range: Range<usize>) -> ExcerptBytes {
         let content_start = self.range.start.to_offset(&self.buffer);
         let bytes_start = content_start + range.start.saturating_sub(self.header_height as usize);
-        let mut bytes_end = content_start
+        let bytes_end = content_start
             + cmp::min(range.end, self.text_summary.bytes)
                 .saturating_sub(self.header_height as usize);
 
@@ -1687,13 +1692,15 @@ impl Excerpt {
             (self.header_height as usize).saturating_sub(range.start),
             range.len(),
         );
-        let mut footer_height = 0;
-        if self.has_trailing_newline && range.end == self.text_summary.bytes {
-            bytes_end -= 1;
-            if !range.is_empty() {
-                footer_height = 1;
-            }
-        }
+
+        let footer_height = if self.has_trailing_newline
+            && range.start <= self.text_summary.bytes
+            && range.end > self.text_summary.bytes
+        {
+            1
+        } else {
+            0
+        };
 
         let content_bytes = self.buffer.bytes_in_range(bytes_start..bytes_end);
 
@@ -1740,9 +1747,13 @@ impl sum_tree::Item for Excerpt {
     type Summary = ExcerptSummary;
 
     fn summary(&self) -> Self::Summary {
+        let mut text = self.text_summary.clone();
+        if self.has_trailing_newline {
+            text += TextSummary::from("\n");
+        }
         ExcerptSummary {
             excerpt_id: self.id.clone(),
-            text: self.text_summary.clone(),
+            text,
         }
     }
 }
@@ -1809,11 +1820,7 @@ impl<'a> MultiBufferChunks<'a> {
         self.excerpts.seek(&offset, Bias::Right, &());
         if let Some(excerpt) = self.excerpts.item() {
             self.excerpt_chunks = Some(excerpt.chunks_in_range(
-                self.range.start - self.excerpts.start()
-                    ..cmp::min(
-                        self.range.end - self.excerpts.start(),
-                        excerpt.text_summary.bytes,
-                    ),
+                self.range.start - self.excerpts.start()..self.range.end - self.excerpts.start(),
                 self.theme,
             ));
         } else {
@@ -1834,13 +1841,9 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
         } else {
             self.excerpts.next(&());
             let excerpt = self.excerpts.item()?;
-            self.excerpt_chunks = Some(excerpt.chunks_in_range(
-                0..cmp::min(
-                    self.range.end - self.excerpts.start(),
-                    excerpt.text_summary.bytes,
-                ),
-                self.theme,
-            ));
+            self.excerpt_chunks = Some(
+                excerpt.chunks_in_range(0..self.range.end - self.excerpts.start(), self.theme),
+            );
             self.next()
         }
     }
@@ -1857,12 +1860,8 @@ impl<'a> MultiBufferBytes<'a> {
             } else {
                 self.excerpts.next(&());
                 if let Some(excerpt) = self.excerpts.item() {
-                    let mut excerpt_bytes = excerpt.bytes_in_range(
-                        0..cmp::min(
-                            self.range.end - self.excerpts.start(),
-                            excerpt.text_summary.bytes,
-                        ),
-                    );
+                    let mut excerpt_bytes =
+                        excerpt.bytes_in_range(0..self.range.end - self.excerpts.start());
                     self.chunk = excerpt_bytes.next().unwrap();
                     self.excerpt_bytes = Some(excerpt_bytes);
                 }
@@ -2148,6 +2147,40 @@ mod tests {
                 old: 8..10,
                 new: 8..9
             }]
+        );
+
+        let multibuffer = multibuffer.read(cx).snapshot(cx);
+        assert_eq!(
+            multibuffer.clip_point(Point::new(0, 0), Bias::Left),
+            Point::new(2, 0)
+        );
+        assert_eq!(
+            multibuffer.clip_point(Point::new(0, 0), Bias::Right),
+            Point::new(2, 0)
+        );
+        assert_eq!(
+            multibuffer.clip_point(Point::new(1, 0), Bias::Left),
+            Point::new(2, 0)
+        );
+        assert_eq!(
+            multibuffer.clip_point(Point::new(1, 0), Bias::Right),
+            Point::new(2, 0)
+        );
+        assert_eq!(
+            multibuffer.clip_point(Point::new(8, 0), Bias::Left),
+            Point::new(7, 4)
+        );
+        assert_eq!(
+            multibuffer.clip_point(Point::new(8, 0), Bias::Right),
+            Point::new(11, 0)
+        );
+        assert_eq!(
+            multibuffer.clip_point(Point::new(9, 0), Bias::Left),
+            Point::new(7, 4)
+        );
+        assert_eq!(
+            multibuffer.clip_point(Point::new(9, 0), Bias::Right),
+            Point::new(11, 0)
         );
     }
 
