@@ -1263,6 +1263,7 @@ mod tests {
                 .sort_unstable_by_key(|(id, block)| (block.position.row, block.disposition, *id));
             let mut sorted_blocks = sorted_blocks.into_iter().peekable();
 
+            let input_buffer_rows = buffer_snapshot.buffer_rows(0).collect::<Vec<_>>();
             let mut expected_buffer_rows = Vec::new();
             let mut expected_text = String::new();
             let input_text = wraps_snapshot.text();
@@ -1272,9 +1273,9 @@ mod tests {
                     expected_text.push('\n');
                 }
 
-                let buffer_row = wraps_snapshot
+                let buffer_row = input_buffer_rows[wraps_snapshot
                     .to_point(WrapPoint::new(row, 0), Bias::Left)
-                    .row;
+                    .row as usize];
 
                 while let Some((_, block)) = sorted_blocks.peek() {
                     if block.position.row == row && block.disposition == BlockDisposition::Above {
@@ -1290,7 +1291,7 @@ mod tests {
                 }
 
                 let soft_wrapped = wraps_snapshot.to_tab_point(WrapPoint::new(row, 0)).column() > 0;
-                expected_buffer_rows.push(if soft_wrapped { None } else { Some(buffer_row) });
+                expected_buffer_rows.push(if soft_wrapped { None } else { buffer_row });
                 expected_text.push_str(input_line);
 
                 while let Some((_, block)) = sorted_blocks.peek() {

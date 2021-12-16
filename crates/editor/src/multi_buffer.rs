@@ -1059,29 +1059,13 @@ impl MultiBufferSnapshot {
     }
 
     pub fn buffer_rows<'a>(&'a self, start_row: u32) -> MultiBufferRows<'a> {
-        let mut excerpts = self.excerpts.cursor::<Point>();
-        excerpts.seek(&Point::new(start_row, 0), Bias::Right, &());
-        if excerpts.item().is_none() {
-            excerpts.prev(&());
-        }
-
-        let mut header_height = 0;
-        let mut buffer_row_range = 0..0;
-        if let Some(excerpt) = excerpts.item() {
-            let overshoot = start_row - excerpts.start().row;
-            let excerpt_start = excerpt.range.start.to_point(&excerpt.buffer).row;
-            let excerpt_header_height = excerpt.header_height as u32;
-            header_height = excerpt_header_height.saturating_sub(overshoot);
-            buffer_row_range.start =
-                excerpt_start + overshoot.saturating_sub(excerpt_header_height);
-            buffer_row_range.end =
-                excerpt_start + excerpt.text_summary.lines.row + 1 - excerpt_header_height;
-        }
-        MultiBufferRows {
-            header_height,
-            buffer_row_range,
-            excerpts,
-        }
+        let mut result = MultiBufferRows {
+            header_height: 0,
+            buffer_row_range: 0..0,
+            excerpts: self.excerpts.cursor(),
+        };
+        result.seek(start_row);
+        result
     }
 
     pub fn chunks<'a, T: ToOffset>(
@@ -1853,6 +1837,36 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Option<&'a ExcerptId> {
     }
 }
 
+impl<'a> MultiBufferRows<'a> {
+    pub fn seek(&mut self, row: u32) {
+        self.header_height = 0;
+        self.buffer_row_range = 0..0;
+
+        self.excerpts
+            .seek_forward(&Point::new(row, 0), Bias::Right, &());
+        if self.excerpts.item().is_none() {
+            self.excerpts.prev(&());
+
+            if self.excerpts.item().is_none() && row == 0 {
+                self.buffer_row_range = 0..1;
+                return;
+            }
+        }
+
+        if let Some(excerpt) = self.excerpts.item() {
+            let overshoot = row - self.excerpts.start().row;
+            let excerpt_start = excerpt.range.start.to_point(&excerpt.buffer).row;
+            let excerpt_header_height = excerpt.header_height as u32;
+
+            self.header_height = excerpt_header_height.saturating_sub(overshoot);
+            self.buffer_row_range.start =
+                excerpt_start + overshoot.saturating_sub(excerpt_header_height);
+            self.buffer_row_range.end =
+                excerpt_start + excerpt.text_summary.lines.row + 1 - excerpt_header_height;
+        }
+    }
+}
+
 impl<'a> Iterator for MultiBufferRows<'a> {
     type Item = Option<u32>;
 
@@ -1867,16 +1881,14 @@ impl<'a> Iterator for MultiBufferRows<'a> {
                 self.buffer_row_range.start += 1;
                 return Some(row);
             }
+            self.excerpts.item()?;
             self.excerpts.next(&());
-            if let Some(excerpt) = self.excerpts.item() {
-                self.header_height = excerpt.header_height as u32;
-                self.buffer_row_range.start = excerpt.range.start.to_point(&excerpt.buffer).row;
-                self.buffer_row_range.end =
-                    self.buffer_row_range.start + excerpt.text_summary.lines.row + 1
-                        - self.header_height;
-            } else {
-                return None;
-            }
+            let excerpt = self.excerpts.item()?;
+            self.header_height = excerpt.header_height as u32;
+            self.buffer_row_range.start = excerpt.range.start.to_point(&excerpt.buffer).row;
+            self.buffer_row_range.end =
+                self.buffer_row_range.start + excerpt.text_summary.lines.row + 1
+                    - self.header_height;
         }
     }
 }
@@ -2179,6 +2191,23 @@ mod tests {
                 Some(3)
             ]
         );
+        assert_eq!(
+            snapshot.buffer_rows(2).collect::<Vec<_>>(),
+            &[
+                Some(1),
+                Some(2),
+                None,
+                Some(3),
+                Some(4),
+                None,
+                None,
+                None,
+                Some(3)
+            ]
+        );
+        assert_eq!(snapshot.buffer_rows(10).collect::<Vec<_>>(), &[Some(3)]);
+        assert_eq!(snapshot.buffer_rows(11).collect::<Vec<_>>(), &[]);
+        assert_eq!(snapshot.buffer_rows(12).collect::<Vec<_>>(), &[]);
 
         {
             let snapshot = multibuffer.read(cx).read(cx);
@@ -2281,6 +2310,16 @@ mod tests {
             multibuffer.clip_point(Point::new(9, 0), Bias::Right),
             Point::new(11, 0)
         );
+    }
+
+    #[gpui::test]
+    fn test_empty_excerpt_buffer(cx: &mut MutableAppContext) {
+        let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
+
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+        assert_eq!(snapshot.text(), "");
+        assert_eq!(snapshot.buffer_rows(0).collect::<Vec<_>>(), &[Some(0)]);
+        assert_eq!(snapshot.buffer_rows(1).collect::<Vec<_>>(), &[]);
     }
 
     #[gpui::test]

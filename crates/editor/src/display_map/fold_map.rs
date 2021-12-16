@@ -1,4 +1,7 @@
-use crate::{Anchor, AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, ToOffset};
+use crate::{
+    multi_buffer::MultiBufferRows, Anchor, AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot,
+    ToOffset,
+};
 use language::{Chunk, Edit, Point, PointUtf16, TextSummary};
 use parking_lot::Mutex;
 use std::{
@@ -563,9 +566,18 @@ impl FoldSnapshot {
         }
 
         let fold_point = FoldPoint::new(start_row, 0);
-        let mut cursor = self.transforms.cursor();
+        let mut cursor = self.transforms.cursor::<(FoldPoint, Point)>();
         cursor.seek(&fold_point, Bias::Left, &());
-        FoldBufferRows { fold_point, cursor }
+
+        let overshoot = fold_point.0 - cursor.start().0 .0;
+        let buffer_point = cursor.start().1 + overshoot;
+        let input_buffer_rows = self.buffer_snapshot.buffer_rows(buffer_point.row);
+
+        FoldBufferRows {
+            fold_point,
+            input_buffer_rows,
+            cursor,
+        }
     }
 
     pub fn max_point(&self) -> FoldPoint {
@@ -897,26 +909,30 @@ impl<'a> sum_tree::Dimension<'a, FoldSummary> for usize {
 
 pub struct FoldBufferRows<'a> {
     cursor: Cursor<'a, Transform, (FoldPoint, Point)>,
+    input_buffer_rows: MultiBufferRows<'a>,
     fold_point: FoldPoint,
 }
 
 impl<'a> Iterator for FoldBufferRows<'a> {
-    type Item = u32;
+    type Item = Option<u32>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        let mut traversed_fold = false;
         while self.fold_point > self.cursor.end(&()).0 {
             self.cursor.next(&());
+            traversed_fold = true;
             if self.cursor.item().is_none() {
-                // TODO: Return a bool from next?
                 break;
             }
         }
 
         if self.cursor.item().is_some() {
-            let overshoot = self.fold_point.0 - self.cursor.start().0 .0;
-            let buffer_point = self.cursor.start().1 + overshoot;
+            if traversed_fold {
+                self.input_buffer_rows.seek(self.cursor.start().1.row);
+                self.input_buffer_rows.next();
+            }
             *self.fold_point.row_mut() += 1;
-            Some(buffer_point.row)
+            self.input_buffer_rows.next()
         } else {
             None
         }
@@ -1282,20 +1298,38 @@ mod tests {
             snapshot_edits.push((snapshot.clone(), edits));
 
             let mut expected_text: String = buffer_snapshot.text().to_string();
-            let mut expected_buffer_rows = Vec::new();
-            let mut next_row = buffer_snapshot.max_point().row;
             for fold_range in map.merged_fold_ranges().into_iter().rev() {
-                let fold_start = buffer_snapshot.offset_to_point(fold_range.start);
-                let fold_end = buffer_snapshot.offset_to_point(fold_range.end);
-                expected_buffer_rows.extend((fold_end.row + 1..=next_row).rev());
-                next_row = fold_start.row;
-
                 expected_text.replace_range(fold_range.start..fold_range.end, "…");
             }
-            expected_buffer_rows.extend((0..=next_row).rev());
-            expected_buffer_rows.reverse();
 
             assert_eq!(snapshot.text(), expected_text);
+            log::info!(
+                "fold text {:?} ({} lines)",
+                expected_text,
+                expected_text.matches('\n').count() + 1
+            );
+
+            let mut prev_row = 0;
+            let mut expected_buffer_rows = Vec::new();
+            for fold_range in map.merged_fold_ranges().into_iter() {
+                let fold_start = buffer_snapshot.offset_to_point(fold_range.start).row;
+                let fold_end = buffer_snapshot.offset_to_point(fold_range.end).row;
+                expected_buffer_rows.extend(
+                    buffer_snapshot
+                        .buffer_rows(prev_row)
+                        .take((1 + fold_start - prev_row) as usize),
+                );
+                prev_row = 1 + fold_end;
+            }
+            expected_buffer_rows.extend(buffer_snapshot.buffer_rows(prev_row));
+
+            assert_eq!(
+                expected_buffer_rows.len(),
+                expected_text.matches('\n').count() + 1,
+                "wrong expected buffer rows {:?}. text: {:?}",
+                expected_buffer_rows,
+                expected_text
+            );
 
             for (output_row, line) in expected_text.lines().enumerate() {
                 let line_len = snapshot.line_len(output_row as u32);
@@ -1373,14 +1407,19 @@ mod tests {
                 );
             }
 
-            for (idx, buffer_row) in expected_buffer_rows.iter().enumerate() {
-                let fold_row = Point::new(*buffer_row, 0)
-                    .to_fold_point(&snapshot, Right)
+            let mut fold_row = 0;
+            while fold_row < expected_buffer_rows.len() as u32 {
+                fold_row = snapshot
+                    .clip_point(FoldPoint::new(fold_row, 0), Bias::Right)
                     .row();
+                eprintln!("fold_row: {} of {}", fold_row, expected_buffer_rows.len());
                 assert_eq!(
                     snapshot.buffer_rows(fold_row).collect::<Vec<_>>(),
-                    expected_buffer_rows[idx..],
+                    expected_buffer_rows[(fold_row as usize)..],
+                    "wrong buffer rows starting at fold row {}",
+                    fold_row,
                 );
+                fold_row += 1;
             }
 
             for fold_range in map.merged_fold_ranges() {
@@ -1470,8 +1509,11 @@ mod tests {
 
         let (snapshot, _) = map.read(buffer_snapshot.clone(), vec![]);
         assert_eq!(snapshot.text(), "aa…cccc\nd…eeeee\nffffff\n");
-        assert_eq!(snapshot.buffer_rows(0).collect::<Vec<_>>(), [0, 3, 5, 6]);
-        assert_eq!(snapshot.buffer_rows(3).collect::<Vec<_>>(), [6]);
+        assert_eq!(
+            snapshot.buffer_rows(0).collect::<Vec<_>>(),
+            [Some(0), Some(3), Some(5), Some(6)]
+        );
+        assert_eq!(snapshot.buffer_rows(3).collect::<Vec<_>>(), [Some(6)]);
     }
 
     impl FoldMap {

@@ -64,7 +64,7 @@ pub struct WrapChunks<'a> {
 
 pub struct WrapBufferRows<'a> {
     input_buffer_rows: fold_map::FoldBufferRows<'a>,
-    input_buffer_row: u32,
+    input_buffer_row: Option<u32>,
     output_row: u32,
     soft_wrapped: bool,
     max_output_row: u32,
@@ -751,22 +751,19 @@ impl WrapSnapshot {
                 }
             }
 
+            let input_buffer_rows = self.buffer_snapshot().buffer_rows(0).collect::<Vec<_>>();
             let mut expected_buffer_rows = Vec::new();
-            let mut buffer_row = 0;
             let mut prev_tab_row = 0;
             for display_row in 0..=self.max_point().row() {
                 let tab_point = self.to_tab_point(WrapPoint::new(display_row, 0));
-                let soft_wrapped;
-                if tab_point.row() == prev_tab_row {
-                    soft_wrapped = display_row != 0;
+                if tab_point.row() == prev_tab_row && display_row != 0 {
+                    expected_buffer_rows.push(None);
                 } else {
                     let fold_point = self.tab_snapshot.to_fold_point(tab_point, Bias::Left).0;
                     let buffer_point = fold_point.to_buffer_point(&self.tab_snapshot.fold_snapshot);
-                    buffer_row = buffer_point.row;
+                    expected_buffer_rows.push(input_buffer_rows[buffer_point.row as usize]);
                     prev_tab_row = tab_point.row();
-                    soft_wrapped = false;
                 }
-                expected_buffer_rows.push(if soft_wrapped { None } else { Some(buffer_row) });
             }
 
             for start_display_row in 0..expected_buffer_rows.len() {
@@ -866,7 +863,7 @@ impl<'a> Iterator for WrapBufferRows<'a> {
             self.soft_wrapped = true;
         }
 
-        Some(if soft_wrapped { None } else { Some(buffer_row) })
+        Some(if soft_wrapped { None } else { buffer_row })
     }
 }
 
