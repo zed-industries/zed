@@ -26,26 +26,25 @@ pub fn right(map: &DisplaySnapshot, mut point: DisplayPoint) -> Result<DisplayPo
 
 pub fn up(
     map: &DisplaySnapshot,
-    mut point: DisplayPoint,
+    start: DisplayPoint,
     goal: SelectionGoal,
 ) -> Result<(DisplayPoint, SelectionGoal)> {
-    let goal_column = if let SelectionGoal::Column(column) = goal {
+    let mut goal_column = if let SelectionGoal::Column(column) = goal {
         column
     } else {
-        map.column_to_chars(point.row(), point.column())
+        map.column_to_chars(start.row(), start.column())
     };
 
-    loop {
-        if point.row() > 0 {
-            *point.row_mut() -= 1;
-            *point.column_mut() = map.column_from_chars(point.row(), goal_column);
-            if !map.is_block_line(point.row()) {
-                break;
-            }
-        } else {
-            point = DisplayPoint::new(0, 0);
-            break;
-        }
+    let prev_row = start.row().saturating_sub(1);
+    let mut point = map.clip_point(
+        DisplayPoint::new(prev_row, map.line_len(prev_row)),
+        Bias::Left,
+    );
+    if point.row() < start.row() {
+        *point.column_mut() = map.column_from_chars(point.row(), goal_column);
+    } else {
+        point = DisplayPoint::new(0, 0);
+        goal_column = 0;
     }
 
     let clip_bias = if point.column() == map.line_len(point.row()) {
@@ -62,27 +61,22 @@ pub fn up(
 
 pub fn down(
     map: &DisplaySnapshot,
-    mut point: DisplayPoint,
+    start: DisplayPoint,
     goal: SelectionGoal,
 ) -> Result<(DisplayPoint, SelectionGoal)> {
-    let max_point = map.max_point();
-    let goal_column = if let SelectionGoal::Column(column) = goal {
+    let mut goal_column = if let SelectionGoal::Column(column) = goal {
         column
     } else {
-        map.column_to_chars(point.row(), point.column())
+        map.column_to_chars(start.row(), start.column())
     };
 
-    loop {
-        if point.row() < max_point.row() {
-            *point.row_mut() += 1;
-            *point.column_mut() = map.column_from_chars(point.row(), goal_column);
-            if !map.is_block_line(point.row()) {
-                break;
-            }
-        } else {
-            point = max_point;
-            break;
-        }
+    let next_row = start.row() + 1;
+    let mut point = map.clip_point(DisplayPoint::new(next_row, 0), Bias::Right);
+    if point.row() > start.row() {
+        *point.column_mut() = map.column_from_chars(point.row(), goal_column);
+    } else {
+        point = map.max_point();
+        goal_column = map.column_to_chars(point.row(), point.column())
     }
 
     let clip_bias = if point.column() == map.line_len(point.row()) {
@@ -244,7 +238,87 @@ fn char_kind(c: char) -> CharKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DisplayMap, MultiBuffer};
+    use crate::{Buffer, DisplayMap, ExcerptProperties, MultiBuffer};
+    use language::Point;
+
+    #[gpui::test]
+    fn test_move_up_and_down_with_excerpts(cx: &mut gpui::MutableAppContext) {
+        let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
+        let font_id = cx
+            .font_cache()
+            .select_font(family_id, &Default::default())
+            .unwrap();
+
+        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndefg\nhijkl\nmn", cx));
+        let multibuffer = cx.add_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(0);
+            multibuffer.push_excerpt(
+                ExcerptProperties {
+                    buffer: &buffer,
+                    range: Point::new(0, 0)..Point::new(1, 4),
+                    header_height: 2,
+                    render_header: None,
+                },
+                cx,
+            );
+            multibuffer.push_excerpt(
+                ExcerptProperties {
+                    buffer: &buffer,
+                    range: Point::new(2, 0)..Point::new(3, 2),
+                    header_height: 3,
+                    render_header: None,
+                },
+                cx,
+            );
+            multibuffer
+        });
+
+        let display_map =
+            cx.add_model(|cx| DisplayMap::new(multibuffer, 2, font_id, 14.0, None, cx));
+
+        let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
+        assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\n\nhijkl\nmn");
+
+        // Can't move up into the first excerpt's header
+        assert_eq!(
+            up(&snapshot, DisplayPoint::new(2, 2), SelectionGoal::Column(2)).unwrap(),
+            (DisplayPoint::new(2, 0), SelectionGoal::Column(0)),
+        );
+        assert_eq!(
+            up(&snapshot, DisplayPoint::new(2, 0), SelectionGoal::None).unwrap(),
+            (DisplayPoint::new(2, 0), SelectionGoal::Column(0)),
+        );
+
+        // Move up and down within first excerpt
+        assert_eq!(
+            up(&snapshot, DisplayPoint::new(3, 4), SelectionGoal::Column(4)).unwrap(),
+            (DisplayPoint::new(2, 3), SelectionGoal::Column(4)),
+        );
+        assert_eq!(
+            down(&snapshot, DisplayPoint::new(2, 3), SelectionGoal::Column(4)).unwrap(),
+            (DisplayPoint::new(3, 4), SelectionGoal::Column(4)),
+        );
+
+        // Move up and down across second excerpt's header
+        assert_eq!(
+            up(&snapshot, DisplayPoint::new(7, 5), SelectionGoal::Column(5)).unwrap(),
+            (DisplayPoint::new(3, 4), SelectionGoal::Column(5)),
+        );
+        assert_eq!(
+            down(&snapshot, DisplayPoint::new(3, 4), SelectionGoal::Column(5)).unwrap(),
+            (DisplayPoint::new(7, 5), SelectionGoal::Column(5)),
+        );
+
+        // Can't move down off the end
+        assert_eq!(
+            down(&snapshot, DisplayPoint::new(8, 0), SelectionGoal::Column(0)).unwrap(),
+            (DisplayPoint::new(8, 2), SelectionGoal::Column(2)),
+        );
+        assert_eq!(
+            down(&snapshot, DisplayPoint::new(8, 2), SelectionGoal::Column(2)).unwrap(),
+            (DisplayPoint::new(8, 2), SelectionGoal::Column(2)),
+        );
+    }
 
     #[gpui::test]
     fn test_prev_next_word_boundary_multibyte(cx: &mut gpui::MutableAppContext) {
