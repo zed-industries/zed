@@ -641,6 +641,8 @@ mod tests {
             }
 
             // Movement
+            let min_point = snapshot.clip_point(DisplayPoint::new(0, 0), Left);
+            let max_point = snapshot.clip_point(snapshot.max_point(), Right);
             for _ in 0..5 {
                 let row = rng.gen_range(0..=snapshot.max_point().row());
                 let column = rng.gen_range(0..=snapshot.line_len(row));
@@ -650,7 +652,7 @@ mod tests {
 
                 let moved_right = movement::right(&snapshot, point).unwrap();
                 log::info!("Right {:?}", moved_right);
-                if point < snapshot.max_point() {
+                if point < max_point {
                     assert!(moved_right > point);
                     if point.column() == snapshot.line_len(point.row())
                         || snapshot.soft_wrap_indent(point.row()).is_some()
@@ -664,13 +666,13 @@ mod tests {
 
                 let moved_left = movement::left(&snapshot, point).unwrap();
                 log::info!("Left {:?}", moved_left);
-                if !point.is_zero() {
+                if point > min_point {
                     assert!(moved_left < point);
                     if point.column() == 0 {
                         assert!(moved_left.row() < point.row());
                     }
                 } else {
-                    assert!(moved_left.is_zero());
+                    assert_eq!(moved_left, point);
                 }
             }
         }
