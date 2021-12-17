@@ -14,7 +14,7 @@ use display_map::*;
 pub use element::*;
 use gpui::{
     action,
-    elements::Text,
+    elements::*,
     fonts::TextStyle,
     geometry::vector::{vec2f, Vector2F},
     keymap::Binding,
@@ -3783,6 +3783,7 @@ pub fn diagnostic_block_renderer(
 }
 
 pub fn diagnostic_header_renderer(
+    buffer: ModelHandle<Buffer>,
     diagnostic: Diagnostic,
     build_settings: BuildSettings,
 ) -> RenderHeaderFn {
@@ -3790,7 +3791,16 @@ pub fn diagnostic_header_renderer(
         let settings = build_settings(cx);
         let mut text_style = settings.style.text.clone();
         text_style.color = diagnostic_style(diagnostic.severity, true, &settings.style).text;
-        Text::new(diagnostic.message.clone(), text_style).boxed()
+        let file_path = if let Some(file) = buffer.read(cx).file() {
+            file.path().to_string_lossy().to_string()
+        } else {
+            "untitled".to_string()
+        };
+
+        Flex::column()
+            .with_child(Label::new(diagnostic.message.clone(), text_style).boxed())
+            .with_child(Label::new(file_path, settings.style.text.clone()).boxed())
+            .boxed()
     })
 }
 
@@ -3798,7 +3808,7 @@ pub fn context_header_renderer(build_settings: BuildSettings) -> RenderHeaderFn 
     Arc::new(move |cx| {
         let settings = build_settings(cx);
         let text_style = settings.style.text.clone();
-        Text::new("...".to_string(), text_style).boxed()
+        Label::new("...".to_string(), text_style).boxed()
     })
 }
 

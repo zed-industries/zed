@@ -113,8 +113,9 @@ impl ProjectDiagnosticsEditor {
                             let mut header = primary.clone();
                             header.message =
                                 primary.message.split('\n').next().unwrap().to_string();
-                            excerpt.header_height = 1;
+                            excerpt.header_height = 2;
                             excerpt.render_header = Some(diagnostic_header_renderer(
+                                buffer.clone(),
                                 header,
                                 self.build_settings.clone(),
                             ));
@@ -321,15 +322,16 @@ mod tests {
             assert_eq!(
                 view.excerpts.read(cx).read(cx).text(),
                 concat!(
-                    "\n",
+                    "\n", // primary diagnostic message
+                    "\n", // filename
                     "    let x = vec![];\n",
                     "    let y = vec![];\n",
                     "    a(x);\n",
-                    "\n",
+                    "\n", // context ellipsis
                     "    a(x);\n",
                     "    b(y);\n",
                     "    // comment 1\n",
-                    "\n",
+                    "\n", // context ellipsis
                     "    // comment 3\n",
                     "    // comment 4\n",
                     "    d(y);"
