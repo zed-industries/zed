@@ -1435,7 +1435,51 @@ impl MultiBufferSnapshot {
         range: Range<T>,
     ) -> Option<(Range<usize>, Range<usize>)> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-        self.as_singleton().unwrap().enclosing_bracket_ranges(range)
+
+        let mut cursor = self.excerpts.cursor::<usize>();
+        cursor.seek(&range.start, Bias::Right, &());
+        let start_excerpt = cursor.item();
+
+        cursor.seek(&range.end, Bias::Right, &());
+        let end_excerpt = cursor.item();
+
+        start_excerpt
+            .zip(end_excerpt)
+            .and_then(|(start_excerpt, end_excerpt)| {
+                if start_excerpt.id != end_excerpt.id {
+                    return None;
+                }
+
+                let excerpt_buffer_start =
+                    start_excerpt.range.start.to_offset(&start_excerpt.buffer);
+                let excerpt_buffer_end = excerpt_buffer_start + start_excerpt.text_summary.bytes
+                    - start_excerpt.header_height as usize;
+
+                let start_after_header = cursor.start() + start_excerpt.header_height as usize;
+                let start_in_buffer =
+                    excerpt_buffer_start + range.start.saturating_sub(start_after_header);
+                let end_in_buffer =
+                    excerpt_buffer_start + range.end.saturating_sub(start_after_header);
+                let (mut start_bracket_range, mut end_bracket_range) = start_excerpt
+                    .buffer
+                    .enclosing_bracket_ranges(start_in_buffer..end_in_buffer)?;
+
+                if start_bracket_range.start >= excerpt_buffer_start
+                    && end_bracket_range.end < excerpt_buffer_end
+                {
+                    start_bracket_range.start =
+                        start_after_header + (start_bracket_range.start - excerpt_buffer_start);
+                    start_bracket_range.end =
+                        start_after_header + (start_bracket_range.end - excerpt_buffer_start);
+                    end_bracket_range.start =
+                        start_after_header + (end_bracket_range.start - excerpt_buffer_start);
+                    end_bracket_range.end =
+                        start_after_header + (end_bracket_range.end - excerpt_buffer_start);
+                    Some((start_bracket_range, end_bracket_range))
+                } else {
+                    None
+                }
+            })
     }
 
     pub fn diagnostics_update_count(&self) -> usize {
