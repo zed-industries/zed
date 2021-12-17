@@ -187,6 +187,14 @@ impl ItemView for Editor {
     fn has_conflict(&self, cx: &AppContext) -> bool {
         self.buffer().read(cx).read(cx).has_conflict()
     }
+
+    fn can_save(&self, cx: &AppContext) -> bool {
+        self.project_path(cx).is_some()
+    }
+
+    fn can_save_as(&self, _: &AppContext) -> bool {
+        true
+    }
 }
 
 pub struct CursorPosition {

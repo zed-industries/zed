@@ -102,7 +102,9 @@ pub trait ItemView: View {
     fn has_conflict(&self, _: &AppContext) -> bool {
         false
     }
+    fn can_save(&self, cx: &AppContext) -> bool;
     fn save(&mut self, cx: &mut ViewContext<Self>) -> Result<Task<Result<()>>>;
+    fn can_save_as(&self, cx: &AppContext) -> bool;
     fn save_as(
         &mut self,
         worktree: ModelHandle<Worktree>,
@@ -146,6 +148,8 @@ pub trait ItemViewHandle {
     fn to_any(&self) -> AnyViewHandle;
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
+    fn can_save(&self, cx: &AppContext) -> bool;
+    fn can_save_as(&self, cx: &AppContext) -> bool;
     fn save(&self, cx: &mut MutableAppContext) -> Result<Task<Result<()>>>;
     fn save_as(
         &self,
@@ -275,6 +279,14 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
 
     fn to_any(&self) -> AnyViewHandle {
         self.into()
+    }
+
+    fn can_save(&self, cx: &AppContext) -> bool {
+        self.read(cx).can_save(cx)
+    }
+
+    fn can_save_as(&self, cx: &AppContext) -> bool {
+        self.read(cx).can_save_as(cx)
     }
 }
 
@@ -685,7 +697,35 @@ impl Workspace {
     pub fn save_active_item(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
         if let Some(item) = self.active_item(cx) {
             let handle = cx.handle();
-            if item.project_path(cx.as_ref()).is_none() {
+            if item.can_save(cx) {
+                if item.has_conflict(cx.as_ref()) {
+                    const CONFLICT_MESSAGE: &'static str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
+
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        CONFLICT_MESSAGE,
+                        &["Overwrite", "Cancel"],
+                        move |answer, cx| {
+                            if answer == 0 {
+                                cx.spawn(|mut cx| async move {
+                                    if let Err(error) = cx.update(|cx| item.save(cx)).unwrap().await
+                                    {
+                                        error!("failed to save item: {:?}, ", error);
+                                    }
+                                })
+                                .detach();
+                            }
+                        },
+                    );
+                } else {
+                    cx.spawn(|_, mut cx| async move {
+                        if let Err(error) = cx.update(|cx| item.save(cx)).unwrap().await {
+                            error!("failed to save item: {:?}, ", error);
+                        }
+                    })
+                    .detach();
+                }
+            } else if item.can_save_as(cx) {
                 let worktree = self.worktrees(cx).first();
                 let start_abs_path = worktree
                     .and_then(|w| w.read(cx).as_local())
@@ -717,32 +757,6 @@ impl Workspace {
                         .detach()
                     }
                 });
-                return;
-            } else if item.has_conflict(cx.as_ref()) {
-                const CONFLICT_MESSAGE: &'static str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
-
-                cx.prompt(
-                    PromptLevel::Warning,
-                    CONFLICT_MESSAGE,
-                    &["Overwrite", "Cancel"],
-                    move |answer, cx| {
-                        if answer == 0 {
-                            cx.spawn(|mut cx| async move {
-                                if let Err(error) = cx.update(|cx| item.save(cx)).unwrap().await {
-                                    error!("failed to save item: {:?}, ", error);
-                                }
-                            })
-                            .detach();
-                        }
-                    },
-                );
-            } else {
-                cx.spawn(|_, mut cx| async move {
-                    if let Err(error) = cx.update(|cx| item.save(cx)).unwrap().await {
-                        error!("failed to save item: {:?}, ", error);
-                    }
-                })
-                .detach();
             }
         }
     }

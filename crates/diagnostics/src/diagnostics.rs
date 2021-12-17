@@ -1,3 +1,4 @@
+use anyhow::Result;
 use editor::{
     context_header_renderer, diagnostic_block_renderer, diagnostic_header_renderer,
     display_map::{BlockDisposition, BlockProperties},
@@ -5,7 +6,7 @@ use editor::{
 };
 use gpui::{
     action, elements::*, keymap::Binding, AppContext, Entity, ModelHandle, MutableAppContext,
-    RenderContext, View, ViewContext, ViewHandle,
+    RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use language::{Bias, Buffer, Point};
 use postage::watch;
@@ -207,7 +208,7 @@ impl workspace::Item for ProjectDiagnostics {
                         .await?;
                     view.update(&mut cx, |view, cx| view.populate_excerpts(buffer, cx))
                 }
-                Result::Ok::<_, anyhow::Error>(())
+                Result::<_, anyhow::Error>::Ok(())
             }
         })
         .detach();
@@ -229,11 +230,8 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         None
     }
 
-    fn save(
-        &mut self,
-        _: &mut ViewContext<Self>,
-    ) -> anyhow::Result<gpui::Task<anyhow::Result<()>>> {
-        todo!()
+    fn save(&mut self, cx: &mut ViewContext<Self>) -> Result<Task<Result<()>>> {
+        self.excerpts.update(cx, |excerpts, cx| excerpts.save(cx))
     }
 
     fn save_as(
@@ -241,8 +239,8 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         _: ModelHandle<project::Worktree>,
         _: &std::path::Path,
         _: &mut ViewContext<Self>,
-    ) -> gpui::Task<anyhow::Result<()>> {
-        todo!()
+    ) -> Task<Result<()>> {
+        unreachable!()
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
@@ -258,6 +256,14 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
             event,
             Event::Saved | Event::Dirtied | Event::FileHandleChanged
         )
+    }
+
+    fn can_save(&self, _: &AppContext) -> bool {
+        true
+    }
+
+    fn can_save_as(&self, _: &AppContext) -> bool {
+        false
     }
 }
 
