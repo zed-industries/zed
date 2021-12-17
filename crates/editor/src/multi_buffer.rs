@@ -16,7 +16,7 @@ use std::{
     ops::{Range, Sub},
     str,
     sync::Arc,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 use sum_tree::{Bias, Cursor, SumTree};
 use text::{
@@ -663,13 +663,18 @@ impl MultiBuffer {
         cx.emit(event.clone());
     }
 
-    pub fn save(
-        &mut self,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<Task<Result<(clock::Global, SystemTime)>>> {
-        self.as_singleton()
-            .unwrap()
-            .update(cx, |buffer, cx| buffer.save(cx))
+    pub fn save(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<()>>> {
+        let mut save_tasks = Vec::new();
+        for BufferState { buffer, .. } in self.buffers.values() {
+            save_tasks.push(buffer.update(cx, |buffer, cx| buffer.save(cx))?);
+        }
+
+        Ok(cx.spawn(|_, _| async move {
+            for save in save_tasks {
+                save.await?;
+            }
+            Ok(())
+        }))
     }
 
     pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
