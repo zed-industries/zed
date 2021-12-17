@@ -2018,9 +2018,7 @@ impl<'a> Iterator for ExcerptChunks<'a> {
         }
 
         if let Some(chunk) = self.content_chunks.next() {
-            if !chunk.text.is_empty() {
-                return Some(chunk);
-            }
+            return Some(chunk);
         }
 
         if self.footer_height > 0 {
