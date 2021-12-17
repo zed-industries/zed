@@ -685,7 +685,7 @@ impl MultiBuffer {
     }
 
     pub fn file<'a>(&self, cx: &'a AppContext) -> Option<&'a dyn File> {
-        self.as_singleton().unwrap().read(cx).file()
+        self.as_singleton()?.read(cx).file()
     }
 
     #[cfg(test)]
@@ -1514,7 +1514,9 @@ impl MultiBufferSnapshot {
     where
         O: text::FromAnchor + 'a,
     {
-        self.as_singleton().unwrap().diagnostic_group(group_id)
+        self.as_singleton()
+            .into_iter()
+            .flat_map(move |buffer| buffer.diagnostic_group(group_id))
     }
 
     pub fn diagnostics_in_range<'a, T, O>(
@@ -1525,8 +1527,9 @@ impl MultiBufferSnapshot {
         T: 'a + ToOffset,
         O: 'a + text::FromAnchor,
     {
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
-        self.as_singleton().unwrap().diagnostics_in_range(range)
+        self.as_singleton().into_iter().flat_map(move |buffer| {
+            buffer.diagnostics_in_range(range.start.to_offset(self)..range.end.to_offset(self))
+        })
     }
 
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
