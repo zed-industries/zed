@@ -9,7 +9,7 @@ use gpui::{
 };
 use parking_lot::Mutex;
 use postage::watch;
-use std::{cmp, rc::Rc, sync::Arc};
+use std::{cmp, sync::Arc};
 use theme::ThemeRegistry;
 use workspace::{Settings, Workspace};
 
@@ -64,7 +64,7 @@ impl ThemeSelector {
             Editor::single_line(
                 {
                     let settings = settings.clone();
-                    Rc::new(move |_| {
+                    Arc::new(move |_| {
                         let settings = settings.borrow();
                         EditorSettings {
                             tab_size: settings.tab_size,

@@ -1179,7 +1179,7 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 mod tests {
     use super::*;
     use crate::{Editor, EditorSettings, MultiBuffer};
-    use std::rc::Rc;
+    use std::sync::Arc;
     use util::test::sample_text;
 
     #[gpui::test]
@@ -1191,7 +1191,7 @@ mod tests {
                 buffer,
                 {
                     let settings = settings.clone();
-                    Rc::new(move |_| settings.clone())
+                    Arc::new(move |_| settings.clone())
                 },
                 cx,
             )

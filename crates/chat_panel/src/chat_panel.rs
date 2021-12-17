@@ -13,7 +13,7 @@ use gpui::{
     ViewContext, ViewHandle,
 };
 use postage::{prelude::Stream, watch};
-use std::{rc::Rc, sync::Arc};
+use std::sync::Arc;
 use time::{OffsetDateTime, UtcOffset};
 use util::{ResultExt, TryFutureExt};
 use workspace::Settings;
@@ -56,7 +56,7 @@ impl ChatPanel {
                 4,
                 {
                     let settings = settings.clone();
-                    Rc::new(move |_| {
+                    Arc::new(move |_| {
                         let settings = settings.borrow();
                         EditorSettings {
                             tab_size: settings.tab_size,

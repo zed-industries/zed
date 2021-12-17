@@ -28,7 +28,9 @@ use language::{
     TransactionId,
 };
 pub use multi_buffer::{Anchor, ExcerptProperties, MultiBuffer};
-use multi_buffer::{AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, ToOffset, ToPoint};
+use multi_buffer::{
+    AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, RenderHeaderFn, ToOffset, ToPoint,
+};
 use postage::watch;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -39,7 +41,6 @@ use std::{
     iter::{self, FromIterator},
     mem,
     ops::{Deref, Range, RangeInclusive, Sub},
-    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -356,7 +357,7 @@ pub enum SoftWrap {
     Column(u32),
 }
 
-type BuildSettings = Rc<dyn Fn(&AppContext) -> EditorSettings>;
+type BuildSettings = Arc<dyn 'static + Send + Sync + Fn(&AppContext) -> EditorSettings>;
 
 pub struct Editor {
     handle: WeakViewHandle<Self>,
@@ -3771,24 +3772,26 @@ pub fn diagnostic_block_renderer(
     build_settings: BuildSettings,
 ) -> RenderBlock {
     Arc::new(move |cx: &BlockContext| {
-        let diagnostic = diagnostic.clone();
         let settings = build_settings(cx);
-        render_diagnostic(diagnostic, &settings.style, is_valid, cx.anchor_x)
+        let mut text_style = settings.style.text.clone();
+        text_style.color = diagnostic_style(diagnostic.severity, is_valid, &settings.style).text;
+        Text::new(diagnostic.message.clone(), text_style)
+            .contained()
+            .with_margin_left(cx.anchor_x)
+            .boxed()
     })
 }
 
-fn render_diagnostic(
+pub fn diagnostic_header_renderer(
     diagnostic: Diagnostic,
-    style: &EditorStyle,
-    valid: bool,
-    anchor_x: f32,
-) -> ElementBox {
-    let mut text_style = style.text.clone();
-    text_style.color = diagnostic_style(diagnostic.severity, valid, &style).text;
-    Text::new(diagnostic.message, text_style)
-        .contained()
-        .with_margin_left(anchor_x)
-        .boxed()
+    build_settings: BuildSettings,
+) -> RenderHeaderFn {
+    Arc::new(move |cx| {
+        let settings = build_settings(cx);
+        let mut text_style = settings.style.text.clone();
+        text_style.color = diagnostic_style(diagnostic.severity, true, &settings.style).text;
+        Text::new(diagnostic.message.clone(), text_style).boxed()
+    })
 }
 
 pub fn diagnostic_style(
@@ -3813,7 +3816,7 @@ pub fn settings_builder(
     buffer: WeakModelHandle<MultiBuffer>,
     settings: watch::Receiver<workspace::Settings>,
 ) -> BuildSettings {
-    Rc::new(move |cx| {
+    Arc::new(move |cx| {
         let settings = settings.borrow();
         let font_cache = cx.font_cache();
         let font_family_id = settings.buffer_font_family;
@@ -6106,7 +6109,7 @@ mod tests {
         settings: EditorSettings,
         cx: &mut ViewContext<Editor>,
     ) -> Editor {
-        Editor::for_buffer(buffer, Rc::new(move |_| settings.clone()), cx)
+        Editor::for_buffer(buffer, Arc::new(move |_| settings.clone()), cx)
     }
 }
 

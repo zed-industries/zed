@@ -932,7 +932,6 @@ mod tests {
     use std::{
         ops::Deref,
         path::Path,
-        rc::Rc,
         sync::{
             atomic::{AtomicBool, Ordering::SeqCst},
             Arc,
@@ -1047,7 +1046,7 @@ mod tests {
             .unwrap();
 
         let editor_b = cx_b.add_view(window_b, |cx| {
-            Editor::for_buffer(buffer_b, Rc::new(|cx| EditorSettings::test(cx)), cx)
+            Editor::for_buffer(buffer_b, Arc::new(|cx| EditorSettings::test(cx)), cx)
         });
         // TODO
         // // Create a selection set as client B and see that selection set as client A.

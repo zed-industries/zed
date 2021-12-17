@@ -1,7 +1,5 @@
-use std::{cmp, sync::Arc};
-
 use editor::{
-    diagnostic_block_renderer, diagnostic_style,
+    diagnostic_block_renderer, diagnostic_header_renderer,
     display_map::{BlockDisposition, BlockProperties},
     Editor, ExcerptProperties, MultiBuffer,
 };
@@ -12,6 +10,7 @@ use gpui::{
 use language::Point;
 use postage::watch;
 use project::Project;
+use std::cmp;
 use workspace::Workspace;
 
 action!(Toggle);
@@ -129,27 +128,10 @@ impl workspace::Item for ProjectDiagnostics {
                                                 .count()
                                                 as u8
                                                 + 1,
-                                            render_header: Some(Arc::new({
-                                                let settings = settings.clone();
-
-                                                move |_| {
-                                                    let editor_style =
-                                                        &settings.borrow().theme.editor;
-                                                    let mut text_style = editor_style.text.clone();
-                                                    text_style.color = diagnostic_style(
-                                                        primary_diagnostic.severity,
-                                                        true,
-                                                        &editor_style,
-                                                    )
-                                                    .text;
-
-                                                    Text::new(
-                                                        primary_diagnostic.message.clone(),
-                                                        text_style,
-                                                    )
-                                                    .boxed()
-                                                }
-                                            })),
+                                            render_header: Some(diagnostic_header_renderer(
+                                                primary_diagnostic,
+                                                build_settings.clone(),
+                                            )),
                                         },
                                         excerpts_cx,
                                     );
