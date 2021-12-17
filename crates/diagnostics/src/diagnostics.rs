@@ -110,9 +110,12 @@ impl ProjectDiagnosticsEditor {
 
                         if is_first_excerpt {
                             let primary = &group.entries[group.primary_ix].diagnostic;
-                            excerpt.header_height = primary.message.matches('\n').count() as u8 + 1;
+                            let mut header = primary.clone();
+                            header.message =
+                                primary.message.split('\n').next().unwrap().to_string();
+                            excerpt.header_height = 1;
                             excerpt.render_header = Some(diagnostic_header_renderer(
-                                primary.clone(),
+                                header,
                                 self.build_settings.clone(),
                             ));
                         } else {
@@ -124,14 +127,20 @@ impl ProjectDiagnosticsEditor {
                         is_first_excerpt = false;
                         let excerpt_id = excerpts.push_excerpt(excerpt, excerpts_cx);
                         for entry in &group.entries[*start_ix..ix] {
-                            if !entry.diagnostic.is_primary {
+                            let mut diagnostic = entry.diagnostic.clone();
+                            if diagnostic.is_primary {
+                                let mut lines = entry.diagnostic.message.split('\n');
+                                lines.next();
+                                diagnostic.message = lines.collect();
+                            }
+
+                            if !diagnostic.message.is_empty() {
                                 let buffer_anchor = snapshot.anchor_before(entry.range.start);
                                 blocks.push(BlockProperties {
                                     position: (excerpt_id.clone(), buffer_anchor),
-                                    height: entry.diagnostic.message.matches('\n').count() as u8
-                                        + 1,
+                                    height: diagnostic.message.matches('\n').count() as u8 + 1,
                                     render: diagnostic_block_renderer(
-                                        entry.diagnostic.clone(),
+                                        diagnostic,
                                         true,
                                         self.build_settings.clone(),
                                     ),
@@ -252,7 +261,10 @@ mod tests {
             let y = vec![];
             a(x);
             b(y);
-            c();
+            // comment 1
+            // comment 2
+            // comment 3
+            // comment 4
             d(y);
             e(x);
         }
@@ -266,10 +278,10 @@ mod tests {
                     None,
                     vec![
                         DiagnosticEntry {
-                            range: PointUtf16::new(1, 8)..PointUtf16::new(1, 9),
+                            range: PointUtf16::new(2, 8)..PointUtf16::new(2, 9),
                             diagnostic: Diagnostic {
                                 message:
-                                    "move occurs because `x` has type `Vec<char>`, which does not implement the `Copy` trait"
+                                    "move occurs because `y` has type `Vec<char>`, which does not implement the `Copy` trait"
                                         .to_string(),
                                 severity: DiagnosticSeverity::INFORMATION,
                                 is_primary: false,
@@ -278,23 +290,21 @@ mod tests {
                             },
                         },
                         DiagnosticEntry {
-                            range: PointUtf16::new(2, 8)..PointUtf16::new(2, 9),
-                            diagnostic: Diagnostic {
-                                message:
-                                    "move occurs because `y` has type `Vec<char>`, which does not implement the `Copy` trait"
-                                        .to_string(),
-                                severity: DiagnosticSeverity::INFORMATION,
-                                is_primary: false,
-                                group_id: 1,
-                                ..Default::default()
-                            },
-                        },
-                        DiagnosticEntry {
-                            range: PointUtf16::new(3, 6)..PointUtf16::new(3, 7),
+                            range: PointUtf16::new(4, 6)..PointUtf16::new(4, 7),
                             diagnostic: Diagnostic {
                                 message: "value moved here".to_string(),
                                 severity: DiagnosticSeverity::INFORMATION,
                                 is_primary: false,
+                                group_id: 0,
+                                ..Default::default()
+                            },
+                        },
+                        DiagnosticEntry {
+                            range: PointUtf16::new(8, 6)..PointUtf16::new(8, 7),
+                            diagnostic: Diagnostic {
+                                message: "use of moved value\nvalue used here after move".to_string(),
+                                severity: DiagnosticSeverity::ERROR,
+                                is_primary: true,
                                 group_id: 0,
                                 ..Default::default()
                             },
@@ -308,6 +318,23 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.populate_excerpts(buffer, cx);
+            assert_eq!(
+                view.excerpts.read(cx).read(cx).text(),
+                concat!(
+                    "\n",
+                    "    let x = vec![];\n",
+                    "    let y = vec![];\n",
+                    "    a(x);\n",
+                    "\n",
+                    "    a(x);\n",
+                    "    b(y);\n",
+                    "    // comment 1\n",
+                    "\n",
+                    "    // comment 3\n",
+                    "    // comment 4\n",
+                    "    d(y);"
+                )
+            );
         });
     }
 }
