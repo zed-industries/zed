@@ -1473,9 +1473,43 @@ impl MultiBufferSnapshot {
 
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-        self.as_singleton()
-            .unwrap()
-            .range_for_syntax_ancestor(range)
+
+        let mut cursor = self.excerpts.cursor::<usize>();
+        cursor.seek(&range.start, Bias::Right, &());
+        let start_excerpt = cursor.item();
+
+        cursor.seek(&range.end, Bias::Right, &());
+        let end_excerpt = cursor.item();
+
+        start_excerpt
+            .zip(end_excerpt)
+            .and_then(|(start_excerpt, end_excerpt)| {
+                if start_excerpt.id != end_excerpt.id {
+                    return None;
+                }
+
+                let excerpt_buffer_start =
+                    start_excerpt.range.start.to_offset(&start_excerpt.buffer);
+                let excerpt_buffer_end = excerpt_buffer_start + start_excerpt.text_summary.bytes
+                    - start_excerpt.header_height as usize;
+
+                let start_after_header = cursor.start() + start_excerpt.header_height as usize;
+                let start_in_buffer =
+                    excerpt_buffer_start + range.start.saturating_sub(start_after_header);
+                let end_in_buffer =
+                    excerpt_buffer_start + range.end.saturating_sub(start_after_header);
+                let mut ancestor_buffer_range = start_excerpt
+                    .buffer
+                    .range_for_syntax_ancestor(start_in_buffer..end_in_buffer)?;
+                ancestor_buffer_range.start =
+                    cmp::max(ancestor_buffer_range.start, excerpt_buffer_start);
+                ancestor_buffer_range.end = cmp::min(ancestor_buffer_range.end, excerpt_buffer_end);
+
+                let start =
+                    start_after_header + (ancestor_buffer_range.start - excerpt_buffer_start);
+                let end = start_after_header + (ancestor_buffer_range.end - excerpt_buffer_start);
+                Some(start..end)
+            })
     }
 
     fn buffer_snapshot_for_excerpt<'a>(
