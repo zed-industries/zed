@@ -689,6 +689,7 @@ impl MultiBuffer {
         self.as_singleton().unwrap().read(cx).has_conflict()
     }
 
+    #[cfg(test)]
     pub fn is_parsing(&self, cx: &AppContext) -> bool {
         self.as_singleton().unwrap().read(cx).is_parsing()
     }
