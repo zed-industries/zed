@@ -20,8 +20,8 @@ pub struct DiagnosticEntry<T> {
 }
 
 pub struct DiagnosticGroup<T> {
-    pub primary: DiagnosticEntry<T>,
-    pub supporting: Vec<DiagnosticEntry<T>>,
+    pub entries: Vec<DiagnosticEntry<T>>,
+    pub primary_ix: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -108,33 +108,29 @@ impl DiagnosticSet {
     where
         O: FromAnchor + Ord + Copy,
     {
-        let mut groups =
-            HashMap::<usize, (Option<DiagnosticEntry<O>>, Vec<DiagnosticEntry<O>>)>::default();
-
+        let mut groups = HashMap::default();
         for entry in self.diagnostics.iter() {
             let entry = entry.resolve(buffer);
-            let (ref mut primary, ref mut supporting) = groups
+            groups
                 .entry(entry.diagnostic.group_id)
-                .or_insert((None, Vec::new()));
-            if entry.diagnostic.is_primary {
-                *primary = Some(entry);
-            } else {
-                supporting.push(entry);
-            }
+                .or_insert(Vec::new())
+                .push(entry);
         }
 
         let mut groups = groups
             .into_values()
-            .map(|(primary, mut supporting)| {
-                supporting.sort_unstable_by_key(|entry| entry.range.start);
-                DiagnosticGroup {
-                    primary: primary.unwrap(),
-                    supporting,
-                }
+            .filter_map(|mut entries| {
+                entries.sort_unstable_by_key(|entry| entry.range.start);
+                entries
+                    .iter()
+                    .position(|entry| entry.diagnostic.is_primary)
+                    .map(|primary_ix| DiagnosticGroup {
+                        entries,
+                        primary_ix,
+                    })
             })
             .collect::<Vec<_>>();
-        groups.sort_unstable_by_key(|group| group.primary.range.start);
-
+        groups.sort_unstable_by_key(|group| group.entries[group.primary_ix].range.start);
         groups
     }
 

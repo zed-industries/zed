@@ -1,16 +1,16 @@
 use editor::{
-    diagnostic_block_renderer, diagnostic_header_renderer,
+    context_header_renderer, diagnostic_block_renderer, diagnostic_header_renderer,
     display_map::{BlockDisposition, BlockProperties},
-    Editor, ExcerptProperties, MultiBuffer,
+    BuildSettings, Editor, ExcerptProperties, MultiBuffer,
 };
 use gpui::{
     action, elements::*, keymap::Binding, AppContext, Entity, ModelHandle, MutableAppContext,
     RenderContext, View, ViewContext, ViewHandle,
 };
-use language::Point;
+use language::{Bias, Buffer, Point};
 use postage::watch;
 use project::Project;
-use std::cmp;
+use std::ops::Range;
 use workspace::Workspace;
 
 action!(Toggle);
@@ -27,6 +27,7 @@ struct ProjectDiagnostics {
 struct ProjectDiagnosticsEditor {
     editor: ViewHandle<Editor>,
     excerpts: ModelHandle<MultiBuffer>,
+    build_settings: BuildSettings,
 }
 
 impl ProjectDiagnostics {
@@ -58,9 +59,113 @@ impl View for ProjectDiagnosticsEditor {
 }
 
 impl ProjectDiagnosticsEditor {
+    fn new(
+        replica_id: u16,
+        settings: watch::Receiver<workspace::Settings>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let excerpts = cx.add_model(|_| MultiBuffer::new(replica_id));
+        let build_settings = editor::settings_builder(excerpts.downgrade(), settings.clone());
+        let editor =
+            cx.add_view(|cx| Editor::for_buffer(excerpts.clone(), build_settings.clone(), cx));
+        Self {
+            excerpts,
+            editor,
+            build_settings,
+        }
+    }
+
     fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
         let diagnostics = cx.add_model(|_| ProjectDiagnostics::new(workspace.project().clone()));
         workspace.add_item(diagnostics, cx);
+    }
+
+    fn populate_excerpts(&mut self, buffer: ModelHandle<Buffer>, cx: &mut ViewContext<Self>) {
+        let mut blocks = Vec::new();
+        let snapshot = buffer.read(cx).snapshot();
+
+        let excerpts_snapshot = self.excerpts.update(cx, |excerpts, excerpts_cx| {
+            for group in snapshot.diagnostic_groups::<Point>() {
+                let mut pending_range: Option<(Range<Point>, usize)> = None;
+                let mut is_first_excerpt = true;
+                for (ix, entry) in group.entries.iter().map(Some).chain([None]).enumerate() {
+                    if let Some((range, start_ix)) = &mut pending_range {
+                        if let Some(entry) = entry {
+                            if entry.range.start.row <= range.end.row + 1 {
+                                range.end = range.end.max(entry.range.end);
+                                continue;
+                            }
+                        }
+
+                        let excerpt_start = Point::new(range.start.row.saturating_sub(1), 0);
+                        let excerpt_end = snapshot
+                            .clip_point(Point::new(range.end.row + 1, u32::MAX), Bias::Left);
+
+                        let mut excerpt = ExcerptProperties {
+                            buffer: &buffer,
+                            range: excerpt_start..excerpt_end,
+                            header_height: 0,
+                            render_header: None,
+                        };
+
+                        if is_first_excerpt {
+                            let primary = &group.entries[group.primary_ix].diagnostic;
+                            excerpt.header_height = primary.message.matches('\n').count() as u8 + 1;
+                            excerpt.render_header = Some(diagnostic_header_renderer(
+                                primary.clone(),
+                                self.build_settings.clone(),
+                            ));
+                        } else {
+                            excerpt.header_height = 1;
+                            excerpt.render_header =
+                                Some(context_header_renderer(self.build_settings.clone()));
+                        }
+
+                        is_first_excerpt = false;
+                        let excerpt_id = excerpts.push_excerpt(excerpt, excerpts_cx);
+                        for entry in &group.entries[*start_ix..ix] {
+                            if !entry.diagnostic.is_primary {
+                                let buffer_anchor = snapshot.anchor_before(entry.range.start);
+                                blocks.push(BlockProperties {
+                                    position: (excerpt_id.clone(), buffer_anchor),
+                                    height: entry.diagnostic.message.matches('\n').count() as u8
+                                        + 1,
+                                    render: diagnostic_block_renderer(
+                                        entry.diagnostic.clone(),
+                                        true,
+                                        self.build_settings.clone(),
+                                    ),
+                                    disposition: BlockDisposition::Below,
+                                });
+                            }
+                        }
+
+                        pending_range.take();
+                    }
+
+                    if let Some(entry) = entry {
+                        pending_range = Some((entry.range.clone(), ix));
+                    }
+                }
+            }
+
+            excerpts.snapshot(excerpts_cx)
+        });
+
+        self.editor.update(cx, |editor, cx| {
+            editor.insert_blocks(
+                blocks.into_iter().map(|block| {
+                    let (excerpt_id, text_anchor) = block.position;
+                    BlockProperties {
+                        position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor),
+                        height: block.height,
+                        render: block.render,
+                        disposition: block.disposition,
+                    }
+                }),
+                cx,
+            );
+        });
     }
 }
 
@@ -73,113 +178,27 @@ impl workspace::Item for ProjectDiagnostics {
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View {
         let project = handle.read(cx).project.clone();
-        let excerpts = cx.add_model(|cx| MultiBuffer::new(project.read(cx).replica_id(cx)));
-        let build_settings = editor::settings_builder(excerpts.downgrade(), settings.clone());
-        let editor =
-            cx.add_view(|cx| Editor::for_buffer(excerpts.clone(), build_settings.clone(), cx));
-
         let project_paths = project
             .read(cx)
             .diagnostic_summaries(cx)
             .map(|e| e.0)
             .collect::<Vec<_>>();
 
-        cx.spawn(|this, mut cx| {
+        cx.spawn(|view, mut cx| {
             let project = project.clone();
             async move {
                 for project_path in project_paths {
                     let buffer = project
                         .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))
                         .await?;
-                    let snapshot = buffer.read_with(&cx, |b, _| b.snapshot());
-
-                    this.update(&mut cx, |this, cx| {
-                        let mut blocks = Vec::new();
-                        let excerpts_snapshot =
-                            this.excerpts.update(cx, |excerpts, excerpts_cx| {
-                                for group in snapshot.diagnostic_groups::<Point>() {
-                                    let excerpt_start = cmp::min(
-                                        group.primary.range.start.row,
-                                        group
-                                            .supporting
-                                            .first()
-                                            .map_or(u32::MAX, |entry| entry.range.start.row),
-                                    );
-                                    let excerpt_end = cmp::max(
-                                        group.primary.range.end.row,
-                                        group
-                                            .supporting
-                                            .last()
-                                            .map_or(0, |entry| entry.range.end.row),
-                                    );
-
-                                    let primary_diagnostic = group.primary.diagnostic;
-                                    let excerpt_id = excerpts.push_excerpt(
-                                        ExcerptProperties {
-                                            buffer: &buffer,
-                                            range: Point::new(excerpt_start, 0)
-                                                ..Point::new(
-                                                    excerpt_end,
-                                                    snapshot.line_len(excerpt_end),
-                                                ),
-                                            header_height: primary_diagnostic
-                                                .message
-                                                .matches('\n')
-                                                .count()
-                                                as u8
-                                                + 1,
-                                            render_header: Some(diagnostic_header_renderer(
-                                                primary_diagnostic,
-                                                build_settings.clone(),
-                                            )),
-                                        },
-                                        excerpts_cx,
-                                    );
-
-                                    for entry in group.supporting {
-                                        let buffer_anchor =
-                                            snapshot.anchor_before(entry.range.start);
-                                        blocks.push(BlockProperties {
-                                            position: (excerpt_id.clone(), buffer_anchor),
-                                            height: entry.diagnostic.message.matches('\n').count()
-                                                as u8
-                                                + 1,
-                                            render: diagnostic_block_renderer(
-                                                entry.diagnostic,
-                                                true,
-                                                build_settings.clone(),
-                                            ),
-                                            disposition: BlockDisposition::Below,
-                                        });
-                                    }
-                                }
-
-                                excerpts.snapshot(excerpts_cx)
-                            });
-
-                        this.editor.update(cx, |editor, cx| {
-                            editor.insert_blocks(
-                                blocks.into_iter().map(|block| {
-                                    let (excerpt_id, text_anchor) = block.position;
-                                    BlockProperties {
-                                        position: excerpts_snapshot
-                                            .anchor_in_excerpt(excerpt_id, text_anchor),
-                                        height: block.height,
-                                        render: block.render,
-                                        disposition: block.disposition,
-                                    }
-                                }),
-                                cx,
-                            );
-                        });
-                    })
+                    view.update(&mut cx, |view, cx| view.populate_excerpts(buffer, cx))
                 }
                 Result::Ok::<_, anyhow::Error>(())
             }
         })
         .detach();
 
-        ProjectDiagnosticsEditor { editor, excerpts }
+        ProjectDiagnosticsEditor::new(project.read(cx).replica_id(cx), settings, cx)
     }
 
     fn project_path(&self) -> Option<project::ProjectPath> {
@@ -210,5 +229,85 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         _: &mut ViewContext<Self>,
     ) -> gpui::Task<anyhow::Result<()>> {
         todo!()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16};
+    use unindent::Unindent as _;
+    use workspace::WorkspaceParams;
+
+    #[gpui::test]
+    fn test_diagnostics(cx: &mut MutableAppContext) {
+        let settings = WorkspaceParams::test(cx).settings;
+        let view = cx.add_view(Default::default(), |cx| {
+            ProjectDiagnosticsEditor::new(0, settings, cx)
+        });
+
+        let text = "
+        fn main() {
+            let x = vec![];
+            let y = vec![];
+            a(x);
+            b(y);
+            c();
+            d(y);
+            e(x);
+        }
+        "
+        .unindent();
+
+        let buffer = cx.add_model(|cx| {
+            let mut buffer = Buffer::new(0, text, cx);
+            buffer
+                .update_diagnostics(
+                    None,
+                    vec![
+                        DiagnosticEntry {
+                            range: PointUtf16::new(1, 8)..PointUtf16::new(1, 9),
+                            diagnostic: Diagnostic {
+                                message:
+                                    "move occurs because `x` has type `Vec<char>`, which does not implement the `Copy` trait"
+                                        .to_string(),
+                                severity: DiagnosticSeverity::INFORMATION,
+                                is_primary: false,
+                                group_id: 0,
+                                ..Default::default()
+                            },
+                        },
+                        DiagnosticEntry {
+                            range: PointUtf16::new(2, 8)..PointUtf16::new(2, 9),
+                            diagnostic: Diagnostic {
+                                message:
+                                    "move occurs because `y` has type `Vec<char>`, which does not implement the `Copy` trait"
+                                        .to_string(),
+                                severity: DiagnosticSeverity::INFORMATION,
+                                is_primary: false,
+                                group_id: 1,
+                                ..Default::default()
+                            },
+                        },
+                        DiagnosticEntry {
+                            range: PointUtf16::new(3, 6)..PointUtf16::new(3, 7),
+                            diagnostic: Diagnostic {
+                                message: "value moved here".to_string(),
+                                severity: DiagnosticSeverity::INFORMATION,
+                                is_primary: false,
+                                group_id: 0,
+                                ..Default::default()
+                            },
+                        },
+                    ],
+                    cx,
+                )
+                .unwrap();
+            buffer
+        });
+
+        view.update(cx, |view, cx| {
+            view.populate_excerpts(buffer, cx);
+        });
     }
 }

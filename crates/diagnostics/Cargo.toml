@@ -15,3 +15,10 @@ gpui = { path = "../gpui" }
 project = { path = "../project" }
 workspace = { path = "../workspace" }
 postage = { version = "0.4", features = ["futures-traits"] }
+
+[dev-dependencies]
+unindent = "0.1"
+editor = { path = "../editor", features = ["test-support"] }
+language = { path = "../language", features = ["test-support"] }
+gpui = { path = "../gpui", features = ["test-support"] }
+workspace = { path = "../workspace", features = ["test-support"] }

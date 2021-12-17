@@ -357,7 +357,7 @@ pub enum SoftWrap {
     Column(u32),
 }
 
-type BuildSettings = Arc<dyn 'static + Send + Sync + Fn(&AppContext) -> EditorSettings>;
+pub type BuildSettings = Arc<dyn 'static + Send + Sync + Fn(&AppContext) -> EditorSettings>;
 
 pub struct Editor {
     handle: WeakViewHandle<Self>,
@@ -3791,6 +3791,14 @@ pub fn diagnostic_header_renderer(
         let mut text_style = settings.style.text.clone();
         text_style.color = diagnostic_style(diagnostic.severity, true, &settings.style).text;
         Text::new(diagnostic.message.clone(), text_style).boxed()
+    })
+}
+
+pub fn context_header_renderer(build_settings: BuildSettings) -> RenderHeaderFn {
+    Arc::new(move |cx| {
+        let settings = build_settings(cx);
+        let text_style = settings.style.text.clone();
+        Text::new("...".to_string(), text_style).boxed()
     })
 }
 
