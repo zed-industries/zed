@@ -3638,6 +3638,7 @@ fn compute_scroll_position(
     scroll_position
 }
 
+#[derive(Copy, Clone)]
 pub enum Event {
     Activate,
     Edited,

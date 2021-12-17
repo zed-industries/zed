@@ -181,11 +181,11 @@ impl ItemView for Editor {
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.buffer().read(cx).is_dirty(cx)
+        self.buffer().read(cx).read(cx).is_dirty()
     }
 
     fn has_conflict(&self, cx: &AppContext) -> bool {
-        self.buffer().read(cx).has_conflict(cx)
+        self.buffer().read(cx).read(cx).has_conflict()
     }
 }
 

@@ -82,6 +82,8 @@ pub struct MultiBufferSnapshot {
     excerpts: SumTree<Excerpt>,
     parse_count: usize,
     diagnostics_update_count: usize,
+    is_dirty: bool,
+    has_conflict: bool,
 }
 
 pub type RenderHeaderFn = Arc<dyn 'static + Send + Sync + Fn(&AppContext) -> ElementBox>;
@@ -681,14 +683,6 @@ impl MultiBuffer {
         self.as_singleton().unwrap().read(cx).file()
     }
 
-    pub fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.as_singleton().unwrap().read(cx).is_dirty()
-    }
-
-    pub fn has_conflict(&self, cx: &AppContext) -> bool {
-        self.as_singleton().unwrap().read(cx).has_conflict()
-    }
-
     #[cfg(test)]
     pub fn is_parsing(&self, cx: &AppContext) -> bool {
         self.as_singleton().unwrap().read(cx).is_parsing()
@@ -699,6 +693,8 @@ impl MultiBuffer {
         let mut excerpts_to_edit = Vec::new();
         let mut reparsed = false;
         let mut diagnostics_updated = false;
+        let mut is_dirty = false;
+        let mut has_conflict = false;
         for buffer_state in self.buffers.values() {
             let buffer = buffer_state.buffer.read(cx);
             let buffer_edited = buffer.version().gt(&buffer_state.last_version);
@@ -716,6 +712,8 @@ impl MultiBuffer {
 
             reparsed |= buffer_reparsed;
             diagnostics_updated |= buffer_diagnostics_updated;
+            is_dirty |= buffer.is_dirty();
+            has_conflict |= buffer.has_conflict();
         }
         if reparsed {
             snapshot.parse_count += 1;
@@ -723,6 +721,9 @@ impl MultiBuffer {
         if diagnostics_updated {
             snapshot.diagnostics_update_count += 1;
         }
+        snapshot.is_dirty = is_dirty;
+        snapshot.has_conflict = has_conflict;
+
         excerpts_to_edit.sort_unstable_by_key(|(excerpt_id, _, _)| *excerpt_id);
 
         let mut edits = Vec::new();
@@ -1491,6 +1492,14 @@ impl MultiBufferSnapshot {
             .iter()
             .next()
             .and_then(|excerpt| excerpt.buffer.language())
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.is_dirty
+    }
+
+    pub fn has_conflict(&self) -> bool {
+        self.has_conflict
     }
 
     pub fn diagnostic_group<'a, O>(

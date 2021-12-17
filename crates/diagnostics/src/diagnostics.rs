@@ -20,6 +20,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectDiagnosticsEditor::toggle);
 }
 
+type Event = editor::Event;
+
 struct ProjectDiagnostics {
     project: ModelHandle<Project>,
 }
@@ -41,7 +43,7 @@ impl Entity for ProjectDiagnostics {
 }
 
 impl Entity for ProjectDiagnosticsEditor {
-    type Event = ();
+    type Event = Event;
 }
 
 impl View for ProjectDiagnosticsEditor {
@@ -68,6 +70,8 @@ impl ProjectDiagnosticsEditor {
         let build_settings = editor::settings_builder(excerpts.downgrade(), settings.clone());
         let editor =
             cx.add_view(|cx| Editor::for_buffer(excerpts.clone(), build_settings.clone(), cx));
+        cx.subscribe(&editor, |_, _, event, cx| cx.emit(*event))
+            .detach();
         Self {
             excerpts,
             editor,
@@ -239,6 +243,21 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         _: &mut ViewContext<Self>,
     ) -> gpui::Task<anyhow::Result<()>> {
         todo!()
+    }
+
+    fn is_dirty(&self, cx: &AppContext) -> bool {
+        self.excerpts.read(cx).read(cx).is_dirty()
+    }
+
+    fn has_conflict(&self, cx: &AppContext) -> bool {
+        self.excerpts.read(cx).read(cx).has_conflict()
+    }
+
+    fn should_update_tab_on_event(event: &Event) -> bool {
+        matches!(
+            event,
+            Event::Saved | Event::Dirtied | Event::FileHandleChanged
+        )
     }
 }
 
