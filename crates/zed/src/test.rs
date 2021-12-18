@@ -1,4 +1,4 @@
-use crate::{assets::Assets, build_window_options, AppState, build_workspace};
+use crate::{assets::Assets, build_window_options, build_workspace, AppState};
 use client::{http::ServerResponse, test::FakeHttpClient, ChannelList, Client, UserStore};
 use gpui::{AssetSource, MutableAppContext};
 use language::LanguageRegistry;

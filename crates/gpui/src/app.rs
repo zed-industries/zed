@@ -3992,12 +3992,7 @@ mod tests {
 
         let actions_clone = actions.clone();
         cx.add_global_action(move |_: &Action, _: &mut MutableAppContext| {
-            actions_clone.borrow_mut().push("global a".to_string());
-        });
-
-        let actions_clone = actions.clone();
-        cx.add_global_action(move |_: &Action, _: &mut MutableAppContext| {
-            actions_clone.borrow_mut().push("global b".to_string());
+            actions_clone.borrow_mut().push("global".to_string());
         });
 
         let actions_clone = actions.clone();
@@ -4053,7 +4048,7 @@ mod tests {
 
         assert_eq!(
             *actions.borrow(),
-            vec!["4 d", "4 c", "3 b", "3 a", "2 d", "2 c", "global b", "global a"]
+            vec!["4 d", "4 c", "3 b", "3 a", "2 d", "2 c", "global"]
         );
     }
 

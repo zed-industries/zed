@@ -31,7 +31,6 @@ const MIN_FONT_SIZE: f32 = 6.0;
 
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     cx.add_global_action(quit);
-
     cx.add_global_action({
         let settings_tx = app_state.settings_tx.clone();
 
@@ -175,7 +174,9 @@ mod tests {
     #[gpui::test]
     async fn test_new_empty_workspace(mut cx: gpui::TestAppContext) {
         let app_state = cx.update(test_app_state);
-        cx.update(|cx| init(&app_state, cx));
+        cx.update(|cx| {
+            workspace::init(cx);
+        });
         cx.dispatch_global_action(workspace::OpenNew(app_state.clone()));
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx.root_view::<Workspace>(window_id).unwrap();
@@ -241,10 +242,11 @@ mod tests {
         let file3 = entries[2].clone();
 
         // Open the first entry
-        workspace
+        let entry_1 = workspace
             .update(&mut cx, |w, cx| w.open_entry(file1.clone(), cx))
             .unwrap()
-            .await;
+            .await
+            .unwrap();
         cx.read(|cx| {
             let pane = workspace.read(cx).active_pane().read(cx);
             assert_eq!(
@@ -258,7 +260,8 @@ mod tests {
         workspace
             .update(&mut cx, |w, cx| w.open_entry(file2.clone(), cx))
             .unwrap()
-            .await;
+            .await
+            .unwrap();
         cx.read(|cx| {
             let pane = workspace.read(cx).active_pane().read(cx);
             assert_eq!(
@@ -269,9 +272,12 @@ mod tests {
         });
 
         // Open the first entry again. The existing pane item is activated.
-        workspace.update(&mut cx, |w, cx| {
-            assert!(w.open_entry(file1.clone(), cx).is_none())
-        });
+        let entry_1b = workspace
+            .update(&mut cx, |w, cx| w.open_entry(file1.clone(), cx).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(entry_1.id(), entry_1b.id());
+
         cx.read(|cx| {
             let pane = workspace.read(cx).active_pane().read(cx);
             assert_eq!(
@@ -282,9 +288,15 @@ mod tests {
         });
 
         // Split the pane with the first entry, then open the second entry again.
-        workspace.update(&mut cx, |w, cx| {
-            w.split_pane(w.active_pane().clone(), SplitDirection::Right, cx);
-            assert!(w.open_entry(file2.clone(), cx).is_none());
+        workspace
+            .update(&mut cx, |w, cx| {
+                w.split_pane(w.active_pane().clone(), SplitDirection::Right, cx);
+                w.open_entry(file2.clone(), cx).unwrap()
+            })
+            .await
+            .unwrap();
+
+        workspace.read_with(&cx, |w, cx| {
             assert_eq!(
                 w.active_pane()
                     .read(cx)
@@ -302,8 +314,8 @@ mod tests {
                 w.open_entry(file3.clone(), cx).unwrap(),
             )
         });
-        t1.await;
-        t2.await;
+        t1.await.unwrap();
+        t2.await.unwrap();
         cx.read(|cx| {
             let pane = workspace.read(cx).active_pane().read(cx);
             assert_eq!(
@@ -524,18 +536,21 @@ mod tests {
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.
         cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
-        workspace.update(&mut cx, |workspace, cx| {
-            workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
-            assert!(workspace
-                .open_entry(
-                    ProjectPath {
-                        worktree_id: worktree.id(),
-                        path: Path::new("the-new-name.rs").into()
-                    },
-                    cx
-                )
-                .is_none());
-        });
+        workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
+                workspace
+                    .open_entry(
+                        ProjectPath {
+                            worktree_id: worktree.id(),
+                            path: Path::new("the-new-name.rs").into(),
+                        },
+                        cx,
+                    )
+                    .unwrap()
+            })
+            .await
+            .unwrap();
         let editor2 = workspace.update(&mut cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -631,7 +646,8 @@ mod tests {
         workspace
             .update(&mut cx, |w, cx| w.open_entry(file1.clone(), cx))
             .unwrap()
-            .await;
+            .await
+            .unwrap();
         cx.read(|cx| {
             assert_eq!(
                 pane_1.read(cx).active_item().unwrap().project_path(cx),
