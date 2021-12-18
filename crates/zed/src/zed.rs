@@ -4,7 +4,6 @@ pub mod menus;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-use self::language::LanguageRegistry;
 use chat_panel::ChatPanel;
 pub use client;
 pub use contacts_panel;
@@ -15,51 +14,22 @@ use gpui::{
     geometry::vector::vec2f,
     keymap::Binding,
     platform::{WindowBounds, WindowOptions},
-    ModelHandle, MutableAppContext, PathPromptOptions, Task, ViewContext,
+    ViewContext,
 };
 pub use lsp;
-use parking_lot::Mutex;
-use postage::watch;
 pub use project::{self, fs};
 use project_panel::ProjectPanel;
-use std::{path::PathBuf, sync::Arc};
-use theme::ThemeRegistry;
-use theme_selector::ThemeSelectorParams;
+use std::sync::Arc;
 pub use workspace;
-use workspace::{OpenNew, Settings, Workspace, WorkspaceParams};
+use workspace::{AppState, Workspace, WorkspaceParams};
 
 action!(About);
-action!(Open, Arc<AppState>);
-action!(OpenPaths, OpenParams);
 action!(Quit);
 action!(AdjustBufferFontSize, f32);
 
 const MIN_FONT_SIZE: f32 = 6.0;
 
-pub struct AppState {
-    pub settings_tx: Arc<Mutex<watch::Sender<Settings>>>,
-    pub settings: watch::Receiver<Settings>,
-    pub languages: Arc<LanguageRegistry>,
-    pub themes: Arc<ThemeRegistry>,
-    pub client: Arc<client::Client>,
-    pub user_store: ModelHandle<client::UserStore>,
-    pub fs: Arc<dyn fs::Fs>,
-    pub channel_list: ModelHandle<client::ChannelList>,
-    pub entry_openers: Arc<[Box<dyn workspace::EntryOpener>]>,
-}
-
-#[derive(Clone)]
-pub struct OpenParams {
-    pub paths: Vec<PathBuf>,
-    pub app_state: Arc<AppState>,
-}
-
 pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
-    cx.add_global_action(open);
-    cx.add_global_action(|action: &OpenPaths, cx: &mut MutableAppContext| {
-        open_paths(action, cx).detach()
-    });
-    cx.add_global_action(open_new);
     cx.add_global_action(quit);
 
     cx.add_global_action({
@@ -79,63 +49,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     ])
 }
 
-fn open(action: &Open, cx: &mut MutableAppContext) {
-    let app_state = action.0.clone();
-    cx.prompt_for_paths(
-        PathPromptOptions {
-            files: true,
-            directories: true,
-            multiple: true,
-        },
-        move |paths, cx| {
-            if let Some(paths) = paths {
-                cx.dispatch_global_action(OpenPaths(OpenParams { paths, app_state }));
-            }
-        },
-    );
-}
-
-fn open_paths(action: &OpenPaths, cx: &mut MutableAppContext) -> Task<()> {
-    log::info!("open paths {:?}", action.0.paths);
-
-    // Open paths in existing workspace if possible
-    for window_id in cx.window_ids().collect::<Vec<_>>() {
-        if let Some(handle) = cx.root_view::<Workspace>(window_id) {
-            let task = handle.update(cx, |view, cx| {
-                if view.contains_paths(&action.0.paths, cx.as_ref()) {
-                    log::info!("open paths on existing workspace");
-                    Some(view.open_paths(&action.0.paths, cx))
-                } else {
-                    None
-                }
-            });
-
-            if let Some(task) = task {
-                return task;
-            }
-        }
-    }
-
-    log::info!("open new workspace");
-
-    // Add a new workspace if necessary
-    let app_state = &action.0.app_state;
-    let (_, workspace) = cx.add_window(window_options(), |cx| {
-        build_workspace(&WorkspaceParams::from(app_state.as_ref()), cx)
-    });
-    // cx.resize_window(window_id);
-    workspace.update(cx, |workspace, cx| {
-        workspace.open_paths(&action.0.paths, cx)
-    })
-}
-
-fn open_new(action: &OpenNew, cx: &mut MutableAppContext) {
-    let (window_id, workspace) =
-        cx.add_window(window_options(), |cx| build_workspace(&action.0, cx));
-    cx.dispatch_action(window_id, vec![workspace.id()], action);
-}
-
-fn build_workspace(params: &WorkspaceParams, cx: &mut ViewContext<Workspace>) -> Workspace {
+pub fn build_workspace(params: &WorkspaceParams, cx: &mut ViewContext<Workspace>) -> Workspace {
     let mut workspace = Workspace::new(params, cx);
     let project = workspace.project().clone();
     workspace.left_sidebar_mut().add_item(
@@ -174,7 +88,7 @@ fn build_workspace(params: &WorkspaceParams, cx: &mut ViewContext<Workspace>) ->
     workspace
 }
 
-fn window_options() -> WindowOptions<'static> {
+pub fn build_window_options() -> WindowOptions<'static> {
     WindowOptions {
         bounds: WindowBounds::Maximized,
         title: None,
@@ -187,41 +101,23 @@ fn quit(_: &Quit, cx: &mut gpui::MutableAppContext) {
     cx.platform().quit();
 }
 
-impl<'a> From<&'a AppState> for WorkspaceParams {
-    fn from(state: &'a AppState) -> Self {
-        Self {
-            client: state.client.clone(),
-            fs: state.fs.clone(),
-            languages: state.languages.clone(),
-            settings: state.settings.clone(),
-            user_store: state.user_store.clone(),
-            channel_list: state.channel_list.clone(),
-            entry_openers: state.entry_openers.clone(),
-        }
-    }
-}
-
-impl<'a> From<&'a AppState> for ThemeSelectorParams {
-    fn from(state: &'a AppState) -> Self {
-        Self {
-            settings_tx: state.settings_tx.clone(),
-            settings: state.settings.clone(),
-            themes: state.themes.clone(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use editor::Editor;
+    use gpui::MutableAppContext;
     use project::ProjectPath;
     use serde_json::json;
-    use std::{collections::HashSet, path::Path};
+    use std::{
+        collections::HashSet,
+        path::{Path, PathBuf},
+    };
     use test::test_app_state;
     use theme::DEFAULT_THEME_NAME;
     use util::test::temp_tree;
-    use workspace::{pane, ItemView, ItemViewHandle, SplitDirection, WorkspaceHandle};
+    use workspace::{
+        open_paths, pane, ItemView, ItemViewHandle, OpenNew, SplitDirection, WorkspaceHandle,
+    };
 
     #[gpui::test]
     async fn test_open_paths_action(mut cx: gpui::TestAppContext) {
@@ -243,29 +139,19 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &OpenPaths(OpenParams {
-                    paths: vec![
-                        dir.path().join("a").to_path_buf(),
-                        dir.path().join("b").to_path_buf(),
-                    ],
-                    app_state: app_state.clone(),
-                }),
+                &[
+                    dir.path().join("a").to_path_buf(),
+                    dir.path().join("b").to_path_buf(),
+                ],
+                &app_state,
                 cx,
             )
         })
         .await;
         assert_eq!(cx.window_ids().len(), 1);
 
-        cx.update(|cx| {
-            open_paths(
-                &OpenPaths(OpenParams {
-                    paths: vec![dir.path().join("a").to_path_buf()],
-                    app_state: app_state.clone(),
-                }),
-                cx,
-            )
-        })
-        .await;
+        cx.update(|cx| open_paths(&[dir.path().join("a").to_path_buf()], &app_state, cx))
+            .await;
         assert_eq!(cx.window_ids().len(), 1);
         let workspace_1 = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
         workspace_1.read_with(&cx, |workspace, cx| {
@@ -274,13 +160,11 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &OpenPaths(OpenParams {
-                    paths: vec![
-                        dir.path().join("b").to_path_buf(),
-                        dir.path().join("c").to_path_buf(),
-                    ],
-                    app_state: app_state.clone(),
-                }),
+                &[
+                    dir.path().join("b").to_path_buf(),
+                    dir.path().join("c").to_path_buf(),
+                ],
+                &app_state,
                 cx,
             )
         })
@@ -292,7 +176,7 @@ mod tests {
     async fn test_new_empty_workspace(mut cx: gpui::TestAppContext) {
         let app_state = cx.update(test_app_state);
         cx.update(|cx| init(&app_state, cx));
-        cx.dispatch_global_action(workspace::OpenNew(app_state.as_ref().into()));
+        cx.dispatch_global_action(workspace::OpenNew(app_state.clone()));
         let window_id = *cx.window_ids().first().unwrap();
         let workspace = cx.root_view::<Workspace>(window_id).unwrap();
         let editor = workspace.update(&mut cx, |workspace, cx| {
@@ -576,7 +460,7 @@ mod tests {
         });
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(params.clone()));
+        cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
         let editor = workspace.read_with(&cx, |workspace, cx| {
             workspace
                 .active_item(cx)
@@ -639,7 +523,7 @@ mod tests {
 
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.
-        cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(params.clone()));
+        cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
         workspace.update(&mut cx, |workspace, cx| {
             workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
             assert!(workspace
@@ -675,7 +559,7 @@ mod tests {
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
 
         // Create a new untitled buffer
-        cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(params.clone()));
+        cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
         let editor = workspace.read_with(&cx, |workspace, cx| {
             workspace
                 .active_item(cx)

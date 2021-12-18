@@ -13,16 +13,18 @@ use gpui::{
     geometry::{vector::vec2f, PathBuilder},
     json::{self, to_string_pretty, ToJson},
     keymap::Binding,
-    platform::CursorStyle,
+    platform::{CursorStyle, WindowOptions},
     AnyViewHandle, AppContext, ClipboardItem, Entity, ModelContext, ModelHandle, MutableAppContext,
-    PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle, WeakModelHandle,
+    PathPromptOptions, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
+    WeakModelHandle,
 };
 use language::LanguageRegistry;
 use log::error;
 pub use pane::*;
 pub use pane_group::*;
+use parking_lot::Mutex;
 use postage::{prelude::Stream, watch};
-use project::{Fs, Project, ProjectPath, Worktree};
+use project::{fs, Fs, Project, ProjectPath, Worktree};
 pub use settings::Settings;
 use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus};
 use status_bar::StatusBar;
@@ -33,13 +35,23 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use theme::Theme;
+use theme::{Theme, ThemeRegistry};
 
-action!(OpenNew, WorkspaceParams);
+action!(Open, Arc<AppState>);
+action!(OpenNew, Arc<AppState>);
+action!(OpenPaths, OpenParams);
 action!(Save);
 action!(DebugElements);
 
 pub fn init(cx: &mut MutableAppContext) {
+    cx.add_global_action(open);
+    cx.add_global_action(move |action: &OpenPaths, cx: &mut MutableAppContext| {
+        open_paths(&action.0.paths, &action.0.app_state, cx).detach()
+    });
+    cx.add_global_action(move |action: &OpenNew, cx: &mut MutableAppContext| {
+        open_new(&action.0, cx)
+    });
+
     cx.add_action(Workspace::save_active_item);
     cx.add_action(Workspace::debug_elements);
     cx.add_action(Workspace::toggle_sidebar_item);
@@ -65,6 +77,27 @@ pub fn init(cx: &mut MutableAppContext) {
         ),
     ]);
     pane::init(cx);
+}
+
+pub struct AppState {
+    pub settings_tx: Arc<Mutex<watch::Sender<Settings>>>,
+    pub settings: watch::Receiver<Settings>,
+    pub languages: Arc<LanguageRegistry>,
+    pub themes: Arc<ThemeRegistry>,
+    pub client: Arc<client::Client>,
+    pub user_store: ModelHandle<client::UserStore>,
+    pub fs: Arc<dyn fs::Fs>,
+    pub channel_list: ModelHandle<client::ChannelList>,
+    pub entry_openers: Arc<[Box<dyn EntryOpener>]>,
+    pub build_window_options: &'static dyn Fn() -> WindowOptions<'static>,
+    pub build_workspace:
+        &'static dyn Fn(&WorkspaceParams, &mut ViewContext<Workspace>) -> Workspace,
+}
+
+#[derive(Clone)]
+pub struct OpenParams {
+    pub paths: Vec<PathBuf>,
+    pub app_state: Arc<AppState>,
 }
 
 pub trait EntryOpener {
@@ -1225,4 +1258,87 @@ impl Element for AvatarRibbon {
             "color": self.color.to_json(),
         })
     }
+}
+
+impl std::fmt::Debug for OpenParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenParams")
+            .field("paths", &self.paths)
+            .finish()
+    }
+}
+
+impl<'a> From<&'a AppState> for WorkspaceParams {
+    fn from(state: &'a AppState) -> Self {
+        Self {
+            client: state.client.clone(),
+            fs: state.fs.clone(),
+            languages: state.languages.clone(),
+            settings: state.settings.clone(),
+            user_store: state.user_store.clone(),
+            channel_list: state.channel_list.clone(),
+            entry_openers: state.entry_openers.clone(),
+        }
+    }
+}
+
+fn open(action: &Open, cx: &mut MutableAppContext) {
+    let app_state = action.0.clone();
+    cx.prompt_for_paths(
+        PathPromptOptions {
+            files: true,
+            directories: true,
+            multiple: true,
+        },
+        move |paths, cx| {
+            if let Some(paths) = paths {
+                cx.dispatch_global_action(OpenPaths(OpenParams { paths, app_state }));
+            }
+        },
+    );
+}
+
+pub fn open_paths(
+    abs_paths: &[PathBuf],
+    app_state: &Arc<AppState>,
+    cx: &mut MutableAppContext,
+) -> Task<ViewHandle<Workspace>> {
+    log::info!("open paths {:?}", abs_paths);
+
+    // Open paths in existing workspace if possible
+    let mut existing = None;
+    for window_id in cx.window_ids().collect::<Vec<_>>() {
+        if let Some(workspace) = cx.root_view::<Workspace>(window_id) {
+            if workspace.update(cx, |view, cx| {
+                if view.contains_paths(abs_paths, cx.as_ref()) {
+                    existing = Some(workspace.clone());
+                    true
+                } else {
+                    false
+                }
+            }) {
+                break;
+            }
+        }
+    }
+
+    let workspace = existing.unwrap_or_else(|| {
+        cx.add_window((app_state.build_window_options)(), |cx| {
+            (app_state.build_workspace)(&WorkspaceParams::from(app_state.as_ref()), cx)
+        })
+        .1
+    });
+
+    let task = workspace.update(cx, |workspace, cx| workspace.open_paths(abs_paths, cx));
+    cx.spawn(|_| async move {
+        task.await;
+        workspace
+    })
+}
+
+fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
+    let (window_id, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
+        (app_state.build_workspace)(&app_state.as_ref().into(), cx)
+    });
+    cx.dispatch_action(window_id, vec![workspace.id()], &OpenNew(app_state.clone()));
 }

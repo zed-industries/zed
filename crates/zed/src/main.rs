@@ -9,8 +9,10 @@ use parking_lot::Mutex;
 use simplelog::SimpleLogger;
 use std::{fs, path::PathBuf, sync::Arc};
 use theme::{ThemeRegistry, DEFAULT_THEME_NAME};
-use workspace::{self, settings, OpenNew, Settings};
-use zed::{self, assets::Assets, fs::RealFs, language, menus, AppState, OpenParams, OpenPaths};
+use workspace::{self, settings, AppState, OpenNew, OpenParams, OpenPaths, Settings};
+use zed::{
+    self, assets::Assets, build_window_options, build_workspace, fs::RealFs, language, menus,
+};
 
 fn main() {
     init_logger();
@@ -71,7 +73,10 @@ fn main() {
             user_store,
             fs: Arc::new(RealFs),
             entry_openers: Arc::from(entry_openers),
+            build_window_options: &build_window_options,
+            build_workspace: &build_workspace,
         });
+        journal::init(app_state.clone(), cx);
         zed::init(&app_state, cx);
         theme_selector::init(app_state.as_ref().into(), cx);
 
@@ -83,7 +88,7 @@ fn main() {
 
         let paths = collect_path_args();
         if paths.is_empty() {
-            cx.dispatch_global_action(OpenNew(app_state.as_ref().into()));
+            cx.dispatch_global_action(OpenNew(app_state.clone()));
         } else {
             cx.dispatch_global_action(OpenPaths(OpenParams { paths, app_state }));
         }

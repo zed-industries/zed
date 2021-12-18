@@ -28,23 +28,24 @@ test-support = [
 ]
 
 [dependencies]
-text = { path = "../text" }
 chat_panel = { path = "../chat_panel" }
 client = { path = "../client" }
 clock = { path = "../clock" }
-fsevent = { path = "../fsevent" }
-fuzzy = { path = "../fuzzy" }
+contacts_panel = { path = "../contacts_panel" }
 editor = { path = "../editor" }
 file_finder = { path = "../file_finder" }
+fsevent = { path = "../fsevent" }
+fuzzy = { path = "../fuzzy" }
 go_to_line = { path = "../go_to_line" }
 gpui = { path = "../gpui" }
+journal = { path = "../journal" }
 language = { path = "../language" }
 lsp = { path = "../lsp" }
-contacts_panel = { path = "../contacts_panel" }
 project = { path = "../project" }
 project_panel = { path = "../project_panel" }
 rpc = { path = "../rpc" }
 sum_tree = { path = "../sum_tree" }
+text = { path = "../text" }
 theme = { path = "../theme" }
 theme_selector = { path = "../theme_selector" }
 util = { path = "../util" }
