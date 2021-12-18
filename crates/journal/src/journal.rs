@@ -24,13 +24,13 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
 
     let journal_dir = home_dir.join("journal");
     let month_dir = journal_dir
-        .join(now.year().to_string())
-        .join(now.month().to_string());
-    let entry_path = month_dir.join(format!("{}.md", now.day()));
+        .join(format!("{:2}", now.year()))
+        .join(format!("{:2}", now.month()));
+    let entry_path = month_dir.join(format!("{:2}.md", now.day()));
     let now = now.time();
     let (pm, hour) = now.hour12();
     let am_or_pm = if pm { "PM" } else { "AM" };
-    let entry_heading = format!("# {}:{} {}\n\n", hour, now.minute(), am_or_pm);
+    let entry_heading = format!("# {}:{:2} {}\n\n", hour, now.minute(), am_or_pm);
 
     let create_entry = cx.background().spawn(async move {
         std::fs::create_dir_all(month_dir)?;
