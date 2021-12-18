@@ -43,7 +43,10 @@ pub trait ResultExt {
     fn warn_on_err(self) -> Option<Self::Ok>;
 }
 
-impl<T> ResultExt for anyhow::Result<T> {
+impl<T, E> ResultExt for Result<T, E>
+where
+    E: std::fmt::Debug,
+{
     type Ok = T;
 
     fn log_err(self) -> Option<T> {

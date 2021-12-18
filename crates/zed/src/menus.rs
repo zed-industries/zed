@@ -1,19 +1,9 @@
-use crate::{AppState, WorkspaceParams};
+use crate::AppState;
 use gpui::{Menu, MenuItem};
 use std::sync::Arc;
 
 #[cfg(target_os = "macos")]
 pub fn menus(state: &Arc<AppState>) -> Vec<Menu<'static>> {
-    let workspace_params = WorkspaceParams {
-        client: state.client.clone(),
-        fs: state.fs.clone(),
-        languages: state.languages.clone(),
-        settings: state.settings.clone(),
-        user_store: state.user_store.clone(),
-        channel_list: state.channel_list.clone(),
-        entry_openers: state.entry_openers.clone(),
-    };
-
     vec![
         Menu {
             name: "Zed",
@@ -37,13 +27,13 @@ pub fn menus(state: &Arc<AppState>) -> Vec<Menu<'static>> {
                 MenuItem::Action {
                     name: "New",
                     keystroke: Some("cmd-n"),
-                    action: Box::new(workspace::OpenNew(workspace_params)),
+                    action: Box::new(workspace::OpenNew(state.clone())),
                 },
                 MenuItem::Separator,
                 MenuItem::Action {
                     name: "Open…",
                     keystroke: Some("cmd-o"),
-                    action: Box::new(crate::Open(state.clone())),
+                    action: Box::new(workspace::Open(state.clone())),
                 },
             ],
         },

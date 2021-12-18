@@ -1,4 +1,4 @@
-use crate::{assets::Assets, AppState};
+use crate::{assets::Assets, build_window_options, build_workspace, AppState};
 use client::{http::ServerResponse, test::FakeHttpClient, ChannelList, Client, UserStore};
 use gpui::{AssetSource, MutableAppContext};
 use language::LanguageRegistry;
@@ -42,6 +42,8 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
         user_store,
         fs: Arc::new(FakeFs::new()),
         entry_openers: Arc::from(entry_openers),
+        build_window_options: &build_window_options,
+        build_workspace: &build_workspace,
     })
 }
 
