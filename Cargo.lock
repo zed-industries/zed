@@ -2501,9 +2501,9 @@ dependencies = [
 name = "journal"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "chrono",
  "dirs 4.0.0",
+ "editor",
  "gpui",
  "log",
  "util",

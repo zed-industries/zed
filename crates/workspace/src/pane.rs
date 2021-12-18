@@ -107,15 +107,15 @@ impl Pane {
         &mut self,
         project_path: ProjectPath,
         cx: &mut ViewContext<Self>,
-    ) -> bool {
+    ) -> Option<Box<dyn ItemViewHandle>> {
         if let Some(index) = self.items.iter().position(|item| {
             item.project_path(cx.as_ref())
                 .map_or(false, |item_path| item_path == project_path)
         }) {
             self.activate_item(index, cx);
-            true
+            self.items.get(index).map(|handle| handle.boxed_clone())
         } else {
-            false
+            None
         }
     }
 

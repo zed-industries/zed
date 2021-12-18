@@ -498,7 +498,7 @@ impl Workspace {
         &mut self,
         abs_paths: &[PathBuf],
         cx: &mut ViewContext<Self>,
-    ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>> {
+    ) -> Task<Vec<Option<Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>>>> {
         let entries = abs_paths
             .iter()
             .cloned()
@@ -625,10 +625,12 @@ impl Workspace {
         &mut self,
         project_path: ProjectPath,
         cx: &mut ViewContext<Self>,
-    ) -> Option<Task<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>> {
+    ) -> Option<Task<Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>>> {
         let pane = self.active_pane().clone();
-        if self.activate_or_open_existing_entry(project_path.clone(), &pane, cx) {
-            return None;
+        if let Some(existing_item) =
+            self.activate_or_open_existing_entry(project_path.clone(), &pane, cx)
+        {
+            return Some(cx.foreground().spawn(async move { Ok(existing_item) }));
         }
 
         let worktree = match self
@@ -687,10 +689,13 @@ impl Workspace {
                 // By the time loading finishes, the entry could have been already added
                 // to the pane. If it was, we activate it, otherwise we'll store the
                 // item and add a new view for it.
-                if !this.activate_or_open_existing_entry(project_path, &pane, cx) {
-                    this.add_item(item.boxed_clone(), cx);
+                if let Some(existing) =
+                    this.activate_or_open_existing_entry(project_path, &pane, cx)
+                {
+                    Ok(existing)
+                } else {
+                    Ok(this.add_item(item.boxed_clone(), cx))
                 }
-                Ok(item)
             })
         }))
     }
@@ -700,11 +705,13 @@ impl Workspace {
         project_path: ProjectPath,
         pane: &ViewHandle<Pane>,
         cx: &mut ViewContext<Self>,
-    ) -> bool {
+    ) -> Option<Box<dyn ItemViewHandle>> {
         // If the pane contains a view for this file, then activate
         // that item view.
-        if pane.update(cx, |pane, cx| pane.activate_entry(project_path.clone(), cx)) {
-            return true;
+        if let Some(existing_item_view) =
+            pane.update(cx, |pane, cx| pane.activate_entry(project_path.clone(), cx))
+        {
+            return Some(existing_item_view);
         }
 
         // Otherwise, if this file is already open somewhere in the workspace,
@@ -727,10 +734,10 @@ impl Workspace {
             }
         });
         if let Some(view) = view_for_existing_item {
-            pane.add_item_view(view, cx.as_mut());
-            true
+            pane.add_item_view(view.boxed_clone(), cx.as_mut());
+            Some(view)
         } else {
-            false
+            None
         }
     }
 
@@ -875,13 +882,19 @@ impl Workspace {
         pane
     }
 
-    pub fn add_item<T>(&mut self, item_handle: T, cx: &mut ViewContext<Self>)
+    pub fn add_item<T>(
+        &mut self,
+        item_handle: T,
+        cx: &mut ViewContext<Self>,
+    ) -> Box<dyn ItemViewHandle>
     where
         T: ItemHandle,
     {
         let view = item_handle.add_view(cx.window_id(), self.settings.clone(), cx);
         self.items.push(item_handle.downgrade());
-        self.active_pane().add_item_view(view, cx.as_mut());
+        self.active_pane()
+            .add_item_view(view.boxed_clone(), cx.as_mut());
+        view
     }
 
     fn activate_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {

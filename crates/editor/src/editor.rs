@@ -1251,7 +1251,7 @@ impl Editor {
         }
     }
 
-    fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
+    pub fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         let old_selections = self.selections::<usize>(cx).collect::<SmallVec<[_; 32]>>();
         let mut new_selections = Vec::new();
