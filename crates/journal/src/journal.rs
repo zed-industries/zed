@@ -9,22 +9,11 @@ use workspace::AppState;
 action!(NewJournalEntry);
 
 pub fn init(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
-    log::info!("JOURNAL INIT");
     cx.add_bindings(vec![Binding::new("ctrl-alt-cmd-j", NewJournalEntry, None)]);
-
-    let mut counter = 0;
-    cx.add_global_action(move |_: &NewJournalEntry, cx| {
-        log::info!("NEW JOURNAL ENTRY ACTION");
-        counter += 1;
-        if counter == 2 {
-            log::info!("called twice?");
-        }
-        new_journal_entry(app_state.clone(), cx)
-    });
+    cx.add_global_action(move |_: &NewJournalEntry, cx| new_journal_entry(app_state.clone(), cx));
 }
 
 pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
-    log::info!("NEW JOURNAL ENTRY");
     let paths = cx.background().spawn(async move {
         let now = Local::now();
         let home_dir = dirs::home_dir().ok_or_else(|| anyhow!("can't determine home directory"))?;
@@ -50,13 +39,16 @@ pub fn new_journal_entry(app_state: Arc<AppState>, cx: &mut MutableAppContext) {
                 .update(|cx| workspace::open_paths(&[journal_dir], &app_state, cx))
                 .await;
 
-            workspace
+            let opened = workspace
                 .update(&mut cx, |workspace, cx| {
                     workspace.open_paths(&[entry_path], cx)
                 })
                 .await;
 
-            dbg!(workspace);
+            if let Some(Some(Ok(item))) = opened.first() {
+                log::info!("opened an item!");
+            }
+
             Ok(())
         }
         .log_err()

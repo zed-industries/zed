@@ -494,7 +494,11 @@ impl Workspace {
         }
     }
 
-    pub fn open_paths(&mut self, abs_paths: &[PathBuf], cx: &mut ViewContext<Self>) -> Task<()> {
+    pub fn open_paths(
+        &mut self,
+        abs_paths: &[PathBuf],
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Vec<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>> {
         let entries = abs_paths
             .iter()
             .cloned()
@@ -510,26 +514,26 @@ impl Workspace {
                 cx.spawn(|this, mut cx| {
                     let fs = fs.clone();
                     async move {
-                        let project_path = project_path.await?;
+                        let project_path = project_path.await.ok()?;
                         if fs.is_file(&abs_path).await {
                             if let Some(entry) =
                                 this.update(&mut cx, |this, cx| this.open_entry(project_path, cx))
                             {
-                                entry.await;
+                                return Some(entry.await);
                             }
                         }
-                        Ok(())
+                        None
                     }
                 })
             })
-            .collect::<Vec<Task<Result<()>>>>();
+            .collect::<Vec<_>>();
 
         cx.foreground().spawn(async move {
+            let mut items = Vec::new();
             for task in tasks {
-                if let Err(error) = task.await {
-                    log::error!("error opening paths {}", error);
-                }
+                items.push(task.await);
             }
+            items
         })
     }
 
@@ -621,7 +625,7 @@ impl Workspace {
         &mut self,
         project_path: ProjectPath,
         cx: &mut ViewContext<Self>,
-    ) -> Option<Task<()>> {
+    ) -> Option<Task<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>> {
         let pane = self.active_pane().clone();
         if self.activate_or_open_existing_entry(project_path.clone(), &pane, cx) {
             return None;
@@ -676,21 +680,17 @@ impl Workspace {
 
             this.update(&mut cx, |this, cx| {
                 this.loading_items.remove(&project_path);
-                if let Some(pane) = pane.upgrade(&cx) {
-                    match load_result {
-                        Ok(item) => {
-                            // By the time loading finishes, the entry could have been already added
-                            // to the pane. If it was, we activate it, otherwise we'll store the
-                            // item and add a new view for it.
-                            if !this.activate_or_open_existing_entry(project_path, &pane, cx) {
-                                this.add_item(item, cx);
-                            }
-                        }
-                        Err(error) => {
-                            log::error!("error opening item: {}", error);
-                        }
-                    }
+                let pane = pane
+                    .upgrade(&cx)
+                    .ok_or_else(|| anyhow!("could not upgrade pane reference"))?;
+                let item = load_result?;
+                // By the time loading finishes, the entry could have been already added
+                // to the pane. If it was, we activate it, otherwise we'll store the
+                // item and add a new view for it.
+                if !this.activate_or_open_existing_entry(project_path, &pane, cx) {
+                    this.add_item(item.boxed_clone(), cx);
                 }
+                Ok(item)
             })
         }))
     }
