@@ -22,14 +22,14 @@ pub struct User {
 #[derive(Debug)]
 pub struct Contact {
     pub user: Arc<User>,
-    pub worktrees: Vec<WorktreeMetadata>,
+    pub projects: Vec<ProjectMetadata>,
 }
 
 #[derive(Debug)]
-pub struct WorktreeMetadata {
+pub struct ProjectMetadata {
     pub id: u64,
-    pub root_name: String,
     pub is_shared: bool,
+    pub worktree_root_names: Vec<String>,
     pub guests: Vec<Arc<User>>,
 }
 
@@ -112,7 +112,7 @@ impl UserStore {
         let mut user_ids = HashSet::new();
         for contact in &message.contacts {
             user_ids.insert(contact.user_id);
-            user_ids.extend(contact.worktrees.iter().flat_map(|w| &w.guests).copied());
+            user_ids.extend(contact.projects.iter().flat_map(|w| &w.guests).copied());
         }
 
         let load_users = self.load_users(user_ids.into_iter().collect(), cx);
@@ -221,10 +221,10 @@ impl Contact {
                 user_store.fetch_user(contact.user_id, cx)
             })
             .await?;
-        let mut worktrees = Vec::new();
-        for worktree in contact.worktrees {
+        let mut projects = Vec::new();
+        for project in contact.projects {
             let mut guests = Vec::new();
-            for participant_id in worktree.guests {
+            for participant_id in project.guests {
                 guests.push(
                     user_store
                         .update(cx, |user_store, cx| {
@@ -233,14 +233,14 @@ impl Contact {
                         .await?,
                 );
             }
-            worktrees.push(WorktreeMetadata {
-                id: worktree.id,
-                root_name: worktree.root_name,
-                is_shared: worktree.is_shared,
+            projects.push(ProjectMetadata {
+                id: project.id,
+                worktree_root_names: project.worktree_root_names.clone(),
+                is_shared: project.is_shared,
                 guests,
             });
         }
-        Ok(Self { user, worktrees })
+        Ok(Self { user, projects })
     }
 }
 

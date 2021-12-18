@@ -60,8 +60,8 @@ impl Server {
 
         server
             .add_handler(Server::ping)
-            .add_handler(Server::open_worktree)
-            .add_handler(Server::close_worktree)
+            .add_handler(Server::register_worktree)
+            .add_handler(Server::unregister_worktree)
             .add_handler(Server::share_worktree)
             .add_handler(Server::unshare_worktree)
             .add_handler(Server::join_worktree)
@@ -169,26 +169,26 @@ impl Server {
         self.peer.disconnect(connection_id).await;
         let removed_connection = self.state_mut().remove_connection(connection_id)?;
 
-        for (worktree_id, worktree) in removed_connection.hosted_worktrees {
-            if let Some(share) = worktree.share {
+        for (project_id, project) in removed_connection.hosted_projects {
+            if let Some(share) = project.share {
                 broadcast(
                     connection_id,
                     share.guests.keys().copied().collect(),
                     |conn_id| {
                         self.peer
-                            .send(conn_id, proto::UnshareWorktree { worktree_id })
+                            .send(conn_id, proto::UnshareProject { project_id })
                     },
                 )
                 .await?;
             }
         }
 
-        for (worktree_id, peer_ids) in removed_connection.guest_worktree_ids {
+        for (project_id, peer_ids) in removed_connection.guest_project_ids {
             broadcast(connection_id, peer_ids, |conn_id| {
                 self.peer.send(
                     conn_id,
-                    proto::RemoveCollaborator {
-                        worktree_id,
+                    proto::RemoveProjectCollaborator {
+                        project_id,
                         peer_id: connection_id.0,
                     },
                 )
@@ -207,9 +207,9 @@ impl Server {
         Ok(())
     }
 
-    async fn open_worktree(
+    async fn register_worktree(
         mut self: Arc<Server>,
-        request: TypedEnvelope<proto::OpenWorktree>,
+        request: TypedEnvelope<proto::RegisterWorktree>,
     ) -> tide::Result<()> {
         let receipt = request.receipt();
         let host_user_id = self.state().user_id_for_connection(request.sender_id)?;
@@ -232,38 +232,54 @@ impl Server {
         }
 
         let contact_user_ids = contact_user_ids.into_iter().collect::<Vec<_>>();
-        let worktree_id = self.state_mut().add_worktree(Worktree {
-            host_connection_id: request.sender_id,
-            host_user_id,
-            authorized_user_ids: contact_user_ids.clone(),
-            root_name: request.payload.root_name,
-            share: None,
-        });
+        let ok = self.state_mut().register_worktree(
+            request.project_id,
+            request.worktree_id,
+            Worktree {
+                authorized_user_ids: contact_user_ids.clone(),
+                root_name: request.payload.root_name,
+            },
+        );
 
-        self.peer
-            .respond(receipt, proto::OpenWorktreeResponse { worktree_id })
-            .await?;
-        self.update_contacts_for_users(&contact_user_ids).await?;
+        if ok {
+            self.peer.respond(receipt, proto::Ack {}).await?;
+            self.update_contacts_for_users(&contact_user_ids).await?;
+        } else {
+            self.peer
+                .respond_with_error(
+                    receipt,
+                    proto::Error {
+                        message: "no such project".to_string(),
+                    },
+                )
+                .await?;
+        }
 
         Ok(())
     }
 
-    async fn close_worktree(
+    async fn unregister_worktree(
         mut self: Arc<Server>,
-        request: TypedEnvelope<proto::CloseWorktree>,
+        request: TypedEnvelope<proto::UnregisterWorktree>,
     ) -> tide::Result<()> {
+        let project_id = request.payload.project_id;
         let worktree_id = request.payload.worktree_id;
-        let worktree = self
-            .state_mut()
-            .remove_worktree(worktree_id, request.sender_id)?;
+        let worktree =
+            self.state_mut()
+                .unregister_worktree(project_id, worktree_id, request.sender_id)?;
 
         if let Some(share) = worktree.share {
             broadcast(
                 request.sender_id,
                 share.guests.keys().copied().collect(),
                 |conn_id| {
-                    self.peer
-                        .send(conn_id, proto::UnshareWorktree { worktree_id })
+                    self.peer.send(
+                        conn_id,
+                        proto::UnregisterWorktree {
+                            project_id,
+                            worktree_id,
+                        },
+                    )
                 },
             )
             .await?;

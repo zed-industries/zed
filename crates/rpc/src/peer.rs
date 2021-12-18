@@ -388,6 +388,7 @@ mod tests {
                     .request(
                         client1_conn_id,
                         proto::OpenBuffer {
+                            project_id: 0,
                             worktree_id: 1,
                             path: "path/one".to_string(),
                         },
@@ -410,6 +411,7 @@ mod tests {
                     .request(
                         client2_conn_id,
                         proto::OpenBuffer {
+                            project_id: 0,
                             worktree_id: 2,
                             path: "path/two".to_string(),
                         },

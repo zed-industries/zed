@@ -8,29 +8,38 @@ use std::collections::hash_map;
 pub struct Store {
     connections: HashMap<ConnectionId, ConnectionState>,
     connections_by_user_id: HashMap<UserId, HashSet<ConnectionId>>,
-    worktrees: HashMap<u64, Worktree>,
-    visible_worktrees_by_user_id: HashMap<UserId, HashSet<u64>>,
+    projects: HashMap<u64, Project>,
+    visible_projects_by_user_id: HashMap<UserId, HashSet<u64>>,
     channels: HashMap<ChannelId, Channel>,
     next_worktree_id: u64,
 }
 
 struct ConnectionState {
     user_id: UserId,
-    worktrees: HashSet<u64>,
+    projects: HashSet<u64>,
     channels: HashSet<ChannelId>,
 }
 
-pub struct Worktree {
+pub struct Project {
     pub host_connection_id: ConnectionId,
     pub host_user_id: UserId,
+    pub share: Option<ProjectShare>,
+    worktrees: HashMap<u64, Worktree>,
+}
+
+pub struct Worktree {
     pub authorized_user_ids: Vec<UserId>,
     pub root_name: String,
-    pub share: Option<WorktreeShare>,
+}
+
+#[derive(Default)]
+pub struct ProjectShare {
+    pub guests: HashMap<ConnectionId, (ReplicaId, UserId)>,
+    pub active_replica_ids: HashSet<ReplicaId>,
+    pub worktrees: HashMap<u64, WorktreeShare>,
 }
 
 pub struct WorktreeShare {
-    pub guests: HashMap<ConnectionId, (ReplicaId, UserId)>,
-    pub active_replica_ids: HashSet<ReplicaId>,
     pub entries: HashMap<u64, proto::Entry>,
 }
 
@@ -43,8 +52,8 @@ pub type ReplicaId = u16;
 
 #[derive(Default)]
 pub struct RemovedConnectionState {
-    pub hosted_worktrees: HashMap<u64, Worktree>,
-    pub guest_worktree_ids: HashMap<u64, Vec<ConnectionId>>,
+    pub hosted_projects: HashMap<u64, Project>,
+    pub guest_project_ids: HashMap<u64, Vec<ConnectionId>>,
     pub contact_ids: HashSet<UserId>,
 }
 
@@ -69,7 +78,7 @@ impl Store {
             connection_id,
             ConnectionState {
                 user_id,
-                worktrees: Default::default(),
+                projects: Default::default(),
                 channels: Default::default(),
             },
         );
@@ -106,7 +115,7 @@ impl Store {
 
         let mut result = RemovedConnectionState::default();
         for worktree_id in connection.worktrees.clone() {
-            if let Ok(worktree) = self.remove_worktree(worktree_id, connection_id) {
+            if let Ok(worktree) = self.unregister_worktree(worktree_id, connection_id) {
                 result
                     .contact_ids
                     .extend(worktree.authorized_user_ids.iter().copied());
@@ -174,12 +183,12 @@ impl Store {
 
     pub fn contacts_for_user(&self, user_id: UserId) -> Vec<proto::Contact> {
         let mut contacts = HashMap::default();
-        for worktree_id in self
-            .visible_worktrees_by_user_id
+        for project_id in self
+            .visible_projects_by_user_id
             .get(&user_id)
             .unwrap_or(&HashSet::default())
         {
-            let worktree = &self.worktrees[worktree_id];
+            let project = &self.projects[project_id];
 
             let mut guests = HashSet::default();
             if let Ok(share) = worktree.share() {
@@ -190,18 +199,22 @@ impl Store {
                 }
             }
 
-            if let Ok(host_user_id) = self.user_id_for_connection(worktree.host_connection_id) {
+            if let Ok(host_user_id) = self.user_id_for_connection(project.host_connection_id) {
                 contacts
                     .entry(host_user_id)
                     .or_insert_with(|| proto::Contact {
                         user_id: host_user_id.to_proto(),
-                        worktrees: Vec::new(),
+                        projects: Vec::new(),
                     })
-                    .worktrees
-                    .push(proto::WorktreeMetadata {
-                        id: *worktree_id,
-                        root_name: worktree.root_name.clone(),
-                        is_shared: worktree.share.is_some(),
+                    .projects
+                    .push(proto::ProjectMetadata {
+                        id: *project_id,
+                        worktree_root_names: project
+                            .worktrees
+                            .iter()
+                            .map(|worktree| worktree.root_name.clone())
+                            .collect(),
+                        is_shared: project.share.is_some(),
                         guests: guests.into_iter().collect(),
                     });
             }
@@ -210,41 +223,75 @@ impl Store {
         contacts.into_values().collect()
     }
 
-    pub fn add_worktree(&mut self, worktree: Worktree) -> u64 {
-        let worktree_id = self.next_worktree_id;
-        for authorized_user_id in &worktree.authorized_user_ids {
-            self.visible_worktrees_by_user_id
-                .entry(*authorized_user_id)
-                .or_default()
-                .insert(worktree_id);
-        }
-        self.next_worktree_id += 1;
-        if let Some(connection) = self.connections.get_mut(&worktree.host_connection_id) {
-            connection.worktrees.insert(worktree_id);
-        }
-        self.worktrees.insert(worktree_id, worktree);
-
-        #[cfg(test)]
-        self.check_invariants();
-
-        worktree_id
+    pub fn register_project(
+        &mut self,
+        host_connection_id: ConnectionId,
+        host_user_id: UserId,
+    ) -> u64 {
+        let project_id = self.next_project_id;
+        self.projects.insert(
+            project_id,
+            Project {
+                host_connection_id,
+                host_user_id,
+                share: None,
+                worktrees: Default::default(),
+            },
+        );
+        self.next_project_id += 1;
+        project_id
     }
 
-    pub fn remove_worktree(
+    pub fn register_worktree(
         &mut self,
+        project_id: u64,
+        worktree_id: u64,
+        worktree: Worktree,
+    ) -> bool {
+        if let Some(project) = self.projects.get_mut(&project_id) {
+            for authorized_user_id in &worktree.authorized_user_ids {
+                self.visible_projects_by_user_id
+                    .entry(*authorized_user_id)
+                    .or_default()
+                    .insert(project_id);
+            }
+            if let Some(connection) = self.connections.get_mut(&project.host_connection_id) {
+                connection.projects.insert(project_id);
+            }
+            project.worktrees.insert(worktree_id, worktree);
+
+            #[cfg(test)]
+            self.check_invariants();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn unregister_project(&mut self, project_id: u64) {
+        todo!()
+    }
+
+    pub fn unregister_worktree(
+        &mut self,
+        project_id: u64,
         worktree_id: u64,
         acting_connection_id: ConnectionId,
     ) -> tide::Result<Worktree> {
-        let worktree = if let hash_map::Entry::Occupied(e) = self.worktrees.entry(worktree_id) {
-            if e.get().host_connection_id != acting_connection_id {
-                Err(anyhow!("not your worktree"))?;
-            }
-            e.remove()
-        } else {
-            return Err(anyhow!("no such worktree"))?;
-        };
+        let project = self
+            .projects
+            .get_mut(&project_id)
+            .ok_or_else(|| anyhow!("no such project"))?;
+        if project.host_connection_id != acting_connection_id {
+            Err(anyhow!("not your worktree"))?;
+        }
 
-        if let Some(connection) = self.connections.get_mut(&worktree.host_connection_id) {
+        let worktree = project
+            .worktrees
+            .remove(&worktree_id)
+            .ok_or_else(|| anyhow!("no such worktree"))?;
+
+        if let Some(connection) = self.connections.get_mut(&project.host_connection_id) {
             connection.worktrees.remove(&worktree_id);
         }
 
@@ -271,20 +318,31 @@ impl Store {
         Ok(worktree)
     }
 
+    pub fn share_project(&mut self, project_id: u64, connection_id: ConnectionId) -> bool {
+        if let Some(project) = self.projects.get_mut(&project_id) {
+            if project.host_connection_id == connection_id {
+                project.share = Some(ProjectShare::default());
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn share_worktree(
         &mut self,
+        project_id: u64,
         worktree_id: u64,
         connection_id: ConnectionId,
         entries: HashMap<u64, proto::Entry>,
     ) -> Option<Vec<UserId>> {
-        if let Some(worktree) = self.worktrees.get_mut(&worktree_id) {
-            if worktree.host_connection_id == connection_id {
-                worktree.share = Some(WorktreeShare {
-                    guests: Default::default(),
-                    active_replica_ids: Default::default(),
-                    entries,
-                });
-                return Some(worktree.authorized_user_ids.clone());
+        if let Some(project) = self.projects.get_mut(&project_id) {
+            if project.host_connection_id == connection_id {
+                if let Some(share) = project.share.as_mut() {
+                    share
+                        .worktrees
+                        .insert(worktree_id, WorktreeShare { entries });
+                    return Some(project.authorized_user_ids());
+                }
             }
         }
         None
@@ -586,14 +644,14 @@ impl Worktree {
         }
     }
 
-    pub fn share(&self) -> tide::Result<&WorktreeShare> {
+    pub fn share(&self) -> tide::Result<&ProjectShare> {
         Ok(self
             .share
             .as_ref()
             .ok_or_else(|| anyhow!("worktree is not shared"))?)
     }
 
-    fn share_mut(&mut self) -> tide::Result<&mut WorktreeShare> {
+    fn share_mut(&mut self) -> tide::Result<&mut ProjectShare> {
         Ok(self
             .share
             .as_mut()
