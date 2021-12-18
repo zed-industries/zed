@@ -667,7 +667,7 @@ pub struct MutableAppContext {
     assets: Arc<AssetCache>,
     cx: AppContext,
     actions: HashMap<TypeId, HashMap<TypeId, Vec<Box<ActionCallback>>>>,
-    global_actions: HashMap<TypeId, Vec<Box<GlobalActionCallback>>>,
+    global_actions: HashMap<TypeId, Box<GlobalActionCallback>>,
     keystroke_matcher: keymap::Matcher,
     next_entity_id: usize,
     next_window_id: usize,
@@ -838,10 +838,13 @@ impl MutableAppContext {
             handler(action, cx);
         });
 
-        self.global_actions
-            .entry(TypeId::of::<A>())
-            .or_default()
-            .push(handler);
+        if self
+            .global_actions
+            .insert(TypeId::of::<A>(), handler)
+            .is_some()
+        {
+            panic!("registered multiple global handlers for the same action type");
+        }
     }
 
     pub fn window_ids(&self) -> impl Iterator<Item = usize> + '_ {
@@ -1125,7 +1128,7 @@ impl MutableAppContext {
             }
 
             if !halted_dispatch {
-                this.dispatch_global_action_any(action);
+                halted_dispatch = this.dispatch_global_action_any(action);
             }
             halted_dispatch
         })
@@ -1135,13 +1138,14 @@ impl MutableAppContext {
         self.dispatch_global_action_any(&action);
     }
 
-    fn dispatch_global_action_any(&mut self, action: &dyn AnyAction) {
+    fn dispatch_global_action_any(&mut self, action: &dyn AnyAction) -> bool {
         self.update(|this| {
-            if let Some((name, mut handlers)) = this.global_actions.remove_entry(&action.id()) {
-                for handler in handlers.iter_mut().rev() {
-                    handler(action, this);
-                }
-                this.global_actions.insert(name, handlers);
+            if let Some((name, mut handler)) = this.global_actions.remove_entry(&action.id()) {
+                handler(action, this);
+                this.global_actions.insert(name, handler);
+                true
+            } else {
+                false
             }
         })
     }
