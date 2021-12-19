@@ -1,4 +1,5 @@
 mod admin;
+mod api;
 mod assets;
 mod auth;
 mod community;
@@ -43,6 +44,7 @@ pub struct Config {
     pub github_client_id: String,
     pub github_client_secret: String,
     pub github_private_key: String,
+    pub api_token: String,
 }
 
 pub struct AppState {
@@ -173,6 +175,7 @@ pub async fn run_server(
         .with_same_site_policy(SameSite::Lax), // Required obtain our session in /auth_callback
     );
     web.with(errors::Middleware);
+    api::add_routes(&mut web);
     home::add_routes(&mut web);
     team::add_routes(&mut web);
     releases::add_routes(&mut web);
