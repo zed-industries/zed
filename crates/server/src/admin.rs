@@ -30,10 +30,10 @@ impl RequestExt for Request {
 
 pub fn add_routes(app: &mut tide::Server<Arc<AppState>>) {
     app.at("/admin").get(get_admin_page);
-    app.at("/users").post(post_user);
-    app.at("/users/:id").put(put_user);
-    app.at("/users/:id/delete").post(delete_user);
-    app.at("/signups/:id/delete").post(delete_signup);
+    app.at("/admin/users").post(post_user);
+    app.at("/admin/users/:id").put(put_user);
+    app.at("/admin/users/:id/delete").post(delete_user);
+    app.at("/admin/signups/:id/delete").post(delete_signup);
 }
 
 #[derive(Serialize)]
