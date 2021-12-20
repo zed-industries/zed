@@ -617,12 +617,13 @@ mod tests {
         )
         .await;
 
-        let project = cx.add_model(|_| {
-            Project::new(
+        let project = cx.add_model(|cx| {
+            Project::local(
                 params.languages.clone(),
                 params.client.clone(),
                 params.user_store.clone(),
                 params.fs.clone(),
+                cx,
             )
         });
         let root1 = project

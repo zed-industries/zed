@@ -358,12 +358,13 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(params: &WorkspaceParams, cx: &mut ViewContext<Self>) -> Self {
-        let project = cx.add_model(|_| {
-            Project::new(
+        let project = cx.add_model(|cx| {
+            Project::local(
                 params.languages.clone(),
                 params.client.clone(),
                 params.user_store.clone(),
                 params.fs.clone(),
+                cx,
             )
         });
         cx.observe(&project, |_, _, cx| cx.notify()).detach();
@@ -988,24 +989,25 @@ impl Workspace {
     }
 
     fn render_collaborators(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> Vec<ElementBox> {
-        let mut elements = Vec::new();
-        if let Some(active_worktree) = self.project.read(cx).active_worktree() {
-            let collaborators = active_worktree
-                .read(cx)
-                .collaborators()
-                .values()
-                .cloned()
-                .collect::<Vec<_>>();
-            for collaborator in collaborators {
-                elements.push(self.render_avatar(
+        let mut collaborators = self
+            .project
+            .read(cx)
+            .collaborators()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        collaborators.sort_unstable_by_key(|collaborator| collaborator.replica_id);
+        collaborators
+            .into_iter()
+            .map(|collaborator| {
+                self.render_avatar(
                     Some(&collaborator.user),
                     Some(collaborator.replica_id),
                     theme,
                     cx,
-                ));
-            }
-        }
-        elements
+                )
+            })
+            .collect()
     }
 
     fn render_avatar(

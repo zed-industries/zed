@@ -213,7 +213,8 @@ impl Project {
             subscriptions: vec![
                 client.subscribe_to_entity(remote_id, cx, Self::handle_add_collaborator),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_remove_collaborator),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_register_worktree),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_share_worktree),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_unregister_worktree),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_update_worktree),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
@@ -229,14 +230,6 @@ impl Project {
     fn set_remote_id(&mut self, remote_id: Option<u64>, cx: &mut ModelContext<Self>) {
         if let ProjectClientState::Local { remote_id_tx, .. } = &mut self.client_state {
             *remote_id_tx.borrow_mut() = remote_id;
-        }
-
-        for worktree in &self.worktrees {
-            worktree.update(cx, |worktree, _| {
-                if let Some(worktree) = worktree.as_local_mut() {
-                    worktree.set_project_remote_id(remote_id);
-                }
-            });
         }
 
         self.subscriptions.clear();
@@ -307,7 +300,11 @@ impl Project {
             this.update(&mut cx, |this, cx| {
                 for worktree in &this.worktrees {
                     worktree.update(cx, |worktree, cx| {
-                        worktree.as_local_mut().unwrap().share(cx).detach();
+                        worktree
+                            .as_local_mut()
+                            .unwrap()
+                            .share(remote_id, cx)
+                            .detach();
                     });
                 }
             });
@@ -327,6 +324,13 @@ impl Project {
         }
     }
 
+    fn is_shared(&self) -> bool {
+        match &self.client_state {
+            ProjectClientState::Local { is_shared, .. } => *is_shared,
+            ProjectClientState::Remote { .. } => false,
+        }
+    }
+
     pub fn add_local_worktree(
         &mut self,
         abs_path: &Path,
@@ -337,32 +341,35 @@ impl Project {
         let user_store = self.user_store.clone();
         let languages = self.languages.clone();
         let path = Arc::from(abs_path);
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|project, mut cx| async move {
             let worktree =
                 Worktree::open_local(client.clone(), user_store, path, fs, languages, &mut cx)
                     .await?;
-            this.update(&mut cx, |this, cx| {
-                if let Some(project_id) = this.remote_id() {
-                    worktree.update(cx, |worktree, cx| {
-                        let worktree = worktree.as_local_mut().unwrap();
-                        worktree.set_project_remote_id(Some(project_id));
-                        let serialized_worktree = worktree.to_proto(cx);
-                        let authorized_logins = worktree.authorized_logins();
-                        cx.foreground()
-                            .spawn(async move {
-                                client
-                                    .request(proto::RegisterWorktree {
-                                        project_id,
-                                        worktree: Some(serialized_worktree),
-                                        authorized_logins,
-                                    })
-                                    .log_err();
-                            })
-                            .detach();
-                    });
-                }
-                this.add_worktree(worktree.clone(), cx);
+
+            let (remote_project_id, is_shared) = project.update(&mut cx, |project, cx| {
+                project.add_worktree(worktree.clone(), cx);
+                (project.remote_id(), project.is_shared())
             });
+
+            if let Some(project_id) = remote_project_id {
+                let register_message = worktree.update(&mut cx, |worktree, _| {
+                    let worktree = worktree.as_local_mut().unwrap();
+                    proto::RegisterWorktree {
+                        project_id,
+                        root_name: worktree.root_name().to_string(),
+                        authorized_logins: worktree.authorized_logins(),
+                    }
+                });
+                client.request(register_message).await?;
+                if is_shared {
+                    worktree
+                        .update(&mut cx, |worktree, cx| {
+                            worktree.as_local_mut().unwrap().share(project_id, cx)
+                        })
+                        .await?;
+                }
+            }
+
             Ok(worktree)
         })
     }
@@ -476,9 +483,9 @@ impl Project {
         Ok(())
     }
 
-    fn handle_register_worktree(
+    fn handle_share_worktree(
         &mut self,
-        envelope: TypedEnvelope<proto::RegisterWorktree>,
+        envelope: TypedEnvelope<proto::ShareWorktree>,
         client: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
@@ -502,6 +509,19 @@ impl Project {
             .log_err()
         })
         .detach();
+        Ok(())
+    }
+
+    fn handle_unregister_worktree(
+        &mut self,
+        envelope: TypedEnvelope<proto::UnregisterWorktree>,
+        _: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        self.worktrees.retain(|worktree| {
+            worktree.read(cx).as_remote().unwrap().remote_id() != envelope.payload.worktree_id
+        });
+        cx.notify();
         Ok(())
     }
 

@@ -208,7 +208,7 @@ impl Worktree {
                 }
 
                 Worktree::Remote(RemoteWorktree {
-                    project_remote_id,
+                    project_id: project_remote_id,
                     remote_id,
                     replica_id,
                     snapshot,
@@ -230,6 +230,14 @@ impl Worktree {
 
     pub fn as_local(&self) -> Option<&LocalWorktree> {
         if let Worktree::Local(worktree) = self {
+            Some(worktree)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_remote(&self) -> Option<&RemoteWorktree> {
+        if let Worktree::Remote(worktree) = self {
             Some(worktree)
         } else {
             None
@@ -483,8 +491,10 @@ impl Worktree {
         let sender_id = envelope.original_sender_id()?;
         let this = self.as_local().unwrap();
         let project_id = this
-            .project_remote_id
-            .ok_or_else(|| anyhow!("can't save buffer while disconnected"))?;
+            .share
+            .as_ref()
+            .ok_or_else(|| anyhow!("can't save buffer while disconnected"))?
+            .project_id;
 
         let buffer = this
             .shared_buffers
@@ -756,13 +766,12 @@ impl Worktree {
         operation: Operation,
         cx: &mut ModelContext<Self>,
     ) {
-        if let Some((rpc, project_id)) = match self {
+        if let Some((project_id, rpc)) = match self {
             Worktree::Local(worktree) => worktree
-                .project_remote_id
-                .map(|id| (worktree.client.clone(), id)),
-            Worktree::Remote(worktree) => {
-                Some((worktree.client.clone(), worktree.project_remote_id))
-            }
+                .share
+                .as_ref()
+                .map(|share| (share.project_id, worktree.client.clone())),
+            Worktree::Remote(worktree) => Some((worktree.project_id, worktree.client.clone())),
         } {
             cx.spawn(|worktree, mut cx| async move {
                 if let Err(error) = rpc
@@ -809,7 +818,6 @@ pub struct LocalWorktree {
     background_snapshot: Arc<Mutex<Snapshot>>,
     last_scan_state_rx: watch::Receiver<ScanState>,
     _background_scanner_task: Option<Task<()>>,
-    project_remote_id: Option<u64>,
     poll_task: Option<Task<()>>,
     share: Option<ShareState>,
     loading_buffers: LoadingBuffers,
@@ -826,11 +834,12 @@ pub struct LocalWorktree {
 }
 
 struct ShareState {
+    project_id: u64,
     snapshots_tx: Sender<Snapshot>,
 }
 
 pub struct RemoteWorktree {
-    project_remote_id: u64,
+    project_id: u64,
     remote_id: u64,
     snapshot: Snapshot,
     snapshot_rx: watch::Receiver<Snapshot>,
@@ -913,7 +922,6 @@ impl LocalWorktree {
             let tree = Self {
                 snapshot: snapshot.clone(),
                 config,
-                project_remote_id: None,
                 background_snapshot: Arc::new(Mutex::new(snapshot)),
                 last_scan_state_rx,
                 _background_scanner_task: None,
@@ -963,10 +971,6 @@ impl LocalWorktree {
         });
 
         Ok((tree, scan_states_tx))
-    }
-
-    pub fn set_project_remote_id(&mut self, id: Option<u64>) {
-        self.project_remote_id = id;
     }
 
     pub fn authorized_logins(&self) -> Vec<String> {
@@ -1244,62 +1248,53 @@ impl LocalWorktree {
         })
     }
 
-    pub fn share(&mut self, cx: &mut ModelContext<Worktree>) -> Task<anyhow::Result<()>> {
+    pub fn share(
+        &mut self,
+        project_id: u64,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<anyhow::Result<()>> {
+        if self.share.is_some() {
+            return Task::ready(Ok(()));
+        }
+
         let snapshot = self.snapshot();
         let rpc = self.client.clone();
-        let project_id = self.project_remote_id;
         let worktree_id = cx.model_id() as u64;
-        cx.spawn(|this, mut cx| async move {
-            let project_id = project_id.ok_or_else(|| anyhow!("no project id"))?;
+        let (snapshots_to_send_tx, snapshots_to_send_rx) = smol::channel::unbounded::<Snapshot>();
+        self.share = Some(ShareState {
+            project_id,
+            snapshots_tx: snapshots_to_send_tx,
+        });
 
-            let (snapshots_to_send_tx, snapshots_to_send_rx) =
-                smol::channel::unbounded::<Snapshot>();
-            cx.background()
-                .spawn({
-                    let rpc = rpc.clone();
-                    async move {
-                        let mut prev_snapshot = snapshot;
-                        while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
-                            let message = snapshot.build_update(
-                                &prev_snapshot,
-                                project_id,
-                                worktree_id,
-                                false,
-                            );
-                            match rpc.send(message).await {
-                                Ok(()) => prev_snapshot = snapshot,
-                                Err(err) => log::error!("error sending snapshot diff {}", err),
-                            }
+        cx.background()
+            .spawn({
+                let rpc = rpc.clone();
+                let snapshot = snapshot.clone();
+                async move {
+                    let mut prev_snapshot = snapshot;
+                    while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
+                        let message =
+                            snapshot.build_update(&prev_snapshot, project_id, worktree_id, false);
+                        match rpc.send(message).await {
+                            Ok(()) => prev_snapshot = snapshot,
+                            Err(err) => log::error!("error sending snapshot diff {}", err),
                         }
                     }
-                })
-                .detach();
+                }
+            })
+            .detach();
 
-            this.update(&mut cx, |worktree, _| {
-                let worktree = worktree.as_local_mut().unwrap();
-                worktree.share = Some(ShareState {
-                    snapshots_tx: snapshots_to_send_tx,
-                });
-            });
+        let share_message = cx.background().spawn(async move {
+            proto::ShareWorktree {
+                project_id,
+                worktree: Some(snapshot.to_proto()),
+            }
+        });
 
+        cx.foreground().spawn(async move {
+            rpc.request(share_message.await).await?;
             Ok(())
         })
-    }
-
-    pub fn to_proto(&self, cx: &mut ModelContext<Worktree>) -> proto::Worktree {
-        let id = cx.model_id() as u64;
-        let snapshot = self.snapshot();
-        let root_name = self.root_name.clone();
-        proto::Worktree {
-            id,
-            root_name,
-            entries: snapshot
-                .entries_by_path
-                .cursor::<()>()
-                .filter(|e| !e.is_ignored)
-                .map(Into::into)
-                .collect(),
-        }
     }
 }
 
@@ -1339,6 +1334,10 @@ impl fmt::Debug for LocalWorktree {
 }
 
 impl RemoteWorktree {
+    pub fn remote_id(&self) -> u64 {
+        self.remote_id
+    }
+
     fn get_open_buffer(
         &mut self,
         path: &Path,
@@ -1368,7 +1367,7 @@ impl RemoteWorktree {
     ) -> Task<Result<ModelHandle<Buffer>>> {
         let rpc = self.client.clone();
         let replica_id = self.replica_id;
-        let project_id = self.project_remote_id;
+        let project_id = self.project_id;
         let remote_worktree_id = self.remote_id;
         let root_path = self.snapshot.abs_path.clone();
         let path: Arc<Path> = Arc::from(path);
@@ -1481,6 +1480,20 @@ impl Snapshot {
         self.id
     }
 
+    pub fn to_proto(&self) -> proto::Worktree {
+        let root_name = self.root_name.clone();
+        proto::Worktree {
+            id: self.id as u64,
+            root_name,
+            entries: self
+                .entries_by_path
+                .cursor::<()>()
+                .filter(|e| !e.is_ignored)
+                .map(Into::into)
+                .collect(),
+        }
+    }
+
     pub fn build_update(
         &self,
         other: &Self,
@@ -1540,6 +1553,7 @@ impl Snapshot {
         proto::UpdateWorktree {
             project_id,
             worktree_id,
+            root_name: self.root_name().to_string(),
             updated_entries,
             removed_entries,
         }
@@ -1902,7 +1916,7 @@ impl language::File for File {
         self.worktree.update(cx, |worktree, cx| match worktree {
             Worktree::Local(worktree) => {
                 let rpc = worktree.client.clone();
-                let project_id = worktree.project_remote_id;
+                let project_id = worktree.share.as_ref().map(|share| share.project_id);
                 let save = worktree.save(self.path.clone(), text, cx);
                 cx.background().spawn(async move {
                     let entry = save.await?;
@@ -1921,7 +1935,7 @@ impl language::File for File {
             }
             Worktree::Remote(worktree) => {
                 let rpc = worktree.client.clone();
-                let project_id = worktree.project_remote_id;
+                let project_id = worktree.project_id;
                 cx.foreground().spawn(async move {
                     let response = rpc
                         .request(proto::SaveBuffer {
@@ -1961,7 +1975,7 @@ impl language::File for File {
         let worktree_id = self.worktree.id() as u64;
         self.worktree.update(cx, |worktree, cx| {
             if let Worktree::Remote(worktree) = worktree {
-                let project_id = worktree.project_remote_id;
+                let project_id = worktree.project_id;
                 let rpc = worktree.client.clone();
                 cx.background()
                     .spawn(async move {

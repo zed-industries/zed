@@ -213,7 +213,7 @@ impl workspace::Item for ProjectDiagnostics {
         })
         .detach();
 
-        ProjectDiagnosticsEditor::new(project.read(cx).replica_id(cx), settings, cx)
+        ProjectDiagnosticsEditor::new(project.read(cx).replica_id(), settings, cx)
     }
 
     fn project_path(&self) -> Option<project::ProjectPath> {

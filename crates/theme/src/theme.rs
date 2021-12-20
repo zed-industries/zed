@@ -155,10 +155,10 @@ pub struct ContactsPanel {
     pub host_username: ContainedText,
     pub tree_branch_width: f32,
     pub tree_branch_color: Color,
-    pub shared_worktree: WorktreeRow,
-    pub hovered_shared_worktree: WorktreeRow,
-    pub unshared_worktree: WorktreeRow,
-    pub hovered_unshared_worktree: WorktreeRow,
+    pub shared_project: WorktreeRow,
+    pub hovered_shared_project: WorktreeRow,
+    pub unshared_project: WorktreeRow,
+    pub hovered_unshared_project: WorktreeRow,
 }
 
 #[derive(Deserialize, Default)]

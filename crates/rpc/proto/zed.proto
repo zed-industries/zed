@@ -96,7 +96,7 @@ message LeaveProject {
 
 message RegisterWorktree {
     uint64 project_id = 1;
-    Worktree worktree = 2;
+    string root_name = 2;
     repeated string authorized_logins = 3;
 }
 
@@ -113,8 +113,9 @@ message ShareWorktree {
 message UpdateWorktree {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
-    repeated Entry updated_entries = 3;
-    repeated uint64 removed_entries = 4;
+    string root_name = 3;
+    repeated Entry updated_entries = 4;
+    repeated uint64 removed_entries = 5;
 }
 
 message AddProjectCollaborator {

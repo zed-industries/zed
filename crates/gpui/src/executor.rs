@@ -54,6 +54,7 @@ type AnyLocalTask = async_task::Task<Box<dyn Any + 'static>>;
 
 #[must_use]
 pub enum Task<T> {
+    Ready(Option<T>),
     Local {
         any_task: AnyLocalTask,
         result_type: PhantomData<T>,
@@ -594,6 +595,10 @@ pub fn deterministic(seed: u64) -> (Rc<Foreground>, Arc<Background>) {
 }
 
 impl<T> Task<T> {
+    pub fn ready(value: T) -> Self {
+        Self::Ready(Some(value))
+    }
+
     fn local(any_task: AnyLocalTask) -> Self {
         Self::Local {
             any_task,
@@ -603,6 +608,7 @@ impl<T> Task<T> {
 
     pub fn detach(self) {
         match self {
+            Task::Ready(_) => {}
             Task::Local { any_task, .. } => any_task.detach(),
             Task::Send { any_task, .. } => any_task.detach(),
         }
@@ -621,6 +627,7 @@ impl<T: Send> Task<T> {
 impl<T: fmt::Debug> fmt::Debug for Task<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Task::Ready(value) => value.fmt(f),
             Task::Local { any_task, .. } => any_task.fmt(f),
             Task::Send { any_task, .. } => any_task.fmt(f),
         }
@@ -632,6 +639,7 @@ impl<T: 'static> Future for Task<T> {
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match unsafe { self.get_unchecked_mut() } {
+            Task::Ready(value) => Poll::Ready(value.take().unwrap()),
             Task::Local { any_task, .. } => {
                 any_task.poll(cx).map(|value| *value.downcast().unwrap())
             }
