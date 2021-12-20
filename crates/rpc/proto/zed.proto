@@ -96,9 +96,8 @@ message LeaveProject {
 
 message RegisterWorktree {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
-    string root_name = 3;
-    repeated string authorized_logins = 4;
+    Worktree worktree = 2;
+    repeated string authorized_logins = 3;
 }
 
 message UnregisterWorktree {

@@ -11,12 +11,12 @@ use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
 use language::{Buffer, DiagnosticEntry, LanguageRegistry};
 use lsp::DiagnosticSeverity;
-use postage::{prelude::Stream, sink::Sink, watch};
+use postage::{prelude::Stream, watch};
 use std::{
     path::Path,
     sync::{atomic::AtomicBool, Arc},
 };
-use util::{ResultExt, TryFutureExt as _};
+use util::TryFutureExt as _;
 
 pub use fs::*;
 pub use worktree::*;
@@ -115,7 +115,7 @@ impl Project {
         let (remote_id_tx, remote_id_rx) = watch::channel();
         let _maintain_remote_id_task = cx.spawn_weak({
             let rpc = client.clone();
-            move |this, cx| {
+            move |this, mut cx| {
                 async move {
                     let mut status = rpc.status();
                     while let Some(status) = status.recv().await {
@@ -228,11 +228,11 @@ impl Project {
 
     fn set_remote_id(&mut self, remote_id: Option<u64>, cx: &mut ModelContext<Self>) {
         if let ProjectClientState::Local { remote_id_tx, .. } = &mut self.client_state {
-            cx.foreground().spawn(remote_id_tx.send(remote_id)).detach();
+            *remote_id_tx.borrow_mut() = remote_id;
         }
 
         for worktree in &self.worktrees {
-            worktree.update(cx, |worktree, cx| {
+            worktree.update(cx, |worktree, _| {
                 if let Some(worktree) = worktree.as_local_mut() {
                     worktree.set_project_remote_id(remote_id);
                 }
@@ -259,7 +259,7 @@ impl Project {
         }
     }
 
-    pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {
+    pub fn replica_id(&self) -> ReplicaId {
         match &self.client_state {
             ProjectClientState::Local { .. } => 0,
             ProjectClientState::Remote { replica_id, .. } => *replica_id,
@@ -284,7 +284,7 @@ impl Project {
     pub fn share(&self, cx: &mut ModelContext<Self>) -> Task<anyhow::Result<()>> {
         let rpc = self.client.clone();
         cx.spawn(|this, mut cx| async move {
-            let remote_id = this.update(&mut cx, |this, cx| {
+            let remote_id = this.update(&mut cx, |this, _| {
                 if let ProjectClientState::Local {
                     is_shared,
                     remote_id_rx,
@@ -339,51 +339,28 @@ impl Project {
         let path = Arc::from(abs_path);
         cx.spawn(|this, mut cx| async move {
             let worktree =
-                Worktree::open_local(client, user_store, path, fs, languages, &mut cx).await?;
+                Worktree::open_local(client.clone(), user_store, path, fs, languages, &mut cx)
+                    .await?;
             this.update(&mut cx, |this, cx| {
                 if let Some(project_id) = this.remote_id() {
                     worktree.update(cx, |worktree, cx| {
-                        worktree
-                            .as_local_mut()
-                            .unwrap()
-                            .set_project_remote_id(Some(project_id));
-                        cx.foreground().spawn(
-                            client
-                                .request(proto::RegisterWorktree {
-                                    project_id,
-                                    root_name: worktree.root_name().to_string(),
-                                    authorized_logins: worktree.authorized_logins(),
-                                    worktree_id: worktree.id() as u64,
-                                })
-                                .log_err(),
-                        );
+                        let worktree = worktree.as_local_mut().unwrap();
+                        worktree.set_project_remote_id(Some(project_id));
+                        let serialized_worktree = worktree.to_proto(cx);
+                        let authorized_logins = worktree.authorized_logins();
+                        cx.foreground()
+                            .spawn(async move {
+                                client
+                                    .request(proto::RegisterWorktree {
+                                        project_id,
+                                        worktree: Some(serialized_worktree),
+                                        authorized_logins,
+                                    })
+                                    .log_err();
+                            })
+                            .detach();
                     });
                 }
-                this.add_worktree(worktree.clone(), cx);
-            });
-            Ok(worktree)
-        })
-    }
-
-    pub fn add_remote_worktree(
-        &mut self,
-        remote_id: u64,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<ModelHandle<Worktree>>> {
-        let rpc = self.client.clone();
-        let languages = self.languages.clone();
-        let user_store = self.user_store.clone();
-        cx.spawn(|this, mut cx| async move {
-            let worktree =
-                Worktree::remote(rpc.clone(), remote_id, languages, user_store, &mut cx).await?;
-            this.update(&mut cx, |this, cx| {
-                cx.subscribe(&worktree, move |this, _, event, cx| match event {
-                    worktree::Event::Closed => {
-                        this.close_remote_worktree(remote_id, cx);
-                        cx.notify();
-                    }
-                })
-                .detach();
                 this.add_worktree(worktree.clone(), cx);
             });
             Ok(worktree)
@@ -446,82 +423,6 @@ impl Project {
         self.active_entry
     }
 
-    pub fn share_worktree(&self, remote_id: u64, cx: &mut ModelContext<Self>) {
-        let rpc = self.client.clone();
-        cx.spawn(|this, mut cx| {
-            async move {
-                rpc.authenticate_and_connect(&cx).await?;
-
-                let task = this.update(&mut cx, |this, cx| {
-                    for worktree in &this.worktrees {
-                        let task = worktree.update(cx, |worktree, cx| {
-                            worktree.as_local_mut().and_then(|worktree| {
-                                if worktree.remote_id() == Some(remote_id) {
-                                    Some(worktree.share(cx))
-                                } else {
-                                    None
-                                }
-                            })
-                        });
-                        if task.is_some() {
-                            return task;
-                        }
-                    }
-                    None
-                });
-
-                if let Some(task) = task {
-                    task.await?;
-                }
-
-                Ok(())
-            }
-            .log_err()
-        })
-        .detach();
-    }
-
-    pub fn unshare_worktree(&mut self, remote_id: u64, cx: &mut ModelContext<Self>) {
-        for worktree in &self.worktrees {
-            if worktree.update(cx, |worktree, cx| {
-                if let Some(worktree) = worktree.as_local_mut() {
-                    if worktree.remote_id() == Some(remote_id) {
-                        worktree.unshare(cx);
-                        return true;
-                    }
-                }
-                false
-            }) {
-                break;
-            }
-        }
-    }
-
-    pub fn close_remote_worktree(&mut self, id: u64, cx: &mut ModelContext<Self>) {
-        let mut reset_active = None;
-        self.worktrees.retain(|worktree| {
-            let keep = worktree.update(cx, |worktree, cx| {
-                if let Some(worktree) = worktree.as_remote_mut() {
-                    if worktree.remote_id() == id {
-                        worktree.close_all_buffers(cx);
-                        return false;
-                    }
-                }
-                true
-            });
-            if !keep {
-                cx.emit(Event::WorktreeRemoved(worktree.id()));
-                reset_active = Some(worktree.id());
-            }
-            keep
-        });
-
-        if self.active_worktree == reset_active {
-            self.active_worktree = self.worktrees.first().map(|w| w.id());
-            cx.notify();
-        }
-    }
-
     // RPC message handlers
 
     fn handle_add_collaborator(
@@ -541,9 +442,11 @@ impl Project {
             async move {
                 let collaborator =
                     Collaborator::from_proto(collaborator, &user_store, &mut cx).await?;
-                this.collaborators
-                    .insert(collaborator.peer_id, collaborator);
-                cx.notify();
+                this.update(&mut cx, |this, cx| {
+                    this.collaborators
+                        .insert(collaborator.peer_id, collaborator);
+                    cx.notify();
+                });
                 Ok(())
             }
             .log_err()
@@ -576,34 +479,43 @@ impl Project {
     fn handle_register_worktree(
         &mut self,
         envelope: TypedEnvelope<proto::RegisterWorktree>,
-        _: Arc<Client>,
+        client: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        let peer_id = PeerId(envelope.payload.peer_id);
-        let replica_id = self
-            .collaborators
-            .remove(&peer_id)
-            .ok_or_else(|| anyhow!("unknown peer {:?}", peer_id))?
-            .replica_id;
-        for worktree in &self.worktrees {
-            worktree.update(cx, |worktree, cx| {
-                worktree.remove_collaborator(peer_id, replica_id, cx);
-            })
-        }
+        let remote_id = self.remote_id().ok_or_else(|| anyhow!("invalid project"))?;
+        let replica_id = self.replica_id();
+        let worktree = envelope
+            .payload
+            .worktree
+            .ok_or_else(|| anyhow!("invalid worktree"))?;
+        let user_store = self.user_store.clone();
+        let languages = self.languages.clone();
+        cx.spawn(|this, mut cx| {
+            async move {
+                let worktree = Worktree::remote(
+                    remote_id, replica_id, worktree, client, user_store, languages, &mut cx,
+                )
+                .await?;
+                this.update(&mut cx, |this, cx| this.add_worktree(worktree, cx));
+                Ok(())
+            }
+            .log_err()
+        })
+        .detach();
         Ok(())
     }
 
     fn handle_update_worktree(
         &mut self,
-        mut envelope: TypedEnvelope<proto::UpdateWorktree>,
+        envelope: TypedEnvelope<proto::UpdateWorktree>,
         _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize) {
-            worktree
-                .as_remote_mut()
-                .unwrap()
-                .update_from_remote(envelope, cx);
+            worktree.update(cx, |worktree, cx| {
+                let worktree = worktree.as_remote_mut().unwrap();
+                worktree.update_from_remote(envelope, cx)
+            })?;
         }
         Ok(())
     }
@@ -615,7 +527,9 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize) {
-            worktree.handle_update_buffer(envelope, cx)?;
+            worktree.update(cx, |worktree, cx| {
+                worktree.handle_update_buffer(envelope, cx)
+            })?;
         }
         Ok(())
     }
@@ -627,7 +541,9 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize) {
-            worktree.handle_buffer_saved(envelope, cx);
+            worktree.update(cx, |worktree, cx| {
+                worktree.handle_buffer_saved(envelope, cx)
+            })?;
         }
         Ok(())
     }
@@ -730,14 +646,16 @@ impl Entity for Project {
     type Event = Event;
 
     fn release(&mut self, cx: &mut gpui::MutableAppContext) {
-        if let Some(project_id) = *self.remote_id.borrow() {
-            let rpc = self.client.clone();
-            cx.spawn(|_| async move {
-                if let Err(err) = rpc.send(proto::UnregisterProject { project_id }).await {
-                    log::error!("error unregistering project: {}", err);
-                }
-            })
-            .detach();
+        if let ProjectClientState::Local { remote_id_rx, .. } = &self.client_state {
+            if let Some(project_id) = *remote_id_rx.borrow() {
+                let rpc = self.client.clone();
+                cx.spawn(|_| async move {
+                    if let Err(err) = rpc.send(proto::UnregisterProject { project_id }).await {
+                        log::error!("error unregistering project: {}", err);
+                    }
+                })
+                .detach();
+            }
         }
     }
 }
@@ -874,6 +792,6 @@ mod tests {
         let client = client::Client::new();
         let http_client = FakeHttpClient::new(|_| async move { Ok(ServerResponse::new(404)) });
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        cx.add_model(|cx| Project::new(languages, client, user_store, fs, cx))
+        cx.add_model(|cx| Project::local(languages, client, user_store, fs, cx))
     }
 }
