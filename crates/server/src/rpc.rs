@@ -1174,7 +1174,8 @@ mod tests {
                 )
             })
             .unwrap()
-            .await;
+            .await
+            .unwrap();
         workspace_b.read_with(&cx_b, |workspace, cx| {
             let active_pane = workspace.active_pane().read(cx);
             assert!(active_pane.active_item().is_some());

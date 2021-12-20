@@ -1257,7 +1257,7 @@ impl Editor {
         }
     }
 
-    fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
+    pub fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         let old_selections = self.local_selections::<usize>(cx);
         let new_selections = self.buffer.update(cx, |buffer, cx| {

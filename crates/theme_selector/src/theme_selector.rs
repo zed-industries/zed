@@ -11,7 +11,7 @@ use parking_lot::Mutex;
 use postage::watch;
 use std::{cmp, sync::Arc};
 use theme::ThemeRegistry;
-use workspace::{Settings, Workspace};
+use workspace::{Settings, Workspace, AppState};
 
 #[derive(Clone)]
 pub struct ThemeSelectorParams {
@@ -315,5 +315,15 @@ impl View for ThemeSelector {
         let mut cx = Self::default_keymap_context();
         cx.set.insert("menu".into());
         cx
+    }
+}
+
+impl<'a> From<&'a AppState> for ThemeSelectorParams {
+    fn from(state: &'a AppState) -> Self {
+        Self {
+            settings_tx: state.settings_tx.clone(),
+            settings: state.settings.clone(),
+            themes: state.themes.clone(),
+        }
     }
 }

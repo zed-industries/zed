@@ -1,0 +1,16 @@
+[package]
+name = "journal"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/journal.rs"
+
+[dependencies]
+editor = { path = "../editor" }
+gpui = { path = "../gpui" }
+util = { path = "../util" }
+workspace = { path = "../workspace" }
+chrono = "0.4"
+dirs = "4.0"
+log = "0.4"
