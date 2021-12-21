@@ -215,9 +215,17 @@ impl Server {
         mut self: Arc<Server>,
         request: TypedEnvelope<proto::RegisterProject>,
     ) -> tide::Result<()> {
-        let mut state = self.state_mut();
-        let user_id = state.user_id_for_connection(request.sender_id)?;
-        state.register_project(request.sender_id, user_id);
+        let project_id = {
+            let mut state = self.state_mut();
+            let user_id = state.user_id_for_connection(request.sender_id)?;
+            state.register_project(request.sender_id, user_id)
+        };
+        self.peer
+            .respond(
+                request.receipt(),
+                proto::RegisterProjectResponse { project_id },
+            )
+            .await?;
         Ok(())
     }
 
@@ -281,10 +289,10 @@ impl Server {
                 let worktrees = joined
                     .project
                     .worktrees
-                    .values()
-                    .filter_map(|worktree| {
+                    .iter()
+                    .filter_map(|(id, worktree)| {
                         worktree.share.as_ref().map(|share| proto::Worktree {
-                            id: project_id,
+                            id: *id,
                             root_name: worktree.root_name.clone(),
                             entries: share.entries.values().cloned().collect(),
                         })
@@ -1062,7 +1070,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Join that project as client B, and see that a guest has joined as client A.
+        // Join that project as client B
         let project_b = Project::remote(
             project_id,
             client_b.clone(),
@@ -1143,8 +1151,8 @@ mod tests {
             .condition(&cx_a, |tree, cx| !tree.has_open_buffer("b.txt", cx))
             .await;
 
-        // Dropping the worktree removes client B from client A's collaborators.
-        cx_b.update(move |_| drop(worktree_b));
+        // Dropping the client B's project removes client B from client A's collaborators.
+        cx_b.update(move |_| drop(project_b));
         project_a
             .condition(&cx_a, |project, _| project.collaborators().is_empty())
             .await;
@@ -1155,12 +1163,12 @@ mod tests {
         cx_b.update(zed::contacts_panel::init);
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(FakeFs::new());
+        cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
-        cx_a.foreground().forbid_parking();
 
         // Share a project as client A
         fs.insert_tree(
@@ -1224,14 +1232,14 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_propagate_saves_and_fs_changes_in_shared_worktree(
+    async fn test_propagate_saves_and_fs_changes(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
         mut cx_c: TestAppContext,
     ) {
-        cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(FakeFs::new());
+        cx_a.foreground().forbid_parking();
 
         // Connect to a server as 3 clients.
         let mut server = TestServer::start().await;
