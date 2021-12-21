@@ -241,13 +241,15 @@ impl Project {
 
         self.subscriptions.clear();
         if let Some(remote_id) = remote_id {
+            let client = &self.client;
             self.subscriptions.extend([
-                self.client
-                    .subscribe_to_entity(remote_id, cx, Self::handle_update_worktree),
-                self.client
-                    .subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
-                self.client
-                    .subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_open_buffer),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_close_buffer),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_add_collaborator),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_remove_collaborator),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_update_worktree),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
             ]);
         }
     }
@@ -632,6 +634,35 @@ impl Project {
         if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize) {
             worktree.update(cx, |worktree, cx| {
                 worktree.handle_update_buffer(envelope, cx)
+            })?;
+        }
+        Ok(())
+    }
+
+    pub fn handle_open_buffer(
+        &mut self,
+        envelope: TypedEnvelope<proto::OpenBuffer>,
+        rpc: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> anyhow::Result<()> {
+        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize) {
+            return worktree.update(cx, |worktree, cx| {
+                worktree.handle_open_buffer(envelope, rpc, cx)
+            });
+        } else {
+            Err(anyhow!("no such worktree"))
+        }
+    }
+
+    pub fn handle_close_buffer(
+        &mut self,
+        envelope: TypedEnvelope<proto::CloseBuffer>,
+        rpc: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> anyhow::Result<()> {
+        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize) {
+            worktree.update(cx, |worktree, cx| {
+                worktree.handle_close_buffer(envelope, rpc, cx)
             })?;
         }
         Ok(())
