@@ -3274,62 +3274,6 @@ mod tests {
         });
     }
 
-    // #[gpui::test]
-    // async fn test_open_and_share_worktree(mut cx: gpui::TestAppContext) {
-    //     let user_id = 100;
-    //     let mut client = Client::new();
-    //     let server = FakeServer::for_client(user_id, &mut client, &cx).await;
-    //     let user_store = server.build_user_store(client.clone(), &mut cx).await;
-
-    //     let fs = Arc::new(FakeFs::new());
-    //     fs.insert_tree(
-    //         "/path",
-    //         json!({
-    //             "to": {
-    //                 "the-dir": {
-    //                     ".zed.toml": r#"collaborators = ["friend-1", "friend-2"]"#,
-    //                     "a.txt": "a-contents",
-    //                 },
-    //             },
-    //         }),
-    //     )
-    //     .await;
-
-    //     let worktree = Worktree::open_local(
-    //         client.clone(),
-    //         user_store,
-    //         "/path/to/the-dir".as_ref(),
-    //         fs,
-    //         Default::default(),
-    //         &mut cx.to_async(),
-    //     )
-    //     .await
-    //     .unwrap();
-
-    //     let open_worktree = server.receive::<proto::OpenWorktree>().await.unwrap();
-    //     assert_eq!(
-    //         open_worktree.payload,
-    //         proto::OpenWorktree {
-    //             root_name: "the-dir".to_string(),
-    //             authorized_logins: vec!["friend-1".to_string(), "friend-2".to_string()],
-    //         }
-    //     );
-
-    //     server
-    //         .respond(
-    //             open_worktree.receipt(),
-    //             proto::OpenWorktreeResponse { worktree_id: 5 },
-    //         )
-    //         .await;
-    //     let remote_id = worktree
-    //         .update(&mut cx, |tree, _| tree.as_local().unwrap().next_remote_id())
-    //         .await;
-    //     assert_eq!(remote_id, Some(5));
-
-    //     cx.update(move |_| drop(worktree));
-    //     server.receive::<proto::CloseWorktree>().await.unwrap();
-    // }
-
     #[gpui::test]
     async fn test_buffer_deduping(mut cx: gpui::TestAppContext) {
         let user_id = 100;
