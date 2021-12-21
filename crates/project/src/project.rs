@@ -749,12 +749,24 @@ impl Entity for Project {
     type Event = Event;
 
     fn release(&mut self, cx: &mut gpui::MutableAppContext) {
-        if let ProjectClientState::Local { remote_id_rx, .. } = &self.client_state {
-            if let Some(project_id) = *remote_id_rx.borrow() {
+        match &self.client_state {
+            ProjectClientState::Local { remote_id_rx, .. } => {
+                if let Some(project_id) = *remote_id_rx.borrow() {
+                    let rpc = self.client.clone();
+                    cx.spawn(|_| async move {
+                        if let Err(err) = rpc.send(proto::UnregisterProject { project_id }).await {
+                            log::error!("error unregistering project: {}", err);
+                        }
+                    })
+                    .detach();
+                }
+            }
+            ProjectClientState::Remote { remote_id, .. } => {
                 let rpc = self.client.clone();
+                let project_id = *remote_id;
                 cx.spawn(|_| async move {
-                    if let Err(err) = rpc.send(proto::UnregisterProject { project_id }).await {
-                        log::error!("error unregistering project: {}", err);
+                    if let Err(err) = rpc.send(proto::LeaveProject { project_id }).await {
+                        log::error!("error leaving project: {}", err);
                     }
                 })
                 .detach();
