@@ -273,9 +273,11 @@ impl Project {
             }
             let mut watch = watch.unwrap();
             loop {
-                if let Some(Some(id)) = watch.recv().await {
+                let id = *watch.borrow();
+                if let Some(id) = id {
                     return id;
                 }
+                watch.recv().await;
             }
         }
     }
