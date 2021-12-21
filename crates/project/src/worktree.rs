@@ -166,7 +166,7 @@ impl Worktree {
         let worktree = cx.update(|cx| {
             cx.add_model(|cx: &mut ModelContext<Worktree>| {
                 let snapshot = Snapshot {
-                    id: cx.model_id(),
+                    id: remote_id as usize,
                     scan_id: 0,
                     abs_path: Path::new("").into(),
                     root_name,
@@ -1034,12 +1034,12 @@ impl LocalWorktree {
         path: &Path,
         cx: &mut ModelContext<Worktree>,
     ) -> Option<ModelHandle<Buffer>> {
-        let handle = cx.handle();
+        let worktree_id = self.id();
         let mut result = None;
         self.open_buffers.retain(|_buffer_id, buffer| {
             if let Some(buffer) = buffer.upgrade(cx.as_ref()) {
                 if let Some(file) = buffer.read(cx.as_ref()).file() {
-                    if file.worktree_id() == handle.id() && file.path().as_ref() == path {
+                    if file.worktree_id() == worktree_id && file.path().as_ref() == path {
                         result = Some(buffer);
                     }
                 }
@@ -1919,7 +1919,7 @@ impl language::File for File {
         version: clock::Global,
         cx: &mut MutableAppContext,
     ) -> Task<Result<(clock::Global, SystemTime)>> {
-        let worktree_id = self.worktree.id() as u64;
+        let worktree_id = self.worktree.read(cx).id() as u64;
         self.worktree.update(cx, |worktree, cx| match worktree {
             Worktree::Local(worktree) => {
                 let rpc = worktree.client.clone();

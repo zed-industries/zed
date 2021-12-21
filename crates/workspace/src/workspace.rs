@@ -6,6 +6,7 @@ mod status_bar;
 
 use anyhow::{anyhow, Result};
 use client::{Authenticate, ChannelList, Client, User, UserStore};
+use clock::ReplicaId;
 use gpui::{
     action,
     color::Color,
@@ -641,7 +642,7 @@ impl Workspace {
         let worktree = match self
             .project
             .read(cx)
-            .worktree_for_id(project_path.worktree_id)
+            .worktree_for_id(project_path.worktree_id, cx)
         {
             Some(worktree) => worktree,
             None => {
@@ -1007,17 +1008,12 @@ impl Workspace {
                         Align::new(
                             Flex::row()
                                 .with_children(self.render_collaborators(theme, cx))
-                                .with_child(
-                                    self.render_avatar(
-                                        self.user_store.read(cx).current_user().as_ref(),
-                                        self.project
-                                            .read(cx)
-                                            .active_worktree()
-                                            .map(|worktree| worktree.read(cx).replica_id()),
-                                        theme,
-                                        cx,
-                                    ),
-                                )
+                                .with_child(self.render_avatar(
+                                    self.user_store.read(cx).current_user().as_ref(),
+                                    self.project.read(cx).replica_id(),
+                                    theme,
+                                    cx,
+                                ))
                                 .with_children(self.render_connection_status())
                                 .boxed(),
                         )
@@ -1045,12 +1041,7 @@ impl Workspace {
         collaborators
             .into_iter()
             .map(|collaborator| {
-                self.render_avatar(
-                    Some(&collaborator.user),
-                    Some(collaborator.replica_id),
-                    theme,
-                    cx,
-                )
+                self.render_avatar(Some(&collaborator.user), collaborator.replica_id, theme, cx)
             })
             .collect()
     }
@@ -1058,7 +1049,7 @@ impl Workspace {
     fn render_avatar(
         &self,
         user: Option<&Arc<User>>,
-        replica_id: Option<u16>,
+        replica_id: ReplicaId,
         theme: &Theme,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
@@ -1076,15 +1067,13 @@ impl Workspace {
                         .boxed(),
                     )
                     .with_child(
-                        AvatarRibbon::new(replica_id.map_or(Default::default(), |id| {
-                            theme.editor.replica_selection_style(id).cursor
-                        }))
-                        .constrained()
-                        .with_width(theme.workspace.titlebar.avatar_ribbon.width)
-                        .with_height(theme.workspace.titlebar.avatar_ribbon.height)
-                        .aligned()
-                        .bottom()
-                        .boxed(),
+                        AvatarRibbon::new(theme.editor.replica_selection_style(replica_id).cursor)
+                            .constrained()
+                            .with_width(theme.workspace.titlebar.avatar_ribbon.width)
+                            .with_height(theme.workspace.titlebar.avatar_ribbon.height)
+                            .aligned()
+                            .bottom()
+                            .boxed(),
                     )
                     .boxed(),
             )

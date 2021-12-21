@@ -170,6 +170,7 @@ request_messages!(
     (RegisterWorktree, Ack),
     (SaveBuffer, BufferSaved),
     (SendChannelMessage, SendChannelMessageResponse),
+    (ShareProject, Ack),
     (ShareWorktree, Ack),
     (UpdateBuffer, Ack),
 );

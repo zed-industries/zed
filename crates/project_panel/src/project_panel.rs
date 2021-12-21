@@ -118,7 +118,7 @@ impl ProjectPanel {
                 worktree_id,
                 entry_id,
             } => {
-                if let Some(worktree) = project.read(cx).worktree_for_id(*worktree_id) {
+                if let Some(worktree) = project.read(cx).worktree_for_id(*worktree_id, cx) {
                     if let Some(entry) = worktree.read(cx).entry_for_id(*entry_id) {
                         workspace
                             .open_entry(
@@ -307,7 +307,7 @@ impl ProjectPanel {
     fn selected_entry<'a>(&self, cx: &'a AppContext) -> Option<(&'a Worktree, &'a project::Entry)> {
         let selection = self.selection?;
         let project = self.project.read(cx);
-        let worktree = project.worktree_for_id(selection.worktree_id)?.read(cx);
+        let worktree = project.worktree_for_id(selection.worktree_id, cx)?.read(cx);
         Some((worktree, worktree.entry_for_id(selection.entry_id)?))
     }
 
@@ -374,7 +374,7 @@ impl ProjectPanel {
     fn expand_entry(&mut self, worktree_id: usize, entry_id: usize, cx: &mut ViewContext<Self>) {
         let project = self.project.read(cx);
         if let Some((worktree, expanded_dir_ids)) = project
-            .worktree_for_id(worktree_id)
+            .worktree_for_id(worktree_id, cx)
             .zip(self.expanded_dir_ids.get_mut(&worktree_id))
         {
             let worktree = worktree.read(cx);

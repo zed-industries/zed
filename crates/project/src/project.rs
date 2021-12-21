@@ -25,7 +25,6 @@ pub use worktree::*;
 
 pub struct Project {
     worktrees: Vec<ModelHandle<Worktree>>,
-    active_worktree: Option<usize>,
     active_entry: Option<ProjectEntry>,
     languages: Arc<LanguageRegistry>,
     client: Arc<client::Client>,
@@ -170,7 +169,6 @@ impl Project {
                     _maintain_remote_id_task,
                 },
                 subscriptions: Vec::new(),
-                active_worktree: None,
                 active_entry: None,
                 languages,
                 client,
@@ -230,7 +228,6 @@ impl Project {
 
         Ok(cx.add_model(|cx| Self {
             worktrees,
-            active_worktree: None,
             active_entry: None,
             collaborators,
             languages,
@@ -270,6 +267,7 @@ impl Project {
                 client.subscribe_to_entity(remote_id, cx, Self::handle_remove_collaborator),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_update_worktree),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_save_buffer),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
             ]);
         }
@@ -320,10 +318,10 @@ impl Project {
         &self.worktrees
     }
 
-    pub fn worktree_for_id(&self, id: usize) -> Option<ModelHandle<Worktree>> {
+    pub fn worktree_for_id(&self, id: usize, cx: &AppContext) -> Option<ModelHandle<Worktree>> {
         self.worktrees
             .iter()
-            .find(|worktree| worktree.id() == id)
+            .find(|worktree| worktree.read(cx).id() == id)
             .cloned()
     }
 
@@ -346,18 +344,19 @@ impl Project {
                 }
             })?;
 
-            rpc.send(proto::ShareProject { project_id }).await?;
+            rpc.request(proto::ShareProject { project_id }).await?;
+            let mut tasks = Vec::new();
             this.update(&mut cx, |this, cx| {
                 for worktree in &this.worktrees {
                     worktree.update(cx, |worktree, cx| {
-                        worktree
-                            .as_local_mut()
-                            .unwrap()
-                            .share(project_id, cx)
-                            .detach();
+                        let worktree = worktree.as_local_mut().unwrap();
+                        tasks.push(worktree.share(project_id, cx));
                     });
                 }
             });
+            for task in tasks {
+                task.await?;
+            }
             Ok(())
         })
     }
@@ -402,7 +401,7 @@ impl Project {
         path: ProjectPath,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
-        if let Some(worktree) = self.worktree_for_id(path.worktree_id) {
+        if let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) {
             worktree.update(cx, |worktree, cx| worktree.open_buffer(path.path, cx))
         } else {
             cx.spawn(|_, _| async move { Err(anyhow!("no such worktree")) })
@@ -463,28 +462,13 @@ impl Project {
 
     fn add_worktree(&mut self, worktree: ModelHandle<Worktree>, cx: &mut ModelContext<Self>) {
         cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
-        if self.active_worktree.is_none() {
-            self.set_active_worktree(Some(worktree.id()), cx);
-        }
         self.worktrees.push(worktree);
         cx.notify();
     }
 
-    fn set_active_worktree(&mut self, worktree_id: Option<usize>, cx: &mut ModelContext<Self>) {
-        if self.active_worktree != worktree_id {
-            self.active_worktree = worktree_id;
-            cx.notify();
-        }
-    }
-
-    pub fn active_worktree(&self) -> Option<ModelHandle<Worktree>> {
-        self.active_worktree
-            .and_then(|worktree_id| self.worktree_for_id(worktree_id))
-    }
-
     pub fn set_active_path(&mut self, entry: Option<ProjectPath>, cx: &mut ModelContext<Self>) {
         let new_active_entry = entry.and_then(|project_path| {
-            let worktree = self.worktree_for_id(project_path.worktree_id)?;
+            let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
             let entry = worktree.read(cx).entry_for_path(project_path.path)?;
             Some(ProjectEntry {
                 worktree_id: project_path.worktree_id,
@@ -492,9 +476,6 @@ impl Project {
             })
         });
         if new_active_entry != self.active_entry {
-            if let Some(worktree_id) = new_active_entry.map(|e| e.worktree_id) {
-                self.set_active_worktree(Some(worktree_id), cx);
-            }
             self.active_entry = new_active_entry;
             cx.emit(Event::ActiveEntryChanged(new_active_entry));
         }
@@ -637,7 +618,7 @@ impl Project {
         _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize) {
+        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize, cx) {
             worktree.update(cx, |worktree, cx| {
                 let worktree = worktree.as_remote_mut().unwrap();
                 worktree.update_from_remote(envelope, cx)
@@ -652,9 +633,23 @@ impl Project {
         _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize) {
+        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize, cx) {
             worktree.update(cx, |worktree, cx| {
                 worktree.handle_update_buffer(envelope, cx)
+            })?;
+        }
+        Ok(())
+    }
+
+    pub fn handle_save_buffer(
+        &mut self,
+        envelope: TypedEnvelope<proto::SaveBuffer>,
+        rpc: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize, cx) {
+            worktree.update(cx, |worktree, cx| {
+                worktree.handle_save_buffer(envelope, rpc, cx)
             })?;
         }
         Ok(())
@@ -666,7 +661,7 @@ impl Project {
         rpc: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
-        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize) {
+        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize, cx) {
             return worktree.update(cx, |worktree, cx| {
                 worktree.handle_open_buffer(envelope, rpc, cx)
             });
@@ -681,7 +676,7 @@ impl Project {
         rpc: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
-        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize) {
+        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize, cx) {
             worktree.update(cx, |worktree, cx| {
                 worktree.handle_close_buffer(envelope, rpc, cx)
             })?;
@@ -695,7 +690,7 @@ impl Project {
         _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize) {
+        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize, cx) {
             worktree.update(cx, |worktree, cx| {
                 worktree.handle_buffer_saved(envelope, cx)
             })?;

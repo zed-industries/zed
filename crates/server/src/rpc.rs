@@ -244,6 +244,7 @@ impl Server {
     ) -> tide::Result<()> {
         self.state_mut()
             .share_project(request.payload.project_id, request.sender_id);
+        self.peer.respond(request.receipt(), proto::Ack {}).await?;
         Ok(())
     }
 

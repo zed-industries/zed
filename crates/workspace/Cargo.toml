@@ -11,6 +11,7 @@ test-support = ["client/test-support", "project/test-support"]
 
 [dependencies]
 client = { path = "../client" }
+clock = { path = "../clock" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 project = { path = "../project" }
