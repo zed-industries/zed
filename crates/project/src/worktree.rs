@@ -766,18 +766,25 @@ impl Worktree {
         operation: Operation,
         cx: &mut ModelContext<Self>,
     ) {
-        if let Some((project_id, rpc)) = match self {
-            Worktree::Local(worktree) => worktree
-                .share
-                .as_ref()
-                .map(|share| (share.project_id, worktree.client.clone())),
-            Worktree::Remote(worktree) => Some((worktree.project_id, worktree.client.clone())),
+        if let Some((project_id, worktree_id, rpc)) = match self {
+            Worktree::Local(worktree) => worktree.share.as_ref().map(|share| {
+                (
+                    share.project_id,
+                    worktree.id() as u64,
+                    worktree.client.clone(),
+                )
+            }),
+            Worktree::Remote(worktree) => Some((
+                worktree.project_id,
+                worktree.remote_id,
+                worktree.client.clone(),
+            )),
         } {
             cx.spawn(|worktree, mut cx| async move {
                 if let Err(error) = rpc
                     .request(proto::UpdateBuffer {
                         project_id,
-                        worktree_id: worktree.id() as u64,
+                        worktree_id,
                         buffer_id,
                         operations: vec![language::proto::serialize_operation(&operation)],
                     })
@@ -1972,10 +1979,10 @@ impl language::File for File {
     }
 
     fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext) {
-        let worktree_id = self.worktree.id() as u64;
         self.worktree.update(cx, |worktree, cx| {
             if let Worktree::Remote(worktree) = worktree {
                 let project_id = worktree.project_id;
+                let worktree_id = worktree.remote_id;
                 let rpc = worktree.client.clone();
                 cx.background()
                     .spawn(async move {
