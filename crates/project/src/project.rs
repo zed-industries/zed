@@ -130,6 +130,27 @@ impl Project {
                                 } else {
                                     None
                                 };
+
+                                if let Some(project_id) = remote_id {
+                                    let mut registrations = Vec::new();
+                                    this.read_with(&cx, |this, cx| {
+                                        for worktree in &this.worktrees {
+                                            let worktree_id = worktree.id() as u64;
+                                            let worktree = worktree.read(cx).as_local().unwrap();
+                                            registrations.push(rpc.request(
+                                                proto::RegisterWorktree {
+                                                    project_id,
+                                                    worktree_id,
+                                                    root_name: worktree.root_name().to_string(),
+                                                    authorized_logins: worktree.authorized_logins(),
+                                                },
+                                            ));
+                                        }
+                                    });
+                                    for registration in registrations {
+                                        registration.await?;
+                                    }
+                                }
                                 this.update(&mut cx, |this, cx| this.set_remote_id(remote_id, cx));
                             }
                         }
