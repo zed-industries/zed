@@ -4,7 +4,7 @@ pub use anchor::{Anchor, AnchorRangeExt};
 use anyhow::Result;
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
-use gpui::{AppContext, ElementBox, Entity, ModelContext, ModelHandle, Task};
+use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 use language::{
     Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Selection,
     ToOffset as _, ToPoint as _, TransactionId,
@@ -86,13 +86,9 @@ pub struct MultiBufferSnapshot {
     has_conflict: bool,
 }
 
-pub type RenderHeaderFn = Arc<dyn 'static + Send + Sync + Fn(&AppContext) -> ElementBox>;
-
 pub struct ExcerptProperties<'a, T> {
     pub buffer: &'a ModelHandle<Buffer>,
     pub range: Range<T>,
-    pub header_height: u8,
-    pub render_header: Option<RenderHeaderFn>,
 }
 
 #[derive(Clone)]
@@ -101,9 +97,7 @@ struct Excerpt {
     buffer_id: usize,
     buffer: BufferSnapshot,
     range: Range<text::Anchor>,
-    render_header: Option<RenderHeaderFn>,
     text_summary: TextSummary,
-    header_height: u8,
     has_trailing_newline: bool,
 }
 
@@ -167,8 +161,6 @@ impl MultiBuffer {
             ExcerptProperties {
                 buffer: &buffer,
                 range: text::Anchor::min()..text::Anchor::max(),
-                header_height: 0,
-                render_header: None,
             },
             cx,
         );
@@ -229,8 +221,6 @@ impl MultiBuffer {
                     ExcerptProperties {
                         buffer: buffer_handle,
                         range: start_ix..end_ix,
-                        header_height,
-                        render_header: None,
                     },
                     cx,
                 );
@@ -618,15 +608,7 @@ impl MultiBuffer {
         );
 
         let id = ExcerptId::between(&prev_id.unwrap_or(ExcerptId::min()), &ExcerptId::max());
-        let excerpt = Excerpt::new(
-            id.clone(),
-            buffer.id(),
-            buffer_snapshot,
-            range,
-            props.header_height,
-            props.render_header,
-            false,
-        );
+        let excerpt = Excerpt::new(id.clone(), buffer.id(), buffer_snapshot, range, false);
         snapshot.excerpts.push(excerpt, &());
         self.buffers
             .entry(props.buffer.id())
@@ -759,8 +741,6 @@ impl MultiBuffer {
                     buffer_state.buffer.id(),
                     buffer.snapshot(),
                     old_excerpt.range.clone(),
-                    old_excerpt.header_height,
-                    old_excerpt.render_header.clone(),
                     old_excerpt.has_trailing_newline,
                 );
             } else {
@@ -819,35 +799,6 @@ impl MultiBufferSnapshot {
         self.chunks(0..self.len(), None)
             .map(|chunk| chunk.text)
             .collect()
-    }
-
-    pub fn excerpt_headers_in_range<'a>(
-        &'a self,
-        range: Range<u32>,
-    ) -> impl 'a + Iterator<Item = (u32, u8, RenderHeaderFn)> {
-        let mut cursor = self.excerpts.cursor::<Point>();
-        cursor.seek(&Point::new(range.start, 0), Bias::Right, &());
-
-        if cursor.item().is_some() && range.start > cursor.start().row {
-            cursor.next(&());
-        }
-
-        iter::from_fn(move || {
-            while let Some(excerpt) = cursor.item() {
-                if cursor.start().row >= range.end {
-                    break;
-                }
-
-                if let Some(render) = excerpt.render_header.clone() {
-                    let start = cursor.start().row;
-                    cursor.next(&());
-                    return Some((start, excerpt.header_height, render));
-                } else {
-                    cursor.next(&());
-                }
-            }
-            None
-        })
     }
 
     pub fn reversed_chars_at<'a, T: ToOffset>(
@@ -1610,8 +1561,6 @@ impl Excerpt {
         buffer_id: usize,
         buffer: BufferSnapshot,
         range: Range<text::Anchor>,
-        header_height: u8,
-        render_header: Option<RenderHeaderFn>,
         has_trailing_newline: bool,
     ) -> Self {
         Excerpt {
@@ -1620,8 +1569,6 @@ impl Excerpt {
             buffer_id,
             buffer,
             range,
-            header_height,
-            render_header,
             has_trailing_newline,
         }
     }
@@ -1974,7 +1921,7 @@ impl ToPoint for Point {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{elements::Empty, Element, MutableAppContext};
+    use gpui::MutableAppContext;
     use language::{Buffer, Rope};
     use rand::prelude::*;
     use std::env;
@@ -2020,8 +1967,6 @@ mod tests {
                 ExcerptProperties {
                     buffer: &buffer_1,
                     range: Point::new(1, 2)..Point::new(2, 5),
-                    header_height: 2,
-                    render_header: Some(Arc::new(|_| Empty::new().named("header 1"))),
                 },
                 cx,
             );
@@ -2037,8 +1982,6 @@ mod tests {
                 ExcerptProperties {
                     buffer: &buffer_1,
                     range: Point::new(3, 3)..Point::new(4, 4),
-                    header_height: 1,
-                    render_header: Some(Arc::new(|_| Empty::new().named("header 2"))),
                 },
                 cx,
             );
@@ -2046,8 +1989,6 @@ mod tests {
                 ExcerptProperties {
                     buffer: &buffer_2,
                     range: Point::new(3, 1)..Point::new(3, 3),
-                    header_height: 3,
-                    render_header: Some(Arc::new(|_| Empty::new().named("header 3"))),
                 },
                 cx,
             );
@@ -2084,49 +2025,6 @@ mod tests {
         assert_eq!(snapshot.buffer_rows(4).collect::<Vec<_>>(), [Some(3)]);
         assert_eq!(snapshot.buffer_rows(5).collect::<Vec<_>>(), []);
 
-        {
-            let snapshot = multibuffer.read(cx).read(cx);
-            assert_eq!(
-                snapshot
-                    .excerpt_headers_in_range(0..snapshot.max_point().row + 1)
-                    .map(|(start_row, header_height, render)| (
-                        start_row,
-                        header_height,
-                        render(cx).name().unwrap().to_string()
-                    ))
-                    .collect::<Vec<_>>(),
-                &[
-                    (0, 2, "header 1".into()),
-                    (2, 1, "header 2".into()),
-                    (4, 3, "header 3".into())
-                ]
-            );
-
-            assert_eq!(
-                snapshot
-                    .excerpt_headers_in_range(1..4)
-                    .map(|(start_row, header_height, render)| (
-                        start_row,
-                        header_height,
-                        render(cx).name().unwrap().to_string()
-                    ))
-                    .collect::<Vec<_>>(),
-                &[(2, 1, "header 2".into())]
-            );
-
-            assert_eq!(
-                snapshot
-                    .excerpt_headers_in_range(2..5)
-                    .map(|(start_row, header_height, render)| (
-                        start_row,
-                        header_height,
-                        render(cx).name().unwrap().to_string()
-                    ))
-                    .collect::<Vec<_>>(),
-                &[(2, 1, "header 2".into()), (4, 3, "header 3".into())]
-            );
-        }
-
         buffer_1.update(cx, |buffer, cx| {
             buffer.edit(
                 [
@@ -2158,7 +2056,6 @@ mod tests {
             }]
         );
 
-        // bbbb\nc\ncc\nddd\neeee\njj
         let multibuffer = multibuffer.read(cx).snapshot(cx);
         assert_eq!(
             multibuffer.clip_point(Point::new(0, 5), Bias::Left),
@@ -2222,8 +2119,6 @@ mod tests {
                 ExcerptProperties {
                     buffer: &buffer_1,
                     range: 0..4,
-                    header_height: 1,
-                    render_header: None,
                 },
                 cx,
             );
@@ -2231,8 +2126,6 @@ mod tests {
                 ExcerptProperties {
                     buffer: &buffer_2,
                     range: 0..5,
-                    header_height: 1,
-                    render_header: None,
                 },
                 cx,
             );
@@ -2318,8 +2211,6 @@ mod tests {
                             ExcerptProperties {
                                 buffer: &buffer_handle,
                                 range: start_ix..end_ix,
-                                header_height,
-                                render_header: None,
                             },
                             cx,
                         )
@@ -2588,8 +2479,6 @@ mod tests {
                 ExcerptProperties {
                     buffer: &buffer_1,
                     range: 0..buffer_1.read(cx).len(),
-                    header_height: 0,
-                    render_header: None,
                 },
                 cx,
             );
@@ -2597,8 +2486,6 @@ mod tests {
                 ExcerptProperties {
                     buffer: &buffer_2,
                     range: 0..buffer_2.read(cx).len(),
-                    header_height: 0,
-                    render_header: None,
                 },
                 cx,
             );

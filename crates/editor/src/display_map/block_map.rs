@@ -240,12 +240,11 @@ impl BlockMap {
                 Ok(ix) | Err(ix) => last_block_ix + ix,
             };
 
-            let new_buffer_end;
             let end_block_ix = if new_end.0 > wrap_snapshot.max_point().row() {
-                new_buffer_end = wrap_snapshot.buffer_snapshot().max_point() + Point::new(1, 0);
                 self.blocks.len()
             } else {
-                new_buffer_end = wrap_snapshot.to_point(WrapPoint::new(new_end.0, 0), Bias::Left);
+                let new_buffer_end =
+                    wrap_snapshot.to_point(WrapPoint::new(new_end.0, 0), Bias::Left);
                 let end_anchor = buffer.anchor_before(new_buffer_end);
                 match self.blocks[start_block_ix..].binary_search_by(|probe| {
                     probe
@@ -260,24 +259,6 @@ impl BlockMap {
             last_block_ix = end_block_ix;
 
             debug_assert!(blocks_in_edit.is_empty());
-            blocks_in_edit.extend(
-                wrap_snapshot
-                    .buffer_snapshot()
-                    .excerpt_headers_in_range(new_buffer_start.row..new_buffer_end.row)
-                    .map(|(start_row, header_height, render_header)| {
-                        (
-                            start_row,
-                            0,
-                            Arc::new(Block {
-                                id: Default::default(),
-                                position: Anchor::min(),
-                                height: header_height,
-                                render: Mutex::new(Arc::new(move |cx| render_header(cx))),
-                                disposition: BlockDisposition::Above,
-                            }),
-                        )
-                    }),
-            );
             blocks_in_edit.extend(
                 self.blocks[start_block_ix..end_block_ix]
                     .iter()

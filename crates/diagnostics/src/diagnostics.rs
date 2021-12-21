@@ -105,33 +105,40 @@ impl ProjectDiagnosticsEditor {
                         let excerpt_start = Point::new(range.start.row.saturating_sub(1), 0);
                         let excerpt_end = snapshot
                             .clip_point(Point::new(range.end.row + 1, u32::MAX), Bias::Left);
+                        let excerpt_id = excerpts.push_excerpt(
+                            ExcerptProperties {
+                                buffer: &buffer,
+                                range: excerpt_start..excerpt_end,
+                            },
+                            excerpts_cx,
+                        );
 
-                        let mut excerpt = ExcerptProperties {
-                            buffer: &buffer,
-                            range: excerpt_start..excerpt_end,
-                            header_height: 0,
-                            render_header: None,
-                        };
-
+                        let header_position = (excerpt_id.clone(), language::Anchor::min());
                         if is_first_excerpt {
                             let primary = &group.entries[group.primary_ix].diagnostic;
                             let mut header = primary.clone();
                             header.message =
                                 primary.message.split('\n').next().unwrap().to_string();
-                            excerpt.header_height = 2;
-                            excerpt.render_header = Some(diagnostic_header_renderer(
-                                buffer.clone(),
-                                header,
-                                self.build_settings.clone(),
-                            ));
+                            blocks.push(BlockProperties {
+                                position: header_position,
+                                height: 2,
+                                render: diagnostic_header_renderer(
+                                    buffer.clone(),
+                                    header,
+                                    self.build_settings.clone(),
+                                ),
+                                disposition: BlockDisposition::Above,
+                            });
                         } else {
-                            excerpt.header_height = 1;
-                            excerpt.render_header =
-                                Some(context_header_renderer(self.build_settings.clone()));
+                            blocks.push(BlockProperties {
+                                position: header_position,
+                                height: 1,
+                                render: context_header_renderer(self.build_settings.clone()),
+                                disposition: BlockDisposition::Above,
+                            });
                         }
 
                         is_first_excerpt = false;
-                        let excerpt_id = excerpts.push_excerpt(excerpt, excerpts_cx);
                         for entry in &group.entries[*start_ix..ix] {
                             let mut diagnostic = entry.diagnostic.clone();
                             if diagnostic.is_primary {

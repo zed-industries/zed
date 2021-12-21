@@ -238,8 +238,13 @@ fn char_kind(c: char) -> CharKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Buffer, DisplayMap, ExcerptProperties, MultiBuffer};
+    use crate::{
+        display_map::{BlockDisposition, BlockProperties},
+        Buffer, DisplayMap, ExcerptProperties, MultiBuffer,
+    };
+    use gpui::{elements::Empty, Element};
     use language::Point;
+    use std::sync::Arc;
 
     #[gpui::test]
     fn test_move_up_and_down_with_excerpts(cx: &mut gpui::MutableAppContext) {
@@ -250,31 +255,59 @@ mod tests {
             .unwrap();
 
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndefg\nhijkl\nmn", cx));
+        let mut excerpt1_header_position = None;
+        let mut excerpt2_header_position = None;
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
-            multibuffer.push_excerpt(
+            let excerpt1_id = multibuffer.push_excerpt(
                 ExcerptProperties {
                     buffer: &buffer,
                     range: Point::new(0, 0)..Point::new(1, 4),
-                    header_height: 2,
-                    render_header: None,
                 },
                 cx,
             );
-            multibuffer.push_excerpt(
+            let excerpt2_id = multibuffer.push_excerpt(
                 ExcerptProperties {
                     buffer: &buffer,
                     range: Point::new(2, 0)..Point::new(3, 2),
-                    header_height: 3,
-                    render_header: None,
                 },
                 cx,
+            );
+
+            excerpt1_header_position = Some(
+                multibuffer
+                    .read(cx)
+                    .anchor_in_excerpt(excerpt1_id, language::Anchor::min()),
+            );
+            excerpt2_header_position = Some(
+                multibuffer
+                    .read(cx)
+                    .anchor_in_excerpt(excerpt2_id, language::Anchor::min()),
             );
             multibuffer
         });
 
         let display_map =
             cx.add_model(|cx| DisplayMap::new(multibuffer, 2, font_id, 14.0, None, cx));
+        display_map.update(cx, |display_map, cx| {
+            display_map.insert_blocks(
+                [
+                    BlockProperties {
+                        position: excerpt1_header_position.unwrap(),
+                        height: 2,
+                        render: Arc::new(|_| Empty::new().boxed()),
+                        disposition: BlockDisposition::Above,
+                    },
+                    BlockProperties {
+                        position: excerpt2_header_position.unwrap(),
+                        height: 3,
+                        render: Arc::new(|_| Empty::new().boxed()),
+                        disposition: BlockDisposition::Above,
+                    },
+                ],
+                cx,
+            )
+        });
 
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\n\nhijkl\nmn");

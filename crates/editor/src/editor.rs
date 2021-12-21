@@ -28,9 +28,7 @@ use language::{
     TransactionId,
 };
 pub use multi_buffer::{Anchor, ExcerptProperties, MultiBuffer};
-use multi_buffer::{
-    AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, RenderHeaderFn, ToOffset, ToPoint,
-};
+use multi_buffer::{AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, ToOffset, ToPoint};
 use postage::watch;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -3787,12 +3785,12 @@ pub fn diagnostic_header_renderer(
     buffer: ModelHandle<Buffer>,
     diagnostic: Diagnostic,
     build_settings: BuildSettings,
-) -> RenderHeaderFn {
+) -> RenderBlock {
     Arc::new(move |cx| {
         let settings = build_settings(cx);
         let mut text_style = settings.style.text.clone();
         text_style.color = diagnostic_style(diagnostic.severity, true, &settings.style).text;
-        let file_path = if let Some(file) = buffer.read(cx).file() {
+        let file_path = if let Some(file) = buffer.read(&**cx).file() {
             file.path().to_string_lossy().to_string()
         } else {
             "untitled".to_string()
@@ -3805,7 +3803,7 @@ pub fn diagnostic_header_renderer(
     })
 }
 
-pub fn context_header_renderer(build_settings: BuildSettings) -> RenderHeaderFn {
+pub fn context_header_renderer(build_settings: BuildSettings) -> RenderBlock {
     Arc::new(move |cx| {
         let settings = build_settings(cx);
         let text_style = settings.style.text.clone();
@@ -5910,8 +5908,6 @@ mod tests {
                 ExcerptProperties {
                     buffer: &buffer,
                     range: Point::new(0, 0)..Point::new(0, 4),
-                    header_height: 0,
-                    render_header: None,
                 },
                 cx,
             );
@@ -5919,8 +5915,6 @@ mod tests {
                 ExcerptProperties {
                     buffer: &buffer,
                     range: Point::new(1, 0)..Point::new(1, 4),
-                    header_height: 0,
-                    render_header: None,
                 },
                 cx,
             );
@@ -5964,8 +5958,6 @@ mod tests {
                 ExcerptProperties {
                     buffer: &buffer,
                     range: Point::new(0, 0)..Point::new(1, 4),
-                    header_height: 0,
-                    render_header: None,
                 },
                 cx,
             );
@@ -5973,8 +5965,6 @@ mod tests {
                 ExcerptProperties {
                     buffer: &buffer,
                     range: Point::new(1, 0)..Point::new(2, 4),
-                    header_height: 0,
-                    render_header: None,
                 },
                 cx,
             );
