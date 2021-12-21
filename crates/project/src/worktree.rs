@@ -7,6 +7,7 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use clock::ReplicaId;
+use collections::BTreeMap;
 use collections::{hash_map, HashMap};
 use futures::{Stream, StreamExt};
 use fuzzy::CharBag;
@@ -218,7 +219,7 @@ impl Worktree {
                     client: client.clone(),
                     loading_buffers: Default::default(),
                     open_buffers: Default::default(),
-                    diagnostic_summaries: HashMap::default(),
+                    diagnostic_summaries: Default::default(),
                     queued_operations: Default::default(),
                     languages,
                     user_store,
@@ -832,7 +833,7 @@ pub struct LocalWorktree {
     open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
     diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<PointUtf16>>>,
-    diagnostic_summaries: HashMap<Arc<Path>, DiagnosticSummary>,
+    diagnostic_summaries: BTreeMap<Arc<Path>, DiagnosticSummary>,
     queued_operations: Vec<(u64, Operation)>,
     languages: Arc<LanguageRegistry>,
     client: Arc<Client>,
@@ -856,7 +857,7 @@ pub struct RemoteWorktree {
     replica_id: ReplicaId,
     loading_buffers: LoadingBuffers,
     open_buffers: HashMap<usize, RemoteBuffer>,
-    diagnostic_summaries: HashMap<Arc<Path>, DiagnosticSummary>,
+    diagnostic_summaries: BTreeMap<Arc<Path>, DiagnosticSummary>,
     languages: Arc<LanguageRegistry>,
     user_store: ModelHandle<UserStore>,
     queued_operations: Vec<(u64, Operation)>,
