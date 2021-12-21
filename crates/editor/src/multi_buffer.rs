@@ -68,13 +68,13 @@ pub trait FromAnchor: 'static {
     fn from_anchor(anchor: &Anchor, snapshot: &MultiBufferSnapshot) -> Self;
 }
 
-#[derive(Debug)]
 struct BufferState {
     buffer: ModelHandle<Buffer>,
     last_version: clock::Global,
     last_parse_count: usize,
     last_diagnostics_update_count: usize,
     excerpts: Vec<ExcerptId>,
+    _subscriptions: [gpui::Subscription; 2],
 }
 
 #[derive(Clone, Default)]
@@ -599,17 +599,9 @@ impl MultiBuffer {
         assert_eq!(self.history.transaction_depth, 0);
         self.sync(cx);
 
-        let buffer = props.buffer.clone();
-        cx.observe(&buffer, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&buffer, Self::on_buffer_event).detach();
-
-        let buffer_snapshot = buffer.read(cx).snapshot();
+        let buffer_snapshot = props.buffer.read(cx).snapshot();
         let range = buffer_snapshot.anchor_before(&props.range.start)
             ..buffer_snapshot.anchor_after(&props.range.end);
-        let last_version = buffer_snapshot.version().clone();
-        let last_parse_count = buffer_snapshot.parse_count();
-        let last_diagnostics_update_count = buffer_snapshot.diagnostics_update_count();
-
         let mut snapshot = self.snapshot.borrow_mut();
         let mut prev_id = None;
         let edit_start = snapshot.excerpts.summary().text.bytes;
@@ -622,27 +614,30 @@ impl MultiBuffer {
         );
 
         let id = ExcerptId::between(&prev_id.unwrap_or(ExcerptId::min()), &ExcerptId::max());
-        let excerpt = Excerpt::new(id.clone(), buffer.id(), buffer_snapshot, range, false);
-        snapshot.excerpts.push(excerpt, &());
         self.buffers
             .borrow_mut()
             .entry(props.buffer.id())
             .or_insert_with(|| BufferState {
-                buffer,
-                last_version,
-                last_parse_count,
-                last_diagnostics_update_count,
+                last_version: buffer_snapshot.version().clone(),
+                last_parse_count: buffer_snapshot.parse_count(),
+                last_diagnostics_update_count: buffer_snapshot.diagnostics_update_count(),
                 excerpts: Default::default(),
+                _subscriptions: [
+                    cx.observe(&props.buffer, |_, _, cx| cx.notify()),
+                    cx.subscribe(&props.buffer, Self::on_buffer_event),
+                ],
+                buffer: props.buffer.clone(),
             })
             .excerpts
             .push(id.clone());
+        let excerpt = Excerpt::new(id.clone(), props.buffer.id(), buffer_snapshot, range, false);
+        snapshot.excerpts.push(excerpt, &());
         self.subscriptions.publish_mut([Edit {
             old: edit_start..edit_start,
             new: edit_start..snapshot.excerpts.summary().text.bytes,
         }]);
 
         cx.notify();
-
         id
     }
 
