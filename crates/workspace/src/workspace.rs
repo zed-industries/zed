@@ -40,6 +40,7 @@ use theme::{Theme, ThemeRegistry};
 action!(Open, Arc<AppState>);
 action!(OpenNew, Arc<AppState>);
 action!(OpenPaths, OpenParams);
+action!(ToggleShare);
 action!(JoinProject, JoinProjectParams);
 action!(Save);
 action!(DebugElements);
@@ -56,6 +57,7 @@ pub fn init(cx: &mut MutableAppContext) {
         join_project(action.0.project_id, &action.0.app_state, cx).detach();
     });
 
+    cx.add_action(Workspace::toggle_share);
     cx.add_action(Workspace::save_active_item);
     cx.add_action(Workspace::debug_elements);
     cx.add_action(Workspace::toggle_sidebar_item);
@@ -992,6 +994,18 @@ impl Workspace {
         &self.active_pane
     }
 
+    fn toggle_share(&mut self, _: &ToggleShare, cx: &mut ViewContext<Self>) {
+        self.project.update(cx, |project, cx| {
+            if project.is_local() {
+                if project.is_shared() {
+                    project.unshare(cx).detach();
+                } else {
+                    project.share(cx).detach();
+                }
+            }
+        });
+    }
+
     fn render_connection_status(&self) -> Option<ElementBox> {
         let theme = &self.settings.borrow().theme;
         match &*self.client.status().borrow() {
@@ -1043,6 +1057,7 @@ impl Workspace {
                     .with_child(
                         Align::new(
                             Flex::row()
+                                .with_children(self.render_share_icon(cx))
                                 .with_children(self.render_collaborators(theme, cx))
                                 .with_child(self.render_avatar(
                                     self.user_store.read(cx).current_user().as_ref(),
@@ -1131,6 +1146,35 @@ impl Workspace {
             .with_cursor_style(CursorStyle::PointingHand)
             .aligned()
             .boxed()
+        }
+    }
+
+    fn render_share_icon(&self, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
+        if self.project().read(cx).is_local() && self.client.user_id().is_some() {
+            enum Share {}
+
+            let color = if self.project().read(cx).is_shared() {
+                Color::green()
+            } else {
+                Color::red()
+            };
+            Some(
+                MouseEventHandler::new::<Share, _, _, _>(0, cx, |_, _| {
+                    Align::new(
+                        ConstrainedBox::new(
+                            Svg::new("icons/broadcast-24.svg").with_color(color).boxed(),
+                        )
+                        .with_width(24.)
+                        .boxed(),
+                    )
+                    .boxed()
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(|cx| cx.dispatch_action(ToggleShare))
+                .boxed(),
+            )
+        } else {
+            None
         }
     }
 }

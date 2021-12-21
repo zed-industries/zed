@@ -357,6 +357,7 @@ impl Project {
             for task in tasks {
                 task.await?;
             }
+            this.update(&mut cx, |_, cx| cx.notify());
             Ok(())
         })
     }
@@ -371,7 +372,7 @@ impl Project {
                     ..
                 } = &mut this.client_state
                 {
-                    *is_shared = true;
+                    *is_shared = false;
                     remote_id_rx
                         .borrow()
                         .ok_or_else(|| anyhow!("no project id"))
@@ -381,7 +382,10 @@ impl Project {
             })?;
 
             rpc.send(proto::UnshareProject { project_id }).await?;
-
+            this.update(&mut cx, |this, cx| {
+                this.collaborators.clear();
+                cx.notify()
+            });
             Ok(())
         })
     }
@@ -393,6 +397,13 @@ impl Project {
                 sharing_has_stopped,
                 ..
             } => *sharing_has_stopped,
+        }
+    }
+
+    pub fn is_local(&self) -> bool {
+        match &self.client_state {
+            ProjectClientState::Local { .. } => true,
+            ProjectClientState::Remote { .. } => false,
         }
     }
 
@@ -408,7 +419,7 @@ impl Project {
         }
     }
 
-    fn is_shared(&self) -> bool {
+    pub fn is_shared(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Local { is_shared, .. } => *is_shared,
             ProjectClientState::Remote { .. } => false,
@@ -512,6 +523,7 @@ impl Project {
         } = &mut self.client_state
         {
             *sharing_has_stopped = true;
+            self.collaborators.clear();
             cx.notify();
             Ok(())
         } else {
