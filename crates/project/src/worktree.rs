@@ -3067,172 +3067,160 @@ mod tests {
         assert_eq!(new_text, buffer.read_with(&cx, |buffer, _| buffer.text()));
     }
 
-    // #[gpui::test]
-    // async fn test_rescan_and_remote_updates(mut cx: gpui::TestAppContext) {
-    //     let dir = temp_tree(json!({
-    //         "a": {
-    //             "file1": "",
-    //             "file2": "",
-    //             "file3": "",
-    //         },
-    //         "b": {
-    //             "c": {
-    //                 "file4": "",
-    //                 "file5": "",
-    //             }
-    //         }
-    //     }));
+    #[gpui::test]
+    async fn test_rescan_and_remote_updates(mut cx: gpui::TestAppContext) {
+        let dir = temp_tree(json!({
+            "a": {
+                "file1": "",
+                "file2": "",
+                "file3": "",
+            },
+            "b": {
+                "c": {
+                    "file4": "",
+                    "file5": "",
+                }
+            }
+        }));
 
-    //     let user_id = 5;
-    //     let mut client = Client::new();
-    //     let server = FakeServer::for_client(user_id, &mut client, &cx).await;
-    //     let user_store = server.build_user_store(client.clone(), &mut cx).await;
-    //     let tree = Worktree::open_local(
-    //         client,
-    //         user_store.clone(),
-    //         dir.path(),
-    //         Arc::new(RealFs),
-    //         Default::default(),
-    //         &mut cx.to_async(),
-    //     )
-    //     .await
-    //     .unwrap();
+        let user_id = 5;
+        let mut client = Client::new();
+        let server = FakeServer::for_client(user_id, &mut client, &cx).await;
+        let user_store = server.build_user_store(client.clone(), &mut cx).await;
+        let tree = Worktree::open_local(
+            client,
+            user_store.clone(),
+            dir.path(),
+            Arc::new(RealFs),
+            Default::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
 
-    //     let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
-    //         let buffer = tree.update(cx, |tree, cx| tree.open_buffer(path, cx));
-    //         async move { buffer.await.unwrap() }
-    //     };
-    //     let id_for_path = |path: &'static str, cx: &gpui::TestAppContext| {
-    //         tree.read_with(cx, |tree, _| {
-    //             tree.entry_for_path(path)
-    //                 .expect(&format!("no entry for path {}", path))
-    //                 .id
-    //         })
-    //     };
+        let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
+            let buffer = tree.update(cx, |tree, cx| tree.open_buffer(path, cx));
+            async move { buffer.await.unwrap() }
+        };
+        let id_for_path = |path: &'static str, cx: &gpui::TestAppContext| {
+            tree.read_with(cx, |tree, _| {
+                tree.entry_for_path(path)
+                    .expect(&format!("no entry for path {}", path))
+                    .id
+            })
+        };
 
-    //     let buffer2 = buffer_for_path("a/file2", &mut cx).await;
-    //     let buffer3 = buffer_for_path("a/file3", &mut cx).await;
-    //     let buffer4 = buffer_for_path("b/c/file4", &mut cx).await;
-    //     let buffer5 = buffer_for_path("b/c/file5", &mut cx).await;
+        let buffer2 = buffer_for_path("a/file2", &mut cx).await;
+        let buffer3 = buffer_for_path("a/file3", &mut cx).await;
+        let buffer4 = buffer_for_path("b/c/file4", &mut cx).await;
+        let buffer5 = buffer_for_path("b/c/file5", &mut cx).await;
 
-    //     let file2_id = id_for_path("a/file2", &cx);
-    //     let file3_id = id_for_path("a/file3", &cx);
-    //     let file4_id = id_for_path("b/c/file4", &cx);
+        let file2_id = id_for_path("a/file2", &cx);
+        let file3_id = id_for_path("a/file3", &cx);
+        let file4_id = id_for_path("b/c/file4", &cx);
 
-    //     // Wait for the initial scan.
-    //     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-    //         .await;
+        // Wait for the initial scan.
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
 
-    //     // Create a remote copy of this worktree.
-    //     let initial_snapshot = tree.read_with(&cx, |tree, _| tree.snapshot());
-    //     let worktree_id = 1;
-    //     let proto_message = tree.update(&mut cx, |tree, cx| tree.as_local().unwrap().to_proto(cx));
-    //     let open_worktree = server.receive::<proto::OpenWorktree>().await.unwrap();
-    //     server
-    //         .respond(
-    //             open_worktree.receipt(),
-    //             proto::OpenWorktreeResponse { worktree_id: 1 },
-    //         )
-    //         .await;
+        // Create a remote copy of this worktree.
+        let initial_snapshot = tree.read_with(&cx, |tree, _| tree.snapshot());
+        let remote = Worktree::remote(
+            1,
+            1,
+            initial_snapshot.to_proto(),
+            Client::new(),
+            user_store,
+            Default::default(),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap();
 
-    //     let remote = Worktree::remote(
-    //         proto::JoinWorktreeResponse {
-    //             worktree: Some(proto_message.await),
-    //             replica_id: 1,
-    //             collaborators: Vec::new(),
-    //         },
-    //         Client::new(),
-    //         user_store,
-    //         Default::default(),
-    //         &mut cx.to_async(),
-    //     )
-    //     .await
-    //     .unwrap();
+        cx.read(|cx| {
+            assert!(!buffer2.read(cx).is_dirty());
+            assert!(!buffer3.read(cx).is_dirty());
+            assert!(!buffer4.read(cx).is_dirty());
+            assert!(!buffer5.read(cx).is_dirty());
+        });
 
-    //     cx.read(|cx| {
-    //         assert!(!buffer2.read(cx).is_dirty());
-    //         assert!(!buffer3.read(cx).is_dirty());
-    //         assert!(!buffer4.read(cx).is_dirty());
-    //         assert!(!buffer5.read(cx).is_dirty());
-    //     });
+        // Rename and delete files and directories.
+        tree.flush_fs_events(&cx).await;
+        std::fs::rename(dir.path().join("a/file3"), dir.path().join("b/c/file3")).unwrap();
+        std::fs::remove_file(dir.path().join("b/c/file5")).unwrap();
+        std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
+        std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
+        tree.flush_fs_events(&cx).await;
 
-    //     // Rename and delete files and directories.
-    //     tree.flush_fs_events(&cx).await;
-    //     std::fs::rename(dir.path().join("a/file3"), dir.path().join("b/c/file3")).unwrap();
-    //     std::fs::remove_file(dir.path().join("b/c/file5")).unwrap();
-    //     std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
-    //     std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
-    //     tree.flush_fs_events(&cx).await;
+        let expected_paths = vec![
+            "a",
+            "a/file1",
+            "a/file2.new",
+            "b",
+            "d",
+            "d/file3",
+            "d/file4",
+        ];
 
-    //     let expected_paths = vec![
-    //         "a",
-    //         "a/file1",
-    //         "a/file2.new",
-    //         "b",
-    //         "d",
-    //         "d/file3",
-    //         "d/file4",
-    //     ];
+        cx.read(|app| {
+            assert_eq!(
+                tree.read(app)
+                    .paths()
+                    .map(|p| p.to_str().unwrap())
+                    .collect::<Vec<_>>(),
+                expected_paths
+            );
 
-    //     cx.read(|app| {
-    //         assert_eq!(
-    //             tree.read(app)
-    //                 .paths()
-    //                 .map(|p| p.to_str().unwrap())
-    //                 .collect::<Vec<_>>(),
-    //             expected_paths
-    //         );
+            assert_eq!(id_for_path("a/file2.new", &cx), file2_id);
+            assert_eq!(id_for_path("d/file3", &cx), file3_id);
+            assert_eq!(id_for_path("d/file4", &cx), file4_id);
 
-    //         assert_eq!(id_for_path("a/file2.new", &cx), file2_id);
-    //         assert_eq!(id_for_path("d/file3", &cx), file3_id);
-    //         assert_eq!(id_for_path("d/file4", &cx), file4_id);
+            assert_eq!(
+                buffer2.read(app).file().unwrap().path().as_ref(),
+                Path::new("a/file2.new")
+            );
+            assert_eq!(
+                buffer3.read(app).file().unwrap().path().as_ref(),
+                Path::new("d/file3")
+            );
+            assert_eq!(
+                buffer4.read(app).file().unwrap().path().as_ref(),
+                Path::new("d/file4")
+            );
+            assert_eq!(
+                buffer5.read(app).file().unwrap().path().as_ref(),
+                Path::new("b/c/file5")
+            );
 
-    //         assert_eq!(
-    //             buffer2.read(app).file().unwrap().path().as_ref(),
-    //             Path::new("a/file2.new")
-    //         );
-    //         assert_eq!(
-    //             buffer3.read(app).file().unwrap().path().as_ref(),
-    //             Path::new("d/file3")
-    //         );
-    //         assert_eq!(
-    //             buffer4.read(app).file().unwrap().path().as_ref(),
-    //             Path::new("d/file4")
-    //         );
-    //         assert_eq!(
-    //             buffer5.read(app).file().unwrap().path().as_ref(),
-    //             Path::new("b/c/file5")
-    //         );
+            assert!(!buffer2.read(app).file().unwrap().is_deleted());
+            assert!(!buffer3.read(app).file().unwrap().is_deleted());
+            assert!(!buffer4.read(app).file().unwrap().is_deleted());
+            assert!(buffer5.read(app).file().unwrap().is_deleted());
+        });
 
-    //         assert!(!buffer2.read(app).file().unwrap().is_deleted());
-    //         assert!(!buffer3.read(app).file().unwrap().is_deleted());
-    //         assert!(!buffer4.read(app).file().unwrap().is_deleted());
-    //         assert!(buffer5.read(app).file().unwrap().is_deleted());
-    //     });
+        // Update the remote worktree. Check that it becomes consistent with the
+        // local worktree.
+        remote.update(&mut cx, |remote, cx| {
+            let update_message =
+                tree.read(cx)
+                    .snapshot()
+                    .build_update(&initial_snapshot, 1, 1, true);
+            remote
+                .as_remote_mut()
+                .unwrap()
+                .snapshot
+                .apply_update(update_message)
+                .unwrap();
 
-    //     // Update the remote worktree. Check that it becomes consistent with the
-    //     // local worktree.
-    //     remote.update(&mut cx, |remote, cx| {
-    //         let update_message =
-    //             tree.read(cx)
-    //                 .snapshot()
-    //                 .build_update(&initial_snapshot, worktree_id, true);
-    //         remote
-    //             .as_remote_mut()
-    //             .unwrap()
-    //             .snapshot
-    //             .apply_update(update_message)
-    //             .unwrap();
-
-    //         assert_eq!(
-    //             remote
-    //                 .paths()
-    //                 .map(|p| p.to_str().unwrap())
-    //                 .collect::<Vec<_>>(),
-    //             expected_paths
-    //         );
-    //     });
-    // }
+            assert_eq!(
+                remote
+                    .paths()
+                    .map(|p| p.to_str().unwrap())
+                    .collect::<Vec<_>>(),
+                expected_paths
+            );
+        });
+    }
 
     #[gpui::test]
     async fn test_rescan_with_gitignore(mut cx: gpui::TestAppContext) {
