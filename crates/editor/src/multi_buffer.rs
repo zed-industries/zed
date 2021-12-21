@@ -641,6 +641,57 @@ impl MultiBuffer {
         id
     }
 
+    pub fn excerpt_ids_for_buffer(&self, buffer: &ModelHandle<Buffer>) -> Vec<ExcerptId> {
+        self.buffers
+            .borrow()
+            .get(&buffer.id())
+            .map_or(Vec::new(), |state| state.excerpts.clone())
+    }
+
+    pub fn remove_excerpts<'a>(
+        &mut self,
+        excerpt_ids: impl IntoIterator<Item = &'a ExcerptId>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let mut buffers = self.buffers.borrow_mut();
+        let mut snapshot = self.snapshot.borrow_mut();
+        let mut new_excerpts = SumTree::new();
+        let mut cursor = snapshot.excerpts.cursor::<(Option<&ExcerptId>, usize)>();
+        let mut edits = Vec::new();
+        for excerpt_id in excerpt_ids {
+            new_excerpts.push_tree(cursor.slice(&Some(excerpt_id), Bias::Left, &()), &());
+            if let Some(excerpt) = cursor.item() {
+                if excerpt.id == *excerpt_id {
+                    let mut old_start = cursor.start().1;
+                    let old_end = cursor.end(&()).1;
+                    cursor.next(&());
+
+                    if let Some(buffer_state) = buffers.get_mut(&excerpt.buffer_id) {
+                        buffer_state.excerpts.retain(|id| id != excerpt_id);
+                    }
+
+                    // When removing the last excerpt, remove the trailing newline from
+                    // the previous excerpt.
+                    if cursor.item().is_none() && old_start > 0 {
+                        old_start -= 1;
+                        new_excerpts.update_last(|e| e.has_trailing_newline = false, &());
+                    }
+
+                    let new_start = new_excerpts.summary().text.bytes;
+                    edits.push(Edit {
+                        old: old_start..old_end,
+                        new: new_start..new_start,
+                    });
+                }
+            }
+        }
+        new_excerpts.push_tree(cursor.suffix(&()), &());
+        drop(cursor);
+        snapshot.excerpts = new_excerpts;
+        self.subscriptions.publish_mut(edits);
+        cx.notify();
+    }
+
     fn on_buffer_event(
         &mut self,
         _: ModelHandle<Buffer>,
@@ -2063,8 +2114,9 @@ mod tests {
             );
         });
 
+        let snapshot = multibuffer.read(cx).snapshot(cx);
         assert_eq!(
-            multibuffer.read(cx).snapshot(cx).text(),
+            snapshot.text(),
             concat!(
                 "bbbb\n", // Preserve newlines
                 "c\n",    //
@@ -2083,26 +2135,43 @@ mod tests {
             }]
         );
 
-        let multibuffer = multibuffer.read(cx).snapshot(cx);
+        let snapshot = multibuffer.read(cx).snapshot(cx);
         assert_eq!(
-            multibuffer.clip_point(Point::new(0, 5), Bias::Left),
+            snapshot.clip_point(Point::new(0, 5), Bias::Left),
             Point::new(0, 4)
         );
         assert_eq!(
-            multibuffer.clip_point(Point::new(0, 5), Bias::Right),
+            snapshot.clip_point(Point::new(0, 5), Bias::Right),
             Point::new(0, 4)
         );
         assert_eq!(
-            multibuffer.clip_point(Point::new(5, 1), Bias::Right),
+            snapshot.clip_point(Point::new(5, 1), Bias::Right),
             Point::new(5, 1)
         );
         assert_eq!(
-            multibuffer.clip_point(Point::new(5, 2), Bias::Right),
+            snapshot.clip_point(Point::new(5, 2), Bias::Right),
             Point::new(5, 2)
         );
         assert_eq!(
-            multibuffer.clip_point(Point::new(5, 3), Bias::Right),
+            snapshot.clip_point(Point::new(5, 3), Bias::Right),
             Point::new(5, 2)
+        );
+
+        let snapshot = multibuffer.update(cx, |multibuffer, cx| {
+            let buffer_2_excerpt_id = multibuffer.excerpt_ids_for_buffer(&buffer_2)[0].clone();
+            multibuffer.remove_excerpts(&[buffer_2_excerpt_id], cx);
+            multibuffer.snapshot(cx)
+        });
+
+        assert_eq!(
+            snapshot.text(),
+            concat!(
+                "bbbb\n", // Preserve newlines
+                "c\n",    //
+                "cc\n",   //
+                "ddd\n",  //
+                "eeee",   //
+            )
         );
     }
 
@@ -2201,7 +2270,7 @@ mod tests {
         let mut buffers: Vec<ModelHandle<Buffer>> = Vec::new();
         let list = cx.add_model(|_| MultiBuffer::new(0));
         let mut excerpt_ids = Vec::new();
-        let mut expected_excerpts = Vec::new();
+        let mut expected_excerpts = Vec::<(ModelHandle<Buffer>, Range<text::Anchor>)>::new();
         let mut old_versions = Vec::new();
 
         for _ in 0..operations {
@@ -2209,6 +2278,20 @@ mod tests {
                 0..=19 if !buffers.is_empty() => {
                     let buffer = buffers.choose(&mut rng).unwrap();
                     buffer.update(cx, |buf, cx| buf.randomly_edit(&mut rng, 5, cx));
+                }
+                20..=29 if !expected_excerpts.is_empty() => {
+                    let ix = rng.gen_range(0..expected_excerpts.len());
+                    let id = excerpt_ids.remove(ix);
+                    let (buffer, range) = expected_excerpts.remove(ix);
+                    let buffer = buffer.read(cx);
+                    log::info!(
+                        "Removing excerpt {}: {:?}",
+                        ix,
+                        buffer
+                            .text_for_range(range.to_offset(&buffer))
+                            .collect::<String>(),
+                    );
+                    list.update(cx, |list, cx| list.remove_excerpts(&[id], cx));
                 }
                 _ => {
                     let buffer_handle = if buffers.is_empty() || rng.gen_bool(0.4) {
@@ -2273,6 +2356,11 @@ mod tests {
             // Remove final trailing newline.
             if !expected_excerpts.is_empty() {
                 expected_text.pop();
+            }
+
+            // Always report one buffer row
+            if expected_buffer_rows.is_empty() {
+                expected_buffer_rows.push(Some(0));
             }
 
             assert_eq!(snapshot.text(), expected_text);
