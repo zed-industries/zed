@@ -345,7 +345,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.populate_excerpts(buffer, cx);
             assert_eq!(
-                view.excerpts.read(cx).read(cx).text(),
+                view.editor.update(cx, |editor, cx| editor.display_text(cx)),
                 concat!(
                     "\n", // primary diagnostic message
                     "\n", // filename

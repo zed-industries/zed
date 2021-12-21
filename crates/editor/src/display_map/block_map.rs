@@ -227,8 +227,9 @@ impl BlockMap {
             }
 
             // Find the blocks within this edited region.
-            let new_start = wrap_snapshot.to_point(WrapPoint::new(new_start.0, 0), Bias::Left);
-            let start_anchor = buffer.anchor_before(new_start);
+            let new_buffer_start =
+                wrap_snapshot.to_point(WrapPoint::new(new_start.0, 0), Bias::Left);
+            let start_anchor = buffer.anchor_before(new_buffer_start);
             let start_block_ix = match self.blocks[last_block_ix..].binary_search_by(|probe| {
                 probe
                     .position
@@ -238,11 +239,14 @@ impl BlockMap {
             }) {
                 Ok(ix) | Err(ix) => last_block_ix + ix,
             };
+
+            let new_buffer_end;
             let end_block_ix = if new_end.0 > wrap_snapshot.max_point().row() {
+                new_buffer_end = wrap_snapshot.buffer_snapshot().max_point() + Point::new(1, 0);
                 self.blocks.len()
             } else {
-                let new_end = wrap_snapshot.to_point(WrapPoint::new(new_end.0, 0), Bias::Left);
-                let end_anchor = buffer.anchor_before(new_end);
+                new_buffer_end = wrap_snapshot.to_point(WrapPoint::new(new_end.0, 0), Bias::Left);
+                let end_anchor = buffer.anchor_before(new_buffer_end);
                 match self.blocks[start_block_ix..].binary_search_by(|probe| {
                     probe
                         .position
@@ -254,7 +258,26 @@ impl BlockMap {
                 }
             };
             last_block_ix = end_block_ix;
-            blocks_in_edit.clear();
+
+            debug_assert!(blocks_in_edit.is_empty());
+            blocks_in_edit.extend(
+                wrap_snapshot
+                    .buffer_snapshot()
+                    .excerpt_headers_in_range(new_buffer_start.row..new_buffer_end.row)
+                    .map(|(start_row, header_height, render_header)| {
+                        (
+                            start_row,
+                            0,
+                            Arc::new(Block {
+                                id: Default::default(),
+                                position: Anchor::min(),
+                                height: header_height,
+                                render: Mutex::new(Arc::new(move |cx| render_header(cx))),
+                                disposition: BlockDisposition::Above,
+                            }),
+                        )
+                    }),
+            );
             blocks_in_edit.extend(
                 self.blocks[start_block_ix..end_block_ix]
                     .iter()
@@ -268,22 +291,21 @@ impl BlockMap {
                             }
                         }
                         let position = wrap_snapshot.from_point(position, Bias::Left);
-                        (position.row(), column, block)
+                        (position.row(), column, block.clone())
                     }),
             );
-            blocks_in_edit
-                .sort_unstable_by_key(|(row, _, block)| (*row, block.disposition, block.id));
+            blocks_in_edit.sort_by_key(|(row, _, block)| (*row, block.disposition, block.id));
 
             // For each of these blocks, insert a new isomorphic transform preceding the block,
             // and then insert the block itself.
-            for (block_row, column, block) in blocks_in_edit.iter().copied() {
+            for (block_row, column, block) in blocks_in_edit.drain(..) {
                 let insertion_row = match block.disposition {
                     BlockDisposition::Above => block_row,
                     BlockDisposition::Below => block_row + 1,
                 };
                 let extent_before_block = insertion_row - new_transforms.summary().input_rows;
                 push_isomorphic(&mut new_transforms, extent_before_block);
-                new_transforms.push(Transform::block(block.clone(), column), &());
+                new_transforms.push(Transform::block(block, column), &());
             }
 
             old_end = WrapRow(old_end.0.min(old_row_count));
