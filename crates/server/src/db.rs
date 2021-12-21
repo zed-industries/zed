@@ -443,7 +443,9 @@ impl Db {
 
 macro_rules! id_type {
     ($name:ident) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, sqlx::Type, Serialize)]
+        #[derive(
+            Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, sqlx::Type, Serialize,
+        )]
         #[sqlx(transparent)]
         #[serde(transparent)]
         pub struct $name(pub i32);

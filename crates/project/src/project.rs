@@ -8,7 +8,9 @@ use clock::ReplicaId;
 use collections::HashMap;
 use futures::Future;
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
-use gpui::{AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, Task};
+use gpui::{
+    AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
+};
 use language::{Buffer, DiagnosticEntry, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use postage::{prelude::Stream, watch};
@@ -42,6 +44,7 @@ enum ProjectClientState {
         _maintain_remote_id_task: Task<Option<()>>,
     },
     Remote {
+        sharing_has_stopped: bool,
         remote_id: u64,
         replica_id: ReplicaId,
     },
@@ -106,59 +109,61 @@ pub struct ProjectEntry {
 
 impl Project {
     pub fn local(
-        languages: Arc<LanguageRegistry>,
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
+        languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
-        let (remote_id_tx, remote_id_rx) = watch::channel();
-        let _maintain_remote_id_task = cx.spawn_weak({
-            let rpc = client.clone();
-            move |this, mut cx| {
-                async move {
-                    let mut status = rpc.status();
-                    while let Some(status) = status.recv().await {
-                        if let Some(this) = this.upgrade(&cx) {
-                            let remote_id = if let client::Status::Connected { .. } = status {
-                                let response = rpc.request(proto::RegisterProject {}).await?;
-                                Some(response.project_id)
-                            } else {
-                                None
-                            };
-                            this.update(&mut cx, |this, cx| this.set_remote_id(remote_id, cx));
+        cx: &mut MutableAppContext,
+    ) -> ModelHandle<Self> {
+        cx.add_model(|cx: &mut ModelContext<Self>| {
+            let (remote_id_tx, remote_id_rx) = watch::channel();
+            let _maintain_remote_id_task = cx.spawn_weak({
+                let rpc = client.clone();
+                move |this, mut cx| {
+                    async move {
+                        let mut status = rpc.status();
+                        while let Some(status) = status.recv().await {
+                            if let Some(this) = this.upgrade(&cx) {
+                                let remote_id = if let client::Status::Connected { .. } = status {
+                                    let response = rpc.request(proto::RegisterProject {}).await?;
+                                    Some(response.project_id)
+                                } else {
+                                    None
+                                };
+                                this.update(&mut cx, |this, cx| this.set_remote_id(remote_id, cx));
+                            }
                         }
+                        Ok(())
                     }
-                    Ok(())
+                    .log_err()
                 }
-                .log_err()
-            }
-        });
+            });
 
-        Self {
-            worktrees: Default::default(),
-            collaborators: Default::default(),
-            client_state: ProjectClientState::Local {
-                is_shared: false,
-                remote_id_tx,
-                remote_id_rx,
-                _maintain_remote_id_task,
-            },
-            subscriptions: Vec::new(),
-            active_worktree: None,
-            active_entry: None,
-            languages,
-            client,
-            user_store,
-            fs,
-        }
+            Self {
+                worktrees: Default::default(),
+                collaborators: Default::default(),
+                client_state: ProjectClientState::Local {
+                    is_shared: false,
+                    remote_id_tx,
+                    remote_id_rx,
+                    _maintain_remote_id_task,
+                },
+                subscriptions: Vec::new(),
+                active_worktree: None,
+                active_entry: None,
+                languages,
+                client,
+                user_store,
+                fs,
+            }
+        })
     }
 
-    pub async fn open_remote(
+    pub async fn remote(
         remote_id: u64,
-        languages: Arc<LanguageRegistry>,
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
+        languages: Arc<LanguageRegistry>,
         fs: Arc<dyn Fs>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
@@ -211,6 +216,7 @@ impl Project {
             user_store,
             fs,
             subscriptions: vec![
+                client.subscribe_to_entity(remote_id, cx, Self::handle_unshare_project),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_add_collaborator),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_remove_collaborator),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_share_worktree),
@@ -221,6 +227,7 @@ impl Project {
             ],
             client,
             client_state: ProjectClientState::Remote {
+                sharing_has_stopped: false,
                 remote_id,
                 replica_id,
             },
@@ -252,6 +259,27 @@ impl Project {
         }
     }
 
+    pub fn next_remote_id(&self) -> impl Future<Output = u64> {
+        let mut id = None;
+        let mut watch = None;
+        match &self.client_state {
+            ProjectClientState::Local { remote_id_rx, .. } => watch = Some(remote_id_rx.clone()),
+            ProjectClientState::Remote { remote_id, .. } => id = Some(*remote_id),
+        }
+
+        async move {
+            if let Some(id) = id {
+                return id;
+            }
+            let mut watch = watch.unwrap();
+            loop {
+                if let Some(Some(id)) = watch.recv().await {
+                    return id;
+                }
+            }
+        }
+    }
+
     pub fn replica_id(&self) -> ReplicaId {
         match &self.client_state {
             ProjectClientState::Local { .. } => 0,
@@ -277,7 +305,7 @@ impl Project {
     pub fn share(&self, cx: &mut ModelContext<Self>) -> Task<anyhow::Result<()>> {
         let rpc = self.client.clone();
         cx.spawn(|this, mut cx| async move {
-            let remote_id = this.update(&mut cx, |this, _| {
+            let project_id = this.update(&mut cx, |this, _| {
                 if let ProjectClientState::Local {
                     is_shared,
                     remote_id_rx,
@@ -285,31 +313,63 @@ impl Project {
                 } = &mut this.client_state
                 {
                     *is_shared = true;
-                    Ok(*remote_id_rx.borrow())
+                    remote_id_rx
+                        .borrow()
+                        .ok_or_else(|| anyhow!("no project id"))
                 } else {
                     Err(anyhow!("can't share a remote project"))
                 }
             })?;
 
-            let remote_id = remote_id.ok_or_else(|| anyhow!("no project id"))?;
-            rpc.send(proto::ShareProject {
-                project_id: remote_id,
-            })
-            .await?;
-
+            rpc.send(proto::ShareProject { project_id }).await?;
             this.update(&mut cx, |this, cx| {
                 for worktree in &this.worktrees {
                     worktree.update(cx, |worktree, cx| {
                         worktree
                             .as_local_mut()
                             .unwrap()
-                            .share(remote_id, cx)
+                            .share(project_id, cx)
                             .detach();
                     });
                 }
             });
             Ok(())
         })
+    }
+
+    pub fn unshare(&self, cx: &mut ModelContext<Self>) -> Task<anyhow::Result<()>> {
+        let rpc = self.client.clone();
+        cx.spawn(|this, mut cx| async move {
+            let project_id = this.update(&mut cx, |this, _| {
+                if let ProjectClientState::Local {
+                    is_shared,
+                    remote_id_rx,
+                    ..
+                } = &mut this.client_state
+                {
+                    *is_shared = true;
+                    remote_id_rx
+                        .borrow()
+                        .ok_or_else(|| anyhow!("no project id"))
+                } else {
+                    Err(anyhow!("can't share a remote project"))
+                }
+            })?;
+
+            rpc.send(proto::UnshareProject { project_id }).await?;
+
+            Ok(())
+        })
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        match &self.client_state {
+            ProjectClientState::Local { .. } => false,
+            ProjectClientState::Remote {
+                sharing_has_stopped,
+                ..
+            } => *sharing_has_stopped,
+        }
     }
 
     pub fn open_buffer(
@@ -333,14 +393,14 @@ impl Project {
 
     pub fn add_local_worktree(
         &mut self,
-        abs_path: &Path,
+        abs_path: impl AsRef<Path>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Worktree>>> {
         let fs = self.fs.clone();
         let client = self.client.clone();
         let user_store = self.user_store.clone();
         let languages = self.languages.clone();
-        let path = Arc::from(abs_path);
+        let path = Arc::from(abs_path.as_ref());
         cx.spawn(|project, mut cx| async move {
             let worktree =
                 Worktree::open_local(client.clone(), user_store, path, fs, languages, &mut cx)
@@ -352,10 +412,12 @@ impl Project {
             });
 
             if let Some(project_id) = remote_project_id {
+                let worktree_id = worktree.id() as u64;
                 let register_message = worktree.update(&mut cx, |worktree, _| {
                     let worktree = worktree.as_local_mut().unwrap();
                     proto::RegisterWorktree {
                         project_id,
+                        worktree_id,
                         root_name: worktree.root_name().to_string(),
                         authorized_logins: worktree.authorized_logins(),
                     }
@@ -431,6 +493,25 @@ impl Project {
     }
 
     // RPC message handlers
+
+    fn handle_unshare_project(
+        &mut self,
+        _: TypedEnvelope<proto::UnshareProject>,
+        _: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        if let ProjectClientState::Remote {
+            sharing_has_stopped,
+            ..
+        } = &mut self.client_state
+        {
+            *sharing_has_stopped = true;
+            cx.notify();
+            Ok(())
+        } else {
+            unreachable!()
+        }
+    }
 
     fn handle_add_collaborator(
         &mut self,
@@ -812,6 +893,6 @@ mod tests {
         let client = client::Client::new();
         let http_client = FakeHttpClient::new(|_| async move { Ok(ServerResponse::new(404)) });
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        cx.add_model(|cx| Project::local(languages, client, user_store, fs, cx))
+        cx.update(|cx| Project::local(client, user_store, languages, fs, cx))
     }
 }

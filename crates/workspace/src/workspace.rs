@@ -391,15 +391,13 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new(params: &WorkspaceParams, cx: &mut ViewContext<Self>) -> Self {
-        let project = cx.add_model(|cx| {
-            Project::local(
-                params.languages.clone(),
-                params.client.clone(),
-                params.user_store.clone(),
-                params.fs.clone(),
-                cx,
-            )
-        });
+        let project = Project::local(
+            params.client.clone(),
+            params.user_store.clone(),
+            params.languages.clone(),
+            params.fs.clone(),
+            cx,
+        );
         cx.observe(&project, |_, _, cx| cx.notify()).detach();
 
         let pane = cx.add_view(|_| Pane::new(params.settings.clone()));

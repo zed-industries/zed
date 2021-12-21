@@ -43,6 +43,7 @@ pub struct Server {
 
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;
+const NO_SUCH_PROJECT: &'static str = "no such project";
 
 impl Server {
     pub fn new(
@@ -60,12 +61,15 @@ impl Server {
 
         server
             .add_handler(Server::ping)
+            .add_handler(Server::register_project)
+            .add_handler(Server::unregister_project)
+            .add_handler(Server::share_project)
+            .add_handler(Server::unshare_project)
+            .add_handler(Server::join_project)
+            .add_handler(Server::leave_project)
             .add_handler(Server::register_worktree)
             .add_handler(Server::unregister_worktree)
             .add_handler(Server::share_worktree)
-            .add_handler(Server::unshare_worktree)
-            .add_handler(Server::join_worktree)
-            .add_handler(Server::leave_worktree)
             .add_handler(Server::update_worktree)
             .add_handler(Server::open_buffer)
             .add_handler(Server::close_buffer)
@@ -207,162 +211,85 @@ impl Server {
         Ok(())
     }
 
-    async fn register_worktree(
+    async fn register_project(
         mut self: Arc<Server>,
-        request: TypedEnvelope<proto::RegisterWorktree>,
+        request: TypedEnvelope<proto::RegisterProject>,
     ) -> tide::Result<()> {
-        let receipt = request.receipt();
-        let host_user_id = self.state().user_id_for_connection(request.sender_id)?;
-
-        let mut contact_user_ids = HashSet::default();
-        contact_user_ids.insert(host_user_id);
-        for github_login in request.payload.authorized_logins {
-            match self.app_state.db.create_user(&github_login, false).await {
-                Ok(contact_user_id) => {
-                    contact_user_ids.insert(contact_user_id);
-                }
-                Err(err) => {
-                    let message = err.to_string();
-                    self.peer
-                        .respond_with_error(receipt, proto::Error { message })
-                        .await?;
-                    return Ok(());
-                }
-            }
-        }
-
-        let contact_user_ids = contact_user_ids.into_iter().collect::<Vec<_>>();
-        let ok = self.state_mut().register_worktree(
-            request.project_id,
-            request.worktree_id,
-            Worktree {
-                authorized_user_ids: contact_user_ids.clone(),
-                root_name: request.payload.root_name,
-            },
-        );
-
-        if ok {
-            self.peer.respond(receipt, proto::Ack {}).await?;
-            self.update_contacts_for_users(&contact_user_ids).await?;
-        } else {
-            self.peer
-                .respond_with_error(
-                    receipt,
-                    proto::Error {
-                        message: "no such project".to_string(),
-                    },
-                )
-                .await?;
-        }
-
+        let mut state = self.state_mut();
+        let user_id = state.user_id_for_connection(request.sender_id)?;
+        state.register_project(request.sender_id, user_id);
         Ok(())
     }
 
-    async fn unregister_worktree(
+    async fn unregister_project(
         mut self: Arc<Server>,
-        request: TypedEnvelope<proto::UnregisterWorktree>,
+        request: TypedEnvelope<proto::UnregisterProject>,
+    ) -> tide::Result<()> {
+        self.state_mut()
+            .unregister_project(request.payload.project_id, request.sender_id);
+        Ok(())
+    }
+
+    async fn share_project(
+        mut self: Arc<Server>,
+        request: TypedEnvelope<proto::ShareProject>,
+    ) -> tide::Result<()> {
+        self.state_mut()
+            .share_project(request.payload.project_id, request.sender_id);
+        Ok(())
+    }
+
+    async fn unshare_project(
+        mut self: Arc<Server>,
+        request: TypedEnvelope<proto::UnshareProject>,
     ) -> tide::Result<()> {
         let project_id = request.payload.project_id;
-        let worktree_id = request.payload.worktree_id;
-        let worktree =
-            self.state_mut()
-                .unregister_worktree(project_id, worktree_id, request.sender_id)?;
-
-        if let Some(share) = worktree.share {
-            broadcast(
-                request.sender_id,
-                share.guests.keys().copied().collect(),
-                |conn_id| {
-                    self.peer.send(
-                        conn_id,
-                        proto::UnregisterWorktree {
-                            project_id,
-                            worktree_id,
-                        },
-                    )
-                },
-            )
-            .await?;
-        }
-        self.update_contacts_for_users(&worktree.authorized_user_ids)
-            .await?;
-        Ok(())
-    }
-
-    async fn share_worktree(
-        mut self: Arc<Server>,
-        mut request: TypedEnvelope<proto::ShareWorktree>,
-    ) -> tide::Result<()> {
-        let worktree = request
-            .payload
-            .worktree
-            .as_mut()
-            .ok_or_else(|| anyhow!("missing worktree"))?;
-        let entries = mem::take(&mut worktree.entries)
-            .into_iter()
-            .map(|entry| (entry.id, entry))
-            .collect();
-
-        let contact_user_ids =
-            self.state_mut()
-                .share_worktree(worktree.id, request.sender_id, entries);
-        if let Some(contact_user_ids) = contact_user_ids {
-            self.peer
-                .respond(request.receipt(), proto::ShareWorktreeResponse {})
-                .await?;
-            self.update_contacts_for_users(&contact_user_ids).await?;
-        } else {
-            self.peer
-                .respond_with_error(
-                    request.receipt(),
-                    proto::Error {
-                        message: "no such worktree".to_string(),
-                    },
-                )
-                .await?;
-        }
-        Ok(())
-    }
-
-    async fn unshare_worktree(
-        mut self: Arc<Server>,
-        request: TypedEnvelope<proto::UnshareWorktree>,
-    ) -> tide::Result<()> {
-        let worktree_id = request.payload.worktree_id;
-        let worktree = self
+        let project = self
             .state_mut()
-            .unshare_worktree(worktree_id, request.sender_id)?;
+            .unshare_project(project_id, request.sender_id)?;
 
-        broadcast(request.sender_id, worktree.connection_ids, |conn_id| {
+        broadcast(request.sender_id, project.connection_ids, |conn_id| {
             self.peer
-                .send(conn_id, proto::UnshareWorktree { worktree_id })
+                .send(conn_id, proto::UnshareProject { project_id })
         })
         .await?;
-        self.update_contacts_for_users(&worktree.authorized_user_ids)
+        self.update_contacts_for_users(&project.authorized_user_ids)
             .await?;
 
         Ok(())
     }
 
-    async fn join_worktree(
+    async fn join_project(
         mut self: Arc<Server>,
-        request: TypedEnvelope<proto::JoinWorktree>,
+        request: TypedEnvelope<proto::JoinProject>,
     ) -> tide::Result<()> {
-        let worktree_id = request.payload.worktree_id;
+        let project_id = request.payload.project_id;
 
         let user_id = self.state().user_id_for_connection(request.sender_id)?;
         let response_data = self
             .state_mut()
-            .join_worktree(request.sender_id, user_id, worktree_id)
+            .join_project(request.sender_id, user_id, project_id)
             .and_then(|joined| {
-                let share = joined.worktree.share()?;
+                let share = joined.project.share()?;
                 let peer_count = share.guests.len();
                 let mut collaborators = Vec::with_capacity(peer_count);
                 collaborators.push(proto::Collaborator {
-                    peer_id: joined.worktree.host_connection_id.0,
+                    peer_id: joined.project.host_connection_id.0,
                     replica_id: 0,
-                    user_id: joined.worktree.host_user_id.to_proto(),
+                    user_id: joined.project.host_user_id.to_proto(),
                 });
+                let worktrees = joined
+                    .project
+                    .worktrees
+                    .values()
+                    .filter_map(|worktree| {
+                        worktree.share.as_ref().map(|share| proto::Worktree {
+                            id: project_id,
+                            root_name: worktree.root_name.clone(),
+                            entries: share.entries.values().cloned().collect(),
+                        })
+                    })
+                    .collect();
                 for (peer_conn_id, (peer_replica_id, peer_user_id)) in &share.guests {
                     if *peer_conn_id != request.sender_id {
                         collaborators.push(proto::Collaborator {
@@ -372,17 +299,13 @@ impl Server {
                         });
                     }
                 }
-                let response = proto::JoinWorktreeResponse {
-                    worktree: Some(proto::Worktree {
-                        id: worktree_id,
-                        root_name: joined.worktree.root_name.clone(),
-                        entries: share.entries.values().cloned().collect(),
-                    }),
+                let response = proto::JoinProjectResponse {
+                    worktrees,
                     replica_id: joined.replica_id as u32,
                     collaborators,
                 };
-                let connection_ids = joined.worktree.connection_ids();
-                let contact_user_ids = joined.worktree.authorized_user_ids.clone();
+                let connection_ids = joined.project.connection_ids();
+                let contact_user_ids = joined.project.authorized_user_ids();
                 Ok((response, connection_ids, contact_user_ids))
             });
 
@@ -391,8 +314,8 @@ impl Server {
                 broadcast(request.sender_id, connection_ids, |conn_id| {
                     self.peer.send(
                         conn_id,
-                        proto::AddCollaborator {
-                            worktree_id,
+                        proto::AddProjectCollaborator {
+                            project_id: project_id,
                             collaborator: Some(proto::Collaborator {
                                 peer_id: request.sender_id.0,
                                 replica_id: response.replica_id,
@@ -420,19 +343,19 @@ impl Server {
         Ok(())
     }
 
-    async fn leave_worktree(
+    async fn leave_project(
         mut self: Arc<Server>,
-        request: TypedEnvelope<proto::LeaveWorktree>,
+        request: TypedEnvelope<proto::LeaveProject>,
     ) -> tide::Result<()> {
         let sender_id = request.sender_id;
-        let worktree_id = request.payload.worktree_id;
-        let worktree = self.state_mut().leave_worktree(sender_id, worktree_id);
+        let project_id = request.payload.project_id;
+        let worktree = self.state_mut().leave_project(sender_id, project_id);
         if let Some(worktree) = worktree {
             broadcast(sender_id, worktree.connection_ids, |conn_id| {
                 self.peer.send(
                     conn_id,
-                    proto::RemoveCollaborator {
-                        worktree_id,
+                    proto::RemoveProjectCollaborator {
+                        project_id,
                         peer_id: sender_id.0,
                     },
                 )
@@ -444,16 +367,133 @@ impl Server {
         Ok(())
     }
 
+    async fn register_worktree(
+        mut self: Arc<Server>,
+        request: TypedEnvelope<proto::RegisterWorktree>,
+    ) -> tide::Result<()> {
+        let receipt = request.receipt();
+        let host_user_id = self.state().user_id_for_connection(request.sender_id)?;
+
+        let mut contact_user_ids = HashSet::default();
+        contact_user_ids.insert(host_user_id);
+        for github_login in request.payload.authorized_logins {
+            match self.app_state.db.create_user(&github_login, false).await {
+                Ok(contact_user_id) => {
+                    contact_user_ids.insert(contact_user_id);
+                }
+                Err(err) => {
+                    let message = err.to_string();
+                    self.peer
+                        .respond_with_error(receipt, proto::Error { message })
+                        .await?;
+                    return Ok(());
+                }
+            }
+        }
+
+        let contact_user_ids = contact_user_ids.into_iter().collect::<Vec<_>>();
+        let ok = self.state_mut().register_worktree(
+            request.payload.project_id,
+            request.payload.worktree_id,
+            Worktree {
+                authorized_user_ids: contact_user_ids.clone(),
+                root_name: request.payload.root_name,
+                share: None,
+            },
+        );
+
+        if ok {
+            self.peer.respond(receipt, proto::Ack {}).await?;
+            self.update_contacts_for_users(&contact_user_ids).await?;
+        } else {
+            self.peer
+                .respond_with_error(
+                    receipt,
+                    proto::Error {
+                        message: NO_SUCH_PROJECT.to_string(),
+                    },
+                )
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn unregister_worktree(
+        mut self: Arc<Server>,
+        request: TypedEnvelope<proto::UnregisterWorktree>,
+    ) -> tide::Result<()> {
+        let project_id = request.payload.project_id;
+        let worktree_id = request.payload.worktree_id;
+        let (worktree, guest_connection_ids) =
+            self.state_mut()
+                .unregister_worktree(project_id, worktree_id, request.sender_id)?;
+
+        broadcast(request.sender_id, guest_connection_ids, |conn_id| {
+            self.peer.send(
+                conn_id,
+                proto::UnregisterWorktree {
+                    project_id,
+                    worktree_id,
+                },
+            )
+        })
+        .await?;
+        self.update_contacts_for_users(&worktree.authorized_user_ids)
+            .await?;
+        Ok(())
+    }
+
+    async fn share_worktree(
+        mut self: Arc<Server>,
+        mut request: TypedEnvelope<proto::ShareWorktree>,
+    ) -> tide::Result<()> {
+        let worktree = request
+            .payload
+            .worktree
+            .as_mut()
+            .ok_or_else(|| anyhow!("missing worktree"))?;
+        let entries = mem::take(&mut worktree.entries)
+            .into_iter()
+            .map(|entry| (entry.id, entry))
+            .collect();
+
+        let contact_user_ids = self.state_mut().share_worktree(
+            request.payload.project_id,
+            worktree.id,
+            request.sender_id,
+            entries,
+        );
+        if let Some(contact_user_ids) = contact_user_ids {
+            self.peer.respond(request.receipt(), proto::Ack {}).await?;
+            self.update_contacts_for_users(&contact_user_ids).await?;
+        } else {
+            self.peer
+                .respond_with_error(
+                    request.receipt(),
+                    proto::Error {
+                        message: "no such worktree".to_string(),
+                    },
+                )
+                .await?;
+        }
+        Ok(())
+    }
+
     async fn update_worktree(
         mut self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateWorktree>,
     ) -> tide::Result<()> {
-        let connection_ids = self.state_mut().update_worktree(
-            request.sender_id,
-            request.payload.worktree_id,
-            &request.payload.removed_entries,
-            &request.payload.updated_entries,
-        )?;
+        let connection_ids = self
+            .state_mut()
+            .update_worktree(
+                request.sender_id,
+                request.payload.project_id,
+                request.payload.worktree_id,
+                &request.payload.removed_entries,
+                &request.payload.updated_entries,
+            )
+            .ok_or_else(|| anyhow!("no such worktree"))?;
 
         broadcast(request.sender_id, connection_ids, |connection_id| {
             self.peer
@@ -471,7 +511,9 @@ impl Server {
         let receipt = request.receipt();
         let host_connection_id = self
             .state()
-            .worktree_host_connection_id(request.sender_id, request.payload.worktree_id)?;
+            .read_project(request.payload.project_id, request.sender_id)
+            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?
+            .host_connection_id;
         let response = self
             .peer
             .forward_request(request.sender_id, host_connection_id, request.payload)
@@ -486,7 +528,9 @@ impl Server {
     ) -> tide::Result<()> {
         let host_connection_id = self
             .state()
-            .worktree_host_connection_id(request.sender_id, request.payload.worktree_id)?;
+            .read_project(request.payload.project_id, request.sender_id)
+            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?
+            .host_connection_id;
         self.peer
             .forward_send(request.sender_id, host_connection_id, request.payload)
             .await?;
@@ -501,10 +545,11 @@ impl Server {
         let guests;
         {
             let state = self.state();
-            host = state
-                .worktree_host_connection_id(request.sender_id, request.payload.worktree_id)?;
-            guests = state
-                .worktree_guest_connection_ids(request.sender_id, request.payload.worktree_id)?;
+            let project = state
+                .read_project(request.payload.project_id, request.sender_id)
+                .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+            host = project.host_connection_id;
+            guests = project.guest_connection_ids()
         }
 
         let sender = request.sender_id;
@@ -536,7 +581,8 @@ impl Server {
     ) -> tide::Result<()> {
         let receiver_ids = self
             .state()
-            .worktree_connection_ids(request.sender_id, request.payload.worktree_id)?;
+            .project_connection_ids(request.payload.project_id, request.sender_id)
+            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
@@ -552,7 +598,8 @@ impl Server {
     ) -> tide::Result<()> {
         let receiver_ids = self
             .state()
-            .worktree_connection_ids(request.sender_id, request.payload.worktree_id)?;
+            .project_connection_ids(request.payload.project_id, request.sender_id)
+            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
@@ -959,7 +1006,6 @@ mod tests {
             self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Credentials,
             EstablishConnectionError, UserStore,
         },
-        contacts_panel::JoinWorktree,
         editor::{Editor, EditorSettings, Input, MultiBuffer},
         fs::{FakeFs, Fs as _},
         language::{
@@ -967,25 +1013,22 @@ mod tests {
             LanguageRegistry, LanguageServerConfig, Point,
         },
         lsp,
-        project::{ProjectPath, Worktree},
-        test::test_app_state,
-        workspace::Workspace,
+        project::Project,
     };
 
     #[gpui::test]
-    async fn test_share_worktree(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+    async fn test_share_project(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         let (window_b, _) = cx_b.add_window(|_| EmptyView);
         let lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(FakeFs::new());
+        cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
-        cx_a.foreground().forbid_parking();
-
-        // Share a local worktree as client A
-        let fs = Arc::new(FakeFs::new());
+        // Share a project as client A
         fs.insert_tree(
             "/a",
             json!({
@@ -995,47 +1038,56 @@ mod tests {
             }),
         )
         .await;
-        let worktree_a = Worktree::open_local(
-            client_a.clone(),
-            client_a.user_store.clone(),
-            "/a".as_ref(),
-            fs,
-            lang_registry.clone(),
-            &mut cx_a.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", cx))
+            .await
+            .unwrap();
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let worktree_id = worktree_a
-            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
+        let project_id = project_a
+            .update(&mut cx_a, |project, _| project.next_remote_id())
+            .await;
+        project_a
+            .update(&mut cx_a, |project, cx| project.share(cx))
             .await
             .unwrap();
 
-        // Join that worktree as client B, and see that a guest has joined as client A.
-        let worktree_b = Worktree::open_remote(
+        // Join that project as client B, and see that a guest has joined as client A.
+        let project_b = Project::remote(
+            project_id,
             client_b.clone(),
-            worktree_id,
-            lang_registry.clone(),
             client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
             &mut cx_b.to_async(),
         )
         .await
         .unwrap();
+        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
 
-        let replica_id_b = worktree_b.read_with(&cx_b, |tree, _| {
+        let replica_id_b = project_b.read_with(&cx_b, |project, _| {
             assert_eq!(
-                tree.collaborators()
+                project
+                    .collaborators()
                     .get(&client_a.peer_id)
                     .unwrap()
                     .user
                     .github_login,
                 "user_a"
             );
-            tree.replica_id()
+            project.replica_id()
         });
-        worktree_a
+        project_a
             .condition(&cx_a, |tree, _| {
                 tree.collaborators()
                     .get(&client_b.peer_id)
@@ -1093,30 +1145,24 @@ mod tests {
 
         // Dropping the worktree removes client B from client A's collaborators.
         cx_b.update(move |_| drop(worktree_b));
-        worktree_a
-            .condition(&cx_a, |tree, _| tree.collaborators().is_empty())
+        project_a
+            .condition(&cx_a, |project, _| project.collaborators().is_empty())
             .await;
     }
 
     #[gpui::test]
-    async fn test_unshare_worktree(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+    async fn test_unshare_project(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_b.update(zed::contacts_panel::init);
-        let mut app_state_a = cx_a.update(test_app_state);
-        let mut app_state_b = cx_b.update(test_app_state);
+        let lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(FakeFs::new());
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
-        Arc::get_mut(&mut app_state_a).unwrap().client = client_a.clone();
-        Arc::get_mut(&mut app_state_a).unwrap().user_store = client_a.user_store.clone();
-        Arc::get_mut(&mut app_state_b).unwrap().client = client_b.clone();
-        Arc::get_mut(&mut app_state_b).unwrap().user_store = client_b.user_store.clone();
-
         cx_a.foreground().forbid_parking();
 
-        // Share a local worktree as client A
-        let fs = Arc::new(FakeFs::new());
+        // Share a project as client A
         fs.insert_tree(
             "/a",
             json!({
@@ -1126,71 +1172,55 @@ mod tests {
             }),
         )
         .await;
-        let worktree_a = Worktree::open_local(
-            app_state_a.client.clone(),
-            app_state_a.user_store.clone(),
-            "/a".as_ref(),
-            fs,
-            app_state_a.languages.clone(),
-            &mut cx_a.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", cx))
+            .await
+            .unwrap();
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-
-        let remote_worktree_id = worktree_a
-            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
+        let project_id = project_a
+            .update(&mut cx_a, |project, _| project.next_remote_id())
+            .await;
+        project_a
+            .update(&mut cx_a, |project, cx| project.share(cx))
             .await
             .unwrap();
 
-        let (window_b, workspace_b) =
-            cx_b.add_window(|cx| Workspace::new(&app_state_b.as_ref().into(), cx));
-        cx_b.update(|cx| {
-            cx.dispatch_action(
-                window_b,
-                vec![workspace_b.id()],
-                &JoinWorktree(remote_worktree_id),
-            );
-        });
-        workspace_b
-            .condition(&cx_b, |workspace, cx| workspace.worktrees(cx).len() == 1)
-            .await;
+        // Join that project as client B
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
 
-        let local_worktree_id_b = workspace_b.read_with(&cx_b, |workspace, cx| {
-            let active_pane = workspace.active_pane().read(cx);
-            assert!(active_pane.active_item().is_none());
-            workspace.worktrees(cx).first().unwrap().id()
-        });
-        workspace_b
-            .update(&mut cx_b, |workspace, cx| {
-                workspace.open_entry(
-                    ProjectPath {
-                        worktree_id: local_worktree_id_b,
-                        path: Path::new("a.txt").into(),
-                    },
-                    cx,
-                )
-            })
-            .unwrap()
+        let worktree_b = project_b.read_with(&cx_b, |p, _| p.worktrees()[0].clone());
+        worktree_b
+            .update(&mut cx_b, |tree, cx| tree.open_buffer("a.txt", cx))
             .await
             .unwrap();
-        workspace_b.read_with(&cx_b, |workspace, cx| {
-            let active_pane = workspace.active_pane().read(cx);
-            assert!(active_pane.active_item().is_some());
-        });
 
-        worktree_a.update(&mut cx_a, |tree, cx| {
-            tree.as_local_mut().unwrap().unshare(cx);
-        });
-        workspace_b
-            .condition(&cx_b, |workspace, cx| workspace.worktrees(cx).len() == 0)
+        project_a
+            .update(&mut cx_a, |project, cx| project.unshare(cx))
+            .await
+            .unwrap();
+        project_b
+            .condition(&mut cx_b, |project, _| project.is_read_only())
             .await;
-        workspace_b.read_with(&cx_b, |workspace, cx| {
-            let active_pane = workspace.active_pane().read(cx);
-            assert!(active_pane.active_item().is_none());
-        });
     }
 
     #[gpui::test]
@@ -1201,14 +1231,13 @@ mod tests {
     ) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(FakeFs::new());
 
         // Connect to a server as 3 clients.
         let mut server = TestServer::start().await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
         let client_c = server.create_client(&mut cx_c, "user_c").await;
-
-        let fs = Arc::new(FakeFs::new());
 
         // Share a worktree as client A.
         fs.insert_tree(
@@ -1220,46 +1249,55 @@ mod tests {
             }),
         )
         .await;
-
-        let worktree_a = Worktree::open_local(
-            client_a.clone(),
-            client_a.user_store.clone(),
-            "/a".as_ref(),
-            fs.clone(),
-            lang_registry.clone(),
-            &mut cx_a.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", cx))
+            .await
+            .unwrap();
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let worktree_id = worktree_a
-            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
+        let project_id = project_a
+            .update(&mut cx_a, |project, _| project.next_remote_id())
+            .await;
+        project_a
+            .update(&mut cx_a, |project, cx| project.share(cx))
             .await
             .unwrap();
 
         // Join that worktree as clients B and C.
-        let worktree_b = Worktree::open_remote(
+        let project_b = Project::remote(
+            project_id,
             client_b.clone(),
-            worktree_id,
-            lang_registry.clone(),
             client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
             &mut cx_b.to_async(),
         )
         .await
         .unwrap();
-        let worktree_c = Worktree::open_remote(
+        let project_c = Project::remote(
+            project_id,
             client_c.clone(),
-            worktree_id,
-            lang_registry.clone(),
             client_c.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
             &mut cx_c.to_async(),
         )
         .await
         .unwrap();
 
         // Open and edit a buffer as both guests B and C.
+        let worktree_b = project_b.read_with(&cx_b, |p, _| p.worktrees()[0].clone());
+        let worktree_c = project_c.read_with(&cx_c, |p, _| p.worktrees()[0].clone());
         let buffer_b = worktree_b
             .update(&mut cx_b, |tree, cx| tree.open_buffer("file1", cx))
             .await
@@ -1343,14 +1381,14 @@ mod tests {
     async fn test_buffer_conflict_after_save(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(FakeFs::new());
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
-        // Share a local worktree as client A
-        let fs = Arc::new(FakeFs::new());
+        // Share a project as client A
         fs.insert_tree(
             "/dir",
             json!({
@@ -1360,35 +1398,44 @@ mod tests {
         )
         .await;
 
-        let worktree_a = Worktree::open_local(
-            client_a.clone(),
-            client_a.user_store.clone(),
-            "/dir".as_ref(),
-            fs,
-            lang_registry.clone(),
-            &mut cx_a.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/dir", cx))
+            .await
+            .unwrap();
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let worktree_id = worktree_a
-            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
+        let project_id = project_a
+            .update(&mut cx_a, |project, _| project.next_remote_id())
+            .await;
+        project_a
+            .update(&mut cx_a, |project, cx| project.share(cx))
             .await
             .unwrap();
 
-        // Join that worktree as client B, and see that a guest has joined as client A.
-        let worktree_b = Worktree::open_remote(
+        // Join that project as client B
+        let project_b = Project::remote(
+            project_id,
             client_b.clone(),
-            worktree_id,
-            lang_registry.clone(),
             client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
             &mut cx_b.to_async(),
         )
         .await
         .unwrap();
+        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
 
+        // Open a buffer as client B
         let buffer_b = worktree_b
             .update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.txt", cx))
             .await
@@ -1430,14 +1477,14 @@ mod tests {
     ) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(FakeFs::new());
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
-        // Share a local worktree as client A
-        let fs = Arc::new(FakeFs::new());
+        // Share a project as client A
         fs.insert_tree(
             "/dir",
             json!({
@@ -1446,44 +1493,56 @@ mod tests {
             }),
         )
         .await;
-        let worktree_a = Worktree::open_local(
-            client_a.clone(),
-            client_a.user_store.clone(),
-            "/dir".as_ref(),
-            fs,
-            lang_registry.clone(),
-            &mut cx_a.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/dir", cx))
+            .await
+            .unwrap();
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let worktree_id = worktree_a
-            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
+        let project_id = project_a
+            .update(&mut cx_a, |project, _| project.next_remote_id())
+            .await;
+        project_a
+            .update(&mut cx_a, |project, cx| project.share(cx))
             .await
             .unwrap();
 
-        // Join that worktree as client B, and see that a guest has joined as client A.
-        let worktree_b = Worktree::open_remote(
+        // Join that project as client B
+        let project_b = Project::remote(
+            project_id,
             client_b.clone(),
-            worktree_id,
-            lang_registry.clone(),
             client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
             &mut cx_b.to_async(),
         )
         .await
         .unwrap();
+        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
 
+        // Open a buffer as client A
         let buffer_a = worktree_a
             .update(&mut cx_a, |tree, cx| tree.open_buffer("a.txt", cx))
             .await
             .unwrap();
+
+        // Start opening the same buffer as client B
         let buffer_b = cx_b
             .background()
             .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.txt", cx)));
-
         task::yield_now().await;
+
+        // Edit the buffer as client A while client B is still opening it.
         buffer_a.update(&mut cx_a, |buf, cx| buf.edit([0..0], "z", cx));
 
         let text = buffer_a.read_with(&cx_a, |buf, _| buf.text());
@@ -1498,14 +1557,14 @@ mod tests {
     ) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(FakeFs::new());
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
-        // Share a local worktree as client A
-        let fs = Arc::new(FakeFs::new());
+        // Share a project as client A
         fs.insert_tree(
             "/dir",
             json!({
@@ -1514,45 +1573,58 @@ mod tests {
             }),
         )
         .await;
-        let worktree_a = Worktree::open_local(
-            client_a.clone(),
-            client_a.user_store.clone(),
-            "/dir".as_ref(),
-            fs,
-            lang_registry.clone(),
-            &mut cx_a.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/dir", cx))
+            .await
+            .unwrap();
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let worktree_id = worktree_a
-            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
+        let project_id = project_a
+            .update(&mut cx_a, |project, _| project.next_remote_id())
+            .await;
+        project_a
+            .update(&mut cx_a, |project, cx| project.share(cx))
             .await
             .unwrap();
 
-        // Join that worktree as client B, and see that a guest has joined as client A.
-        let worktree_b = Worktree::open_remote(
+        // Join that project as client B
+        let project_b = Project::remote(
+            project_id,
             client_b.clone(),
-            worktree_id,
-            lang_registry.clone(),
             client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
             &mut cx_b.to_async(),
         )
         .await
         .unwrap();
-        worktree_a
-            .condition(&cx_a, |tree, _| tree.collaborators().len() == 1)
+        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
+
+        // See that a guest has joined as client A.
+        project_a
+            .condition(&cx_a, |p, _| p.collaborators().len() == 1)
             .await;
 
+        // Begin opening a buffer as client B, but leave the project before the open completes.
         let buffer_b = cx_b
             .background()
             .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.txt", cx)));
         cx_b.update(|_| drop(worktree_b));
         drop(buffer_b);
-        worktree_a
-            .condition(&cx_a, |tree, _| tree.collaborators().len() == 0)
+
+        // See that the guest has left.
+        project_a
+            .condition(&cx_a, |p, _| p.collaborators().len() == 0)
             .await;
     }
 
@@ -1560,14 +1632,14 @@ mod tests {
     async fn test_peer_disconnection(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(FakeFs::new());
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
-        // Share a local worktree as client A
-        let fs = Arc::new(FakeFs::new());
+        // Share a project as client A
         fs.insert_tree(
             "/a",
             json!({
@@ -1577,42 +1649,51 @@ mod tests {
             }),
         )
         .await;
-        let worktree_a = Worktree::open_local(
-            client_a.clone(),
-            client_a.user_store.clone(),
-            "/a".as_ref(),
-            fs,
-            lang_registry.clone(),
-            &mut cx_a.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", cx))
+            .await
+            .unwrap();
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let worktree_id = worktree_a
-            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
+        let project_id = project_a
+            .update(&mut cx_a, |project, _| project.next_remote_id())
+            .await;
+        project_a
+            .update(&mut cx_a, |project, cx| project.share(cx))
             .await
             .unwrap();
 
-        // Join that worktree as client B, and see that a guest has joined as client A.
-        let _worktree_b = Worktree::open_remote(
+        // Join that project as client B
+        let _project_b = Project::remote(
+            project_id,
             client_b.clone(),
-            worktree_id,
-            lang_registry.clone(),
             client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
             &mut cx_b.to_async(),
         )
         .await
         .unwrap();
-        worktree_a
-            .condition(&cx_a, |tree, _| tree.collaborators().len() == 1)
+
+        // See that a guest has joined as client A.
+        project_a
+            .condition(&cx_a, |p, _| p.collaborators().len() == 1)
             .await;
 
         // Drop client B's connection and ensure client A observes client B leaving the worktree.
         client_b.disconnect(&cx_b.to_async()).await.unwrap();
-        worktree_a
-            .condition(&cx_a, |tree, _| tree.collaborators().len() == 0)
+        project_a
+            .condition(&cx_a, |p, _| p.collaborators().len() == 0)
             .await;
     }
 
@@ -1622,28 +1703,30 @@ mod tests {
         mut cx_b: TestAppContext,
     ) {
         cx_a.foreground().forbid_parking();
+        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(FakeFs::new());
+
+        // Set up a fake language server.
         let (language_server_config, mut fake_language_server) =
             LanguageServerConfig::fake(cx_a.background()).await;
-        let mut lang_registry = LanguageRegistry::new();
-        lang_registry.add(Arc::new(Language::new(
-            LanguageConfig {
-                name: "Rust".to_string(),
-                path_suffixes: vec!["rs".to_string()],
-                language_server: Some(language_server_config),
-                ..Default::default()
-            },
-            Some(tree_sitter_rust::language()),
-        )));
-
-        let lang_registry = Arc::new(lang_registry);
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Rust".to_string(),
+                    path_suffixes: vec!["rs".to_string()],
+                    language_server: Some(language_server_config),
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )));
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start().await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
-        // Share a local worktree as client A
-        let fs = Arc::new(FakeFs::new());
+        // Share a project as client A
         fs.insert_tree(
             "/a",
             json!({
@@ -1653,25 +1736,31 @@ mod tests {
             }),
         )
         .await;
-        let worktree_a = Worktree::open_local(
-            client_a.clone(),
-            client_a.user_store.clone(),
-            "/a".as_ref(),
-            fs,
-            lang_registry.clone(),
-            &mut cx_a.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", cx))
+            .await
+            .unwrap();
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let worktree_id = worktree_a
-            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
+        let project_id = project_a
+            .update(&mut cx_a, |project, _| project.next_remote_id())
+            .await;
+        project_a
+            .update(&mut cx_a, |project, cx| project.share(cx))
             .await
             .unwrap();
 
-        // Cause language server to start.
+        // Cause the language server to start.
         let _ = cx_a
             .background()
             .spawn(worktree_a.update(&mut cx_a, |worktree, cx| {
@@ -1706,15 +1795,17 @@ mod tests {
             .await;
 
         // Join the worktree as client B.
-        let worktree_b = Worktree::open_remote(
+        let project_b = Project::remote(
+            project_id,
             client_b.clone(),
-            worktree_id,
-            lang_registry.clone(),
             client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
             &mut cx_b.to_async(),
         )
         .await
         .unwrap();
+        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
 
         // Open the file with the errors.
         let buffer_b = cx_b
@@ -2175,14 +2266,13 @@ mod tests {
     ) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(FakeFs::new());
 
         // Connect to a server as 3 clients.
         let mut server = TestServer::start().await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
         let client_c = server.create_client(&mut cx_c, "user_c").await;
-
-        let fs = Arc::new(FakeFs::new());
 
         // Share a worktree as client A.
         fs.insert_tree(
@@ -2193,16 +2283,22 @@ mod tests {
         )
         .await;
 
-        let worktree_a = Worktree::open_local(
-            client_a.clone(),
-            client_a.user_store.clone(),
-            "/a".as_ref(),
-            fs.clone(),
-            lang_registry.clone(),
-            &mut cx_a.to_async(),
-        )
-        .await
-        .unwrap();
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", cx))
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
 
         client_a
             .user_store
@@ -2223,16 +2319,20 @@ mod tests {
             })
             .await;
 
-        let worktree_id = worktree_a
-            .update(&mut cx_a, |tree, cx| tree.as_local_mut().unwrap().share(cx))
+        let project_id = project_a
+            .update(&mut cx_a, |project, _| project.next_remote_id())
+            .await;
+        project_a
+            .update(&mut cx_a, |project, cx| project.share(cx))
             .await
             .unwrap();
 
-        let _worktree_b = Worktree::open_remote(
+        let _project_b = Project::remote(
+            project_id,
             client_b.clone(),
-            worktree_id,
-            lang_registry.clone(),
             client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
             &mut cx_b.to_async(),
         )
         .await
@@ -2257,13 +2357,13 @@ mod tests {
             })
             .await;
 
-        worktree_a
-            .condition(&cx_a, |worktree, _| {
-                worktree.collaborators().contains_key(&client_b.peer_id)
+        project_a
+            .condition(&cx_a, |project, _| {
+                project.collaborators().contains_key(&client_b.peer_id)
             })
             .await;
 
-        cx_a.update(move |_| drop(worktree_a));
+        cx_a.update(move |_| drop(project_a));
         client_a
             .user_store
             .condition(&cx_a, |user_store, _| contacts(user_store) == vec![])
@@ -2283,12 +2383,12 @@ mod tests {
                 .iter()
                 .map(|contact| {
                     let worktrees = contact
-                        .worktrees
+                        .projects
                         .iter()
-                        .map(|w| {
+                        .map(|p| {
                             (
-                                w.root_name.as_str(),
-                                w.guests.iter().map(|p| p.github_login.as_str()).collect(),
+                                p.worktree_root_names[0].as_str(),
+                                p.guests.iter().map(|p| p.github_login.as_str()).collect(),
                             )
                         })
                         .collect();

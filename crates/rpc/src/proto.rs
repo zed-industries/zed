@@ -186,6 +186,7 @@ entity_messages!(
     SaveBuffer,
     ShareWorktree,
     UnregisterWorktree,
+    UnshareProject,
     UpdateBuffer,
     UpdateWorktree,
 );

@@ -617,18 +617,18 @@ mod tests {
         )
         .await;
 
-        let project = cx.add_model(|cx| {
+        let project = cx.update(|cx| {
             Project::local(
-                params.languages.clone(),
                 params.client.clone(),
                 params.user_store.clone(),
+                params.languages.clone(),
                 params.fs.clone(),
                 cx,
             )
         });
         let root1 = project
             .update(&mut cx, |project, cx| {
-                project.add_local_worktree("/root1".as_ref(), cx)
+                project.add_local_worktree("/root1", cx)
             })
             .await
             .unwrap();
@@ -637,7 +637,7 @@ mod tests {
             .await;
         let root2 = project
             .update(&mut cx, |project, cx| {
-                project.add_local_worktree("/root2".as_ref(), cx)
+                project.add_local_worktree("/root2", cx)
             })
             .await
             .unwrap();
