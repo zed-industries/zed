@@ -2195,11 +2195,9 @@ mod tests {
                     let buffer = buffer_handle.read(cx);
                     let end_ix = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Right);
                     let start_ix = buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
-                    let header_height = rng.gen_range(0..=5);
                     let anchor_range = buffer.anchor_before(start_ix)..buffer.anchor_after(end_ix);
                     log::info!(
-                        "Pushing excerpt wih header {}, buffer {}: {:?}[{:?}] = {:?}",
-                        header_height,
+                        "Pushing excerpt for buffer {}: {:?}[{:?}] = {:?}",
                         buffer_handle.id(),
                         buffer.text(),
                         start_ix..end_ix,
@@ -2216,7 +2214,7 @@ mod tests {
                         )
                     });
                     excerpt_ids.push(excerpt_id);
-                    expected_excerpts.push((buffer_handle.clone(), anchor_range, header_height));
+                    expected_excerpts.push((buffer_handle.clone(), anchor_range));
                 }
             }
 
@@ -2231,7 +2229,7 @@ mod tests {
             let mut excerpt_starts = Vec::new();
             let mut expected_text = String::new();
             let mut expected_buffer_rows = Vec::new();
-            for (buffer, range, _) in &expected_excerpts {
+            for (buffer, range) in &expected_excerpts {
                 let buffer = buffer.read(cx);
                 let buffer_range = range.to_offset(buffer);
 
@@ -2269,7 +2267,7 @@ mod tests {
             }
 
             let mut excerpt_starts = excerpt_starts.into_iter();
-            for (buffer, range, _) in &expected_excerpts {
+            for (buffer, range) in &expected_excerpts {
                 let buffer_id = buffer.id();
                 let buffer = buffer.read(cx);
                 let buffer_range = range.to_offset(buffer);
