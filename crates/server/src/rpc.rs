@@ -1632,7 +1632,7 @@ mod tests {
         let buffer_b = cx_b
             .background()
             .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.txt", cx)));
-        cx_b.update(|_| drop(worktree_b));
+        cx_b.update(|_| drop(project_b));
         drop(buffer_b);
 
         // See that the guest has left.
