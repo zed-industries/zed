@@ -34,6 +34,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt,
     future::Future,
+    mem,
     ops::{Deref, Range},
     path::{Path, PathBuf},
     sync::{
@@ -671,7 +672,7 @@ impl Worktree {
 
     fn update_diagnostics(
         &mut self,
-        params: lsp::PublishDiagnosticsParams,
+        mut params: lsp::PublishDiagnosticsParams,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
         let this = self.as_local_mut().ok_or_else(|| anyhow!("not local"))?;
@@ -688,7 +689,7 @@ impl Worktree {
         let mut group_ids_by_diagnostic_range = HashMap::default();
         let mut diagnostics_by_group_id = HashMap::default();
         let mut next_group_id = 0;
-        for diagnostic in &params.diagnostics {
+        for diagnostic in &mut params.diagnostics {
             let source = diagnostic.source.as_ref();
             let code = diagnostic.code.as_ref();
             let group_id = diagnostic_ranges(&diagnostic, &abs_path)
@@ -715,7 +716,7 @@ impl Worktree {
                             lsp::NumberOrString::String(code) => code,
                         }),
                         severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
-                        message: diagnostic.message.clone(),
+                        message: mem::take(&mut diagnostic.message),
                         group_id,
                         is_primary: false,
                     },
