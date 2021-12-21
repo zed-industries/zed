@@ -34,7 +34,7 @@ pub type ExcerptId = Locator;
 
 pub struct MultiBuffer {
     snapshot: RefCell<MultiBufferSnapshot>,
-    buffers: HashMap<usize, BufferState>,
+    buffers: RefCell<HashMap<usize, BufferState>>,
     subscriptions: Topic,
     singleton: bool,
     replica_id: ReplicaId,
@@ -245,9 +245,17 @@ impl MultiBuffer {
         self.snapshot.borrow()
     }
 
-    pub fn as_singleton(&self) -> Option<&ModelHandle<Buffer>> {
+    pub fn as_singleton(&self) -> Option<ModelHandle<Buffer>> {
         if self.singleton {
-            return Some(&self.buffers.values().next().unwrap().buffer);
+            return Some(
+                self.buffers
+                    .borrow()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .buffer
+                    .clone(),
+            );
         } else {
             None
         }
@@ -364,40 +372,42 @@ impl MultiBuffer {
         let new_text = new_text.into();
         for (buffer_id, mut edits) in buffer_edits {
             edits.sort_unstable_by_key(|(range, _)| range.start);
-            self.buffers[&buffer_id].buffer.update(cx, |buffer, cx| {
-                let mut edits = edits.into_iter().peekable();
-                let mut insertions = Vec::new();
-                let mut deletions = Vec::new();
-                while let Some((mut range, mut is_insertion)) = edits.next() {
-                    while let Some((next_range, next_is_insertion)) = edits.peek() {
-                        if range.end >= next_range.start {
-                            range.end = cmp::max(next_range.end, range.end);
-                            is_insertion |= *next_is_insertion;
-                            edits.next();
-                        } else {
-                            break;
+            self.buffers.borrow()[&buffer_id]
+                .buffer
+                .update(cx, |buffer, cx| {
+                    let mut edits = edits.into_iter().peekable();
+                    let mut insertions = Vec::new();
+                    let mut deletions = Vec::new();
+                    while let Some((mut range, mut is_insertion)) = edits.next() {
+                        while let Some((next_range, next_is_insertion)) = edits.peek() {
+                            if range.end >= next_range.start {
+                                range.end = cmp::max(next_range.end, range.end);
+                                is_insertion |= *next_is_insertion;
+                                edits.next();
+                            } else {
+                                break;
+                            }
+                        }
+
+                        if is_insertion {
+                            insertions.push(
+                                buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
+                            );
+                        } else if !range.is_empty() {
+                            deletions.push(
+                                buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
+                            );
                         }
                     }
 
-                    if is_insertion {
-                        insertions.push(
-                            buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
-                        );
-                    } else if !range.is_empty() {
-                        deletions.push(
-                            buffer.anchor_before(range.start)..buffer.anchor_before(range.end),
-                        );
+                    if autoindent {
+                        buffer.edit_with_autoindent(deletions, "", cx);
+                        buffer.edit_with_autoindent(insertions, new_text.clone(), cx);
+                    } else {
+                        buffer.edit(deletions, "", cx);
+                        buffer.edit(insertions, new_text.clone(), cx);
                     }
-                }
-
-                if autoindent {
-                    buffer.edit_with_autoindent(deletions, "", cx);
-                    buffer.edit_with_autoindent(insertions, new_text.clone(), cx);
-                } else {
-                    buffer.edit(deletions, "", cx);
-                    buffer.edit(insertions, new_text.clone(), cx);
-                }
-            })
+                })
         }
     }
 
@@ -414,7 +424,7 @@ impl MultiBuffer {
             return buffer.update(cx, |buffer, _| buffer.start_transaction_at(now));
         }
 
-        for BufferState { buffer, .. } in self.buffers.values() {
+        for BufferState { buffer, .. } in self.buffers.borrow().values() {
             buffer.update(cx, |buffer, _| buffer.start_transaction_at(now));
         }
         self.history.start_transaction(now)
@@ -434,7 +444,7 @@ impl MultiBuffer {
         }
 
         let mut buffer_transactions = HashSet::default();
-        for BufferState { buffer, .. } in self.buffers.values() {
+        for BufferState { buffer, .. } in self.buffers.borrow().values() {
             if let Some(transaction_id) =
                 buffer.update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
             {
@@ -490,40 +500,42 @@ impl MultiBuffer {
         }
 
         for (buffer_id, mut selections) in selections_by_buffer {
-            self.buffers[&buffer_id].buffer.update(cx, |buffer, cx| {
-                selections.sort_unstable_by(|a, b| a.start.cmp(&b.start, buffer).unwrap());
-                let mut selections = selections.into_iter().peekable();
-                let merged_selections = Arc::from_iter(iter::from_fn(|| {
-                    let mut selection = selections.next()?;
-                    while let Some(next_selection) = selections.peek() {
-                        if selection
-                            .end
-                            .cmp(&next_selection.start, buffer)
-                            .unwrap()
-                            .is_ge()
-                        {
-                            let next_selection = selections.next().unwrap();
-                            if next_selection
+            self.buffers.borrow()[&buffer_id]
+                .buffer
+                .update(cx, |buffer, cx| {
+                    selections.sort_unstable_by(|a, b| a.start.cmp(&b.start, buffer).unwrap());
+                    let mut selections = selections.into_iter().peekable();
+                    let merged_selections = Arc::from_iter(iter::from_fn(|| {
+                        let mut selection = selections.next()?;
+                        while let Some(next_selection) = selections.peek() {
+                            if selection
                                 .end
-                                .cmp(&selection.end, buffer)
+                                .cmp(&next_selection.start, buffer)
                                 .unwrap()
                                 .is_ge()
                             {
-                                selection.end = next_selection.end;
+                                let next_selection = selections.next().unwrap();
+                                if next_selection
+                                    .end
+                                    .cmp(&selection.end, buffer)
+                                    .unwrap()
+                                    .is_ge()
+                                {
+                                    selection.end = next_selection.end;
+                                }
+                            } else {
+                                break;
                             }
-                        } else {
-                            break;
                         }
-                    }
-                    Some(selection)
-                }));
-                buffer.set_active_selections(merged_selections, cx);
-            });
+                        Some(selection)
+                    }));
+                    buffer.set_active_selections(merged_selections, cx);
+                });
         }
     }
 
     pub fn remove_active_selections(&mut self, cx: &mut ModelContext<Self>) {
-        for buffer in self.buffers.values() {
+        for buffer in self.buffers.borrow().values() {
             buffer
                 .buffer
                 .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
@@ -538,7 +550,7 @@ impl MultiBuffer {
         while let Some(transaction) = self.history.pop_undo() {
             let mut undone = false;
             for (buffer_id, buffer_transaction_id) in &transaction.buffer_transactions {
-                if let Some(BufferState { buffer, .. }) = self.buffers.get(&buffer_id) {
+                if let Some(BufferState { buffer, .. }) = self.buffers.borrow().get(&buffer_id) {
                     undone |= buffer.update(cx, |buf, cx| {
                         buf.undo_transaction(*buffer_transaction_id, cx)
                     });
@@ -561,7 +573,7 @@ impl MultiBuffer {
         while let Some(transaction) = self.history.pop_redo() {
             let mut redone = false;
             for (buffer_id, buffer_transaction_id) in &transaction.buffer_transactions {
-                if let Some(BufferState { buffer, .. }) = self.buffers.get(&buffer_id) {
+                if let Some(BufferState { buffer, .. }) = self.buffers.borrow().get(&buffer_id) {
                     redone |= buffer.update(cx, |buf, cx| {
                         buf.redo_transaction(*buffer_transaction_id, cx)
                     });
@@ -613,6 +625,7 @@ impl MultiBuffer {
         let excerpt = Excerpt::new(id.clone(), buffer.id(), buffer_snapshot, range, false);
         snapshot.excerpts.push(excerpt, &());
         self.buffers
+            .borrow_mut()
             .entry(props.buffer.id())
             .or_insert_with(|| BufferState {
                 buffer,
@@ -644,7 +657,7 @@ impl MultiBuffer {
 
     pub fn save(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<()>>> {
         let mut save_tasks = Vec::new();
-        for BufferState { buffer, .. } in self.buffers.values() {
+        for BufferState { buffer, .. } in self.buffers.borrow().values() {
             save_tasks.push(buffer.update(cx, |buffer, cx| buffer.save(cx))?);
         }
 
@@ -658,6 +671,7 @@ impl MultiBuffer {
 
     pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
         self.buffers
+            .borrow()
             .values()
             .next()
             .and_then(|state| state.buffer.read(cx).language())
@@ -679,18 +693,26 @@ impl MultiBuffer {
         let mut diagnostics_updated = false;
         let mut is_dirty = false;
         let mut has_conflict = false;
-        for buffer_state in self.buffers.values() {
+        let mut buffers = self.buffers.borrow_mut();
+        for buffer_state in buffers.values_mut() {
             let buffer = buffer_state.buffer.read(cx);
-            let buffer_edited = buffer.version().gt(&buffer_state.last_version);
-            let buffer_reparsed = buffer.parse_count() > buffer_state.last_parse_count;
+            let version = buffer.version();
+            let parse_count = buffer.parse_count();
+            let diagnostics_update_count = buffer.diagnostics_update_count();
+
+            let buffer_edited = version.gt(&buffer_state.last_version);
+            let buffer_reparsed = parse_count > buffer_state.last_parse_count;
             let buffer_diagnostics_updated =
-                buffer.diagnostics_update_count() > buffer_state.last_diagnostics_update_count;
+                diagnostics_update_count > buffer_state.last_diagnostics_update_count;
             if buffer_edited || buffer_reparsed || buffer_diagnostics_updated {
+                buffer_state.last_version = version;
+                buffer_state.last_parse_count = parse_count;
+                buffer_state.last_diagnostics_update_count = diagnostics_update_count;
                 excerpts_to_edit.extend(
                     buffer_state
                         .excerpts
                         .iter()
-                        .map(|excerpt_id| (excerpt_id, buffer_state, buffer_edited)),
+                        .map(|excerpt_id| (excerpt_id, buffer_state.buffer.clone(), buffer_edited)),
                 );
             }
 
@@ -714,10 +736,11 @@ impl MultiBuffer {
         let mut new_excerpts = SumTree::new();
         let mut cursor = snapshot.excerpts.cursor::<(Option<&ExcerptId>, usize)>();
 
-        for (id, buffer_state, buffer_edited) in excerpts_to_edit {
+        for (id, buffer, buffer_edited) in excerpts_to_edit {
             new_excerpts.push_tree(cursor.slice(&Some(id), Bias::Left, &()), &());
             let old_excerpt = cursor.item().unwrap();
-            let buffer = buffer_state.buffer.read(cx);
+            let buffer_id = buffer.id();
+            let buffer = buffer.read(cx);
 
             let mut new_excerpt;
             if buffer_edited {
@@ -740,7 +763,7 @@ impl MultiBuffer {
 
                 new_excerpt = Excerpt::new(
                     id.clone(),
-                    buffer_state.buffer.id(),
+                    buffer_id,
                     buffer.snapshot(),
                     old_excerpt.range.clone(),
                     old_excerpt.has_trailing_newline,
