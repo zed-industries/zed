@@ -115,10 +115,8 @@ impl Store {
 
         let mut result = RemovedConnectionState::default();
         for project_id in connection.projects.clone() {
-            if let Some((project, authorized_user_ids)) =
-                self.unregister_project(project_id, connection_id)
-            {
-                result.contact_ids.extend(authorized_user_ids);
+            if let Some(project) = self.unregister_project(project_id, connection_id) {
+                result.contact_ids.extend(project.authorized_user_ids());
                 result.hosted_projects.insert(project_id, project);
             } else if let Some(project) = self.leave_project(connection_id, project_id) {
                 result
@@ -274,17 +272,25 @@ impl Store {
         &mut self,
         project_id: u64,
         connection_id: ConnectionId,
-    ) -> Option<(Project, Vec<UserId>)> {
+    ) -> Option<Project> {
         match self.projects.entry(project_id) {
             hash_map::Entry::Occupied(e) => {
-                if e.get().host_connection_id != connection_id {
-                    return None;
+                if e.get().host_connection_id == connection_id {
+                    for user_id in e.get().authorized_user_ids() {
+                        if let hash_map::Entry::Occupied(mut projects) =
+                            self.visible_projects_by_user_id.entry(user_id)
+                        {
+                            projects.get_mut().remove(&project_id);
+                        }
+                    }
+
+                    Some(e.remove())
+                } else {
+                    None
                 }
             }
-            hash_map::Entry::Vacant(_) => return None,
+            hash_map::Entry::Vacant(_) => None,
         }
-
-        todo!()
     }
 
     pub fn unregister_worktree(

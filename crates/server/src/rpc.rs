@@ -233,8 +233,12 @@ impl Server {
         mut self: Arc<Server>,
         request: TypedEnvelope<proto::UnregisterProject>,
     ) -> tide::Result<()> {
-        self.state_mut()
-            .unregister_project(request.payload.project_id, request.sender_id);
+        let project = self
+            .state_mut()
+            .unregister_project(request.payload.project_id, request.sender_id)
+            .ok_or_else(|| anyhow!("no such project"))?;
+        self.update_contacts_for_users(project.authorized_user_ids().iter())
+            .await?;
         Ok(())
     }
 
