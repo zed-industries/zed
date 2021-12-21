@@ -16,6 +16,8 @@ use workspace::Workspace;
 
 action!(Toggle);
 
+const CONTEXT_LINE_COUNT: u32 = 1;
+
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([Binding::new("alt-shift-D", Toggle, None)]);
     cx.add_action(ProjectDiagnosticsEditor::toggle);
@@ -96,15 +98,18 @@ impl ProjectDiagnosticsEditor {
                 for (ix, entry) in group.entries.iter().map(Some).chain([None]).enumerate() {
                     if let Some((range, start_ix)) = &mut pending_range {
                         if let Some(entry) = entry {
-                            if entry.range.start.row <= range.end.row + 1 {
+                            if entry.range.start.row <= range.end.row + 1 + CONTEXT_LINE_COUNT * 2 {
                                 range.end = range.end.max(entry.range.end);
                                 continue;
                             }
                         }
 
-                        let excerpt_start = Point::new(range.start.row.saturating_sub(1), 0);
-                        let excerpt_end = snapshot
-                            .clip_point(Point::new(range.end.row + 1, u32::MAX), Bias::Left);
+                        let excerpt_start =
+                            Point::new(range.start.row.saturating_sub(CONTEXT_LINE_COUNT), 0);
+                        let excerpt_end = snapshot.clip_point(
+                            Point::new(range.end.row + CONTEXT_LINE_COUNT, u32::MAX),
+                            Bias::Left,
+                        );
                         let excerpt_id = excerpts.push_excerpt(
                             ExcerptProperties {
                                 buffer: &buffer,
@@ -296,10 +301,8 @@ mod tests {
             b(y);
             // comment 1
             // comment 2
-            // comment 3
-            // comment 4
-            d(y);
-            e(x);
+            c(y);
+            d(x);
         }
         "
         .unindent();
@@ -311,6 +314,18 @@ mod tests {
                     None,
                     vec![
                         DiagnosticEntry {
+                            range: PointUtf16::new(1, 8)..PointUtf16::new(1, 9),
+                            diagnostic: Diagnostic {
+                                message:
+                                    "move occurs because `x` has type `Vec<char>`, which does not implement the `Copy` trait"
+                                        .to_string(),
+                                severity: DiagnosticSeverity::INFORMATION,
+                                is_primary: false,
+                                group_id: 1,
+                                ..Default::default()
+                            },
+                        },
+                        DiagnosticEntry {
                             range: PointUtf16::new(2, 8)..PointUtf16::new(2, 9),
                             diagnostic: Diagnostic {
                                 message:
@@ -319,6 +334,16 @@ mod tests {
                                 severity: DiagnosticSeverity::INFORMATION,
                                 is_primary: false,
                                 group_id: 0,
+                                ..Default::default()
+                            },
+                        },
+                        DiagnosticEntry {
+                            range: PointUtf16::new(3, 6)..PointUtf16::new(3, 7),
+                            diagnostic: Diagnostic {
+                                message: "value moved here".to_string(),
+                                severity: DiagnosticSeverity::INFORMATION,
+                                is_primary: false,
+                                group_id: 1,
                                 ..Default::default()
                             },
                         },
@@ -333,12 +358,22 @@ mod tests {
                             },
                         },
                         DiagnosticEntry {
-                            range: PointUtf16::new(8, 6)..PointUtf16::new(8, 7),
+                            range: PointUtf16::new(7, 6)..PointUtf16::new(7, 7),
                             diagnostic: Diagnostic {
                                 message: "use of moved value\nvalue used here after move".to_string(),
                                 severity: DiagnosticSeverity::ERROR,
                                 is_primary: true,
                                 group_id: 0,
+                                ..Default::default()
+                            },
+                        },
+                        DiagnosticEntry {
+                            range: PointUtf16::new(8, 6)..PointUtf16::new(8, 7),
+                            diagnostic: Diagnostic {
+                                message: "use of moved value\nvalue used here after move".to_string(),
+                                severity: DiagnosticSeverity::ERROR,
+                                is_primary: true,
+                                group_id: 1,
                                 ..Default::default()
                             },
                         },
@@ -351,22 +386,40 @@ mod tests {
 
         view.update(cx, |view, cx| {
             view.populate_excerpts(buffer, cx);
+            let editor = view.editor.update(cx, |editor, cx| editor.snapshot(cx));
+
             assert_eq!(
-                view.editor.update(cx, |editor, cx| editor.display_text(cx)),
+                editor.text(),
                 concat!(
-                    "\n", // primary diagnostic message
+                    // Diagnostic group 1 (error for `y`)
+                    "\n", // primary message
                     "\n", // filename
                     "    let x = vec![];\n",
                     "    let y = vec![];\n",
-                    "    a(x);\n",
-                    "\n", // context ellipsis
+                    "\n", // supporting diagnostic
                     "    a(x);\n",
                     "    b(y);\n",
+                    "\n", // supporting diagnostic
                     "    // comment 1\n",
+                    "    // comment 2\n",
+                    "    c(y);\n",
+                    "\n", // supporting diagnostic
+                    "    d(x);\n",
+                    // Diagnostic group 2 (error for `x`)
+                    "\n", // primary message
+                    "\n", // filename
+                    "fn main() {\n",
+                    "    let x = vec![];\n",
+                    "\n", // supporting diagnostic
+                    "    let y = vec![];\n",
+                    "    a(x);\n",
+                    "\n", // supporting diagnostic
+                    "    b(y);\n",
                     "\n", // context ellipsis
-                    "    // comment 3\n",
-                    "    // comment 4\n",
-                    "    d(y);"
+                    "    c(y);\n",
+                    "    d(x);\n",
+                    "\n", // supporting diagnostic
+                    "}"
                 )
             );
         });

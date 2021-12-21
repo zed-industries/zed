@@ -561,7 +561,7 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
         match rng.gen_range(0..=100) {
             0..=50 if mutation_count != 0 => {
                 let op = buffer.randomly_edit(&mut rng, 5).2;
-                network.broadcast(buffer.replica_id, vec!(op));
+                network.broadcast(buffer.replica_id, vec![op]);
                 log::info!("buffer {} text: {:?}", buffer.replica_id, buffer.text());
                 mutation_count -= 1;
             }

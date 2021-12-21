@@ -11,6 +11,7 @@ use oauth2::{
     TokenResponse as _, TokenUrl,
 };
 use rand::thread_rng;
+use rpc::auth as zed_auth;
 use scrypt::{
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Scrypt,
@@ -19,7 +20,6 @@ use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, convert::TryFrom, sync::Arc};
 use surf::{StatusCode, Url};
 use tide::{log, Error, Server};
-use rpc::auth as zed_auth;
 
 static CURRENT_GITHUB_USER: &'static str = "current_github_user";
 static GITHUB_AUTH_URL: &'static str = "https://github.com/login/oauth/authorize";

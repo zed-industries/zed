@@ -11,7 +11,7 @@ use parking_lot::Mutex;
 use postage::watch;
 use std::{cmp, sync::Arc};
 use theme::ThemeRegistry;
-use workspace::{Settings, Workspace, AppState};
+use workspace::{AppState, Settings, Workspace};
 
 #[derive(Clone)]
 pub struct ThemeSelectorParams {

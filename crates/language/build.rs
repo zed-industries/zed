@@ -3,4 +3,3 @@ fn main() {
         println!("cargo:rustc-env=ZED_BUNDLE={}", bundled);
     }
 }
-
