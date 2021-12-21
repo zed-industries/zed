@@ -9,10 +9,9 @@ use anyhow::{anyhow, Result};
 pub use buffer::Operation;
 pub use buffer::*;
 pub use diagnostic_set::DiagnosticEntry;
-use gpui::{executor::Background, AppContext};
+use gpui::AppContext;
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
-use lsp::LanguageServer;
 use parking_lot::Mutex;
 use serde::Deserialize;
 use std::{collections::HashSet, path::Path, str, sync::Arc};
@@ -48,7 +47,7 @@ pub struct LanguageServerConfig {
     pub disk_based_diagnostic_sources: HashSet<String>,
     #[cfg(any(test, feature = "test-support"))]
     #[serde(skip)]
-    pub fake_server: Option<(Arc<LanguageServer>, Arc<std::sync::atomic::AtomicBool>)>,
+    pub fake_server: Option<(Arc<lsp::LanguageServer>, Arc<std::sync::atomic::AtomicBool>)>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -219,7 +218,9 @@ impl Grammar {
 
 #[cfg(any(test, feature = "test-support"))]
 impl LanguageServerConfig {
-    pub async fn fake(executor: Arc<Background>) -> (Self, lsp::FakeLanguageServer) {
+    pub async fn fake(
+        executor: Arc<gpui::executor::Background>,
+    ) -> (Self, lsp::FakeLanguageServer) {
         let (server, fake) = lsp::LanguageServer::fake(executor).await;
         fake.started
             .store(false, std::sync::atomic::Ordering::SeqCst);

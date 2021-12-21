@@ -730,6 +730,9 @@ impl Buffer {
         let version = version.map(|version| version as usize);
         let content = if let Some(version) = version {
             let language_server = self.language_server.as_mut().unwrap();
+            language_server
+                .pending_snapshots
+                .retain(|&v, _| v >= version);
             let snapshot = language_server
                 .pending_snapshots
                 .get(&version)
@@ -756,6 +759,10 @@ impl Buffer {
             let entry = &mut diagnostics[ix];
             let mut start = entry.range.start;
             let mut end = entry.range.end;
+
+            // Some diagnostics are based on files on disk instead of buffers'
+            // current contents. Adjust these diagnostics' ranges to reflect
+            // any unsaved edits.
             if entry
                 .diagnostic
                 .source
@@ -781,6 +788,8 @@ impl Buffer {
 
             entry.range = content.clip_point_utf16(start, Bias::Left)
                 ..content.clip_point_utf16(end, Bias::Right);
+
+            // Expand empty ranges by one character
             if entry.range.start == entry.range.end {
                 entry.range.end.column += 1;
                 entry.range.end = content.clip_point_utf16(entry.range.end, Bias::Right);
@@ -794,19 +803,6 @@ impl Buffer {
 
         drop(edits_since_save);
         self.diagnostics = DiagnosticSet::new(diagnostics, content);
-
-        if let Some(version) = version {
-            let language_server = self.language_server.as_mut().unwrap();
-            let versions_to_delete = language_server
-                .pending_snapshots
-                .range(..version)
-                .map(|(v, _)| *v)
-                .collect::<Vec<_>>();
-            for version in versions_to_delete {
-                language_server.pending_snapshots.remove(&version);
-            }
-        }
-
         self.diagnostics_update_count += 1;
         cx.notify();
         cx.emit(Event::DiagnosticsUpdated);
