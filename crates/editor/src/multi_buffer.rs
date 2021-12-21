@@ -97,6 +97,7 @@ struct Excerpt {
     buffer_id: usize,
     buffer: BufferSnapshot,
     range: Range<text::Anchor>,
+    max_buffer_row: u32,
     text_summary: TextSummary,
     has_trailing_newline: bool,
 }
@@ -104,6 +105,7 @@ struct Excerpt {
 #[derive(Clone, Debug, Default)]
 struct ExcerptSummary {
     excerpt_id: ExcerptId,
+    max_buffer_row: u32,
     text: TextSummary,
 }
 
@@ -884,6 +886,10 @@ impl MultiBufferSnapshot {
         self.excerpts.summary().text.bytes
     }
 
+    pub fn max_buffer_row(&self) -> u32 {
+        self.excerpts.summary().max_buffer_row
+    }
+
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
         let mut cursor = self.excerpts.cursor::<usize>();
         cursor.seek(&offset, Bias::Right, &());
@@ -1565,6 +1571,7 @@ impl Excerpt {
     ) -> Self {
         Excerpt {
             id,
+            max_buffer_row: range.end.to_point(&buffer).row,
             text_summary: buffer.text_summary_for_range::<TextSummary, _>(range.to_offset(&buffer)),
             buffer_id,
             buffer,
@@ -1660,6 +1667,7 @@ impl sum_tree::Item for Excerpt {
         }
         ExcerptSummary {
             excerpt_id: self.id.clone(),
+            max_buffer_row: self.max_buffer_row,
             text,
         }
     }
@@ -1672,6 +1680,7 @@ impl sum_tree::Summary for ExcerptSummary {
         debug_assert!(summary.excerpt_id > self.excerpt_id);
         self.excerpt_id = summary.excerpt_id.clone();
         self.text.add_summary(&summary.text, &());
+        self.max_buffer_row = cmp::max(self.max_buffer_row, summary.max_buffer_row);
     }
 }
 
@@ -2265,6 +2274,15 @@ mod tests {
                     start_row
                 );
             }
+
+            assert_eq!(
+                snapshot.max_buffer_row(),
+                expected_buffer_rows
+                    .into_iter()
+                    .filter_map(|r| r)
+                    .max()
+                    .unwrap()
+            );
 
             let mut excerpt_starts = excerpt_starts.into_iter();
             for (buffer, range) in &expected_excerpts {

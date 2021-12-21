@@ -436,7 +436,7 @@ impl EditorElement {
     }
 
     fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &LayoutContext) -> f32 {
-        let digit_count = (snapshot.buffer_row_count() as f32).log10().floor() as usize + 1;
+        let digit_count = (snapshot.max_buffer_row() as f32).log10().floor() as usize + 1;
         let style = &self.settings.style;
 
         cx.text_layout_cache

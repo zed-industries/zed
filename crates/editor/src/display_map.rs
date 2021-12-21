@@ -198,8 +198,8 @@ impl DisplaySnapshot {
         self.blocks_snapshot.buffer_rows(start_row)
     }
 
-    pub fn buffer_row_count(&self) -> u32 {
-        self.buffer_snapshot.max_point().row + 1
+    pub fn max_buffer_row(&self) -> u32 {
+        self.buffer_snapshot.max_buffer_row()
     }
 
     pub fn prev_row_boundary(&self, input_display_point: DisplayPoint) -> (DisplayPoint, Point) {
