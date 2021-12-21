@@ -114,7 +114,6 @@ struct ExcerptSummary {
 }
 
 pub struct MultiBufferRows<'a> {
-    header_height: u32,
     buffer_row_range: Range<u32>,
     excerpts: Cursor<'a, Excerpt, Point>,
 }
@@ -134,13 +133,11 @@ pub struct MultiBufferBytes<'a> {
 }
 
 struct ExcerptChunks<'a> {
-    header_height: usize,
     content_chunks: BufferChunks<'a>,
     footer_height: usize,
 }
 
 struct ExcerptBytes<'a> {
-    header_height: usize,
     content_bytes: language::rope::Bytes<'a>,
     footer_height: usize,
 }
@@ -326,8 +323,7 @@ impl MultiBuffer {
                 cursor.prev(&());
             }
             let start_excerpt = cursor.item().expect("start offset out of bounds");
-            let start_overshoot =
-                (start - cursor.start()).saturating_sub(start_excerpt.header_height as usize);
+            let start_overshoot = start - cursor.start();
             let buffer_start =
                 start_excerpt.range.start.to_offset(&start_excerpt.buffer) + start_overshoot;
 
@@ -336,8 +332,7 @@ impl MultiBuffer {
                 cursor.prev(&());
             }
             let end_excerpt = cursor.item().expect("end offset out of bounds");
-            let end_overshoot =
-                (end - cursor.start()).saturating_sub(end_excerpt.header_height as usize);
+            let end_overshoot = end - cursor.start();
             let buffer_end = end_excerpt.range.start.to_offset(&end_excerpt.buffer) + end_overshoot;
 
             if start_excerpt.id == end_excerpt.id {
@@ -749,10 +744,8 @@ impl MultiBuffer {
                             old_excerpt.range.clone(),
                         )
                         .map(|mut edit| {
-                            let excerpt_old_start =
-                                cursor.start().1 + old_excerpt.header_height as usize;
-                            let excerpt_new_start = new_excerpts.summary().text.bytes
-                                + old_excerpt.header_height as usize;
+                            let excerpt_old_start = cursor.start().1;
+                            let excerpt_new_start = new_excerpts.summary().text.bytes;
                             edit.old.start += excerpt_old_start;
                             edit.old.end += excerpt_old_start;
                             edit.new.start += excerpt_new_start;
@@ -831,14 +824,12 @@ impl MultiBufferSnapshot {
     pub fn excerpt_headers_in_range<'a>(
         &'a self,
         range: Range<u32>,
-    ) -> impl 'a + Iterator<Item = (Range<u32>, RenderHeaderFn)> {
+    ) -> impl 'a + Iterator<Item = (u32, u8, RenderHeaderFn)> {
         let mut cursor = self.excerpts.cursor::<Point>();
         cursor.seek(&Point::new(range.start, 0), Bias::Right, &());
 
-        if let Some(excerpt) = cursor.item() {
-            if range.start >= cursor.start().row + excerpt.header_height as u32 {
-                cursor.next(&());
-            }
+        if cursor.item().is_some() && range.start > cursor.start().row {
+            cursor.next(&());
         }
 
         iter::from_fn(move || {
@@ -849,9 +840,8 @@ impl MultiBufferSnapshot {
 
                 if let Some(render) = excerpt.render_header.clone() {
                     let start = cursor.start().row;
-                    let end = start + excerpt.header_height as u32;
                     cursor.next(&());
-                    return Some((start..end, render));
+                    return Some((start, excerpt.header_height, render));
                 } else {
                     cursor.next(&());
                 }
@@ -868,12 +858,9 @@ impl MultiBufferSnapshot {
         let mut cursor = self.excerpts.cursor::<usize>();
         cursor.seek(&offset, Bias::Left, &());
         let mut excerpt_chunks = cursor.item().map(|excerpt| {
-            let start_after_header = cursor.start() + excerpt.header_height as usize;
             let end_before_footer = cursor.start() + excerpt.text_summary.bytes;
-
             let start = excerpt.range.start.to_offset(&excerpt.buffer);
-            let end =
-                start + (cmp::min(offset, end_before_footer).saturating_sub(start_after_header));
+            let end = start + (cmp::min(offset, end_before_footer) - cursor.start());
             excerpt.buffer.reversed_chunks_in_range(start..end)
         });
         iter::from_fn(move || {
@@ -888,11 +875,7 @@ impl MultiBufferSnapshot {
             }
 
             let excerpt = cursor.item().unwrap();
-            if offset <= cursor.start() + excerpt.header_height as usize {
-                let header_height = offset - cursor.start();
-                offset -= header_height;
-                Some(unsafe { str::from_utf8_unchecked(&NEWLINES[..header_height]) })
-            } else if offset == cursor.end(&()) && excerpt.has_trailing_newline {
+            if offset == cursor.end(&()) && excerpt.has_trailing_newline {
                 offset -= 1;
                 Some("\n")
             } else {
@@ -953,93 +936,48 @@ impl MultiBufferSnapshot {
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
         let mut cursor = self.excerpts.cursor::<usize>();
         cursor.seek(&offset, Bias::Right, &());
-        if let Some(excerpt) = cursor.item() {
-            let header_end = *cursor.start() + excerpt.header_height as usize;
-            if offset < header_end {
-                if bias == Bias::Left {
-                    cursor.prev(&());
-                    if let Some(excerpt) = cursor.item() {
-                        return *cursor.start() + excerpt.text_summary.bytes;
-                    }
-                }
-                header_end
-            } else {
-                let excerpt_start = excerpt.range.start.to_offset(&excerpt.buffer);
-                let buffer_offset = excerpt
-                    .buffer
-                    .clip_offset(excerpt_start + (offset - header_end), bias);
-                let offset_in_excerpt = if buffer_offset > excerpt_start {
-                    buffer_offset - excerpt_start
-                } else {
-                    0
-                };
-                header_end + offset_in_excerpt
-            }
+        let overshoot = if let Some(excerpt) = cursor.item() {
+            let excerpt_start = excerpt.range.start.to_offset(&excerpt.buffer);
+            let buffer_offset = excerpt
+                .buffer
+                .clip_offset(excerpt_start + (offset - cursor.start()), bias);
+            buffer_offset.saturating_sub(excerpt_start)
         } else {
-            self.excerpts.summary().text.bytes
-        }
+            0
+        };
+        cursor.start() + overshoot
     }
 
     pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
         let mut cursor = self.excerpts.cursor::<Point>();
         cursor.seek(&point, Bias::Right, &());
-        if let Some(excerpt) = cursor.item() {
-            let header_end = *cursor.start() + Point::new(excerpt.header_height as u32, 0);
-            if point < header_end {
-                if bias == Bias::Left {
-                    cursor.prev(&());
-                    if let Some(excerpt) = cursor.item() {
-                        return *cursor.start() + excerpt.text_summary.lines;
-                    }
-                }
-                header_end
-            } else {
-                let excerpt_start = excerpt.range.start.to_point(&excerpt.buffer);
-                let buffer_point = excerpt
-                    .buffer
-                    .clip_point(excerpt_start + (point - header_end), bias);
-                let point_in_excerpt = if buffer_point > excerpt_start {
-                    buffer_point - excerpt_start
-                } else {
-                    Point::zero()
-                };
-                header_end + point_in_excerpt
-            }
+        let overshoot = if let Some(excerpt) = cursor.item() {
+            let excerpt_start = excerpt.range.start.to_point(&excerpt.buffer);
+            let buffer_point = excerpt
+                .buffer
+                .clip_point(excerpt_start + (point - cursor.start()), bias);
+            buffer_point.saturating_sub(excerpt_start)
         } else {
-            self.excerpts.summary().text.lines
-        }
+            Point::zero()
+        };
+        *cursor.start() + overshoot
     }
 
     pub fn clip_point_utf16(&self, point: PointUtf16, bias: Bias) -> PointUtf16 {
         let mut cursor = self.excerpts.cursor::<PointUtf16>();
         cursor.seek(&point, Bias::Right, &());
-        if let Some(excerpt) = cursor.item() {
-            let header_end = *cursor.start() + PointUtf16::new(excerpt.header_height as u32, 0);
-            if point < header_end {
-                if bias == Bias::Left {
-                    cursor.prev(&());
-                    if let Some(excerpt) = cursor.item() {
-                        return *cursor.start() + excerpt.text_summary.lines_utf16;
-                    }
-                }
-                header_end
-            } else {
-                let excerpt_start = excerpt
-                    .buffer
-                    .offset_to_point_utf16(excerpt.range.start.to_offset(&excerpt.buffer));
-                let buffer_point = excerpt
-                    .buffer
-                    .clip_point_utf16(excerpt_start + (point - header_end), bias);
-                let point_in_excerpt = if buffer_point > excerpt_start {
-                    buffer_point - excerpt_start
-                } else {
-                    PointUtf16::new(0, 0)
-                };
-                header_end + point_in_excerpt
-            }
+        let overshoot = if let Some(excerpt) = cursor.item() {
+            let excerpt_start = excerpt
+                .buffer
+                .offset_to_point_utf16(excerpt.range.start.to_offset(&excerpt.buffer));
+            let buffer_point = excerpt
+                .buffer
+                .clip_point_utf16(excerpt_start + (point - cursor.start()), bias);
+            buffer_point.saturating_sub(excerpt_start)
         } else {
-            self.excerpts.summary().text.lines_utf16
-        }
+            PointUtf16::zero()
+        };
+        *cursor.start() + overshoot
     }
 
     pub fn bytes_in_range<'a, T: ToOffset>(&'a self, range: Range<T>) -> MultiBufferBytes<'a> {
@@ -1067,7 +1005,6 @@ impl MultiBufferSnapshot {
 
     pub fn buffer_rows<'a>(&'a self, start_row: u32) -> MultiBufferRows<'a> {
         let mut result = MultiBufferRows {
-            header_height: 0,
             buffer_row_range: 0..0,
             excerpts: self.excerpts.cursor(),
         };
@@ -1097,19 +1034,12 @@ impl MultiBufferSnapshot {
         if let Some(excerpt) = cursor.item() {
             let (start_offset, start_point) = cursor.start();
             let overshoot = offset - start_offset;
-            let header_height = excerpt.header_height as usize;
-            if overshoot < header_height {
-                *start_point + Point::new(overshoot as u32, 0)
-            } else {
-                let excerpt_start_offset = excerpt.range.start.to_offset(&excerpt.buffer);
-                let excerpt_start_point = excerpt.range.start.to_point(&excerpt.buffer);
-                let buffer_point = excerpt
-                    .buffer
-                    .offset_to_point(excerpt_start_offset + (overshoot - header_height));
-                *start_point
-                    + Point::new(header_height as u32, 0)
-                    + (buffer_point - excerpt_start_point)
-            }
+            let excerpt_start_offset = excerpt.range.start.to_offset(&excerpt.buffer);
+            let excerpt_start_point = excerpt.range.start.to_point(&excerpt.buffer);
+            let buffer_point = excerpt
+                .buffer
+                .offset_to_point(excerpt_start_offset + overshoot);
+            *start_point + (buffer_point - excerpt_start_point)
         } else {
             self.excerpts.summary().text.lines
         }
@@ -1121,18 +1051,12 @@ impl MultiBufferSnapshot {
         if let Some(excerpt) = cursor.item() {
             let (start_point, start_offset) = cursor.start();
             let overshoot = point - start_point;
-            let header_height = Point::new(excerpt.header_height as u32, 0);
-            if overshoot < header_height {
-                start_offset + overshoot.row as usize
-            } else {
-                let excerpt_start_offset = excerpt.range.start.to_offset(&excerpt.buffer);
-                let excerpt_start_point = excerpt.range.start.to_point(&excerpt.buffer);
-                let buffer_offset = excerpt
-                    .buffer
-                    .point_to_offset(excerpt_start_point + (overshoot - header_height));
-                *start_offset + excerpt.header_height as usize + buffer_offset
-                    - excerpt_start_offset
-            }
+            let excerpt_start_offset = excerpt.range.start.to_offset(&excerpt.buffer);
+            let excerpt_start_point = excerpt.range.start.to_point(&excerpt.buffer);
+            let buffer_offset = excerpt
+                .buffer
+                .point_to_offset(excerpt_start_point + overshoot);
+            *start_offset + buffer_offset - excerpt_start_offset
         } else {
             self.excerpts.summary().text.bytes
         }
@@ -1144,21 +1068,14 @@ impl MultiBufferSnapshot {
         if let Some(excerpt) = cursor.item() {
             let (start_point, start_offset) = cursor.start();
             let overshoot = point - start_point;
-            let header_height = PointUtf16::new(excerpt.header_height as u32, 0);
-            if overshoot < header_height {
-                start_offset + overshoot.row as usize
-            } else {
-                let excerpt_start_offset = excerpt.range.start.to_offset(&excerpt.buffer);
-                let excerpt_start_point = excerpt
-                    .buffer
-                    .offset_to_point_utf16(excerpt.range.start.to_offset(&excerpt.buffer));
-                let buffer_offset = excerpt
-                    .buffer
-                    .point_utf16_to_offset(excerpt_start_point + (overshoot - header_height));
-                *start_offset
-                    + excerpt.header_height as usize
-                    + (buffer_offset - excerpt_start_offset)
-            }
+            let excerpt_start_offset = excerpt.range.start.to_offset(&excerpt.buffer);
+            let excerpt_start_point = excerpt
+                .buffer
+                .offset_to_point_utf16(excerpt.range.start.to_offset(&excerpt.buffer));
+            let buffer_offset = excerpt
+                .buffer
+                .point_utf16_to_offset(excerpt_start_point + overshoot);
+            *start_offset + (buffer_offset - excerpt_start_offset)
         } else {
             self.excerpts.summary().text.bytes
         }
@@ -1188,18 +1105,15 @@ impl MultiBufferSnapshot {
         cursor.seek(&Point::new(row, 0), Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
             let overshoot = row - cursor.start().row;
-            let header_height = excerpt.header_height as u32;
-            if overshoot >= header_height {
-                let excerpt_start = excerpt.range.start.to_point(&excerpt.buffer);
-                let excerpt_end = excerpt.range.end.to_point(&excerpt.buffer);
-                let buffer_row = excerpt_start.row + overshoot - header_height;
-                let line_start = Point::new(buffer_row, 0);
-                let line_end = Point::new(buffer_row, excerpt.buffer.line_len(buffer_row));
-                return Some((
-                    &excerpt.buffer,
-                    line_start.max(excerpt_start)..line_end.min(excerpt_end),
-                ));
-            }
+            let excerpt_start = excerpt.range.start.to_point(&excerpt.buffer);
+            let excerpt_end = excerpt.range.end.to_point(&excerpt.buffer);
+            let buffer_row = excerpt_start.row + overshoot;
+            let line_start = Point::new(buffer_row, 0);
+            let line_end = Point::new(buffer_row, excerpt.buffer.line_len(buffer_row));
+            return Some((
+                &excerpt.buffer,
+                line_start.max(excerpt_start)..line_end.min(excerpt_end),
+            ));
         }
         None
     }
@@ -1222,31 +1136,15 @@ impl MultiBufferSnapshot {
         let mut cursor = self.excerpts.cursor::<usize>();
         cursor.seek(&range.start, Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
-            let start_after_header = cursor.start() + excerpt.header_height as usize;
-            if range.start < start_after_header {
-                let header_len = cmp::min(range.end, start_after_header) - range.start;
-                summary.add_assign(&D::from_text_summary(&TextSummary {
-                    bytes: header_len,
-                    lines: Point::new(header_len as u32, 0),
-                    lines_utf16: PointUtf16::new(header_len as u32, 0),
-                    first_line_chars: 0,
-                    last_line_chars: 0,
-                    longest_row: 0,
-                    longest_row_chars: 0,
-                }));
-                range.start = start_after_header;
-                range.end = cmp::max(range.start, range.end);
-            }
-
             let mut end_before_newline = cursor.end(&());
             if excerpt.has_trailing_newline {
                 end_before_newline -= 1;
             }
 
             let excerpt_start = excerpt.range.start.to_offset(&excerpt.buffer);
-            let start_in_excerpt = excerpt_start + (range.start - start_after_header);
+            let start_in_excerpt = excerpt_start + (range.start - cursor.start());
             let end_in_excerpt =
-                excerpt_start + (cmp::min(end_before_newline, range.end) - start_after_header);
+                excerpt_start + (cmp::min(end_before_newline, range.end) - cursor.start());
             summary.add_assign(
                 &excerpt
                     .buffer
@@ -1275,28 +1173,15 @@ impl MultiBufferSnapshot {
                 &(),
             )));
             if let Some(excerpt) = cursor.item() {
-                let start_after_header = cursor.start() + excerpt.header_height as usize;
-                let header_len =
-                    cmp::min(range.end - cursor.start(), excerpt.header_height as usize);
-                summary.add_assign(&D::from_text_summary(&TextSummary {
-                    bytes: header_len,
-                    lines: Point::new(header_len as u32, 0),
-                    lines_utf16: PointUtf16::new(header_len as u32, 0),
-                    first_line_chars: 0,
-                    last_line_chars: 0,
-                    longest_row: 0,
-                    longest_row_chars: 0,
-                }));
-                range.end = cmp::max(start_after_header, range.end);
+                range.end = cmp::max(*cursor.start(), range.end);
 
                 let excerpt_start = excerpt.range.start.to_offset(&excerpt.buffer);
-                let end_in_excerpt = excerpt_start + (range.end - start_after_header);
+                let end_in_excerpt = excerpt_start + (range.end - cursor.start());
                 summary.add_assign(
                     &excerpt
                         .buffer
                         .text_summary_for_range(excerpt_start..end_in_excerpt),
                 );
-                cursor.next(&());
             }
         }
 
@@ -1315,7 +1200,6 @@ impl MultiBufferSnapshot {
 
         let mut position = D::from_text_summary(&cursor.start().text);
         if let Some(excerpt) = cursor.item() {
-            position.add_summary(&excerpt.header_summary(), &());
             if excerpt.id == anchor.excerpt_id {
                 let excerpt_buffer_start = excerpt.range.start.summary::<D>(&excerpt.buffer);
                 let buffer_position = anchor.text_anchor.summary::<D>(&excerpt.buffer);
@@ -1351,9 +1235,8 @@ impl MultiBufferSnapshot {
                 cursor.next(&());
             }
 
-            let mut position = D::from_text_summary(&cursor.start().text);
+            let position = D::from_text_summary(&cursor.start().text);
             if let Some(excerpt) = cursor.item() {
-                position.add_summary(&excerpt.header_summary(), &());
                 if excerpt.id == *excerpt_id {
                     let excerpt_buffer_start = excerpt.range.start.summary::<D>(&excerpt.buffer);
                     summaries.extend(
@@ -1395,8 +1278,7 @@ impl MultiBufferSnapshot {
             cursor.prev(&());
         }
         if let Some(excerpt) = cursor.item() {
-            let start_after_header = cursor.start().0 + excerpt.header_height as usize;
-            let mut overshoot = offset.saturating_sub(start_after_header);
+            let mut overshoot = offset.saturating_sub(cursor.start().0);
             if excerpt.has_trailing_newline && offset == cursor.end(&()).0 {
                 overshoot -= 1;
                 bias = Bias::Right;
@@ -1458,14 +1340,12 @@ impl MultiBufferSnapshot {
 
                 let excerpt_buffer_start =
                     start_excerpt.range.start.to_offset(&start_excerpt.buffer);
-                let excerpt_buffer_end = excerpt_buffer_start + start_excerpt.text_summary.bytes
-                    - start_excerpt.header_height as usize;
+                let excerpt_buffer_end = excerpt_buffer_start + start_excerpt.text_summary.bytes;
 
-                let start_after_header = cursor.start() + start_excerpt.header_height as usize;
                 let start_in_buffer =
-                    excerpt_buffer_start + range.start.saturating_sub(start_after_header);
+                    excerpt_buffer_start + range.start.saturating_sub(*cursor.start());
                 let end_in_buffer =
-                    excerpt_buffer_start + range.end.saturating_sub(start_after_header);
+                    excerpt_buffer_start + range.end.saturating_sub(*cursor.start());
                 let (mut start_bracket_range, mut end_bracket_range) = start_excerpt
                     .buffer
                     .enclosing_bracket_ranges(start_in_buffer..end_in_buffer)?;
@@ -1474,13 +1354,13 @@ impl MultiBufferSnapshot {
                     && end_bracket_range.end < excerpt_buffer_end
                 {
                     start_bracket_range.start =
-                        start_after_header + (start_bracket_range.start - excerpt_buffer_start);
+                        cursor.start() + (start_bracket_range.start - excerpt_buffer_start);
                     start_bracket_range.end =
-                        start_after_header + (start_bracket_range.end - excerpt_buffer_start);
+                        cursor.start() + (start_bracket_range.end - excerpt_buffer_start);
                     end_bracket_range.start =
-                        start_after_header + (end_bracket_range.start - excerpt_buffer_start);
+                        cursor.start() + (end_bracket_range.start - excerpt_buffer_start);
                     end_bracket_range.end =
-                        start_after_header + (end_bracket_range.end - excerpt_buffer_start);
+                        cursor.start() + (end_bracket_range.end - excerpt_buffer_start);
                     Some((start_bracket_range, end_bracket_range))
                 } else {
                     None
@@ -1551,14 +1431,12 @@ impl MultiBufferSnapshot {
 
                 let excerpt_buffer_start =
                     start_excerpt.range.start.to_offset(&start_excerpt.buffer);
-                let excerpt_buffer_end = excerpt_buffer_start + start_excerpt.text_summary.bytes
-                    - start_excerpt.header_height as usize;
+                let excerpt_buffer_end = excerpt_buffer_start + start_excerpt.text_summary.bytes;
 
-                let start_after_header = cursor.start() + start_excerpt.header_height as usize;
                 let start_in_buffer =
-                    excerpt_buffer_start + range.start.saturating_sub(start_after_header);
+                    excerpt_buffer_start + range.start.saturating_sub(*cursor.start());
                 let end_in_buffer =
-                    excerpt_buffer_start + range.end.saturating_sub(start_after_header);
+                    excerpt_buffer_start + range.end.saturating_sub(*cursor.start());
                 let mut ancestor_buffer_range = start_excerpt
                     .buffer
                     .range_for_syntax_ancestor(start_in_buffer..end_in_buffer)?;
@@ -1566,9 +1444,8 @@ impl MultiBufferSnapshot {
                     cmp::max(ancestor_buffer_range.start, excerpt_buffer_start);
                 ancestor_buffer_range.end = cmp::min(ancestor_buffer_range.end, excerpt_buffer_end);
 
-                let start =
-                    start_after_header + (ancestor_buffer_range.start - excerpt_buffer_start);
-                let end = start_after_header + (ancestor_buffer_range.end - excerpt_buffer_start);
+                let start = cursor.start() + (ancestor_buffer_range.start - excerpt_buffer_start);
+                let end = cursor.start() + (ancestor_buffer_range.end - excerpt_buffer_start);
                 Some(start..end)
             })
     }
@@ -1737,36 +1614,15 @@ impl Excerpt {
         render_header: Option<RenderHeaderFn>,
         has_trailing_newline: bool,
     ) -> Self {
-        let mut text_summary =
-            buffer.text_summary_for_range::<TextSummary, _>(range.to_offset(&buffer));
-        if header_height > 0 {
-            text_summary.first_line_chars = 0;
-            text_summary.lines.row += header_height as u32;
-            text_summary.lines_utf16.row += header_height as u32;
-            text_summary.bytes += header_height as usize;
-            text_summary.longest_row += header_height as u32;
-        }
         Excerpt {
             id,
+            text_summary: buffer.text_summary_for_range::<TextSummary, _>(range.to_offset(&buffer)),
             buffer_id,
             buffer,
             range,
-            text_summary,
             header_height,
             render_header,
             has_trailing_newline,
-        }
-    }
-
-    fn header_summary(&self) -> TextSummary {
-        TextSummary {
-            bytes: self.header_height as usize,
-            lines: Point::new(self.header_height as u32, 0),
-            lines_utf16: PointUtf16::new(self.header_height as u32, 0),
-            first_line_chars: 0,
-            last_line_chars: 0,
-            longest_row: 0,
-            longest_row_chars: 0,
         }
     }
 
@@ -1776,15 +1632,8 @@ impl Excerpt {
         theme: Option<&'a SyntaxTheme>,
     ) -> ExcerptChunks<'a> {
         let content_start = self.range.start.to_offset(&self.buffer);
-        let chunks_start = content_start + range.start.saturating_sub(self.header_height as usize);
-        let chunks_end = content_start
-            + cmp::min(range.end, self.text_summary.bytes)
-                .saturating_sub(self.header_height as usize);
-
-        let header_height = cmp::min(
-            (self.header_height as usize).saturating_sub(range.start),
-            range.len(),
-        );
+        let chunks_start = content_start + range.start;
+        let chunks_end = content_start + cmp::min(range.end, self.text_summary.bytes);
 
         let footer_height = if self.has_trailing_newline
             && range.start <= self.text_summary.bytes
@@ -1798,7 +1647,6 @@ impl Excerpt {
         let content_chunks = self.buffer.chunks(chunks_start..chunks_end, theme);
 
         ExcerptChunks {
-            header_height,
             content_chunks,
             footer_height,
         }
@@ -1806,16 +1654,8 @@ impl Excerpt {
 
     fn bytes_in_range(&self, range: Range<usize>) -> ExcerptBytes {
         let content_start = self.range.start.to_offset(&self.buffer);
-        let bytes_start = content_start + range.start.saturating_sub(self.header_height as usize);
-        let bytes_end = content_start
-            + cmp::min(range.end, self.text_summary.bytes)
-                .saturating_sub(self.header_height as usize);
-
-        let header_height = cmp::min(
-            (self.header_height as usize).saturating_sub(range.start),
-            range.len(),
-        );
-
+        let bytes_start = content_start + range.start;
+        let bytes_end = content_start + cmp::min(range.end, self.text_summary.bytes);
         let footer_height = if self.has_trailing_newline
             && range.start <= self.text_summary.bytes
             && range.end > self.text_summary.bytes
@@ -1824,11 +1664,9 @@ impl Excerpt {
         } else {
             0
         };
-
         let content_bytes = self.buffer.bytes_in_range(bytes_start..bytes_end);
 
         ExcerptBytes {
-            header_height,
             content_bytes,
             footer_height,
         }
@@ -1860,7 +1698,6 @@ impl fmt::Debug for Excerpt {
             .field("buffer_id", &self.buffer_id)
             .field("range", &self.range)
             .field("text_summary", &self.text_summary)
-            .field("header_height", &self.header_height)
             .field("has_trailing_newline", &self.has_trailing_newline)
             .finish()
     }
@@ -1935,7 +1772,6 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Option<&'a ExcerptId> {
 
 impl<'a> MultiBufferRows<'a> {
     pub fn seek(&mut self, row: u32) {
-        self.header_height = 0;
         self.buffer_row_range = 0..0;
 
         self.excerpts
@@ -1952,13 +1788,8 @@ impl<'a> MultiBufferRows<'a> {
         if let Some(excerpt) = self.excerpts.item() {
             let overshoot = row - self.excerpts.start().row;
             let excerpt_start = excerpt.range.start.to_point(&excerpt.buffer).row;
-            let excerpt_header_height = excerpt.header_height as u32;
-
-            self.header_height = excerpt_header_height.saturating_sub(overshoot);
-            self.buffer_row_range.start =
-                excerpt_start + overshoot.saturating_sub(excerpt_header_height);
-            self.buffer_row_range.end =
-                excerpt_start + excerpt.text_summary.lines.row + 1 - excerpt_header_height;
+            self.buffer_row_range.start = excerpt_start + overshoot;
+            self.buffer_row_range.end = excerpt_start + excerpt.text_summary.lines.row + 1;
         }
     }
 }
@@ -1968,10 +1799,6 @@ impl<'a> Iterator for MultiBufferRows<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            if self.header_height > 0 {
-                self.header_height -= 1;
-                return Some(None);
-            }
             if !self.buffer_row_range.is_empty() {
                 let row = Some(self.buffer_row_range.start);
                 self.buffer_row_range.start += 1;
@@ -1980,11 +1807,9 @@ impl<'a> Iterator for MultiBufferRows<'a> {
             self.excerpts.item()?;
             self.excerpts.next(&());
             let excerpt = self.excerpts.item()?;
-            self.header_height = excerpt.header_height as u32;
             self.buffer_row_range.start = excerpt.range.start.to_point(&excerpt.buffer).row;
             self.buffer_row_range.end =
-                self.buffer_row_range.start + excerpt.text_summary.lines.row + 1
-                    - self.header_height;
+                self.buffer_row_range.start + excerpt.text_summary.lines.row + 1;
         }
     }
 }
@@ -2078,12 +1903,6 @@ impl<'a> Iterator for ExcerptBytes<'a> {
     type Item = &'a [u8];
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.header_height > 0 {
-            let result = &NEWLINES[..self.header_height];
-            self.header_height = 0;
-            return Some(result);
-        }
-
         if let Some(chunk) = self.content_bytes.next() {
             if !chunk.is_empty() {
                 return Some(chunk);
@@ -2104,15 +1923,6 @@ impl<'a> Iterator for ExcerptChunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.header_height > 0 {
-            let text = unsafe { str::from_utf8_unchecked(&NEWLINES[..self.header_height]) };
-            self.header_height = 0;
-            return Some(Chunk {
-                text,
-                ..Default::default()
-            });
-        }
-
         if let Some(chunk) = self.content_chunks.next() {
             return Some(chunk);
         }
@@ -2219,7 +2029,7 @@ mod tests {
                 subscription.consume().into_inner(),
                 [Edit {
                     old: 0..0,
-                    new: 0..12
+                    new: 0..10
                 }]
             );
 
@@ -2244,8 +2054,8 @@ mod tests {
             assert_eq!(
                 subscription.consume().into_inner(),
                 [Edit {
-                    old: 12..12,
-                    new: 12..28
+                    old: 10..10,
+                    new: 10..22
                 }]
             );
 
@@ -2256,81 +2066,64 @@ mod tests {
         assert_eq!(
             snapshot.text(),
             concat!(
-                "\n",      // Preserve newlines
-                "\n",      //
-                "bbbb\n",  //
+                "bbbb\n",  // Preserve newlines
                 "ccccc\n", //
-                "\n",      //
                 "ddd\n",   //
                 "eeee\n",  //
-                "\n",      //
-                "\n",      //
-                "\n",      //
                 "jj"       //
             )
         );
         assert_eq!(
             snapshot.buffer_rows(0).collect::<Vec<_>>(),
-            &[
-                None,
-                None,
-                Some(1),
-                Some(2),
-                None,
-                Some(3),
-                Some(4),
-                None,
-                None,
-                None,
-                Some(3)
-            ]
+            [Some(1), Some(2), Some(3), Some(4), Some(3)]
         );
         assert_eq!(
             snapshot.buffer_rows(2).collect::<Vec<_>>(),
-            &[
-                Some(1),
-                Some(2),
-                None,
-                Some(3),
-                Some(4),
-                None,
-                None,
-                None,
-                Some(3)
-            ]
+            [Some(3), Some(4), Some(3)]
         );
-        assert_eq!(snapshot.buffer_rows(10).collect::<Vec<_>>(), &[Some(3)]);
-        assert_eq!(snapshot.buffer_rows(11).collect::<Vec<_>>(), &[]);
-        assert_eq!(snapshot.buffer_rows(12).collect::<Vec<_>>(), &[]);
+        assert_eq!(snapshot.buffer_rows(4).collect::<Vec<_>>(), [Some(3)]);
+        assert_eq!(snapshot.buffer_rows(5).collect::<Vec<_>>(), []);
 
         {
             let snapshot = multibuffer.read(cx).read(cx);
             assert_eq!(
                 snapshot
                     .excerpt_headers_in_range(0..snapshot.max_point().row + 1)
-                    .map(|(rows, render)| (rows, render(cx).name().unwrap().to_string()))
+                    .map(|(start_row, header_height, render)| (
+                        start_row,
+                        header_height,
+                        render(cx).name().unwrap().to_string()
+                    ))
                     .collect::<Vec<_>>(),
                 &[
-                    (0..2, "header 1".into()),
-                    (4..5, "header 2".into()),
-                    (7..10, "header 3".into())
+                    (0, 2, "header 1".into()),
+                    (2, 1, "header 2".into()),
+                    (4, 3, "header 3".into())
                 ]
             );
 
             assert_eq!(
                 snapshot
-                    .excerpt_headers_in_range(1..5)
-                    .map(|(rows, render)| (rows, render(cx).name().unwrap().to_string()))
+                    .excerpt_headers_in_range(1..4)
+                    .map(|(start_row, header_height, render)| (
+                        start_row,
+                        header_height,
+                        render(cx).name().unwrap().to_string()
+                    ))
                     .collect::<Vec<_>>(),
-                &[(0..2, "header 1".into()), (4..5, "header 2".into())]
+                &[(2, 1, "header 2".into())]
             );
 
             assert_eq!(
                 snapshot
-                    .excerpt_headers_in_range(2..8)
-                    .map(|(rows, render)| (rows, render(cx).name().unwrap().to_string()))
+                    .excerpt_headers_in_range(2..5)
+                    .map(|(start_row, header_height, render)| (
+                        start_row,
+                        header_height,
+                        render(cx).name().unwrap().to_string()
+                    ))
                     .collect::<Vec<_>>(),
-                &[(4..5, "header 2".into()), (7..10, "header 3".into())]
+                &[(2, 1, "header 2".into()), (4, 3, "header 3".into())]
             );
         }
 
@@ -2348,17 +2141,11 @@ mod tests {
         assert_eq!(
             multibuffer.read(cx).snapshot(cx).text(),
             concat!(
-                "\n",     // Preserve newlines
-                "\n",     //
-                "bbbb\n", //
+                "bbbb\n", // Preserve newlines
                 "c\n",    //
                 "cc\n",   //
-                "\n",     //
                 "ddd\n",  //
                 "eeee\n", //
-                "\n",     //
-                "\n",     //
-                "\n",     //
                 "jj"      //
             )
         );
@@ -2366,43 +2153,32 @@ mod tests {
         assert_eq!(
             subscription.consume().into_inner(),
             [Edit {
-                old: 8..10,
-                new: 8..9
+                old: 6..8,
+                new: 6..7
             }]
         );
 
+        // bbbb\nc\ncc\nddd\neeee\njj
         let multibuffer = multibuffer.read(cx).snapshot(cx);
         assert_eq!(
-            multibuffer.clip_point(Point::new(0, 0), Bias::Left),
-            Point::new(2, 0)
+            multibuffer.clip_point(Point::new(0, 5), Bias::Left),
+            Point::new(0, 4)
         );
         assert_eq!(
-            multibuffer.clip_point(Point::new(0, 0), Bias::Right),
-            Point::new(2, 0)
+            multibuffer.clip_point(Point::new(0, 5), Bias::Right),
+            Point::new(0, 4)
         );
         assert_eq!(
-            multibuffer.clip_point(Point::new(1, 0), Bias::Left),
-            Point::new(2, 0)
+            multibuffer.clip_point(Point::new(5, 1), Bias::Right),
+            Point::new(5, 1)
         );
         assert_eq!(
-            multibuffer.clip_point(Point::new(1, 0), Bias::Right),
-            Point::new(2, 0)
+            multibuffer.clip_point(Point::new(5, 2), Bias::Right),
+            Point::new(5, 2)
         );
         assert_eq!(
-            multibuffer.clip_point(Point::new(8, 0), Bias::Left),
-            Point::new(7, 4)
-        );
-        assert_eq!(
-            multibuffer.clip_point(Point::new(8, 0), Bias::Right),
-            Point::new(11, 0)
-        );
-        assert_eq!(
-            multibuffer.clip_point(Point::new(9, 0), Bias::Left),
-            Point::new(7, 4)
-        );
-        assert_eq!(
-            multibuffer.clip_point(Point::new(9, 0), Bias::Right),
-            Point::new(11, 0)
+            multibuffer.clip_point(Point::new(5, 3), Bias::Right),
+            Point::new(5, 2)
         );
     }
 
@@ -2464,12 +2240,12 @@ mod tests {
         });
         let old_snapshot = multibuffer.read(cx).snapshot(cx);
 
-        assert_eq!(old_snapshot.anchor_before(0).to_offset(&old_snapshot), 1);
-        assert_eq!(old_snapshot.anchor_after(0).to_offset(&old_snapshot), 1);
-        assert_eq!(Anchor::min().to_offset(&old_snapshot), 1);
-        assert_eq!(Anchor::min().to_offset(&old_snapshot), 1);
-        assert_eq!(Anchor::max().to_offset(&old_snapshot), 12);
-        assert_eq!(Anchor::max().to_offset(&old_snapshot), 12);
+        assert_eq!(old_snapshot.anchor_before(0).to_offset(&old_snapshot), 0);
+        assert_eq!(old_snapshot.anchor_after(0).to_offset(&old_snapshot), 0);
+        assert_eq!(Anchor::min().to_offset(&old_snapshot), 0);
+        assert_eq!(Anchor::min().to_offset(&old_snapshot), 0);
+        assert_eq!(Anchor::max().to_offset(&old_snapshot), 10);
+        assert_eq!(Anchor::max().to_offset(&old_snapshot), 10);
 
         buffer_1.update(cx, |buffer, cx| {
             buffer.edit([0..0], "W", cx);
@@ -2481,19 +2257,19 @@ mod tests {
         });
         let new_snapshot = multibuffer.read(cx).snapshot(cx);
 
-        assert_eq!(old_snapshot.text(), "\nabcd\n\nefghi");
-        assert_eq!(new_snapshot.text(), "\nWabcdX\n\nYefghiZ");
+        assert_eq!(old_snapshot.text(), "abcd\nefghi");
+        assert_eq!(new_snapshot.text(), "WabcdX\nYefghiZ");
 
-        assert_eq!(old_snapshot.anchor_before(0).to_offset(&new_snapshot), 1);
-        assert_eq!(old_snapshot.anchor_after(0).to_offset(&new_snapshot), 2);
-        assert_eq!(old_snapshot.anchor_before(1).to_offset(&new_snapshot), 1);
+        assert_eq!(old_snapshot.anchor_before(0).to_offset(&new_snapshot), 0);
+        assert_eq!(old_snapshot.anchor_after(0).to_offset(&new_snapshot), 1);
+        assert_eq!(old_snapshot.anchor_before(1).to_offset(&new_snapshot), 2);
         assert_eq!(old_snapshot.anchor_after(1).to_offset(&new_snapshot), 2);
         assert_eq!(old_snapshot.anchor_before(2).to_offset(&new_snapshot), 3);
         assert_eq!(old_snapshot.anchor_after(2).to_offset(&new_snapshot), 3);
-        assert_eq!(old_snapshot.anchor_before(7).to_offset(&new_snapshot), 9);
-        assert_eq!(old_snapshot.anchor_after(7).to_offset(&new_snapshot), 10);
-        assert_eq!(old_snapshot.anchor_before(12).to_offset(&new_snapshot), 15);
-        assert_eq!(old_snapshot.anchor_after(12).to_offset(&new_snapshot), 16);
+        assert_eq!(old_snapshot.anchor_before(5).to_offset(&new_snapshot), 7);
+        assert_eq!(old_snapshot.anchor_after(5).to_offset(&new_snapshot), 8);
+        assert_eq!(old_snapshot.anchor_before(10).to_offset(&new_snapshot), 13);
+        assert_eq!(old_snapshot.anchor_after(10).to_offset(&new_snapshot), 14);
     }
 
     #[gpui::test(iterations = 100)]
@@ -2564,14 +2340,9 @@ mod tests {
             let mut excerpt_starts = Vec::new();
             let mut expected_text = String::new();
             let mut expected_buffer_rows = Vec::new();
-            for (buffer, range, header_height) in &expected_excerpts {
+            for (buffer, range, _) in &expected_excerpts {
                 let buffer = buffer.read(cx);
                 let buffer_range = range.to_offset(buffer);
-
-                for _ in 0..*header_height {
-                    expected_text.push('\n');
-                    expected_buffer_rows.push(None);
-                }
 
                 excerpt_starts.push(TextSummary::from(expected_text.as_str()));
                 expected_text.extend(buffer.text_for_range(buffer_range.clone()));

@@ -38,7 +38,7 @@ impl Point {
 
     pub fn saturating_sub(self, other: Self) -> Self {
         if self < other {
-            Point::zero()
+            Self::zero()
         } else {
             self - other
         }

@@ -348,11 +348,12 @@ impl DisplaySnapshot {
         &'a self,
         rows: Range<u32>,
     ) -> impl 'a + Iterator<Item = (Range<u32>, RenderHeaderFn)> {
+        todo!();
         let start_row = DisplayPoint::new(rows.start, 0).to_point(self).row;
         let end_row = DisplayPoint::new(rows.end, 0).to_point(self).row;
         self.buffer_snapshot
             .excerpt_headers_in_range(start_row..end_row)
-            .map(move |(rows, render)| {
+            .map(move |(row, header_height, render)| {
                 let start_row = Point::new(rows.start, 0).to_display_point(self).row();
                 let end_row = Point::new(rows.end, 0).to_display_point(self).row();
                 (start_row..end_row, render)

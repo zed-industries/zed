@@ -26,6 +26,14 @@ impl PointUtf16 {
     pub fn is_zero(&self) -> bool {
         self.row == 0 && self.column == 0
     }
+
+    pub fn saturating_sub(self, other: Self) -> Self {
+        if self < other {
+            Self::zero()
+        } else {
+            self - other
+        }
+    }
 }
 
 impl<'a> Add<&'a Self> for PointUtf16 {
