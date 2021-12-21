@@ -58,7 +58,6 @@ fn main() {
         editor::init(cx, &mut entry_openers);
         go_to_line::init(cx);
         file_finder::init(cx);
-        contacts_panel::init(cx);
         chat_panel::init(cx);
         project_panel::init(cx);
         diagnostics::init(cx);

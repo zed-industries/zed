@@ -1,21 +1,15 @@
+use std::sync::Arc;
+
 use client::{Contact, UserStore};
 use gpui::{
-    action,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     platform::CursorStyle,
-    Element, ElementBox, Entity, LayoutContext, ModelHandle, MutableAppContext, RenderContext,
-    Subscription, View, ViewContext,
+    Element, ElementBox, Entity, LayoutContext, ModelHandle, RenderContext, Subscription, View,
+    ViewContext,
 };
 use postage::watch;
-use theme::Theme;
-use workspace::{Settings, Workspace};
-
-action!(JoinProject, u64);
-
-pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(ContactsPanel::join_project);
-}
+use workspace::{AppState, JoinProject, JoinProjectParams, Settings};
 
 pub struct ContactsPanel {
     contacts: ListState,
@@ -25,40 +19,31 @@ pub struct ContactsPanel {
 }
 
 impl ContactsPanel {
-    pub fn new(
-        user_store: ModelHandle<UserStore>,
-        settings: watch::Receiver<Settings>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    pub fn new(app_state: Arc<AppState>, cx: &mut ViewContext<Self>) -> Self {
         Self {
             contacts: ListState::new(
-                user_store.read(cx).contacts().len(),
+                app_state.user_store.read(cx).contacts().len(),
                 Orientation::Top,
                 1000.,
                 {
-                    let user_store = user_store.clone();
-                    let settings = settings.clone();
+                    let app_state = app_state.clone();
                     move |ix, cx| {
-                        let user_store = user_store.read(cx);
+                        let user_store = app_state.user_store.read(cx);
                         let contacts = user_store.contacts().clone();
                         let current_user_id = user_store.current_user().map(|user| user.id);
                         Self::render_collaborator(
                             &contacts[ix],
                             current_user_id,
-                            &settings.borrow().theme,
+                            app_state.clone(),
                             cx,
                         )
                     }
                 },
             ),
-            _maintain_contacts: cx.observe(&user_store, Self::update_contacts),
-            user_store,
-            settings,
+            _maintain_contacts: cx.observe(&app_state.user_store, Self::update_contacts),
+            user_store: app_state.user_store.clone(),
+            settings: app_state.settings.clone(),
         }
-    }
-
-    fn join_project(_: &mut Workspace, _: &JoinProject, _: &mut ViewContext<Workspace>) {
-        todo!();
     }
 
     fn update_contacts(&mut self, _: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) {
@@ -70,10 +55,10 @@ impl ContactsPanel {
     fn render_collaborator(
         collaborator: &Contact,
         current_user_id: Option<u64>,
-        theme: &Theme,
+        app_state: Arc<AppState>,
         cx: &mut LayoutContext,
     ) -> ElementBox {
-        let theme = &theme.contacts_panel;
+        let theme = &app_state.settings.borrow().theme.contacts_panel;
         let project_count = collaborator.projects.len();
         let font_cache = cx.font_cache();
         let line_height = theme.unshared_project.name.text.line_height(font_cache);
@@ -169,6 +154,7 @@ impl ContactsPanel {
                                         .iter()
                                         .any(|guest| Some(guest.id) == current_user_id);
                                 let is_shared = project.is_shared;
+                                let app_state = app_state.clone();
 
                                 MouseEventHandler::new::<ContactsPanel, _, _, _>(
                                     project_id as usize,
@@ -222,7 +208,10 @@ impl ContactsPanel {
                                 })
                                 .on_click(move |cx| {
                                     if !is_host && !is_guest {
-                                        cx.dispatch_action(JoinProject(project_id))
+                                        cx.dispatch_global_action(JoinProject(JoinProjectParams {
+                                            project_id,
+                                            app_state: app_state.clone(),
+                                        }));
                                     }
                                 })
                                 .expanded(1.0)

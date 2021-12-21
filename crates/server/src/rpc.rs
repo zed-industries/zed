@@ -1165,7 +1165,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_unshare_project(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
-        cx_b.update(zed::contacts_panel::init);
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(FakeFs::new());
         cx_a.foreground().forbid_parking();
