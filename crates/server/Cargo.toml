@@ -38,6 +38,7 @@ rand = "0.8"
 rust-embed = { version = "6.2", features = ["include-exclude"] }
 scrypt = "0.7"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 sha-1 = "0.9"
 surf = "2.2.0"
 tide = "0.16.0"
