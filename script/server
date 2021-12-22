@@ -1,6 +1,0 @@
-#!/bin/bash
-
-set -e
-
-cd crates/server
-cargo run $@

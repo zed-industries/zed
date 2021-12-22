@@ -14,6 +14,30 @@ The Zed server uses libcurl, which currently triggers [a bug](https://github.com
 export MACOSX_DEPLOYMENT_TARGET=10.7
 ```
 
+### Testing against locally-running servers
+
+Make sure you have `zed.dev` cloned as a sibling to this repo.
+
+```
+cd ..
+git clone https://github.com/zed-industries/zed.dev
+```
+
+Run `zed.dev` and the collaboration server.
+
+```
+brew install foreman
+foreman start
+```
+
+If you want to run Zed pointed at the local servers, you can run:
+
+```
+script/zed_with_local_servers
+# or...
+script/zed_with_local_servers --release
+```
+
 ### Dump element JSON
 
 If you trigger `cmd-shift-i`, Zed will copy a JSON representation of the current window contents to the clipboard. You can paste this in a tool like [DJSON](https://chrome.google.com/webstore/detail/djson-json-viewer-formatt/chaeijjekipecdajnijdldjjipaegdjc?hl=en) to navigate the state of on-screen elements in a structured way.
@@ -34,12 +58,12 @@ Establish basic infrastructure for building the app bundle and uploading an arti
 
 [Tracking issue](https://github.com/zed-industries/zed/issues/6)
 
-Turn the minimal text editor into a collaborative *code* editor. This will include the minimal features that the Zed team needs to collaborate in Zed to build Zed without net loss in developer productivity. This includes productivity-critical features such as:
+Turn the minimal text editor into a collaborative _code_ editor. This will include the minimal features that the Zed team needs to collaborate in Zed to build Zed without net loss in developer productivity. This includes productivity-critical features such as:
 
-* Syntax highlighting and syntax-aware editing and navigation
-* The ability to see and edit non-local working copies of a repository
-* Language server support for Rust code navigation, refactoring, diagnostics, etc.
-* Project browsing and project-wide search and replace
+- Syntax highlighting and syntax-aware editing and navigation
+- The ability to see and edit non-local working copies of a repository
+- Language server support for Rust code navigation, refactoring, diagnostics, etc.
+- Project browsing and project-wide search and replace
 
 We want to tackle collaboration fairly early so that the rest of the design of the product can flow around that assumption. We could probably produce a single-player code editor more quickly, but at the risk of having collaboration feel more "bolted on" when we eventually add it.
 
