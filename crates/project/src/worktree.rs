@@ -64,8 +64,9 @@ pub enum Worktree {
     Remote(RemoteWorktree),
 }
 
+#[derive(Debug)]
 pub enum Event {
-    Closed,
+    DiagnosticsUpdated(Arc<Path>),
 }
 
 impl Entity for Worktree {
@@ -671,7 +672,7 @@ impl Worktree {
         }
     }
 
-    fn update_diagnostics(
+    pub fn update_diagnostics(
         &mut self,
         mut params: lsp::PublishDiagnosticsParams,
         cx: &mut ModelContext<Worktree>,
@@ -736,17 +737,28 @@ impl Worktree {
             })
             .collect::<Vec<_>>();
 
+        self.update_diagnostic_entries(worktree_path, params.version, diagnostics, cx)
+    }
+
+    pub fn update_diagnostic_entries(
+        &mut self,
+        path: Arc<Path>,
+        version: Option<i32>,
+        diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Result<()> {
+        let this = self.as_local_mut().unwrap();
         for buffer in this.open_buffers.values() {
             if let Some(buffer) = buffer.upgrade(cx) {
                 if buffer
                     .read(cx)
                     .file()
-                    .map_or(false, |file| *file.path() == worktree_path)
+                    .map_or(false, |file| *file.path() == path)
                 {
                     let (remote_id, operation) = buffer.update(cx, |buffer, cx| {
                         (
                             buffer.remote_id(),
-                            buffer.update_diagnostics(params.version, diagnostics.clone(), cx),
+                            buffer.update_diagnostics(version, diagnostics.clone(), cx),
                         )
                     });
                     self.send_buffer_update(remote_id, operation?, cx);
@@ -757,8 +769,9 @@ impl Worktree {
 
         let this = self.as_local_mut().unwrap();
         this.diagnostic_summaries
-            .insert(worktree_path.clone(), DiagnosticSummary::new(&diagnostics));
-        this.diagnostics.insert(worktree_path.clone(), diagnostics);
+            .insert(path.clone(), DiagnosticSummary::new(&diagnostics));
+        this.diagnostics.insert(path.clone(), diagnostics);
+        cx.emit(Event::DiagnosticsUpdated(path.clone()));
         Ok(())
     }
 

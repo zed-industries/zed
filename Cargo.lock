@@ -1404,13 +1404,16 @@ name = "diagnostics"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "collections",
  "editor",
  "gpui",
  "language",
  "postage",
  "project",
+ "serde_json",
  "unindent",
+ "util",
  "workspace",
 ]
 

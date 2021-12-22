@@ -12,6 +12,7 @@ use language::{Bias, Buffer, Point};
 use postage::watch;
 use project::Project;
 use std::ops::Range;
+use util::TryFutureExt;
 use workspace::Workspace;
 
 action!(Toggle);
@@ -65,11 +66,49 @@ impl View for ProjectDiagnosticsEditor {
 
 impl ProjectDiagnosticsEditor {
     fn new(
-        replica_id: u16,
+        project: ModelHandle<Project>,
         settings: watch::Receiver<workspace::Settings>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let excerpts = cx.add_model(|_| MultiBuffer::new(replica_id));
+        let project_paths = project
+            .read(cx)
+            .diagnostic_summaries(cx)
+            .map(|e| e.0)
+            .collect::<Vec<_>>();
+
+        cx.spawn(|this, mut cx| {
+            let project = project.clone();
+            async move {
+                for project_path in project_paths {
+                    let buffer = project
+                        .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))
+                        .await?;
+                    this.update(&mut cx, |view, cx| view.populate_excerpts(buffer, cx))
+                }
+                Result::<_, anyhow::Error>::Ok(())
+            }
+        })
+        .detach();
+
+        cx.subscribe(&project, |_, project, event, cx| {
+            if let project::Event::DiagnosticsUpdated(project_path) = event {
+                let project_path = project_path.clone();
+                cx.spawn(|this, mut cx| {
+                    async move {
+                        let buffer = project
+                            .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))
+                            .await?;
+                        this.update(&mut cx, |view, cx| view.populate_excerpts(buffer, cx));
+                        Ok(())
+                    }
+                    .log_err()
+                })
+                .detach();
+            }
+        })
+        .detach();
+
+        let excerpts = cx.add_model(|cx| MultiBuffer::new(project.read(cx).replica_id()));
         let build_settings = editor::settings_builder(excerpts.downgrade(), settings.clone());
         let editor =
             cx.add_view(|cx| Editor::for_buffer(excerpts.clone(), build_settings.clone(), cx));
@@ -80,6 +119,11 @@ impl ProjectDiagnosticsEditor {
             editor,
             build_settings,
         }
+    }
+
+    #[cfg(test)]
+    fn text(&self, cx: &AppContext) -> String {
+        self.editor.read(cx).text(cx)
     }
 
     fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
@@ -193,6 +237,7 @@ impl ProjectDiagnosticsEditor {
                 cx,
             );
         });
+        cx.notify();
     }
 }
 
@@ -205,27 +250,7 @@ impl workspace::Item for ProjectDiagnostics {
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View {
         let project = handle.read(cx).project.clone();
-        let project_paths = project
-            .read(cx)
-            .diagnostic_summaries(cx)
-            .map(|e| e.0)
-            .collect::<Vec<_>>();
-
-        cx.spawn(|view, mut cx| {
-            let project = project.clone();
-            async move {
-                for project_path in project_paths {
-                    let buffer = project
-                        .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))
-                        .await?;
-                    view.update(&mut cx, |view, cx| view.populate_excerpts(buffer, cx))
-                }
-                Result::<_, anyhow::Error>::Ok(())
-            }
-        })
-        .detach();
-
-        ProjectDiagnosticsEditor::new(project.read(cx).replica_id(), settings, cx)
+        ProjectDiagnosticsEditor::new(project, settings, cx)
     }
 
     fn project_path(&self) -> Option<project::ProjectPath> {
@@ -282,35 +307,68 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16};
+    use client::{http::ServerResponse, test::FakeHttpClient, Client, UserStore};
+    use gpui::TestAppContext;
+    use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, LanguageRegistry, PointUtf16};
+    use project::FakeFs;
+    use serde_json::json;
+    use std::sync::Arc;
     use unindent::Unindent as _;
     use workspace::WorkspaceParams;
 
     #[gpui::test]
-    fn test_diagnostics(cx: &mut MutableAppContext) {
-        let settings = WorkspaceParams::test(cx).settings;
-        let view = cx.add_view(Default::default(), |cx| {
-            ProjectDiagnosticsEditor::new(0, settings, cx)
+    async fn test_diagnostics(mut cx: TestAppContext) {
+        let settings = cx.update(WorkspaceParams::test).settings;
+        let http_client = FakeHttpClient::new(|_| async move { Ok(ServerResponse::new(404)) });
+        let client = Client::new();
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+        let fs = Arc::new(FakeFs::new());
+
+        let project = cx.update(|cx| {
+            Project::local(
+                client.clone(),
+                user_store,
+                Arc::new(LanguageRegistry::new()),
+                fs.clone(),
+                cx,
+            )
         });
 
-        let text = "
-        fn main() {
-            let x = vec![];
-            let y = vec![];
-            a(x);
-            b(y);
-            // comment 1
-            // comment 2
-            c(y);
-            d(x);
-        }
-        "
-        .unindent();
+        fs.insert_tree(
+            "/test",
+            json!({
+                "a.rs": "
+                    const a: i32 = 'a';
+                ".unindent(),
 
-        let buffer = cx.add_model(|cx| {
-            let mut buffer = Buffer::new(0, text, cx);
-            buffer
-                .update_diagnostics(
+                "main.rs": "
+                    fn main() {
+                        let x = vec![];
+                        let y = vec![];
+                        a(x);
+                        b(y);
+                        // comment 1
+                        // comment 2
+                        c(y);
+                        d(x);
+                    }
+                "
+                .unindent(),
+            }),
+        )
+        .await;
+
+        let worktree = project
+            .update(&mut cx, |project, cx| {
+                project.add_local_worktree("/test", cx)
+            })
+            .await
+            .unwrap();
+
+        worktree.update(&mut cx, |worktree, cx| {
+            worktree
+                .update_diagnostic_entries(
+                    Arc::from("/test/main.rs".as_ref()),
                     None,
                     vec![
                         DiagnosticEntry {
@@ -381,11 +439,16 @@ mod tests {
                     cx,
                 )
                 .unwrap();
-            buffer
         });
 
-        view.update(cx, |view, cx| {
-            view.populate_excerpts(buffer, cx);
+        let view = cx.add_view(Default::default(), |cx| {
+            ProjectDiagnosticsEditor::new(project.clone(), settings, cx)
+        });
+
+        view.condition(&mut cx, |view, cx| view.text(cx).contains("fn main()"))
+            .await;
+
+        view.update(&mut cx, |view, cx| {
             let editor = view.editor.update(cx, |editor, cx| editor.snapshot(cx));
 
             assert_eq!(
@@ -406,6 +469,72 @@ mod tests {
                     "\n", // supporting diagnostic
                     "    d(x);\n",
                     // Diagnostic group 2 (error for `x`)
+                    "\n", // primary message
+                    "\n", // filename
+                    "fn main() {\n",
+                    "    let x = vec![];\n",
+                    "\n", // supporting diagnostic
+                    "    let y = vec![];\n",
+                    "    a(x);\n",
+                    "\n", // supporting diagnostic
+                    "    b(y);\n",
+                    "\n", // context ellipsis
+                    "    c(y);\n",
+                    "    d(x);\n",
+                    "\n", // supporting diagnostic
+                    "}"
+                )
+            );
+        });
+
+        worktree.update(&mut cx, |worktree, cx| {
+            worktree
+                .update_diagnostic_entries(
+                    Arc::from("/test/a.rs".as_ref()),
+                    None,
+                    vec![DiagnosticEntry {
+                        range: PointUtf16::new(0, 15)..PointUtf16::new(0, 15),
+                        diagnostic: Diagnostic {
+                            message: "mismatched types\nexpected `usize`, found `char`".to_string(),
+                            severity: DiagnosticSeverity::ERROR,
+                            is_primary: true,
+                            group_id: 0,
+                            ..Default::default()
+                        },
+                    }],
+                    cx,
+                )
+                .unwrap();
+        });
+
+        view.condition(&mut cx, |view, cx| view.text(cx).contains("const a"))
+            .await;
+
+        view.update(&mut cx, |view, cx| {
+            let editor = view.editor.update(cx, |editor, cx| editor.snapshot(cx));
+
+            assert_eq!(
+                editor.text(),
+                concat!(
+                    // a.rs
+                    "\n", // primary message
+                    "\n", // filename
+                    "const a: i32 = 'a';\n",
+                    // main.rs, diagnostic group 1
+                    "\n", // primary message
+                    "\n", // filename
+                    "    let x = vec![];\n",
+                    "    let y = vec![];\n",
+                    "\n", // supporting diagnostic
+                    "    a(x);\n",
+                    "    b(y);\n",
+                    "\n", // supporting diagnostic
+                    "    // comment 1\n",
+                    "    // comment 2\n",
+                    "    c(y);\n",
+                    "\n", // supporting diagnostic
+                    "    d(x);\n",
+                    // main.rs, diagnostic group 2
                     "\n", // primary message
                     "\n", // filename
                     "fn main() {\n",
