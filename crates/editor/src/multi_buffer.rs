@@ -6,8 +6,8 @@ use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 use language::{
-    Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Selection,
-    ToOffset as _, ToPoint as _, TransactionId,
+    Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Patch,
+    Selection, ToOffset as _, ToPoint as _, TransactionId,
 };
 use std::{
     cell::{Ref, RefCell},
@@ -100,6 +100,7 @@ struct Excerpt {
     max_buffer_row: u32,
     text_summary: TextSummary,
     has_trailing_newline: bool,
+    is_tombstone: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -107,7 +108,11 @@ struct ExcerptSummary {
     excerpt_id: ExcerptId,
     max_buffer_row: u32,
     text: TextSummary,
+    visible_excerpts: usize,
 }
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+struct VisibleExcerptCount(usize);
 
 pub struct MultiBufferRows<'a> {
     buffer_row_range: Range<u32>,
@@ -603,16 +608,25 @@ impl MultiBuffer {
         let range = buffer_snapshot.anchor_before(&props.range.start)
             ..buffer_snapshot.anchor_after(&props.range.end);
         let mut snapshot = self.snapshot.borrow_mut();
-        let mut prev_id = None;
         let edit_start = snapshot.excerpts.summary().text.bytes;
-        snapshot.excerpts.update_last(
-            |excerpt| {
-                excerpt.has_trailing_newline = true;
-                prev_id = Some(excerpt.id.clone());
-            },
-            &(),
-        );
 
+        snapshot.excerpts = {
+            let mut cursor = snapshot.excerpts.cursor::<VisibleExcerptCount>();
+            let mut new_excerpts = cursor.slice(
+                &VisibleExcerptCount(snapshot.excerpts.summary().visible_excerpts),
+                Bias::Left,
+                &(),
+            );
+            if let Some(mut excerpt) = cursor.item().cloned() {
+                excerpt.has_trailing_newline = !excerpt.is_tombstone;
+                new_excerpts.push(excerpt, &());
+                cursor.next(&());
+            }
+            new_excerpts.push_tree(cursor.suffix(&()), &());
+            new_excerpts
+        };
+
+        let prev_id = snapshot.excerpts.last().map(|e| e.id.clone());
         let id = ExcerptId::between(&prev_id.unwrap_or(ExcerptId::min()), &ExcerptId::max());
         self.buffers
             .borrow_mut()
@@ -655,39 +669,60 @@ impl MultiBuffer {
     ) {
         let mut buffers = self.buffers.borrow_mut();
         let mut snapshot = self.snapshot.borrow_mut();
-        let mut new_excerpts = SumTree::new();
-        let mut cursor = snapshot.excerpts.cursor::<(Option<&ExcerptId>, usize)>();
-        let mut edits = Vec::new();
-        for excerpt_id in excerpt_ids {
-            new_excerpts.push_tree(cursor.slice(&Some(excerpt_id), Bias::Left, &()), &());
-            if let Some(excerpt) = cursor.item() {
-                if excerpt.id == *excerpt_id {
-                    let mut old_start = cursor.start().1;
-                    let old_end = cursor.end(&()).1;
-                    cursor.next(&());
+        let mut edits = Patch::default();
+        snapshot.excerpts = {
+            let mut new_excerpts = SumTree::new();
+            let mut cursor = snapshot.excerpts.cursor::<(Option<&ExcerptId>, usize)>();
+            for excerpt_id in excerpt_ids {
+                new_excerpts.push_tree(cursor.slice(&Some(excerpt_id), Bias::Left, &()), &());
+                if let Some(excerpt) = cursor.item() {
+                    if excerpt.id == *excerpt_id {
+                        let old_start = cursor.start().1;
+                        let old_end = cursor.end(&()).1;
+                        cursor.next(&());
 
-                    if let Some(buffer_state) = buffers.get_mut(&excerpt.buffer_id) {
-                        buffer_state.excerpts.retain(|id| id != excerpt_id);
+                        if let Some(buffer_state) = buffers.get_mut(&excerpt.buffer_id) {
+                            buffer_state.excerpts.retain(|id| id != excerpt_id);
+                        }
+
+                        new_excerpts.push(excerpt.tombstone(), &());
+                        let new_start = new_excerpts.summary().text.bytes;
+                        edits.push(Edit {
+                            old: old_start..old_end,
+                            new: new_start..new_start,
+                        });
                     }
-
-                    // When removing the last excerpt, remove the trailing newline from
-                    // the previous excerpt.
-                    if cursor.item().is_none() && old_start > 0 {
-                        old_start -= 1;
-                        new_excerpts.update_last(|e| e.has_trailing_newline = false, &());
-                    }
-
-                    let new_start = new_excerpts.summary().text.bytes;
-                    edits.push(Edit {
-                        old: old_start..old_end,
-                        new: new_start..new_start,
-                    });
                 }
             }
-        }
-        new_excerpts.push_tree(cursor.suffix(&()), &());
-        drop(cursor);
-        snapshot.excerpts = new_excerpts;
+            new_excerpts.push_tree(cursor.suffix(&()), &());
+            new_excerpts
+        };
+
+        // Ensure there's no trailing newline on the last visible excerpt.
+        snapshot.excerpts = {
+            let mut cursor = snapshot.excerpts.cursor::<(VisibleExcerptCount, usize)>();
+            let mut new_excerpts = cursor.slice(
+                &VisibleExcerptCount(snapshot.excerpts.summary().visible_excerpts),
+                Bias::Left,
+                &(),
+            );
+            if let Some(mut excerpt) = cursor.item().cloned() {
+                if excerpt.has_trailing_newline {
+                    let old_start = cursor.start().1;
+                    let old_end = cursor.end(&()).1;
+                    edits = edits.compose([Edit {
+                        old: old_start..old_end,
+                        new: old_start..old_end - 1,
+                    }]);
+                }
+                excerpt.has_trailing_newline = false;
+                new_excerpts.push(excerpt, &());
+                cursor.next(&());
+            }
+            new_excerpts.push_tree(cursor.suffix(&()), &());
+            new_excerpts
+        };
+
         self.subscriptions.publish_mut(edits);
         cx.notify();
     }
@@ -888,6 +923,10 @@ impl MultiBufferSnapshot {
         iter::from_fn(move || {
             if offset == *cursor.start() {
                 cursor.prev(&());
+                while cursor.item()?.is_tombstone {
+                    cursor.prev(&());
+                }
+
                 let excerpt = cursor.item()?;
                 excerpt_chunks = Some(
                     excerpt
@@ -1638,7 +1677,7 @@ impl Excerpt {
         range: Range<text::Anchor>,
         has_trailing_newline: bool,
     ) -> Self {
-        Excerpt {
+        Self {
             id,
             max_buffer_row: range.end.to_point(&buffer).row,
             text_summary: buffer.text_summary_for_range::<TextSummary, _>(range.to_offset(&buffer)),
@@ -1646,6 +1685,20 @@ impl Excerpt {
             buffer,
             range,
             has_trailing_newline,
+            is_tombstone: false,
+        }
+    }
+
+    fn tombstone(&self) -> Self {
+        Self {
+            id: self.id.clone(),
+            buffer_id: self.buffer_id,
+            buffer: self.buffer.clone(),
+            range: self.range.start.clone()..self.range.start.clone(),
+            max_buffer_row: 0,
+            text_summary: Default::default(),
+            has_trailing_newline: false,
+            is_tombstone: true,
         }
     }
 
@@ -1722,6 +1775,7 @@ impl fmt::Debug for Excerpt {
             .field("range", &self.range)
             .field("text_summary", &self.text_summary)
             .field("has_trailing_newline", &self.has_trailing_newline)
+            .field("is_tombstone", &self.is_tombstone)
             .finish()
     }
 }
@@ -1738,6 +1792,7 @@ impl sum_tree::Item for Excerpt {
             excerpt_id: self.id.clone(),
             max_buffer_row: self.max_buffer_row,
             text,
+            visible_excerpts: if self.is_tombstone { 0 } else { 1 },
         }
     }
 }
@@ -1750,6 +1805,7 @@ impl sum_tree::Summary for ExcerptSummary {
         self.excerpt_id = summary.excerpt_id.clone();
         self.text.add_summary(&summary.text, &());
         self.max_buffer_row = cmp::max(self.max_buffer_row, summary.max_buffer_row);
+        self.visible_excerpts += summary.visible_excerpts;
     }
 }
 
@@ -1795,6 +1851,12 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Option<&'a ExcerptId> {
     }
 }
 
+impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for VisibleExcerptCount {
+    fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
+        self.0 += summary.visible_excerpts;
+    }
+}
+
 impl<'a> MultiBufferRows<'a> {
     pub fn seek(&mut self, row: u32) {
         self.buffer_row_range = 0..0;
@@ -1803,6 +1865,13 @@ impl<'a> MultiBufferRows<'a> {
             .seek_forward(&Point::new(row, 0), Bias::Right, &());
         if self.excerpts.item().is_none() {
             self.excerpts.prev(&());
+            while let Some(excerpt) = self.excerpts.item() {
+                if excerpt.is_tombstone {
+                    self.excerpts.prev(&());
+                } else {
+                    break;
+                }
+            }
 
             if self.excerpts.item().is_none() && row == 0 {
                 self.buffer_row_range = 0..1;
@@ -1832,9 +1901,11 @@ impl<'a> Iterator for MultiBufferRows<'a> {
             self.excerpts.item()?;
             self.excerpts.next(&());
             let excerpt = self.excerpts.item()?;
-            self.buffer_row_range.start = excerpt.range.start.to_point(&excerpt.buffer).row;
-            self.buffer_row_range.end =
-                self.buffer_row_range.start + excerpt.text_summary.lines.row + 1;
+            if !excerpt.is_tombstone {
+                self.buffer_row_range.start = excerpt.range.start.to_point(&excerpt.buffer).row;
+                self.buffer_row_range.end =
+                    self.buffer_row_range.start + excerpt.text_summary.lines.row + 1;
+            }
         }
     }
 }
@@ -1869,6 +1940,9 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
             Some(chunk)
         } else {
             self.excerpts.next(&());
+            while self.excerpts.item()?.is_tombstone {
+                self.excerpts.next(&());
+            }
             let excerpt = self.excerpts.item()?;
             self.excerpt_chunks = Some(
                 excerpt.chunks_in_range(0..self.range.end - self.excerpts.start(), self.theme),
@@ -1888,6 +1962,14 @@ impl<'a> MultiBufferBytes<'a> {
                 self.chunk = chunk;
             } else {
                 self.excerpts.next(&());
+                while let Some(excerpt) = self.excerpts.item() {
+                    if excerpt.is_tombstone {
+                        self.excerpts.next(&());
+                    } else {
+                        break;
+                    }
+                }
+
                 if let Some(excerpt) = self.excerpts.item() {
                     let mut excerpt_bytes =
                         excerpt.bytes_in_range(0..self.range.end - self.excerpts.start());
