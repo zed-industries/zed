@@ -7,6 +7,7 @@ pub use crate::{
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
+use collections::hash_map;
 use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
@@ -18,11 +19,11 @@ use smol::future::yield_now;
 use std::{
     any::Any,
     cell::RefCell,
-    cmp::{self, Reverse},
+    cmp::{self, Ordering},
     collections::{BTreeMap, HashMap, HashSet},
     ffi::OsString,
     future::Future,
-    iter::{self, Iterator, Peekable},
+    iter::{Iterator, Peekable},
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     str,
@@ -68,6 +69,7 @@ pub struct Buffer {
     remote_selections: TreeMap<ReplicaId, Arc<[Selection<Anchor>]>>,
     diagnostics: DiagnosticSet,
     diagnostics_update_count: usize,
+    next_diagnostic_group_id: usize,
     language_server: Option<LanguageServerState>,
     deferred_ops: OperationQueue<Operation>,
     #[cfg(test)]
@@ -360,6 +362,7 @@ impl Buffer {
             remote_selections: Default::default(),
             diagnostics: Default::default(),
             diagnostics_update_count: 0,
+            next_diagnostic_group_id: 0,
             language_server: None,
             deferred_ops: OperationQueue::new(),
             #[cfg(test)]
@@ -726,7 +729,20 @@ impl Buffer {
         mut diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<Operation> {
-        diagnostics.sort_unstable_by_key(|d| (d.range.start, Reverse(d.range.end)));
+        fn compare_diagnostics(a: &Diagnostic, b: &Diagnostic) -> Ordering {
+            Ordering::Equal
+                .then_with(|| b.is_primary.cmp(&a.is_primary))
+                .then_with(|| a.source.cmp(&b.source))
+                .then_with(|| a.severity.cmp(&b.severity))
+                .then_with(|| a.message.cmp(&b.message))
+        }
+
+        diagnostics.sort_unstable_by(|a, b| {
+            Ordering::Equal
+                .then_with(|| a.range.start.cmp(&b.range.start))
+                .then_with(|| b.range.end.cmp(&a.range.end))
+                .then_with(|| compare_diagnostics(&a.diagnostic, &b.diagnostic))
+        });
 
         let version = version.map(|version| version as usize);
         let content = if let Some(version) = version {
@@ -803,65 +819,117 @@ impl Buffer {
             }
             ix += 1;
         }
-
         drop(edits_since_save);
 
-        let diagnostics = diagnostics.into_iter().map(|entry| DiagnosticEntry {
-            range: content.anchor_before(entry.range.start)..content.anchor_after(entry.range.end),
-            diagnostic: entry.diagnostic,
-        });
-
-        // Some diagnostic sources are reported on a less frequent basis than others.
-        // If those sources are absent from this message, then preserve the previous
-        // diagnostics for those sources, but mark them as stale, and set a time to
-        // clear them out.
-        let mut merged_old_disk_based_diagnostics = false;
-        self.diagnostics = if has_disk_based_diagnostics {
-            DiagnosticSet::from_sorted_entries(diagnostics, content)
-        } else {
-            let mut new_diagnostics = diagnostics.peekable();
-            let mut old_diagnostics = self
-                .diagnostics
-                .iter()
-                .filter_map(|entry| {
-                    let is_disk_based = entry
+        let mut merged_diagnostics = Vec::with_capacity(diagnostics.len());
+        let mut old_diagnostics = self
+            .diagnostics
+            .iter()
+            .map(|entry| {
+                (
+                    entry,
+                    entry
                         .diagnostic
                         .source
                         .as_ref()
-                        .map_or(false, |source| disk_based_sources.contains(source));
-                    if is_disk_based {
+                        .map_or(false, |source| disk_based_sources.contains(source)),
+                )
+            })
+            .peekable();
+        let mut new_diagnostics = diagnostics
+            .into_iter()
+            .map(|entry| DiagnosticEntry {
+                range: content.anchor_before(entry.range.start)
+                    ..content.anchor_after(entry.range.end),
+                diagnostic: entry.diagnostic,
+            })
+            .peekable();
+
+        // Compare the old and new diagnostics for two reasons.
+        // 1. Recycling group ids - diagnostic groups whose primary diagnostic has not
+        //    changed should use the same group id as before, so that downstream code
+        //    can determine which diagnostics are new.
+        // 2. Preserving disk-based diagnostics - These diagnostic sources are reported
+        //    on a less frequent basis than others. If these sources are absent from this
+        //    message, then preserve the previous diagnostics for those sources, but mark
+        //    them as invalid, and set a time to clear them out.
+        let mut group_id_replacements = HashMap::new();
+        let mut merged_old_disk_based_diagnostics = false;
+        loop {
+            match (old_diagnostics.peek(), new_diagnostics.peek()) {
+                (None, None) => break,
+                (None, Some(_)) => {
+                    merged_diagnostics.push(new_diagnostics.next().unwrap());
+                }
+                (Some(_), None) => {
+                    let (old_entry, is_disk_based) = old_diagnostics.next().unwrap();
+                    if is_disk_based && !has_disk_based_diagnostics {
+                        let mut old_entry = old_entry.clone();
+                        old_entry.diagnostic.is_valid = false;
                         merged_old_disk_based_diagnostics = true;
-                        let mut entry = entry.clone();
-                        entry.diagnostic.is_valid = false;
-                        Some(entry)
-                    } else {
-                        None
+                        merged_diagnostics.push(old_entry);
                     }
-                })
-                .peekable();
-            let merged_diagnostics =
-                iter::from_fn(|| match (old_diagnostics.peek(), new_diagnostics.peek()) {
-                    (None, None) => None,
-                    (Some(_), None) => old_diagnostics.next(),
-                    (None, Some(_)) => new_diagnostics.next(),
-                    (Some(old), Some(new)) => {
-                        let ordering = old
-                            .range
-                            .start
-                            .cmp(&new.range.start, content)
-                            .unwrap()
-                            .then_with(|| new.range.end.cmp(&old.range.end, content).unwrap());
-                        if ordering.is_lt() {
-                            old_diagnostics.next()
-                        } else {
-                            new_diagnostics.next()
+                }
+                (Some((old, _)), Some(new)) => {
+                    let ordering = Ordering::Equal
+                        .then_with(|| old.range.start.cmp(&new.range.start, content).unwrap())
+                        .then_with(|| new.range.end.cmp(&old.range.end, content).unwrap())
+                        .then_with(|| compare_diagnostics(&old.diagnostic, &new.diagnostic));
+                    match ordering {
+                        Ordering::Less => {
+                            let (old_entry, is_disk_based) = old_diagnostics.next().unwrap();
+                            if is_disk_based && !has_disk_based_diagnostics {
+                                let mut old_entry = old_entry.clone();
+                                old_entry.diagnostic.is_valid = false;
+                                merged_old_disk_based_diagnostics = true;
+                                merged_diagnostics.push(old_entry);
+                            }
+                        }
+                        Ordering::Equal => {
+                            let (old_entry, _) = old_diagnostics.next().unwrap();
+                            let new_entry = new_diagnostics.next().unwrap();
+                            if new_entry.diagnostic.is_primary {
+                                group_id_replacements.insert(
+                                    new_entry.diagnostic.group_id,
+                                    old_entry.diagnostic.group_id,
+                                );
+                            }
+                            merged_diagnostics.push(new_entry);
+                        }
+                        Ordering::Greater => {
+                            let new_entry = new_diagnostics.next().unwrap();
+                            merged_diagnostics.push(new_entry);
                         }
                     }
-                });
-            DiagnosticSet::from_sorted_entries(merged_diagnostics, content)
-        };
+                }
+            }
+        }
+        drop(old_diagnostics);
 
+        // Having determined which group ids should be recycled, renumber all of
+        // groups. Any new group that does not correspond to an old group receives
+        // a brand new group id.
+        let mut next_diagnostic_group_id = self.next_diagnostic_group_id;
+        for entry in &mut merged_diagnostics {
+            if entry.diagnostic.is_valid {
+                match group_id_replacements.entry(entry.diagnostic.group_id) {
+                    hash_map::Entry::Occupied(e) => entry.diagnostic.group_id = *e.get(),
+                    hash_map::Entry::Vacant(e) => {
+                        entry.diagnostic.group_id = post_inc(&mut next_diagnostic_group_id);
+                        e.insert(entry.diagnostic.group_id);
+                    }
+                }
+            }
+        }
+
+        self.diagnostics = DiagnosticSet::from_sorted_entries(merged_diagnostics, content);
         self.diagnostics_update_count += 1;
+        self.next_diagnostic_group_id = next_diagnostic_group_id;
+
+        if merged_old_disk_based_diagnostics {
+            // TODO - spawn a task to clear the old ones
+        }
+
         cx.notify();
         cx.emit(Event::DiagnosticsUpdated);
         Ok(Operation::UpdateDiagnostics {

@@ -386,6 +386,7 @@ fn test_edit_with_autoindent(cx: &mut MutableAppContext) {
 //         buffer
 //     });
 // }
+
 #[gpui::test]
 fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut MutableAppContext) {
     cx.add_model(|cx| {
@@ -518,6 +519,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'A'".to_string(),
+                            source: Some("disk".to_string()),
                             group_id: 0,
                             is_primary: true,
                             ..Default::default()
@@ -528,6 +530,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'BB'".to_string(),
+                            source: Some("disk".to_string()),
                             group_id: 1,
                             is_primary: true,
                             ..Default::default()
@@ -537,6 +540,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         range: PointUtf16::new(2, 9)..PointUtf16::new(2, 12),
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
+                            source: Some("disk".to_string()),
                             message: "undefined variable 'CCC'".to_string(),
                             group_id: 2,
                             is_primary: true,
@@ -560,6 +564,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'BB'".to_string(),
+                        source: Some("disk".to_string()),
                         group_id: 1,
                         is_primary: true,
                         ..Default::default()
@@ -570,6 +575,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'CCC'".to_string(),
+                        source: Some("disk".to_string()),
                         group_id: 2,
                         is_primary: true,
                         ..Default::default()
@@ -608,6 +614,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'A'".to_string(),
+                            source: Some("disk".to_string()),
                             group_id: 0,
                             is_primary: true,
                             ..Default::default()
@@ -638,7 +645,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::WARNING,
                         message: "unreachable statement".to_string(),
-                        group_id: 1,
+                        group_id: 3,
                         is_primary: true,
                         ..Default::default()
                     }
@@ -648,6 +655,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'A'".to_string(),
+                        source: Some("disk".to_string()),
                         group_id: 0,
                         is_primary: true,
                         ..Default::default()
@@ -740,7 +748,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'BB'".to_string(),
                         source: Some("disk".to_string()),
-                        group_id: 1,
+                        group_id: 4,
                         is_primary: true,
                         ..Default::default()
                     },
@@ -751,7 +759,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_preserving_disk_based_diagnostics(mut cx: gpui::TestAppContext) {
+async fn test_preserving_old_group_ids_and_disk_based_diagnostics(mut cx: gpui::TestAppContext) {
     let buffer = cx.add_model(|cx| {
         let text = "
             use a::*;
@@ -822,10 +830,10 @@ async fn test_preserving_disk_based_diagnostics(mut cx: gpui::TestAppContext) {
         );
     });
 
-    // The diagnostics are updated, and the disk-based diagnostic is omitted from this message.
+    // The diagnostics are updated. The disk-based diagnostic is omitted, and one
+    // other diagnostic has changed its message.
     let mut new_diagnostics = vec![diagnostics[0].clone(), diagnostics[2].clone()];
     new_diagnostics[0].diagnostic.message = "another syntax error".to_string();
-    new_diagnostics[1].diagnostic.message = "yet another syntax error".to_string();
 
     buffer.update(&mut cx, |buffer, cx| {
         buffer
@@ -837,7 +845,16 @@ async fn test_preserving_disk_based_diagnostics(mut cx: gpui::TestAppContext) {
                 .diagnostics_in_range::<_, PointUtf16>(PointUtf16::new(0, 0)..PointUtf16::new(4, 0))
                 .collect::<Vec<_>>(),
             &[
-                new_diagnostics[0].clone(),
+                // The changed diagnostic is given a new group id.
+                DiagnosticEntry {
+                    range: new_diagnostics[0].range.clone(),
+                    diagnostic: Diagnostic {
+                        group_id: 3,
+                        ..new_diagnostics[0].diagnostic.clone()
+                    },
+                },
+                // The old disk-based diagnostic is marked as invalid, but keeps
+                // its original group id.
                 DiagnosticEntry {
                     range: diagnostics[1].range.clone(),
                     diagnostic: Diagnostic {
@@ -845,6 +862,7 @@ async fn test_preserving_disk_based_diagnostics(mut cx: gpui::TestAppContext) {
                         ..diagnostics[1].diagnostic.clone()
                     },
                 },
+                // The unchanged diagnostic keeps its original group id
                 new_diagnostics[1].clone(),
             ],
         );
