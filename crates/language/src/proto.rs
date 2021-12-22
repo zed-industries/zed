@@ -117,6 +117,7 @@ pub fn serialize_diagnostics<'a>(
             } as i32,
             group_id: entry.diagnostic.group_id as u64,
             is_primary: entry.diagnostic.is_primary,
+            is_valid: entry.diagnostic.is_valid,
             code: entry.diagnostic.code.clone(),
             source: entry.diagnostic.source.clone(),
         })
@@ -273,6 +274,7 @@ pub fn deserialize_diagnostics(
                     is_primary: diagnostic.is_primary,
                     code: diagnostic.code,
                     source: diagnostic.source,
+                    is_valid: diagnostic.is_valid,
                 },
             })
         })

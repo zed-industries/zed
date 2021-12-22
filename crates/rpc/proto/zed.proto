@@ -303,10 +303,12 @@ message Diagnostic {
     Anchor end = 2;
     Severity severity = 3;
     string message = 4;
-    uint64 group_id = 5;
-    bool is_primary = 6;
-    optional string code = 7;
-    optional string source = 8;
+    optional string code = 5;
+    optional string source = 6;
+    uint64 group_id = 7;
+    bool is_primary = 8;
+    bool is_valid = 9;
+
     enum Severity {
         None = 0;
         Error = 1;

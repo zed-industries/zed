@@ -18,11 +18,11 @@ use smol::future::yield_now;
 use std::{
     any::Any,
     cell::RefCell,
-    cmp,
+    cmp::{self, Reverse},
     collections::{BTreeMap, HashMap, HashSet},
     ffi::OsString,
     future::Future,
-    iter::{Iterator, Peekable},
+    iter::{self, Iterator, Peekable},
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     str,
@@ -92,6 +92,7 @@ pub struct Diagnostic {
     pub severity: DiagnosticSeverity,
     pub message: String,
     pub group_id: usize,
+    pub is_valid: bool,
     pub is_primary: bool,
 }
 
@@ -725,7 +726,7 @@ impl Buffer {
         mut diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<Operation> {
-        diagnostics.sort_unstable_by_key(|d| (d.range.start, d.range.end));
+        diagnostics.sort_unstable_by_key(|d| (d.range.start, Reverse(d.range.end)));
 
         let version = version.map(|version| version as usize);
         let content = if let Some(version) = version {
@@ -754,6 +755,7 @@ impl Buffer {
             .peekable();
         let mut last_edit_old_end = PointUtf16::zero();
         let mut last_edit_new_end = PointUtf16::zero();
+        let mut has_disk_based_diagnostics = false;
         let mut ix = 0;
         'outer: while ix < diagnostics.len() {
             let entry = &mut diagnostics[ix];
@@ -769,6 +771,7 @@ impl Buffer {
                 .as_ref()
                 .map_or(false, |source| disk_based_sources.contains(source))
             {
+                has_disk_based_diagnostics = true;
                 while let Some(edit) = edits_since_save.peek() {
                     if edit.old.end <= start {
                         last_edit_old_end = edit.old.end;
@@ -802,7 +805,62 @@ impl Buffer {
         }
 
         drop(edits_since_save);
-        self.diagnostics = DiagnosticSet::new(diagnostics, content);
+
+        let diagnostics = diagnostics.into_iter().map(|entry| DiagnosticEntry {
+            range: content.anchor_before(entry.range.start)..content.anchor_after(entry.range.end),
+            diagnostic: entry.diagnostic,
+        });
+
+        // Some diagnostic sources are reported on a less frequent basis than others.
+        // If those sources are absent from this message, then preserve the previous
+        // diagnostics for those sources, but mark them as stale, and set a time to
+        // clear them out.
+        let mut merged_old_disk_based_diagnostics = false;
+        self.diagnostics = if has_disk_based_diagnostics {
+            DiagnosticSet::from_sorted_entries(diagnostics, content)
+        } else {
+            let mut new_diagnostics = diagnostics.peekable();
+            let mut old_diagnostics = self
+                .diagnostics
+                .iter()
+                .filter_map(|entry| {
+                    let is_disk_based = entry
+                        .diagnostic
+                        .source
+                        .as_ref()
+                        .map_or(false, |source| disk_based_sources.contains(source));
+                    if is_disk_based {
+                        merged_old_disk_based_diagnostics = true;
+                        let mut entry = entry.clone();
+                        entry.diagnostic.is_valid = false;
+                        Some(entry)
+                    } else {
+                        None
+                    }
+                })
+                .peekable();
+            let merged_diagnostics =
+                iter::from_fn(|| match (old_diagnostics.peek(), new_diagnostics.peek()) {
+                    (None, None) => None,
+                    (Some(_), None) => old_diagnostics.next(),
+                    (None, Some(_)) => new_diagnostics.next(),
+                    (Some(old), Some(new)) => {
+                        let ordering = old
+                            .range
+                            .start
+                            .cmp(&new.range.start, content)
+                            .unwrap()
+                            .then_with(|| new.range.end.cmp(&old.range.end, content).unwrap());
+                        if ordering.is_lt() {
+                            old_diagnostics.next()
+                        } else {
+                            new_diagnostics.next()
+                        }
+                    }
+                });
+            DiagnosticSet::from_sorted_entries(merged_diagnostics, content)
+        };
+
         self.diagnostics_update_count += 1;
         cx.notify();
         cx.emit(Event::DiagnosticsUpdated);
@@ -2009,6 +2067,7 @@ impl Default for Diagnostic {
             message: Default::default(),
             group_id: Default::default(),
             is_primary: Default::default(),
+            is_valid: Default::default(),
         }
     }
 }

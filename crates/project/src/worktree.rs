@@ -721,6 +721,7 @@ impl Worktree {
                         message: mem::take(&mut diagnostic.message),
                         group_id,
                         is_primary: false,
+                        is_valid: true,
                     },
                 });
         }
