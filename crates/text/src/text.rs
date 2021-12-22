@@ -2057,12 +2057,18 @@ pub trait FromAnchor {
 
 impl FromAnchor for Point {
     fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self {
-        anchor.to_point(snapshot)
+        snapshot.summary_for_anchor(anchor)
+    }
+}
+
+impl FromAnchor for PointUtf16 {
+    fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self {
+        snapshot.summary_for_anchor(anchor)
     }
 }
 
 impl FromAnchor for usize {
     fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self {
-        anchor.to_offset(snapshot)
+        snapshot.summary_for_anchor(anchor)
     }
 }

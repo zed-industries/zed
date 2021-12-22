@@ -2067,7 +2067,7 @@ impl Default for Diagnostic {
             message: Default::default(),
             group_id: Default::default(),
             is_primary: Default::default(),
-            is_valid: Default::default(),
+            is_valid: true,
         }
     }
 }
