@@ -69,6 +69,7 @@ pub struct Buffer {
     remote_selections: TreeMap<ReplicaId, Arc<[Selection<Anchor>]>>,
     diagnostics: DiagnosticSet,
     diagnostics_update_count: usize,
+    clear_invalid_diagnostics_task: Option<Task<()>>,
     next_diagnostic_group_id: usize,
     language_server: Option<LanguageServerState>,
     deferred_ops: OperationQueue<Operation>,
@@ -363,6 +364,7 @@ impl Buffer {
             diagnostics: Default::default(),
             diagnostics_update_count: 0,
             next_diagnostic_group_id: 0,
+            clear_invalid_diagnostics_task: None,
             language_server: None,
             deferred_ops: OperationQueue::new(),
             #[cfg(test)]
@@ -845,14 +847,14 @@ impl Buffer {
             })
             .peekable();
 
-        // Compare the old and new diagnostics for two reasons.
-        // 1. Recycling group ids - diagnostic groups whose primary diagnostic has not
+        // Incorporate the *old* diagnostics into the new diagnostics set, in two ways:
+        // 1. Recycle group ids - diagnostic groups whose primary diagnostic has not
         //    changed should use the same group id as before, so that downstream code
         //    can determine which diagnostics are new.
-        // 2. Preserving disk-based diagnostics - These diagnostic sources are reported
+        // 2. Preserve disk-based diagnostics - Some diagnostic sources are reported
         //    on a less frequent basis than others. If these sources are absent from this
         //    message, then preserve the previous diagnostics for those sources, but mark
-        //    them as invalid, and set a time to clear them out.
+        //    them as invalid, and set a timer to clear them out.
         let mut group_id_replacements = HashMap::new();
         let mut merged_old_disk_based_diagnostics = false;
         loop {
@@ -923,19 +925,42 @@ impl Buffer {
         }
 
         self.diagnostics = DiagnosticSet::from_sorted_entries(merged_diagnostics, content);
-        self.diagnostics_update_count += 1;
         self.next_diagnostic_group_id = next_diagnostic_group_id;
 
+        // If old disk-based diagnostics were included in this new set, then
+        // set a timer to remove them if enough time passes before the next
+        // diagnostics update.
         if merged_old_disk_based_diagnostics {
-            // TODO - spawn a task to clear the old ones
+            self.clear_invalid_diagnostics_task = Some(cx.spawn(|this, mut cx| async move {
+                smol::Timer::after(Duration::from_secs(2)).await;
+                this.update(&mut cx, |this, cx| {
+                    let content = this.snapshot();
+                    this.diagnostics = DiagnosticSet::from_sorted_entries(
+                        this.diagnostics
+                            .iter()
+                            .filter(|d| d.diagnostic.is_valid)
+                            .cloned(),
+                        &content,
+                    );
+                    let operation = this.did_update_diagnostics(cx);
+                    this.send_operation(operation, cx);
+                });
+            }));
+        } else if has_disk_based_diagnostics {
+            self.clear_invalid_diagnostics_task.take();
         }
 
+        Ok(self.did_update_diagnostics(cx))
+    }
+
+    fn did_update_diagnostics(&mut self, cx: &mut ModelContext<Self>) -> Operation {
+        self.diagnostics_update_count += 1;
         cx.notify();
         cx.emit(Event::DiagnosticsUpdated);
-        Ok(Operation::UpdateDiagnostics {
+        Operation::UpdateDiagnostics {
             diagnostics: Arc::from(self.diagnostics.iter().cloned().collect::<Vec<_>>()),
             lamport_timestamp: self.text.lamport_clock.tick(),
-        })
+        }
     }
 
     fn request_autoindent(&mut self, cx: &mut ModelContext<Self>) {
