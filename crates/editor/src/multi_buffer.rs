@@ -64,10 +64,6 @@ pub trait ToPoint: 'static + fmt::Debug {
     fn to_point(&self, snapshot: &MultiBufferSnapshot) -> Point;
 }
 
-pub trait FromAnchor: 'static {
-    fn from_anchor(anchor: &Anchor, snapshot: &MultiBufferSnapshot) -> Self;
-}
-
 struct BufferState {
     buffer: ModelHandle<Buffer>,
     last_version: clock::Global,
