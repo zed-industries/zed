@@ -592,6 +592,18 @@ impl MultiBuffer {
     where
         O: text::ToOffset,
     {
+        self.insert_excerpt_after(&ExcerptId::max(), props, cx)
+    }
+
+    pub fn insert_excerpt_after<O>(
+        &mut self,
+        prev_excerpt_id: &ExcerptId,
+        props: ExcerptProperties<O>,
+        cx: &mut ModelContext<Self>,
+    ) -> ExcerptId
+    where
+        O: text::ToOffset,
+    {
         assert_eq!(self.history.transaction_depth, 0);
         self.sync(cx);
 
@@ -599,19 +611,28 @@ impl MultiBuffer {
         let range = buffer_snapshot.anchor_before(&props.range.start)
             ..buffer_snapshot.anchor_after(&props.range.end);
         let mut snapshot = self.snapshot.borrow_mut();
-        let mut prev_id = None;
-        let edit_start = snapshot.excerpts.summary().text.bytes;
-        snapshot.excerpts.update_last(
+        let mut cursor = snapshot.excerpts.cursor::<Option<&ExcerptId>>();
+        let mut new_excerpts = cursor.slice(&Some(prev_excerpt_id), Bias::Right, &());
+
+        let mut prev_id = ExcerptId::min();
+        let edit_start = new_excerpts.summary().text.bytes;
+        new_excerpts.update_last(
             |excerpt| {
                 excerpt.has_trailing_newline = true;
-                prev_id = Some(excerpt.id.clone());
+                prev_id = excerpt.id.clone();
             },
             &(),
         );
 
-        let id = ExcerptId::between(&prev_id.unwrap_or(ExcerptId::min()), &ExcerptId::max());
-        self.buffers
-            .borrow_mut()
+        let mut next_id = ExcerptId::max();
+        if let Some(next_excerpt) = cursor.item() {
+            next_id = next_excerpt.id.clone();
+        }
+
+        let id = ExcerptId::between(&prev_id, &next_id);
+
+        let mut buffers = self.buffers.borrow_mut();
+        let buffer_state = buffers
             .entry(props.buffer.id())
             .or_insert_with(|| BufferState {
                 last_version: buffer_snapshot.version().clone(),
@@ -623,14 +644,28 @@ impl MultiBuffer {
                     cx.subscribe(&props.buffer, Self::on_buffer_event),
                 ],
                 buffer: props.buffer.clone(),
-            })
-            .excerpts
-            .push(id.clone());
-        let excerpt = Excerpt::new(id.clone(), props.buffer.id(), buffer_snapshot, range, false);
-        snapshot.excerpts.push(excerpt, &());
+            });
+        if let Err(ix) = buffer_state.excerpts.binary_search(&id) {
+            buffer_state.excerpts.insert(ix, id.clone());
+        }
+
+        let excerpt = Excerpt::new(
+            id.clone(),
+            props.buffer.id(),
+            buffer_snapshot,
+            range,
+            cursor.item().is_some(),
+        );
+        new_excerpts.push(excerpt, &());
+        let edit_end = new_excerpts.summary().text.bytes;
+
+        new_excerpts.push_tree(cursor.suffix(&()), &());
+        drop(cursor);
+        snapshot.excerpts = new_excerpts;
+
         self.subscriptions.publish_mut([Edit {
             old: edit_start..edit_start,
-            new: edit_start..snapshot.excerpts.summary().text.bytes,
+            new: edit_start..edit_end,
         }]);
 
         cx.notify();
@@ -2302,8 +2337,17 @@ mod tests {
                     let end_ix = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Right);
                     let start_ix = buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
                     let anchor_range = buffer.anchor_before(start_ix)..buffer.anchor_after(end_ix);
+                    let prev_excerpt_ix = rng.gen_range(0..=expected_excerpts.len());
+                    let prev_excerpt_id = excerpt_ids
+                        .get(prev_excerpt_ix)
+                        .cloned()
+                        .unwrap_or(ExcerptId::max());
+                    let excerpt_ix = (prev_excerpt_ix + 1).min(expected_excerpts.len());
+
                     log::info!(
-                        "Pushing excerpt for buffer {}: {:?}[{:?}] = {:?}",
+                        "Inserting excerpt at {} of {} for buffer {}: {:?}[{:?}] = {:?}",
+                        excerpt_ix,
+                        expected_excerpts.len(),
                         buffer_handle.id(),
                         buffer.text(),
                         start_ix..end_ix,
@@ -2311,7 +2355,8 @@ mod tests {
                     );
 
                     let excerpt_id = list.update(cx, |list, cx| {
-                        list.push_excerpt(
+                        list.insert_excerpt_after(
+                            &prev_excerpt_id,
                             ExcerptProperties {
                                 buffer: &buffer_handle,
                                 range: start_ix..end_ix,
@@ -2319,8 +2364,9 @@ mod tests {
                             cx,
                         )
                     });
-                    excerpt_ids.push(excerpt_id);
-                    expected_excerpts.push((buffer_handle.clone(), anchor_range));
+
+                    excerpt_ids.insert(excerpt_ix, excerpt_id);
+                    expected_excerpts.insert(excerpt_ix, (buffer_handle.clone(), anchor_range));
                 }
             }
 
