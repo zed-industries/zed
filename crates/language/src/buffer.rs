@@ -725,6 +725,10 @@ impl Buffer {
         cx.notify();
     }
 
+    pub fn all_diagnostics<'a>(&'a self) -> impl 'a + Iterator<Item = &'a DiagnosticEntry<Anchor>> {
+        self.diagnostics.iter()
+    }
+
     pub fn update_diagnostics(
         &mut self,
         version: Option<i32>,
@@ -1857,15 +1861,6 @@ impl BufferSnapshot {
 
                 (*replica_id, selections[start_ix..end_ix].iter())
             })
-    }
-
-    pub fn all_diagnostics<'a, O>(&'a self) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
-    where
-        O: 'a + FromAnchor,
-    {
-        self.diagnostics
-            .iter()
-            .map(|diagnostic| diagnostic.resolve(self))
     }
 
     pub fn diagnostics_in_range<'a, T, O>(

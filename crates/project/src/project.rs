@@ -78,7 +78,7 @@ pub struct DiagnosticSummary {
 }
 
 impl DiagnosticSummary {
-    fn new<T>(diagnostics: &[DiagnosticEntry<T>]) -> Self {
+    fn new<'a, T: 'a>(diagnostics: impl IntoIterator<Item = &'a DiagnosticEntry<T>>) -> Self {
         let mut this = Self {
             error_count: 0,
             warning_count: 0,
