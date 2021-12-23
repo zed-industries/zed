@@ -291,7 +291,7 @@ impl Worktree {
 
     pub fn languages(&self) -> &Arc<LanguageRegistry> {
         match self {
-            Worktree::Local(worktree) => &worktree.languages,
+            Worktree::Local(worktree) => &worktree.language_registry,
             Worktree::Remote(worktree) => &worktree.languages,
         }
     }
@@ -853,10 +853,11 @@ pub struct LocalWorktree {
     diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<PointUtf16>>>,
     diagnostic_summaries: BTreeMap<Arc<Path>, DiagnosticSummary>,
     queued_operations: Vec<(u64, Operation)>,
-    languages: Arc<LanguageRegistry>,
+    language_registry: Arc<LanguageRegistry>,
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     fs: Arc<dyn Fs>,
+    languages: Vec<Arc<Language>>,
     language_servers: HashMap<String, Arc<LanguageServer>>,
 }
 
@@ -960,10 +961,11 @@ impl LocalWorktree {
                 diagnostics: Default::default(),
                 diagnostic_summaries: Default::default(),
                 queued_operations: Default::default(),
-                languages,
+                language_registry: languages,
                 client,
                 user_store,
                 fs,
+                languages: Default::default(),
                 language_servers: Default::default(),
             };
 
@@ -1004,15 +1006,23 @@ impl LocalWorktree {
         self.config.collaborators.clone()
     }
 
-    pub fn languages(&self) -> &LanguageRegistry {
+    pub fn language_registry(&self) -> &LanguageRegistry {
+        &self.language_registry
+    }
+
+    pub fn languages(&self) -> &[Arc<Language>] {
         &self.languages
     }
 
-    pub fn ensure_language_server(
+    pub fn register_language(
         &mut self,
-        language: &Language,
+        language: &Arc<Language>,
         cx: &mut ModelContext<Worktree>,
     ) -> Option<Arc<LanguageServer>> {
+        if !self.languages.iter().any(|l| Arc::ptr_eq(l, language)) {
+            self.languages.push(language.clone());
+        }
+
         if let Some(server) = self.language_servers.get(language.name()) {
             return Some(server.clone());
         }
@@ -1090,10 +1100,13 @@ impl LocalWorktree {
             let (diagnostics, language, language_server) = this.update(&mut cx, |this, cx| {
                 let this = this.as_local_mut().unwrap();
                 let diagnostics = this.diagnostics.remove(&path);
-                let language = this.languages.select_language(file.full_path()).cloned();
+                let language = this
+                    .language_registry
+                    .select_language(file.full_path())
+                    .cloned();
                 let server = language
                     .as_ref()
-                    .and_then(|language| this.ensure_language_server(language, cx));
+                    .and_then(|language| this.register_language(language, cx));
                 (diagnostics, language, server)
             });
 
@@ -1191,8 +1204,8 @@ impl LocalWorktree {
         self.snapshot.clone()
     }
 
-    pub fn abs_path(&self) -> &Path {
-        self.snapshot.abs_path.as_ref()
+    pub fn abs_path(&self) -> &Arc<Path> {
+        &self.snapshot.abs_path
     }
 
     pub fn contains_abs_path(&self, path: &Path) -> bool {

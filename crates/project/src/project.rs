@@ -11,14 +11,14 @@ use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
 };
-use language::{Buffer, DiagnosticEntry, LanguageRegistry};
+use language::{Buffer, DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use postage::{prelude::Stream, watch};
 use std::{
     path::Path,
     sync::{atomic::AtomicBool, Arc},
 };
-use util::TryFutureExt as _;
+use util::{ResultExt, TryFutureExt as _};
 
 pub use fs::*;
 pub use worktree::*;
@@ -500,6 +500,31 @@ impl Project {
         if new_active_entry != self.active_entry {
             self.active_entry = new_active_entry;
             cx.emit(Event::ActiveEntryChanged(new_active_entry));
+        }
+    }
+
+    pub fn diagnose(&self, cx: &mut ModelContext<Self>) {
+        for worktree_handle in &self.worktrees {
+            if let Some(worktree) = worktree_handle.read(cx).as_local() {
+                for language in worktree.languages() {
+                    if let Some(diagnostic_source) = language.diagnostic_source().cloned() {
+                        let worktree_path = worktree.abs_path().clone();
+                        let worktree_handle = worktree_handle.downgrade();
+                        cx.spawn_weak(|_, cx| async move {
+                            if let Some(diagnostics) =
+                                diagnostic_source.diagnose(worktree_path).await.log_err()
+                            {
+                                if let Some(worktree_handle) = worktree_handle.upgrade(&cx) {
+                                    worktree_handle.update(&mut cx, |worktree, cx| {
+                                        for (path, diagnostics) in diagnostics {}
+                                    })
+                                }
+                            }
+                        })
+                        .detach();
+                    }
+                }
+            }
         }
     }
 

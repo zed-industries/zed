@@ -162,12 +162,12 @@ impl ItemView for Editor {
                     let (language, language_server) = worktree.update(&mut cx, |worktree, cx| {
                         let worktree = worktree.as_local_mut().unwrap();
                         let language = worktree
-                            .languages()
+                            .language_registry()
                             .select_language(new_file.full_path())
                             .cloned();
                         let language_server = language
                             .as_ref()
-                            .and_then(|language| worktree.ensure_language_server(language, cx));
+                            .and_then(|language| worktree.register_language(language, cx));
                         (language, language_server.clone())
                     });
 

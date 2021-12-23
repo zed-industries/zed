@@ -6,6 +6,7 @@ pub mod proto;
 mod tests;
 
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 pub use buffer::Operation;
 pub use buffer::*;
 use collections::HashSet;
@@ -15,7 +16,11 @@ use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Deserialize;
-use std::{path::Path, str, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    str,
+    sync::Arc,
+};
 use theme::SyntaxTheme;
 use tree_sitter::{self, Query};
 pub use tree_sitter::{Parser, Tree};
@@ -59,9 +64,18 @@ pub struct BracketPair {
     pub newline: bool,
 }
 
+#[async_trait]
+pub trait DiagnosticSource: 'static + Send + Sync {
+    async fn diagnose(
+        &self,
+        path: Arc<Path>,
+    ) -> Result<Vec<(PathBuf, Vec<DiagnosticEntry<Point>>)>>;
+}
+
 pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
+    pub(crate) diagnostic_source: Option<Arc<dyn DiagnosticSource>>,
 }
 
 pub struct Grammar {
@@ -126,6 +140,7 @@ impl Language {
                     highlight_map: Default::default(),
                 })
             }),
+            diagnostic_source: None,
         }
     }
 
@@ -159,6 +174,11 @@ impl Language {
         Ok(self)
     }
 
+    pub fn with_diagnostic_source(mut self, source: impl DiagnosticSource) -> Self {
+        self.diagnostic_source = Some(Arc::new(source));
+        self
+    }
+
     pub fn name(&self) -> &str {
         self.config.name.as_str()
     }
@@ -190,6 +210,10 @@ impl Language {
         } else {
             Ok(None)
         }
+    }
+
+    pub fn diagnostic_source(&self) -> Option<&Arc<dyn DiagnosticSource>> {
+        self.diagnostic_source.as_ref()
     }
 
     pub fn disk_based_diagnostic_sources(&self) -> Option<&HashSet<String>> {
