@@ -1,8 +1,9 @@
 use anyhow::Result;
+use collections::{hash_map, HashMap, HashSet};
 use editor::{
     context_header_renderer, diagnostic_block_renderer, diagnostic_header_renderer,
-    display_map::{BlockDisposition, BlockProperties},
-    BuildSettings, Editor, ExcerptProperties, MultiBuffer,
+    display_map::{BlockDisposition, BlockId, BlockProperties},
+    BuildSettings, Editor, ExcerptId, ExcerptProperties, MultiBuffer,
 };
 use gpui::{
     action, elements::*, keymap::Binding, AppContext, Entity, ModelHandle, MutableAppContext,
@@ -11,7 +12,7 @@ use gpui::{
 use language::{Bias, Buffer, Point};
 use postage::watch;
 use project::Project;
-use std::ops::Range;
+use std::{ops::Range, path::Path, sync::Arc};
 use util::TryFutureExt;
 use workspace::Workspace;
 
@@ -33,7 +34,20 @@ struct ProjectDiagnostics {
 struct ProjectDiagnosticsEditor {
     editor: ViewHandle<Editor>,
     excerpts: ModelHandle<MultiBuffer>,
+    path_states: Vec<(Arc<Path>, PathState)>,
     build_settings: BuildSettings,
+}
+
+#[derive(Default)]
+struct PathState {
+    last_excerpt: ExcerptId,
+    diagnostic_group_states: HashMap<usize, DiagnosticGroupState>,
+}
+
+#[derive(Default)]
+struct DiagnosticGroupState {
+    excerpts: Vec<ExcerptId>,
+    blocks: Vec<BlockId>,
 }
 
 impl ProjectDiagnostics {
@@ -118,6 +132,7 @@ impl ProjectDiagnosticsEditor {
             excerpts,
             editor,
             build_settings,
+            path_states: Default::default(),
         }
     }
 
@@ -132,13 +147,66 @@ impl ProjectDiagnosticsEditor {
     }
 
     fn populate_excerpts(&mut self, buffer: ModelHandle<Buffer>, cx: &mut ViewContext<Self>) {
-        let mut blocks = Vec::new();
-        let snapshot = buffer.read(cx).snapshot();
+        let snapshot;
+        let path;
+        {
+            let buffer = buffer.read(cx);
+            snapshot = buffer.snapshot();
+            if let Some(file) = buffer.file() {
+                path = file.path().clone();
+            } else {
+                return;
+            }
+        }
 
+        let path_ix = match self
+            .path_states
+            .binary_search_by_key(&path.as_ref(), |e| e.0.as_ref())
+        {
+            Ok(ix) => ix,
+            Err(ix) => {
+                self.path_states.insert(
+                    ix,
+                    (
+                        path.clone(),
+                        PathState {
+                            last_excerpt: ExcerptId::max(),
+                            diagnostic_group_states: Default::default(),
+                        },
+                    ),
+                );
+                ix
+            }
+        };
+        let mut prev_excerpt_id = if path_ix > 0 {
+            self.path_states[path_ix - 1].1.last_excerpt.clone()
+        } else {
+            ExcerptId::min()
+        };
+        let path_state = &mut self.path_states[path_ix].1;
+
+        let mut blocks_to_add = Vec::new();
+        let mut blocks_to_remove = HashSet::default();
+        let mut excerpts_to_remove = Vec::new();
+        let mut block_counts_by_group = Vec::new();
+
+        let diagnostic_groups = snapshot.diagnostic_groups::<Point>();
         let excerpts_snapshot = self.excerpts.update(cx, |excerpts, excerpts_cx| {
-            for group in snapshot.diagnostic_groups::<Point>() {
+            for group in &diagnostic_groups {
+                let group_id = group.entries[0].diagnostic.group_id;
+
+                let group_state = match path_state.diagnostic_group_states.entry(group_id) {
+                    hash_map::Entry::Occupied(e) => {
+                        prev_excerpt_id = e.get().excerpts.last().unwrap().clone();
+                        block_counts_by_group.push(0);
+                        continue;
+                    }
+                    hash_map::Entry::Vacant(e) => e.insert(DiagnosticGroupState::default()),
+                };
+
+                let mut block_count = 0;
                 let mut pending_range: Option<(Range<Point>, usize)> = None;
-                let mut is_first_excerpt = true;
+                let mut is_first_excerpt_for_group = true;
                 for (ix, entry) in group.entries.iter().map(Some).chain([None]).enumerate() {
                     if let Some((range, start_ix)) = &mut pending_range {
                         if let Some(entry) = entry {
@@ -154,7 +222,8 @@ impl ProjectDiagnosticsEditor {
                             Point::new(range.end.row + CONTEXT_LINE_COUNT, u32::MAX),
                             Bias::Left,
                         );
-                        let excerpt_id = excerpts.push_excerpt(
+                        let excerpt_id = excerpts.insert_excerpt_after(
+                            &prev_excerpt_id,
                             ExcerptProperties {
                                 buffer: &buffer,
                                 range: excerpt_start..excerpt_end,
@@ -162,13 +231,18 @@ impl ProjectDiagnosticsEditor {
                             excerpts_cx,
                         );
 
+                        prev_excerpt_id = excerpt_id.clone();
+                        group_state.excerpts.push(excerpt_id.clone());
                         let header_position = (excerpt_id.clone(), language::Anchor::min());
-                        if is_first_excerpt {
+
+                        if is_first_excerpt_for_group {
+                            is_first_excerpt_for_group = false;
                             let primary = &group.entries[group.primary_ix].diagnostic;
                             let mut header = primary.clone();
                             header.message =
                                 primary.message.split('\n').next().unwrap().to_string();
-                            blocks.push(BlockProperties {
+                            block_count += 1;
+                            blocks_to_add.push(BlockProperties {
                                 position: header_position,
                                 height: 2,
                                 render: diagnostic_header_renderer(
@@ -179,7 +253,8 @@ impl ProjectDiagnosticsEditor {
                                 disposition: BlockDisposition::Above,
                             });
                         } else {
-                            blocks.push(BlockProperties {
+                            block_count += 1;
+                            blocks_to_add.push(BlockProperties {
                                 position: header_position,
                                 height: 1,
                                 render: context_header_renderer(self.build_settings.clone()),
@@ -187,7 +262,6 @@ impl ProjectDiagnosticsEditor {
                             });
                         }
 
-                        is_first_excerpt = false;
                         for entry in &group.entries[*start_ix..ix] {
                             let mut diagnostic = entry.diagnostic.clone();
                             if diagnostic.is_primary {
@@ -198,7 +272,8 @@ impl ProjectDiagnosticsEditor {
 
                             if !diagnostic.message.is_empty() {
                                 let buffer_anchor = snapshot.anchor_before(entry.range.start);
-                                blocks.push(BlockProperties {
+                                block_count += 1;
+                                blocks_to_add.push(BlockProperties {
                                     position: (excerpt_id.clone(), buffer_anchor),
                                     height: diagnostic.message.matches('\n').count() as u8 + 1,
                                     render: diagnostic_block_renderer(
@@ -218,14 +293,36 @@ impl ProjectDiagnosticsEditor {
                         pending_range = Some((entry.range.clone(), ix));
                     }
                 }
+
+                block_counts_by_group.push(block_count);
             }
 
+            path_state
+                .diagnostic_group_states
+                .retain(|group_id, group_state| {
+                    if diagnostic_groups
+                        .iter()
+                        .any(|group| group.entries[0].diagnostic.group_id == *group_id)
+                    {
+                        true
+                    } else {
+                        excerpts_to_remove.extend(group_state.excerpts.drain(..));
+                        blocks_to_remove.extend(group_state.blocks.drain(..));
+                        false
+                    }
+                });
+
+            excerpts_to_remove.sort();
+            excerpts.remove_excerpts(excerpts_to_remove.iter(), excerpts_cx);
             excerpts.snapshot(excerpts_cx)
         });
 
+        path_state.last_excerpt = prev_excerpt_id;
+
         self.editor.update(cx, |editor, cx| {
-            editor.insert_blocks(
-                blocks.into_iter().map(|block| {
+            editor.remove_blocks(blocks_to_remove, cx);
+            let block_ids = editor.insert_blocks(
+                blocks_to_add.into_iter().map(|block| {
                     let (excerpt_id, text_anchor) = block.position;
                     BlockProperties {
                         position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor),
@@ -236,6 +333,20 @@ impl ProjectDiagnosticsEditor {
                 }),
                 cx,
             );
+
+            let mut block_ids = block_ids.into_iter();
+            let mut block_counts_by_group = block_counts_by_group.into_iter();
+            for group in &diagnostic_groups {
+                let group_id = group.entries[0].diagnostic.group_id;
+                let block_count = block_counts_by_group.next().unwrap();
+                let group_state = path_state
+                    .diagnostic_group_states
+                    .get_mut(&group_id)
+                    .unwrap();
+                group_state
+                    .blocks
+                    .extend(block_ids.by_ref().take(block_count));
+            }
         });
         cx.notify();
     }
@@ -454,7 +565,9 @@ mod tests {
             assert_eq!(
                 editor.text(),
                 concat!(
-                    // Diagnostic group 1 (error for `y`)
+                    //
+                    // main.rs, diagnostic group 1
+                    //
                     "\n", // primary message
                     "\n", // filename
                     "    let x = vec![];\n",
@@ -468,7 +581,9 @@ mod tests {
                     "    c(y);\n",
                     "\n", // supporting diagnostic
                     "    d(x);\n",
-                    // Diagnostic group 2 (error for `x`)
+                    //
+                    // main.rs, diagnostic group 2
+                    //
                     "\n", // primary message
                     "\n", // filename
                     "fn main() {\n",
@@ -516,11 +631,15 @@ mod tests {
             assert_eq!(
                 editor.text(),
                 concat!(
+                    //
                     // a.rs
+                    //
                     "\n", // primary message
                     "\n", // filename
                     "const a: i32 = 'a';\n",
+                    //
                     // main.rs, diagnostic group 1
+                    //
                     "\n", // primary message
                     "\n", // filename
                     "    let x = vec![];\n",
@@ -534,7 +653,9 @@ mod tests {
                     "    c(y);\n",
                     "\n", // supporting diagnostic
                     "    d(x);\n",
+                    //
                     // main.rs, diagnostic group 2
+                    //
                     "\n", // primary message
                     "\n", // filename
                     "fn main() {\n",
