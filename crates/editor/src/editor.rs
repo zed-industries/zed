@@ -3423,12 +3423,6 @@ impl Editor {
         }
     }
 
-    pub fn remove_blocks(&mut self, block_ids: HashSet<BlockId>, cx: &mut ViewContext<Self>) {
-        self.display_map.update(cx, |display_map, cx| {
-            display_map.remove_blocks(block_ids, cx)
-        });
-    }
-
     pub fn insert_blocks<P>(
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<P>>,
@@ -3442,6 +3436,22 @@ impl Editor {
             .update(cx, |display_map, cx| display_map.insert_blocks(blocks, cx));
         self.request_autoscroll(Autoscroll::Fit, cx);
         blocks
+    }
+
+    pub fn replace_blocks(
+        &mut self,
+        blocks: HashMap<BlockId, RenderBlock>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.display_map
+            .update(cx, |display_map, _| display_map.replace_blocks(blocks));
+        self.request_autoscroll(Autoscroll::Fit, cx);
+    }
+
+    pub fn remove_blocks(&mut self, block_ids: HashSet<BlockId>, cx: &mut ViewContext<Self>) {
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.remove_blocks(block_ids, cx)
+        });
     }
 
     pub fn longest_row(&self, cx: &mut MutableAppContext) -> u32 {
@@ -3790,12 +3800,13 @@ pub fn diagnostic_block_renderer(
 pub fn diagnostic_header_renderer(
     buffer: ModelHandle<Buffer>,
     diagnostic: Diagnostic,
+    is_valid: bool,
     build_settings: BuildSettings,
 ) -> RenderBlock {
     Arc::new(move |cx| {
         let settings = build_settings(cx);
         let mut text_style = settings.style.text.clone();
-        text_style.color = diagnostic_style(diagnostic.severity, true, &settings.style).text;
+        text_style.color = diagnostic_style(diagnostic.severity, is_valid, &settings.style).text;
         let file_path = if let Some(file) = buffer.read(&**cx).file() {
             file.path().to_string_lossy().to_string()
         } else {

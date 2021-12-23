@@ -7,7 +7,6 @@ pub use crate::{
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
-use collections::hash_map;
 use futures::FutureExt as _;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
@@ -69,8 +68,6 @@ pub struct Buffer {
     remote_selections: TreeMap<ReplicaId, Arc<[Selection<Anchor>]>>,
     diagnostics: DiagnosticSet,
     diagnostics_update_count: usize,
-    clear_invalid_diagnostics_task: Option<Task<()>>,
-    next_diagnostic_group_id: usize,
     language_server: Option<LanguageServerState>,
     deferred_ops: OperationQueue<Operation>,
     #[cfg(test)]
@@ -363,8 +360,6 @@ impl Buffer {
             remote_selections: Default::default(),
             diagnostics: Default::default(),
             diagnostics_update_count: 0,
-            next_diagnostic_group_id: 0,
-            clear_invalid_diagnostics_task: None,
             language_server: None,
             deferred_ops: OperationQueue::new(),
             #[cfg(test)]
@@ -777,7 +772,6 @@ impl Buffer {
             .peekable();
         let mut last_edit_old_end = PointUtf16::zero();
         let mut last_edit_new_end = PointUtf16::zero();
-        let mut has_disk_based_diagnostics = false;
         let mut ix = 0;
         'outer: while ix < diagnostics.len() {
             let entry = &mut diagnostics[ix];
@@ -793,7 +787,6 @@ impl Buffer {
                 .as_ref()
                 .map_or(false, |source| disk_based_sources.contains(source))
             {
-                has_disk_based_diagnostics = true;
                 while let Some(edit) = edits_since_save.peek() {
                     if edit.old.end <= start {
                         last_edit_old_end = edit.old.end;
@@ -826,145 +819,14 @@ impl Buffer {
             ix += 1;
         }
         drop(edits_since_save);
-
-        let mut merged_diagnostics = Vec::with_capacity(diagnostics.len());
-        let mut old_diagnostics = self
-            .diagnostics
-            .iter()
-            .map(|entry| {
-                (
-                    entry,
-                    entry
-                        .diagnostic
-                        .source
-                        .as_ref()
-                        .map_or(false, |source| disk_based_sources.contains(source)),
-                )
-            })
-            .peekable();
-        let mut new_diagnostics = diagnostics
-            .into_iter()
-            .map(|entry| DiagnosticEntry {
-                range: content.anchor_before(entry.range.start)
-                    ..content.anchor_after(entry.range.end),
-                diagnostic: entry.diagnostic,
-            })
-            .peekable();
-
-        // Incorporate the *old* diagnostics into the new diagnostics set, in two ways:
-        // 1. Recycle group ids - diagnostic groups whose primary diagnostic has not
-        //    changed should use the same group id as before, so that downstream code
-        //    can determine which diagnostics are new.
-        // 2. Preserve disk-based diagnostics - Some diagnostic sources are reported
-        //    on a less frequent basis than others. If these sources are absent from this
-        //    message, then preserve the previous diagnostics for those sources, but mark
-        //    them as invalid, and set a timer to clear them out.
-        let mut group_id_replacements = HashMap::new();
-        let mut merged_old_disk_based_diagnostics = false;
-        loop {
-            match (old_diagnostics.peek(), new_diagnostics.peek()) {
-                (None, None) => break,
-                (None, Some(_)) => {
-                    merged_diagnostics.push(new_diagnostics.next().unwrap());
-                }
-                (Some(_), None) => {
-                    let (old_entry, is_disk_based) = old_diagnostics.next().unwrap();
-                    if is_disk_based && !has_disk_based_diagnostics {
-                        let mut old_entry = old_entry.clone();
-                        old_entry.diagnostic.is_valid = false;
-                        merged_old_disk_based_diagnostics = true;
-                        merged_diagnostics.push(old_entry);
-                    }
-                }
-                (Some((old, _)), Some(new)) => {
-                    let ordering = Ordering::Equal
-                        .then_with(|| old.range.start.cmp(&new.range.start, content).unwrap())
-                        .then_with(|| new.range.end.cmp(&old.range.end, content).unwrap())
-                        .then_with(|| compare_diagnostics(&old.diagnostic, &new.diagnostic));
-                    match ordering {
-                        Ordering::Less => {
-                            let (old_entry, is_disk_based) = old_diagnostics.next().unwrap();
-                            if is_disk_based && !has_disk_based_diagnostics {
-                                let mut old_entry = old_entry.clone();
-                                old_entry.diagnostic.is_valid = false;
-                                merged_old_disk_based_diagnostics = true;
-                                merged_diagnostics.push(old_entry);
-                            }
-                        }
-                        Ordering::Equal => {
-                            let (old_entry, _) = old_diagnostics.next().unwrap();
-                            let new_entry = new_diagnostics.next().unwrap();
-                            if new_entry.diagnostic.is_primary {
-                                group_id_replacements.insert(
-                                    new_entry.diagnostic.group_id,
-                                    old_entry.diagnostic.group_id,
-                                );
-                            }
-                            merged_diagnostics.push(new_entry);
-                        }
-                        Ordering::Greater => {
-                            let new_entry = new_diagnostics.next().unwrap();
-                            merged_diagnostics.push(new_entry);
-                        }
-                    }
-                }
-            }
-        }
-        drop(old_diagnostics);
-
-        // Having determined which group ids should be recycled, renumber all of
-        // groups. Any new group that does not correspond to an old group receives
-        // a brand new group id.
-        let mut next_diagnostic_group_id = self.next_diagnostic_group_id;
-        for entry in &mut merged_diagnostics {
-            if entry.diagnostic.is_valid {
-                match group_id_replacements.entry(entry.diagnostic.group_id) {
-                    hash_map::Entry::Occupied(e) => entry.diagnostic.group_id = *e.get(),
-                    hash_map::Entry::Vacant(e) => {
-                        entry.diagnostic.group_id = post_inc(&mut next_diagnostic_group_id);
-                        e.insert(entry.diagnostic.group_id);
-                    }
-                }
-            }
-        }
-
-        self.diagnostics = DiagnosticSet::from_sorted_entries(merged_diagnostics, content);
-        self.next_diagnostic_group_id = next_diagnostic_group_id;
-
-        // If old disk-based diagnostics were included in this new set, then
-        // set a timer to remove them if enough time passes before the next
-        // diagnostics update.
-        if merged_old_disk_based_diagnostics {
-            self.clear_invalid_diagnostics_task = Some(cx.spawn(|this, mut cx| async move {
-                smol::Timer::after(Duration::from_secs(2)).await;
-                this.update(&mut cx, |this, cx| {
-                    let content = this.snapshot();
-                    this.diagnostics = DiagnosticSet::from_sorted_entries(
-                        this.diagnostics
-                            .iter()
-                            .filter(|d| d.diagnostic.is_valid)
-                            .cloned(),
-                        &content,
-                    );
-                    let operation = this.did_update_diagnostics(cx);
-                    this.send_operation(operation, cx);
-                });
-            }));
-        } else if has_disk_based_diagnostics {
-            self.clear_invalid_diagnostics_task.take();
-        }
-
-        Ok(self.did_update_diagnostics(cx))
-    }
-
-    fn did_update_diagnostics(&mut self, cx: &mut ModelContext<Self>) -> Operation {
+        self.diagnostics = DiagnosticSet::new(diagnostics, content);
         self.diagnostics_update_count += 1;
         cx.notify();
         cx.emit(Event::DiagnosticsUpdated);
-        Operation::UpdateDiagnostics {
+        Ok(Operation::UpdateDiagnostics {
             diagnostics: Arc::from(self.diagnostics.iter().cloned().collect::<Vec<_>>()),
             lamport_timestamp: self.text.lamport_clock.tick(),
-        }
+        })
     }
 
     fn request_autoindent(&mut self, cx: &mut ModelContext<Self>) {
@@ -1874,10 +1736,7 @@ impl BufferSnapshot {
         self.diagnostics.range(search_range, self, true)
     }
 
-    pub fn diagnostic_groups<O>(&self) -> Vec<DiagnosticGroup<O>>
-    where
-        O: FromAnchor + Ord + Copy,
-    {
+    pub fn diagnostic_groups(&self) -> Vec<DiagnosticGroup<Anchor>> {
         self.diagnostics.groups(self)
     }
 

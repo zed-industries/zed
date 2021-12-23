@@ -104,23 +104,19 @@ impl DiagnosticSet {
         })
     }
 
-    pub fn groups<O>(&self, buffer: &text::BufferSnapshot) -> Vec<DiagnosticGroup<O>>
-    where
-        O: FromAnchor + Ord + Copy,
-    {
+    pub fn groups(&self, buffer: &text::BufferSnapshot) -> Vec<DiagnosticGroup<Anchor>> {
         let mut groups = HashMap::default();
         for entry in self.diagnostics.iter() {
-            let entry = entry.resolve(buffer);
             groups
                 .entry(entry.diagnostic.group_id)
                 .or_insert(Vec::new())
-                .push(entry);
+                .push(entry.clone());
         }
 
         let mut groups = groups
             .into_values()
             .filter_map(|mut entries| {
-                entries.sort_unstable_by_key(|entry| entry.range.start);
+                entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start, buffer).unwrap());
                 entries
                     .iter()
                     .position(|entry| entry.diagnostic.is_primary)
@@ -130,7 +126,13 @@ impl DiagnosticSet {
                     })
             })
             .collect::<Vec<_>>();
-        groups.sort_unstable_by_key(|group| group.entries[group.primary_ix].range.start);
+        groups.sort_unstable_by(|a, b| {
+            a.entries[a.primary_ix]
+                .range
+                .start
+                .cmp(&b.entries[b.primary_ix].range.start, buffer)
+                .unwrap()
+        });
         groups
     }
 

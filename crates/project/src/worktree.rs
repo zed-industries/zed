@@ -1097,41 +1097,13 @@ impl LocalWorktree {
                 buffer
             });
 
-            this.update(&mut cx, |this, cx| {
+            this.update(&mut cx, |this, _| {
                 let this = this.as_local_mut().unwrap();
                 this.open_buffers.insert(buffer.id(), buffer.downgrade());
-                cx.subscribe(&buffer, |worktree, buffer, event, cx| {
-                    worktree
-                        .as_local_mut()
-                        .unwrap()
-                        .on_buffer_event(buffer, event, cx);
-                })
-                .detach();
             });
 
             Ok(buffer)
         })
-    }
-
-    fn on_buffer_event(
-        &mut self,
-        buffer: ModelHandle<Buffer>,
-        event: &language::Event,
-        cx: &mut ModelContext<Worktree>,
-    ) {
-        match event {
-            language::Event::DiagnosticsUpdated => {
-                let buffer = buffer.read(cx);
-                if let Some(path) = buffer.file().map(|file| file.path().clone()) {
-                    let diagnostics = buffer.all_diagnostics();
-                    self.diagnostic_summaries
-                        .insert(path.clone(), DiagnosticSummary::new(diagnostics));
-                    cx.emit(Event::DiagnosticsUpdated(path));
-                    cx.notify();
-                }
-            }
-            _ => {}
-        }
     }
 
     pub fn open_remote_buffer(
