@@ -512,6 +512,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
         // Receive diagnostics for an earlier version of the buffer.
         buffer
             .update_diagnostics(
+                "lsp".into(),
                 Some(open_notification.text_document.version),
                 vec![
                     DiagnosticEntry {
@@ -607,6 +608,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
         // Ensure overlapping diagnostics are highlighted correctly.
         buffer
             .update_diagnostics(
+                "lsp".into(),
                 Some(open_notification.text_document.version),
                 vec![
                     DiagnosticEntry {
@@ -697,6 +699,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
     buffer.update(&mut cx, |buffer, cx| {
         buffer
             .update_diagnostics(
+                "lsp".into(),
                 Some(change_notification_2.text_document.version),
                 vec![
                     DiagnosticEntry {
@@ -819,7 +822,7 @@ async fn test_preserving_old_group_ids_and_disk_based_diagnostics(mut cx: gpui::
     ];
     buffer.update(&mut cx, |buffer, cx| {
         buffer
-            .update_diagnostics(None, diagnostics.clone(), cx)
+            .update_diagnostics("lsp".into(), None, diagnostics.clone(), cx)
             .unwrap();
         assert_eq!(
             buffer
@@ -837,7 +840,7 @@ async fn test_preserving_old_group_ids_and_disk_based_diagnostics(mut cx: gpui::
 
     buffer.update(&mut cx, |buffer, cx| {
         buffer
-            .update_diagnostics(None, new_diagnostics.clone(), cx)
+            .update_diagnostics("lsp".into(), None, new_diagnostics.clone(), cx)
             .unwrap();
         assert_eq!(
             buffer
@@ -882,6 +885,7 @@ async fn test_empty_diagnostic_ranges(mut cx: gpui::TestAppContext) {
         buffer.set_language(Some(Arc::new(rust_lang())), None, cx);
         buffer
             .update_diagnostics(
+                "lsp".into(),
                 None,
                 vec![
                     DiagnosticEntry {

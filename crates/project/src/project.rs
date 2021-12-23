@@ -11,7 +11,7 @@ use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
 };
-use language::{Buffer, DiagnosticEntry, Language, LanguageRegistry};
+use language::{Buffer, DiagnosticEntry, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use postage::{prelude::Stream, watch};
 use std::{
@@ -510,13 +510,15 @@ impl Project {
                     if let Some(diagnostic_source) = language.diagnostic_source().cloned() {
                         let worktree_path = worktree.abs_path().clone();
                         let worktree_handle = worktree_handle.downgrade();
-                        cx.spawn_weak(|_, cx| async move {
+                        cx.spawn_weak(|_, mut cx| async move {
                             if let Some(diagnostics) =
                                 diagnostic_source.diagnose(worktree_path).await.log_err()
                             {
                                 if let Some(worktree_handle) = worktree_handle.upgrade(&cx) {
                                     worktree_handle.update(&mut cx, |worktree, cx| {
-                                        for (path, diagnostics) in diagnostics {}
+                                        for (path, diagnostics) in diagnostics {
+                                            todo!()
+                                        }
                                     })
                                 }
                             }

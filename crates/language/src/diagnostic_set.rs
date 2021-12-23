@@ -4,13 +4,14 @@ use std::{
     cmp::{Ordering, Reverse},
     iter,
     ops::Range,
+    sync::Arc,
 };
 use sum_tree::{self, Bias, SumTree};
 use text::{Anchor, FromAnchor, PointUtf16, ToOffset};
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct DiagnosticSet {
-    provider_name: String,
+    provider_name: Arc<str>,
     diagnostics: SumTree<DiagnosticEntry<Anchor>>,
 }
 
@@ -40,7 +41,7 @@ impl DiagnosticSet {
     }
 
     pub fn from_sorted_entries<I>(
-        provider_name: String,
+        provider_name: impl Into<Arc<str>>,
         iter: I,
         buffer: &text::BufferSnapshot,
     ) -> Self
@@ -48,12 +49,12 @@ impl DiagnosticSet {
         I: IntoIterator<Item = DiagnosticEntry<Anchor>>,
     {
         Self {
-            provider_name,
+            provider_name: provider_name.into(),
             diagnostics: SumTree::from_iter(iter, buffer),
         }
     }
 
-    pub fn new<I>(provider_name: &'static str, iter: I, buffer: &text::BufferSnapshot) -> Self
+    pub fn new<I>(provider_name: Arc<str>, iter: I, buffer: &text::BufferSnapshot) -> Self
     where
         I: IntoIterator<Item = DiagnosticEntry<PointUtf16>>,
     {
@@ -115,7 +116,7 @@ impl DiagnosticSet {
         })
     }
 
-    pub fn groups(&self, buffer: &text::BufferSnapshot) -> Vec<DiagnosticGroup<Anchor>> {
+    pub fn groups(&self, output: &mut Vec<DiagnosticGroup<Anchor>>, buffer: &text::BufferSnapshot) {
         let mut groups = HashMap::default();
         for entry in self.diagnostics.iter() {
             groups
@@ -124,27 +125,24 @@ impl DiagnosticSet {
                 .push(entry.clone());
         }
 
-        let mut groups = groups
-            .into_values()
-            .filter_map(|mut entries| {
-                entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start, buffer).unwrap());
-                entries
-                    .iter()
-                    .position(|entry| entry.diagnostic.is_primary)
-                    .map(|primary_ix| DiagnosticGroup {
-                        entries,
-                        primary_ix,
-                    })
-            })
-            .collect::<Vec<_>>();
-        groups.sort_unstable_by(|a, b| {
+        let start_ix = output.len();
+        output.extend(groups.into_values().filter_map(|mut entries| {
+            entries.sort_unstable_by(|a, b| a.range.start.cmp(&b.range.start, buffer).unwrap());
+            entries
+                .iter()
+                .position(|entry| entry.diagnostic.is_primary)
+                .map(|primary_ix| DiagnosticGroup {
+                    entries,
+                    primary_ix,
+                })
+        }));
+        output[start_ix..].sort_unstable_by(|a, b| {
             a.entries[a.primary_ix]
                 .range
                 .start
                 .cmp(&b.entries[b.primary_ix].range.start, buffer)
                 .unwrap()
         });
-        groups
     }
 
     pub fn group<'a, O: FromAnchor>(
@@ -155,6 +153,15 @@ impl DiagnosticSet {
         self.iter()
             .filter(move |entry| entry.diagnostic.group_id == group_id)
             .map(|entry| entry.resolve(buffer))
+    }
+}
+
+impl Default for DiagnosticSet {
+    fn default() -> Self {
+        Self {
+            provider_name: "".into(),
+            diagnostics: Default::default(),
+        }
     }
 }
 

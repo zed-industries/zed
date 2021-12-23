@@ -392,7 +392,7 @@ mod tests {
                 .read(cx)
                 .worktrees(cx)
                 .iter()
-                .map(|w| w.read(cx).as_local().unwrap().abs_path())
+                .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
                 .collect::<HashSet<_>>();
             assert_eq!(
                 worktree_roots,

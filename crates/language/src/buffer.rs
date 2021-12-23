@@ -66,7 +66,7 @@ pub struct Buffer {
     parsing_in_background: bool,
     parse_count: usize,
     remote_selections: TreeMap<ReplicaId, Arc<[Selection<Anchor>]>>,
-    diagnostics: DiagnosticSet,
+    diagnostic_sets: Vec<DiagnosticSet>,
     diagnostics_update_count: usize,
     language_server: Option<LanguageServerState>,
     deferred_ops: OperationQueue<Operation>,
@@ -77,7 +77,7 @@ pub struct Buffer {
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
     tree: Option<Tree>,
-    diagnostics: HashMap<&'static str, DiagnosticSet>,
+    diagnostic_sets: Vec<DiagnosticSet>,
     remote_selections: TreeMap<ReplicaId, Arc<[Selection<Anchor>]>>,
     diagnostics_update_count: usize,
     is_parsing: bool,
@@ -115,7 +115,8 @@ struct LanguageServerSnapshot {
 pub enum Operation {
     Buffer(text::Operation),
     UpdateDiagnostics {
-        diagnostic_set: Arc<DiagnosticSet>,
+        provider_name: String,
+        diagnostics: Arc<[DiagnosticEntry<Anchor>]>,
         lamport_timestamp: clock::Lamport,
     },
     UpdateSelections {
@@ -298,9 +299,15 @@ impl Buffer {
                 proto::deserialize_selections(selection_set.selections),
             );
         }
+        let snapshot = this.snapshot();
         for diagnostic_set in message.diagnostic_sets {
+            let (provider_name, entries) = proto::deserialize_diagnostic_set(diagnostic_set);
             this.apply_diagnostic_update(
-                Arc::from(proto::deserialize_diagnostics(diagnostic_set)),
+                DiagnosticSet::from_sorted_entries(
+                    provider_name,
+                    entries.into_iter().cloned(),
+                    &snapshot,
+                ),
                 cx,
             );
         }
@@ -325,7 +332,13 @@ impl Buffer {
                     selections: proto::serialize_selections(selections),
                 })
                 .collect(),
-            diagnostics: proto::serialize_diagnostic_set(self.diagnostics.iter()),
+            diagnostic_sets: self
+                .diagnostic_sets
+                .iter()
+                .map(|set| {
+                    proto::serialize_diagnostic_set(set.provider_name().to_string(), set.iter())
+                })
+                .collect(),
         }
     }
 
@@ -360,7 +373,7 @@ impl Buffer {
             pending_autoindent: Default::default(),
             language: None,
             remote_selections: Default::default(),
-            diagnostics: Default::default(),
+            diagnostic_sets: Default::default(),
             diagnostics_update_count: 0,
             language_server: None,
             deferred_ops: OperationQueue::new(),
@@ -374,7 +387,7 @@ impl Buffer {
             text: self.text.snapshot(),
             tree: self.syntax_tree(),
             remote_selections: self.remote_selections.clone(),
-            diagnostics: self.diagnostics.clone(),
+            diagnostic_sets: self.diagnostic_sets.clone(),
             diagnostics_update_count: self.diagnostics_update_count,
             is_parsing: self.parsing_in_background,
             language: self.language.clone(),
@@ -723,11 +736,13 @@ impl Buffer {
     }
 
     pub fn all_diagnostics<'a>(&'a self) -> impl 'a + Iterator<Item = &'a DiagnosticEntry<Anchor>> {
-        self.diagnostics.iter()
+        // TODO - enforce ordering between sets
+        self.diagnostic_sets.iter().flat_map(|set| set.iter())
     }
 
     pub fn update_diagnostics(
         &mut self,
+        provider_name: Arc<str>,
         version: Option<i32>,
         mut diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
         cx: &mut ModelContext<Self>,
@@ -809,12 +824,12 @@ impl Buffer {
             ix += 1;
         }
         drop(edits_since_save);
-        self.diagnostics = DiagnosticSet::new(diagnostics, content);
-        self.diagnostics_update_count += 1;
-        cx.notify();
-        cx.emit(Event::DiagnosticsUpdated);
+
+        let set = DiagnosticSet::new(provider_name, diagnostics, content);
+        self.apply_diagnostic_update(set.clone(), cx);
         Ok(Operation::UpdateDiagnostics {
-            diagnostics: Arc::from(self.diagnostics.iter().cloned().collect::<Vec<_>>()),
+            provider_name: set.provider_name().to_string(),
+            diagnostics: set.iter().cloned().collect(),
             lamport_timestamp: self.text.lamport_clock.tick(),
         })
     }
@@ -1303,12 +1318,13 @@ impl Buffer {
             Operation::Buffer(_) => {
                 unreachable!("buffer operations should never be applied at this layer")
             }
-            Operation::UpdateDiagnostics { diagnostics, .. } => {
-                diagnostics.iter().all(|diagnostic| {
-                    self.text.can_resolve(&diagnostic.range.start)
-                        && self.text.can_resolve(&diagnostic.range.end)
-                })
-            }
+            Operation::UpdateDiagnostics {
+                diagnostics: diagnostic_set,
+                ..
+            } => diagnostic_set.iter().all(|diagnostic| {
+                self.text.can_resolve(&diagnostic.range.start)
+                    && self.text.can_resolve(&diagnostic.range.end)
+            }),
             Operation::UpdateSelections { selections, .. } => selections
                 .iter()
                 .all(|s| self.can_resolve(&s.start) && self.can_resolve(&s.end)),
@@ -1321,8 +1337,20 @@ impl Buffer {
             Operation::Buffer(_) => {
                 unreachable!("buffer operations should never be applied at this layer")
             }
-            Operation::UpdateDiagnostics { diagnostics, .. } => {
-                self.apply_diagnostic_update(diagnostics, cx);
+            Operation::UpdateDiagnostics {
+                provider_name,
+                diagnostics: diagnostic_set,
+                ..
+            } => {
+                let snapshot = self.snapshot();
+                self.apply_diagnostic_update(
+                    DiagnosticSet::from_sorted_entries(
+                        provider_name,
+                        diagnostic_set.iter().cloned(),
+                        &snapshot,
+                    ),
+                    cx,
+                );
             }
             Operation::UpdateSelections {
                 replica_id,
@@ -1342,14 +1370,18 @@ impl Buffer {
         }
     }
 
-    fn apply_diagnostic_update(
-        &mut self,
-        diagnostics: Arc<[DiagnosticEntry<Anchor>]>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.diagnostics = DiagnosticSet::from_sorted_entries(diagnostics.iter().cloned(), self);
+    fn apply_diagnostic_update(&mut self, set: DiagnosticSet, cx: &mut ModelContext<Self>) {
+        match self
+            .diagnostic_sets
+            .binary_search_by_key(&set.provider_name(), |set| set.provider_name())
+        {
+            Ok(ix) => self.diagnostic_sets[ix] = set.clone(),
+            Err(ix) => self.diagnostic_sets.insert(ix, set.clone()),
+        }
+
         self.diagnostics_update_count += 1;
         cx.notify();
+        cx.emit(Event::DiagnosticsUpdated);
     }
 
     #[cfg(not(test))]
@@ -1584,10 +1616,7 @@ impl BufferSnapshot {
         let mut highlights = None;
         let mut diagnostic_endpoints = Vec::<DiagnosticEndpoint>::new();
         if let Some(theme) = theme {
-            for entry in self
-                .diagnostics
-                .range::<_, usize>(range.clone(), self, true)
-            {
+            for entry in self.diagnostics_in_range::<_, usize>(range.clone()) {
                 diagnostic_endpoints.push(DiagnosticEndpoint {
                     offset: entry.range.start,
                     is_start: true,
@@ -1720,14 +1749,20 @@ impl BufferSnapshot {
         search_range: Range<T>,
     ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
     where
-        T: 'a + ToOffset,
+        T: 'a + Clone + ToOffset,
         O: 'a + FromAnchor,
     {
-        self.diagnostics.range(search_range, self, true)
+        self.diagnostic_sets
+            .iter()
+            .flat_map(move |set| set.range(search_range.clone(), self, true))
     }
 
     pub fn diagnostic_groups(&self) -> Vec<DiagnosticGroup<Anchor>> {
-        self.diagnostics.groups(self)
+        let mut groups = Vec::new();
+        for set in &self.diagnostic_sets {
+            set.groups(&mut groups, self);
+        }
+        groups
     }
 
     pub fn diagnostic_group<'a, O>(
@@ -1737,7 +1772,8 @@ impl BufferSnapshot {
     where
         O: 'a + FromAnchor,
     {
-        self.diagnostics.group(group_id, self)
+        todo!();
+        [].into_iter()
     }
 
     pub fn diagnostics_update_count(&self) -> usize {
@@ -1755,7 +1791,7 @@ impl Clone for BufferSnapshot {
             text: self.text.clone(),
             tree: self.tree.clone(),
             remote_selections: self.remote_selections.clone(),
-            diagnostics: self.diagnostics.clone(),
+            diagnostic_sets: self.diagnostic_sets.clone(),
             diagnostics_update_count: self.diagnostics_update_count,
             is_parsing: self.is_parsing,
             language: self.language.clone(),
