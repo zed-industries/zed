@@ -689,31 +689,52 @@ impl MultiBuffer {
         let mut new_excerpts = SumTree::new();
         let mut cursor = snapshot.excerpts.cursor::<(Option<&ExcerptId>, usize)>();
         let mut edits = Vec::new();
-        for excerpt_id in excerpt_ids {
-            new_excerpts.push_tree(cursor.slice(&Some(excerpt_id), Bias::Left, &()), &());
-            if let Some(excerpt) = cursor.item() {
-                if excerpt.id == *excerpt_id {
-                    let mut old_start = cursor.start().1;
-                    let old_end = cursor.end(&()).1;
-                    cursor.next(&());
+        let mut excerpt_ids = excerpt_ids.into_iter().peekable();
 
+        while let Some(mut excerpt_id) = excerpt_ids.next() {
+            // Seek to the next excerpt to remove, preserving any preceding excerpts.
+            new_excerpts.push_tree(cursor.slice(&Some(excerpt_id), Bias::Left, &()), &());
+            if let Some(mut excerpt) = cursor.item() {
+                if excerpt.id != *excerpt_id {
+                    continue;
+                }
+                let mut old_start = cursor.start().1;
+
+                // Skip over the removed excerpt.
+                loop {
                     if let Some(buffer_state) = buffers.get_mut(&excerpt.buffer_id) {
                         buffer_state.excerpts.retain(|id| id != excerpt_id);
                     }
+                    cursor.next(&());
 
-                    // When removing the last excerpt, remove the trailing newline from
-                    // the previous excerpt.
-                    if cursor.item().is_none() && old_start > 0 {
-                        old_start -= 1;
-                        new_excerpts.update_last(|e| e.has_trailing_newline = false, &());
+                    // Skip over any subsequent excerpts that are also removed.
+                    if let Some(&next_excerpt_id) = excerpt_ids.peek() {
+                        if let Some(next_excerpt) = cursor.item() {
+                            if next_excerpt.id == *next_excerpt_id {
+                                excerpt = next_excerpt;
+                                excerpt_id = excerpt_ids.next().unwrap();
+                                continue;
+                            }
+                        }
                     }
 
-                    let new_start = new_excerpts.summary().text.bytes;
-                    edits.push(Edit {
-                        old: old_start..old_end,
-                        new: new_start..new_start,
-                    });
+                    break;
                 }
+
+                // When removing the last excerpt, remove the trailing newline from
+                // the previous excerpt.
+                if cursor.item().is_none() && old_start > 0 {
+                    old_start -= 1;
+                    new_excerpts.update_last(|e| e.has_trailing_newline = false, &());
+                }
+
+                // Push an edit for the removal of this run of excerpts.
+                let old_end = cursor.start().1;
+                let new_start = new_excerpts.summary().text.bytes;
+                edits.push(Edit {
+                    old: old_start..old_end,
+                    new: new_start..new_start,
+                });
             }
         }
         new_excerpts.push_tree(cursor.suffix(&()), &());
@@ -2311,18 +2332,26 @@ mod tests {
                     buffer.update(cx, |buf, cx| buf.randomly_edit(&mut rng, 5, cx));
                 }
                 20..=29 if !expected_excerpts.is_empty() => {
-                    let ix = rng.gen_range(0..expected_excerpts.len());
-                    let id = excerpt_ids.remove(ix);
-                    let (buffer, range) = expected_excerpts.remove(ix);
-                    let buffer = buffer.read(cx);
-                    log::info!(
-                        "Removing excerpt {}: {:?}",
-                        ix,
-                        buffer
-                            .text_for_range(range.to_offset(&buffer))
-                            .collect::<String>(),
-                    );
-                    list.update(cx, |list, cx| list.remove_excerpts(&[id], cx));
+                    let mut ids_to_remove = vec![];
+                    for _ in 0..rng.gen_range(1..=3) {
+                        if expected_excerpts.is_empty() {
+                            break;
+                        }
+
+                        let ix = rng.gen_range(0..expected_excerpts.len());
+                        ids_to_remove.push(excerpt_ids.remove(ix));
+                        let (buffer, range) = expected_excerpts.remove(ix);
+                        let buffer = buffer.read(cx);
+                        log::info!(
+                            "Removing excerpt {}: {:?}",
+                            ix,
+                            buffer
+                                .text_for_range(range.to_offset(&buffer))
+                                .collect::<String>(),
+                        );
+                    }
+                    ids_to_remove.sort_unstable();
+                    list.update(cx, |list, cx| list.remove_excerpts(&ids_to_remove, cx));
                 }
                 _ => {
                     let buffer_handle = if buffers.is_empty() || rng.gen_bool(0.4) {
