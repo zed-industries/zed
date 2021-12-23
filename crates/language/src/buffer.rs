@@ -77,7 +77,7 @@ pub struct Buffer {
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
     tree: Option<Tree>,
-    diagnostics: DiagnosticSet,
+    diagnostics: HashMap<&'static str, DiagnosticSet>,
     remote_selections: TreeMap<ReplicaId, Arc<[Selection<Anchor>]>>,
     diagnostics_update_count: usize,
     is_parsing: bool,
@@ -115,7 +115,7 @@ struct LanguageServerSnapshot {
 pub enum Operation {
     Buffer(text::Operation),
     UpdateDiagnostics {
-        diagnostics: Arc<[DiagnosticEntry<Anchor>]>,
+        diagnostic_set: Arc<DiagnosticSet>,
         lamport_timestamp: clock::Lamport,
     },
     UpdateSelections {
@@ -298,10 +298,12 @@ impl Buffer {
                 proto::deserialize_selections(selection_set.selections),
             );
         }
-        this.apply_diagnostic_update(
-            Arc::from(proto::deserialize_diagnostics(message.diagnostics)),
-            cx,
-        );
+        for diagnostic_set in message.diagnostic_sets {
+            this.apply_diagnostic_update(
+                Arc::from(proto::deserialize_diagnostics(diagnostic_set)),
+                cx,
+            );
+        }
 
         Ok(this)
     }
@@ -323,7 +325,7 @@ impl Buffer {
                     selections: proto::serialize_selections(selections),
                 })
                 .collect(),
-            diagnostics: proto::serialize_diagnostics(self.diagnostics.iter()),
+            diagnostics: proto::serialize_diagnostic_set(self.diagnostics.iter()),
         }
     }
 

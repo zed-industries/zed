@@ -672,6 +672,79 @@ impl Worktree {
         }
     }
 
+    pub fn update_lsp_diagnostics(
+        &mut self,
+        mut params: lsp::PublishDiagnosticsParams,
+        disk_based_sources: &HashSet<String>,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Result<()> {
+        let this = self.as_local_mut().ok_or_else(|| anyhow!("not local"))?;
+        let abs_path = params
+            .uri
+            .to_file_path()
+            .map_err(|_| anyhow!("URI is not a file"))?;
+        let worktree_path = Arc::from(
+            abs_path
+                .strip_prefix(&this.abs_path)
+                .context("path is not within worktree")?,
+        );
+
+        let mut group_ids_by_diagnostic_range = HashMap::default();
+        let mut diagnostics_by_group_id = HashMap::default();
+        let mut next_group_id = 0;
+        for diagnostic in &mut params.diagnostics {
+            let source = diagnostic.source.as_ref();
+            let code = diagnostic.code.as_ref();
+            let group_id = diagnostic_ranges(&diagnostic, &abs_path)
+                .find_map(|range| group_ids_by_diagnostic_range.get(&(source, code, range)))
+                .copied()
+                .unwrap_or_else(|| {
+                    let group_id = post_inc(&mut next_group_id);
+                    for range in diagnostic_ranges(&diagnostic, &abs_path) {
+                        group_ids_by_diagnostic_range.insert((source, code, range), group_id);
+                    }
+                    group_id
+                });
+
+            diagnostics_by_group_id
+                .entry(group_id)
+                .or_insert(Vec::new())
+                .push(DiagnosticEntry {
+                    range: diagnostic.range.start.to_point_utf16()
+                        ..diagnostic.range.end.to_point_utf16(),
+                    diagnostic: Diagnostic {
+                        code: diagnostic.code.clone().map(|code| match code {
+                            lsp::NumberOrString::Number(code) => code.to_string(),
+                            lsp::NumberOrString::String(code) => code,
+                        }),
+                        severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
+                        message: mem::take(&mut diagnostic.message),
+                        group_id,
+                        is_primary: false,
+                        is_valid: true,
+                        is_disk_based: diagnostic
+                            .source
+                            .as_ref()
+                            .map_or(false, |source| disk_based_sources.contains(source)),
+                    },
+                });
+        }
+
+        let diagnostics = diagnostics_by_group_id
+            .into_values()
+            .flat_map(|mut diagnostics| {
+                let primary = diagnostics
+                    .iter_mut()
+                    .min_by_key(|entry| entry.diagnostic.severity)
+                    .unwrap();
+                primary.diagnostic.is_primary = true;
+                diagnostics
+            })
+            .collect::<Vec<_>>();
+
+        self.update_diagnostic_entries(worktree_path, params.version, diagnostics, cx)
+    }
+
     pub fn update_diagnostics(
         &mut self,
         mut params: lsp::PublishDiagnosticsParams,
@@ -1046,7 +1119,7 @@ impl LocalWorktree {
                 while let Ok(diagnostics) = diagnostics_rx.recv().await {
                     if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
                         handle.update(&mut cx, |this, cx| {
-                            this.update_diagnostics(diagnostics, &disk_based_sources, cx)
+                            this.update_lsp_diagnostics(diagnostics, &disk_based_sources, cx)
                                 .log_err();
                         });
                     } else {
@@ -3835,7 +3908,7 @@ mod tests {
 
         worktree
             .update(&mut cx, |tree, cx| {
-                tree.update_diagnostics(message, &Default::default(), cx)
+                tree.update_lsp_diagnostics(message, &Default::default(), cx)
             })
             .unwrap();
         let buffer = buffer.read_with(&cx, |buffer, _| buffer.snapshot());

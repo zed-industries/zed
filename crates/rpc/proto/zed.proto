@@ -265,7 +265,7 @@ message Buffer {
     string content = 2;
     repeated Operation.Edit history = 3;
     repeated SelectionSet selections = 4;
-    repeated Diagnostic diagnostics = 5;
+    repeated DiagnosticSet diagnostic_sets = 5;
 }
 
 message SelectionSet {
@@ -292,10 +292,15 @@ enum Bias {
     Right = 1;
 }
 
-message UpdateDiagnostics {
+message UpdateDiagnosticSet {
     uint32 replica_id = 1;
     uint32 lamport_timestamp = 2;
-    repeated Diagnostic diagnostics = 3;
+    DiagnosticSet diagnostic_set = 3;
+}
+
+message DiagnosticSet {
+    string provider_name = 1;
+    repeated Diagnostic diagnostics = 2;
 }
 
 message Diagnostic {
@@ -324,7 +329,7 @@ message Operation {
         Undo undo = 2;
         UpdateSelections update_selections = 3;
         RemoveSelections remove_selections = 4;
-        UpdateDiagnostics update_diagnostics = 5;
+        UpdateDiagnosticSet update_diagnostic_set = 5;
     }
 
     message Edit {

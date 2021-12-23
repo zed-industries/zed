@@ -8,8 +8,9 @@ use std::{
 use sum_tree::{self, Bias, SumTree};
 use text::{Anchor, FromAnchor, PointUtf16, ToOffset};
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct DiagnosticSet {
+    provider_name: String,
     diagnostics: SumTree<DiagnosticEntry<Anchor>>,
 }
 
@@ -34,22 +35,32 @@ pub struct Summary {
 }
 
 impl DiagnosticSet {
-    pub fn from_sorted_entries<I>(iter: I, buffer: &text::BufferSnapshot) -> Self
+    pub fn provider_name(&self) -> &str {
+        &self.provider_name
+    }
+
+    pub fn from_sorted_entries<I>(
+        provider_name: String,
+        iter: I,
+        buffer: &text::BufferSnapshot,
+    ) -> Self
     where
         I: IntoIterator<Item = DiagnosticEntry<Anchor>>,
     {
         Self {
+            provider_name,
             diagnostics: SumTree::from_iter(iter, buffer),
         }
     }
 
-    pub fn new<I>(iter: I, buffer: &text::BufferSnapshot) -> Self
+    pub fn new<I>(provider_name: &'static str, iter: I, buffer: &text::BufferSnapshot) -> Self
     where
         I: IntoIterator<Item = DiagnosticEntry<PointUtf16>>,
     {
         let mut entries = iter.into_iter().collect::<Vec<_>>();
         entries.sort_unstable_by_key(|entry| (entry.range.start, Reverse(entry.range.end)));
         Self {
+            provider_name,
             diagnostics: SumTree::from_iter(
                 entries.into_iter().map(|entry| DiagnosticEntry {
                     range: buffer.anchor_before(entry.range.start)

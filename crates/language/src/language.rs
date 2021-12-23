@@ -66,6 +66,8 @@ pub struct BracketPair {
 
 #[async_trait]
 pub trait DiagnosticSource: 'static + Send + Sync {
+    fn name(&self) -> &'static str;
+
     async fn diagnose(
         &self,
         path: Arc<Path>,
