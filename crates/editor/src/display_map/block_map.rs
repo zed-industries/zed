@@ -1,11 +1,11 @@
 use super::wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot};
 use crate::{Anchor, ToOffset, ToPoint as _};
+use collections::{HashMap, HashSet};
 use gpui::{AppContext, ElementBox};
 use language::Chunk;
 use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
-    collections::{HashMap, HashSet},
     fmt::Debug,
     ops::{Deref, Range},
     sync::{

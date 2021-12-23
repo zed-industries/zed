@@ -1,11 +1,10 @@
-use crate::display_map::{BlockContext, ToDisplayPoint};
-
 use super::{
+    display_map::{BlockContext, ToDisplayPoint},
     DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, Input, Scroll,
-    Select, SelectPhase, SoftWrap, MAX_LINE_LEN,
+    Select, SelectPhase, SoftWrap, ToPoint, MAX_LINE_LEN,
 };
-use crate::ToPoint;
 use clock::ReplicaId;
+use collections::{BTreeMap, HashMap};
 use gpui::{
     color::Color,
     geometry::{
@@ -24,7 +23,6 @@ use language::Chunk;
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
-    collections::{BTreeMap, HashMap},
     fmt::Write,
     ops::Range,
 };

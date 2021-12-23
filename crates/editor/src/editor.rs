@@ -9,6 +9,7 @@ mod test;
 
 use aho_corasick::AhoCorasick;
 use clock::ReplicaId;
+use collections::{HashMap, HashSet};
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
@@ -27,7 +28,7 @@ use language::{
     BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point, Selection, SelectionGoal,
     TransactionId,
 };
-pub use multi_buffer::{Anchor, ExcerptProperties, MultiBuffer};
+pub use multi_buffer::{Anchor, ExcerptId, ExcerptProperties, MultiBuffer};
 use multi_buffer::{AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, ToOffset, ToPoint};
 use postage::watch;
 use serde::{Deserialize, Serialize};
@@ -35,7 +36,6 @@ use smallvec::SmallVec;
 use smol::Timer;
 use std::{
     cmp,
-    collections::HashMap,
     iter::{self, FromIterator},
     mem,
     ops::{Deref, Range, RangeInclusive, Sub},
@@ -2893,7 +2893,7 @@ impl Editor {
 
             if is_valid != active_diagnostics.is_valid {
                 active_diagnostics.is_valid = is_valid;
-                let mut new_styles = HashMap::new();
+                let mut new_styles = HashMap::default();
                 for (block_id, diagnostic) in &active_diagnostics.blocks {
                     new_styles.insert(
                         *block_id,
@@ -3051,7 +3051,7 @@ impl Editor {
             }
         }
 
-        let mut result = HashMap::new();
+        let mut result = HashMap::default();
 
         result.insert(
             self.replica_id(cx),
@@ -3421,6 +3421,12 @@ impl Editor {
             self.request_autoscroll(Autoscroll::Fit, cx);
             cx.notify();
         }
+    }
+
+    pub fn remove_blocks(&mut self, block_ids: HashSet<BlockId>, cx: &mut ViewContext<Self>) {
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.remove_blocks(block_ids, cx)
+        });
     }
 
     pub fn insert_blocks<P>(

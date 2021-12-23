@@ -5,13 +5,11 @@ mod wrap_map;
 
 use crate::{Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 use block_map::{BlockMap, BlockPoint};
+use collections::{HashMap, HashSet};
 use fold_map::{FoldMap, ToFoldPoint as _};
 use gpui::{fonts::FontId, Entity, ModelContext, ModelHandle};
 use language::{Point, Subscription as BufferSubscription};
-use std::{
-    collections::{HashMap, HashSet},
-    ops::Range,
-};
+use std::ops::Range;
 use sum_tree::Bias;
 use tab_map::TabMap;
 use theme::SyntaxTheme;
