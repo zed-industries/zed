@@ -28,6 +28,10 @@ impl Anchor {
         }
     }
 
+    pub fn excerpt_id(&self) -> &ExcerptId {
+        &self.excerpt_id
+    }
+
     pub fn cmp<'a>(&self, other: &Anchor, snapshot: &MultiBufferSnapshot) -> Result<Ordering> {
         let excerpt_id_cmp = self.excerpt_id.cmp(&other.excerpt_id);
         if excerpt_id_cmp.is_eq() {

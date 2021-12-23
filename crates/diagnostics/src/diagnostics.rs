@@ -223,11 +223,20 @@ impl ProjectDiagnosticsEditor {
 
         let groups = &mut self.path_states[path_ix].1;
         let mut groups_to_add = Vec::new();
+        let mut group_ixs_to_remove = Vec::new();
         let mut blocks_to_add = Vec::new();
         let mut blocks_to_restyle = HashMap::default();
+        let mut blocks_to_remove = HashSet::default();
+        let selected_excerpts = self
+            .editor
+            .read(cx)
+            .local_anchor_selections()
+            .iter()
+            .flat_map(|s| [s.start.excerpt_id().clone(), s.end.excerpt_id().clone()])
+            .collect::<HashSet<_>>();
         let mut diagnostic_blocks = Vec::new();
         let excerpts_snapshot = self.excerpts.update(cx, |excerpts, excerpts_cx| {
-            let mut old_groups = groups.iter_mut().peekable();
+            let mut old_groups = groups.iter_mut().enumerate().peekable();
             let mut new_groups = snapshot.diagnostic_groups().into_iter().peekable();
 
             loop {
@@ -238,7 +247,7 @@ impl ProjectDiagnosticsEditor {
                     (None, None) => break,
                     (None, Some(_)) => to_insert = new_groups.next(),
                     (Some(_), None) => to_invalidate = old_groups.next(),
-                    (Some(old_group), Some(new_group)) => {
+                    (Some((_, old_group)), Some(new_group)) => {
                         let old_primary = &old_group.primary_diagnostic;
                         let new_primary = &new_group.entries[new_group.primary_ix];
                         match compare_diagnostics(old_primary, new_primary, &snapshot) {
@@ -357,38 +366,48 @@ impl ProjectDiagnosticsEditor {
                     }
 
                     groups_to_add.push(group_state);
-                } else if let Some(to_invalidate) = to_invalidate {
-                    for (block_id, block) in &to_invalidate.blocks {
-                        match block {
-                            DiagnosticBlock::Header(diagnostic) => {
-                                blocks_to_restyle.insert(
-                                    *block_id,
-                                    diagnostic_header_renderer(
-                                        buffer.clone(),
-                                        diagnostic.clone(),
-                                        false,
-                                        self.build_settings.clone(),
-                                    ),
-                                );
+                } else if let Some((group_ix, group_state)) = to_invalidate {
+                    if group_state
+                        .excerpts
+                        .iter()
+                        .any(|excerpt_id| selected_excerpts.contains(excerpt_id))
+                    {
+                        for (block_id, block) in &group_state.blocks {
+                            match block {
+                                DiagnosticBlock::Header(diagnostic) => {
+                                    blocks_to_restyle.insert(
+                                        *block_id,
+                                        diagnostic_header_renderer(
+                                            buffer.clone(),
+                                            diagnostic.clone(),
+                                            false,
+                                            self.build_settings.clone(),
+                                        ),
+                                    );
+                                }
+                                DiagnosticBlock::Inline(diagnostic) => {
+                                    blocks_to_restyle.insert(
+                                        *block_id,
+                                        diagnostic_block_renderer(
+                                            diagnostic.clone(),
+                                            false,
+                                            self.build_settings.clone(),
+                                        ),
+                                    );
+                                }
+                                DiagnosticBlock::Context => {}
                             }
-                            DiagnosticBlock::Inline(diagnostic) => {
-                                blocks_to_restyle.insert(
-                                    *block_id,
-                                    diagnostic_block_renderer(
-                                        diagnostic.clone(),
-                                        false,
-                                        self.build_settings.clone(),
-                                    ),
-                                );
-                            }
-                            DiagnosticBlock::Context => {}
                         }
-                    }
 
-                    to_invalidate.is_valid = false;
-                    prev_excerpt_id = to_invalidate.excerpts.last().unwrap().clone();
-                } else if let Some(to_validate) = to_validate {
-                    for (block_id, block) in &to_validate.blocks {
+                        group_state.is_valid = false;
+                        prev_excerpt_id = group_state.excerpts.last().unwrap().clone();
+                    } else {
+                        excerpts.remove_excerpts(group_state.excerpts.iter(), excerpts_cx);
+                        group_ixs_to_remove.push(group_ix);
+                        blocks_to_remove.extend(group_state.blocks.keys().copied());
+                    }
+                } else if let Some((_, group_state)) = to_validate {
+                    for (block_id, block) in &group_state.blocks {
                         match block {
                             DiagnosticBlock::Header(diagnostic) => {
                                 blocks_to_restyle.insert(
@@ -414,8 +433,8 @@ impl ProjectDiagnosticsEditor {
                             DiagnosticBlock::Context => {}
                         }
                     }
-                    to_validate.is_valid = true;
-                    prev_excerpt_id = to_validate.excerpts.last().unwrap().clone();
+                    group_state.is_valid = true;
+                    prev_excerpt_id = group_state.excerpts.last().unwrap().clone();
                 } else {
                     unreachable!();
                 }
@@ -425,6 +444,7 @@ impl ProjectDiagnosticsEditor {
         });
 
         self.editor.update(cx, |editor, cx| {
+            editor.remove_blocks(blocks_to_remove, cx);
             editor.replace_blocks(blocks_to_restyle, cx);
             let mut block_ids = editor
                 .insert_blocks(
@@ -447,6 +467,9 @@ impl ProjectDiagnosticsEditor {
             }
         });
 
+        for ix in group_ixs_to_remove.into_iter().rev() {
+            groups.remove(ix);
+        }
         groups.extend(groups_to_add);
         groups.sort_unstable_by(|a, b| {
             let range_a = &a.primary_diagnostic.range;
