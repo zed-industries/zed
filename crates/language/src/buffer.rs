@@ -19,7 +19,7 @@ use std::{
     any::Any,
     cell::RefCell,
     cmp::{self, Ordering},
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     ffi::OsString,
     future::Future,
     iter::{Iterator, Peekable},
@@ -87,13 +87,13 @@ pub struct BufferSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Diagnostic {
-    pub source: Option<String>,
     pub code: Option<String>,
     pub severity: DiagnosticSeverity,
     pub message: String,
     pub group_id: usize,
     pub is_valid: bool,
     pub is_primary: bool,
+    pub is_disk_based: bool,
 }
 
 struct LanguageServerState {
@@ -733,7 +733,7 @@ impl Buffer {
         fn compare_diagnostics(a: &Diagnostic, b: &Diagnostic) -> Ordering {
             Ordering::Equal
                 .then_with(|| b.is_primary.cmp(&a.is_primary))
-                .then_with(|| a.source.cmp(&b.source))
+                .then_with(|| a.is_disk_based.cmp(&b.is_disk_based))
                 .then_with(|| a.severity.cmp(&b.severity))
                 .then_with(|| a.message.cmp(&b.message))
         }
@@ -760,13 +760,6 @@ impl Buffer {
             self.deref()
         };
 
-        let empty_set = HashSet::new();
-        let disk_based_sources = self
-            .language
-            .as_ref()
-            .and_then(|language| language.disk_based_diagnostic_sources())
-            .unwrap_or(&empty_set);
-
         let mut edits_since_save = content
             .edits_since::<PointUtf16>(&self.saved_version)
             .peekable();
@@ -781,12 +774,7 @@ impl Buffer {
             // Some diagnostics are based on files on disk instead of buffers'
             // current contents. Adjust these diagnostics' ranges to reflect
             // any unsaved edits.
-            if entry
-                .diagnostic
-                .source
-                .as_ref()
-                .map_or(false, |source| disk_based_sources.contains(source))
-            {
+            if entry.diagnostic.is_disk_based {
                 while let Some(edit) = edits_since_save.peek() {
                     if edit.old.end <= start {
                         last_edit_old_end = edit.old.end;
@@ -2008,13 +1996,13 @@ impl operation_queue::Operation for Operation {
 impl Default for Diagnostic {
     fn default() -> Self {
         Self {
-            source: Default::default(),
             code: Default::default(),
             severity: DiagnosticSeverity::ERROR,
             message: Default::default(),
             group_id: Default::default(),
             is_primary: Default::default(),
             is_valid: true,
+            is_disk_based: false,
         }
     }
 }

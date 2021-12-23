@@ -119,7 +119,7 @@ pub fn serialize_diagnostics<'a>(
             is_primary: entry.diagnostic.is_primary,
             is_valid: entry.diagnostic.is_valid,
             code: entry.diagnostic.code.clone(),
-            source: entry.diagnostic.source.clone(),
+            is_disk_based: entry.diagnostic.is_disk_based,
         })
         .collect()
 }
@@ -271,10 +271,10 @@ pub fn deserialize_diagnostics(
                     },
                     message: diagnostic.message,
                     group_id: diagnostic.group_id as usize,
-                    is_primary: diagnostic.is_primary,
                     code: diagnostic.code,
-                    source: diagnostic.source,
                     is_valid: diagnostic.is_valid,
+                    is_primary: diagnostic.is_primary,
+                    is_disk_based: diagnostic.is_disk_based,
                 },
             })
         })

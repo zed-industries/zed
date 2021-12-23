@@ -304,10 +304,10 @@ message Diagnostic {
     Severity severity = 3;
     string message = 4;
     optional string code = 5;
-    optional string source = 6;
-    uint64 group_id = 7;
-    bool is_primary = 8;
-    bool is_valid = 9;
+    uint64 group_id = 6;
+    bool is_primary = 7;
+    bool is_valid = 8;
+    bool is_disk_based = 9;
 
     enum Severity {
         None = 0;

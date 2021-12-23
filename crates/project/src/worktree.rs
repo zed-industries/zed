@@ -7,8 +7,8 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use clock::ReplicaId;
-use collections::BTreeMap;
 use collections::{hash_map, HashMap};
+use collections::{BTreeMap, HashSet};
 use futures::{Stream, StreamExt};
 use fuzzy::CharBag;
 use gpui::{
@@ -675,6 +675,7 @@ impl Worktree {
     pub fn update_diagnostics(
         &mut self,
         mut params: lsp::PublishDiagnosticsParams,
+        disk_based_sources: &HashSet<String>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
         let this = self.as_local_mut().ok_or_else(|| anyhow!("not local"))?;
@@ -712,7 +713,6 @@ impl Worktree {
                     range: diagnostic.range.start.to_point_utf16()
                         ..diagnostic.range.end.to_point_utf16(),
                     diagnostic: Diagnostic {
-                        source: diagnostic.source.clone(),
                         code: diagnostic.code.clone().map(|code| match code {
                             lsp::NumberOrString::Number(code) => code.to_string(),
                             lsp::NumberOrString::String(code) => code,
@@ -722,6 +722,10 @@ impl Worktree {
                         group_id,
                         is_primary: false,
                         is_valid: true,
+                        is_disk_based: diagnostic
+                            .source
+                            .as_ref()
+                            .map_or(false, |source| disk_based_sources.contains(source)),
                     },
                 });
         }
@@ -1018,6 +1022,10 @@ impl LocalWorktree {
             .log_err()
             .flatten()
         {
+            let disk_based_sources = language
+                .disk_based_diagnostic_sources()
+                .cloned()
+                .unwrap_or_default();
             let (diagnostics_tx, diagnostics_rx) = smol::channel::unbounded();
             language_server
                 .on_notification::<lsp::notification::PublishDiagnostics, _>(move |params| {
@@ -1028,7 +1036,8 @@ impl LocalWorktree {
                 while let Ok(diagnostics) = diagnostics_rx.recv().await {
                     if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
                         handle.update(&mut cx, |this, cx| {
-                            this.update_diagnostics(diagnostics, cx).log_err();
+                            this.update_diagnostics(diagnostics, &disk_based_sources, cx)
+                                .log_err();
                         });
                     } else {
                         break;
@@ -3812,7 +3821,9 @@ mod tests {
         };
 
         worktree
-            .update(&mut cx, |tree, cx| tree.update_diagnostics(message, cx))
+            .update(&mut cx, |tree, cx| {
+                tree.update_diagnostics(message, &Default::default(), cx)
+            })
             .unwrap();
         let buffer = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
 

@@ -237,7 +237,11 @@ impl ProjectDiagnosticsEditor {
         let mut diagnostic_blocks = Vec::new();
         let excerpts_snapshot = self.excerpts.update(cx, |excerpts, excerpts_cx| {
             let mut old_groups = groups.iter_mut().enumerate().peekable();
-            let mut new_groups = snapshot.diagnostic_groups().into_iter().peekable();
+            let mut new_groups = snapshot
+                .diagnostic_groups()
+                .into_iter()
+                .filter(|group| group.entries[group.primary_ix].diagnostic.is_disk_based)
+                .peekable();
 
             loop {
                 let mut to_insert = None;

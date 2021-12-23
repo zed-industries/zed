@@ -519,7 +519,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'A'".to_string(),
-                            source: Some("disk".to_string()),
+                            is_disk_based: true,
                             group_id: 0,
                             is_primary: true,
                             ..Default::default()
@@ -530,7 +530,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'BB'".to_string(),
-                            source: Some("disk".to_string()),
+                            is_disk_based: true,
                             group_id: 1,
                             is_primary: true,
                             ..Default::default()
@@ -540,7 +540,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         range: PointUtf16::new(2, 9)..PointUtf16::new(2, 12),
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
-                            source: Some("disk".to_string()),
+                            is_disk_based: true,
                             message: "undefined variable 'CCC'".to_string(),
                             group_id: 2,
                             is_primary: true,
@@ -564,7 +564,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'BB'".to_string(),
-                        source: Some("disk".to_string()),
+                        is_disk_based: true,
                         group_id: 1,
                         is_primary: true,
                         ..Default::default()
@@ -575,7 +575,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'CCC'".to_string(),
-                        source: Some("disk".to_string()),
+                        is_disk_based: true,
                         group_id: 2,
                         is_primary: true,
                         ..Default::default()
@@ -614,7 +614,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'A'".to_string(),
-                            source: Some("disk".to_string()),
+                            is_disk_based: true,
                             group_id: 0,
                             is_primary: true,
                             ..Default::default()
@@ -655,7 +655,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'A'".to_string(),
-                        source: Some("disk".to_string()),
+                        is_disk_based: true,
                         group_id: 0,
                         is_primary: true,
                         ..Default::default()
@@ -704,7 +704,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'BB'".to_string(),
-                            source: Some("disk".to_string()),
+                            is_disk_based: true,
                             group_id: 1,
                             is_primary: true,
                             ..Default::default()
@@ -715,7 +715,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'A'".to_string(),
-                            source: Some("disk".to_string()),
+                            is_disk_based: true,
                             group_id: 0,
                             is_primary: true,
                             ..Default::default()
@@ -736,7 +736,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'A'".to_string(),
-                        source: Some("disk".to_string()),
+                        is_disk_based: true,
                         group_id: 0,
                         is_primary: true,
                         ..Default::default()
@@ -747,7 +747,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'BB'".to_string(),
-                        source: Some("disk".to_string()),
+                        is_disk_based: true,
                         group_id: 4,
                         is_primary: true,
                         ..Default::default()
@@ -798,7 +798,7 @@ async fn test_preserving_old_group_ids_and_disk_based_diagnostics(mut cx: gpui::
             diagnostic: Diagnostic {
                 severity: DiagnosticSeverity::ERROR,
                 message: "cannot find value `d` in this scope".to_string(),
-                source: Some("disk".to_string()),
+                is_disk_based: true,
                 group_id: 1,
                 is_primary: true,
                 is_valid: true,
