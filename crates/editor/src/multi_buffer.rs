@@ -704,6 +704,9 @@ impl MultiBuffer {
                 loop {
                     if let Some(buffer_state) = buffers.get_mut(&excerpt.buffer_id) {
                         buffer_state.excerpts.retain(|id| id != excerpt_id);
+                        if buffer_state.excerpts.is_empty() {
+                            buffers.remove(&excerpt.buffer_id);
+                        }
                     }
                     cursor.next(&());
 
