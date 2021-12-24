@@ -121,6 +121,11 @@ impl Db {
         })
     }
 
+    pub async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>> {
+        let users = self.get_users_by_ids([id]).await?;
+        Ok(users.into_iter().next())
+    }
+
     pub async fn get_users_by_ids(
         &self,
         ids: impl IntoIterator<Item = UserId>,
