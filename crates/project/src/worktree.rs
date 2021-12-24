@@ -3729,22 +3729,25 @@ mod tests {
             .unwrap();
 
         buffer.read_with(&cx, |buffer, _| {
-            let diagnostics = buffer
-                .snapshot()
+            let snapshot = buffer.snapshot();
+            let diagnostics = snapshot
                 .diagnostics_in_range::<_, Point>(0..buffer.len())
                 .collect::<Vec<_>>();
             assert_eq!(
                 diagnostics,
-                &[DiagnosticEntry {
-                    range: Point::new(0, 9)..Point::new(0, 10),
-                    diagnostic: Diagnostic {
-                        severity: lsp::DiagnosticSeverity::ERROR,
-                        message: "undefined variable 'A'".to_string(),
-                        group_id: 0,
-                        is_primary: true,
-                        ..Default::default()
+                &[(
+                    LSP_PROVIDER_NAME.as_ref(),
+                    DiagnosticEntry {
+                        range: Point::new(0, 9)..Point::new(0, 10),
+                        diagnostic: Diagnostic {
+                            severity: lsp::DiagnosticSeverity::ERROR,
+                            message: "undefined variable 'A'".to_string(),
+                            group_id: 0,
+                            is_primary: true,
+                            ..Default::default()
+                        }
                     }
-                }]
+                )]
             )
         });
     }
@@ -3899,61 +3902,78 @@ mod tests {
                 .diagnostics_in_range::<_, Point>(0..buffer.len())
                 .collect::<Vec<_>>(),
             &[
-                DiagnosticEntry {
-                    range: Point::new(1, 8)..Point::new(1, 9),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::WARNING,
-                        message: "error 1".to_string(),
-                        group_id: 0,
-                        is_primary: true,
-                        ..Default::default()
+                (
+                    LSP_PROVIDER_NAME.as_ref(),
+                    DiagnosticEntry {
+                        range: Point::new(1, 8)..Point::new(1, 9),
+                        diagnostic: Diagnostic {
+                            severity: DiagnosticSeverity::WARNING,
+                            message: "error 1".to_string(),
+                            group_id: 0,
+                            is_primary: true,
+                            ..Default::default()
+                        }
                     }
-                },
-                DiagnosticEntry {
-                    range: Point::new(1, 8)..Point::new(1, 9),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::HINT,
-                        message: "error 1 hint 1".to_string(),
-                        group_id: 0,
-                        is_primary: false,
-                        ..Default::default()
+                ),
+                (
+                    LSP_PROVIDER_NAME.as_ref(),
+                    DiagnosticEntry {
+                        range: Point::new(1, 8)..Point::new(1, 9),
+                        diagnostic: Diagnostic {
+                            severity: DiagnosticSeverity::HINT,
+                            message: "error 1 hint 1".to_string(),
+                            group_id: 0,
+                            is_primary: false,
+                            ..Default::default()
+                        }
                     }
-                },
-                DiagnosticEntry {
-                    range: Point::new(1, 13)..Point::new(1, 15),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::HINT,
-                        message: "error 2 hint 1".to_string(),
-                        group_id: 1,
-                        is_primary: false,
-                        ..Default::default()
+                ),
+                (
+                    LSP_PROVIDER_NAME.as_ref(),
+                    DiagnosticEntry {
+                        range: Point::new(1, 13)..Point::new(1, 15),
+                        diagnostic: Diagnostic {
+                            severity: DiagnosticSeverity::HINT,
+                            message: "error 2 hint 1".to_string(),
+                            group_id: 1,
+                            is_primary: false,
+                            ..Default::default()
+                        }
                     }
-                },
-                DiagnosticEntry {
-                    range: Point::new(1, 13)..Point::new(1, 15),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::HINT,
-                        message: "error 2 hint 2".to_string(),
-                        group_id: 1,
-                        is_primary: false,
-                        ..Default::default()
+                ),
+                (
+                    LSP_PROVIDER_NAME.as_ref(),
+                    DiagnosticEntry {
+                        range: Point::new(1, 13)..Point::new(1, 15),
+                        diagnostic: Diagnostic {
+                            severity: DiagnosticSeverity::HINT,
+                            message: "error 2 hint 2".to_string(),
+                            group_id: 1,
+                            is_primary: false,
+                            ..Default::default()
+                        }
                     }
-                },
-                DiagnosticEntry {
-                    range: Point::new(2, 8)..Point::new(2, 17),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::ERROR,
-                        message: "error 2".to_string(),
-                        group_id: 1,
-                        is_primary: true,
-                        ..Default::default()
+                ),
+                (
+                    LSP_PROVIDER_NAME.as_ref(),
+                    DiagnosticEntry {
+                        range: Point::new(2, 8)..Point::new(2, 17),
+                        diagnostic: Diagnostic {
+                            severity: DiagnosticSeverity::ERROR,
+                            message: "error 2".to_string(),
+                            group_id: 1,
+                            is_primary: true,
+                            ..Default::default()
+                        }
                     }
-                }
+                )
             ]
         );
 
         assert_eq!(
-            buffer.diagnostic_group::<Point>(0).collect::<Vec<_>>(),
+            buffer
+                .diagnostic_group::<Point>(&LSP_PROVIDER_NAME, 0)
+                .collect::<Vec<_>>(),
             &[
                 DiagnosticEntry {
                     range: Point::new(1, 8)..Point::new(1, 9),
@@ -3978,7 +3998,9 @@ mod tests {
             ]
         );
         assert_eq!(
-            buffer.diagnostic_group::<Point>(1).collect::<Vec<_>>(),
+            buffer
+                .diagnostic_group::<Point>(&LSP_PROVIDER_NAME, 1)
+                .collect::<Vec<_>>(),
             &[
                 DiagnosticEntry {
                     range: Point::new(1, 13)..Point::new(1, 15),

@@ -1831,6 +1831,7 @@ mod tests {
                 buffer
                     .snapshot()
                     .diagnostics_in_range::<_, Point>(0..buffer.len())
+                    .map(|(_, entry)| entry)
                     .collect::<Vec<_>>(),
                 &[
                     DiagnosticEntry {

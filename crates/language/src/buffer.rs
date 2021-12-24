@@ -23,7 +23,7 @@ use std::{
     ffi::OsString,
     future::Future,
     iter::{Iterator, Peekable},
-    ops::{Add, Deref, DerefMut, Range, Sub},
+    ops::{Deref, DerefMut, Range, Sub},
     path::{Path, PathBuf},
     str,
     sync::Arc,
@@ -741,11 +741,6 @@ impl Buffer {
         cx.notify();
     }
 
-    pub fn all_diagnostics<'a>(&'a self) -> impl 'a + Iterator<Item = &'a DiagnosticEntry<Anchor>> {
-        // TODO - enforce ordering between sets
-        self.diagnostic_sets.iter().flat_map(|set| set.iter())
-    }
-
     pub fn update_diagnostics<T>(
         &mut self,
         provider_name: Arc<str>,
@@ -754,7 +749,7 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) -> Result<Operation>
     where
-        T: ToPoint + Ord + Clip + TextDimension + Add<Output = T> + Sub<Output = T> + Copy,
+        T: Copy + Ord + TextDimension + Sub<Output = T> + Clip + ToPoint,
     {
         fn compare_diagnostics(a: &Diagnostic, b: &Diagnostic) -> Ordering {
             Ordering::Equal
@@ -810,8 +805,10 @@ impl Buffer {
                     }
                 }
 
-                start = last_edit_new_end + (start - last_edit_old_end);
-                end = last_edit_new_end + (end - last_edit_old_end);
+                start = last_edit_new_end;
+                start.add_assign(&(start - last_edit_old_end));
+                end = last_edit_new_end;
+                end.add_assign(&(end - last_edit_old_end));
             }
 
             let range = start.clip(Bias::Left, content)..end.clip(Bias::Right, content);
@@ -1624,7 +1621,7 @@ impl BufferSnapshot {
         let mut highlights = None;
         let mut diagnostic_endpoints = Vec::<DiagnosticEndpoint>::new();
         if let Some(theme) = theme {
-            for entry in self.diagnostics_in_range::<_, usize>(range.clone()) {
+            for (_, entry) in self.diagnostics_in_range::<_, usize>(range.clone()) {
                 diagnostic_endpoints.push(DiagnosticEndpoint {
                     offset: entry.range.start,
                     is_start: true,
@@ -1755,14 +1752,15 @@ impl BufferSnapshot {
     pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
         search_range: Range<T>,
-    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
+    ) -> impl 'a + Iterator<Item = (&'a str, DiagnosticEntry<O>)>
     where
         T: 'a + Clone + ToOffset,
         O: 'a + FromAnchor,
     {
-        self.diagnostic_sets
-            .iter()
-            .flat_map(move |set| set.range(search_range.clone(), self, true))
+        self.diagnostic_sets.iter().flat_map(move |set| {
+            set.range(search_range.clone(), self, true)
+                .map(|e| (set.provider_name(), e))
+        })
     }
 
     pub fn diagnostic_groups(&self) -> Vec<DiagnosticGroup<Anchor>> {
@@ -1775,13 +1773,17 @@ impl BufferSnapshot {
 
     pub fn diagnostic_group<'a, O>(
         &'a self,
+        provider_name: &str,
         group_id: usize,
     ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
     where
         O: 'a + FromAnchor,
     {
-        todo!();
-        [].into_iter()
+        self.diagnostic_sets
+            .iter()
+            .find(|s| s.provider_name() == provider_name)
+            .into_iter()
+            .flat_map(move |s| s.group(group_id, self))
     }
 
     pub fn diagnostics_update_count(&self) -> usize {

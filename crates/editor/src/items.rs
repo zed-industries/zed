@@ -298,9 +298,9 @@ impl DiagnosticMessage {
         let new_diagnostic = buffer
             .read(cx)
             .diagnostics_in_range::<_, usize>(cursor_position..cursor_position)
-            .filter(|entry| !entry.range.is_empty())
-            .min_by_key(|entry| (entry.diagnostic.severity, entry.range.len()))
-            .map(|entry| entry.diagnostic);
+            .filter(|(_, entry)| !entry.range.is_empty())
+            .min_by_key(|(_, entry)| (entry.diagnostic.severity, entry.range.len()))
+            .map(|(_, entry)| entry.diagnostic);
         if new_diagnostic != self.diagnostic {
             self.diagnostic = new_diagnostic;
             cx.notify();

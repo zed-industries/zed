@@ -1470,6 +1470,7 @@ impl MultiBufferSnapshot {
 
     pub fn diagnostic_group<'a, O>(
         &'a self,
+        provider_name: &'a str,
         group_id: usize,
     ) -> impl Iterator<Item = DiagnosticEntry<O>> + 'a
     where
@@ -1477,13 +1478,13 @@ impl MultiBufferSnapshot {
     {
         self.as_singleton()
             .into_iter()
-            .flat_map(move |buffer| buffer.diagnostic_group(group_id))
+            .flat_map(move |buffer| buffer.diagnostic_group(provider_name, group_id))
     }
 
     pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
         range: Range<T>,
-    ) -> impl Iterator<Item = DiagnosticEntry<O>> + 'a
+    ) -> impl Iterator<Item = (&'a str, DiagnosticEntry<O>)> + 'a
     where
         T: 'a + ToOffset,
         O: 'a + text::FromAnchor,
