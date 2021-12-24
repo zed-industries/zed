@@ -1164,8 +1164,7 @@ impl MutableAppContext {
         let mut context = keymap::Context::default();
         for view_id in &responder_chain {
             if let Some(view) = self.cx.views.get(&(window_id, *view_id)) {
-                context.extend(view.keymap_context(self.as_ref()));
-                context_chain.push(context.clone());
+                context_chain.push(view.keymap_context(self.as_ref()));
             } else {
                 return Err(anyhow!(
                     "View {} in responder chain does not exist",
@@ -4094,7 +4093,10 @@ mod tests {
         let mut view_2 = View::new(2);
         let mut view_3 = View::new(3);
         view_1.keymap_context.set.insert("a".into());
+        view_2.keymap_context.set.insert("a".into());
         view_2.keymap_context.set.insert("b".into());
+        view_3.keymap_context.set.insert("a".into());
+        view_3.keymap_context.set.insert("b".into());
         view_3.keymap_context.set.insert("c".into());
 
         let (window_id, view_1) = cx.add_window(Default::default(), |_| view_1);
