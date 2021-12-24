@@ -66,12 +66,12 @@ pub struct BracketPair {
 
 #[async_trait]
 pub trait DiagnosticSource: 'static + Send + Sync {
-    fn name(&self) -> &'static str;
+    fn name(&self) -> Arc<str>;
 
     async fn diagnose(
         &self,
         path: Arc<Path>,
-    ) -> Result<Vec<(PathBuf, Vec<DiagnosticEntry<Point>>)>>;
+    ) -> Result<Vec<(PathBuf, Vec<DiagnosticEntry<usize>>)>>;
 }
 
 pub struct Language {

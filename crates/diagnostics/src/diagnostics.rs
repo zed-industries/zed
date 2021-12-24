@@ -637,7 +637,7 @@ mod tests {
 
         worktree.update(&mut cx, |worktree, cx| {
             worktree
-                .update_diagnostic_entries(
+                .update_point_utf16_diagnostics(
                     "lsp".into(),
                     Arc::from("/test/main.rs".as_ref()),
                     None,
@@ -764,7 +764,7 @@ mod tests {
 
         worktree.update(&mut cx, |worktree, cx| {
             worktree
-                .update_diagnostic_entries(
+                .update_point_utf16_diagnostics(
                     "lsp".into(),
                     Arc::from("/test/a.rs".as_ref()),
                     None,

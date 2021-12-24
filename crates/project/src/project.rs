@@ -511,17 +511,22 @@ impl Project {
                         let worktree_path = worktree.abs_path().clone();
                         let worktree_handle = worktree_handle.downgrade();
                         cx.spawn_weak(|_, mut cx| async move {
-                            if let Some(diagnostics) =
-                                diagnostic_source.diagnose(worktree_path).await.log_err()
-                            {
-                                if let Some(worktree_handle) = worktree_handle.upgrade(&cx) {
-                                    worktree_handle.update(&mut cx, |worktree, cx| {
-                                        for (path, diagnostics) in diagnostics {
-                                            todo!()
-                                        }
-                                    })
+                            let diagnostics =
+                                diagnostic_source.diagnose(worktree_path).await.log_err()?;
+                            let worktree_handle = worktree_handle.upgrade(&cx)?;
+                            worktree_handle.update(&mut cx, |worktree, cx| {
+                                for (path, diagnostics) in diagnostics {
+                                    worktree
+                                        .update_offset_diagnostics(
+                                            diagnostic_source.name(),
+                                            path.into(),
+                                            diagnostics,
+                                            cx,
+                                        )
+                                        .log_err()?;
                                 }
-                            }
+                                Some(())
+                            })
                         })
                         .detach();
                     }
