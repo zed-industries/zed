@@ -31,10 +31,11 @@ mod rust {
 
     #[derive(Debug, Deserialize)]
     struct CompilerMessage {
-        code: ErrorCode,
+        code: Option<ErrorCode>,
         spans: Vec<Span>,
         message: String,
         level: ErrorLevel,
+        children: Vec<CompilerMessage>,
     }
 
     #[derive(Debug, Deserialize)]
@@ -43,6 +44,8 @@ mod rust {
         Warning,
         #[serde(rename = "error")]
         Error,
+        #[serde(rename = "help")]
+        Help,
         #[serde(rename = "note")]
         Note,
     }
@@ -52,24 +55,30 @@ mod rust {
         code: String,
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Clone, Debug, Deserialize)]
     struct Span {
         is_primary: bool,
         file_name: PathBuf,
         byte_start: usize,
         byte_end: usize,
+        expansion: Option<Box<Expansion>>,
+    }
+
+    #[derive(Clone, Debug, Deserialize)]
+    struct Expansion {
+        span: Span,
     }
 
     #[async_trait]
     impl language::DiagnosticProvider for DiagnosticProvider {
         async fn diagnose(
             &self,
-            path: Arc<Path>,
+            root_path: Arc<Path>,
         ) -> Result<HashMap<Arc<Path>, Vec<DiagnosticEntry<usize>>>> {
             let output = Command::new("cargo")
                 .arg("check")
                 .args(["--message-format", "json"])
-                .current_dir(&path)
+                .current_dir(&root_path)
                 .output()
                 .await?;
 
@@ -80,13 +89,21 @@ mod rust {
                 Deserializer::from_slice(&output.stdout).into_iter::<&serde_json::value::RawValue>()
             {
                 if let Ok(check) = serde_json::from_str::<Check>(value?.get()) {
-                    let severity = match check.message.level {
+                    let check_severity = match check.message.level {
                         ErrorLevel::Warning => DiagnosticSeverity::WARNING,
                         ErrorLevel::Error => DiagnosticSeverity::ERROR,
+                        ErrorLevel::Help => DiagnosticSeverity::HINT,
                         ErrorLevel::Note => DiagnosticSeverity::INFORMATION,
                     };
-                    for span in check.message.spans {
-                        let span_path: Arc<Path> = span.file_name.into();
+
+                    let mut primary_span = None;
+                    for mut span in check.message.spans {
+                        if let Some(mut expansion) = span.expansion {
+                            expansion.span.is_primary = span.is_primary;
+                            span = expansion.span;
+                        }
+
+                        let span_path: Arc<Path> = span.file_name.as_path().into();
                         new_reported_paths.insert(span_path.clone());
                         diagnostics_by_path
                             .entry(span_path)
@@ -94,8 +111,8 @@ mod rust {
                             .push(DiagnosticEntry {
                                 range: span.byte_start..span.byte_end,
                                 diagnostic: Diagnostic {
-                                    code: Some(check.message.code.code.clone()),
-                                    severity,
+                                    code: check.message.code.as_ref().map(|c| c.code.clone()),
+                                    severity: check_severity,
                                     message: check.message.message.clone(),
                                     group_id,
                                     is_valid: true,
@@ -103,7 +120,54 @@ mod rust {
                                     is_disk_based: true,
                                 },
                             });
+
+                        if span.is_primary {
+                            primary_span = Some(span);
+                        }
                     }
+
+                    for mut child in check.message.children {
+                        if child.spans.is_empty() {
+                            if let Some(primary_span) = primary_span.clone() {
+                                child.spans.push(primary_span);
+                            }
+                        } else {
+                            // TODO
+                            continue;
+                        }
+
+                        let child_severity = match child.level {
+                            ErrorLevel::Warning => DiagnosticSeverity::WARNING,
+                            ErrorLevel::Error => DiagnosticSeverity::ERROR,
+                            ErrorLevel::Help => DiagnosticSeverity::HINT,
+                            ErrorLevel::Note => DiagnosticSeverity::INFORMATION,
+                        };
+
+                        for mut span in child.spans {
+                            if let Some(expansion) = span.expansion {
+                                span = expansion.span;
+                            }
+
+                            let span_path: Arc<Path> = span.file_name.as_path().into();
+                            new_reported_paths.insert(span_path.clone());
+                            diagnostics_by_path
+                                .entry(span_path)
+                                .or_insert(Vec::new())
+                                .push(DiagnosticEntry {
+                                    range: span.byte_start..span.byte_end,
+                                    diagnostic: Diagnostic {
+                                        code: child.code.as_ref().map(|c| c.code.clone()),
+                                        severity: child_severity,
+                                        message: child.message.clone(),
+                                        group_id,
+                                        is_valid: true,
+                                        is_primary: false,
+                                        is_disk_based: true,
+                                    },
+                                });
+                        }
+                    }
+
                     group_id += 1;
                 }
             }
