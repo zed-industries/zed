@@ -12,6 +12,7 @@ mod home;
 mod releases;
 mod rpc;
 mod team;
+mod careers;
 
 use self::errors::TideResultExt as _;
 use ::rpc::Peer;
@@ -178,6 +179,7 @@ pub async fn run_server(
     api::add_routes(&mut web);
     home::add_routes(&mut web);
     team::add_routes(&mut web);
+    careers::add_routes(&mut web);
     releases::add_routes(&mut web);
     community::add_routes(&mut web);
     admin::add_routes(&mut web);
