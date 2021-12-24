@@ -1047,6 +1047,11 @@ impl Editor {
             let buffer = self.buffer.read(cx).snapshot(cx);
             let mut oldest_selection = self.oldest_selection::<usize>(&buffer);
             if self.selection_count() == 1 {
+                if oldest_selection.is_empty() {
+                    cx.propagate_action();
+                    return;
+                }
+
                 oldest_selection.start = oldest_selection.head().clone();
                 oldest_selection.end = oldest_selection.head().clone();
             }
