@@ -21,6 +21,15 @@ pub struct Lamport {
 }
 
 impl Local {
+    pub const MIN: Self = Self {
+        replica_id: ReplicaId::MIN,
+        value: Seq::MIN,
+    };
+    pub const MAX: Self = Self {
+        replica_id: ReplicaId::MAX,
+        value: Seq::MAX,
+    };
+
     pub fn new(replica_id: ReplicaId) -> Self {
         Self {
             replica_id,

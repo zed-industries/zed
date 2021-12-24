@@ -388,6 +388,7 @@ mod tests {
                     .request(
                         client1_conn_id,
                         proto::OpenBuffer {
+                            project_id: 0,
                             worktree_id: 1,
                             path: "path/one".to_string(),
                         },
@@ -400,7 +401,7 @@ mod tests {
                         content: "path/one content".to_string(),
                         history: vec![],
                         selections: vec![],
-                        diagnostics: None,
+                        diagnostic_sets: vec![],
                     }),
                 }
             );
@@ -410,6 +411,7 @@ mod tests {
                     .request(
                         client2_conn_id,
                         proto::OpenBuffer {
+                            project_id: 0,
                             worktree_id: 2,
                             path: "path/two".to_string(),
                         },
@@ -422,7 +424,7 @@ mod tests {
                         content: "path/two content".to_string(),
                         history: vec![],
                         selections: vec![],
-                        diagnostics: None,
+                        diagnostic_sets: vec![],
                     }),
                 }
             );
@@ -453,7 +455,7 @@ mod tests {
                                         content: "path/one content".to_string(),
                                         history: vec![],
                                         selections: vec![],
-                                        diagnostics: None,
+                                        diagnostic_sets: vec![],
                                     }),
                                 }
                             }
@@ -465,7 +467,7 @@ mod tests {
                                         content: "path/two content".to_string(),
                                         history: vec![],
                                         selections: vec![],
-                                        diagnostics: None,
+                                        diagnostic_sets: vec![],
                                     }),
                                 }
                             }

@@ -2,16 +2,15 @@ use crate::{
     auth::RequestExt as _, github::Release, AppState, LayoutData, Request, RequestExt as _,
 };
 use comrak::ComrakOptions;
-use serde::{Serialize};
+use serde::Serialize;
 use std::sync::Arc;
-use tide::{http::mime};
+use tide::http::mime;
 
 pub fn add_routes(releases: &mut tide::Server<Arc<AppState>>) {
     releases.at("/releases").get(get_releases);
 }
 
 async fn get_releases(mut request: Request) -> tide::Result {
-
     #[derive(Serialize)]
     struct ReleasesData {
         #[serde(flatten)]

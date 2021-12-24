@@ -29,9 +29,11 @@ test-support = [
 
 [dependencies]
 chat_panel = { path = "../chat_panel" }
+collections = { path = "../collections" }
 client = { path = "../client" }
 clock = { path = "../clock" }
 contacts_panel = { path = "../contacts_panel" }
+diagnostics = { path = "../diagnostics" }
 editor = { path = "../editor" }
 file_finder = { path = "../file_finder" }
 fsevent = { path = "../fsevent" }

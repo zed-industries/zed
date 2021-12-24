@@ -1,27 +1,15 @@
+use std::sync::Arc;
+
 use client::{Contact, UserStore};
 use gpui::{
-    action,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     platform::CursorStyle,
-    Element, ElementBox, Entity, LayoutContext, ModelHandle, MutableAppContext, RenderContext,
-    Subscription, View, ViewContext,
+    Element, ElementBox, Entity, LayoutContext, ModelHandle, RenderContext, Subscription, View,
+    ViewContext,
 };
 use postage::watch;
-use theme::Theme;
-use workspace::{Settings, Workspace};
-
-action!(JoinWorktree, u64);
-action!(LeaveWorktree, u64);
-action!(ShareWorktree, u64);
-action!(UnshareWorktree, u64);
-
-pub fn init(cx: &mut MutableAppContext) {
-    cx.add_action(ContactsPanel::share_worktree);
-    cx.add_action(ContactsPanel::unshare_worktree);
-    cx.add_action(ContactsPanel::join_worktree);
-    cx.add_action(ContactsPanel::leave_worktree);
-}
+use workspace::{AppState, JoinProject, JoinProjectParams, Settings};
 
 pub struct ContactsPanel {
     contacts: ListState,
@@ -31,76 +19,31 @@ pub struct ContactsPanel {
 }
 
 impl ContactsPanel {
-    pub fn new(
-        user_store: ModelHandle<UserStore>,
-        settings: watch::Receiver<Settings>,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    pub fn new(app_state: Arc<AppState>, cx: &mut ViewContext<Self>) -> Self {
         Self {
             contacts: ListState::new(
-                user_store.read(cx).contacts().len(),
+                app_state.user_store.read(cx).contacts().len(),
                 Orientation::Top,
                 1000.,
                 {
-                    let user_store = user_store.clone();
-                    let settings = settings.clone();
+                    let app_state = app_state.clone();
                     move |ix, cx| {
-                        let user_store = user_store.read(cx);
+                        let user_store = app_state.user_store.read(cx);
                         let contacts = user_store.contacts().clone();
                         let current_user_id = user_store.current_user().map(|user| user.id);
                         Self::render_collaborator(
                             &contacts[ix],
                             current_user_id,
-                            &settings.borrow().theme,
+                            app_state.clone(),
                             cx,
                         )
                     }
                 },
             ),
-            _maintain_contacts: cx.observe(&user_store, Self::update_contacts),
-            user_store,
-            settings,
+            _maintain_contacts: cx.observe(&app_state.user_store, Self::update_contacts),
+            user_store: app_state.user_store.clone(),
+            settings: app_state.settings.clone(),
         }
-    }
-
-    fn share_worktree(
-        workspace: &mut Workspace,
-        action: &ShareWorktree,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        workspace
-            .project()
-            .update(cx, |p, cx| p.share_worktree(action.0, cx));
-    }
-
-    fn unshare_worktree(
-        workspace: &mut Workspace,
-        action: &UnshareWorktree,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        workspace
-            .project()
-            .update(cx, |p, cx| p.unshare_worktree(action.0, cx));
-    }
-
-    fn join_worktree(
-        workspace: &mut Workspace,
-        action: &JoinWorktree,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        workspace
-            .project()
-            .update(cx, |p, cx| p.add_remote_worktree(action.0, cx).detach());
-    }
-
-    fn leave_worktree(
-        workspace: &mut Workspace,
-        action: &LeaveWorktree,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        workspace
-            .project()
-            .update(cx, |p, cx| p.close_remote_worktree(action.0, cx));
     }
 
     fn update_contacts(&mut self, _: ModelHandle<UserStore>, cx: &mut ViewContext<Self>) {
@@ -112,20 +55,16 @@ impl ContactsPanel {
     fn render_collaborator(
         collaborator: &Contact,
         current_user_id: Option<u64>,
-        theme: &Theme,
+        app_state: Arc<AppState>,
         cx: &mut LayoutContext,
     ) -> ElementBox {
-        let theme = &theme.contacts_panel;
-        let worktree_count = collaborator.worktrees.len();
+        let theme = &app_state.settings.borrow().theme.contacts_panel;
+        let project_count = collaborator.projects.len();
         let font_cache = cx.font_cache();
-        let line_height = theme.unshared_worktree.name.text.line_height(font_cache);
-        let cap_height = theme.unshared_worktree.name.text.cap_height(font_cache);
-        let baseline_offset = theme
-            .unshared_worktree
-            .name
-            .text
-            .baseline_offset(font_cache)
-            + (theme.unshared_worktree.height - line_height) / 2.;
+        let line_height = theme.unshared_project.name.text.line_height(font_cache);
+        let cap_height = theme.unshared_project.name.text.cap_height(font_cache);
+        let baseline_offset = theme.unshared_project.name.text.baseline_offset(font_cache)
+            + (theme.unshared_project.height - line_height) / 2.;
         let tree_branch_width = theme.tree_branch_width;
         let tree_branch_color = theme.tree_branch_color;
         let host_avatar_height = theme
@@ -161,11 +100,11 @@ impl ContactsPanel {
             )
             .with_children(
                 collaborator
-                    .worktrees
+                    .projects
                     .iter()
                     .enumerate()
-                    .map(|(ix, worktree)| {
-                        let worktree_id = worktree.id;
+                    .map(|(ix, project)| {
+                        let project_id = project.id;
 
                         Flex::row()
                             .with_child(
@@ -182,7 +121,7 @@ impl ContactsPanel {
                                             vec2f(start_x, start_y),
                                             vec2f(
                                                 start_x + tree_branch_width,
-                                                if ix + 1 == worktree_count {
+                                                if ix + 1 == project_count {
                                                     end_y
                                                 } else {
                                                     bounds.max_y()
@@ -210,28 +149,28 @@ impl ContactsPanel {
                             .with_child({
                                 let is_host = Some(collaborator.user.id) == current_user_id;
                                 let is_guest = !is_host
-                                    && worktree
+                                    && project
                                         .guests
                                         .iter()
                                         .any(|guest| Some(guest.id) == current_user_id);
-                                let is_shared = worktree.is_shared;
+                                let is_shared = project.is_shared;
+                                let app_state = app_state.clone();
 
                                 MouseEventHandler::new::<ContactsPanel, _, _, _>(
-                                    worktree_id as usize,
+                                    project_id as usize,
                                     cx,
                                     |mouse_state, _| {
-                                        let style = match (worktree.is_shared, mouse_state.hovered)
-                                        {
-                                            (false, false) => &theme.unshared_worktree,
-                                            (false, true) => &theme.hovered_unshared_worktree,
-                                            (true, false) => &theme.shared_worktree,
-                                            (true, true) => &theme.hovered_shared_worktree,
+                                        let style = match (project.is_shared, mouse_state.hovered) {
+                                            (false, false) => &theme.unshared_project,
+                                            (false, true) => &theme.hovered_unshared_project,
+                                            (true, false) => &theme.shared_project,
+                                            (true, true) => &theme.hovered_shared_project,
                                         };
 
                                         Flex::row()
                                             .with_child(
                                                 Label::new(
-                                                    worktree.root_name.clone(),
+                                                    project.worktree_root_names.join(", "),
                                                     style.name.text.clone(),
                                                 )
                                                 .aligned()
@@ -240,7 +179,7 @@ impl ContactsPanel {
                                                 .with_style(style.name.container)
                                                 .boxed(),
                                             )
-                                            .with_children(worktree.guests.iter().filter_map(
+                                            .with_children(project.guests.iter().filter_map(
                                                 |participant| {
                                                     participant.avatar.clone().map(|avatar| {
                                                         Image::new(avatar)
@@ -268,23 +207,18 @@ impl ContactsPanel {
                                     CursorStyle::Arrow
                                 })
                                 .on_click(move |cx| {
-                                    if is_shared {
-                                        if is_host {
-                                            cx.dispatch_action(UnshareWorktree(worktree_id));
-                                        } else if is_guest {
-                                            cx.dispatch_action(LeaveWorktree(worktree_id));
-                                        } else {
-                                            cx.dispatch_action(JoinWorktree(worktree_id))
-                                        }
-                                    } else if is_host {
-                                        cx.dispatch_action(ShareWorktree(worktree_id));
+                                    if !is_host && !is_guest {
+                                        cx.dispatch_global_action(JoinProject(JoinProjectParams {
+                                            project_id,
+                                            app_state: app_state.clone(),
+                                        }));
                                     }
                                 })
                                 .expanded(1.0)
                                 .boxed()
                             })
                             .constrained()
-                            .with_height(theme.unshared_worktree.height)
+                            .with_height(theme.unshared_project.height)
                             .boxed()
                     }),
             )

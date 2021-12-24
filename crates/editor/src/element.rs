@@ -1,10 +1,10 @@
-use crate::display_map::{BlockContext, ToDisplayPoint};
-
 use super::{
-    DisplayPoint, Editor, EditorMode, EditorSettings, EditorStyle, Input, Scroll, Select,
-    SelectPhase, Snapshot, SoftWrap, MAX_LINE_LEN,
+    display_map::{BlockContext, ToDisplayPoint},
+    DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, Input, Scroll,
+    Select, SelectPhase, SoftWrap, ToPoint, MAX_LINE_LEN,
 };
 use clock::ReplicaId;
+use collections::{BTreeMap, HashMap};
 use gpui::{
     color::Color,
     geometry::{
@@ -19,11 +19,10 @@ use gpui::{
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
-use language::{Chunk, ToPoint};
+use language::Chunk;
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
-    collections::{BTreeMap, HashMap},
     fmt::Write,
     ops::Range,
 };
@@ -49,7 +48,7 @@ impl EditorElement {
         self.view.upgrade(cx).unwrap().update(cx, f)
     }
 
-    fn snapshot(&self, cx: &mut MutableAppContext) -> Snapshot {
+    fn snapshot(&self, cx: &mut MutableAppContext) -> EditorSnapshot {
         self.update_view(cx, |view, cx| view.snapshot(cx))
     }
 
@@ -434,8 +433,8 @@ impl EditorElement {
         }
     }
 
-    fn max_line_number_width(&self, snapshot: &Snapshot, cx: &LayoutContext) -> f32 {
-        let digit_count = (snapshot.buffer_row_count() as f32).log10().floor() as usize + 1;
+    fn max_line_number_width(&self, snapshot: &EditorSnapshot, cx: &LayoutContext) -> f32 {
+        let digit_count = (snapshot.max_buffer_row() as f32).log10().floor() as usize + 1;
         let style = &self.settings.style;
 
         cx.text_layout_cache
@@ -458,7 +457,7 @@ impl EditorElement {
         &self,
         rows: Range<u32>,
         active_rows: &BTreeMap<u32, bool>,
-        snapshot: &Snapshot,
+        snapshot: &EditorSnapshot,
         cx: &LayoutContext,
     ) -> Vec<Option<text_layout::Line>> {
         let style = &self.settings.style;
@@ -504,7 +503,7 @@ impl EditorElement {
     fn layout_lines(
         &mut self,
         mut rows: Range<u32>,
-        snapshot: &mut Snapshot,
+        snapshot: &mut EditorSnapshot,
         cx: &LayoutContext,
     ) -> Vec<text_layout::Line> {
         rows.end = cmp::min(rows.end, snapshot.max_point().row() + 1);
@@ -623,7 +622,7 @@ impl EditorElement {
     fn layout_blocks(
         &mut self,
         rows: Range<u32>,
-        snapshot: &Snapshot,
+        snapshot: &EditorSnapshot,
         text_width: f32,
         line_height: f32,
         style: &EditorStyle,
@@ -732,21 +731,14 @@ impl Element for EditorElement {
         let scroll_top = scroll_position.y() * line_height;
         let end_row = ((scroll_top + size.y()) / line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
 
-        let mut selections = HashMap::new();
         let mut active_rows = BTreeMap::new();
         let mut highlighted_row = None;
-        self.update_view(cx.app, |view, cx| {
+        let selections = self.update_view(cx.app, |view, cx| {
             highlighted_row = view.highlighted_row();
-            for selection_set_id in view.active_selection_sets(cx).collect::<Vec<_>>() {
-                let replica_selections = view
-                    .intersecting_selections(
-                        selection_set_id,
-                        DisplayPoint::new(start_row, 0)..DisplayPoint::new(end_row, 0),
-                        cx,
-                    )
-                    .collect::<Vec<_>>();
-                for selection in &replica_selections {
-                    if selection_set_id == view.selection_set_id {
+            let selections = view.visible_selections(start_row..end_row, cx);
+            for (replica_id, selections) in &selections {
+                if *replica_id == view.replica_id(cx) {
+                    for selection in selections {
                         let is_empty = selection.start == selection.end;
                         let selection_start = snapshot.prev_row_boundary(selection.start).0;
                         let selection_end = snapshot.next_row_boundary(selection.end).0;
@@ -759,9 +751,8 @@ impl Element for EditorElement {
                         }
                     }
                 }
-
-                selections.insert(selection_set_id.replica_id, replica_selections);
             }
+            selections
         });
 
         let line_number_layouts = self.layout_rows(start_row..end_row, &active_rows, &snapshot, cx);
@@ -923,7 +914,7 @@ pub struct LayoutState {
     gutter_padding: f32,
     text_size: Vector2F,
     style: EditorStyle,
-    snapshot: Snapshot,
+    snapshot: EditorSnapshot,
     active_rows: BTreeMap<u32, bool>,
     highlighted_row: Option<u32>,
     line_layouts: Vec<text_layout::Line>,
@@ -961,7 +952,7 @@ impl LayoutState {
 
 fn layout_line(
     row: u32,
-    snapshot: &Snapshot,
+    snapshot: &EditorSnapshot,
     style: &EditorStyle,
     layout_cache: &TextLayoutCache,
 ) -> text_layout::Line {
@@ -998,7 +989,7 @@ pub struct PaintState {
 impl PaintState {
     fn point_for_position(
         &self,
-        snapshot: &Snapshot,
+        snapshot: &EditorSnapshot,
         layout: &LayoutState,
         position: Vector2F,
     ) -> (DisplayPoint, u32) {
@@ -1164,23 +1155,20 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        test::sample_text,
-        {Editor, EditorSettings},
-    };
-    use language::Buffer;
+    use crate::{Editor, EditorSettings, MultiBuffer};
+    use std::sync::Arc;
+    use util::test::sample_text;
 
     #[gpui::test]
     fn test_layout_line_numbers(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(cx);
-
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6), cx));
+        let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
         let (window_id, editor) = cx.add_window(Default::default(), |cx| {
             Editor::for_buffer(
                 buffer,
                 {
                     let settings = settings.clone();
-                    move |_| settings.clone()
+                    Arc::new(move |_| settings.clone())
                 },
                 cx,
             )

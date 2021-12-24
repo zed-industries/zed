@@ -13,6 +13,7 @@ test-support = ["language/test-support", "text/test-support"]
 text = { path = "../text" }
 client = { path = "../client" }
 clock = { path = "../clock" }
+collections = { path = "../collections" }
 fsevent = { path = "../fsevent" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
@@ -37,6 +38,7 @@ toml = "0.5"
 
 [dev-dependencies]
 client = { path = "../client", features = ["test-support"] }
+collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }

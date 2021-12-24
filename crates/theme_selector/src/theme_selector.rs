@@ -11,7 +11,7 @@ use parking_lot::Mutex;
 use postage::watch;
 use std::{cmp, sync::Arc};
 use theme::ThemeRegistry;
-use workspace::{Settings, Workspace, AppState};
+use workspace::{AppState, Settings, Workspace};
 
 #[derive(Clone)]
 pub struct ThemeSelectorParams {
@@ -64,14 +64,14 @@ impl ThemeSelector {
             Editor::single_line(
                 {
                     let settings = settings.clone();
-                    move |_| {
+                    Arc::new(move |_| {
                         let settings = settings.borrow();
                         EditorSettings {
                             tab_size: settings.tab_size,
                             style: settings.theme.selector.input_editor.as_editor(),
                             soft_wrap: editor::SoftWrap::None,
                         }
-                    }
+                    })
                 },
                 cx,
             )

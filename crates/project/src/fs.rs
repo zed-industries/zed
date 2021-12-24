@@ -134,6 +134,7 @@ impl Fs for RealFs {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Debug)]
 struct FakeFsEntry {
     metadata: Metadata,

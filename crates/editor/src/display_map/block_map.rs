@@ -1,10 +1,11 @@
-use super::wrap_map::{self, Edit as WrapEdit, Snapshot as WrapSnapshot, WrapPoint};
-use gpui::{AppContext, ElementBox, ModelHandle};
-use language::{Buffer, Chunk};
+use super::wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot};
+use crate::{Anchor, ToOffset, ToPoint as _};
+use collections::{HashMap, HashSet};
+use gpui::{AppContext, ElementBox};
+use language::Chunk;
 use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering},
-    collections::{HashMap, HashSet},
     fmt::Debug,
     ops::{Deref, Range},
     sync::{
@@ -12,14 +13,13 @@ use std::{
         Arc,
     },
 };
-use sum_tree::SumTree;
-use text::{Anchor, Bias, Edit, Point, ToOffset, ToPoint as _};
+use sum_tree::{Bias, SumTree};
+use text::{Edit, Point};
 use theme::SyntaxTheme;
 
 const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
 
 pub struct BlockMap {
-    buffer: ModelHandle<Buffer>,
     next_block_id: AtomicUsize,
     wrap_snapshot: Mutex<WrapSnapshot>,
     blocks: Vec<Arc<Block>>,
@@ -45,11 +45,13 @@ struct BlockRow(u32);
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 struct WrapRow(u32);
 
+pub type RenderBlock = Arc<dyn Fn(&BlockContext) -> ElementBox>;
+
 pub struct Block {
     id: BlockId,
     position: Anchor,
     height: u8,
-    render: Mutex<Arc<dyn Fn(&BlockContext) -> ElementBox>>,
+    render: Mutex<RenderBlock>,
     disposition: BlockDisposition,
 }
 
@@ -93,25 +95,24 @@ struct TransformSummary {
     output_rows: u32,
 }
 
-pub struct Chunks<'a> {
+pub struct BlockChunks<'a> {
     transforms: sum_tree::Cursor<'a, Transform, (BlockRow, WrapRow)>,
-    input_chunks: wrap_map::Chunks<'a>,
+    input_chunks: wrap_map::WrapChunks<'a>,
     input_chunk: Chunk<'a>,
     output_row: u32,
     max_output_row: u32,
 }
 
-pub struct BufferRows<'a> {
+pub struct BlockBufferRows<'a> {
     transforms: sum_tree::Cursor<'a, Transform, (BlockRow, WrapRow)>,
-    input_buffer_rows: wrap_map::BufferRows<'a>,
+    input_buffer_rows: wrap_map::WrapBufferRows<'a>,
     output_row: u32,
     started: bool,
 }
 
 impl BlockMap {
-    pub fn new(buffer: ModelHandle<Buffer>, wrap_snapshot: WrapSnapshot) -> Self {
+    pub fn new(wrap_snapshot: WrapSnapshot) -> Self {
         Self {
-            buffer,
             next_block_id: AtomicUsize::new(0),
             blocks: Vec::new(),
             transforms: Mutex::new(SumTree::from_item(
@@ -122,13 +123,8 @@ impl BlockMap {
         }
     }
 
-    pub fn read(
-        &self,
-        wrap_snapshot: WrapSnapshot,
-        edits: Vec<WrapEdit>,
-        cx: &AppContext,
-    ) -> BlockSnapshot {
-        self.sync(&wrap_snapshot, edits, cx);
+    pub fn read(&self, wrap_snapshot: WrapSnapshot, edits: Vec<WrapEdit>) -> BlockSnapshot {
+        self.sync(&wrap_snapshot, edits);
         *self.wrap_snapshot.lock() = wrap_snapshot.clone();
         BlockSnapshot {
             wrap_snapshot,
@@ -136,23 +132,18 @@ impl BlockMap {
         }
     }
 
-    pub fn write(
-        &mut self,
-        wrap_snapshot: WrapSnapshot,
-        edits: Vec<WrapEdit>,
-        cx: &AppContext,
-    ) -> BlockMapWriter {
-        self.sync(&wrap_snapshot, edits, cx);
+    pub fn write(&mut self, wrap_snapshot: WrapSnapshot, edits: Vec<WrapEdit>) -> BlockMapWriter {
+        self.sync(&wrap_snapshot, edits);
         *self.wrap_snapshot.lock() = wrap_snapshot;
         BlockMapWriter(self)
     }
 
-    fn sync(&self, wrap_snapshot: &WrapSnapshot, edits: Vec<WrapEdit>, cx: &AppContext) {
+    fn sync(&self, wrap_snapshot: &WrapSnapshot, edits: Vec<WrapEdit>) {
         if edits.is_empty() {
             return;
         }
 
-        let buffer = self.buffer.read(cx);
+        let buffer = wrap_snapshot.buffer_snapshot();
         let mut transforms = self.transforms.lock();
         let mut new_transforms = SumTree::new();
         let old_row_count = transforms.summary().input_rows;
@@ -236,26 +227,29 @@ impl BlockMap {
             }
 
             // Find the blocks within this edited region.
-            let new_start = wrap_snapshot.to_point(WrapPoint::new(new_start.0, 0), Bias::Left);
-            let start_anchor = buffer.anchor_before(new_start);
+            let new_buffer_start =
+                wrap_snapshot.to_point(WrapPoint::new(new_start.0, 0), Bias::Left);
+            let start_anchor = buffer.anchor_before(new_buffer_start);
             let start_block_ix = match self.blocks[last_block_ix..].binary_search_by(|probe| {
                 probe
                     .position
-                    .cmp(&start_anchor, buffer)
+                    .cmp(&start_anchor, &buffer)
                     .unwrap()
                     .then(Ordering::Greater)
             }) {
                 Ok(ix) | Err(ix) => last_block_ix + ix,
             };
+
             let end_block_ix = if new_end.0 > wrap_snapshot.max_point().row() {
                 self.blocks.len()
             } else {
-                let new_end = wrap_snapshot.to_point(WrapPoint::new(new_end.0, 0), Bias::Left);
-                let end_anchor = buffer.anchor_before(new_end);
+                let new_buffer_end =
+                    wrap_snapshot.to_point(WrapPoint::new(new_end.0, 0), Bias::Left);
+                let end_anchor = buffer.anchor_before(new_buffer_end);
                 match self.blocks[start_block_ix..].binary_search_by(|probe| {
                     probe
                         .position
-                        .cmp(&end_anchor, buffer)
+                        .cmp(&end_anchor, &buffer)
                         .unwrap()
                         .then(Ordering::Greater)
                 }) {
@@ -263,12 +257,13 @@ impl BlockMap {
                 }
             };
             last_block_ix = end_block_ix;
-            blocks_in_edit.clear();
+
+            debug_assert!(blocks_in_edit.is_empty());
             blocks_in_edit.extend(
                 self.blocks[start_block_ix..end_block_ix]
                     .iter()
                     .map(|block| {
-                        let mut position = block.position.to_point(buffer);
+                        let mut position = block.position.to_point(&buffer);
                         let column = wrap_snapshot.from_point(position, Bias::Left).column();
                         match block.disposition {
                             BlockDisposition::Above => position.column = 0,
@@ -277,22 +272,21 @@ impl BlockMap {
                             }
                         }
                         let position = wrap_snapshot.from_point(position, Bias::Left);
-                        (position.row(), column, block)
+                        (position.row(), column, block.clone())
                     }),
             );
-            blocks_in_edit
-                .sort_unstable_by_key(|(row, _, block)| (*row, block.disposition, block.id));
+            blocks_in_edit.sort_by_key(|(row, _, block)| (*row, block.disposition, block.id));
 
             // For each of these blocks, insert a new isomorphic transform preceding the block,
             // and then insert the block itself.
-            for (block_row, column, block) in blocks_in_edit.iter().copied() {
+            for (block_row, column, block) in blocks_in_edit.drain(..) {
                 let insertion_row = match block.disposition {
                     BlockDisposition::Above => block_row,
                     BlockDisposition::Below => block_row + 1,
                 };
                 let extent_before_block = insertion_row - new_transforms.summary().input_rows;
                 push_isomorphic(&mut new_transforms, extent_before_block);
-                new_transforms.push(Transform::block(block.clone(), column), &());
+                new_transforms.push(Transform::block(block, column), &());
             }
 
             old_end = WrapRow(old_end.0.min(old_row_count));
@@ -317,13 +311,10 @@ impl BlockMap {
         *transforms = new_transforms;
     }
 
-    pub fn replace<F>(&mut self, mut element_builders: HashMap<BlockId, F>)
-    where
-        F: 'static + Fn(&BlockContext) -> ElementBox,
-    {
+    pub fn replace(&mut self, mut renderers: HashMap<BlockId, RenderBlock>) {
         for block in &self.blocks {
-            if let Some(build_element) = element_builders.remove(&block.id) {
-                *block.render.lock() = Arc::new(build_element);
+            if let Some(render) = renderers.remove(&block.id) {
+                *block.render.lock() = render;
             }
         }
     }
@@ -374,37 +365,33 @@ impl<'a> BlockMapWriter<'a> {
     pub fn insert<P>(
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<P>>,
-        cx: &AppContext,
     ) -> Vec<BlockId>
     where
         P: ToOffset + Clone,
     {
-        let buffer = self.0.buffer.read(cx);
         let mut ids = Vec::new();
         let mut edits = Vec::<Edit<u32>>::new();
         let wrap_snapshot = &*self.0.wrap_snapshot.lock();
+        let buffer = wrap_snapshot.buffer_snapshot();
 
         for block in blocks {
             let id = BlockId(self.0.next_block_id.fetch_add(1, SeqCst));
             ids.push(id);
 
             let position = buffer.anchor_after(block.position);
-            let point = position.to_point(buffer);
-            let start_row = wrap_snapshot
+            let point = position.to_point(&buffer);
+            let wrap_row = wrap_snapshot
                 .from_point(Point::new(point.row, 0), Bias::Left)
                 .row();
-            let end_row = if point.row == buffer.max_point().row {
-                wrap_snapshot.max_point().row() + 1
-            } else {
-                wrap_snapshot
-                    .from_point(Point::new(point.row + 1, 0), Bias::Left)
-                    .row()
-            };
+            let start_row = wrap_snapshot.prev_row_boundary(WrapPoint::new(wrap_row, 0));
+            let end_row = wrap_snapshot
+                .next_row_boundary(WrapPoint::new(wrap_row, 0))
+                .unwrap_or(wrap_snapshot.max_point().row() + 1);
 
             let block_ix = match self
                 .0
                 .blocks
-                .binary_search_by(|probe| probe.position.cmp(&position, buffer).unwrap())
+                .binary_search_by(|probe| probe.position.cmp(&position, &buffer).unwrap())
             {
                 Ok(ix) | Err(ix) => ix,
             };
@@ -430,30 +417,27 @@ impl<'a> BlockMapWriter<'a> {
             }
         }
 
-        self.0.sync(wrap_snapshot, edits, cx);
+        self.0.sync(wrap_snapshot, edits);
         ids
     }
 
-    pub fn remove(&mut self, block_ids: HashSet<BlockId>, cx: &AppContext) {
-        let buffer = self.0.buffer.read(cx);
+    pub fn remove(&mut self, block_ids: HashSet<BlockId>) {
         let wrap_snapshot = &*self.0.wrap_snapshot.lock();
+        let buffer = wrap_snapshot.buffer_snapshot();
         let mut edits = Vec::new();
         let mut last_block_buffer_row = None;
         self.0.blocks.retain(|block| {
             if block_ids.contains(&block.id) {
-                let buffer_row = block.position.to_point(buffer).row;
+                let buffer_row = block.position.to_point(&buffer).row;
                 if last_block_buffer_row != Some(buffer_row) {
                     last_block_buffer_row = Some(buffer_row);
-                    let start_row = wrap_snapshot
+                    let wrap_row = wrap_snapshot
                         .from_point(Point::new(buffer_row, 0), Bias::Left)
                         .row();
+                    let start_row = wrap_snapshot.prev_row_boundary(WrapPoint::new(wrap_row, 0));
                     let end_row = wrap_snapshot
-                        .from_point(
-                            Point::new(buffer_row, buffer.line_len(buffer_row)),
-                            Bias::Left,
-                        )
-                        .row()
-                        + 1;
+                        .next_row_boundary(WrapPoint::new(wrap_row, 0))
+                        .unwrap_or(wrap_snapshot.max_point().row() + 1);
                     edits.push(Edit {
                         old: start_row..end_row,
                         new: start_row..end_row,
@@ -464,19 +448,23 @@ impl<'a> BlockMapWriter<'a> {
                 true
             }
         });
-        self.0.sync(wrap_snapshot, edits, cx);
+        self.0.sync(wrap_snapshot, edits);
     }
 }
 
 impl BlockSnapshot {
     #[cfg(test)]
-    fn text(&mut self) -> String {
+    pub fn text(&self) -> String {
         self.chunks(0..self.transforms.summary().output_rows, None)
             .map(|chunk| chunk.text)
             .collect()
     }
 
-    pub fn chunks<'a>(&'a self, rows: Range<u32>, theme: Option<&'a SyntaxTheme>) -> Chunks<'a> {
+    pub fn chunks<'a>(
+        &'a self,
+        rows: Range<u32>,
+        theme: Option<&'a SyntaxTheme>,
+    ) -> BlockChunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
         let input_end = {
@@ -503,7 +491,7 @@ impl BlockSnapshot {
             };
             cursor.start().1 .0 + overshoot
         };
-        Chunks {
+        BlockChunks {
             input_chunks: self.wrap_snapshot.chunks(input_start..input_end, theme),
             input_chunk: Default::default(),
             transforms: cursor,
@@ -512,7 +500,7 @@ impl BlockSnapshot {
         }
     }
 
-    pub fn buffer_rows<'a>(&'a self, start_row: u32) -> BufferRows<'a> {
+    pub fn buffer_rows<'a>(&'a self, start_row: u32) -> BlockBufferRows<'a> {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
         cursor.seek(&BlockRow(start_row), Bias::Right, &());
         let (output_start, input_start) = cursor.start();
@@ -522,7 +510,7 @@ impl BlockSnapshot {
             0
         };
         let input_start_row = input_start.0 + overshoot;
-        BufferRows {
+        BlockBufferRows {
             transforms: cursor,
             input_buffer_rows: self.wrap_snapshot.buffer_rows(input_start_row),
             output_row: start_row,
@@ -590,41 +578,45 @@ impl BlockSnapshot {
         cursor.seek(&BlockRow(point.row), Bias::Right, &());
 
         let max_input_row = WrapRow(self.transforms.summary().input_rows);
-        let search_left =
+        let mut search_left =
             (bias == Bias::Left && cursor.start().1 .0 > 0) || cursor.end(&()).1 == max_input_row;
+        let mut reversed = false;
 
         loop {
             if let Some(transform) = cursor.item() {
                 if transform.is_isomorphic() {
                     let (output_start_row, input_start_row) = cursor.start();
                     let (output_end_row, input_end_row) = cursor.end(&());
-
-                    if point.row >= output_end_row.0 {
-                        return BlockPoint::new(
-                            output_end_row.0 - 1,
-                            self.wrap_snapshot.line_len(input_end_row.0 - 1),
-                        );
-                    }
-
                     let output_start = Point::new(output_start_row.0, 0);
-                    if point.0 > output_start {
-                        let output_overshoot = point.0 - output_start;
-                        let input_start = Point::new(input_start_row.0, 0);
-                        let input_point = self
-                            .wrap_snapshot
-                            .clip_point(WrapPoint(input_start + output_overshoot), bias);
-                        let input_overshoot = input_point.0 - input_start;
-                        return BlockPoint(output_start + input_overshoot);
+                    let input_start = Point::new(input_start_row.0, 0);
+                    let input_end = Point::new(input_end_row.0, 0);
+                    let input_point = if point.row >= output_end_row.0 {
+                        let line_len = self.wrap_snapshot.line_len(input_end_row.0 - 1);
+                        self.wrap_snapshot
+                            .clip_point(WrapPoint::new(input_end_row.0 - 1, line_len), bias)
                     } else {
-                        return BlockPoint(output_start);
+                        let output_overshoot = point.0.saturating_sub(output_start);
+                        self.wrap_snapshot
+                            .clip_point(WrapPoint(input_start + output_overshoot), bias)
+                    };
+
+                    if (input_start..input_end).contains(&input_point.0) {
+                        let input_overshoot = input_point.0.saturating_sub(input_start);
+                        return BlockPoint(output_start + input_overshoot);
                     }
-                } else if search_left {
+                }
+
+                if search_left {
                     cursor.prev(&());
                 } else {
                     cursor.next(&());
                 }
-            } else {
+            } else if reversed {
                 return self.max_point();
+            } else {
+                reversed = true;
+                search_left = !search_left;
+                cursor.seek(&BlockRow(point.row), Bias::Right, &());
             }
         }
     }
@@ -693,7 +685,7 @@ impl Transform {
     }
 }
 
-impl<'a> Iterator for Chunks<'a> {
+impl<'a> Iterator for BlockChunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -756,7 +748,7 @@ impl<'a> Iterator for Chunks<'a> {
     }
 }
 
-impl<'a> Iterator for BufferRows<'a> {
+impl<'a> Iterator for BlockBufferRows<'a> {
     type Item = Option<u32>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -840,6 +832,14 @@ impl Deref for AlignedBlock {
     }
 }
 
+impl<'a> Deref for BlockContext<'a> {
+    type Target = AppContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.cx
+    }
+}
+
 impl Debug for Block {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Block")
@@ -872,8 +872,8 @@ fn offset_for_row(s: &str, target: u32) -> (u32, usize) {
 mod tests {
     use super::*;
     use crate::display_map::{fold_map::FoldMap, tab_map::TabMap, wrap_map::WrapMap};
+    use crate::multi_buffer::MultiBuffer;
     use gpui::{elements::Empty, Element};
-    use language::Buffer;
     use rand::prelude::*;
     use std::env;
     use text::RandomCharIter;
@@ -902,38 +902,36 @@ mod tests {
 
         let text = "aaa\nbbb\nccc\nddd";
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        let (fold_map, folds_snapshot) = FoldMap::new(buffer.read(cx).snapshot());
+        let buffer = MultiBuffer::build_simple(text, cx);
+        let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
+        let (fold_map, folds_snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
         let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), 1);
         let (wrap_map, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, None, cx);
-        let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot.clone());
+        let mut block_map = BlockMap::new(wraps_snapshot.clone());
 
-        let mut writer = block_map.write(wraps_snapshot.clone(), vec![], cx);
-        writer.insert(
-            vec![
-                BlockProperties {
-                    position: Point::new(1, 0),
-                    height: 1,
-                    disposition: BlockDisposition::Above,
-                    render: Arc::new(|_| Empty::new().named("block 1")),
-                },
-                BlockProperties {
-                    position: Point::new(1, 2),
-                    height: 2,
-                    disposition: BlockDisposition::Above,
-                    render: Arc::new(|_| Empty::new().named("block 2")),
-                },
-                BlockProperties {
-                    position: Point::new(3, 3),
-                    height: 3,
-                    disposition: BlockDisposition::Below,
-                    render: Arc::new(|_| Empty::new().named("block 3")),
-                },
-            ],
-            cx,
-        );
+        let mut writer = block_map.write(wraps_snapshot.clone(), vec![]);
+        writer.insert(vec![
+            BlockProperties {
+                position: Point::new(1, 0),
+                height: 1,
+                disposition: BlockDisposition::Above,
+                render: Arc::new(|_| Empty::new().named("block 1")),
+            },
+            BlockProperties {
+                position: Point::new(1, 2),
+                height: 2,
+                disposition: BlockDisposition::Above,
+                render: Arc::new(|_| Empty::new().named("block 2")),
+            },
+            BlockProperties {
+                position: Point::new(3, 3),
+                height: 3,
+                disposition: BlockDisposition::Below,
+                render: Arc::new(|_| Empty::new().named("block 3")),
+            },
+        ]);
 
-        let mut snapshot = block_map.read(wraps_snapshot, vec![], cx);
+        let snapshot = block_map.read(wraps_snapshot, vec![]);
         assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n");
 
         let blocks = snapshot
@@ -1046,20 +1044,19 @@ mod tests {
             ]
         );
 
-        // Insert a line break, separating two block decorations into separate
-        // lines.
-        let (buffer_snapshot, buffer_edits) = buffer.update(cx, |buffer, cx| {
-            let v0 = buffer.version();
+        // Insert a line break, separating two block decorations into separate lines.
+        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
             buffer.edit([Point::new(1, 1)..Point::new(1, 1)], "!!!\n", cx);
-            (buffer.snapshot(), buffer.edits_since(&v0).collect())
+            buffer.snapshot(cx)
         });
 
-        let (folds_snapshot, fold_edits) = fold_map.read(buffer_snapshot, buffer_edits);
+        let (folds_snapshot, fold_edits) =
+            fold_map.read(buffer_snapshot, subscription.consume().into_inner());
         let (tabs_snapshot, tab_edits) = tab_map.sync(folds_snapshot, fold_edits);
         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
             wrap_map.sync(tabs_snapshot, tab_edits, cx)
         });
-        let mut snapshot = block_map.read(wraps_snapshot, wrap_edits, cx);
+        let snapshot = block_map.read(wraps_snapshot, wrap_edits);
         assert_eq!(snapshot.text(), "aaa\n\nb!!!\n\n\nbb\nccc\nddd\n\n\n");
     }
 
@@ -1073,34 +1070,31 @@ mod tests {
 
         let text = "one two three\nfour five six\nseven eight";
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
-        let (_, folds_snapshot) = FoldMap::new(buffer.read(cx).snapshot());
+        let buffer = MultiBuffer::build_simple(text, cx);
+        let (_, folds_snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
         let (_, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), 1);
         let (_, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, Some(60.), cx);
-        let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot.clone());
+        let mut block_map = BlockMap::new(wraps_snapshot.clone());
 
-        let mut writer = block_map.write(wraps_snapshot.clone(), vec![], cx);
-        writer.insert(
-            vec![
-                BlockProperties {
-                    position: Point::new(1, 12),
-                    disposition: BlockDisposition::Above,
-                    render: Arc::new(|_| Empty::new().named("block 1")),
-                    height: 1,
-                },
-                BlockProperties {
-                    position: Point::new(1, 1),
-                    disposition: BlockDisposition::Below,
-                    render: Arc::new(|_| Empty::new().named("block 2")),
-                    height: 1,
-                },
-            ],
-            cx,
-        );
+        let mut writer = block_map.write(wraps_snapshot.clone(), vec![]);
+        writer.insert(vec![
+            BlockProperties {
+                position: Point::new(1, 12),
+                disposition: BlockDisposition::Above,
+                render: Arc::new(|_| Empty::new().named("block 1")),
+                height: 1,
+            },
+            BlockProperties {
+                position: Point::new(1, 1),
+                disposition: BlockDisposition::Below,
+                render: Arc::new(|_| Empty::new().named("block 2")),
+                height: 1,
+            },
+        ]);
 
         // Blocks with an 'above' disposition go above their corresponding buffer line.
         // Blocks with a 'below' disposition go below their corresponding buffer line.
-        let mut snapshot = block_map.read(wraps_snapshot, vec![], cx);
+        let snapshot = block_map.read(wraps_snapshot, vec![]);
         assert_eq!(
             snapshot.text(),
             "one two \nthree\n\nfour five \nsix\n\nseven \neight"
@@ -1128,18 +1122,21 @@ mod tests {
 
         log::info!("Wrap width: {:?}", wrap_width);
 
-        let buffer = cx.add_model(|cx| {
+        let buffer = if rng.gen() {
             let len = rng.gen_range(0..10);
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
             log::info!("initial buffer text: {:?}", text);
-            Buffer::new(0, text, cx)
-        });
-        let mut buffer_snapshot = buffer.read(cx).snapshot();
+            MultiBuffer::build_simple(&text, cx)
+        } else {
+            MultiBuffer::build_random(&mut rng, cx)
+        };
+
+        let mut buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (fold_map, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
         let (wrap_map, wraps_snapshot) =
             WrapMap::new(tabs_snapshot, font_id, font_size, wrap_width, cx);
-        let mut block_map = BlockMap::new(buffer.clone(), wraps_snapshot);
+        let mut block_map = BlockMap::new(wraps_snapshot);
         let mut expected_blocks = Vec::new();
 
         for _ in 0..operations {
@@ -1155,10 +1152,10 @@ mod tests {
                     wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
                 }
                 20..=39 => {
-                    let block_count = rng.gen_range(1..=1);
+                    let block_count = rng.gen_range(1..=5);
                     let block_properties = (0..block_count)
                         .map(|_| {
-                            let buffer = buffer.read(cx);
+                            let buffer = buffer.read(cx).read(cx);
                             let position = buffer.anchor_after(
                                 buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Left),
                             );
@@ -1172,7 +1169,7 @@ mod tests {
                             log::info!(
                                 "inserting block {:?} {:?} with height {}",
                                 disposition,
-                                position.to_point(buffer),
+                                position.to_point(&buffer),
                                 height
                             );
                             BlockProperties {
@@ -1190,8 +1187,8 @@ mod tests {
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tabs_snapshot, tab_edits, cx)
                     });
-                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits, cx);
-                    let block_ids = block_map.insert(block_properties.clone(), cx);
+                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
+                    let block_ids = block_map.insert(block_properties.clone());
                     for (block_id, props) in block_ids.into_iter().zip(block_properties) {
                         expected_blocks.push((block_id, props));
                     }
@@ -1212,17 +1209,17 @@ mod tests {
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                         wrap_map.sync(tabs_snapshot, tab_edits, cx)
                     });
-                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits, cx);
-                    block_map.remove(block_ids_to_remove, cx);
+                    let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
+                    block_map.remove(block_ids_to_remove);
                 }
                 _ => {
                     buffer.update(cx, |buffer, cx| {
-                        let v0 = buffer.version();
                         let edit_count = rng.gen_range(1..=5);
+                        let subscription = buffer.subscribe();
                         buffer.randomly_edit(&mut rng, edit_count, cx);
-                        log::info!("buffer text: {:?}", buffer.text());
-                        buffer_edits.extend(buffer.edits_since(&v0));
-                        buffer_snapshot = buffer.snapshot();
+                        buffer_snapshot = buffer.snapshot(cx);
+                        buffer_edits.extend(subscription.consume());
+                        log::info!("buffer text: {:?}", buffer_snapshot.text());
                     });
                 }
             }
@@ -1232,26 +1229,25 @@ mod tests {
             let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
                 wrap_map.sync(tabs_snapshot, tab_edits, cx)
             });
-            let mut blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits, cx);
+            let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
             assert_eq!(
                 blocks_snapshot.transforms.summary().input_rows,
                 wraps_snapshot.max_point().row() + 1
             );
             log::info!("blocks text: {:?}", blocks_snapshot.text());
 
-            let buffer = buffer.read(cx);
             let mut sorted_blocks = expected_blocks
                 .iter()
                 .cloned()
                 .map(|(id, block)| {
-                    let mut position = block.position.to_point(buffer);
+                    let mut position = block.position.to_point(&buffer_snapshot);
                     let column = wraps_snapshot.from_point(position, Bias::Left).column();
                     match block.disposition {
                         BlockDisposition::Above => {
                             position.column = 0;
                         }
                         BlockDisposition::Below => {
-                            position.column = buffer.line_len(position.row);
+                            position.column = buffer_snapshot.line_len(position.row);
                         }
                     };
                     let row = wraps_snapshot.from_point(position, Bias::Left).row();
@@ -1270,6 +1266,7 @@ mod tests {
                 .sort_unstable_by_key(|(id, block)| (block.position.row, block.disposition, *id));
             let mut sorted_blocks = sorted_blocks.into_iter().peekable();
 
+            let input_buffer_rows = buffer_snapshot.buffer_rows(0).collect::<Vec<_>>();
             let mut expected_buffer_rows = Vec::new();
             let mut expected_text = String::new();
             let input_text = wraps_snapshot.text();
@@ -1279,9 +1276,9 @@ mod tests {
                     expected_text.push('\n');
                 }
 
-                let buffer_row = wraps_snapshot
+                let buffer_row = input_buffer_rows[wraps_snapshot
                     .to_point(WrapPoint::new(row, 0), Bias::Left)
-                    .row;
+                    .row as usize];
 
                 while let Some((_, block)) = sorted_blocks.peek() {
                     if block.position.row == row && block.disposition == BlockDisposition::Above {
@@ -1297,7 +1294,7 @@ mod tests {
                 }
 
                 let soft_wrapped = wraps_snapshot.to_tab_point(WrapPoint::new(row, 0)).column() > 0;
-                expected_buffer_rows.push(if soft_wrapped { None } else { Some(buffer_row) });
+                expected_buffer_rows.push(if soft_wrapped { None } else { buffer_row });
                 expected_text.push_str(input_line);
 
                 while let Some((_, block)) = sorted_blocks.peek() {
@@ -1377,14 +1374,28 @@ mod tests {
             let mut block_point = BlockPoint::new(0, 0);
             for c in expected_text.chars() {
                 let left_point = blocks_snapshot.clip_point(block_point, Bias::Left);
-                let right_point = blocks_snapshot.clip_point(block_point, Bias::Right);
-
+                let left_buffer_point = blocks_snapshot.to_point(left_point, Bias::Left);
                 assert_eq!(
                     blocks_snapshot.to_block_point(blocks_snapshot.to_wrap_point(left_point)),
                     left_point
                 );
                 assert_eq!(
+                    left_buffer_point,
+                    buffer_snapshot.clip_point(left_buffer_point, Bias::Right),
+                    "{:?} is not valid in buffer coordinates",
+                    left_point
+                );
+
+                let right_point = blocks_snapshot.clip_point(block_point, Bias::Right);
+                let right_buffer_point = blocks_snapshot.to_point(right_point, Bias::Right);
+                assert_eq!(
                     blocks_snapshot.to_block_point(blocks_snapshot.to_wrap_point(right_point)),
+                    right_point
+                );
+                assert_eq!(
+                    right_buffer_point,
+                    buffer_snapshot.clip_point(right_buffer_point, Bias::Left),
+                    "{:?} is not valid in buffer coordinates",
                     right_point
                 );
 
@@ -1394,6 +1405,12 @@ mod tests {
                     block_point.column += c.len_utf8() as u32;
                 }
             }
+        }
+    }
+
+    impl BlockSnapshot {
+        fn to_point(&self, point: BlockPoint, bias: Bias) -> Point {
+            self.wrap_snapshot.to_point(self.to_wrap_point(point), bias)
         }
     }
 }

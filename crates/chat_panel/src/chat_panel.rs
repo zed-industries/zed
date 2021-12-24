@@ -56,14 +56,14 @@ impl ChatPanel {
                 4,
                 {
                     let settings = settings.clone();
-                    move |_| {
+                    Arc::new(move |_| {
                         let settings = settings.borrow();
                         EditorSettings {
                             tab_size: settings.tab_size,
                             style: settings.theme.chat_panel.input_editor.as_editor(),
                             soft_wrap: editor::SoftWrap::EditorWidth,
                         }
-                    }
+                    })
                 },
                 cx,
             )

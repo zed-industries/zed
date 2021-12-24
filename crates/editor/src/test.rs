@@ -9,19 +9,6 @@ fn init_logger() {
     env_logger::init();
 }
 
-pub fn sample_text(rows: usize, cols: usize) -> String {
-    let mut text = String::new();
-    for row in 0..rows {
-        let c: char = ('a' as u32 + row as u32) as u8 as char;
-        let mut line = c.to_string().repeat(cols);
-        if row < rows - 1 {
-            line.push('\n');
-        }
-        text += &line;
-    }
-    text
-}
-
 pub struct Observer<T>(PhantomData<T>);
 
 impl<T: 'static> Entity for Observer<T> {

@@ -78,6 +78,8 @@ fn test_random_edits(mut rng: StdRng) {
             TextSummary::from(&reference_string[range])
         );
 
+        buffer.check_invariants();
+
         if rng.gen_bool(0.3) {
             buffer_versions.push((buffer.clone(), buffer.subscribe()));
         }
@@ -101,6 +103,32 @@ fn test_random_edits(mut rng: StdRng) {
             text.replace(edit.new.start..edit.new.start + edit.old.len(), &new_text);
         }
         assert_eq!(text.to_string(), buffer.text());
+
+        for _ in 0..5 {
+            let end_ix = old_buffer.clip_offset(rng.gen_range(0..=old_buffer.len()), Bias::Right);
+            let start_ix = old_buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
+            let range = old_buffer.anchor_before(start_ix)..old_buffer.anchor_after(end_ix);
+            let mut old_text = old_buffer.text_for_range(range.clone()).collect::<String>();
+            let edits = buffer
+                .edits_since_in_range::<usize>(&old_buffer.version, range.clone())
+                .collect::<Vec<_>>();
+            log::info!(
+                "applying edits since version {:?} to old text in range {:?}: {:?}: {:?}",
+                old_buffer.version(),
+                start_ix..end_ix,
+                old_text,
+                edits,
+            );
+
+            let new_text = buffer.text_for_range(range).collect::<String>();
+            for edit in edits {
+                old_text.replace_range(
+                    edit.new.start..edit.new.start + edit.old_len(),
+                    &new_text[edit.new],
+                );
+            }
+            assert_eq!(old_text, new_text);
+        }
 
         let subscription_edits = subscription.consume();
         log::info!(
@@ -432,63 +460,41 @@ fn test_history() {
     let mut now = Instant::now();
     let mut buffer = Buffer::new(0, 0, History::new("123456".into()));
 
-    let set_id = if let Operation::UpdateSelections { set_id, .. } =
-        buffer.add_selection_set(&buffer.selections_from_ranges(vec![4..4]).unwrap())
-    {
-        set_id
-    } else {
-        unreachable!()
-    };
-    buffer.start_transaction_at(Some(set_id), now).unwrap();
+    buffer.start_transaction_at(now);
     buffer.edit(vec![2..4], "cd");
-    buffer.end_transaction_at(Some(set_id), now).unwrap();
+    buffer.end_transaction_at(now);
     assert_eq!(buffer.text(), "12cd56");
-    assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![4..4]);
 
-    buffer.start_transaction_at(Some(set_id), now).unwrap();
-    buffer
-        .update_selection_set(set_id, &buffer.selections_from_ranges(vec![1..3]).unwrap())
-        .unwrap();
+    buffer.start_transaction_at(now);
     buffer.edit(vec![4..5], "e");
-    buffer.end_transaction_at(Some(set_id), now).unwrap();
+    buffer.end_transaction_at(now).unwrap();
     assert_eq!(buffer.text(), "12cde6");
-    assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![1..3]);
 
     now += buffer.history.group_interval + Duration::from_millis(1);
-    buffer.start_transaction_at(Some(set_id), now).unwrap();
-    buffer
-        .update_selection_set(set_id, &buffer.selections_from_ranges(vec![2..2]).unwrap())
-        .unwrap();
+    buffer.start_transaction_at(now);
     buffer.edit(vec![0..1], "a");
     buffer.edit(vec![1..1], "b");
-    buffer.end_transaction_at(Some(set_id), now).unwrap();
+    buffer.end_transaction_at(now).unwrap();
     assert_eq!(buffer.text(), "ab2cde6");
-    assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![3..3]);
 
-    // Last transaction happened past the group interval, undo it on its
-    // own.
+    // Last transaction happened past the group interval, undo it on its own.
     buffer.undo();
     assert_eq!(buffer.text(), "12cde6");
-    assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![1..3]);
 
-    // First two transactions happened within the group interval, undo them
-    // together.
+    // First two transactions happened within the group interval, undo them together.
     buffer.undo();
     assert_eq!(buffer.text(), "123456");
-    assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![4..4]);
 
     // Redo the first two transactions together.
     buffer.redo();
     assert_eq!(buffer.text(), "12cde6");
-    assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![1..3]);
 
     // Redo the last transaction on its own.
     buffer.redo();
     assert_eq!(buffer.text(), "ab2cde6");
-    assert_eq!(buffer.selection_ranges(set_id).unwrap(), vec![3..3]);
 
-    buffer.start_transaction_at(None, now).unwrap();
-    assert!(buffer.end_transaction_at(None, now).is_none());
+    buffer.start_transaction_at(now);
+    assert!(buffer.end_transaction_at(now).is_none());
     buffer.undo();
     assert_eq!(buffer.text(), "12cde6");
 }
@@ -554,8 +560,8 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
         let buffer = &mut buffers[replica_index];
         match rng.gen_range(0..=100) {
             0..=50 if mutation_count != 0 => {
-                let ops = buffer.randomly_mutate(&mut rng);
-                network.broadcast(buffer.replica_id, ops);
+                let op = buffer.randomly_edit(&mut rng, 5).2;
+                network.broadcast(buffer.replica_id, vec![op]);
                 log::info!("buffer {} text: {:?}", buffer.replica_id, buffer.text());
                 mutation_count -= 1;
             }
@@ -577,6 +583,7 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
             }
             _ => {}
         }
+        buffer.check_invariants();
 
         if mutation_count == 0 && network.is_idle() {
             break;
@@ -591,18 +598,7 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
             "Replica {} text != Replica 0 text",
             buffer.replica_id
         );
-        assert_eq!(
-            buffer.selection_sets().collect::<HashMap<_, _>>(),
-            first_buffer.selection_sets().collect::<HashMap<_, _>>()
-        );
-        assert_eq!(
-            buffer
-                .all_selection_ranges::<usize>()
-                .collect::<HashMap<_, _>>(),
-            first_buffer
-                .all_selection_ranges::<usize>()
-                .collect::<HashMap<_, _>>()
-        );
+        buffer.check_invariants();
     }
 }
 
@@ -616,6 +612,39 @@ struct Network<T: Clone, R: rand::Rng> {
     inboxes: std::collections::BTreeMap<ReplicaId, Vec<Envelope<T>>>,
     all_messages: Vec<T>,
     rng: R,
+}
+
+impl Buffer {
+    fn check_invariants(&self) {
+        // Ensure every fragment is ordered by locator in the fragment tree and corresponds
+        // to an insertion fragment in the insertions tree.
+        let mut prev_fragment_id = Locator::min();
+        for fragment in self.snapshot.fragments.items(&None) {
+            assert!(fragment.id > prev_fragment_id);
+            prev_fragment_id = fragment.id.clone();
+
+            let insertion_fragment = self
+                .snapshot
+                .insertions
+                .get(
+                    &InsertionFragmentKey {
+                        timestamp: fragment.insertion_timestamp.local(),
+                        split_offset: fragment.insertion_offset,
+                    },
+                    &(),
+                )
+                .unwrap();
+            assert_eq!(insertion_fragment.fragment_id, fragment.id);
+        }
+
+        let mut cursor = self.snapshot.fragments.cursor::<Option<&Locator>>();
+        for insertion_fragment in self.snapshot.insertions.cursor::<()>() {
+            cursor.seek(&Some(&insertion_fragment.fragment_id), Bias::Left, &None);
+            let fragment = cursor.item().unwrap();
+            assert_eq!(insertion_fragment.fragment_id, fragment.id);
+            assert_eq!(insertion_fragment.split_offset, fragment.insertion_offset);
+        }
+    }
 }
 
 impl<T: Clone, R: rand::Rng> Network<T, R> {

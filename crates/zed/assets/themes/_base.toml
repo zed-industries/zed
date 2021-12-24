@@ -156,30 +156,30 @@ host_username = { extends = "$text.0", padding.left = 8 }
 tree_branch_width = 1
 tree_branch_color = "$surface.2"
 
-[contacts_panel.worktree]
+[contacts_panel.project]
 height = 24
 padding = { left = 8 }
 guest_avatar = { corner_radius = 8, width = 14 }
 guest_avatar_spacing = 4
 
-[contacts_panel.worktree.name]
+[contacts_panel.project.name]
 extends = "$text.1"
 margin = { right = 6 }
 
-[contacts_panel.unshared_worktree]
-extends = "$contacts_panel.worktree"
+[contacts_panel.unshared_project]
+extends = "$contacts_panel.project"
 
-[contacts_panel.hovered_unshared_worktree]
-extends = "$contacts_panel.unshared_worktree"
+[contacts_panel.hovered_unshared_project]
+extends = "$contacts_panel.unshared_project"
 background = "$state.hover"
 corner_radius = 6
 
-[contacts_panel.shared_worktree]
-extends = "$contacts_panel.worktree"
+[contacts_panel.shared_project]
+extends = "$contacts_panel.project"
 name.color = "$text.0.color"
 
-[contacts_panel.hovered_shared_worktree]
-extends = "$contacts_panel.shared_worktree"
+[contacts_panel.hovered_shared_project]
+extends = "$contacts_panel.shared_project"
 background = "$state.hover"
 corner_radius = 6
 

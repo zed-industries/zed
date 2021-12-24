@@ -1,28 +1,27 @@
-use crate::{Editor, EditorSettings, Event};
+use crate::{Editor, Event};
+use crate::{MultiBuffer, ToPoint as _};
 use anyhow::Result;
 use gpui::{
-    elements::*, fonts::TextStyle, AppContext, Entity, ModelContext, ModelHandle,
-    MutableAppContext, RenderContext, Subscription, Task, View, ViewContext, ViewHandle,
-    WeakModelHandle,
+    elements::*, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, RenderContext,
+    Subscription, Task, View, ViewContext, ViewHandle, WeakModelHandle,
 };
-use language::{Buffer, Diagnostic, File as _};
+use language::{Diagnostic, File as _};
 use postage::watch;
 use project::{ProjectPath, Worktree};
 use std::fmt::Write;
 use std::path::Path;
-use text::{Point, Selection, ToPoint};
+use text::{Point, Selection};
 use workspace::{
-    settings, EntryOpener, ItemHandle, ItemView, ItemViewHandle, Settings, StatusItemView,
-    WeakItemHandle,
+    EntryOpener, ItemHandle, ItemView, ItemViewHandle, Settings, StatusItemView, WeakItemHandle,
 };
 
 pub struct BufferOpener;
 
 #[derive(Clone)]
-pub struct BufferItemHandle(pub ModelHandle<Buffer>);
+pub struct BufferItemHandle(pub ModelHandle<MultiBuffer>);
 
 #[derive(Clone)]
-struct WeakBufferItemHandle(WeakModelHandle<Buffer>);
+struct WeakBufferItemHandle(WeakModelHandle<MultiBuffer>);
 
 impl EntryOpener for BufferOpener {
     fn open(
@@ -32,10 +31,10 @@ impl EntryOpener for BufferOpener {
         cx: &mut ModelContext<Worktree>,
     ) -> Option<Task<Result<Box<dyn ItemHandle>>>> {
         let buffer = worktree.open_buffer(project_path.path, cx);
-        let task = cx.spawn(|_, _| async move {
-            buffer
-                .await
-                .map(|buffer| Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)
+        let task = cx.spawn(|_, mut cx| async move {
+            let buffer = buffer.await?;
+            let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+            Ok(Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)
         });
         Some(task)
     }
@@ -52,42 +51,7 @@ impl ItemHandle for BufferItemHandle {
         Box::new(cx.add_view(window_id, |cx| {
             Editor::for_buffer(
                 self.0.clone(),
-                move |cx| {
-                    let settings = settings.borrow();
-                    let font_cache = cx.font_cache();
-                    let font_family_id = settings.buffer_font_family;
-                    let font_family_name = cx.font_cache().family_name(font_family_id).unwrap();
-                    let font_properties = Default::default();
-                    let font_id = font_cache
-                        .select_font(font_family_id, &font_properties)
-                        .unwrap();
-                    let font_size = settings.buffer_font_size;
-
-                    let mut theme = settings.theme.editor.clone();
-                    theme.text = TextStyle {
-                        color: theme.text.color,
-                        font_family_name,
-                        font_family_id,
-                        font_id,
-                        font_size,
-                        font_properties,
-                        underline: None,
-                    };
-                    let language = buffer.upgrade(cx).and_then(|buf| buf.read(cx).language());
-                    let soft_wrap = match settings.soft_wrap(language) {
-                        settings::SoftWrap::None => crate::SoftWrap::None,
-                        settings::SoftWrap::EditorWidth => crate::SoftWrap::EditorWidth,
-                        settings::SoftWrap::PreferredLineLength => crate::SoftWrap::Column(
-                            settings.preferred_line_length(language).saturating_sub(1),
-                        ),
-                    };
-
-                    EditorSettings {
-                        tab_size: settings.tab_size,
-                        soft_wrap,
-                        style: theme,
-                    }
-                },
+                crate::settings_builder(buffer, settings),
                 cx,
             )
         }))
@@ -102,7 +66,7 @@ impl ItemHandle for BufferItemHandle {
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
-        self.0.read(cx).file().map(|f| ProjectPath {
+        self.0.read(cx).file(cx).map(|f| ProjectPath {
             worktree_id: f.worktree_id(),
             path: f.path().clone(),
         })
@@ -137,7 +101,7 @@ impl ItemView for Editor {
         let filename = self
             .buffer()
             .read(cx)
-            .file()
+            .file(cx)
             .and_then(|file| file.file_name());
         if let Some(name) = filename {
             name.to_string_lossy().into()
@@ -147,7 +111,7 @@ impl ItemView for Editor {
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
-        self.buffer().read(cx).file().map(|file| ProjectPath {
+        self.buffer().read(cx).file(cx).map(|file| ProjectPath {
             worktree_id: file.worktree_id(),
             path: file.path().clone(),
         })
@@ -174,7 +138,14 @@ impl ItemView for Editor {
         path: &Path,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        self.buffer().update(cx, |buffer, cx| {
+        let buffer = self
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .expect("cannot call save_as on an excerpt list")
+            .clone();
+
+        buffer.update(cx, |buffer, cx| {
             let handle = cx.handle();
             let text = buffer.as_rope().clone();
             let version = buffer.version();
@@ -191,12 +162,12 @@ impl ItemView for Editor {
                     let (language, language_server) = worktree.update(&mut cx, |worktree, cx| {
                         let worktree = worktree.as_local_mut().unwrap();
                         let language = worktree
-                            .languages()
+                            .language_registry()
                             .select_language(new_file.full_path())
                             .cloned();
                         let language_server = language
                             .as_ref()
-                            .and_then(|language| worktree.ensure_language_server(language, cx));
+                            .and_then(|language| worktree.register_language(language, cx));
                         (language, language_server.clone())
                     });
 
@@ -210,11 +181,19 @@ impl ItemView for Editor {
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.buffer().read(cx).is_dirty()
+        self.buffer().read(cx).read(cx).is_dirty()
     }
 
     fn has_conflict(&self, cx: &AppContext) -> bool {
-        self.buffer().read(cx).has_conflict()
+        self.buffer().read(cx).read(cx).has_conflict()
+    }
+
+    fn can_save(&self, cx: &AppContext) -> bool {
+        self.project_path(cx).is_some()
+    }
+
+    fn can_save_as(&self, _: &AppContext) -> bool {
+        true
     }
 }
 
@@ -237,11 +216,11 @@ impl CursorPosition {
 
     fn update_position(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
         let editor = editor.read(cx);
-        let buffer = editor.buffer().read(cx);
+        let buffer = editor.buffer().read(cx).snapshot(cx);
 
         self.selected_count = 0;
         let mut last_selection: Option<Selection<usize>> = None;
-        for selection in editor.selections::<usize>(cx) {
+        for selection in editor.local_selections::<usize>(cx) {
             self.selected_count += selection.end - selection.start;
             if last_selection
                 .as_ref()
@@ -250,7 +229,7 @@ impl CursorPosition {
                 last_selection = Some(selection);
             }
         }
-        self.position = last_selection.map(|s| s.head().to_point(buffer));
+        self.position = last_selection.map(|s| s.head().to_point(&buffer));
 
         cx.notify();
     }
@@ -314,14 +293,14 @@ impl DiagnosticMessage {
 
     fn update(&mut self, editor: ViewHandle<Editor>, cx: &mut ViewContext<Self>) {
         let editor = editor.read(cx);
-        let cursor_position = editor.newest_selection(cx).head();
-        let new_diagnostic = editor
-            .buffer()
+        let buffer = editor.buffer().read(cx);
+        let cursor_position = editor.newest_selection::<usize>(&buffer.read(cx)).head();
+        let new_diagnostic = buffer
             .read(cx)
-            .diagnostics_in_range::<usize, usize>(cursor_position..cursor_position)
-            .filter(|(range, _)| !range.is_empty())
-            .min_by_key(|(range, diagnostic)| (diagnostic.severity, range.len()))
-            .map(|(_, diagnostic)| diagnostic.clone());
+            .diagnostics_in_range::<_, usize>(cursor_position..cursor_position)
+            .filter(|(_, entry)| !entry.range.is_empty())
+            .min_by_key(|(_, entry)| (entry.diagnostic.severity, entry.range.len()))
+            .map(|(_, entry)| entry.diagnostic);
         if new_diagnostic != self.diagnostic {
             self.diagnostic = new_diagnostic;
             cx.notify();

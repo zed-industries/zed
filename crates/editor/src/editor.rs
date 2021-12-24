@@ -2,37 +2,45 @@ pub mod display_map;
 mod element;
 pub mod items;
 pub mod movement;
+mod multi_buffer;
 
 #[cfg(test)]
 mod test;
 
 use aho_corasick::AhoCorasick;
 use clock::ReplicaId;
+use collections::{HashMap, HashSet};
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
 use gpui::{
     action,
-    elements::Text,
+    elements::*,
+    fonts::TextStyle,
     geometry::vector::{vec2f, Vector2F},
     keymap::Binding,
     text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
-    MutableAppContext, RenderContext, View, ViewContext, WeakViewHandle,
+    MutableAppContext, RenderContext, View, ViewContext, WeakModelHandle, WeakViewHandle,
 };
 use items::BufferItemHandle;
-use language::*;
+use itertools::Itertools as _;
+use language::{
+    BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point, Selection, SelectionGoal,
+    TransactionId,
+};
+pub use multi_buffer::{Anchor, ExcerptId, ExcerptProperties, MultiBuffer};
+use multi_buffer::{AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, ToOffset, ToPoint};
+use postage::watch;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
 use std::{
-    cell::RefCell,
     cmp,
-    collections::HashMap,
-    iter, mem,
-    ops::{Deref, Range, RangeInclusive},
-    rc::Rc,
+    iter::{self, FromIterator},
+    mem,
+    ops::{Deref, Range, RangeInclusive, Sub},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use sum_tree::Bias;
 use text::rope::TextDimension;
@@ -273,11 +281,13 @@ pub fn init(cx: &mut MutableAppContext, entry_openers: &mut Vec<Box<dyn EntryOpe
 }
 
 trait SelectionExt {
-    fn display_range(&self, map: &DisplayMapSnapshot) -> Range<DisplayPoint>;
+    fn offset_range(&self, buffer: &MultiBufferSnapshot) -> Range<usize>;
+    fn point_range(&self, buffer: &MultiBufferSnapshot) -> Range<Point>;
+    fn display_range(&self, map: &DisplaySnapshot) -> Range<DisplayPoint>;
     fn spanned_rows(
         &self,
         include_end_if_at_line_start: bool,
-        map: &DisplayMapSnapshot,
+        map: &DisplaySnapshot,
     ) -> SpannedRows;
 }
 
@@ -345,23 +355,27 @@ pub enum SoftWrap {
     Column(u32),
 }
 
+pub type BuildSettings = Arc<dyn 'static + Send + Sync + Fn(&AppContext) -> EditorSettings>;
+
 pub struct Editor {
     handle: WeakViewHandle<Self>,
-    buffer: ModelHandle<Buffer>,
+    buffer: ModelHandle<MultiBuffer>,
     display_map: ModelHandle<DisplayMap>,
-    selection_set_id: SelectionSetId,
+    next_selection_id: usize,
+    selections: Arc<[Selection<Anchor>]>,
     pending_selection: Option<PendingSelection>,
     columnar_selection_tail: Option<Anchor>,
-    next_selection_id: usize,
     add_selections_state: Option<AddSelectionsState>,
     select_next_state: Option<SelectNextState>,
+    selection_history:
+        HashMap<TransactionId, (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)>,
     autoclose_stack: Vec<BracketPairState>,
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     scroll_position: Vector2F,
     scroll_top_anchor: Anchor,
     autoscroll_request: Option<Autoscroll>,
-    build_settings: Rc<RefCell<dyn Fn(&AppContext) -> EditorSettings>>,
+    build_settings: BuildSettings,
     focused: bool,
     show_local_cursors: bool,
     blink_epoch: usize,
@@ -371,9 +385,9 @@ pub struct Editor {
     highlighted_row: Option<u32>,
 }
 
-pub struct Snapshot {
+pub struct EditorSnapshot {
     pub mode: EditorMode,
-    pub display_snapshot: DisplayMapSnapshot,
+    pub display_snapshot: DisplaySnapshot,
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
     scroll_position: Vector2F,
@@ -398,7 +412,7 @@ struct SelectNextState {
 
 #[derive(Debug)]
 struct BracketPairState {
-    ranges: AnchorRangeSet,
+    ranges: Vec<Range<Anchor>>,
     pair: BracketPair,
 }
 
@@ -417,11 +431,9 @@ struct ClipboardSelection {
 }
 
 impl Editor {
-    pub fn single_line(
-        build_settings: impl 'static + Fn(&AppContext) -> EditorSettings,
-        cx: &mut ViewContext<Self>,
-    ) -> Self {
+    pub fn single_line(build_settings: BuildSettings, cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let mut view = Self::for_buffer(buffer, build_settings, cx);
         view.mode = EditorMode::SingleLine;
         view
@@ -429,21 +441,22 @@ impl Editor {
 
     pub fn auto_height(
         max_lines: usize,
-        build_settings: impl 'static + Fn(&AppContext) -> EditorSettings,
+        build_settings: BuildSettings,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let mut view = Self::for_buffer(buffer, build_settings, cx);
         view.mode = EditorMode::AutoHeight { max_lines };
         view
     }
 
     pub fn for_buffer(
-        buffer: ModelHandle<Buffer>,
-        build_settings: impl 'static + Fn(&AppContext) -> EditorSettings,
+        buffer: ModelHandle<MultiBuffer>,
+        build_settings: BuildSettings,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        Self::new(buffer, Rc::new(RefCell::new(build_settings)), cx)
+        Self::new(buffer, build_settings, cx)
     }
 
     pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
@@ -454,11 +467,11 @@ impl Editor {
     }
 
     pub fn new(
-        buffer: ModelHandle<Buffer>,
-        build_settings: Rc<RefCell<dyn Fn(&AppContext) -> EditorSettings>>,
+        buffer: ModelHandle<MultiBuffer>,
+        build_settings: BuildSettings,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let settings = build_settings.borrow_mut()(cx);
+        let settings = build_settings(cx);
         let display_map = cx.add_model(|cx| {
             DisplayMap::new(
                 buffer.clone(),
@@ -475,28 +488,27 @@ impl Editor {
             .detach();
 
         let mut next_selection_id = 0;
-        let selection_set_id = buffer.update(cx, |buffer, cx| {
-            buffer.add_selection_set(
-                &[Selection {
-                    id: post_inc(&mut next_selection_id),
-                    start: 0,
-                    end: 0,
-                    reversed: false,
-                    goal: SelectionGoal::None,
-                }],
-                cx,
-            )
-        });
+        let selections = Arc::from(
+            &[Selection {
+                id: post_inc(&mut next_selection_id),
+                start: Anchor::min(),
+                end: Anchor::min(),
+                reversed: false,
+                goal: SelectionGoal::None,
+            }][..],
+        );
+
         Self {
             handle: cx.weak_handle(),
             buffer,
             display_map,
-            selection_set_id,
+            selections,
             pending_selection: None,
             columnar_selection_tail: None,
             next_selection_id,
             add_selections_state: None,
             select_next_state: None,
+            selection_history: Default::default(),
             autoclose_stack: Default::default(),
             select_larger_syntax_node_stack: Vec::new(),
             active_diagnostics: None,
@@ -522,6 +534,7 @@ impl Editor {
         let buffer = cx.add_model(|cx| {
             Buffer::new(0, "", cx).with_language(Some(language::PLAIN_TEXT.clone()), None, cx)
         });
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         workspace.add_item(BufferItemHandle(buffer), cx);
     }
 
@@ -529,12 +542,12 @@ impl Editor {
         self.buffer.read(cx).replica_id()
     }
 
-    pub fn buffer(&self) -> &ModelHandle<Buffer> {
+    pub fn buffer(&self) -> &ModelHandle<MultiBuffer> {
         &self.buffer
     }
 
-    pub fn snapshot(&mut self, cx: &mut MutableAppContext) -> Snapshot {
-        Snapshot {
+    pub fn snapshot(&mut self, cx: &mut MutableAppContext) -> EditorSnapshot {
+        EditorSnapshot {
             mode: self.mode,
             display_snapshot: self.display_map.update(cx, |map, cx| map.snapshot(cx)),
             scroll_position: self.scroll_position,
@@ -548,7 +561,7 @@ impl Editor {
     }
 
     pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
-        self.buffer.read(cx).language()
+        self.buffer.read(cx).language(cx)
     }
 
     pub fn set_placeholder_text(
@@ -564,18 +577,12 @@ impl Editor {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let scroll_top_buffer_offset =
             DisplayPoint::new(scroll_position.y() as u32, 0).to_offset(&map, Bias::Right);
-        self.scroll_top_anchor = self
-            .buffer
-            .read(cx)
+        self.scroll_top_anchor = map
+            .buffer_snapshot
             .anchor_at(scroll_top_buffer_offset, Bias::Right);
         self.scroll_position = vec2f(
             scroll_position.x(),
             scroll_position.y() - self.scroll_top_anchor.to_display_point(&map).row() as f32,
-        );
-
-        debug_assert_eq!(
-            compute_scroll_position(&map, self.scroll_position, &self.scroll_top_anchor),
-            scroll_position
         );
 
         cx.notify();
@@ -624,13 +631,13 @@ impl Editor {
         let first_cursor_top;
         let last_cursor_bottom;
         if autoscroll == Autoscroll::Newest {
-            let newest_selection = self.newest_selection::<Point>(cx);
+            let newest_selection = self.newest_selection::<Point>(&display_map.buffer_snapshot);
             first_cursor_top = newest_selection.head().to_display_point(&display_map).row() as f32;
             last_cursor_bottom = first_cursor_top + 1.;
         } else {
-            let mut selections = self.selections::<Point>(cx).peekable();
+            let selections = self.local_selections::<Point>(cx);
             first_cursor_top = selections
-                .peek()
+                .first()
                 .unwrap()
                 .head()
                 .to_display_point(&display_map)
@@ -688,7 +695,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) -> bool {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let selections = self.selections::<Point>(cx);
+        let selections = self.local_selections::<Point>(cx);
         let mut target_left = std::f32::INFINITY;
         let mut target_right = 0.0_f32;
         for selection in selections {
@@ -756,14 +763,14 @@ impl Editor {
         click_count: usize,
         cx: &mut ViewContext<Self>,
     ) {
-        let tail = self.newest_selection::<usize>(cx).tail();
-
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let tail = self
+            .newest_selection::<usize>(&display_map.buffer_snapshot)
+            .tail();
         self.begin_selection(position, false, click_count, cx);
 
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx);
         let position = position.to_offset(&display_map, Bias::Left);
-        let tail_anchor = buffer.anchor_before(tail);
+        let tail_anchor = display_map.buffer_snapshot.anchor_before(tail);
         let pending = self.pending_selection.as_mut().unwrap();
 
         if position >= tail {
@@ -794,7 +801,7 @@ impl Editor {
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx);
+        let buffer = &display_map.buffer_snapshot;
         let start;
         let end;
         let mode;
@@ -841,14 +848,10 @@ impl Editor {
             self.update_selections::<usize>(Vec::new(), None, cx);
         } else if click_count > 1 {
             // Remove the newest selection since it was only added as part of this multi-click.
-            let newest_selection = self.newest_selection::<usize>(cx);
-            self.update_selections::<usize>(
-                self.selections(cx)
-                    .filter(|selection| selection.id != newest_selection.id)
-                    .collect(),
-                None,
-                cx,
-            )
+            let newest_selection = self.newest_selection::<usize>(buffer);
+            let mut selections = self.local_selections(cx);
+            selections.retain(|selection| selection.id != newest_selection.id);
+            self.update_selections::<usize>(selections, None, cx)
         }
 
         self.pending_selection = Some(PendingSelection { selection, mode });
@@ -868,10 +871,10 @@ impl Editor {
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx);
-
-        let tail = self.newest_selection::<Point>(cx).tail();
-        self.columnar_selection_tail = Some(buffer.anchor_before(tail));
+        let tail = self
+            .newest_selection::<Point>(&display_map.buffer_snapshot)
+            .tail();
+        self.columnar_selection_tail = Some(display_map.buffer_snapshot.anchor_before(tail));
 
         self.select_columns(
             tail.to_display_point(&display_map),
@@ -895,13 +898,13 @@ impl Editor {
             let tail = tail.to_display_point(&display_map);
             self.select_columns(tail, position, overshoot, &display_map, cx);
         } else if let Some(PendingSelection { selection, mode }) = self.pending_selection.as_mut() {
-            let buffer = self.buffer.read(cx);
+            let buffer = self.buffer.read(cx).snapshot(cx);
             let head;
             let tail;
             match mode {
                 SelectMode::Character => {
                     head = position.to_point(&display_map);
-                    tail = selection.tail().to_point(buffer);
+                    tail = selection.tail().to_point(&buffer);
                 }
                 SelectMode::Word(original_range) => {
                     let original_display_range = original_range.start.to_display_point(&display_map)
@@ -976,7 +979,7 @@ impl Editor {
     fn end_selection(&mut self, cx: &mut ViewContext<Self>) {
         self.columnar_selection_tail.take();
         if self.pending_selection.is_some() {
-            let selections = self.selections::<usize>(cx).collect::<Vec<_>>();
+            let selections = self.local_selections::<usize>(cx);
             self.update_selections(selections, None, cx);
         }
     }
@@ -986,7 +989,7 @@ impl Editor {
         tail: DisplayPoint,
         head: DisplayPoint,
         overshoot: u32,
-        display_map: &DisplayMapSnapshot,
+        display_map: &DisplaySnapshot,
         cx: &mut ViewContext<Self>,
     ) {
         let start_row = cmp::min(tail.row(), head.row());
@@ -1029,20 +1032,21 @@ impl Editor {
         if self.active_diagnostics.is_some() {
             self.dismiss_diagnostics(cx);
         } else if let Some(PendingSelection { selection, .. }) = self.pending_selection.take() {
-            let buffer = self.buffer.read(cx);
+            let buffer = self.buffer.read(cx).snapshot(cx);
             let selection = Selection {
                 id: selection.id,
-                start: selection.start.to_point(buffer),
-                end: selection.end.to_point(buffer),
+                start: selection.start.to_point(&buffer),
+                end: selection.end.to_point(&buffer),
                 reversed: selection.reversed,
                 goal: selection.goal,
             };
-            if self.selections::<Point>(cx).next().is_none() {
+            if self.local_selections::<Point>(cx).is_empty() {
                 self.update_selections(vec![selection], Some(Autoscroll::Fit), cx);
             }
         } else {
-            let mut oldest_selection = self.oldest_selection::<usize>(cx);
-            if self.selection_count(cx) == 1 {
+            let buffer = self.buffer.read(cx).snapshot(cx);
+            let mut oldest_selection = self.oldest_selection::<usize>(&buffer);
+            if self.selection_count() == 1 {
                 oldest_selection.start = oldest_selection.head().clone();
                 oldest_selection.end = oldest_selection.head().clone();
             }
@@ -1059,12 +1063,12 @@ impl Editor {
         I: IntoIterator<Item = Range<T>>,
         T: ToOffset,
     {
-        let buffer = self.buffer.read(cx);
+        let buffer = self.buffer.read(cx).snapshot(cx);
         let selections = ranges
             .into_iter()
             .map(|range| {
-                let mut start = range.start.to_offset(buffer);
-                let mut end = range.end.to_offset(buffer);
+                let mut start = range.start.to_offset(&buffer);
+                let mut end = range.end.to_offset(&buffer);
                 let reversed = if start > end {
                     mem::swap(&mut start, &mut end);
                     true
@@ -1131,15 +1135,15 @@ impl Editor {
         self.start_transaction(cx);
         let mut old_selections = SmallVec::<[_; 32]>::new();
         {
-            let selections = self.selections::<Point>(cx).collect::<Vec<_>>();
-            let buffer = self.buffer.read(cx);
+            let selections = self.local_selections::<Point>(cx);
+            let buffer = self.buffer.read(cx).snapshot(cx);
             for selection in selections.iter() {
                 let start_point = selection.start;
                 let indent = buffer
                     .indent_column_for_line(start_point.row)
                     .min(start_point.column);
-                let start = selection.start.to_offset(buffer);
-                let end = selection.end.to_offset(buffer);
+                let start = selection.start.to_offset(&buffer);
+                let end = selection.end.to_offset(&buffer);
 
                 let mut insert_extra_newline = false;
                 if let Some(language) = buffer.language() {
@@ -1253,30 +1257,27 @@ impl Editor {
 
     pub fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
-        let old_selections = self.selections::<usize>(cx).collect::<SmallVec<[_; 32]>>();
-        let mut new_selections = Vec::new();
-        self.buffer.update(cx, |buffer, cx| {
+        let old_selections = self.local_selections::<usize>(cx);
+        let new_selections = self.buffer.update(cx, |buffer, cx| {
+            let snapshot = buffer.read(cx);
+            let new_selections = old_selections
+                .iter()
+                .map(|selection| Selection {
+                    id: selection.id,
+                    start: snapshot.anchor_after(selection.start),
+                    end: snapshot.anchor_after(selection.end),
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                })
+                .collect::<Vec<_>>();
+
+            drop(snapshot);
             let edit_ranges = old_selections.iter().map(|s| s.start..s.end);
             buffer.edit_with_autoindent(edit_ranges, text, cx);
-            let text_len = text.len() as isize;
-            let mut delta = 0_isize;
-            new_selections = old_selections
-                .into_iter()
-                .map(|selection| {
-                    let start = selection.start as isize;
-                    let end = selection.end as isize;
-                    let cursor = (start + delta + text_len) as usize;
-                    let deleted_count = end - start;
-                    delta += text_len - deleted_count;
-                    Selection {
-                        id: selection.id,
-                        start: cursor,
-                        end: cursor,
-                        reversed: false,
-                        goal: SelectionGoal::None,
-                    }
-                })
-                .collect();
+
+            let snapshot = buffer.read(cx);
+            self.resolve_selections::<usize, _>(new_selections.iter(), &snapshot)
+                .collect()
         });
 
         self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
@@ -1284,19 +1285,20 @@ impl Editor {
     }
 
     fn autoclose_pairs(&mut self, cx: &mut ViewContext<Self>) {
-        let selections = self.selections::<usize>(cx).collect::<Vec<_>>();
-        let new_autoclose_pair_state = self.buffer.update(cx, |buffer, cx| {
-            let autoclose_pair = buffer.language().and_then(|language| {
+        let selections = self.local_selections::<usize>(cx);
+        let new_autoclose_pair = self.buffer.update(cx, |buffer, cx| {
+            let snapshot = buffer.snapshot(cx);
+            let autoclose_pair = snapshot.language().and_then(|language| {
                 let first_selection_start = selections.first().unwrap().start;
                 let pair = language.brackets().iter().find(|pair| {
-                    buffer.contains_str_at(
+                    snapshot.contains_str_at(
                         first_selection_start.saturating_sub(pair.start.len()),
                         &pair.start,
                     )
                 });
                 pair.and_then(|pair| {
                     let should_autoclose = selections[1..].iter().all(|selection| {
-                        buffer.contains_str_at(
+                        snapshot.contains_str_at(
                             selection.start.saturating_sub(pair.start.len()),
                             &pair.start,
                         )
@@ -1314,25 +1316,25 @@ impl Editor {
                 let selection_ranges = selections
                     .iter()
                     .map(|selection| {
-                        let start = selection.start.to_offset(&*buffer);
+                        let start = selection.start.to_offset(&snapshot);
                         start..start
                     })
                     .collect::<SmallVec<[_; 32]>>();
 
                 buffer.edit(selection_ranges, &pair.end, cx);
+                let snapshot = buffer.snapshot(cx);
 
                 if pair.end.len() == 1 {
                     let mut delta = 0;
                     Some(BracketPairState {
-                        ranges: buffer.anchor_range_set(
-                            Bias::Left,
-                            Bias::Right,
-                            selections.iter().map(move |selection| {
+                        ranges: selections
+                            .iter()
+                            .map(move |selection| {
                                 let offset = selection.start + delta;
                                 delta += 1;
-                                offset..offset
-                            }),
-                        ),
+                                snapshot.anchor_before(offset)..snapshot.anchor_after(offset)
+                            })
+                            .collect(),
                         pair,
                     })
                 } else {
@@ -1340,28 +1342,28 @@ impl Editor {
                 }
             })
         });
-        self.autoclose_stack.extend(new_autoclose_pair_state);
+        self.autoclose_stack.extend(new_autoclose_pair);
     }
 
     fn skip_autoclose_end(&mut self, text: &str, cx: &mut ViewContext<Self>) -> bool {
-        let old_selections = self.selections::<usize>(cx).collect::<Vec<_>>();
-        let autoclose_pair_state = if let Some(autoclose_pair_state) = self.autoclose_stack.last() {
-            autoclose_pair_state
+        let old_selections = self.local_selections::<usize>(cx);
+        let autoclose_pair = if let Some(autoclose_pair) = self.autoclose_stack.last() {
+            autoclose_pair
         } else {
             return false;
         };
-        if text != autoclose_pair_state.pair.end {
+        if text != autoclose_pair.pair.end {
             return false;
         }
 
-        debug_assert_eq!(old_selections.len(), autoclose_pair_state.ranges.len());
+        debug_assert_eq!(old_selections.len(), autoclose_pair.ranges.len());
 
-        let buffer = self.buffer.read(cx);
+        let buffer = self.buffer.read(cx).snapshot(cx);
         if old_selections
             .iter()
-            .zip(autoclose_pair_state.ranges.ranges::<usize>(buffer))
+            .zip(autoclose_pair.ranges.iter().map(|r| r.to_offset(&buffer)))
             .all(|(selection, autoclose_range)| {
-                let autoclose_range_end = autoclose_range.end.to_offset(buffer);
+                let autoclose_range_end = autoclose_range.end.to_offset(&buffer);
                 selection.is_empty() && selection.start == autoclose_range_end
             })
         {
@@ -1395,7 +1397,7 @@ impl Editor {
 
     pub fn backspace(&mut self, _: &Backspace, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         for selection in &mut selections {
             if selection.is_empty() {
@@ -1415,7 +1417,7 @@ impl Editor {
     pub fn delete(&mut self, _: &Delete, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             if selection.is_empty() {
                 let head = selection.head().to_display_point(&display_map);
@@ -1433,14 +1435,16 @@ impl Editor {
 
     pub fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
-        let tab_size = self.build_settings.borrow()(cx).tab_size;
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let tab_size = (self.build_settings)(cx).tab_size;
+        let mut selections = self.local_selections::<Point>(cx);
         let mut last_indent = None;
         self.buffer.update(cx, |buffer, cx| {
             for selection in &mut selections {
                 if selection.is_empty() {
                     let char_column = buffer
-                        .chars_for_range(Point::new(selection.start.row, 0)..selection.start)
+                        .read(cx)
+                        .text_for_range(Point::new(selection.start.row, 0)..selection.start)
+                        .flat_map(str::chars)
                         .count();
                     let chars_to_next_tab_stop = tab_size - (char_column % tab_size);
                     buffer.edit(
@@ -1474,7 +1478,7 @@ impl Editor {
                     }
 
                     for row in start_row..end_row {
-                        let indent_column = buffer.indent_column_for_line(row) as usize;
+                        let indent_column = buffer.read(cx).indent_column_for_line(row) as usize;
                         let columns_to_next_tab_stop = tab_size - (indent_column % tab_size);
                         let row_start = Point::new(row, 0);
                         buffer.edit(
@@ -1503,11 +1507,12 @@ impl Editor {
 
     pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
-        let tab_size = self.build_settings.borrow()(cx).tab_size;
-        let selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let tab_size = (self.build_settings)(cx).tab_size;
+        let selections = self.local_selections::<Point>(cx);
         let mut deletion_ranges = Vec::new();
         let mut last_outdent = None;
-        self.buffer.update(cx, |buffer, cx| {
+        {
+            let buffer = self.buffer.read(cx).read(cx);
             for selection in &selections {
                 let mut start_row = selection.start.row;
                 let mut end_row = selection.end.row + 1;
@@ -1538,11 +1543,13 @@ impl Editor {
                     }
                 }
             }
+        }
+        self.buffer.update(cx, |buffer, cx| {
             buffer.edit(deletion_ranges, "", cx);
         });
 
         self.update_selections(
-            self.selections::<usize>(cx).collect(),
+            self.local_selections::<usize>(cx),
             Some(Autoscroll::Fit),
             cx,
         );
@@ -1552,9 +1559,9 @@ impl Editor {
     pub fn delete_line(&mut self, _: &DeleteLine, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
-        let selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx);
+        let buffer = self.buffer.read(cx).snapshot(cx);
 
         let mut row_delta = 0;
         let mut new_cursors = Vec::new();
@@ -1575,13 +1582,13 @@ impl Editor {
                 }
             }
 
-            let mut edit_start = Point::new(rows.start, 0).to_offset(buffer);
+            let mut edit_start = Point::new(rows.start, 0).to_offset(&buffer);
             let edit_end;
             let cursor_buffer_row;
             if buffer.max_point().row >= rows.end {
                 // If there's a line after the range, delete the \n from the end of the row range
                 // and position the cursor on the next line.
-                edit_end = Point::new(rows.end, 0).to_offset(buffer);
+                edit_end = Point::new(rows.end, 0).to_offset(&buffer);
                 cursor_buffer_row = rows.start;
             } else {
                 // If there isn't a line after the range, delete the \n from the line before the
@@ -1621,9 +1628,9 @@ impl Editor {
     pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx);
+        let buffer = &display_map.buffer_snapshot;
 
         let mut edits = Vec::new();
         let mut selections_iter = selections.iter().peekable();
@@ -1679,9 +1686,9 @@ impl Editor {
     pub fn move_line_up(&mut self, _: &MoveLineUp, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
-        let selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx);
+        let buffer = self.buffer.read(cx).snapshot(cx);
 
         let mut edits = Vec::new();
         let mut new_selection_ranges = Vec::new();
@@ -1692,7 +1699,7 @@ impl Editor {
         let mut contiguous_selections = Vec::new();
         while let Some(selection) = selections.next() {
             // Accumulate contiguous regions of rows that we want to move.
-            contiguous_selections.push(selection.point_range(buffer));
+            contiguous_selections.push(selection.point_range(&buffer));
             let SpannedRows {
                 mut buffer_rows,
                 mut display_rows,
@@ -1706,7 +1713,7 @@ impl Editor {
                 if next_buffer_rows.start <= buffer_rows.end {
                     buffer_rows.end = next_buffer_rows.end;
                     display_rows.end = next_display_rows.end;
-                    contiguous_selections.push(next_selection.point_range(buffer));
+                    contiguous_selections.push(next_selection.point_range(&buffer));
                     selections.next().unwrap();
                 } else {
                     break;
@@ -1715,13 +1722,13 @@ impl Editor {
 
             // Cut the text from the selected rows and paste it at the start of the previous line.
             if display_rows.start != 0 {
-                let start = Point::new(buffer_rows.start, 0).to_offset(buffer);
+                let start = Point::new(buffer_rows.start, 0).to_offset(&buffer);
                 let end = Point::new(buffer_rows.end - 1, buffer.line_len(buffer_rows.end - 1))
-                    .to_offset(buffer);
+                    .to_offset(&buffer);
 
                 let prev_row_display_start = DisplayPoint::new(display_rows.start - 1, 0);
                 let prev_row_buffer_start = display_map.prev_row_boundary(prev_row_display_start).1;
-                let prev_row_buffer_start_offset = prev_row_buffer_start.to_offset(buffer);
+                let prev_row_buffer_start_offset = prev_row_buffer_start.to_offset(&buffer);
 
                 let mut text = String::new();
                 text.extend(buffer.text_for_range(start..end));
@@ -1743,8 +1750,8 @@ impl Editor {
                 // Move folds up.
                 old_folds.push(start..end);
                 for fold in display_map.folds_in_range(start..end) {
-                    let mut start = fold.start.to_point(buffer);
-                    let mut end = fold.end.to_point(buffer);
+                    let mut start = fold.start.to_point(&buffer);
+                    let mut end = fold.end.to_point(&buffer);
                     start.row -= row_delta;
                     end.row -= row_delta;
                     new_folds.push(start..end);
@@ -1769,9 +1776,9 @@ impl Editor {
     pub fn move_line_down(&mut self, _: &MoveLineDown, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
-        let selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx);
+        let buffer = self.buffer.read(cx).snapshot(cx);
 
         let mut edits = Vec::new();
         let mut new_selection_ranges = Vec::new();
@@ -1782,7 +1789,7 @@ impl Editor {
         let mut contiguous_selections = Vec::new();
         while let Some(selection) = selections.next() {
             // Accumulate contiguous regions of rows that we want to move.
-            contiguous_selections.push(selection.point_range(buffer));
+            contiguous_selections.push(selection.point_range(&buffer));
             let SpannedRows {
                 mut buffer_rows,
                 mut display_rows,
@@ -1795,7 +1802,7 @@ impl Editor {
                 if next_buffer_rows.start <= buffer_rows.end {
                     buffer_rows.end = next_buffer_rows.end;
                     display_rows.end = next_display_rows.end;
-                    contiguous_selections.push(next_selection.point_range(buffer));
+                    contiguous_selections.push(next_selection.point_range(&buffer));
                     selections.next().unwrap();
                 } else {
                     break;
@@ -1804,14 +1811,14 @@ impl Editor {
 
             // Cut the text from the selected rows and paste it at the end of the next line.
             if display_rows.end <= display_map.max_point().row() {
-                let start = Point::new(buffer_rows.start, 0).to_offset(buffer);
+                let start = Point::new(buffer_rows.start, 0).to_offset(&buffer);
                 let end = Point::new(buffer_rows.end - 1, buffer.line_len(buffer_rows.end - 1))
-                    .to_offset(buffer);
+                    .to_offset(&buffer);
 
                 let next_row_display_end =
                     DisplayPoint::new(display_rows.end, display_map.line_len(display_rows.end));
                 let next_row_buffer_end = display_map.next_row_boundary(next_row_display_end).1;
-                let next_row_buffer_end_offset = next_row_buffer_end.to_offset(buffer);
+                let next_row_buffer_end_offset = next_row_buffer_end.to_offset(&buffer);
 
                 let mut text = String::new();
                 text.push('\n');
@@ -1830,8 +1837,8 @@ impl Editor {
                 // Move folds down.
                 old_folds.push(start..end);
                 for fold in display_map.folds_in_range(start..end) {
-                    let mut start = fold.start.to_point(buffer);
-                    let mut end = fold.end.to_point(buffer);
+                    let mut start = fold.start.to_point(&buffer);
+                    let mut end = fold.end.to_point(&buffer);
                     start.row += row_delta;
                     end.row += row_delta;
                     new_folds.push(start..end);
@@ -1856,10 +1863,10 @@ impl Editor {
     pub fn cut(&mut self, _: &Cut, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         let mut text = String::new();
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         let mut clipboard_selections = Vec::with_capacity(selections.len());
         {
-            let buffer = self.buffer.read(cx);
+            let buffer = self.buffer.read(cx).read(cx);
             let max_point = buffer.max_point();
             for selection in &mut selections {
                 let is_entire_line = selection.is_empty();
@@ -1887,28 +1894,30 @@ impl Editor {
     }
 
     pub fn copy(&mut self, _: &Copy, cx: &mut ViewContext<Self>) {
-        let selections = self.selections::<Point>(cx).collect::<Vec<_>>();
-        let buffer = self.buffer.read(cx);
-        let max_point = buffer.max_point();
+        let selections = self.local_selections::<Point>(cx);
         let mut text = String::new();
         let mut clipboard_selections = Vec::with_capacity(selections.len());
-        for selection in selections.iter() {
-            let mut start = selection.start;
-            let mut end = selection.end;
-            let is_entire_line = selection.is_empty();
-            if is_entire_line {
-                start = Point::new(start.row, 0);
-                end = cmp::min(max_point, Point::new(start.row + 1, 0));
+        {
+            let buffer = self.buffer.read(cx).read(cx);
+            let max_point = buffer.max_point();
+            for selection in selections.iter() {
+                let mut start = selection.start;
+                let mut end = selection.end;
+                let is_entire_line = selection.is_empty();
+                if is_entire_line {
+                    start = Point::new(start.row, 0);
+                    end = cmp::min(max_point, Point::new(start.row + 1, 0));
+                }
+                let mut len = 0;
+                for chunk in buffer.text_for_range(start..end) {
+                    text.push_str(chunk);
+                    len += chunk.len();
+                }
+                clipboard_selections.push(ClipboardSelection {
+                    len,
+                    is_entire_line,
+                });
             }
-            let mut len = 0;
-            for chunk in buffer.text_for_range(start..end) {
-                text.push_str(chunk);
-                len += chunk.len();
-            }
-            clipboard_selections.push(ClipboardSelection {
-                len,
-                is_entire_line,
-            });
         }
 
         cx.as_mut()
@@ -1919,7 +1928,7 @@ impl Editor {
         if let Some(item) = cx.as_mut().read_from_clipboard() {
             let clipboard_text = item.text();
             if let Some(mut clipboard_selections) = item.metadata::<Vec<ClipboardSelection>>() {
-                let mut selections = self.selections::<usize>(cx).collect::<Vec<_>>();
+                let mut selections = self.local_selections::<usize>(cx);
                 let all_selections_were_entire_line =
                     clipboard_selections.iter().all(|s| s.is_entire_line);
                 if clipboard_selections.len() != selections.len() {
@@ -1950,7 +1959,7 @@ impl Editor {
                         // selection was copied. If this selection is also currently empty,
                         // then paste the line before the current line of the buffer.
                         let range = if selection.is_empty() && entire_line {
-                            let column = selection.start.to_point(&*buffer).column as usize;
+                            let column = selection.start.to_point(&buffer.read(cx)).column as usize;
                             let line_start = selection.start - column;
                             line_start..line_start
                         } else {
@@ -1971,18 +1980,26 @@ impl Editor {
     }
 
     pub fn undo(&mut self, _: &Undo, cx: &mut ViewContext<Self>) {
-        self.buffer.update(cx, |buffer, cx| buffer.undo(cx));
-        self.request_autoscroll(Autoscroll::Fit, cx);
+        if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
+            if let Some((selections, _)) = self.selection_history.get(&tx_id).cloned() {
+                self.set_selections(selections, cx);
+            }
+            self.request_autoscroll(Autoscroll::Fit, cx);
+        }
     }
 
     pub fn redo(&mut self, _: &Redo, cx: &mut ViewContext<Self>) {
-        self.buffer.update(cx, |buffer, cx| buffer.redo(cx));
-        self.request_autoscroll(Autoscroll::Fit, cx);
+        if let Some(tx_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
+            if let Some((_, Some(selections))) = self.selection_history.get(&tx_id).cloned() {
+                self.set_selections(selections, cx);
+            }
+            self.request_autoscroll(Autoscroll::Fit, cx);
+        }
     }
 
     pub fn move_left(&mut self, _: &MoveLeft, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let start = selection.start.to_display_point(&display_map);
             let end = selection.end.to_display_point(&display_map);
@@ -2004,7 +2021,7 @@ impl Editor {
 
     pub fn select_left(&mut self, _: &SelectLeft, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
             let cursor = movement::left(&display_map, head)
@@ -2018,7 +2035,7 @@ impl Editor {
 
     pub fn move_right(&mut self, _: &MoveRight, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let start = selection.start.to_display_point(&display_map);
             let end = selection.end.to_display_point(&display_map);
@@ -2040,7 +2057,7 @@ impl Editor {
 
     pub fn select_right(&mut self, _: &SelectRight, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
             let cursor = movement::right(&display_map, head)
@@ -2059,7 +2076,7 @@ impl Editor {
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let start = selection.start.to_display_point(&display_map);
             let end = selection.end.to_display_point(&display_map);
@@ -2079,7 +2096,7 @@ impl Editor {
 
     pub fn select_up(&mut self, _: &SelectUp, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
             let (head, goal) = movement::up(&display_map, head, selection.goal).unwrap();
@@ -2097,7 +2114,7 @@ impl Editor {
         }
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let start = selection.start.to_display_point(&display_map);
             let end = selection.end.to_display_point(&display_map);
@@ -2117,7 +2134,7 @@ impl Editor {
 
     pub fn select_down(&mut self, _: &SelectDown, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
             let (head, goal) = movement::down(&display_map, head, selection.goal).unwrap();
@@ -2134,7 +2151,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
             let cursor = movement::prev_word_boundary(&display_map, head).to_point(&display_map);
@@ -2152,7 +2169,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
             let cursor = movement::prev_word_boundary(&display_map, head).to_point(&display_map);
@@ -2169,7 +2186,7 @@ impl Editor {
     ) {
         self.start_transaction(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             if selection.is_empty() {
                 let head = selection.head().to_display_point(&display_map);
@@ -2190,7 +2207,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
             let cursor = movement::next_word_boundary(&display_map, head).to_point(&display_map);
@@ -2208,7 +2225,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
             let cursor = movement::next_word_boundary(&display_map, head).to_point(&display_map);
@@ -2225,7 +2242,7 @@ impl Editor {
     ) {
         self.start_transaction(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             if selection.is_empty() {
                 let head = selection.head().to_display_point(&display_map);
@@ -2246,7 +2263,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
             let new_head = movement::line_beginning(&display_map, head, true);
@@ -2265,7 +2282,7 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
             let new_head = movement::line_beginning(&display_map, head, *toggle_indent);
@@ -2288,7 +2305,7 @@ impl Editor {
 
     pub fn move_to_end_of_line(&mut self, _: &MoveToEndOfLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         {
             for selection in &mut selections {
                 let head = selection.head().to_display_point(&display_map);
@@ -2305,7 +2322,7 @@ impl Editor {
 
     pub fn select_to_end_of_line(&mut self, _: &SelectToEndOfLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
             let new_head = movement::line_end(&display_map, head);
@@ -2341,14 +2358,13 @@ impl Editor {
     }
 
     pub fn select_to_beginning(&mut self, _: &SelectToBeginning, cx: &mut ViewContext<Self>) {
-        let mut selection = self.selections::<Point>(cx).last().unwrap().clone();
+        let mut selection = self.local_selections::<Point>(cx).last().unwrap().clone();
         selection.set_head(Point::zero());
         self.update_selections(vec![selection], Some(Autoscroll::Fit), cx);
     }
 
     pub fn move_to_end(&mut self, _: &MoveToEnd, cx: &mut ViewContext<Self>) {
-        let buffer = self.buffer.read(cx);
-        let cursor = buffer.len();
+        let cursor = self.buffer.read(cx).read(cx).len();
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
             start: cursor,
@@ -2360,8 +2376,8 @@ impl Editor {
     }
 
     pub fn select_to_end(&mut self, _: &SelectToEnd, cx: &mut ViewContext<Self>) {
-        let mut selection = self.selections::<usize>(cx).last().unwrap().clone();
-        selection.set_head(self.buffer.read(cx).len());
+        let mut selection = self.local_selections::<usize>(cx).first().unwrap().clone();
+        selection.set_head(self.buffer.read(cx).read(cx).len());
         self.update_selections(vec![selection], Some(Autoscroll::Fit), cx);
     }
 
@@ -2369,7 +2385,7 @@ impl Editor {
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
             start: 0,
-            end: self.buffer.read(cx).len(),
+            end: self.buffer.read(cx).read(cx).len(),
             reversed: false,
             goal: SelectionGoal::None,
         };
@@ -2378,9 +2394,8 @@ impl Editor {
 
     pub fn select_line(&mut self, _: &SelectLine, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
-        let buffer = self.buffer.read(cx);
-        let max_point = buffer.max_point();
+        let mut selections = self.local_selections::<Point>(cx);
+        let max_point = display_map.buffer_snapshot.max_point();
         for selection in &mut selections {
             let rows = selection.spanned_rows(true, &display_map).buffer_rows;
             selection.start = Point::new(rows.start, 0);
@@ -2395,30 +2410,31 @@ impl Editor {
         _: &SplitSelectionIntoLines,
         cx: &mut ViewContext<Self>,
     ) {
-        let selections = self.selections::<Point>(cx).collect::<Vec<_>>();
-        let buffer = self.buffer.read(cx);
-
         let mut to_unfold = Vec::new();
         let mut new_selections = Vec::new();
-        for selection in selections.iter() {
-            for row in selection.start.row..selection.end.row {
-                let cursor = Point::new(row, buffer.line_len(row));
+        {
+            let selections = self.local_selections::<Point>(cx);
+            let buffer = self.buffer.read(cx).read(cx);
+            for selection in selections {
+                for row in selection.start.row..selection.end.row {
+                    let cursor = Point::new(row, buffer.line_len(row));
+                    new_selections.push(Selection {
+                        id: post_inc(&mut self.next_selection_id),
+                        start: cursor,
+                        end: cursor,
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    });
+                }
                 new_selections.push(Selection {
-                    id: post_inc(&mut self.next_selection_id),
-                    start: cursor,
-                    end: cursor,
+                    id: selection.id,
+                    start: selection.end,
+                    end: selection.end,
                     reversed: false,
                     goal: SelectionGoal::None,
                 });
+                to_unfold.push(selection.start..selection.end);
             }
-            new_selections.push(Selection {
-                id: selection.id,
-                start: selection.end,
-                end: selection.end,
-                reversed: false,
-                goal: SelectionGoal::None,
-            });
-            to_unfold.push(selection.start..selection.end);
         }
         self.unfold_ranges(to_unfold, cx);
         self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
@@ -2434,7 +2450,7 @@ impl Editor {
 
     fn add_selection(&mut self, above: bool, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         let mut state = self.add_selections_state.take().unwrap_or_else(|| {
             let oldest_selection = selections.iter().min_by_key(|s| s.id).unwrap().clone();
             let range = oldest_selection.display_range(&display_map).sorted();
@@ -2529,7 +2545,7 @@ impl Editor {
         let replace_newest = action.0;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
-        let mut selections = self.selections::<usize>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<usize>(cx);
         if let Some(mut select_next_state) = self.select_next_state.take() {
             let query = &select_next_state.query;
             if !select_next_state.done {
@@ -2636,13 +2652,14 @@ impl Editor {
         let comment_prefix_whitespace = &full_comment_prefix[comment_prefix.len()..];
 
         self.start_transaction(cx);
-        let mut selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let mut selections = self.local_selections::<Point>(cx);
         let mut all_selection_lines_are_comments = true;
         let mut edit_ranges = Vec::new();
         let mut last_toggled_row = None;
         self.buffer.update(cx, |buffer, cx| {
             for selection in &mut selections {
                 edit_ranges.clear();
+                let snapshot = buffer.snapshot(cx);
 
                 let end_row =
                     if selection.end.row > selection.start.row && selection.end.column == 0 {
@@ -2660,13 +2677,13 @@ impl Editor {
                         last_toggled_row = Some(row);
                     }
 
-                    if buffer.is_line_blank(row) {
+                    if snapshot.is_line_blank(row) {
                         continue;
                     }
 
-                    let start = Point::new(row, buffer.indent_column_for_line(row));
-                    let mut line_bytes = buffer
-                        .bytes_in_range(start..buffer.max_point())
+                    let start = Point::new(row, snapshot.indent_column_for_line(row));
+                    let mut line_bytes = snapshot
+                        .bytes_in_range(start..snapshot.max_point())
                         .flatten()
                         .copied();
 
@@ -2713,7 +2730,7 @@ impl Editor {
         });
 
         self.update_selections(
-            self.selections::<usize>(cx).collect(),
+            self.local_selections::<usize>(cx),
             Some(Autoscroll::Fit),
             cx,
         );
@@ -2725,9 +2742,9 @@ impl Editor {
         _: &SelectLargerSyntaxNode,
         cx: &mut ViewContext<Self>,
     ) {
-        let old_selections = self.selections::<usize>(cx).collect::<Box<_>>();
+        let old_selections = self.local_selections::<usize>(cx).into_boxed_slice();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx);
+        let buffer = self.buffer.read(cx).snapshot(cx);
 
         let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
         let mut selected_larger_node = false;
@@ -2783,8 +2800,8 @@ impl Editor {
         _: &MoveToEnclosingBracket,
         cx: &mut ViewContext<Self>,
     ) {
-        let mut selections = self.selections::<usize>(cx).collect::<Vec<_>>();
-        let buffer = self.buffer.read(cx.as_ref());
+        let mut selections = self.local_selections::<usize>(cx);
+        let buffer = self.buffer.read(cx).snapshot(cx);
         for selection in &mut selections {
             if let Some((open_range, close_range)) =
                 buffer.enclosing_bracket_ranges(selection.start..selection.end)
@@ -2806,12 +2823,12 @@ impl Editor {
     }
 
     pub fn show_next_diagnostic(&mut self, _: &ShowNextDiagnostic, cx: &mut ViewContext<Self>) {
-        let selection = self.newest_selection::<usize>(cx);
-        let buffer = self.buffer.read(cx.as_ref());
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let selection = self.newest_selection::<usize>(&buffer);
         let active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
             active_diagnostics
                 .primary_range
-                .to_offset(buffer)
+                .to_offset(&buffer)
                 .to_inclusive()
         });
         let mut search_start = if let Some(active_primary_range) = active_primary_range.as_ref() {
@@ -2827,19 +2844,19 @@ impl Editor {
         loop {
             let next_group = buffer
                 .diagnostics_in_range::<_, usize>(search_start..buffer.len())
-                .find_map(|(range, diagnostic)| {
-                    if diagnostic.is_primary
-                        && !range.is_empty()
-                        && Some(range.end) != active_primary_range.as_ref().map(|r| *r.end())
+                .find_map(|(provider_name, entry)| {
+                    if entry.diagnostic.is_primary
+                        && !entry.range.is_empty()
+                        && Some(entry.range.end) != active_primary_range.as_ref().map(|r| *r.end())
                     {
-                        Some((range, diagnostic.group_id))
+                        Some((provider_name, entry.range, entry.diagnostic.group_id))
                     } else {
                         None
                     }
                 });
 
-            if let Some((primary_range, group_id)) = next_group {
-                self.activate_diagnostics(group_id, cx);
+            if let Some((provider_name, primary_range, group_id)) = next_group {
+                self.activate_diagnostics(provider_name, group_id, cx);
                 self.update_selections(
                     vec![Selection {
                         id: selection.id,
@@ -2863,28 +2880,29 @@ impl Editor {
 
     fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Editor>) {
         if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
-            let buffer = self.buffer.read(cx);
-            let primary_range_start = active_diagnostics.primary_range.start.to_offset(buffer);
+            let buffer = self.buffer.read(cx).snapshot(cx);
+            let primary_range_start = active_diagnostics.primary_range.start.to_offset(&buffer);
             let is_valid = buffer
                 .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone())
-                .any(|(range, diagnostic)| {
-                    diagnostic.is_primary
-                        && !range.is_empty()
-                        && range.start == primary_range_start
-                        && diagnostic.message == active_diagnostics.primary_message
+                .any(|(_, entry)| {
+                    entry.diagnostic.is_primary
+                        && !entry.range.is_empty()
+                        && entry.range.start == primary_range_start
+                        && entry.diagnostic.message == active_diagnostics.primary_message
                 });
 
             if is_valid != active_diagnostics.is_valid {
                 active_diagnostics.is_valid = is_valid;
-                let mut new_styles = HashMap::new();
+                let mut new_styles = HashMap::default();
                 for (block_id, diagnostic) in &active_diagnostics.blocks {
-                    let build_settings = self.build_settings.clone();
-                    let diagnostic = diagnostic.clone();
-                    new_styles.insert(*block_id, move |cx: &BlockContext| {
-                        let diagnostic = diagnostic.clone();
-                        let settings = build_settings.borrow()(cx.cx);
-                        render_diagnostic(diagnostic, &settings.style, is_valid, cx.anchor_x)
-                    });
+                    new_styles.insert(
+                        *block_id,
+                        diagnostic_block_renderer(
+                            diagnostic.clone(),
+                            is_valid,
+                            self.build_settings.clone(),
+                        ),
+                    );
                 }
                 self.display_map
                     .update(cx, |display_map, _| display_map.replace_blocks(new_styles));
@@ -2892,25 +2910,30 @@ impl Editor {
         }
     }
 
-    fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) {
+    fn activate_diagnostics(
+        &mut self,
+        provider_name: &str,
+        group_id: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.dismiss_diagnostics(cx);
         self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
-            let buffer = self.buffer.read(cx);
+            let buffer = self.buffer.read(cx).snapshot(cx);
 
             let mut primary_range = None;
             let mut primary_message = None;
             let mut group_end = Point::zero();
             let diagnostic_group = buffer
-                .diagnostic_group::<Point>(group_id)
-                .map(|(range, diagnostic)| {
-                    if range.end > group_end {
-                        group_end = range.end;
+                .diagnostic_group::<Point>(provider_name, group_id)
+                .map(|entry| {
+                    if entry.range.end > group_end {
+                        group_end = entry.range.end;
                     }
-                    if diagnostic.is_primary {
-                        primary_range = Some(range.clone());
-                        primary_message = Some(diagnostic.message.clone());
+                    if entry.diagnostic.is_primary {
+                        primary_range = Some(entry.range.clone());
+                        primary_message = Some(entry.diagnostic.message.clone());
                     }
-                    (range, diagnostic.clone())
+                    entry
                 })
                 .collect::<Vec<_>>();
             let primary_range = primary_range.unwrap();
@@ -2920,30 +2943,22 @@ impl Editor {
 
             let blocks = display_map
                 .insert_blocks(
-                    diagnostic_group.iter().map(|(range, diagnostic)| {
+                    diagnostic_group.iter().map(|entry| {
                         let build_settings = self.build_settings.clone();
-                        let diagnostic = diagnostic.clone();
+                        let diagnostic = entry.diagnostic.clone();
                         let message_height = diagnostic.message.lines().count() as u8;
 
                         BlockProperties {
-                            position: range.start,
+                            position: entry.range.start,
                             height: message_height,
-                            render: Arc::new(move |cx| {
-                                let settings = build_settings.borrow()(cx.cx);
-                                let diagnostic = diagnostic.clone();
-                                render_diagnostic(diagnostic, &settings.style, true, cx.anchor_x)
-                            }),
+                            render: diagnostic_block_renderer(diagnostic, true, build_settings),
                             disposition: BlockDisposition::Below,
                         }
                     }),
                     cx,
                 )
                 .into_iter()
-                .zip(
-                    diagnostic_group
-                        .into_iter()
-                        .map(|(_, diagnostic)| diagnostic),
-                )
+                .zip(diagnostic_group.into_iter().map(|entry| entry.diagnostic))
                 .collect();
 
             Some(ActiveDiagnosticGroup {
@@ -2966,7 +2981,7 @@ impl Editor {
 
     fn build_columnar_selection(
         &mut self,
-        display_map: &DisplayMapSnapshot,
+        display_map: &DisplaySnapshot,
         row: u32,
         columns: &Range<u32>,
         reversed: bool,
@@ -2991,76 +3006,95 @@ impl Editor {
         }
     }
 
-    pub fn active_selection_sets<'a>(
+    pub fn visible_selections<'a>(
         &'a self,
-        cx: &'a AppContext,
-    ) -> impl 'a + Iterator<Item = SelectionSetId> {
-        let buffer = self.buffer.read(cx);
-        let replica_id = buffer.replica_id();
-        buffer
-            .selection_sets()
-            .filter(move |(set_id, set)| {
-                set.active && (set_id.replica_id != replica_id || **set_id == self.selection_set_id)
-            })
-            .map(|(set_id, _)| *set_id)
-    }
-
-    pub fn intersecting_selections<'a>(
-        &'a self,
-        set_id: SelectionSetId,
-        range: Range<DisplayPoint>,
+        display_rows: Range<u32>,
         cx: &'a mut MutableAppContext,
-    ) -> impl 'a + Iterator<Item = Selection<DisplayPoint>> {
+    ) -> HashMap<ReplicaId, Vec<Selection<DisplayPoint>>> {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx);
+        let buffer = &display_map.buffer_snapshot;
 
-        let pending_selection = if set_id == self.selection_set_id {
-            self.pending_selection.as_ref().and_then(|pending| {
-                let selection_start = pending.selection.start.to_display_point(&display_map);
-                let selection_end = pending.selection.end.to_display_point(&display_map);
-                if selection_start <= range.end || selection_end <= range.end {
-                    Some(Selection {
-                        id: pending.selection.id,
-                        start: selection_start,
-                        end: selection_end,
-                        reversed: pending.selection.reversed,
-                        goal: pending.selection.goal,
-                    })
-                } else {
-                    None
-                }
-            })
+        let start = if display_rows.start == 0 {
+            Anchor::min()
         } else {
-            None
+            buffer.anchor_before(
+                DisplayPoint::new(display_rows.start, 0).to_offset(&display_map, Bias::Left),
+            )
+        };
+        let end = if display_rows.end > display_map.max_point().row() {
+            Anchor::max()
+        } else {
+            buffer.anchor_before(
+                DisplayPoint::new(display_rows.end, 0).to_offset(&display_map, Bias::Right),
+            )
         };
 
-        let range = (range.start.to_offset(&display_map, Bias::Left), Bias::Left)
-            ..(range.end.to_offset(&display_map, Bias::Left), Bias::Right);
-        let selections = self
-            .buffer
-            .read(cx)
-            .selection_set(set_id)
-            .unwrap()
-            .intersecting_selections::<Point, _>(range, buffer);
+        let start_ix = match self
+            .selections
+            .binary_search_by(|probe| probe.end.cmp(&start, &buffer).unwrap())
+        {
+            Ok(ix) | Err(ix) => ix,
+        };
+        let end_ix = match self
+            .selections
+            .binary_search_by(|probe| probe.start.cmp(&end, &buffer).unwrap())
+        {
+            Ok(ix) => ix + 1,
+            Err(ix) => ix,
+        };
 
-        selections
-            .map(move |s| Selection {
-                id: s.id,
-                start: s.start.to_display_point(&display_map),
-                end: s.end.to_display_point(&display_map),
-                reversed: s.reversed,
-                goal: s.goal,
-            })
-            .chain(pending_selection)
+        fn display_selection(
+            selection: &Selection<Anchor>,
+            display_map: &DisplaySnapshot,
+        ) -> Selection<DisplayPoint> {
+            Selection {
+                id: selection.id,
+                start: selection.start.to_display_point(&display_map),
+                end: selection.end.to_display_point(&display_map),
+                reversed: selection.reversed,
+                goal: selection.goal,
+            }
+        }
+
+        let mut result = HashMap::default();
+
+        result.insert(
+            self.replica_id(cx),
+            self.selections[start_ix..end_ix]
+                .iter()
+                .chain(
+                    self.pending_selection
+                        .as_ref()
+                        .map(|pending| &pending.selection),
+                )
+                .map(|s| display_selection(s, &display_map))
+                .collect(),
+        );
+
+        for (replica_id, selection) in display_map
+            .buffer_snapshot
+            .remote_selections_in_range(&(start..end))
+        {
+            result
+                .entry(replica_id)
+                .or_insert(Vec::new())
+                .push(display_selection(&selection, &display_map));
+        }
+
+        result
     }
 
-    pub fn selections<'a, D>(&self, cx: &'a AppContext) -> impl 'a + Iterator<Item = Selection<D>>
+    pub fn local_selections<'a, D>(&self, cx: &'a AppContext) -> Vec<Selection<D>>
     where
-        D: 'a + TextDimension<'a> + Ord,
+        D: 'a + TextDimension + Ord + Sub<D, Output = D>,
     {
-        let buffer = self.buffer.read(cx);
-        let mut selections = self.selection_set(cx).selections::<D>(buffer).peekable();
-        let mut pending_selection = self.pending_selection(cx);
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let mut selections = self
+            .resolve_selections::<D, _>(self.selections.iter(), &buffer)
+            .peekable();
+
+        let mut pending_selection = self.pending_selection::<D>(&buffer);
+
         iter::from_fn(move || {
             if let Some(pending) = pending_selection.as_mut() {
                 while let Some(next_selection) = selections.peek() {
@@ -3084,55 +3118,89 @@ impl Editor {
                 selections.next()
             }
         })
+        .collect()
     }
 
-    fn pending_selection<'a, D>(&self, cx: &'a AppContext) -> Option<Selection<D>>
+    pub fn local_anchor_selections(&self) -> &Arc<[Selection<Anchor>]> {
+        &self.selections
+    }
+
+    fn resolve_selections<'a, D, I>(
+        &self,
+        selections: I,
+        snapshot: &MultiBufferSnapshot,
+    ) -> impl 'a + Iterator<Item = Selection<D>>
     where
-        D: 'a + TextDimension<'a>,
+        D: TextDimension + Ord + Sub<D, Output = D>,
+        I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
     {
-        let buffer = self.buffer.read(cx);
-        self.pending_selection.as_ref().map(|pending| Selection {
-            id: pending.selection.id,
-            start: pending.selection.start.summary::<D>(buffer),
-            end: pending.selection.end.summary::<D>(buffer),
-            reversed: pending.selection.reversed,
-            goal: pending.selection.goal,
+        let (to_summarize, selections) = selections.into_iter().tee();
+        let mut summaries = snapshot
+            .summaries_for_anchors::<D, _>(to_summarize.flat_map(|s| [&s.start, &s.end]))
+            .into_iter();
+        selections.map(move |s| Selection {
+            id: s.id,
+            start: summaries.next().unwrap(),
+            end: summaries.next().unwrap(),
+            reversed: s.reversed,
+            goal: s.goal,
         })
     }
 
-    fn selection_count<'a>(&self, cx: &'a AppContext) -> usize {
-        let mut selection_count = self.selection_set(cx).len();
-        if self.pending_selection.is_some() {
-            selection_count += 1;
+    fn pending_selection<D: TextDimension + Ord + Sub<D, Output = D>>(
+        &self,
+        snapshot: &MultiBufferSnapshot,
+    ) -> Option<Selection<D>> {
+        self.pending_selection
+            .as_ref()
+            .map(|pending| self.resolve_selection(&pending.selection, &snapshot))
+    }
+
+    fn resolve_selection<D: TextDimension + Ord + Sub<D, Output = D>>(
+        &self,
+        selection: &Selection<Anchor>,
+        buffer: &MultiBufferSnapshot,
+    ) -> Selection<D> {
+        Selection {
+            id: selection.id,
+            start: selection.start.summary::<D>(&buffer),
+            end: selection.end.summary::<D>(&buffer),
+            reversed: selection.reversed,
+            goal: selection.goal,
         }
-        selection_count
     }
 
-    pub fn oldest_selection<'a, T>(&self, cx: &'a AppContext) -> Selection<T>
-    where
-        T: 'a + TextDimension<'a>,
-    {
-        let buffer = self.buffer.read(cx);
-        self.selection_set(cx)
-            .oldest_selection(buffer)
-            .or_else(|| self.pending_selection(cx))
+    fn selection_count<'a>(&self) -> usize {
+        let mut count = self.selections.len();
+        if self.pending_selection.is_some() {
+            count += 1;
+        }
+        count
+    }
+
+    pub fn oldest_selection<D: TextDimension + Ord + Sub<D, Output = D>>(
+        &self,
+        snapshot: &MultiBufferSnapshot,
+    ) -> Selection<D> {
+        self.selections
+            .iter()
+            .min_by_key(|s| s.id)
+            .map(|selection| self.resolve_selection(selection, snapshot))
+            .or_else(|| self.pending_selection(snapshot))
             .unwrap()
     }
 
-    pub fn newest_selection<'a, T>(&self, cx: &'a AppContext) -> Selection<T>
-    where
-        T: 'a + TextDimension<'a>,
-    {
-        let buffer = self.buffer.read(cx);
-        self.pending_selection(cx)
-            .or_else(|| self.selection_set(cx).newest_selection(buffer))
-            .unwrap()
-    }
-
-    fn selection_set<'a>(&self, cx: &'a AppContext) -> &'a SelectionSet {
-        self.buffer
-            .read(cx)
-            .selection_set(self.selection_set_id)
+    pub fn newest_selection<D: TextDimension + Ord + Sub<D, Output = D>>(
+        &self,
+        snapshot: &MultiBufferSnapshot,
+    ) -> Selection<D> {
+        self.pending_selection(snapshot)
+            .or_else(|| {
+                self.selections
+                    .iter()
+                    .min_by_key(|s| s.id)
+                    .map(|selection| self.resolve_selection(selection, snapshot))
+            })
             .unwrap()
     }
 
@@ -3145,7 +3213,7 @@ impl Editor {
         T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
     {
         // Merge overlapping selections.
-        let buffer = self.buffer.read(cx);
+        let buffer = self.buffer.read(cx).snapshot(cx);
         let mut i = 1;
         while i < selections.len() {
             if selections[i - 1].end >= selections[i].start {
@@ -3165,14 +3233,14 @@ impl Editor {
         self.add_selections_state = None;
         self.select_next_state = None;
         self.select_larger_syntax_node_stack.clear();
-        while let Some(autoclose_pair_state) = self.autoclose_stack.last() {
+        while let Some(autoclose_pair) = self.autoclose_stack.last() {
             let all_selections_inside_autoclose_ranges =
-                if selections.len() == autoclose_pair_state.ranges.len() {
+                if selections.len() == autoclose_pair.ranges.len() {
                     selections
                         .iter()
-                        .zip(autoclose_pair_state.ranges.ranges::<Point>(buffer))
+                        .zip(autoclose_pair.ranges.iter().map(|r| r.to_point(&buffer)))
                         .all(|(selection, autoclose_range)| {
-                            let head = selection.head().to_point(&*buffer);
+                            let head = selection.head().to_point(&buffer);
                             autoclose_range.start <= head && autoclose_range.end >= head
                         })
                 } else {
@@ -3191,10 +3259,22 @@ impl Editor {
         }
         self.pause_cursor_blinking(cx);
 
+        self.set_selections(
+            Arc::from_iter(selections.into_iter().map(|selection| Selection {
+                id: selection.id,
+                start: buffer.anchor_before(selection.start),
+                end: buffer.anchor_before(selection.end),
+                reversed: selection.reversed,
+                goal: selection.goal,
+            })),
+            cx,
+        );
+    }
+
+    fn set_selections(&mut self, selections: Arc<[Selection<Anchor>]>, cx: &mut ViewContext<Self>) {
+        self.selections = selections;
         self.buffer.update(cx, |buffer, cx| {
-            buffer
-                .update_selection_set(self.selection_set_id, &selections, cx)
-                .unwrap();
+            buffer.set_active_selections(&self.selections, cx)
         });
     }
 
@@ -3204,20 +3284,31 @@ impl Editor {
     }
 
     fn start_transaction(&mut self, cx: &mut ViewContext<Self>) {
-        self.end_selection(cx);
-        self.buffer.update(cx, |buffer, _| {
-            buffer
-                .start_transaction(Some(self.selection_set_id))
-                .unwrap()
-        });
+        self.start_transaction_at(Instant::now(), cx);
     }
 
-    fn end_transaction(&self, cx: &mut ViewContext<Self>) {
-        self.buffer.update(cx, |buffer, cx| {
-            buffer
-                .end_transaction(Some(self.selection_set_id), cx)
-                .unwrap()
-        });
+    fn start_transaction_at(&mut self, now: Instant, cx: &mut ViewContext<Self>) {
+        self.end_selection(cx);
+        if let Some(tx_id) = self
+            .buffer
+            .update(cx, |buffer, cx| buffer.start_transaction_at(now, cx))
+        {
+            self.selection_history
+                .insert(tx_id, (self.selections.clone(), None));
+        }
+    }
+
+    fn end_transaction(&mut self, cx: &mut ViewContext<Self>) {
+        self.end_transaction_at(Instant::now(), cx);
+    }
+
+    fn end_transaction_at(&mut self, now: Instant, cx: &mut ViewContext<Self>) {
+        if let Some(tx_id) = self
+            .buffer
+            .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
+        {
+            self.selection_history.get_mut(&tx_id).unwrap().1 = Some(self.selections.clone());
+        }
     }
 
     pub fn page_up(&mut self, _: &PageUp, _: &mut ViewContext<Self>) {
@@ -3231,7 +3322,7 @@ impl Editor {
     pub fn fold(&mut self, _: &Fold, cx: &mut ViewContext<Self>) {
         let mut fold_ranges = Vec::new();
 
-        let selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         for selection in selections {
             let range = selection.display_range(&display_map).sorted();
@@ -3254,9 +3345,9 @@ impl Editor {
     }
 
     pub fn unfold(&mut self, _: &Unfold, cx: &mut ViewContext<Self>) {
-        let selections = self.selections::<Point>(cx).collect::<Vec<_>>();
+        let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = self.buffer.read(cx);
+        let buffer = &display_map.buffer_snapshot;
         let ranges = selections
             .iter()
             .map(|s| {
@@ -3271,7 +3362,7 @@ impl Editor {
         self.unfold_ranges(ranges, cx);
     }
 
-    fn is_line_foldable(&self, display_map: &DisplayMapSnapshot, display_row: u32) -> bool {
+    fn is_line_foldable(&self, display_map: &DisplaySnapshot, display_row: u32) -> bool {
         let max_point = display_map.max_point();
         if display_row >= max_point.row() {
             false
@@ -3293,7 +3384,7 @@ impl Editor {
 
     fn foldable_range_for_line(
         &self,
-        display_map: &DisplayMapSnapshot,
+        display_map: &DisplaySnapshot,
         start_row: u32,
     ) -> Range<Point> {
         let max_point = display_map.max_point();
@@ -3314,13 +3405,18 @@ impl Editor {
     }
 
     pub fn fold_selected_ranges(&mut self, _: &FoldSelectedRanges, cx: &mut ViewContext<Self>) {
-        let selections = self.selections::<Point>(cx);
-        let ranges = selections.map(|s| s.start..s.end).collect();
+        let selections = self.local_selections::<Point>(cx);
+        let ranges = selections.into_iter().map(|s| s.start..s.end);
         self.fold_ranges(ranges, cx);
     }
 
-    fn fold_ranges<T: ToOffset>(&mut self, ranges: Vec<Range<T>>, cx: &mut ViewContext<Self>) {
-        if !ranges.is_empty() {
+    fn fold_ranges<T: ToOffset>(
+        &mut self,
+        ranges: impl IntoIterator<Item = Range<T>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let mut ranges = ranges.into_iter().peekable();
+        if ranges.peek().is_some() {
             self.display_map.update(cx, |map, cx| map.fold(ranges, cx));
             self.request_autoscroll(Autoscroll::Fit, cx);
             cx.notify();
@@ -3336,6 +3432,37 @@ impl Editor {
         }
     }
 
+    pub fn insert_blocks<P>(
+        &mut self,
+        blocks: impl IntoIterator<Item = BlockProperties<P>>,
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<BlockId>
+    where
+        P: ToOffset + Clone,
+    {
+        let blocks = self
+            .display_map
+            .update(cx, |display_map, cx| display_map.insert_blocks(blocks, cx));
+        self.request_autoscroll(Autoscroll::Fit, cx);
+        blocks
+    }
+
+    pub fn replace_blocks(
+        &mut self,
+        blocks: HashMap<BlockId, RenderBlock>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.display_map
+            .update(cx, |display_map, _| display_map.replace_blocks(blocks));
+        self.request_autoscroll(Autoscroll::Fit, cx);
+    }
+
+    pub fn remove_blocks(&mut self, block_ids: HashSet<BlockId>, cx: &mut ViewContext<Self>) {
+        self.display_map.update(cx, |display_map, cx| {
+            display_map.remove_blocks(block_ids, cx)
+        });
+    }
+
     pub fn longest_row(&self, cx: &mut MutableAppContext) -> u32 {
         self.display_map
             .update(cx, |map, cx| map.snapshot(cx))
@@ -3349,7 +3476,7 @@ impl Editor {
     }
 
     pub fn text(&self, cx: &AppContext) -> String {
-        self.buffer.read(cx).text()
+        self.buffer.read(cx).read(cx).text()
     }
 
     pub fn display_text(&self, cx: &mut MutableAppContext) -> String {
@@ -3423,14 +3550,14 @@ impl Editor {
         self.show_local_cursors
     }
 
-    fn on_buffer_changed(&mut self, _: ModelHandle<Buffer>, cx: &mut ViewContext<Self>) {
+    fn on_buffer_changed(&mut self, _: ModelHandle<MultiBuffer>, cx: &mut ViewContext<Self>) {
         self.refresh_active_diagnostics(cx);
         cx.notify();
     }
 
     fn on_buffer_event(
         &mut self,
-        _: ModelHandle<Buffer>,
+        _: ModelHandle<MultiBuffer>,
         event: &language::Event,
         cx: &mut ViewContext<Self>,
     ) {
@@ -3450,7 +3577,7 @@ impl Editor {
     }
 }
 
-impl Snapshot {
+impl EditorSnapshot {
     pub fn is_focused(&self) -> bool {
         self.is_focused
     }
@@ -3468,8 +3595,8 @@ impl Snapshot {
     }
 }
 
-impl Deref for Snapshot {
-    type Target = DisplayMapSnapshot;
+impl Deref for EditorSnapshot {
+    type Target = DisplaySnapshot;
 
     fn deref(&self) -> &Self::Target {
         &self.display_snapshot
@@ -3525,7 +3652,7 @@ impl EditorSettings {
 }
 
 fn compute_scroll_position(
-    snapshot: &DisplayMapSnapshot,
+    snapshot: &DisplaySnapshot,
     mut scroll_position: Vector2F,
     scroll_top_anchor: &Anchor,
 ) -> Vector2F {
@@ -3534,6 +3661,7 @@ fn compute_scroll_position(
     scroll_position
 }
 
+#[derive(Copy, Clone)]
 pub enum Event {
     Activate,
     Edited,
@@ -3546,19 +3674,11 @@ pub enum Event {
 
 impl Entity for Editor {
     type Event = Event;
-
-    fn release(&mut self, cx: &mut MutableAppContext) {
-        self.buffer.update(cx, |buffer, cx| {
-            buffer
-                .remove_selection_set(self.selection_set_id, cx)
-                .unwrap();
-        });
-    }
 }
 
 impl View for Editor {
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let settings = self.build_settings.borrow_mut()(cx);
+        let settings = (self.build_settings)(cx);
         self.display_map.update(cx, |map, cx| {
             map.set_font(
                 settings.style.text.font_id,
@@ -3577,18 +3697,15 @@ impl View for Editor {
         self.focused = true;
         self.blink_cursors(self.blink_epoch, cx);
         self.buffer.update(cx, |buffer, cx| {
-            buffer
-                .set_active_selection_set(Some(self.selection_set_id), cx)
-                .unwrap();
+            buffer.set_active_selections(&self.selections, cx)
         });
     }
 
     fn on_blur(&mut self, cx: &mut ViewContext<Self>) {
         self.focused = false;
         self.show_local_cursors = false;
-        self.buffer.update(cx, |buffer, cx| {
-            buffer.set_active_selection_set(None, cx).unwrap();
-        });
+        self.buffer
+            .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
         cx.emit(Event::Blurred);
         cx.notify();
     }
@@ -3605,10 +3722,36 @@ impl View for Editor {
     }
 }
 
-impl SelectionExt for Selection<Point> {
-    fn display_range(&self, map: &DisplayMapSnapshot) -> Range<DisplayPoint> {
-        let start = self.start.to_display_point(map);
-        let end = self.end.to_display_point(map);
+impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
+    fn point_range(&self, buffer: &MultiBufferSnapshot) -> Range<Point> {
+        let start = self.start.to_point(buffer);
+        let end = self.end.to_point(buffer);
+        if self.reversed {
+            end..start
+        } else {
+            start..end
+        }
+    }
+
+    fn offset_range(&self, buffer: &MultiBufferSnapshot) -> Range<usize> {
+        let start = self.start.to_offset(buffer);
+        let end = self.end.to_offset(buffer);
+        if self.reversed {
+            end..start
+        } else {
+            start..end
+        }
+    }
+
+    fn display_range(&self, map: &DisplaySnapshot) -> Range<DisplayPoint> {
+        let start = self
+            .start
+            .to_point(&map.buffer_snapshot)
+            .to_display_point(map);
+        let end = self
+            .end
+            .to_point(&map.buffer_snapshot)
+            .to_display_point(map);
         if self.reversed {
             end..start
         } else {
@@ -3619,10 +3762,16 @@ impl SelectionExt for Selection<Point> {
     fn spanned_rows(
         &self,
         include_end_if_at_line_start: bool,
-        map: &DisplayMapSnapshot,
+        map: &DisplaySnapshot,
     ) -> SpannedRows {
-        let display_start = self.start.to_display_point(map);
-        let mut display_end = self.end.to_display_point(map);
+        let display_start = self
+            .start
+            .to_point(&map.buffer_snapshot)
+            .to_display_point(map);
+        let mut display_end = self
+            .end
+            .to_point(&map.buffer_snapshot)
+            .to_display_point(map);
         if !include_end_if_at_line_start
             && display_end.row() != map.max_point().row()
             && display_start.row() != display_end.row()
@@ -3641,18 +3790,51 @@ impl SelectionExt for Selection<Point> {
     }
 }
 
-fn render_diagnostic(
+pub fn diagnostic_block_renderer(
     diagnostic: Diagnostic,
-    style: &EditorStyle,
-    valid: bool,
-    anchor_x: f32,
-) -> ElementBox {
-    let mut text_style = style.text.clone();
-    text_style.color = diagnostic_style(diagnostic.severity, valid, &style).text;
-    Text::new(diagnostic.message, text_style)
-        .contained()
-        .with_margin_left(anchor_x)
-        .boxed()
+    is_valid: bool,
+    build_settings: BuildSettings,
+) -> RenderBlock {
+    Arc::new(move |cx: &BlockContext| {
+        let settings = build_settings(cx);
+        let mut text_style = settings.style.text.clone();
+        text_style.color = diagnostic_style(diagnostic.severity, is_valid, &settings.style).text;
+        Text::new(diagnostic.message.clone(), text_style)
+            .contained()
+            .with_margin_left(cx.anchor_x)
+            .boxed()
+    })
+}
+
+pub fn diagnostic_header_renderer(
+    buffer: ModelHandle<Buffer>,
+    diagnostic: Diagnostic,
+    is_valid: bool,
+    build_settings: BuildSettings,
+) -> RenderBlock {
+    Arc::new(move |cx| {
+        let settings = build_settings(cx);
+        let mut text_style = settings.style.text.clone();
+        text_style.color = diagnostic_style(diagnostic.severity, is_valid, &settings.style).text;
+        let file_path = if let Some(file) = buffer.read(&**cx).file() {
+            file.path().to_string_lossy().to_string()
+        } else {
+            "untitled".to_string()
+        };
+
+        Flex::column()
+            .with_child(Label::new(diagnostic.message.clone(), text_style).boxed())
+            .with_child(Label::new(file_path, settings.style.text.clone()).boxed())
+            .boxed()
+    })
+}
+
+pub fn context_header_renderer(build_settings: BuildSettings) -> RenderBlock {
+    Arc::new(move |cx| {
+        let settings = build_settings(cx);
+        let text_style = settings.style.text.clone();
+        Label::new("...".to_string(), text_style).boxed()
+    })
 }
 
 pub fn diagnostic_style(
@@ -3673,16 +3855,131 @@ pub fn diagnostic_style(
     }
 }
 
+pub fn settings_builder(
+    buffer: WeakModelHandle<MultiBuffer>,
+    settings: watch::Receiver<workspace::Settings>,
+) -> BuildSettings {
+    Arc::new(move |cx| {
+        let settings = settings.borrow();
+        let font_cache = cx.font_cache();
+        let font_family_id = settings.buffer_font_family;
+        let font_family_name = cx.font_cache().family_name(font_family_id).unwrap();
+        let font_properties = Default::default();
+        let font_id = font_cache
+            .select_font(font_family_id, &font_properties)
+            .unwrap();
+        let font_size = settings.buffer_font_size;
+
+        let mut theme = settings.theme.editor.clone();
+        theme.text = TextStyle {
+            color: theme.text.color,
+            font_family_name,
+            font_family_id,
+            font_id,
+            font_size,
+            font_properties,
+            underline: None,
+        };
+        let language = buffer.upgrade(cx).and_then(|buf| buf.read(cx).language(cx));
+        let soft_wrap = match settings.soft_wrap(language) {
+            workspace::settings::SoftWrap::None => SoftWrap::None,
+            workspace::settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
+            workspace::settings::SoftWrap::PreferredLineLength => {
+                SoftWrap::Column(settings.preferred_line_length(language).saturating_sub(1))
+            }
+        };
+
+        EditorSettings {
+            tab_size: settings.tab_size,
+            soft_wrap,
+            style: theme,
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::sample_text;
+    use language::LanguageConfig;
+    use std::time::Instant;
     use text::Point;
     use unindent::Unindent;
+    use util::test::sample_text;
+
+    #[gpui::test]
+    fn test_undo_redo_with_selection_restoration(cx: &mut MutableAppContext) {
+        let mut now = Instant::now();
+        let buffer = cx.add_model(|cx| language::Buffer::new(0, "123456", cx));
+        let group_interval = buffer.read(cx).transaction_group_interval();
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let settings = EditorSettings::test(cx);
+        let (_, editor) = cx.add_window(Default::default(), |cx| {
+            build_editor(buffer.clone(), settings, cx)
+        });
+
+        editor.update(cx, |editor, cx| {
+            editor.start_transaction_at(now, cx);
+            editor.select_ranges([2..4], None, cx);
+            editor.insert("cd", cx);
+            editor.end_transaction_at(now, cx);
+            assert_eq!(editor.text(cx), "12cd56");
+            assert_eq!(editor.selected_ranges(cx), vec![4..4]);
+
+            editor.start_transaction_at(now, cx);
+            editor.select_ranges([4..5], None, cx);
+            editor.insert("e", cx);
+            editor.end_transaction_at(now, cx);
+            assert_eq!(editor.text(cx), "12cde6");
+            assert_eq!(editor.selected_ranges(cx), vec![5..5]);
+
+            now += group_interval + Duration::from_millis(1);
+            editor.select_ranges([2..2], None, cx);
+
+            // Simulate an edit in another editor
+            buffer.update(cx, |buffer, cx| {
+                buffer.start_transaction_at(now, cx);
+                buffer.edit([0..1], "a", cx);
+                buffer.edit([1..1], "b", cx);
+                buffer.end_transaction_at(now, cx);
+            });
+
+            assert_eq!(editor.text(cx), "ab2cde6");
+            assert_eq!(editor.selected_ranges(cx), vec![3..3]);
+
+            // Last transaction happened past the group interval in a different editor.
+            // Undo it individually and don't restore selections.
+            editor.undo(&Undo, cx);
+            assert_eq!(editor.text(cx), "12cde6");
+            assert_eq!(editor.selected_ranges(cx), vec![2..2]);
+
+            // First two transactions happened within the group interval in this editor.
+            // Undo them together and restore selections.
+            editor.undo(&Undo, cx);
+            editor.undo(&Undo, cx); // Undo stack is empty here, so this is a no-op.
+            assert_eq!(editor.text(cx), "123456");
+            assert_eq!(editor.selected_ranges(cx), vec![0..0]);
+
+            // Redo the first two transactions together.
+            editor.redo(&Redo, cx);
+            assert_eq!(editor.text(cx), "12cde6");
+            assert_eq!(editor.selected_ranges(cx), vec![5..5]);
+
+            // Redo the last transaction on its own.
+            editor.redo(&Redo, cx);
+            assert_eq!(editor.text(cx), "ab2cde6");
+            assert_eq!(editor.selected_ranges(cx), vec![6..6]);
+
+            // Test empty transactions.
+            editor.start_transaction_at(now, cx);
+            editor.end_transaction_at(now, cx);
+            editor.undo(&Undo, cx);
+            assert_eq!(editor.text(cx), "12cde6");
+        });
+    }
 
     #[gpui::test]
     fn test_selection_with_mouse(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
+        let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
         let settings = EditorSettings::test(cx);
         let (_, editor) =
             cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
@@ -3692,7 +3989,7 @@ mod tests {
         });
 
         assert_eq!(
-            editor.update(cx, |view, cx| view.selection_ranges(cx)),
+            editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
         );
 
@@ -3701,7 +3998,7 @@ mod tests {
         });
 
         assert_eq!(
-            editor.update(cx, |view, cx| view.selection_ranges(cx)),
+            editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
         );
 
@@ -3710,7 +4007,7 @@ mod tests {
         });
 
         assert_eq!(
-            editor.update(cx, |view, cx| view.selection_ranges(cx)),
+            editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
         );
 
@@ -3720,7 +4017,7 @@ mod tests {
         });
 
         assert_eq!(
-            editor.update(cx, |view, cx| view.selection_ranges(cx)),
+            editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
             [DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1)]
         );
 
@@ -3730,7 +4027,7 @@ mod tests {
         });
 
         assert_eq!(
-            editor.update(cx, |view, cx| view.selection_ranges(cx)),
+            editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
             [
                 DisplayPoint::new(2, 2)..DisplayPoint::new(1, 1),
                 DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)
@@ -3742,21 +4039,21 @@ mod tests {
         });
 
         assert_eq!(
-            editor.update(cx, |view, cx| view.selection_ranges(cx)),
+            editor.update(cx, |view, cx| view.selected_display_ranges(cx)),
             [DisplayPoint::new(3, 3)..DisplayPoint::new(0, 0)]
         );
     }
 
     #[gpui::test]
     fn test_canceling_pending_selection(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
+        let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
         let settings = EditorSettings::test(cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
         view.update(cx, |view, cx| {
             view.begin_selection(DisplayPoint::new(2, 2), false, 1, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 [DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2)]
             );
         });
@@ -3764,7 +4061,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.update_selection(DisplayPoint::new(3, 3), 0, Vector2F::zero(), cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
             );
         });
@@ -3773,7 +4070,7 @@ mod tests {
             view.cancel(&Cancel, cx);
             view.update_selection(DisplayPoint::new(1, 1), 0, Vector2F::zero(), cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
             );
         });
@@ -3781,7 +4078,7 @@ mod tests {
 
     #[gpui::test]
     fn test_cancel(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx));
+        let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
         let settings = EditorSettings::test(cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
@@ -3794,7 +4091,7 @@ mod tests {
             view.update_selection(DisplayPoint::new(0, 3), 0, Vector2F::zero(), cx);
             view.end_selection(cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 [
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1),
@@ -3805,7 +4102,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.cancel(&Cancel, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 [DisplayPoint::new(3, 4)..DisplayPoint::new(1, 1)]
             );
         });
@@ -3813,7 +4110,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.cancel(&Cancel, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 [DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1)]
             );
         });
@@ -3821,30 +4118,27 @@ mod tests {
 
     #[gpui::test]
     fn test_fold(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| {
-            Buffer::new(
-                0,
-                "
-                    impl Foo {
-                        // Hello!
+        let buffer = MultiBuffer::build_simple(
+            &"
+                impl Foo {
+                    // Hello!
 
-                        fn a() {
-                            1
-                        }
-
-                        fn b() {
-                            2
-                        }
-
-                        fn c() {
-                            3
-                        }
+                    fn a() {
+                        1
                     }
-                "
-                .unindent(),
-                cx,
-            )
-        });
+
+                    fn b() {
+                        2
+                    }
+
+                    fn c() {
+                        3
+                    }
+                }
+            "
+            .unindent(),
+            cx,
+        );
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(buffer.clone(), settings, cx)
@@ -3906,13 +4200,13 @@ mod tests {
             );
 
             view.unfold(&Unfold, cx);
-            assert_eq!(view.display_text(cx), buffer.read(cx).text());
+            assert_eq!(view.display_text(cx), buffer.read(cx).read(cx).text());
         });
     }
 
     #[gpui::test]
     fn test_move_cursor(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 6), cx));
+        let buffer = MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx);
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(buffer.clone(), settings, cx)
@@ -3931,43 +4225,43 @@ mod tests {
 
         view.update(cx, |view, cx| {
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
             );
 
             view.move_down(&MoveDown, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
             );
 
             view.move_right(&MoveRight, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4)]
             );
 
             view.move_left(&MoveLeft, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
             );
 
             view.move_up(&MoveUp, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
             );
 
             view.move_to_end(&MoveToEnd, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(5, 6)..DisplayPoint::new(5, 6)]
             );
 
             view.move_to_beginning(&MoveToBeginning, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0)]
             );
 
@@ -3975,13 +4269,13 @@ mod tests {
                 .unwrap();
             view.select_to_beginning(&SelectToBeginning, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 0)]
             );
 
             view.select_to_end(&SelectToEnd, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(0, 1)..DisplayPoint::new(5, 6)]
             );
         });
@@ -3989,7 +4283,7 @@ mod tests {
 
     #[gpui::test]
     fn test_move_cursor_multibyte(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcde\nαβγδε\n", cx));
+        let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcde\nαβγδε\n", cx);
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(buffer.clone(), settings, cx)
@@ -4010,44 +4304,89 @@ mod tests {
             assert_eq!(view.display_text(cx), "ⓐⓑ…ⓔ\nab…e\nαβ…ε\n");
 
             view.move_right(&MoveRight, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐ".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(0, "ⓐ".len())]
+            );
             view.move_right(&MoveRight, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(0, "ⓐⓑ".len())]
+            );
             view.move_right(&MoveRight, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ…".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(0, "ⓐⓑ…".len())]
+            );
 
             view.move_down(&MoveDown, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "ab…".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(1, "ab…".len())]
+            );
             view.move_left(&MoveLeft, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "ab".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(1, "ab".len())]
+            );
             view.move_left(&MoveLeft, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "a".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(1, "a".len())]
+            );
 
             view.move_down(&MoveDown, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "α".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(2, "α".len())]
+            );
             view.move_right(&MoveRight, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβ".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(2, "αβ".len())]
+            );
             view.move_right(&MoveRight, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβ…".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(2, "αβ…".len())]
+            );
             view.move_right(&MoveRight, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβ…ε".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(2, "αβ…ε".len())]
+            );
 
             view.move_up(&MoveUp, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "ab…e".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(1, "ab…e".len())]
+            );
             view.move_up(&MoveUp, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ…ⓔ".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(0, "ⓐⓑ…ⓔ".len())]
+            );
             view.move_left(&MoveLeft, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ…".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(0, "ⓐⓑ…".len())]
+            );
             view.move_left(&MoveLeft, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐⓑ".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(0, "ⓐⓑ".len())]
+            );
             view.move_left(&MoveLeft, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(0, "ⓐ".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(0, "ⓐ".len())]
+            );
         });
     }
 
     #[gpui::test]
     fn test_move_cursor_different_line_lengths(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", cx));
+        let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", cx);
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(buffer.clone(), settings, cx)
@@ -4057,28 +4396,46 @@ mod tests {
                 .unwrap();
 
             view.move_down(&MoveDown, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(1, "abcd".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(1, "abcd".len())]
+            );
 
             view.move_down(&MoveDown, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβγ".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(2, "αβγ".len())]
+            );
 
             view.move_down(&MoveDown, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(3, "abcd".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(3, "abcd".len())]
+            );
 
             view.move_down(&MoveDown, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(4, "ⓐⓑⓒⓓⓔ".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(4, "ⓐⓑⓒⓓⓔ".len())]
+            );
 
             view.move_up(&MoveUp, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(3, "abcd".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(3, "abcd".len())]
+            );
 
             view.move_up(&MoveUp, cx);
-            assert_eq!(view.selection_ranges(cx), &[empty_range(2, "αβγ".len())]);
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[empty_range(2, "αβγ".len())]
+            );
         });
     }
 
     #[gpui::test]
     fn test_beginning_end_of_line(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\n  def", cx));
+        let buffer = MultiBuffer::build_simple("abc\n  def", cx);
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
@@ -4095,7 +4452,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
@@ -4106,7 +4463,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
@@ -4117,7 +4474,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_beginning_of_line(&MoveToBeginningOfLine, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
@@ -4128,7 +4485,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_end_of_line(&MoveToEndOfLine, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
@@ -4140,7 +4497,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_end_of_line(&MoveToEndOfLine, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
@@ -4152,7 +4509,7 @@ mod tests {
             view.move_left(&MoveLeft, cx);
             view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
@@ -4163,7 +4520,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 0),
@@ -4174,7 +4531,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_to_beginning_of_line(&SelectToBeginningOfLine(true), cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 2),
@@ -4185,7 +4542,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_to_end_of_line(&SelectToEndOfLine, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 5),
@@ -4197,7 +4554,7 @@ mod tests {
             view.delete_to_end_of_line(&DeleteToEndOfLine, cx);
             assert_eq!(view.display_text(cx), "ab\n  de");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4),
@@ -4209,7 +4566,7 @@ mod tests {
             view.delete_to_beginning_of_line(&DeleteToBeginningOfLine, cx);
             assert_eq!(view.display_text(cx), "\n");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
@@ -4220,8 +4577,7 @@ mod tests {
 
     #[gpui::test]
     fn test_prev_next_word_boundary(cx: &mut gpui::MutableAppContext) {
-        let buffer =
-            cx.add_model(|cx| Buffer::new(0, "use std::str::{foo, bar}\n\n  {baz.qux()}", cx));
+        let buffer = MultiBuffer::build_simple("use std::str::{foo, bar}\n\n  {baz.qux()}", cx);
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
@@ -4238,7 +4594,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
                     DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
@@ -4249,7 +4605,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
                     DisplayPoint::new(2, 2)..DisplayPoint::new(2, 2),
@@ -4260,7 +4616,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 4)..DisplayPoint::new(0, 4),
                     DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
@@ -4271,7 +4627,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
@@ -4282,7 +4638,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(0, 23)..DisplayPoint::new(0, 23),
@@ -4293,7 +4649,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(0, 24)..DisplayPoint::new(0, 24),
@@ -4304,7 +4660,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 7)..DisplayPoint::new(0, 7),
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
@@ -4315,7 +4671,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 9)..DisplayPoint::new(0, 9),
                     DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
@@ -4327,7 +4683,7 @@ mod tests {
             view.move_right(&MoveRight, cx);
             view.select_to_previous_word_boundary(&SelectToPreviousWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
                     DisplayPoint::new(2, 4)..DisplayPoint::new(2, 3),
@@ -4338,7 +4694,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_to_previous_word_boundary(&SelectToPreviousWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 10)..DisplayPoint::new(0, 7),
                     DisplayPoint::new(2, 4)..DisplayPoint::new(2, 2),
@@ -4349,7 +4705,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_to_next_word_boundary(&SelectToNextWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 10)..DisplayPoint::new(0, 9),
                     DisplayPoint::new(2, 4)..DisplayPoint::new(2, 3),
@@ -4360,8 +4716,7 @@ mod tests {
 
     #[gpui::test]
     fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut gpui::MutableAppContext) {
-        let buffer =
-            cx.add_model(|cx| Buffer::new(0, "use one::{\n    two::three::four::five\n};", cx));
+        let buffer = MultiBuffer::build_simple("use one::{\n    two::three::four::five\n};", cx);
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
@@ -4377,37 +4732,37 @@ mod tests {
 
             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 9)..DisplayPoint::new(1, 9)]
             );
 
             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
             );
 
             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
             );
 
             view.move_to_next_word_boundary(&MoveToNextWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(2, 8)..DisplayPoint::new(2, 8)]
             );
 
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(2, 4)..DisplayPoint::new(2, 4)]
             );
 
             view.move_to_previous_word_boundary(&MoveToPreviousWordBoundary, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 14)..DisplayPoint::new(1, 14)]
             );
         });
@@ -4415,7 +4770,7 @@ mod tests {
 
     #[gpui::test]
     fn test_delete_to_word_boundary(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "one two three four", cx));
+        let buffer = MultiBuffer::build_simple("one two three four", cx);
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(buffer.clone(), settings, cx)
@@ -4435,7 +4790,7 @@ mod tests {
             view.delete_to_previous_word_boundary(&DeleteToPreviousWordBoundary, cx);
         });
 
-        assert_eq!(buffer.read(cx).text(), "e two te four");
+        assert_eq!(buffer.read(cx).read(cx).text(), "e two te four");
 
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -4451,12 +4806,12 @@ mod tests {
             view.delete_to_next_word_boundary(&DeleteToNextWordBoundary, cx);
         });
 
-        assert_eq!(buffer.read(cx).text(), "e t te our");
+        assert_eq!(buffer.read(cx).read(cx).text(), "e t te our");
     }
 
     #[gpui::test]
     fn test_newline(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "aaaa\n    bbbb\n", cx));
+        let buffer = MultiBuffer::build_simple("aaaa\n    bbbb\n", cx);
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(buffer.clone(), settings, cx)
@@ -4480,7 +4835,7 @@ mod tests {
 
     #[gpui::test]
     fn test_indent_outdent(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "  one two\nthree\n four", cx));
+        let buffer = MultiBuffer::build_simple("  one two\nthree\n four", cx);
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(buffer.clone(), settings, cx)
@@ -4501,7 +4856,7 @@ mod tests {
             view.tab(&Tab, cx);
             assert_eq!(view.text(cx), "    one two\nthree\n four");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 4)..DisplayPoint::new(0, 7),
                     DisplayPoint::new(0, 8)..DisplayPoint::new(0, 11),
@@ -4512,7 +4867,7 @@ mod tests {
             view.outdent(&Outdent, cx);
             assert_eq!(view.text(cx), "one two\nthree\n four");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(0, 4)..DisplayPoint::new(0, 7),
@@ -4527,13 +4882,13 @@ mod tests {
             view.tab(&Tab, cx);
             assert_eq!(view.text(cx), "one two\n    three\n four");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 5)..DisplayPoint::new(2, 0)]
             );
             view.outdent(&Outdent, cx);
             assert_eq!(view.text(cx), "one two\nthree\n four");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 1)..DisplayPoint::new(2, 0)]
             );
         });
@@ -4541,13 +4896,8 @@ mod tests {
 
     #[gpui::test]
     fn test_backspace(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| {
-            Buffer::new(
-                0,
-                "one two three\nfour five six\nseven eight nine\nten\n",
-                cx,
-            )
-        });
+        let buffer =
+            MultiBuffer::build_simple("one two three\nfour five six\nseven eight nine\nten\n", cx);
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(buffer.clone(), settings, cx)
@@ -4570,20 +4920,15 @@ mod tests {
         });
 
         assert_eq!(
-            buffer.read(cx).text(),
+            buffer.read(cx).read(cx).text(),
             "oe two three\nfou five six\nseven ten\n"
         );
     }
 
     #[gpui::test]
     fn test_delete(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| {
-            Buffer::new(
-                0,
-                "one two three\nfour five six\nseven eight nine\nten\n",
-                cx,
-            )
-        });
+        let buffer =
+            MultiBuffer::build_simple("one two three\nfour five six\nseven eight nine\nten\n", cx);
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| {
             build_editor(buffer.clone(), settings, cx)
@@ -4606,7 +4951,7 @@ mod tests {
         });
 
         assert_eq!(
-            buffer.read(cx).text(),
+            buffer.read(cx).read(cx).text(),
             "on two three\nfou five six\nseven ten\n"
         );
     }
@@ -4614,7 +4959,7 @@ mod tests {
     #[gpui::test]
     fn test_delete_line(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
+        let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -4629,7 +4974,7 @@ mod tests {
             view.delete_line(&DeleteLine, cx);
             assert_eq!(view.display_text(cx), "ghi");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)
@@ -4638,7 +4983,7 @@ mod tests {
         });
 
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
+        let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_display_ranges(&[DisplayPoint::new(2, 0)..DisplayPoint::new(0, 1)], cx)
@@ -4646,7 +4991,7 @@ mod tests {
             view.delete_line(&DeleteLine, cx);
             assert_eq!(view.display_text(cx), "ghi\n");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)]
             );
         });
@@ -4655,7 +5000,7 @@ mod tests {
     #[gpui::test]
     fn test_duplicate_line(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
+        let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -4671,7 +5016,7 @@ mod tests {
             view.duplicate_line(&DuplicateLine, cx);
             assert_eq!(view.display_text(cx), "abc\nabc\ndef\ndef\nghi\n\n");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 0)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
@@ -4682,7 +5027,7 @@ mod tests {
         });
 
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndef\nghi\n", cx));
+        let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -4696,7 +5041,7 @@ mod tests {
             view.duplicate_line(&DuplicateLine, cx);
             assert_eq!(view.display_text(cx), "abc\ndef\nghi\nabc\ndef\nghi\n");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(3, 1)..DisplayPoint::new(4, 1),
                     DisplayPoint::new(4, 2)..DisplayPoint::new(5, 1),
@@ -4708,7 +5053,7 @@ mod tests {
     #[gpui::test]
     fn test_move_line_up_down(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(10, 5), cx));
+        let buffer = MultiBuffer::build_simple(&sample_text(10, 5, 'a'), cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.fold_ranges(
@@ -4740,7 +5085,7 @@ mod tests {
                 "aa…bbb\nccc…eeee\nggggg\n…i\njjjjj\nfffff"
             );
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
@@ -4757,7 +5102,7 @@ mod tests {
                 "ccc…eeee\naa…bbb\nfffff\nggggg\n…i\njjjjj"
             );
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
@@ -4774,7 +5119,7 @@ mod tests {
                 "ccc…eeee\nfffff\naa…bbb\nggggg\n…i\njjjjj"
             );
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
                     DisplayPoint::new(3, 1)..DisplayPoint::new(3, 1),
@@ -4791,7 +5136,7 @@ mod tests {
                 "ccc…eeee\naa…bbb\nggggg\n…i\njjjjj\nfffff"
             );
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
@@ -4804,7 +5149,7 @@ mod tests {
 
     #[gpui::test]
     fn test_clipboard(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "one✅ two three four five six ", cx));
+        let buffer = MultiBuffer::build_simple("one✅ two three four five six ", cx);
         let settings = EditorSettings::test(&cx);
         let view = cx
             .add_window(Default::default(), |cx| {
@@ -4825,7 +5170,7 @@ mod tests {
             view.paste(&Paste, cx);
             assert_eq!(view.display_text(cx), "two one✅ four three six five ");
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 11)..DisplayPoint::new(0, 11),
                     DisplayPoint::new(0, 22)..DisplayPoint::new(0, 22),
@@ -4893,7 +5238,7 @@ mod tests {
                 "123\n4567\n9\n( 8ne✅ three five ) two one✅ four three six five ( one✅ three five ) "
             );
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
                     DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
@@ -4927,7 +5272,7 @@ mod tests {
                 "123\n123\n123\n67\n123\n9\n( 8ne✅ three five ) two one✅ four three six five ( one✅ three five ) "
             );
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0),
@@ -4939,13 +5284,13 @@ mod tests {
 
     #[gpui::test]
     fn test_select_all(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\nde\nfgh", cx));
+        let buffer = MultiBuffer::build_simple("abc\nde\nfgh", cx);
         let settings = EditorSettings::test(&cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_all(&SelectAll, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 &[DisplayPoint::new(0, 0)..DisplayPoint::new(2, 3)]
             );
         });
@@ -4954,7 +5299,7 @@ mod tests {
     #[gpui::test]
     fn test_select_line(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(6, 5), cx));
+        let buffer = MultiBuffer::build_simple(&sample_text(6, 5, 'a'), cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.select_display_ranges(
@@ -4969,7 +5314,7 @@ mod tests {
             .unwrap();
             view.select_line(&SelectLine, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 0)..DisplayPoint::new(2, 0),
                     DisplayPoint::new(4, 0)..DisplayPoint::new(5, 0),
@@ -4980,7 +5325,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_line(&SelectLine, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 0)..DisplayPoint::new(3, 0),
                     DisplayPoint::new(4, 0)..DisplayPoint::new(5, 5),
@@ -4991,7 +5336,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.select_line(&SelectLine, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![DisplayPoint::new(0, 0)..DisplayPoint::new(5, 5)]
             );
         });
@@ -5000,7 +5345,7 @@ mod tests {
     #[gpui::test]
     fn test_split_selection_into_lines(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(9, 5), cx));
+        let buffer = MultiBuffer::build_simple(&sample_text(9, 5, 'a'), cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         view.update(cx, |view, cx| {
             view.fold_ranges(
@@ -5031,7 +5376,7 @@ mod tests {
                 "aaaaa\nbbbbb\nccc…eeee\nfffff\nggggg\n…i"
             );
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 [
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2),
@@ -5050,7 +5395,7 @@ mod tests {
                 "aaaaa\nbbbbb\nccccc\nddddd\neeeee\nfffff\nggggg\nhhhhh\niiiii"
             );
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 [
                     DisplayPoint::new(0, 5)..DisplayPoint::new(0, 5),
                     DisplayPoint::new(1, 5)..DisplayPoint::new(1, 5),
@@ -5068,7 +5413,7 @@ mod tests {
     #[gpui::test]
     fn test_add_selection_above_below(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(&cx);
-        let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndefghi\n\njk\nlmno\n", cx));
+        let buffer = MultiBuffer::build_simple("abc\ndefghi\n\njk\nlmno\n", cx);
         let (_, view) = cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
 
         view.update(cx, |view, cx| {
@@ -5078,7 +5423,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
@@ -5089,7 +5434,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)
@@ -5100,7 +5445,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3)]
             );
         });
@@ -5108,7 +5453,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
                     DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
@@ -5119,7 +5464,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
                     DisplayPoint::new(4, 3)..DisplayPoint::new(4, 3)
@@ -5134,7 +5479,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
                     DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
@@ -5145,7 +5490,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3),
                     DisplayPoint::new(4, 4)..DisplayPoint::new(4, 3)
@@ -5156,7 +5501,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
             );
         });
@@ -5164,7 +5509,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![DisplayPoint::new(1, 4)..DisplayPoint::new(1, 3)]
             );
         });
@@ -5174,7 +5519,7 @@ mod tests {
                 .unwrap();
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
@@ -5186,7 +5531,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
@@ -5199,7 +5544,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 1)..DisplayPoint::new(0, 3),
                     DisplayPoint::new(1, 1)..DisplayPoint::new(1, 4),
@@ -5215,7 +5560,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_above(&AddSelectionAbove, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(0, 3)..DisplayPoint::new(0, 1),
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
@@ -5228,7 +5573,7 @@ mod tests {
         view.update(cx, |view, cx| {
             view.add_selection_below(&AddSelectionBelow, cx);
             assert_eq!(
-                view.selection_ranges(cx),
+                view.selected_display_ranges(cx),
                 vec![
                     DisplayPoint::new(1, 3)..DisplayPoint::new(1, 1),
                     DisplayPoint::new(3, 2)..DisplayPoint::new(3, 1),
@@ -5256,8 +5601,9 @@ mod tests {
         .unindent();
 
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
-        view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
+        view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
             .await;
 
         view.update(&mut cx, |view, cx| {
@@ -5273,7 +5619,7 @@ mod tests {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
                 DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
@@ -5285,7 +5631,7 @@ mod tests {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
                 DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
@@ -5296,7 +5642,7 @@ mod tests {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
             &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
         );
 
@@ -5305,7 +5651,7 @@ mod tests {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
             &[DisplayPoint::new(5, 0)..DisplayPoint::new(0, 0)]
         );
 
@@ -5313,7 +5659,7 @@ mod tests {
             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
                 DisplayPoint::new(4, 1)..DisplayPoint::new(2, 0),
@@ -5324,7 +5670,7 @@ mod tests {
             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 23)..DisplayPoint::new(0, 27),
                 DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
@@ -5336,7 +5682,7 @@ mod tests {
             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
                 DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
@@ -5349,7 +5695,7 @@ mod tests {
             view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 25)..DisplayPoint::new(0, 25),
                 DisplayPoint::new(2, 24)..DisplayPoint::new(2, 12),
@@ -5370,7 +5716,7 @@ mod tests {
             view.select_larger_syntax_node(&SelectLargerSyntaxNode, cx);
         });
         assert_eq!(
-            view.update(&mut cx, |view, cx| view.selection_ranges(cx)),
+            view.update(&mut cx, |view, cx| view.selected_display_ranges(cx)),
             &[
                 DisplayPoint::new(0, 16)..DisplayPoint::new(0, 28),
                 DisplayPoint::new(2, 35)..DisplayPoint::new(2, 7),
@@ -5412,8 +5758,9 @@ mod tests {
         .unindent();
 
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
-        view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
+        view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
             .await;
 
         view.update(&mut cx, |view, cx| {
@@ -5512,6 +5859,7 @@ mod tests {
         .unindent();
 
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
 
         view.update(&mut cx, |editor, cx| {
@@ -5577,6 +5925,109 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_editing_disjoint_excerpts(cx: &mut gpui::MutableAppContext) {
+        let settings = EditorSettings::test(cx);
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
+        let multibuffer = cx.add_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(0);
+            multibuffer.push_excerpt(
+                ExcerptProperties {
+                    buffer: &buffer,
+                    range: Point::new(0, 0)..Point::new(0, 4),
+                },
+                cx,
+            );
+            multibuffer.push_excerpt(
+                ExcerptProperties {
+                    buffer: &buffer,
+                    range: Point::new(1, 0)..Point::new(1, 4),
+                },
+                cx,
+            );
+            multibuffer
+        });
+
+        assert_eq!(multibuffer.read(cx).read(cx).text(), "aaaa\nbbbb");
+
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            build_editor(multibuffer, settings, cx)
+        });
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+                ],
+                cx,
+            )
+            .unwrap();
+
+            view.handle_input(&Input("X".to_string()), cx);
+            assert_eq!(view.text(cx), "Xaaaa\nXbbbb");
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                ]
+            )
+        });
+    }
+
+    #[gpui::test]
+    fn test_editing_overlapping_excerpts(cx: &mut gpui::MutableAppContext) {
+        let settings = EditorSettings::test(cx);
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
+        let multibuffer = cx.add_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(0);
+            multibuffer.push_excerpt(
+                ExcerptProperties {
+                    buffer: &buffer,
+                    range: Point::new(0, 0)..Point::new(1, 4),
+                },
+                cx,
+            );
+            multibuffer.push_excerpt(
+                ExcerptProperties {
+                    buffer: &buffer,
+                    range: Point::new(1, 0)..Point::new(2, 4),
+                },
+                cx,
+            );
+            multibuffer
+        });
+
+        assert_eq!(
+            multibuffer.read(cx).read(cx).text(),
+            "aaaa\nbbbb\nbbbb\ncccc"
+        );
+
+        let (_, view) = cx.add_window(Default::default(), |cx| {
+            build_editor(multibuffer, settings, cx)
+        });
+        view.update(cx, |view, cx| {
+            view.select_display_ranges(
+                &[
+                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
+                ],
+                cx,
+            )
+            .unwrap();
+
+            view.handle_input(&Input("X".to_string()), cx);
+            assert_eq!(view.text(cx), "aaaa\nbXbbXb\nbXbbXb\ncccc");
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[
+                    DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
+                    DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
+                ]
+            )
+        });
+    }
+
+    #[gpui::test]
     async fn test_extra_newline_insertion(mut cx: gpui::TestAppContext) {
         let settings = cx.read(EditorSettings::test);
         let language = Some(Arc::new(Language::new(
@@ -5609,8 +6060,9 @@ mod tests {
         );
 
         let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
-        view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing())
+        view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
             .await;
 
         view.update(&mut cx, |view, cx| {
@@ -5626,7 +6078,7 @@ mod tests {
             view.newline(&Newline, cx);
 
             assert_eq!(
-                view.buffer().read(cx).text(),
+                view.buffer().read(cx).read(cx).text(),
                 concat!(
                     "{ \n",    // Suppress rustfmt
                     "\n",      //
@@ -5644,21 +6096,41 @@ mod tests {
     }
 
     impl Editor {
-        fn selection_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
-            self.intersecting_selections(
-                self.selection_set_id,
-                DisplayPoint::zero()..self.max_point(cx),
-                cx,
-            )
-            .into_iter()
-            .map(|s| {
-                if s.reversed {
-                    s.end..s.start
-                } else {
-                    s.start..s.end
-                }
-            })
-            .collect()
+        fn selected_ranges<D: TextDimension + Ord + Sub<D, Output = D>>(
+            &self,
+            cx: &mut MutableAppContext,
+        ) -> Vec<Range<D>> {
+            self.local_selections::<D>(cx)
+                .iter()
+                .map(|s| {
+                    if s.reversed {
+                        s.end.clone()..s.start.clone()
+                    } else {
+                        s.start.clone()..s.end.clone()
+                    }
+                })
+                .collect()
+        }
+
+        fn selected_display_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
+            let display_map = self
+                .display_map
+                .update(cx, |display_map, cx| display_map.snapshot(cx));
+            self.selections
+                .iter()
+                .chain(
+                    self.pending_selection
+                        .as_ref()
+                        .map(|pending| &pending.selection),
+                )
+                .map(|s| {
+                    if s.reversed {
+                        s.end.to_display_point(&display_map)..s.start.to_display_point(&display_map)
+                    } else {
+                        s.start.to_display_point(&display_map)..s.end.to_display_point(&display_map)
+                    }
+                })
+                .collect()
         }
     }
 
@@ -5668,11 +6140,11 @@ mod tests {
     }
 
     fn build_editor(
-        buffer: ModelHandle<Buffer>,
+        buffer: ModelHandle<MultiBuffer>,
         settings: EditorSettings,
         cx: &mut ViewContext<Editor>,
     ) -> Editor {
-        Editor::for_buffer(buffer, move |_| settings.clone(), cx)
+        Editor::for_buffer(buffer, Arc::new(move |_| settings.clone()), cx)
     }
 }
 

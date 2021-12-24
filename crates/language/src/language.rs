@@ -1,19 +1,22 @@
 mod buffer;
+mod diagnostic_set;
 mod highlight_map;
 pub mod proto;
 #[cfg(test)]
 mod tests;
 
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 pub use buffer::Operation;
 pub use buffer::*;
-use gpui::{executor::Background, AppContext};
+use collections::{HashMap, HashSet};
+pub use diagnostic_set::DiagnosticEntry;
+use gpui::AppContext;
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
-use lsp::LanguageServer;
 use parking_lot::Mutex;
 use serde::Deserialize;
-use std::{collections::HashSet, path::Path, str, sync::Arc};
+use std::{path::Path, str, sync::Arc};
 use theme::SyntaxTheme;
 use tree_sitter::{self, Query};
 pub use tree_sitter::{Parser, Tree};
@@ -46,7 +49,7 @@ pub struct LanguageServerConfig {
     pub disk_based_diagnostic_sources: HashSet<String>,
     #[cfg(any(test, feature = "test-support"))]
     #[serde(skip)]
-    pub fake_server: Option<(Arc<LanguageServer>, Arc<std::sync::atomic::AtomicBool>)>,
+    pub fake_server: Option<(Arc<lsp::LanguageServer>, Arc<std::sync::atomic::AtomicBool>)>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -57,9 +60,18 @@ pub struct BracketPair {
     pub newline: bool,
 }
 
+#[async_trait]
+pub trait DiagnosticProvider: 'static + Send + Sync {
+    async fn diagnose(
+        &self,
+        path: Arc<Path>,
+    ) -> Result<HashMap<Arc<Path>, Vec<DiagnosticEntry<usize>>>>;
+}
+
 pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
+    pub(crate) diagnostic_provider: Option<Arc<dyn DiagnosticProvider>>,
 }
 
 pub struct Grammar {
@@ -124,6 +136,7 @@ impl Language {
                     highlight_map: Default::default(),
                 })
             }),
+            diagnostic_provider: None,
         }
     }
 
@@ -155,6 +168,11 @@ impl Language {
             .ok_or_else(|| anyhow!("grammar does not exist or is already being used"))?;
         grammar.indents_query = Query::new(grammar.ts_language, source)?;
         Ok(self)
+    }
+
+    pub fn with_diagnostic_provider(mut self, source: impl DiagnosticProvider) -> Self {
+        self.diagnostic_provider = Some(Arc::new(source));
+        self
     }
 
     pub fn name(&self) -> &str {
@@ -190,6 +208,10 @@ impl Language {
         }
     }
 
+    pub fn diagnostic_provider(&self) -> Option<&Arc<dyn DiagnosticProvider>> {
+        self.diagnostic_provider.as_ref()
+    }
+
     pub fn disk_based_diagnostic_sources(&self) -> Option<&HashSet<String>> {
         self.config
             .language_server
@@ -217,7 +239,9 @@ impl Grammar {
 
 #[cfg(any(test, feature = "test-support"))]
 impl LanguageServerConfig {
-    pub async fn fake(executor: Arc<Background>) -> (Self, lsp::FakeLanguageServer) {
+    pub async fn fake(
+        executor: Arc<gpui::executor::Background>,
+    ) -> (Self, lsp::FakeLanguageServer) {
         let (server, fake) = lsp::LanguageServer::fake(executor).await;
         fake.started
             .store(false, std::sync::atomic::Ordering::SeqCst);

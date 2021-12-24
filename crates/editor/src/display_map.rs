@@ -3,28 +3,29 @@ mod fold_map;
 mod tab_map;
 mod wrap_map;
 
-pub use block_map::{
-    AlignedBlock, BlockContext, BlockDisposition, BlockId, BlockProperties, BufferRows, Chunks,
-};
+use crate::{Anchor, MultiBuffer, MultiBufferSnapshot, ToOffset, ToPoint};
 use block_map::{BlockMap, BlockPoint};
+use collections::{HashMap, HashSet};
 use fold_map::{FoldMap, ToFoldPoint as _};
-use gpui::{fonts::FontId, ElementBox, Entity, ModelContext, ModelHandle};
-use language::{Anchor, Buffer, Point, Subscription as BufferSubscription, ToOffset, ToPoint};
-use std::{
-    collections::{HashMap, HashSet},
-    ops::Range,
-};
+use gpui::{fonts::FontId, Entity, ModelContext, ModelHandle};
+use language::{Point, Subscription as BufferSubscription};
+use std::ops::Range;
 use sum_tree::Bias;
 use tab_map::TabMap;
 use theme::SyntaxTheme;
 use wrap_map::WrapMap;
 
+pub use block_map::{
+    AlignedBlock, BlockBufferRows as DisplayBufferRows, BlockChunks as DisplayChunks, BlockContext,
+    BlockDisposition, BlockId, BlockProperties, RenderBlock,
+};
+
 pub trait ToDisplayPoint {
-    fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint;
+    fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
 
 pub struct DisplayMap {
-    buffer: ModelHandle<Buffer>,
+    buffer: ModelHandle<MultiBuffer>,
     buffer_subscription: BufferSubscription,
     fold_map: FoldMap,
     tab_map: TabMap,
@@ -38,7 +39,7 @@ impl Entity for DisplayMap {
 
 impl DisplayMap {
     pub fn new(
-        buffer: ModelHandle<Buffer>,
+        buffer: ModelHandle<MultiBuffer>,
         tab_size: usize,
         font_id: FontId,
         font_size: f32,
@@ -46,10 +47,10 @@ impl DisplayMap {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let buffer_subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
-        let (fold_map, snapshot) = FoldMap::new(buffer.read(cx).snapshot());
+        let (fold_map, snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font_id, font_size, wrap_width, cx);
-        let block_map = BlockMap::new(buffer.clone(), snapshot);
+        let block_map = BlockMap::new(snapshot);
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
         DisplayMap {
             buffer,
@@ -61,18 +62,18 @@ impl DisplayMap {
         }
     }
 
-    pub fn snapshot(&self, cx: &mut ModelContext<Self>) -> DisplayMapSnapshot {
-        let buffer_snapshot = self.buffer.read(cx).snapshot();
+    pub fn snapshot(&self, cx: &mut ModelContext<Self>) -> DisplaySnapshot {
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (folds_snapshot, edits) = self.fold_map.read(buffer_snapshot, edits);
         let (tabs_snapshot, edits) = self.tab_map.sync(folds_snapshot.clone(), edits);
         let (wraps_snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(tabs_snapshot.clone(), edits, cx));
-        let blocks_snapshot = self.block_map.read(wraps_snapshot.clone(), edits, cx);
+        let blocks_snapshot = self.block_map.read(wraps_snapshot.clone(), edits);
 
-        DisplayMapSnapshot {
-            buffer_snapshot: self.buffer.read(cx).snapshot(),
+        DisplaySnapshot {
+            buffer_snapshot: self.buffer.read(cx).snapshot(cx),
             folds_snapshot,
             tabs_snapshot,
             wraps_snapshot,
@@ -85,20 +86,20 @@ impl DisplayMap {
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &mut ModelContext<Self>,
     ) {
-        let snapshot = self.buffer.read(cx).snapshot();
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits, cx);
+        self.block_map.read(snapshot, edits);
         let (snapshot, edits) = fold_map.fold(ranges);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits, cx);
+        self.block_map.read(snapshot, edits);
     }
 
     pub fn unfold<T: ToOffset>(
@@ -106,20 +107,20 @@ impl DisplayMap {
         ranges: impl IntoIterator<Item = Range<T>>,
         cx: &mut ModelContext<Self>,
     ) {
-        let snapshot = self.buffer.read(cx).snapshot();
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits, cx);
+        self.block_map.read(snapshot, edits);
         let (snapshot, edits) = fold_map.unfold(ranges);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits, cx);
+        self.block_map.read(snapshot, edits);
     }
 
     pub fn insert_blocks<P>(
@@ -130,34 +131,31 @@ impl DisplayMap {
     where
         P: ToOffset + Clone,
     {
-        let snapshot = self.buffer.read(cx).snapshot();
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        let mut block_map = self.block_map.write(snapshot, edits, cx);
-        block_map.insert(blocks, cx)
+        let mut block_map = self.block_map.write(snapshot, edits);
+        block_map.insert(blocks)
     }
 
-    pub fn replace_blocks<F>(&mut self, styles: HashMap<BlockId, F>)
-    where
-        F: 'static + Fn(&BlockContext) -> ElementBox,
-    {
+    pub fn replace_blocks(&mut self, styles: HashMap<BlockId, RenderBlock>) {
         self.block_map.replace(styles);
     }
 
     pub fn remove_blocks(&mut self, ids: HashSet<BlockId>, cx: &mut ModelContext<Self>) {
-        let snapshot = self.buffer.read(cx).snapshot();
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        let mut block_map = self.block_map.write(snapshot, edits, cx);
-        block_map.remove(ids, cx);
+        let mut block_map = self.block_map.write(snapshot, edits);
+        block_map.remove(ids);
     }
 
     pub fn set_font(&self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) {
@@ -176,15 +174,15 @@ impl DisplayMap {
     }
 }
 
-pub struct DisplayMapSnapshot {
-    pub buffer_snapshot: language::Snapshot,
-    folds_snapshot: fold_map::Snapshot,
-    tabs_snapshot: tab_map::Snapshot,
-    wraps_snapshot: wrap_map::Snapshot,
+pub struct DisplaySnapshot {
+    pub buffer_snapshot: MultiBufferSnapshot,
+    folds_snapshot: fold_map::FoldSnapshot,
+    tabs_snapshot: tab_map::TabSnapshot,
+    wraps_snapshot: wrap_map::WrapSnapshot,
     blocks_snapshot: block_map::BlockSnapshot,
 }
 
-impl DisplayMapSnapshot {
+impl DisplaySnapshot {
     #[cfg(test)]
     pub fn fold_count(&self) -> usize {
         self.folds_snapshot.fold_count()
@@ -194,56 +192,74 @@ impl DisplayMapSnapshot {
         self.buffer_snapshot.len() == 0
     }
 
-    pub fn buffer_rows<'a>(&'a self, start_row: u32) -> BufferRows<'a> {
+    pub fn buffer_rows<'a>(&'a self, start_row: u32) -> DisplayBufferRows<'a> {
         self.blocks_snapshot.buffer_rows(start_row)
     }
 
-    pub fn buffer_row_count(&self) -> u32 {
-        self.buffer_snapshot.max_point().row + 1
+    pub fn max_buffer_row(&self) -> u32 {
+        self.buffer_snapshot.max_buffer_row()
     }
 
-    pub fn prev_row_boundary(&self, mut display_point: DisplayPoint) -> (DisplayPoint, Point) {
+    pub fn prev_row_boundary(&self, input_display_point: DisplayPoint) -> (DisplayPoint, Point) {
+        let mut display_point = input_display_point;
         loop {
             *display_point.column_mut() = 0;
             let mut point = display_point.to_point(self);
+            point = self.buffer_snapshot.clip_point(point, Bias::Left);
             point.column = 0;
-            let next_display_point = self.point_to_display_point(point, Bias::Left);
+            let next_display_point = self.point_to_display_point_with_clipping(point, Bias::Left);
             if next_display_point == display_point {
                 return (display_point, point);
+            }
+            if next_display_point > display_point {
+                panic!("invalid display point {:?}", input_display_point);
             }
             display_point = next_display_point;
         }
     }
 
-    pub fn next_row_boundary(&self, mut display_point: DisplayPoint) -> (DisplayPoint, Point) {
+    pub fn next_row_boundary(&self, input_display_point: DisplayPoint) -> (DisplayPoint, Point) {
+        let mut display_point = input_display_point;
         loop {
             *display_point.column_mut() = self.line_len(display_point.row());
-            let mut point = display_point.to_point(self);
+            let mut point = self.display_point_to_point(display_point, Bias::Right);
+            point = self.buffer_snapshot.clip_point(point, Bias::Right);
             point.column = self.buffer_snapshot.line_len(point.row);
             let next_display_point = self.point_to_display_point(point, Bias::Right);
             if next_display_point == display_point {
                 return (display_point, point);
+            }
+            if next_display_point < display_point {
+                panic!("invalid display point {:?}", input_display_point);
             }
             display_point = next_display_point;
         }
     }
 
     fn point_to_display_point(&self, point: Point, bias: Bias) -> DisplayPoint {
-        DisplayPoint(
-            self.blocks_snapshot.to_block_point(
-                self.wraps_snapshot.from_tab_point(
-                    self.tabs_snapshot
-                        .to_tab_point(point.to_fold_point(&self.folds_snapshot, bias)),
-                ),
-            ),
-        )
+        let fold_point = point.to_fold_point(&self.folds_snapshot, bias);
+        let tab_point = self.tabs_snapshot.to_tab_point(fold_point);
+        let wrap_point = self.wraps_snapshot.from_tab_point(tab_point);
+        let block_point = self.blocks_snapshot.to_block_point(wrap_point);
+        DisplayPoint(block_point)
+    }
+
+    fn point_to_display_point_with_clipping(&self, point: Point, bias: Bias) -> DisplayPoint {
+        let fold_point = point.to_fold_point(&self.folds_snapshot, bias);
+        let tab_point = self.tabs_snapshot.to_tab_point(fold_point);
+        let wrap_point = self
+            .wraps_snapshot
+            .from_tab_point_with_clipping(tab_point, bias);
+        let block_point = self.blocks_snapshot.to_block_point(wrap_point);
+        DisplayPoint(block_point)
     }
 
     fn display_point_to_point(&self, point: DisplayPoint, bias: Bias) -> Point {
-        let unblocked_point = self.blocks_snapshot.to_wrap_point(point.0);
-        let unwrapped_point = self.wraps_snapshot.to_tab_point(unblocked_point);
-        let unexpanded_point = self.tabs_snapshot.to_fold_point(unwrapped_point, bias).0;
-        unexpanded_point.to_buffer_point(&self.folds_snapshot)
+        let block_point = point.0;
+        let wrap_point = self.blocks_snapshot.to_wrap_point(block_point);
+        let tab_point = self.wraps_snapshot.to_tab_point(wrap_point);
+        let fold_point = self.tabs_snapshot.to_fold_point(tab_point, bias).0;
+        fold_point.to_buffer_point(&self.folds_snapshot)
     }
 
     pub fn max_point(&self) -> DisplayPoint {
@@ -260,7 +276,7 @@ impl DisplayMapSnapshot {
         &'a self,
         display_rows: Range<u32>,
         theme: Option<&'a SyntaxTheme>,
-    ) -> block_map::Chunks<'a> {
+    ) -> DisplayChunks<'a> {
         self.blocks_snapshot.chunks(display_rows, theme)
     }
 
@@ -420,11 +436,11 @@ impl DisplayPoint {
         &mut self.0.column
     }
 
-    pub fn to_point(self, map: &DisplayMapSnapshot) -> Point {
+    pub fn to_point(self, map: &DisplaySnapshot) -> Point {
         map.display_point_to_point(self, Bias::Left)
     }
 
-    pub fn to_offset(self, map: &DisplayMapSnapshot, bias: Bias) -> usize {
+    pub fn to_offset(self, map: &DisplaySnapshot, bias: Bias) -> usize {
         let unblocked_point = map.blocks_snapshot.to_wrap_point(self.0);
         let unwrapped_point = map.wraps_snapshot.to_tab_point(unblocked_point);
         let unexpanded_point = map.tabs_snapshot.to_fold_point(unwrapped_point, bias).0;
@@ -433,19 +449,19 @@ impl DisplayPoint {
 }
 
 impl ToDisplayPoint for usize {
-    fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint {
+    fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
         map.point_to_display_point(self.to_point(&map.buffer_snapshot), Bias::Left)
     }
 }
 
 impl ToDisplayPoint for Point {
-    fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint {
+    fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
         map.point_to_display_point(*self, Bias::Left)
     }
 }
 
 impl ToDisplayPoint for Anchor {
-    fn to_display_point(&self, map: &DisplayMapSnapshot) -> DisplayPoint {
+    fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint {
         self.to_point(&map.buffer_snapshot).to_display_point(map)
     }
 }
@@ -454,15 +470,16 @@ impl ToDisplayPoint for Anchor {
 mod tests {
     use super::*;
     use crate::{movement, test::*};
-    use gpui::{color::Color, MutableAppContext};
-    use language::{Language, LanguageConfig, RandomCharIter, SelectionGoal};
-    use rand::{prelude::StdRng, Rng};
+    use gpui::{color::Color, elements::*, MutableAppContext};
+    use language::{Buffer, Language, LanguageConfig, RandomCharIter, SelectionGoal};
+    use rand::{prelude::*, Rng};
     use std::{env, sync::Arc};
     use theme::SyntaxTheme;
+    use util::test::sample_text;
     use Bias::*;
 
     #[gpui::test(iterations = 100)]
-    async fn test_random(mut cx: gpui::TestAppContext, mut rng: StdRng) {
+    async fn test_random_display_map(mut cx: gpui::TestAppContext, mut rng: StdRng) {
         cx.foreground().set_block_on_ticks(0..=50);
         cx.foreground().forbid_parking();
         let operations = env::var("OPERATIONS")
@@ -486,10 +503,14 @@ mod tests {
         log::info!("tab size: {}", tab_size);
         log::info!("wrap width: {:?}", wrap_width);
 
-        let buffer = cx.add_model(|cx| {
-            let len = rng.gen_range(0..10);
-            let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-            Buffer::new(0, text, cx)
+        let buffer = cx.update(|cx| {
+            if rng.gen() {
+                let len = rng.gen_range(0..10);
+                let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+                MultiBuffer::build_simple(&text, cx)
+            } else {
+                MultiBuffer::build_random(&mut rng, cx)
+            }
         });
 
         let map = cx.add_model(|cx| {
@@ -497,6 +518,15 @@ mod tests {
         });
         let (_observer, notifications) = Observer::new(&map, &mut cx);
         let mut fold_count = 0;
+        let mut blocks = Vec::new();
+
+        let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
+        log::info!("buffer text: {:?}", snapshot.buffer_snapshot.text());
+        log::info!("fold text: {:?}", snapshot.folds_snapshot.text());
+        log::info!("tab text: {:?}", snapshot.tabs_snapshot.text());
+        log::info!("wrap text: {:?}", snapshot.wraps_snapshot.text());
+        log::info!("block text: {:?}", snapshot.blocks_snapshot.text());
+        log::info!("display text: {:?}", snapshot.text());
 
         for _i in 0..operations {
             match rng.gen_range(0..100) {
@@ -509,10 +539,55 @@ mod tests {
                     log::info!("setting wrap width to {:?}", wrap_width);
                     map.update(&mut cx, |map, cx| map.set_wrap_width(wrap_width, cx));
                 }
-                20..=80 => {
+                20..=44 => {
+                    map.update(&mut cx, |map, cx| {
+                        if rng.gen() || blocks.is_empty() {
+                            let buffer = map.snapshot(cx).buffer_snapshot;
+                            let block_properties = (0..rng.gen_range(1..=1))
+                                .map(|_| {
+                                    let position =
+                                        buffer.anchor_after(buffer.clip_offset(
+                                            rng.gen_range(0..=buffer.len()),
+                                            Bias::Left,
+                                        ));
+
+                                    let disposition = if rng.gen() {
+                                        BlockDisposition::Above
+                                    } else {
+                                        BlockDisposition::Below
+                                    };
+                                    let height = rng.gen_range(1..5);
+                                    log::info!(
+                                        "inserting block {:?} {:?} with height {}",
+                                        disposition,
+                                        position.to_point(&buffer),
+                                        height
+                                    );
+                                    BlockProperties {
+                                        position,
+                                        height,
+                                        disposition,
+                                        render: Arc::new(|_| Empty::new().boxed()),
+                                    }
+                                })
+                                .collect::<Vec<_>>();
+                            blocks.extend(map.insert_blocks(block_properties, cx));
+                        } else {
+                            blocks.shuffle(&mut rng);
+                            let remove_count = rng.gen_range(1..=4.min(blocks.len()));
+                            let block_ids_to_remove = (0..remove_count)
+                                .map(|_| blocks.remove(rng.gen_range(0..blocks.len())))
+                                .collect();
+                            log::info!("removing block ids {:?}", block_ids_to_remove);
+                            map.remove_blocks(block_ids_to_remove, cx);
+                        }
+                    });
+                }
+                45..=79 => {
                     let mut ranges = Vec::new();
                     for _ in 0..rng.gen_range(1..=3) {
-                        buffer.read_with(&cx, |buffer, _| {
+                        buffer.read_with(&cx, |buffer, cx| {
+                            let buffer = buffer.read(cx);
                             let end = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Right);
                             let start = buffer.clip_offset(rng.gen_range(0..=end), Left);
                             ranges.push(start..end);
@@ -542,7 +617,11 @@ mod tests {
 
             let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
             fold_count = snapshot.fold_count();
-            log::info!("buffer text: {:?}", buffer.read_with(&cx, |b, _| b.text()));
+            log::info!("buffer text: {:?}", snapshot.buffer_snapshot.text());
+            log::info!("fold text: {:?}", snapshot.folds_snapshot.text());
+            log::info!("tab text: {:?}", snapshot.tabs_snapshot.text());
+            log::info!("wrap text: {:?}", snapshot.wraps_snapshot.text());
+            log::info!("block text: {:?}", snapshot.blocks_snapshot.text());
             log::info!("display text: {:?}", snapshot.text());
 
             // Line boundaries
@@ -558,12 +637,11 @@ mod tests {
                 assert!(next_display_bound >= point);
                 assert_eq!(prev_buffer_bound.column, 0);
                 assert_eq!(prev_display_bound.column(), 0);
-                if next_display_bound < snapshot.max_point() {
+                if next_buffer_bound < snapshot.buffer_snapshot.max_point() {
                     assert_eq!(
-                        buffer
-                            .read_with(&cx, |buffer, _| buffer.chars_at(next_buffer_bound).next()),
+                        snapshot.buffer_snapshot.chars_at(next_buffer_bound).next(),
                         Some('\n')
-                    )
+                    );
                 }
 
                 assert_eq!(
@@ -597,6 +675,8 @@ mod tests {
             }
 
             // Movement
+            let min_point = snapshot.clip_point(DisplayPoint::new(0, 0), Left);
+            let max_point = snapshot.clip_point(snapshot.max_point(), Right);
             for _ in 0..5 {
                 let row = rng.gen_range(0..=snapshot.max_point().row());
                 let column = rng.gen_range(0..=snapshot.line_len(row));
@@ -606,7 +686,7 @@ mod tests {
 
                 let moved_right = movement::right(&snapshot, point).unwrap();
                 log::info!("Right {:?}", moved_right);
-                if point < snapshot.max_point() {
+                if point < max_point {
                     assert!(moved_right > point);
                     if point.column() == snapshot.line_len(point.row())
                         || snapshot.soft_wrap_indent(point.row()).is_some()
@@ -620,13 +700,13 @@ mod tests {
 
                 let moved_left = movement::left(&snapshot, point).unwrap();
                 log::info!("Left {:?}", moved_left);
-                if !point.is_zero() {
+                if point > min_point {
                     assert!(moved_left < point);
                     if point.column() == 0 {
                         assert!(moved_left.row() < point.row());
                     }
                 } else {
-                    assert!(moved_left.is_zero());
+                    assert_eq!(moved_left, point);
                 }
             }
         }
@@ -648,7 +728,7 @@ mod tests {
         let wrap_width = Some(64.);
 
         let text = "one two three four five\nsix seven eight";
-        let buffer = cx.add_model(|cx| Buffer::new(0, text.to_string(), cx));
+        let buffer = MultiBuffer::build_simple(text, cx);
         let map = cx.add_model(|cx| {
             DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, wrap_width, cx)
         });
@@ -697,8 +777,8 @@ mod tests {
             (DisplayPoint::new(2, 4), SelectionGoal::Column(10))
         );
 
+        let ix = snapshot.buffer_snapshot.text().find("seven").unwrap();
         buffer.update(cx, |buffer, cx| {
-            let ix = buffer.text().find("seven").unwrap();
             buffer.edit(vec![ix..ix], "and ", cx);
         });
 
@@ -720,8 +800,8 @@ mod tests {
 
     #[gpui::test]
     fn test_text_chunks(cx: &mut gpui::MutableAppContext) {
-        let text = sample_text(6, 6);
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+        let text = sample_text(6, 6, 'a');
+        let buffer = MultiBuffer::build_simple(&text, cx);
         let tab_size = 4;
         let family_id = cx.font_cache().load_family(&["Helvetica"]).unwrap();
         let font_id = cx
@@ -800,6 +880,7 @@ mod tests {
         let buffer =
             cx.add_model(|cx| Buffer::new(0, text, cx).with_language(Some(lang), None, cx));
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
 
         let tab_size = 2;
         let font_cache = cx.font_cache();
@@ -887,6 +968,7 @@ mod tests {
         let buffer =
             cx.add_model(|cx| Buffer::new(0, text, cx).with_language(Some(lang), None, cx));
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
 
         let font_cache = cx.font_cache();
 
@@ -932,7 +1014,7 @@ mod tests {
 
         let text = "\n'a', 'α',\t'✋',\t'❎', '🍐'\n";
         let display_text = "\n'a', 'α',   '✋',    '❎', '🍐'\n";
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+        let buffer = MultiBuffer::build_simple(text, cx);
 
         let tab_size = 4;
         let font_cache = cx.font_cache();
@@ -976,7 +1058,7 @@ mod tests {
     #[gpui::test]
     fn test_tabs_with_multibyte_chars(cx: &mut gpui::MutableAppContext) {
         let text = "✅\t\tα\nβ\t\n🏀β\t\tγ";
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+        let buffer = MultiBuffer::build_simple(text, cx);
         let tab_size = 4;
         let font_cache = cx.font_cache();
         let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
@@ -1035,7 +1117,7 @@ mod tests {
 
     #[gpui::test]
     fn test_max_point(cx: &mut gpui::MutableAppContext) {
-        let buffer = cx.add_model(|cx| Buffer::new(0, "aaa\n\t\tbbb", cx));
+        let buffer = MultiBuffer::build_simple("aaa\n\t\tbbb", cx);
         let tab_size = 4;
         let font_cache = cx.font_cache();
         let family_id = font_cache.load_family(&["Helvetica"]).unwrap();

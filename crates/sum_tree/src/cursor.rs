@@ -18,6 +18,11 @@ pub struct Cursor<'a, T: Item, D> {
     at_end: bool,
 }
 
+pub struct Iter<'a, T: Item> {
+    tree: &'a SumTree<T>,
+    stack: ArrayVec<StackEntry<'a, T, ()>, 16>,
+}
+
 impl<'a, T, D> Cursor<'a, T, D>
 where
     T: Item,
@@ -484,6 +489,71 @@ where
         }
 
         target.cmp(&end, cx) == Ordering::Equal
+    }
+}
+
+impl<'a, T: Item> Iter<'a, T> {
+    pub(crate) fn new(tree: &'a SumTree<T>) -> Self {
+        Self {
+            tree,
+            stack: Default::default(),
+        }
+    }
+}
+
+impl<'a, T: Item> Iterator for Iter<'a, T> {
+    type Item = &'a T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut descend = false;
+
+        if self.stack.is_empty() {
+            self.stack.push(StackEntry {
+                tree: self.tree,
+                index: 0,
+                position: (),
+            });
+            descend = true;
+        }
+
+        while self.stack.len() > 0 {
+            let new_subtree = {
+                let entry = self.stack.last_mut().unwrap();
+                match entry.tree.0.as_ref() {
+                    Node::Internal { child_trees, .. } => {
+                        if !descend {
+                            entry.index += 1;
+                        }
+                        child_trees.get(entry.index)
+                    }
+                    Node::Leaf { items, .. } => {
+                        if !descend {
+                            entry.index += 1;
+                        }
+
+                        if let Some(next_item) = items.get(entry.index) {
+                            return Some(next_item);
+                        } else {
+                            None
+                        }
+                    }
+                }
+            };
+
+            if let Some(subtree) = new_subtree {
+                descend = true;
+                self.stack.push(StackEntry {
+                    tree: subtree,
+                    index: 0,
+                    position: (),
+                });
+            } else {
+                descend = false;
+                self.stack.pop();
+            }
+        }
+
+        None
     }
 }
 

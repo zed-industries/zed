@@ -226,7 +226,11 @@ impl LanguageServer {
             process_id: Default::default(),
             root_path: Default::default(),
             root_uri: Some(root_uri),
-            initialization_options: Default::default(),
+            initialization_options: Some(json!({
+                "checkOnSave": {
+                    "enable": false
+                },
+            })),
             capabilities: lsp_types::ClientCapabilities {
                 experimental: Some(json!({
                     "serverStatusNotification": true,

@@ -6,6 +6,7 @@ mod status_bar;
 
 use anyhow::{anyhow, Result};
 use client::{Authenticate, ChannelList, Client, User, UserStore};
+use clock::ReplicaId;
 use gpui::{
     action,
     color::Color,
@@ -30,7 +31,6 @@ use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItem
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
-    collections::{hash_map::Entry, HashMap},
     future::Future,
     path::{Path, PathBuf},
     sync::Arc,
@@ -40,18 +40,24 @@ use theme::{Theme, ThemeRegistry};
 action!(Open, Arc<AppState>);
 action!(OpenNew, Arc<AppState>);
 action!(OpenPaths, OpenParams);
+action!(ToggleShare);
+action!(JoinProject, JoinProjectParams);
 action!(Save);
 action!(DebugElements);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_global_action(open);
     cx.add_global_action(move |action: &OpenPaths, cx: &mut MutableAppContext| {
-        open_paths(&action.0.paths, &action.0.app_state, cx).detach()
+        open_paths(&action.0.paths, &action.0.app_state, cx).detach();
     });
     cx.add_global_action(move |action: &OpenNew, cx: &mut MutableAppContext| {
         open_new(&action.0, cx)
     });
+    cx.add_global_action(move |action: &JoinProject, cx: &mut MutableAppContext| {
+        join_project(action.0.project_id, &action.0.app_state, cx).detach();
+    });
 
+    cx.add_action(Workspace::toggle_share);
     cx.add_action(Workspace::save_active_item);
     cx.add_action(Workspace::debug_elements);
     cx.add_action(Workspace::toggle_sidebar_item);
@@ -90,13 +96,22 @@ pub struct AppState {
     pub channel_list: ModelHandle<client::ChannelList>,
     pub entry_openers: Arc<[Box<dyn EntryOpener>]>,
     pub build_window_options: &'static dyn Fn() -> WindowOptions<'static>,
-    pub build_workspace:
-        &'static dyn Fn(&WorkspaceParams, &mut ViewContext<Workspace>) -> Workspace,
+    pub build_workspace: &'static dyn Fn(
+        ModelHandle<Project>,
+        &Arc<AppState>,
+        &mut ViewContext<Workspace>,
+    ) -> Workspace,
 }
 
 #[derive(Clone)]
 pub struct OpenParams {
     pub paths: Vec<PathBuf>,
+    pub app_state: Arc<AppState>,
+}
+
+#[derive(Clone)]
+pub struct JoinProjectParams {
+    pub project_id: u64,
     pub app_state: Arc<AppState>,
 }
 
@@ -136,7 +151,9 @@ pub trait ItemView: View {
     fn has_conflict(&self, _: &AppContext) -> bool {
         false
     }
+    fn can_save(&self, cx: &AppContext) -> bool;
     fn save(&mut self, cx: &mut ViewContext<Self>) -> Result<Task<Result<()>>>;
+    fn can_save_as(&self, cx: &AppContext) -> bool;
     fn save_as(
         &mut self,
         worktree: ModelHandle<Worktree>,
@@ -180,6 +197,8 @@ pub trait ItemViewHandle {
     fn to_any(&self) -> AnyViewHandle;
     fn is_dirty(&self, cx: &AppContext) -> bool;
     fn has_conflict(&self, cx: &AppContext) -> bool;
+    fn can_save(&self, cx: &AppContext) -> bool;
+    fn can_save_as(&self, cx: &AppContext) -> bool;
     fn save(&self, cx: &mut MutableAppContext) -> Result<Task<Result<()>>>;
     fn save_as(
         &self,
@@ -310,6 +329,14 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
     fn to_any(&self) -> AnyViewHandle {
         self.into()
     }
+
+    fn can_save(&self, cx: &AppContext) -> bool {
+        self.read(cx).can_save(cx)
+    }
+
+    fn can_save_as(&self, cx: &AppContext) -> bool {
+        self.read(cx).can_save_as(cx)
+    }
 }
 
 impl Clone for Box<dyn ItemViewHandle> {
@@ -326,6 +353,7 @@ impl Clone for Box<dyn ItemHandle> {
 
 #[derive(Clone)]
 pub struct WorkspaceParams {
+    pub project: ModelHandle<Project>,
     pub client: Arc<Client>,
     pub fs: Arc<dyn Fs>,
     pub languages: Arc<LanguageRegistry>,
@@ -338,7 +366,8 @@ pub struct WorkspaceParams {
 impl WorkspaceParams {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut MutableAppContext) -> Self {
-        let languages = LanguageRegistry::new();
+        let fs = Arc::new(project::FakeFs::new());
+        let languages = Arc::new(LanguageRegistry::new());
         let client = Client::new();
         let http_client = client::test::FakeHttpClient::new(|_| async move {
             Ok(client::http::ServerResponse::new(404))
@@ -347,15 +376,43 @@ impl WorkspaceParams {
             gpui::fonts::with_font_cache(cx.font_cache().clone(), || theme::Theme::default());
         let settings = Settings::new("Courier", cx.font_cache(), Arc::new(theme)).unwrap();
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+        let project = Project::local(
+            client.clone(),
+            user_store.clone(),
+            languages.clone(),
+            fs.clone(),
+            cx,
+        );
         Self {
+            project,
             channel_list: cx
                 .add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx)),
             client,
-            fs: Arc::new(project::FakeFs::new()),
-            languages: Arc::new(languages),
+            fs,
+            languages,
             settings: watch::channel_with(settings).1,
             user_store,
             entry_openers: Arc::from([]),
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn local(app_state: &Arc<AppState>, cx: &mut MutableAppContext) -> Self {
+        Self {
+            project: Project::local(
+                app_state.client.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                cx,
+            ),
+            client: app_state.client.clone(),
+            fs: app_state.fs.clone(),
+            languages: app_state.languages.clone(),
+            settings: app_state.settings.clone(),
+            user_store: app_state.user_store.clone(),
+            channel_list: app_state.channel_list.clone(),
+            entry_openers: app_state.entry_openers.clone(),
         }
     }
 }
@@ -375,24 +432,12 @@ pub struct Workspace {
     project: ModelHandle<Project>,
     entry_openers: Arc<[Box<dyn EntryOpener>]>,
     items: Vec<Box<dyn WeakItemHandle>>,
-    loading_items: HashMap<
-        ProjectPath,
-        postage::watch::Receiver<Option<Result<Box<dyn ItemHandle>, Arc<anyhow::Error>>>>,
-    >,
     _observe_current_user: Task<()>,
 }
 
 impl Workspace {
     pub fn new(params: &WorkspaceParams, cx: &mut ViewContext<Self>) -> Self {
-        let project = cx.add_model(|_| {
-            Project::new(
-                params.languages.clone(),
-                params.client.clone(),
-                params.user_store.clone(),
-                params.fs.clone(),
-            )
-        });
-        cx.observe(&project, |_, _, cx| cx.notify()).detach();
+        cx.observe(&params.project, |_, _, cx| cx.notify()).detach();
 
         let pane = cx.add_view(|_| Pane::new(params.settings.clone()));
         let pane_id = pane.id();
@@ -438,10 +483,9 @@ impl Workspace {
             fs: params.fs.clone(),
             left_sidebar: Sidebar::new(Side::Left),
             right_sidebar: Sidebar::new(Side::Right),
-            project,
+            project: params.project.clone(),
             entry_openers: params.entry_openers.clone(),
             items: Default::default(),
-            loading_items: Default::default(),
             _observe_current_user,
         }
     }
@@ -636,7 +680,7 @@ impl Workspace {
         let worktree = match self
             .project
             .read(cx)
-            .worktree_for_id(project_path.worktree_id)
+            .worktree_for_id(project_path.worktree_id, cx)
         {
             Some(worktree) => worktree,
             None => {
@@ -645,47 +689,27 @@ impl Workspace {
             }
         };
 
-        if let Entry::Vacant(entry) = self.loading_items.entry(project_path.clone()) {
-            let (mut tx, rx) = postage::watch::channel();
-            entry.insert(rx);
-
-            let project_path = project_path.clone();
-            let entry_openers = self.entry_openers.clone();
-            cx.as_mut()
-                .spawn(|mut cx| async move {
-                    let item = worktree.update(&mut cx, move |worktree, cx| {
-                        for opener in entry_openers.iter() {
-                            if let Some(task) = opener.open(worktree, project_path.clone(), cx) {
-                                return task;
-                            }
-                        }
-
-                        cx.spawn(|_, _| async move {
-                            Err(anyhow!("no opener for path {:?} found", project_path))
-                        })
-                    });
-                    *tx.borrow_mut() = Some(item.await.map_err(Arc::new));
-                })
-                .detach();
-        }
+        let project_path = project_path.clone();
+        let entry_openers = self.entry_openers.clone();
+        let task = worktree.update(cx, |worktree, cx| {
+            for opener in entry_openers.iter() {
+                if let Some(task) = opener.open(worktree, project_path.clone(), cx) {
+                    return Some(task);
+                }
+            }
+            log::error!("no opener for path {:?} found", project_path);
+            None
+        })?;
 
         let pane = pane.downgrade();
-        let mut watch = self.loading_items.get(&project_path).unwrap().clone();
-
         Some(cx.spawn(|this, mut cx| async move {
-            let load_result = loop {
-                if let Some(load_result) = watch.borrow().as_ref() {
-                    break load_result.clone();
-                }
-                watch.recv().await;
-            };
-
+            let load_result = task.await;
             this.update(&mut cx, |this, cx| {
-                this.loading_items.remove(&project_path);
                 let pane = pane
                     .upgrade(&cx)
                     .ok_or_else(|| anyhow!("could not upgrade pane reference"))?;
                 let item = load_result?;
+
                 // By the time loading finishes, the entry could have been already added
                 // to the pane. If it was, we activate it, otherwise we'll store the
                 // item and add a new view for it.
@@ -694,7 +718,7 @@ impl Workspace {
                 {
                     Ok(existing)
                 } else {
-                    Ok(this.add_item(item.boxed_clone(), cx))
+                    Ok(this.add_item(item, cx))
                 }
             })
         }))
@@ -752,7 +776,43 @@ impl Workspace {
     pub fn save_active_item(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
         if let Some(item) = self.active_item(cx) {
             let handle = cx.handle();
-            if item.project_path(cx.as_ref()).is_none() {
+            if item.can_save(cx) {
+                if item.has_conflict(cx.as_ref()) {
+                    const CONFLICT_MESSAGE: &'static str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
+
+                    cx.prompt(
+                        PromptLevel::Warning,
+                        CONFLICT_MESSAGE,
+                        &["Overwrite", "Cancel"],
+                        move |answer, cx| {
+                            if answer == 0 {
+                                cx.spawn(|mut cx| async move {
+                                    if let Err(error) = cx.update(|cx| item.save(cx)).unwrap().await
+                                    {
+                                        error!("failed to save item: {:?}, ", error);
+                                    }
+
+                                    handle.update(&mut cx, |this, cx| {
+                                        this.project.update(cx, |project, cx| project.diagnose(cx))
+                                    });
+                                })
+                                .detach();
+                            }
+                        },
+                    );
+                } else {
+                    cx.spawn(|this, mut cx| async move {
+                        if let Err(error) = cx.update(|cx| item.save(cx)).unwrap().await {
+                            error!("failed to save item: {:?}, ", error);
+                        }
+
+                        this.update(&mut cx, |this, cx| {
+                            this.project.update(cx, |project, cx| project.diagnose(cx))
+                        });
+                    })
+                    .detach();
+                }
+            } else if item.can_save_as(cx) {
                 let worktree = self.worktrees(cx).first();
                 let start_abs_path = worktree
                     .and_then(|w| w.read(cx).as_local())
@@ -780,36 +840,14 @@ impl Workspace {
                             if let Err(error) = result {
                                 error!("failed to save item: {:?}, ", error);
                             }
+
+                            handle.update(&mut cx, |this, cx| {
+                                this.project.update(cx, |project, cx| project.diagnose(cx))
+                            });
                         })
                         .detach()
                     }
                 });
-                return;
-            } else if item.has_conflict(cx.as_ref()) {
-                const CONFLICT_MESSAGE: &'static str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
-
-                cx.prompt(
-                    PromptLevel::Warning,
-                    CONFLICT_MESSAGE,
-                    &["Overwrite", "Cancel"],
-                    move |answer, cx| {
-                        if answer == 0 {
-                            cx.spawn(|mut cx| async move {
-                                if let Err(error) = cx.update(|cx| item.save(cx)).unwrap().await {
-                                    error!("failed to save item: {:?}, ", error);
-                                }
-                            })
-                            .detach();
-                        }
-                    },
-                );
-            } else {
-                cx.spawn(|_, mut cx| async move {
-                    if let Err(error) = cx.update(|cx| item.save(cx)).unwrap().await {
-                        error!("failed to save item: {:?}, ", error);
-                    }
-                })
-                .detach();
             }
         }
     }
@@ -968,6 +1006,18 @@ impl Workspace {
         &self.active_pane
     }
 
+    fn toggle_share(&mut self, _: &ToggleShare, cx: &mut ViewContext<Self>) {
+        self.project.update(cx, |project, cx| {
+            if project.is_local() {
+                if project.is_shared() {
+                    project.unshare(cx).detach();
+                } else {
+                    project.share(cx).detach();
+                }
+            }
+        });
+    }
+
     fn render_connection_status(&self) -> Option<ElementBox> {
         let theme = &self.settings.borrow().theme;
         match &*self.client.status().borrow() {
@@ -1019,18 +1069,14 @@ impl Workspace {
                     .with_child(
                         Align::new(
                             Flex::row()
+                                .with_children(self.render_share_icon(cx))
                                 .with_children(self.render_collaborators(theme, cx))
-                                .with_child(
-                                    self.render_avatar(
-                                        self.user_store.read(cx).current_user().as_ref(),
-                                        self.project
-                                            .read(cx)
-                                            .active_worktree()
-                                            .map(|worktree| worktree.read(cx).replica_id()),
-                                        theme,
-                                        cx,
-                                    ),
-                                )
+                                .with_child(self.render_avatar(
+                                    self.user_store.read(cx).current_user().as_ref(),
+                                    self.project.read(cx).replica_id(),
+                                    theme,
+                                    cx,
+                                ))
                                 .with_children(self.render_connection_status())
                                 .boxed(),
                         )
@@ -1047,30 +1093,26 @@ impl Workspace {
     }
 
     fn render_collaborators(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> Vec<ElementBox> {
-        let mut elements = Vec::new();
-        if let Some(active_worktree) = self.project.read(cx).active_worktree() {
-            let collaborators = active_worktree
-                .read(cx)
-                .collaborators()
-                .values()
-                .cloned()
-                .collect::<Vec<_>>();
-            for collaborator in collaborators {
-                elements.push(self.render_avatar(
-                    Some(&collaborator.user),
-                    Some(collaborator.replica_id),
-                    theme,
-                    cx,
-                ));
-            }
-        }
-        elements
+        let mut collaborators = self
+            .project
+            .read(cx)
+            .collaborators()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        collaborators.sort_unstable_by_key(|collaborator| collaborator.replica_id);
+        collaborators
+            .into_iter()
+            .map(|collaborator| {
+                self.render_avatar(Some(&collaborator.user), collaborator.replica_id, theme, cx)
+            })
+            .collect()
     }
 
     fn render_avatar(
         &self,
         user: Option<&Arc<User>>,
-        replica_id: Option<u16>,
+        replica_id: ReplicaId,
         theme: &Theme,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
@@ -1088,15 +1130,13 @@ impl Workspace {
                         .boxed(),
                     )
                     .with_child(
-                        AvatarRibbon::new(replica_id.map_or(Default::default(), |id| {
-                            theme.editor.replica_selection_style(id).cursor
-                        }))
-                        .constrained()
-                        .with_width(theme.workspace.titlebar.avatar_ribbon.width)
-                        .with_height(theme.workspace.titlebar.avatar_ribbon.height)
-                        .aligned()
-                        .bottom()
-                        .boxed(),
+                        AvatarRibbon::new(theme.editor.replica_selection_style(replica_id).cursor)
+                            .constrained()
+                            .with_width(theme.workspace.titlebar.avatar_ribbon.width)
+                            .with_height(theme.workspace.titlebar.avatar_ribbon.height)
+                            .aligned()
+                            .bottom()
+                            .boxed(),
                     )
                     .boxed(),
             )
@@ -1118,6 +1158,35 @@ impl Workspace {
             .with_cursor_style(CursorStyle::PointingHand)
             .aligned()
             .boxed()
+        }
+    }
+
+    fn render_share_icon(&self, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
+        if self.project().read(cx).is_local() && self.client.user_id().is_some() {
+            enum Share {}
+
+            let color = if self.project().read(cx).is_shared() {
+                Color::green()
+            } else {
+                Color::red()
+            };
+            Some(
+                MouseEventHandler::new::<Share, _, _, _>(0, cx, |_, _| {
+                    Align::new(
+                        ConstrainedBox::new(
+                            Svg::new("icons/broadcast-24.svg").with_color(color).boxed(),
+                        )
+                        .with_width(24.)
+                        .boxed(),
+                    )
+                    .boxed()
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .on_click(|cx| cx.dispatch_action(ToggleShare))
+                .boxed(),
+            )
+        } else {
+            None
         }
     }
 }
@@ -1281,20 +1350,6 @@ impl std::fmt::Debug for OpenParams {
     }
 }
 
-impl<'a> From<&'a AppState> for WorkspaceParams {
-    fn from(state: &'a AppState) -> Self {
-        Self {
-            client: state.client.clone(),
-            fs: state.fs.clone(),
-            languages: state.languages.clone(),
-            settings: state.settings.clone(),
-            user_store: state.user_store.clone(),
-            channel_list: state.channel_list.clone(),
-            entry_openers: state.entry_openers.clone(),
-        }
-    }
-}
-
 fn open(action: &Open, cx: &mut MutableAppContext) {
     let app_state = action.0.clone();
     cx.prompt_for_paths(
@@ -1337,7 +1392,14 @@ pub fn open_paths(
 
     let workspace = existing.unwrap_or_else(|| {
         cx.add_window((app_state.build_window_options)(), |cx| {
-            (app_state.build_workspace)(&WorkspaceParams::from(app_state.as_ref()), cx)
+            let project = Project::local(
+                app_state.client.clone(),
+                app_state.user_store.clone(),
+                app_state.languages.clone(),
+                app_state.fs.clone(),
+                cx,
+            );
+            (app_state.build_workspace)(project, &app_state, cx)
         })
         .1
     });
@@ -1349,9 +1411,49 @@ pub fn open_paths(
     })
 }
 
+pub fn join_project(
+    project_id: u64,
+    app_state: &Arc<AppState>,
+    cx: &mut MutableAppContext,
+) -> Task<Result<ViewHandle<Workspace>>> {
+    for window_id in cx.window_ids().collect::<Vec<_>>() {
+        if let Some(workspace) = cx.root_view::<Workspace>(window_id) {
+            if workspace.read(cx).project().read(cx).remote_id() == Some(project_id) {
+                return Task::ready(Ok(workspace));
+            }
+        }
+    }
+
+    let app_state = app_state.clone();
+    cx.spawn(|mut cx| async move {
+        let project = Project::remote(
+            project_id,
+            app_state.client.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            &mut cx,
+        )
+        .await?;
+        let (_, workspace) = cx.update(|cx| {
+            cx.add_window((app_state.build_window_options)(), |cx| {
+                (app_state.build_workspace)(project, &app_state, cx)
+            })
+        });
+        Ok(workspace)
+    })
+}
+
 fn open_new(app_state: &Arc<AppState>, cx: &mut MutableAppContext) {
     let (window_id, workspace) = cx.add_window((app_state.build_window_options)(), |cx| {
-        (app_state.build_workspace)(&app_state.as_ref().into(), cx)
+        let project = Project::local(
+            app_state.client.clone(),
+            app_state.user_store.clone(),
+            app_state.languages.clone(),
+            app_state.fs.clone(),
+            cx,
+        );
+        (app_state.build_workspace)(project, &app_state, cx)
     });
     cx.dispatch_action(window_id, vec![workspace.id()], &OpenNew(app_state.clone()));
 }

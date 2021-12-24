@@ -1,10 +1,11 @@
-use text::{Bias, Point, Selection};
 use editor::{display_map::ToDisplayPoint, Autoscroll, Editor, EditorSettings};
 use gpui::{
     action, elements::*, geometry::vector::Vector2F, keymap::Binding, Axis, Entity,
     MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
 };
 use postage::watch;
+use std::sync::Arc;
+use text::{Bias, Point, Selection};
 use workspace::{Settings, Workspace};
 
 action!(Toggle);
@@ -49,14 +50,14 @@ impl GoToLine {
             Editor::single_line(
                 {
                     let settings = settings.clone();
-                    move |_| {
+                    Arc::new(move |_| {
                         let settings = settings.borrow();
                         EditorSettings {
                             tab_size: settings.tab_size,
                             style: settings.theme.selector.input_editor.as_editor(),
                             soft_wrap: editor::SoftWrap::None,
                         }
-                    }
+                    })
                 },
                 cx,
             )
@@ -67,13 +68,14 @@ impl GoToLine {
         let (restore_state, cursor_point, max_point) = active_editor.update(cx, |editor, cx| {
             let restore_state = Some(RestoreState {
                 scroll_position: editor.scroll_position(cx),
-                selections: editor.selections::<usize>(cx).collect(),
+                selections: editor.local_selections::<usize>(cx),
             });
 
+            let buffer = editor.buffer().read(cx).read(cx);
             (
                 restore_state,
-                editor.newest_selection(cx).head(),
-                editor.buffer().read(cx).max_point(),
+                editor.newest_selection(&buffer).head(),
+                buffer.max_point(),
             )
         });
 
@@ -127,7 +129,7 @@ impl GoToLine {
         match event {
             editor::Event::Blurred => cx.emit(Event::Dismissed),
             editor::Event::Edited => {
-                let line_editor = self.line_editor.read(cx).buffer().read(cx).text();
+                let line_editor = self.line_editor.read(cx).buffer().read(cx).read(cx).text();
                 let mut components = line_editor.trim().split(&[',', ':'][..]);
                 let row = components.next().and_then(|row| row.parse::<u32>().ok());
                 let column = components.next().and_then(|row| row.parse::<u32>().ok());
@@ -143,7 +145,7 @@ impl GoToLine {
                         let display_point = point.to_display_point(&snapshot);
                         active_editor.select_ranges([point..point], Some(Autoscroll::Center), cx);
                         active_editor.set_highlighted_row(Some(display_point.row()));
-                        Some(active_editor.newest_selection(cx))
+                        Some(active_editor.newest_selection(&snapshot.buffer_snapshot))
                     });
                     cx.notify();
                 }
@@ -162,7 +164,9 @@ impl Entity for GoToLine {
         self.active_editor.update(cx, |editor, cx| {
             editor.set_highlighted_row(None);
             if let Some((line_selection, restore_state)) = line_selection.zip(restore_state) {
-                if line_selection.id == editor.newest_selection::<usize>(cx).id {
+                let newest_selection =
+                    editor.newest_selection::<usize>(&editor.buffer().read(cx).read(cx));
+                if line_selection.id == newest_selection.id {
                     editor.set_scroll_position(restore_state.scroll_position, cx);
                     editor.update_selections(restore_state.selections, None, cx);
                 }

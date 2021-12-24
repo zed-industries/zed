@@ -1400,6 +1400,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "diagnostics"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "collections",
+ "editor",
+ "gpui",
+ "language",
+ "postage",
+ "project",
+ "serde_json",
+ "unindent",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "digest"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1525,9 +1543,11 @@ dependencies = [
  "aho-corasick",
  "anyhow",
  "clock",
+ "collections",
  "ctor",
  "env_logger",
  "gpui",
+ "itertools",
  "language",
  "lazy_static",
  "log",
@@ -2585,7 +2605,11 @@ name = "language"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "clock",
+ "collections",
+ "ctor",
+ "env_logger",
  "futures",
  "gpui",
  "lazy_static",
@@ -2597,7 +2621,9 @@ dependencies = [
  "rpc",
  "serde",
  "similar",
+ "smallvec",
  "smol",
+ "sum_tree",
  "text",
  "theme",
  "tree-sitter",
@@ -3449,6 +3475,7 @@ dependencies = [
  "async-trait",
  "client",
  "clock",
+ "collections",
  "fsevent",
  "futures",
  "fuzzy",
@@ -4834,6 +4861,7 @@ dependencies = [
  "ctor",
  "env_logger",
  "gpui",
+ "lazy_static",
  "log",
  "parking_lot",
  "rand 0.8.3",
@@ -5628,6 +5656,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "clock",
  "gpui",
  "language",
  "log",
@@ -5673,9 +5702,11 @@ dependencies = [
  "chat_panel",
  "client",
  "clock",
+ "collections",
  "contacts_panel",
  "crossbeam-channel",
  "ctor",
+ "diagnostics",
  "dirs 3.0.1",
  "easy-parallel",
  "editor",

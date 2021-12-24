@@ -14,9 +14,10 @@ use gpui::{
     geometry::vector::vec2f,
     keymap::Binding,
     platform::{WindowBounds, WindowOptions},
-    ViewContext,
+    ModelHandle, ViewContext,
 };
 pub use lsp;
+use project::Project;
 pub use project::{self, fs};
 use project_panel::ProjectPanel;
 use std::sync::Arc;
@@ -48,27 +49,39 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut gpui::MutableAppContext) {
     ])
 }
 
-pub fn build_workspace(params: &WorkspaceParams, cx: &mut ViewContext<Workspace>) -> Workspace {
-    let mut workspace = Workspace::new(params, cx);
+pub fn build_workspace(
+    project: ModelHandle<Project>,
+    app_state: &Arc<AppState>,
+    cx: &mut ViewContext<Workspace>,
+) -> Workspace {
+    let workspace_params = WorkspaceParams {
+        project,
+        client: app_state.client.clone(),
+        fs: app_state.fs.clone(),
+        languages: app_state.languages.clone(),
+        settings: app_state.settings.clone(),
+        user_store: app_state.user_store.clone(),
+        channel_list: app_state.channel_list.clone(),
+        entry_openers: app_state.entry_openers.clone(),
+    };
+    let mut workspace = Workspace::new(&workspace_params, cx);
     let project = workspace.project().clone();
     workspace.left_sidebar_mut().add_item(
         "icons/folder-tree-16.svg",
-        ProjectPanel::new(project, params.settings.clone(), cx).into(),
+        ProjectPanel::new(project, app_state.settings.clone(), cx).into(),
     );
     workspace.right_sidebar_mut().add_item(
         "icons/user-16.svg",
-        cx.add_view(|cx| {
-            ContactsPanel::new(params.user_store.clone(), params.settings.clone(), cx)
-        })
-        .into(),
+        cx.add_view(|cx| ContactsPanel::new(app_state.clone(), cx))
+            .into(),
     );
     workspace.right_sidebar_mut().add_item(
         "icons/comment-16.svg",
         cx.add_view(|cx| {
             ChatPanel::new(
-                params.client.clone(),
-                params.channel_list.clone(),
-                params.settings.clone(),
+                app_state.client.clone(),
+                app_state.channel_list.clone(),
+                app_state.settings.clone(),
                 cx,
             )
         })
@@ -76,9 +89,9 @@ pub fn build_workspace(params: &WorkspaceParams, cx: &mut ViewContext<Workspace>
     );
 
     let diagnostic =
-        cx.add_view(|_| editor::items::DiagnosticMessage::new(params.settings.clone()));
+        cx.add_view(|_| editor::items::DiagnosticMessage::new(app_state.settings.clone()));
     let cursor_position =
-        cx.add_view(|_| editor::items::CursorPosition::new(params.settings.clone()));
+        cx.add_view(|_| editor::items::CursorPosition::new(app_state.settings.clone()));
     workspace.status_bar().update(cx, |status_bar, cx| {
         status_bar.add_left_item(diagnostic, cx);
         status_bar.add_right_item(cursor_position, cx);
@@ -225,8 +238,8 @@ mod tests {
                 }),
             )
             .await;
-
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state.as_ref().into(), cx));
+        let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
                 workspace.add_worktree(Path::new("/root"), cx)
@@ -340,7 +353,8 @@ mod tests {
         fs.insert_file("/dir1/a.txt", "".into()).await.unwrap();
         fs.insert_file("/dir2/b.txt", "".into()).await.unwrap();
 
-        let (_, workspace) = cx.add_window(|cx| Workspace::new(&app_state.as_ref().into(), cx));
+        let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
+        let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
                 workspace.add_worktree("/dir1".as_ref(), cx)
@@ -378,7 +392,7 @@ mod tests {
                 .read(cx)
                 .worktrees(cx)
                 .iter()
-                .map(|w| w.read(cx).as_local().unwrap().abs_path())
+                .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
                 .collect::<HashSet<_>>();
             assert_eq!(
                 worktree_roots,
@@ -406,8 +420,8 @@ mod tests {
         let fs = app_state.fs.as_fake();
         fs.insert_tree("/root", json!({ "a.txt": "" })).await;
 
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(&app_state.as_ref().into(), cx));
+        let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
                 workspace.add_worktree(Path::new("/root"), cx)
@@ -453,7 +467,7 @@ mod tests {
     async fn test_open_and_save_new_file(mut cx: gpui::TestAppContext) {
         let app_state = cx.update(test_app_state);
         app_state.fs.as_fake().insert_dir("/root").await.unwrap();
-        let params = app_state.as_ref().into();
+        let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
@@ -570,7 +584,7 @@ mod tests {
     ) {
         let app_state = cx.update(test_app_state);
         app_state.fs.as_fake().insert_dir("/root").await.unwrap();
-        let params = app_state.as_ref().into();
+        let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
 
         // Create a new untitled buffer
@@ -628,8 +642,8 @@ mod tests {
             )
             .await;
 
-        let (window_id, workspace) =
-            cx.add_window(|cx| Workspace::new(&app_state.as_ref().into(), cx));
+        let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
+        let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         workspace
             .update(&mut cx, |workspace, cx| {
                 workspace.add_worktree(Path::new("/root"), cx)

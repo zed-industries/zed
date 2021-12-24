@@ -9,7 +9,8 @@ pub struct Patch<T>(Vec<Edit<T>>);
 
 impl<T> Patch<T>
 where
-    T: Clone
+    T: 'static
+        + Clone
         + Copy
         + Ord
         + Sub<T, Output = T>
@@ -33,13 +34,17 @@ where
         Self(edits)
     }
 
+    pub fn edits(&self) -> &[Edit<T>] {
+        &self.0
+    }
+
     pub fn into_inner(self) -> Vec<Edit<T>> {
         self.0
     }
 
-    pub fn compose(&self, other: &Self) -> Self {
+    pub fn compose(&self, new_edits_iter: impl IntoIterator<Item = Edit<T>>) -> Self {
         let mut old_edits_iter = self.0.iter().cloned().peekable();
-        let mut new_edits_iter = other.0.iter().cloned().peekable();
+        let mut new_edits_iter = new_edits_iter.into_iter().peekable();
         let mut composed = Patch(Vec::new());
 
         let mut old_start = T::default();
@@ -193,6 +198,33 @@ where
         } else {
             self.0.push(edit);
         }
+    }
+}
+
+impl<T: Clone> IntoIterator for Patch<T> {
+    type Item = Edit<T>;
+    type IntoIter = std::vec::IntoIter<Edit<T>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a, T: Clone> IntoIterator for &'a Patch<T> {
+    type Item = Edit<T>;
+    type IntoIter = std::iter::Cloned<std::slice::Iter<'a, Edit<T>>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter().cloned()
+    }
+}
+
+impl<'a, T: Clone> IntoIterator for &'a mut Patch<T> {
+    type Item = Edit<T>;
+    type IntoIter = std::iter::Cloned<std::slice::Iter<'a, Edit<T>>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter().cloned()
     }
 }
 

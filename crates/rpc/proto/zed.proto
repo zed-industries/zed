@@ -9,37 +9,46 @@ message Envelope {
         Ack ack = 4;
         Error error = 5;
         Ping ping = 6;
-        ShareWorktree share_worktree = 7;
-        ShareWorktreeResponse share_worktree_response = 8;
-        JoinWorktree join_worktree = 9;
-        JoinWorktreeResponse join_worktree_response = 10;
-        UpdateWorktree update_worktree = 11;
-        CloseWorktree close_worktree = 12;
-        OpenBuffer open_buffer = 13;
-        OpenBufferResponse open_buffer_response = 14;
-        CloseBuffer close_buffer = 15;
-        UpdateBuffer update_buffer = 16;
-        SaveBuffer save_buffer = 17;
-        BufferSaved buffer_saved = 18;
-        AddCollaborator add_collaborator = 19;
-        RemoveCollaborator remove_collaborator = 20;
-        GetChannels get_channels = 21;
-        GetChannelsResponse get_channels_response = 22;
-        GetUsers get_users = 23;
-        GetUsersResponse get_users_response = 24;
-        JoinChannel join_channel = 25;
-        JoinChannelResponse join_channel_response = 26;
-        LeaveChannel leave_channel = 27;
-        SendChannelMessage send_channel_message = 28;
-        SendChannelMessageResponse send_channel_message_response = 29;
-        ChannelMessageSent channel_message_sent = 30;
-        GetChannelMessages get_channel_messages = 31;
-        GetChannelMessagesResponse get_channel_messages_response = 32;
-        OpenWorktree open_worktree = 33;
-        OpenWorktreeResponse open_worktree_response = 34;
-        UnshareWorktree unshare_worktree = 35;
-        UpdateContacts update_contacts = 36;
-        LeaveWorktree leave_worktree = 37;
+
+        RegisterProject register_project = 7;
+        RegisterProjectResponse register_project_response = 8;
+        UnregisterProject unregister_project = 9;
+        ShareProject share_project = 10;
+        UnshareProject unshare_project = 11;
+        JoinProject join_project = 12;
+        JoinProjectResponse join_project_response = 13;
+        LeaveProject leave_project = 14;
+        AddProjectCollaborator add_project_collaborator = 15;
+        RemoveProjectCollaborator remove_project_collaborator = 16;
+
+        RegisterWorktree register_worktree = 17;
+        UnregisterWorktree unregister_worktree = 18;
+        ShareWorktree share_worktree = 100;
+        UpdateWorktree update_worktree = 19;
+        UpdateDiagnosticSummary update_diagnostic_summary = 20;
+
+        OpenBuffer open_buffer = 22;
+        OpenBufferResponse open_buffer_response = 23;
+        CloseBuffer close_buffer = 24;
+        UpdateBuffer update_buffer = 25;
+        SaveBuffer save_buffer = 26;
+        BufferSaved buffer_saved = 27;
+
+        GetChannels get_channels = 28;
+        GetChannelsResponse get_channels_response = 29;
+        JoinChannel join_channel = 30;
+        JoinChannelResponse join_channel_response = 31;
+        LeaveChannel leave_channel = 32;
+        SendChannelMessage send_channel_message = 33;
+        SendChannelMessageResponse send_channel_message_response = 34;
+        ChannelMessageSent channel_message_sent = 35;
+        GetChannelMessages get_channel_messages = 36;
+        GetChannelMessagesResponse get_channel_messages_response = 37;
+
+        UpdateContacts update_contacts = 38;
+
+        GetUsers get_users = 39;
+        GetUsersResponse get_users_response = 40;
     }
 }
 
@@ -53,62 +62,77 @@ message Error {
     string message = 1;
 }
 
-message OpenWorktree {
-    string root_name = 1;
-    repeated string authorized_logins = 2;
+message RegisterProject {}
+
+message RegisterProjectResponse {
+    uint64 project_id = 1;
 }
 
-message OpenWorktreeResponse {
-    uint64 worktree_id = 1;
+message UnregisterProject {
+    uint64 project_id = 1;
 }
 
-message ShareWorktree {
-    Worktree worktree = 1;
+message ShareProject {
+    uint64 project_id = 1;
 }
 
-message ShareWorktreeResponse {}
-
-message UnshareWorktree {
-    uint64 worktree_id = 1;
+message UnshareProject {
+    uint64 project_id = 1;
 }
 
-message JoinWorktree {
-    uint64 worktree_id = 1;
+message JoinProject {
+    uint64 project_id = 1;
 }
 
-message LeaveWorktree {
-    uint64 worktree_id = 1;
-}
-
-message JoinWorktreeResponse {
-    Worktree worktree = 2;
-    uint32 replica_id = 3;
+message JoinProjectResponse {
+    uint32 replica_id = 2;
+    repeated Worktree worktrees = 3;
     repeated Collaborator collaborators = 4;
 }
 
+message LeaveProject {
+    uint64 project_id = 1;
+}
+
+message RegisterWorktree {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string root_name = 3;
+    repeated string authorized_logins = 4;
+}
+
+message UnregisterWorktree {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+}
+
+message ShareWorktree {
+    uint64 project_id = 1;
+    Worktree worktree = 2;
+}
+
 message UpdateWorktree {
-    uint64 worktree_id = 1;
-    repeated Entry updated_entries = 2;
-    repeated uint64 removed_entries = 3;
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string root_name = 3;
+    repeated Entry updated_entries = 4;
+    repeated uint64 removed_entries = 5;
 }
 
-message CloseWorktree {
-    uint64 worktree_id = 1;
-}
-
-message AddCollaborator {
-    uint64 worktree_id = 1;
+message AddProjectCollaborator {
+    uint64 project_id = 1;
     Collaborator collaborator = 2;
 }
 
-message RemoveCollaborator {
-    uint64 worktree_id = 1;
+message RemoveProjectCollaborator {
+    uint64 project_id = 1;
     uint32 peer_id = 2;
 }
 
 message OpenBuffer {
-    uint64 worktree_id = 1;
-    string path = 2;
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string path = 3;
 }
 
 message OpenBufferResponse {
@@ -116,26 +140,38 @@ message OpenBufferResponse {
 }
 
 message CloseBuffer {
-    uint64 worktree_id = 1;
-    uint64 buffer_id = 2;
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 buffer_id = 3;
 }
 
 message UpdateBuffer {
-    uint64 worktree_id = 1;
-    uint64 buffer_id = 2;
-    repeated Operation operations = 3;
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 buffer_id = 3;
+    repeated Operation operations = 4;
 }
 
 message SaveBuffer {
-    uint64 worktree_id = 1;
-    uint64 buffer_id = 2;
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 buffer_id = 3;
 }
 
 message BufferSaved {
-    uint64 worktree_id = 1;
-    uint64 buffer_id = 2;
-    repeated VectorClockEntry version = 3;
-    Timestamp mtime = 4;
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 buffer_id = 3;
+    repeated VectorClockEntry version = 4;
+    Timestamp mtime = 5;
+}
+
+message UpdateDiagnosticSummary {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string path = 3;
+    uint32 error_count = 4;
+    uint32 warning_count = 5;
 }
 
 message GetChannels {}
@@ -229,36 +265,55 @@ message Buffer {
     string content = 2;
     repeated Operation.Edit history = 3;
     repeated SelectionSet selections = 4;
-    DiagnosticSet diagnostics = 5;
+    repeated DiagnosticSet diagnostic_sets = 5;
 }
 
 message SelectionSet {
     uint32 replica_id = 1;
-    uint32 lamport_timestamp = 2;
-    bool is_active = 3;
-    repeated VectorClockEntry version = 4;
-    repeated Selection selections = 5;
+    repeated Selection selections = 2;
 }
 
 message Selection {
     uint64 id = 1;
-    uint64 start = 2;
-    uint64 end = 3;
+    Anchor start = 2;
+    Anchor end = 3;
     bool reversed = 4;
 }
 
+message Anchor {
+    uint32 replica_id = 1;
+    uint32 local_timestamp = 2;
+    uint64 offset = 3;
+    Bias bias = 4;
+}
+
+enum Bias {
+    Left = 0;
+    Right = 1;
+}
+
+message UpdateDiagnosticSet {
+    uint32 replica_id = 1;
+    uint32 lamport_timestamp = 2;
+    DiagnosticSet diagnostic_set = 3;
+}
+
 message DiagnosticSet {
-    repeated VectorClockEntry version = 1;
+    string provider_name = 1;
     repeated Diagnostic diagnostics = 2;
 }
 
 message Diagnostic {
-    uint64 start = 1;
-    uint64 end = 2;
+    Anchor start = 1;
+    Anchor end = 2;
     Severity severity = 3;
     string message = 4;
-    uint64 group_id = 5;
-    bool is_primary = 6;
+    optional string code = 5;
+    uint64 group_id = 6;
+    bool is_primary = 7;
+    bool is_valid = 8;
+    bool is_disk_based = 9;
+
     enum Severity {
         None = 0;
         Error = 1;
@@ -268,16 +323,13 @@ message Diagnostic {
     }
 }
 
-
-
 message Operation {
     oneof variant {
         Edit edit = 1;
         Undo undo = 2;
         UpdateSelections update_selections = 3;
         RemoveSelections remove_selections = 4;
-        SetActiveSelections set_active_selections = 5;
-        DiagnosticSet update_diagnostics = 6;
+        UpdateDiagnosticSet update_diagnostic_set = 5;
     }
 
     message Edit {
@@ -306,21 +358,12 @@ message Operation {
 
     message UpdateSelections {
         uint32 replica_id = 1;
-        uint32 local_timestamp = 2;
         uint32 lamport_timestamp = 3;
-        repeated VectorClockEntry version = 4;
-        repeated Selection selections = 5;
+        repeated Selection selections = 4;
     }
 
     message RemoveSelections {
         uint32 replica_id = 1;
-        uint32 local_timestamp = 2;
-        uint32 lamport_timestamp = 3;
-    }
-
-    message SetActiveSelections {
-        uint32 replica_id = 1;
-        optional uint32 local_timestamp = 2;
         uint32 lamport_timestamp = 3;
     }
 }
@@ -360,12 +403,12 @@ message ChannelMessage {
 
 message Contact {
     uint64 user_id = 1;
-    repeated WorktreeMetadata worktrees = 2;
+    repeated ProjectMetadata projects = 2;
 }
 
-message WorktreeMetadata {
+message ProjectMetadata {
     uint64 id = 1;
-    string root_name = 2;
-    bool is_shared = 3;
+    bool is_shared = 2;
+    repeated string worktree_root_names = 3;
     repeated uint64 guests = 4;
 }
