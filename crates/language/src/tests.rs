@@ -655,7 +655,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         diagnostic: Diagnostic {
                             severity: DiagnosticSeverity::WARNING,
                             message: "unreachable statement".to_string(),
-                            group_id: 3,
+                            group_id: 1,
                             is_primary: true,
                             ..Default::default()
                         }
@@ -768,133 +768,13 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                             severity: DiagnosticSeverity::ERROR,
                             message: "undefined variable 'BB'".to_string(),
                             is_disk_based: true,
-                            group_id: 4,
+                            group_id: 1,
                             is_primary: true,
                             ..Default::default()
                         },
                     }
                 )
             ]
-        );
-    });
-}
-
-#[gpui::test]
-async fn test_preserving_old_group_ids_and_disk_based_diagnostics(mut cx: gpui::TestAppContext) {
-    let buffer = cx.add_model(|cx| {
-        let text = "
-            use a::*;
-            const b: i32 = c::;
-            const c: i32 = d;
-            const e: i32 = f +;
-        "
-        .unindent();
-
-        let mut rust_lang = rust_lang();
-        rust_lang.config.language_server = Some(LanguageServerConfig {
-            disk_based_diagnostic_sources: HashSet::from_iter(["disk".to_string()]),
-            ..Default::default()
-        });
-
-        let mut buffer = Buffer::new(0, text, cx);
-        buffer.set_language(Some(Arc::new(rust_lang)), None, cx);
-        buffer
-    });
-
-    // Initially, there are three errors. The second one is disk-based.
-    let diagnostics = vec![
-        DiagnosticEntry {
-            range: PointUtf16::new(1, 16)..PointUtf16::new(1, 18),
-            diagnostic: Diagnostic {
-                severity: DiagnosticSeverity::ERROR,
-                message: "syntax error 1".to_string(),
-                group_id: 0,
-                is_primary: true,
-                is_valid: true,
-                ..Default::default()
-            },
-        },
-        DiagnosticEntry {
-            range: PointUtf16::new(2, 15)..PointUtf16::new(2, 16),
-            diagnostic: Diagnostic {
-                severity: DiagnosticSeverity::ERROR,
-                message: "cannot find value `d` in this scope".to_string(),
-                is_disk_based: true,
-                group_id: 1,
-                is_primary: true,
-                is_valid: true,
-                ..Default::default()
-            },
-        },
-        DiagnosticEntry {
-            range: PointUtf16::new(3, 17)..PointUtf16::new(3, 18),
-            diagnostic: Diagnostic {
-                severity: DiagnosticSeverity::ERROR,
-                message: "syntax error 2".to_string(),
-                group_id: 2,
-                is_primary: true,
-                is_valid: true,
-                ..Default::default()
-            },
-        },
-    ];
-    buffer.update(&mut cx, |buffer, cx| {
-        buffer
-            .update_diagnostics("lsp".into(), None, diagnostics.clone(), cx)
-            .unwrap();
-        assert_eq!(
-            buffer
-                .snapshot()
-                .diagnostics_in_range::<_, PointUtf16>(PointUtf16::new(0, 0)..PointUtf16::new(4, 0))
-                .collect::<Vec<_>>(),
-            diagnostics
-                .iter()
-                .map(|entry| ("lsp", entry.clone()))
-                .collect::<Vec<_>>(),
-        );
-    });
-
-    // The diagnostics are updated. The disk-based diagnostic is omitted, and one
-    // other diagnostic has changed its message.
-    let mut new_diagnostics = vec![diagnostics[0].clone(), diagnostics[2].clone()];
-    new_diagnostics[0].diagnostic.message = "another syntax error".to_string();
-
-    buffer.update(&mut cx, |buffer, cx| {
-        buffer
-            .update_diagnostics("lsp".into(), None, new_diagnostics.clone(), cx)
-            .unwrap();
-        assert_eq!(
-            buffer
-                .snapshot()
-                .diagnostics_in_range::<_, PointUtf16>(PointUtf16::new(0, 0)..PointUtf16::new(4, 0))
-                .collect::<Vec<_>>(),
-            &[
-                // The changed diagnostic is given a new group id.
-                (
-                    "lsp",
-                    DiagnosticEntry {
-                        range: new_diagnostics[0].range.clone(),
-                        diagnostic: Diagnostic {
-                            group_id: 3,
-                            ..new_diagnostics[0].diagnostic.clone()
-                        },
-                    }
-                ),
-                // The old disk-based diagnostic is marked as invalid, but keeps
-                // its original group id.
-                (
-                    "lsp",
-                    DiagnosticEntry {
-                        range: diagnostics[1].range.clone(),
-                        diagnostic: Diagnostic {
-                            is_valid: false,
-                            ..diagnostics[1].diagnostic.clone()
-                        },
-                    }
-                ),
-                // The unchanged diagnostic keeps its original group id
-                ("lsp", new_diagnostics[1].clone()),
-            ],
         );
     });
 }
