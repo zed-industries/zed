@@ -507,18 +507,16 @@ impl Project {
         for worktree_handle in &self.worktrees {
             if let Some(worktree) = worktree_handle.read(cx).as_local() {
                 for language in worktree.languages() {
-                    if let Some(diagnostic_source) = language.diagnostic_source().cloned() {
+                    if let Some(provider) = language.diagnostic_provider().cloned() {
                         let worktree_path = worktree.abs_path().clone();
                         let worktree_handle = worktree_handle.downgrade();
                         cx.spawn_weak(|_, mut cx| async move {
-                            let diagnostics =
-                                diagnostic_source.diagnose(worktree_path).await.log_err()?;
+                            let diagnostics = provider.diagnose(worktree_path).await.log_err()?;
                             let worktree_handle = worktree_handle.upgrade(&cx)?;
                             worktree_handle.update(&mut cx, |worktree, cx| {
                                 for (path, diagnostics) in diagnostics {
                                     worktree
-                                        .update_offset_diagnostics(
-                                            diagnostic_source.name(),
+                                        .update_diagnostics_from_provider(
                                             path.into(),
                                             diagnostics,
                                             cx,

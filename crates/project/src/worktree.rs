@@ -50,6 +50,8 @@ use util::{post_inc, ResultExt, TryFutureExt};
 
 lazy_static! {
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
+    static ref DIAGNOSTIC_PROVIDER_NAME: Arc<str> = Arc::from("diagnostic_source");
+    static ref LSP_PROVIDER_NAME: Arc<str> = Arc::from("lsp");
 }
 
 #[derive(Clone, Debug)]
@@ -672,9 +674,8 @@ impl Worktree {
         }
     }
 
-    pub fn update_lsp_diagnostics(
+    pub fn update_diagnostics_from_lsp(
         &mut self,
-        provider_name: Arc<str>,
         mut params: lsp::PublishDiagnosticsParams,
         disk_based_sources: &HashSet<String>,
         cx: &mut ModelContext<Worktree>,
@@ -743,18 +744,42 @@ impl Worktree {
             })
             .collect::<Vec<_>>();
 
-        self.update_point_utf16_diagnostics(
-            provider_name,
-            worktree_path,
-            params.version,
-            diagnostics,
-            cx,
-        )
+        let this = self.as_local_mut().unwrap();
+        for buffer in this.open_buffers.values() {
+            if let Some(buffer) = buffer.upgrade(cx) {
+                if buffer
+                    .read(cx)
+                    .file()
+                    .map_or(false, |file| *file.path() == worktree_path)
+                {
+                    let (remote_id, operation) = buffer.update(cx, |buffer, cx| {
+                        (
+                            buffer.remote_id(),
+                            buffer.update_diagnostics(
+                                LSP_PROVIDER_NAME.clone(),
+                                params.version,
+                                diagnostics.clone(),
+                                cx,
+                            ),
+                        )
+                    });
+                    self.send_buffer_update(remote_id, operation?, cx);
+                    break;
+                }
+            }
+        }
+
+        let this = self.as_local_mut().unwrap();
+        this.diagnostic_summaries
+            .insert(worktree_path.clone(), DiagnosticSummary::new(&diagnostics));
+        this.lsp_diagnostics
+            .insert(worktree_path.clone(), diagnostics);
+        cx.emit(Event::DiagnosticsUpdated(worktree_path.clone()));
+        Ok(())
     }
 
-    pub fn update_offset_diagnostics(
+    pub fn update_diagnostics_from_provider(
         &mut self,
-        provider_name: Arc<str>,
         path: Arc<Path>,
         diagnostics: Vec<DiagnosticEntry<usize>>,
         cx: &mut ModelContext<Worktree>,
@@ -771,56 +796,8 @@ impl Worktree {
                         (
                             buffer.remote_id(),
                             buffer.update_diagnostics(
-                                provider_name,
+                                DIAGNOSTIC_PROVIDER_NAME.clone(),
                                 None,
-                                diagnostics
-                                    .iter()
-                                    .map(|entry| DiagnosticEntry {
-                                        range: buffer.offset_to_point_utf16(entry.range.start)
-                                            ..buffer.offset_to_point_utf16(entry.range.end),
-                                        diagnostic: entry.diagnostic.clone(),
-                                    })
-                                    .collect(),
-                                cx,
-                            ),
-                        )
-                    });
-                    self.send_buffer_update(remote_id, operation?, cx);
-                    break;
-                }
-            }
-        }
-
-        let this = self.as_local_mut().unwrap();
-        this.diagnostic_summaries
-            .insert(path.clone(), DiagnosticSummary::new(&diagnostics));
-        this.offset_diagnostics.insert(path.clone(), diagnostics);
-        cx.emit(Event::DiagnosticsUpdated(path.clone()));
-        Ok(())
-    }
-
-    pub fn update_point_utf16_diagnostics(
-        &mut self,
-        provider_name: Arc<str>,
-        path: Arc<Path>,
-        version: Option<i32>,
-        diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Result<()> {
-        let this = self.as_local_mut().unwrap();
-        for buffer in this.open_buffers.values() {
-            if let Some(buffer) = buffer.upgrade(cx) {
-                if buffer
-                    .read(cx)
-                    .file()
-                    .map_or(false, |file| *file.path() == path)
-                {
-                    let (remote_id, operation) = buffer.update(cx, |buffer, cx| {
-                        (
-                            buffer.remote_id(),
-                            buffer.update_diagnostics(
-                                provider_name,
-                                version,
                                 diagnostics.clone(),
                                 cx,
                             ),
@@ -835,24 +812,9 @@ impl Worktree {
         let this = self.as_local_mut().unwrap();
         this.diagnostic_summaries
             .insert(path.clone(), DiagnosticSummary::new(&diagnostics));
-        this.point_utf16_diagnostics
-            .insert(path.clone(), diagnostics);
+        this.provider_diagnostics.insert(path.clone(), diagnostics);
         cx.emit(Event::DiagnosticsUpdated(path.clone()));
         Ok(())
-    }
-
-    fn convert_diagnostics(
-        diagnostics: &[DiagnosticEntry<usize>],
-        buffer: &Buffer,
-    ) -> Vec<DiagnosticEntry<PointUtf16>> {
-        diagnostics
-            .iter()
-            .map(|entry| DiagnosticEntry {
-                range: buffer.offset_to_point_utf16(entry.range.start)
-                    ..buffer.offset_to_point_utf16(entry.range.end),
-                diagnostic: entry.diagnostic.clone(),
-            })
-            .collect()
     }
 
     fn send_buffer_update(
@@ -925,8 +887,8 @@ pub struct LocalWorktree {
     loading_buffers: LoadingBuffers,
     open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
-    point_utf16_diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<PointUtf16>>>,
-    offset_diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<usize>>>,
+    lsp_diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<PointUtf16>>>,
+    provider_diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<usize>>>,
     diagnostic_summaries: BTreeMap<Arc<Path>, DiagnosticSummary>,
     queued_operations: Vec<(u64, Operation)>,
     language_registry: Arc<LanguageRegistry>,
@@ -1034,8 +996,8 @@ impl LocalWorktree {
                 loading_buffers: Default::default(),
                 open_buffers: Default::default(),
                 shared_buffers: Default::default(),
-                point_utf16_diagnostics: Default::default(),
-                offset_diagnostics: Default::default(),
+                lsp_diagnostics: Default::default(),
+                provider_diagnostics: Default::default(),
                 diagnostic_summaries: Default::default(),
                 queued_operations: Default::default(),
                 language_registry: languages,
@@ -1104,8 +1066,6 @@ impl LocalWorktree {
             return Some(server.clone());
         }
 
-        let name: Arc<str> = language.name().into();
-
         if let Some(language_server) = language
             .start_server(self.abs_path(), cx)
             .log_err()
@@ -1121,23 +1081,15 @@ impl LocalWorktree {
                     smol::block_on(diagnostics_tx.send(params)).ok();
                 })
                 .detach();
-            cx.spawn_weak(|this, mut cx| {
-                let provider_name = name.clone();
-                async move {
-                    while let Ok(diagnostics) = diagnostics_rx.recv().await {
-                        if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
-                            handle.update(&mut cx, |this, cx| {
-                                this.update_lsp_diagnostics(
-                                    provider_name.clone(),
-                                    diagnostics,
-                                    &disk_based_sources,
-                                    cx,
-                                )
+            cx.spawn_weak(|this, mut cx| async move {
+                while let Ok(diagnostics) = diagnostics_rx.recv().await {
+                    if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
+                        handle.update(&mut cx, |this, cx| {
+                            this.update_diagnostics_from_lsp(diagnostics, &disk_based_sources, cx)
                                 .log_err();
-                            });
-                        } else {
-                            break;
-                        }
+                        });
+                    } else {
+                        break;
                     }
                 }
             })
@@ -1184,11 +1136,11 @@ impl LocalWorktree {
                 .update(&mut cx, |t, cx| t.as_local().unwrap().load(&path, cx))
                 .await?;
 
-            let (point_utf16_diagnostics, offset_diagnostics, language, language_server) = this
-                .update(&mut cx, |this, cx| {
+            let (lsp_diagnostics, provider_diagnostics, language, language_server) =
+                this.update(&mut cx, |this, cx| {
                     let this = this.as_local_mut().unwrap();
-                    let point_utf16_diagnostics = this.point_utf16_diagnostics.remove(&path);
-                    let offset_diagnostics = this.offset_diagnostics.remove(&path);
+                    let lsp_diagnostics = this.lsp_diagnostics.remove(&path);
+                    let provider_diagnostics = this.provider_diagnostics.remove(&path);
                     let language = this
                         .language_registry
                         .select_language(file.full_path())
@@ -1196,31 +1148,32 @@ impl LocalWorktree {
                     let server = language
                         .as_ref()
                         .and_then(|language| this.register_language(language, cx));
-                    (
-                        point_utf16_diagnostics,
-                        offset_diagnostics,
-                        language,
-                        server,
-                    )
+                    (lsp_diagnostics, provider_diagnostics, language, server)
                 });
 
+            let mut buffer_operations = Vec::new();
             let buffer = cx.add_model(|cx| {
                 let mut buffer = Buffer::from_file(0, contents, Box::new(file), cx);
                 buffer.set_language(language, language_server, cx);
-                if let Some(diagnostics) = point_utf16_diagnostics {
-                    buffer
-                        .update_diagnostics(todo!(), None, diagnostics, cx)
+                if let Some(diagnostics) = lsp_diagnostics {
+                    let op = buffer
+                        .update_diagnostics(LSP_PROVIDER_NAME.clone(), None, diagnostics, cx)
                         .unwrap();
+                    buffer_operations.push(op);
                 }
-                if let Some(diagnostics) = offset_diagnostics {
-                    buffer
-                        .update_offset_diagnostics(todo!(), None, diagnostics, cx)
+                if let Some(diagnostics) = provider_diagnostics {
+                    let op = buffer
+                        .update_diagnostics(DIAGNOSTIC_PROVIDER_NAME.clone(), None, diagnostics, cx)
                         .unwrap();
+                    buffer_operations.push(op);
                 }
                 buffer
             });
 
-            this.update(&mut cx, |this, _| {
+            this.update(&mut cx, |this, cx| {
+                for op in buffer_operations {
+                    this.send_buffer_update(buffer.read(cx).remote_id(), op, cx);
+                }
                 let this = this.as_local_mut().unwrap();
                 this.open_buffers.insert(buffer.id(), buffer.downgrade());
             });
@@ -3936,7 +3889,7 @@ mod tests {
 
         worktree
             .update(&mut cx, |tree, cx| {
-                tree.update_lsp_diagnostics("lsp".into(), message, &Default::default(), cx)
+                tree.update_diagnostics_from_lsp(message, &Default::default(), cx)
             })
             .unwrap();
         let buffer = buffer.read_with(&cx, |buffer, _| buffer.snapshot());

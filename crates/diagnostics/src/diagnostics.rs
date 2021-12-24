@@ -579,7 +579,7 @@ mod tests {
     use super::*;
     use client::{http::ServerResponse, test::FakeHttpClient, Client, UserStore};
     use gpui::TestAppContext;
-    use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, LanguageRegistry, PointUtf16};
+    use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, LanguageRegistry};
     use project::FakeFs;
     use serde_json::json;
     use std::sync::Arc;
@@ -637,13 +637,11 @@ mod tests {
 
         worktree.update(&mut cx, |worktree, cx| {
             worktree
-                .update_point_utf16_diagnostics(
-                    "lsp".into(),
+                .update_diagnostics_from_provider(
                     Arc::from("/test/main.rs".as_ref()),
-                    None,
                     vec![
                         DiagnosticEntry {
-                            range: PointUtf16::new(1, 8)..PointUtf16::new(1, 9),
+                            range: 20..21,
                             diagnostic: Diagnostic {
                                 message:
                                     "move occurs because `x` has type `Vec<char>`, which does not implement the `Copy` trait"
@@ -655,7 +653,7 @@ mod tests {
                             },
                         },
                         DiagnosticEntry {
-                            range: PointUtf16::new(2, 8)..PointUtf16::new(2, 9),
+                            range: 40..41,
                             diagnostic: Diagnostic {
                                 message:
                                     "move occurs because `y` has type `Vec<char>`, which does not implement the `Copy` trait"
@@ -667,7 +665,7 @@ mod tests {
                             },
                         },
                         DiagnosticEntry {
-                            range: PointUtf16::new(3, 6)..PointUtf16::new(3, 7),
+                            range: 58..59,
                             diagnostic: Diagnostic {
                                 message: "value moved here".to_string(),
                                 severity: DiagnosticSeverity::INFORMATION,
@@ -677,7 +675,7 @@ mod tests {
                             },
                         },
                         DiagnosticEntry {
-                            range: PointUtf16::new(4, 6)..PointUtf16::new(4, 7),
+                            range: 68..69,
                             diagnostic: Diagnostic {
                                 message: "value moved here".to_string(),
                                 severity: DiagnosticSeverity::INFORMATION,
@@ -687,7 +685,7 @@ mod tests {
                             },
                         },
                         DiagnosticEntry {
-                            range: PointUtf16::new(7, 6)..PointUtf16::new(7, 7),
+                            range: 112..113,
                             diagnostic: Diagnostic {
                                 message: "use of moved value\nvalue used here after move".to_string(),
                                 severity: DiagnosticSeverity::ERROR,
@@ -697,7 +695,7 @@ mod tests {
                             },
                         },
                         DiagnosticEntry {
-                            range: PointUtf16::new(8, 6)..PointUtf16::new(8, 7),
+                            range: 122..123,
                             diagnostic: Diagnostic {
                                 message: "use of moved value\nvalue used here after move".to_string(),
                                 severity: DiagnosticSeverity::ERROR,
@@ -764,12 +762,10 @@ mod tests {
 
         worktree.update(&mut cx, |worktree, cx| {
             worktree
-                .update_point_utf16_diagnostics(
-                    "lsp".into(),
+                .update_diagnostics_from_provider(
                     Arc::from("/test/a.rs".as_ref()),
-                    None,
                     vec![DiagnosticEntry {
-                        range: PointUtf16::new(0, 15)..PointUtf16::new(0, 15),
+                        range: 15..15,
                         diagnostic: Diagnostic {
                             message: "mismatched types\nexpected `usize`, found `char`".to_string(),
                             severity: DiagnosticSeverity::ERROR,

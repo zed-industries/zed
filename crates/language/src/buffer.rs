@@ -23,7 +23,7 @@ use std::{
     ffi::OsString,
     future::Future,
     iter::{Iterator, Peekable},
-    ops::{Deref, DerefMut, Range},
+    ops::{Add, Deref, DerefMut, Range, Sub},
     path::{Path, PathBuf},
     str,
     sync::Arc,
@@ -31,7 +31,7 @@ use std::{
     vec,
 };
 use sum_tree::TreeMap;
-use text::operation_queue::OperationQueue;
+use text::{operation_queue::OperationQueue, rope::TextDimension};
 pub use text::{Buffer as TextBuffer, Operation as _, *};
 use theme::SyntaxTheme;
 use tree_sitter::{InputEdit, Parser, QueryCursor, Tree};
@@ -83,6 +83,12 @@ pub struct BufferSnapshot {
     is_parsing: bool,
     language: Option<Arc<Language>>,
     parse_count: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroupId {
+    source: Arc<str>,
+    id: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -740,13 +746,16 @@ impl Buffer {
         self.diagnostic_sets.iter().flat_map(|set| set.iter())
     }
 
-    pub fn update_diagnostics(
+    pub fn update_diagnostics<T>(
         &mut self,
         provider_name: Arc<str>,
         version: Option<i32>,
-        mut diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
+        mut diagnostics: Vec<DiagnosticEntry<T>>,
         cx: &mut ModelContext<Self>,
-    ) -> Result<Operation> {
+    ) -> Result<Operation>
+    where
+        T: ToPoint + Ord + Clip + TextDimension + Add<Output = T> + Sub<Output = T> + Copy,
+    {
         fn compare_diagnostics(a: &Diagnostic, b: &Diagnostic) -> Ordering {
             Ordering::Equal
                 .then_with(|| b.is_primary.cmp(&a.is_primary))
@@ -754,13 +763,6 @@ impl Buffer {
                 .then_with(|| a.severity.cmp(&b.severity))
                 .then_with(|| a.message.cmp(&b.message))
         }
-
-        diagnostics.sort_unstable_by(|a, b| {
-            Ordering::Equal
-                .then_with(|| a.range.start.cmp(&b.range.start))
-                .then_with(|| b.range.end.cmp(&a.range.end))
-                .then_with(|| compare_diagnostics(&a.diagnostic, &b.diagnostic))
-        });
 
         let version = version.map(|version| version as usize);
         let content = if let Some(version) = version {
@@ -777,14 +779,18 @@ impl Buffer {
             self.deref()
         };
 
-        let mut edits_since_save = content
-            .edits_since::<PointUtf16>(&self.saved_version)
-            .peekable();
-        let mut last_edit_old_end = PointUtf16::zero();
-        let mut last_edit_new_end = PointUtf16::zero();
-        let mut ix = 0;
-        'outer: while ix < diagnostics.len() {
-            let entry = &mut diagnostics[ix];
+        diagnostics.sort_unstable_by(|a, b| {
+            Ordering::Equal
+                .then_with(|| a.range.start.cmp(&b.range.start))
+                .then_with(|| b.range.end.cmp(&a.range.end))
+                .then_with(|| compare_diagnostics(&a.diagnostic, &b.diagnostic))
+        });
+
+        let mut sanitized_diagnostics = Vec::new();
+        let mut edits_since_save = content.edits_since::<T>(&self.saved_version).peekable();
+        let mut last_edit_old_end = T::default();
+        let mut last_edit_new_end = T::default();
+        'outer: for entry in diagnostics {
             let mut start = entry.range.start;
             let mut end = entry.range.end;
 
@@ -798,7 +804,6 @@ impl Buffer {
                         last_edit_new_end = edit.new.end;
                         edits_since_save.next();
                     } else if edit.old.start <= end && edit.old.end >= start {
-                        diagnostics.remove(ix);
                         continue 'outer;
                     } else {
                         break;
@@ -809,23 +814,26 @@ impl Buffer {
                 end = last_edit_new_end + (end - last_edit_old_end);
             }
 
-            entry.range = content.clip_point_utf16(start, Bias::Left)
-                ..content.clip_point_utf16(end, Bias::Right);
-
+            let range = start.clip(Bias::Left, content)..end.clip(Bias::Right, content);
+            let mut range = range.start.to_point(content)..range.end.to_point(content);
             // Expand empty ranges by one character
-            if entry.range.start == entry.range.end {
-                entry.range.end.column += 1;
-                entry.range.end = content.clip_point_utf16(entry.range.end, Bias::Right);
-                if entry.range.start == entry.range.end && entry.range.end.column > 0 {
-                    entry.range.start.column -= 1;
-                    entry.range.start = content.clip_point_utf16(entry.range.start, Bias::Left);
+            if range.start == range.end {
+                range.end.column += 1;
+                range.end = content.clip_point(range.end, Bias::Right);
+                if range.start == range.end && range.end.column > 0 {
+                    range.start.column -= 1;
+                    range.start = content.clip_point(range.start, Bias::Left);
                 }
             }
-            ix += 1;
+
+            sanitized_diagnostics.push(DiagnosticEntry {
+                range,
+                diagnostic: entry.diagnostic,
+            });
         }
         drop(edits_since_save);
 
-        let set = DiagnosticSet::new(provider_name, diagnostics, content);
+        let set = DiagnosticSet::new(provider_name, sanitized_diagnostics, content);
         self.apply_diagnostic_update(set.clone(), cx);
         Ok(Operation::UpdateDiagnostics {
             provider_name: set.provider_name().to_string(),

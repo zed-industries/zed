@@ -205,6 +205,19 @@ impl Rope {
                 .map_or(0, |chunk| chunk.point_utf16_to_offset(overshoot))
     }
 
+    pub fn point_utf16_to_point(&self, point: PointUtf16) -> Point {
+        if point >= self.summary().lines_utf16 {
+            return self.summary().lines;
+        }
+        let mut cursor = self.chunks.cursor::<(PointUtf16, Point)>();
+        cursor.seek(&point, Bias::Left, &());
+        let overshoot = point - cursor.start().0;
+        cursor.start().1
+            + cursor
+                .item()
+                .map_or(Point::zero(), |chunk| chunk.point_utf16_to_point(overshoot))
+    }
+
     pub fn clip_offset(&self, mut offset: usize, bias: Bias) -> usize {
         let mut cursor = self.chunks.cursor::<usize>();
         cursor.seek(&offset, Bias::Left, &());
@@ -581,6 +594,28 @@ impl Chunk {
             offset += ch.len_utf8();
         }
         offset
+    }
+
+    fn point_utf16_to_point(&self, target: PointUtf16) -> Point {
+        let mut point = Point::zero();
+        let mut point_utf16 = PointUtf16::zero();
+        for ch in self.0.chars() {
+            if point_utf16 >= target {
+                if point_utf16 > target {
+                    panic!("point {:?} is inside of character {:?}", target, ch);
+                }
+                break;
+            }
+
+            if ch == '\n' {
+                point_utf16 += PointUtf16::new(1, 0);
+                point += Point::new(1, 0);
+            } else {
+                point_utf16 += PointUtf16::new(0, ch.len_utf16() as u32);
+                point += Point::new(0, ch.len_utf8() as u32);
+            }
+        }
+        point
     }
 
     fn clip_point(&self, target: Point, bias: Bias) -> Point {

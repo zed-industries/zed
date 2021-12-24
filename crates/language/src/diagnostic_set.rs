@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::{self, Bias, SumTree};
-use text::{Anchor, FromAnchor, PointUtf16, ToOffset};
+use text::{Anchor, FromAnchor, Point, ToOffset};
 
 #[derive(Clone, Debug)]
 pub struct DiagnosticSet {
@@ -56,7 +56,7 @@ impl DiagnosticSet {
 
     pub fn new<I>(provider_name: Arc<str>, iter: I, buffer: &text::BufferSnapshot) -> Self
     where
-        I: IntoIterator<Item = DiagnosticEntry<PointUtf16>>,
+        I: IntoIterator<Item = DiagnosticEntry<Point>>,
     {
         let mut entries = iter.into_iter().collect::<Vec<_>>();
         entries.sort_unstable_by_key(|entry| (entry.range.start, Reverse(entry.range.end)));

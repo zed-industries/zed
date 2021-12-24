@@ -65,9 +65,7 @@ pub struct BracketPair {
 }
 
 #[async_trait]
-pub trait DiagnosticSource: 'static + Send + Sync {
-    fn name(&self) -> Arc<str>;
-
+pub trait DiagnosticProvider: 'static + Send + Sync {
     async fn diagnose(
         &self,
         path: Arc<Path>,
@@ -77,7 +75,7 @@ pub trait DiagnosticSource: 'static + Send + Sync {
 pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
-    pub(crate) diagnostic_source: Option<Arc<dyn DiagnosticSource>>,
+    pub(crate) diagnostic_provider: Option<Arc<dyn DiagnosticProvider>>,
 }
 
 pub struct Grammar {
@@ -142,7 +140,7 @@ impl Language {
                     highlight_map: Default::default(),
                 })
             }),
-            diagnostic_source: None,
+            diagnostic_provider: None,
         }
     }
 
@@ -176,8 +174,8 @@ impl Language {
         Ok(self)
     }
 
-    pub fn with_diagnostic_source(mut self, source: impl DiagnosticSource) -> Self {
-        self.diagnostic_source = Some(Arc::new(source));
+    pub fn with_diagnostic_provider(mut self, source: impl DiagnosticProvider) -> Self {
+        self.diagnostic_provider = Some(Arc::new(source));
         self
     }
 
@@ -214,8 +212,8 @@ impl Language {
         }
     }
 
-    pub fn diagnostic_source(&self) -> Option<&Arc<dyn DiagnosticSource>> {
-        self.diagnostic_source.as_ref()
+    pub fn diagnostic_provider(&self) -> Option<&Arc<dyn DiagnosticProvider>> {
+        self.diagnostic_provider.as_ref()
     }
 
     pub fn disk_based_diagnostic_sources(&self) -> Option<&HashSet<String>> {
