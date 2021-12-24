@@ -5702,6 +5702,7 @@ dependencies = [
  "chat_panel",
  "client",
  "clock",
+ "collections",
  "contacts_panel",
  "crossbeam-channel",
  "ctor",

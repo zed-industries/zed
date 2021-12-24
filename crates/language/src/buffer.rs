@@ -805,10 +805,13 @@ impl Buffer {
                     }
                 }
 
+                let start_overshoot = start - last_edit_old_end;
                 start = last_edit_new_end;
-                start.add_assign(&(start - last_edit_old_end));
+                start.add_assign(&start_overshoot);
+
+                let end_overshoot = end - last_edit_old_end;
                 end = last_edit_new_end;
-                end.add_assign(&(end - last_edit_old_end));
+                end.add_assign(&end_overshoot);
             }
 
             let range = start.clip(Bias::Left, content)..end.clip(Bias::Right, content);

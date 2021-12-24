@@ -9,18 +9,14 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 pub use buffer::Operation;
 pub use buffer::*;
-use collections::HashSet;
+use collections::{HashMap, HashSet};
 pub use diagnostic_set::DiagnosticEntry;
 use gpui::AppContext;
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Deserialize;
-use std::{
-    path::{Path, PathBuf},
-    str,
-    sync::Arc,
-};
+use std::{path::Path, str, sync::Arc};
 use theme::SyntaxTheme;
 use tree_sitter::{self, Query};
 pub use tree_sitter::{Parser, Tree};
@@ -69,7 +65,7 @@ pub trait DiagnosticProvider: 'static + Send + Sync {
     async fn diagnose(
         &self,
         path: Arc<Path>,
-    ) -> Result<Vec<(PathBuf, Vec<DiagnosticEntry<usize>>)>>;
+    ) -> Result<HashMap<Arc<Path>, Vec<DiagnosticEntry<usize>>>>;
 }
 
 pub struct Language {
