@@ -76,6 +76,11 @@ spec:
                 secretKeyRef:
                   name: github
                   key: privateKey
+            - name: API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: api
+                  key: token
           securityContext:
             capabilities:
               # FIXME - Switch to the more restrictive `PERFMON` capability.
