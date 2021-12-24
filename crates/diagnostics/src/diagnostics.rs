@@ -648,6 +648,7 @@ mod tests {
                                         .to_string(),
                                 severity: DiagnosticSeverity::INFORMATION,
                                 is_primary: false,
+                                is_disk_based: true,
                                 group_id: 1,
                                 ..Default::default()
                             },
@@ -660,6 +661,7 @@ mod tests {
                                         .to_string(),
                                 severity: DiagnosticSeverity::INFORMATION,
                                 is_primary: false,
+                                is_disk_based: true,
                                 group_id: 0,
                                 ..Default::default()
                             },
@@ -670,6 +672,7 @@ mod tests {
                                 message: "value moved here".to_string(),
                                 severity: DiagnosticSeverity::INFORMATION,
                                 is_primary: false,
+                                is_disk_based: true,
                                 group_id: 1,
                                 ..Default::default()
                             },
@@ -680,6 +683,7 @@ mod tests {
                                 message: "value moved here".to_string(),
                                 severity: DiagnosticSeverity::INFORMATION,
                                 is_primary: false,
+                                is_disk_based: true,
                                 group_id: 0,
                                 ..Default::default()
                             },
@@ -690,6 +694,7 @@ mod tests {
                                 message: "use of moved value\nvalue used here after move".to_string(),
                                 severity: DiagnosticSeverity::ERROR,
                                 is_primary: true,
+                                is_disk_based: true,
                                 group_id: 0,
                                 ..Default::default()
                             },
@@ -700,6 +705,7 @@ mod tests {
                                 message: "use of moved value\nvalue used here after move".to_string(),
                                 severity: DiagnosticSeverity::ERROR,
                                 is_primary: true,
+                                is_disk_based: true,
                                 group_id: 1,
                                 ..Default::default()
                             },
@@ -770,6 +776,7 @@ mod tests {
                             message: "mismatched types\nexpected `usize`, found `char`".to_string(),
                             severity: DiagnosticSeverity::ERROR,
                             is_primary: true,
+                            is_disk_based: true,
                             group_id: 0,
                             ..Default::default()
                         },
