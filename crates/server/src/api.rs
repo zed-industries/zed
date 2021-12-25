@@ -9,6 +9,7 @@ pub fn add_routes(app: &mut tide::Server<Arc<AppState>>) {
     app.at("/users").get(get_users);
     app.at("/users").post(create_user);
     app.at("/users/:id").put(update_user);
+    app.at("/users/:id").delete(delete_user);
     app.at("/users/:github_login").get(get_user);
     app.at("/users/:github_login/access_tokens")
         .post(create_access_token);
@@ -84,6 +85,20 @@ async fn update_user(mut request: Request) -> tide::Result {
         .db()
         .set_user_is_admin(user_id, params.admin)
         .await?;
+
+    Ok(tide::Response::builder(StatusCode::Ok).build())
+}
+
+async fn delete_user(request: Request) -> tide::Result {
+    request.require_token().await?;
+    let user_id = UserId(
+        request
+            .param("id")?
+            .parse::<i32>()
+            .map_err(|error| surf::Error::from_str(StatusCode::BadRequest, error.to_string()))?,
+    );
+
+    request.db().delete_user(user_id).await?;
 
     Ok(tide::Response::builder(StatusCode::Ok).build())
 }
