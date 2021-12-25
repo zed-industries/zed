@@ -200,37 +200,27 @@ impl DisplaySnapshot {
         self.buffer_snapshot.max_buffer_row()
     }
 
-    pub fn prev_row_boundary(&self, input_display_point: DisplayPoint) -> (DisplayPoint, Point) {
-        let mut display_point = input_display_point;
+    pub fn prev_row_boundary(&self, mut display_point: DisplayPoint) -> (DisplayPoint, Point) {
         loop {
             *display_point.column_mut() = 0;
             let mut point = display_point.to_point(self);
-            point = self.buffer_snapshot.clip_point(point, Bias::Left);
             point.column = 0;
-            let next_display_point = self.point_to_display_point_with_clipping(point, Bias::Left);
+            let next_display_point = self.point_to_display_point(point, Bias::Left);
             if next_display_point == display_point {
                 return (display_point, point);
-            }
-            if next_display_point > display_point {
-                panic!("invalid display point {:?}", input_display_point);
             }
             display_point = next_display_point;
         }
     }
 
-    pub fn next_row_boundary(&self, input_display_point: DisplayPoint) -> (DisplayPoint, Point) {
-        let mut display_point = input_display_point;
+    pub fn next_row_boundary(&self, mut display_point: DisplayPoint) -> (DisplayPoint, Point) {
         loop {
             *display_point.column_mut() = self.line_len(display_point.row());
-            let mut point = self.display_point_to_point(display_point, Bias::Right);
-            point = self.buffer_snapshot.clip_point(point, Bias::Right);
+            let mut point = display_point.to_point(self);
             point.column = self.buffer_snapshot.line_len(point.row);
             let next_display_point = self.point_to_display_point(point, Bias::Right);
             if next_display_point == display_point {
                 return (display_point, point);
-            }
-            if next_display_point < display_point {
-                panic!("invalid display point {:?}", input_display_point);
             }
             display_point = next_display_point;
         }
