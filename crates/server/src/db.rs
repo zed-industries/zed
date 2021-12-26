@@ -84,7 +84,7 @@ impl Db {
         })
     }
 
-    pub async fn delete_signup(&self, id: SignupId) -> Result<()> {
+    pub async fn destroy_signup(&self, id: SignupId) -> Result<()> {
         test_support!(self, {
             let query = "DELETE FROM signups WHERE id = $1";
             sqlx::query(query)
@@ -164,8 +164,14 @@ impl Db {
         })
     }
 
-    pub async fn delete_user(&self, id: UserId) -> Result<()> {
+    pub async fn destroy_user(&self, id: UserId) -> Result<()> {
         test_support!(self, {
+            let query = "DELETE FROM access_tokens WHERE user_id = $1;";
+            sqlx::query(query)
+                .bind(id.0)
+                .execute(&self.pool)
+                .await
+                .map(drop)?;
             let query = "DELETE FROM users WHERE id = $1;";
             sqlx::query(query)
                 .bind(id.0)
