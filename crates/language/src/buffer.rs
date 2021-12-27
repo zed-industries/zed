@@ -980,6 +980,7 @@ impl Buffer {
         indent_columns: BTreeMap<u32, u32>,
         cx: &mut ModelContext<Self>,
     ) {
+        self.autoindent_requests.clear();
         self.start_transaction();
         for (row, indent_column) in &indent_columns {
             self.set_indent_column_for_line(*row, *indent_column, cx);
