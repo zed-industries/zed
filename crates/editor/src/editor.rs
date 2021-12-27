@@ -3207,7 +3207,7 @@ impl Editor {
             .or_else(|| {
                 self.selections
                     .iter()
-                    .min_by_key(|s| s.id)
+                    .max_by_key(|s| s.id)
                     .map(|selection| self.resolve_selection(selection, snapshot))
             })
             .unwrap()
