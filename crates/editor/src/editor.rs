@@ -487,25 +487,14 @@ impl Editor {
         cx.observe(&display_map, Self::on_display_map_changed)
             .detach();
 
-        let mut next_selection_id = 0;
-        let selections = Arc::from(
-            &[Selection {
-                id: post_inc(&mut next_selection_id),
-                start: Anchor::min(),
-                end: Anchor::min(),
-                reversed: false,
-                goal: SelectionGoal::None,
-            }][..],
-        );
-
-        Self {
+        let mut this = Self {
             handle: cx.weak_handle(),
             buffer,
             display_map,
-            selections,
+            selections: Arc::from([]),
             pending_selection: None,
             columnar_selection_tail: None,
-            next_selection_id,
+            next_selection_id: 0,
             add_selections_state: None,
             select_next_state: None,
             selection_history: Default::default(),
@@ -523,7 +512,16 @@ impl Editor {
             mode: EditorMode::Full,
             placeholder_text: None,
             highlighted_row: None,
-        }
+        };
+        let selection = Selection {
+            id: post_inc(&mut this.next_selection_id),
+            start: 0,
+            end: 0,
+            reversed: false,
+            goal: SelectionGoal::None,
+        };
+        this.update_selections(vec![selection], None, cx);
+        this
     }
 
     pub fn open_new(
@@ -1263,36 +1261,33 @@ impl Editor {
     pub fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         let old_selections = self.local_selections::<usize>(cx);
-        let new_selections = self.buffer.update(cx, |buffer, cx| {
-            let snapshot = buffer.read(cx);
-            let new_selections = old_selections
-                .iter()
-                .map(|selection| Selection {
-                    id: selection.id,
-                    start: snapshot.anchor_after(selection.start),
-                    end: snapshot.anchor_after(selection.end),
-                    reversed: false,
-                    goal: SelectionGoal::None,
-                })
-                .collect::<Vec<_>>();
-
-            drop(snapshot);
+        self.buffer.update(cx, |buffer, cx| {
             let edit_ranges = old_selections.iter().map(|s| s.start..s.end);
             buffer.edit_with_autoindent(edit_ranges, text, cx);
-
-            let snapshot = buffer.read(cx);
-            self.resolve_selections::<usize, _>(new_selections.iter(), &snapshot)
-                .collect()
         });
 
-        self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
+        let selections = self.local_selections::<usize>(cx);
+        self.update_selections(selections, Some(Autoscroll::Fit), cx);
         self.end_transaction(cx);
     }
 
     fn autoclose_pairs(&mut self, cx: &mut ViewContext<Self>) {
         let selections = self.local_selections::<usize>(cx);
-        let new_autoclose_pair = self.buffer.update(cx, |buffer, cx| {
-            let snapshot = buffer.snapshot(cx);
+        let mut bracket_pair_state = None;
+        let mut new_selections = None;
+        self.buffer.update(cx, |buffer, cx| {
+            let mut snapshot = buffer.snapshot(cx);
+            let left_biased_selections = selections
+                .iter()
+                .map(|selection| Selection {
+                    id: selection.id,
+                    start: snapshot.anchor_before(selection.start),
+                    end: snapshot.anchor_before(selection.end),
+                    reversed: selection.reversed,
+                    goal: selection.goal,
+                })
+                .collect::<Vec<_>>();
+
             let autoclose_pair = snapshot.language().and_then(|language| {
                 let first_selection_start = selections.first().unwrap().start;
                 let pair = language.brackets().iter().find(|pair| {
@@ -1317,7 +1312,7 @@ impl Editor {
                 })
             });
 
-            autoclose_pair.and_then(|pair| {
+            if let Some(pair) = autoclose_pair {
                 let selection_ranges = selections
                     .iter()
                     .map(|selection| {
@@ -1327,11 +1322,16 @@ impl Editor {
                     .collect::<SmallVec<[_; 32]>>();
 
                 buffer.edit(selection_ranges, &pair.end, cx);
-                let snapshot = buffer.snapshot(cx);
+                snapshot = buffer.snapshot(cx);
+
+                new_selections = Some(
+                    self.resolve_selections::<usize, _>(left_biased_selections.iter(), &snapshot)
+                        .collect::<Vec<_>>(),
+                );
 
                 if pair.end.len() == 1 {
                     let mut delta = 0;
-                    Some(BracketPairState {
+                    bracket_pair_state = Some(BracketPairState {
                         ranges: selections
                             .iter()
                             .map(move |selection| {
@@ -1341,13 +1341,17 @@ impl Editor {
                             })
                             .collect(),
                         pair,
-                    })
-                } else {
-                    None
+                    });
                 }
-            })
+            }
         });
-        self.autoclose_stack.extend(new_autoclose_pair);
+
+        if let Some(new_selections) = new_selections {
+            self.update_selections(new_selections, None, cx);
+        }
+        if let Some(bracket_pair_state) = bracket_pair_state {
+            self.autoclose_stack.push(bracket_pair_state);
+        }
     }
 
     fn skip_autoclose_end(&mut self, text: &str, cx: &mut ViewContext<Self>) -> bool {
@@ -3265,12 +3269,19 @@ impl Editor {
         self.pause_cursor_blinking(cx);
 
         self.set_selections(
-            Arc::from_iter(selections.into_iter().map(|selection| Selection {
-                id: selection.id,
-                start: buffer.anchor_before(selection.start),
-                end: buffer.anchor_before(selection.end),
-                reversed: selection.reversed,
-                goal: selection.goal,
+            Arc::from_iter(selections.into_iter().map(|selection| {
+                let end_bias = if selection.end > selection.start {
+                    Bias::Left
+                } else {
+                    Bias::Right
+                };
+                Selection {
+                    id: selection.id,
+                    start: buffer.anchor_after(selection.start),
+                    end: buffer.anchor_at(selection.end, end_bias),
+                    reversed: selection.reversed,
+                    goal: selection.goal,
+                }
             })),
             cx,
         );
@@ -5728,6 +5739,63 @@ mod tests {
                 DisplayPoint::new(3, 4)..DisplayPoint::new(3, 23),
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_autoindent_selections(mut cx: gpui::TestAppContext) {
+        let settings = cx.read(EditorSettings::test);
+        let language = Some(Arc::new(
+            Language::new(
+                LanguageConfig {
+                    brackets: vec![
+                        BracketPair {
+                            start: "{".to_string(),
+                            end: "}".to_string(),
+                            close: false,
+                            newline: true,
+                        },
+                        BracketPair {
+                            start: "(".to_string(),
+                            end: ")".to_string(),
+                            close: false,
+                            newline: true,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )
+            .with_indents_query(
+                r#"
+                (_ "(" ")" @end) @indent
+                (_ "{" "}" @end) @indent
+                "#,
+            )
+            .unwrap(),
+        ));
+
+        let text = "fn a() {}";
+
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let (_, editor) = cx.add_window(|cx| build_editor(buffer, settings, cx));
+        editor
+            .condition(&cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+            .await;
+
+        editor.update(&mut cx, |editor, cx| {
+            editor.select_ranges([5..5, 8..8, 9..9], None, cx);
+            editor.newline(&Newline, cx);
+            assert_eq!(editor.text(cx), "fn a(\n    \n) {\n    \n}\n");
+            assert_eq!(
+                editor.selected_ranges(cx),
+                &[
+                    Point::new(1, 4)..Point::new(1, 4),
+                    Point::new(3, 4)..Point::new(3, 4),
+                    Point::new(5, 0)..Point::new(5, 0)
+                ]
+            );
+        });
     }
 
     #[gpui::test]

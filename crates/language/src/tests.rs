@@ -330,63 +330,6 @@ fn test_edit_with_autoindent(cx: &mut MutableAppContext) {
     });
 }
 
-// We need another approach to managing selections with auto-indent
-
-// #[gpui::test]
-// fn test_autoindent_moves_selections(cx: &mut MutableAppContext) {
-//     cx.add_model(|cx| {
-//         let text = "fn a() {}";
-
-//         let mut buffer =
-//             Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx);
-
-//         let selection_set_id = buffer.add_selection_set::<usize>(&[], cx);
-//         buffer.start_transaction();
-//         buffer.edit_with_autoindent([5..5, 9..9], "\n\n", cx);
-//         buffer
-//             .update_selection_set(
-//                 selection_set_id,
-//                 &[
-//                     Selection {
-//                         id: 0,
-//                         start: Point::new(1, 0),
-//                         end: Point::new(1, 0),
-//                         reversed: false,
-//                         goal: SelectionGoal::None,
-//                     },
-//                     Selection {
-//                         id: 1,
-//                         start: Point::new(4, 0),
-//                         end: Point::new(4, 0),
-//                         reversed: false,
-//                         goal: SelectionGoal::None,
-//                     },
-//                 ],
-//                 cx,
-//             )
-//             .unwrap();
-//         assert_eq!(buffer.text(), "fn a(\n\n) {}\n\n");
-
-//         // TODO! Come up with a different approach to moving selections now that we don't manage selection sets in the buffer
-
-//         // Ending the transaction runs the auto-indent. The selection
-//         // at the start of the auto-indented row is pushed to the right.
-//         buffer.end_transaction(cx);
-//         assert_eq!(buffer.text(), "fn a(\n    \n) {}\n\n");
-//         let selection_ranges = buffer
-//             .selection_set(selection_set_id)
-//             .unwrap()
-//             .selections::<Point>(&buffer)
-//             .map(|selection| selection.start.to_point(&buffer)..selection.end.to_point(&buffer))
-//             .collect::<Vec<_>>();
-
-//         assert_eq!(selection_ranges[0], empty(Point::new(1, 4)));
-//         assert_eq!(selection_ranges[1], empty(Point::new(4, 0)));
-
-//         buffer
-//     });
-// }
-
 #[gpui::test]
 fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut MutableAppContext) {
     cx.add_model(|cx| {
