@@ -105,13 +105,13 @@ async fn put_user(mut request: Request) -> tide::Result {
 async fn delete_user(request: Request) -> tide::Result {
     request.require_admin().await?;
     let user_id = db::UserId(request.param("id")?.parse()?);
-    request.db().delete_user(user_id).await?;
+    request.db().destroy_user(user_id).await?;
     Ok(tide::Redirect::new("/admin").into())
 }
 
 async fn delete_signup(request: Request) -> tide::Result {
     request.require_admin().await?;
     let signup_id = db::SignupId(request.param("id")?.parse()?);
-    request.db().delete_signup(signup_id).await?;
+    request.db().destroy_signup(signup_id).await?;
     Ok(tide::Redirect::new("/admin").into())
 }

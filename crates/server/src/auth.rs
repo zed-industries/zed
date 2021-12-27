@@ -238,12 +238,10 @@ async fn get_auth_callback(mut request: Request) -> tide::Result {
         }
 
         let access_token = create_access_token(request.db(), user_id).await?;
-        let native_app_public_key =
-            zed_auth::PublicKey::try_from(app_sign_in_params.native_app_public_key.clone())
-                .context("failed to parse app public key")?;
-        let encrypted_access_token = native_app_public_key
-            .encrypt_string(&access_token)
-            .context("failed to encrypt access token with public key")?;
+        let encrypted_access_token = encrypt_access_token(
+            &access_token,
+            app_sign_in_params.native_app_public_key.clone(),
+        )?;
 
         return Ok(tide::Redirect::new(&format!(
             "http://127.0.0.1:{}?user_id={}&access_token={}",
@@ -287,6 +285,15 @@ fn hash_access_token(token: &str) -> tide::Result<String> {
             &SaltString::generate(thread_rng()),
         )?
         .to_string())
+}
+
+pub fn encrypt_access_token(access_token: &str, public_key: String) -> tide::Result<String> {
+    let native_app_public_key =
+        zed_auth::PublicKey::try_from(public_key).context("failed to parse app public key")?;
+    let encrypted_access_token = native_app_public_key
+        .encrypt_string(&access_token)
+        .context("failed to encrypt access token with public key")?;
+    Ok(encrypted_access_token)
 }
 
 pub fn verify_access_token(token: &str, hash: &str) -> tide::Result<bool> {

@@ -6,18 +6,9 @@ use time::{Duration, OffsetDateTime};
 #[allow(unused)]
 #[path = "../db.rs"]
 mod db;
-#[path = "../env.rs"]
-mod env;
 
 #[async_std::main]
 async fn main() {
-    if let Err(error) = env::load_dotenv() {
-        log::error!(
-            "error loading .env.toml (this is expected in production): {}",
-            error
-        );
-    }
-
     let mut rng = StdRng::from_entropy();
     let database_url = std::env::var("DATABASE_URL").expect("missing DATABASE_URL env var");
     let db = Db::new(&database_url, 5)

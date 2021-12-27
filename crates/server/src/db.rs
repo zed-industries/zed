@@ -84,7 +84,7 @@ impl Db {
         })
     }
 
-    pub async fn delete_signup(&self, id: SignupId) -> Result<()> {
+    pub async fn destroy_signup(&self, id: SignupId) -> Result<()> {
         test_support!(self, {
             let query = "DELETE FROM signups WHERE id = $1";
             sqlx::query(query)
@@ -119,6 +119,11 @@ impl Db {
             let query = "SELECT * FROM users ORDER BY github_login ASC";
             sqlx::query_as(query).fetch_all(&self.pool).await
         })
+    }
+
+    pub async fn get_user_by_id(&self, id: UserId) -> Result<Option<User>> {
+        let users = self.get_users_by_ids([id]).await?;
+        Ok(users.into_iter().next())
     }
 
     pub async fn get_users_by_ids(
@@ -159,8 +164,14 @@ impl Db {
         })
     }
 
-    pub async fn delete_user(&self, id: UserId) -> Result<()> {
+    pub async fn destroy_user(&self, id: UserId) -> Result<()> {
         test_support!(self, {
+            let query = "DELETE FROM access_tokens WHERE user_id = $1;";
+            sqlx::query(query)
+                .bind(id.0)
+                .execute(&self.pool)
+                .await
+                .map(drop)?;
             let query = "DELETE FROM users WHERE id = $1;";
             sqlx::query(query)
                 .bind(id.0)
