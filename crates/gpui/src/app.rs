@@ -1161,7 +1161,6 @@ impl MutableAppContext {
         keystroke: &Keystroke,
     ) -> Result<bool> {
         let mut context_chain = Vec::new();
-        let mut context = keymap::Context::default();
         for view_id in &responder_chain {
             if let Some(view) = self.cx.views.get(&(window_id, *view_id)) {
                 context_chain.push(view.keymap_context(self.as_ref()));
