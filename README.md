@@ -23,6 +23,14 @@ cd ..
 git clone https://github.com/zed-industries/zed.dev
 ```
 
+Make sure your local database is created, migrated, and seeded with initial data. Install [Postgres](https://postgresapp.com), then from the `zed` repository root, run:
+
+```
+script/sqlx database create
+script/sqlx migrate run
+script/seed-db
+```
+
 Run `zed.dev` and the collaboration server.
 
 ```

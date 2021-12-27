@@ -1,4 +1,9 @@
 #!/bin/bash
-
 set -e
+
+cd crates/server
+
+# Export contents of .env.toml
+eval "$(cargo run --bin dotenv)"
+
 cargo run --package=zed-server --features seed-support --bin seed
