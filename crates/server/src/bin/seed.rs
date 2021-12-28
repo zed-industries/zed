@@ -1,6 +1,5 @@
 use db::{Db, UserId};
 use rand::prelude::*;
-use tide::log;
 use time::{Duration, OffsetDateTime};
 
 #[allow(unused)]
