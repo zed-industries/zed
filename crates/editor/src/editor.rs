@@ -1702,7 +1702,7 @@ impl Editor {
             contiguous_row_selections.push(selection.clone());
             let start_row = selection.start.row;
             let mut end_row = if selection.end.column > 0 || selection.is_empty() {
-                display_map.next_line_boundary(selection.end).row + 1
+                display_map.next_line_boundary(selection.end).0.row + 1
             } else {
                 selection.end.row
             };
@@ -1710,7 +1710,7 @@ impl Editor {
             while let Some(next_selection) = selections.peek() {
                 if next_selection.start.row <= end_row {
                     end_row = if next_selection.end.column > 0 || next_selection.is_empty() {
-                        display_map.next_line_boundary(next_selection.end).row + 1
+                        display_map.next_line_boundary(next_selection.end).0.row + 1
                     } else {
                         next_selection.end.row
                     };
@@ -1724,7 +1724,9 @@ impl Editor {
             if start_row > 0 {
                 let range_to_move = Point::new(start_row - 1, buffer.line_len(start_row - 1))
                     ..Point::new(end_row - 1, buffer.line_len(end_row - 1));
-                let insertion_point = display_map.prev_line_boundary(Point::new(start_row - 1, 0));
+                let insertion_point = display_map
+                    .prev_line_boundary(Point::new(start_row - 1, 0))
+                    .0;
 
                 // Don't move lines across excerpts
                 if !buffer.range_contains_excerpt_boundary(insertion_point..range_to_move.end) {
@@ -1798,7 +1800,7 @@ impl Editor {
             contiguous_row_selections.push(selection.clone());
             let start_row = selection.start.row;
             let mut end_row = if selection.end.column > 0 || selection.is_empty() {
-                display_map.next_line_boundary(selection.end).row + 1
+                display_map.next_line_boundary(selection.end).0.row + 1
             } else {
                 selection.end.row
             };
@@ -1806,7 +1808,7 @@ impl Editor {
             while let Some(next_selection) = selections.peek() {
                 if next_selection.start.row <= end_row {
                     end_row = if next_selection.end.column > 0 || next_selection.is_empty() {
-                        display_map.next_line_boundary(next_selection.end).row + 1
+                        display_map.next_line_boundary(next_selection.end).0.row + 1
                     } else {
                         next_selection.end.row
                     };
@@ -1819,7 +1821,7 @@ impl Editor {
             // Move the text spanned by the row range to be after the last line of the row range
             if end_row <= buffer.max_point().row {
                 let range_to_move = Point::new(start_row, 0)..Point::new(end_row, 0);
-                let insertion_point = display_map.next_line_boundary(Point::new(end_row, 0));
+                let insertion_point = display_map.next_line_boundary(Point::new(end_row, 0)).0;
 
                 // Don't move lines across excerpt boundaries
                 if !buffer.range_contains_excerpt_boundary(range_to_move.start..insertion_point) {
@@ -3017,82 +3019,51 @@ impl Editor {
         }
     }
 
-    pub fn visible_selections<'a>(
-        &'a self,
-        display_rows: Range<u32>,
-        cx: &'a mut MutableAppContext,
-    ) -> HashMap<ReplicaId, Vec<Selection<DisplayPoint>>> {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+    pub fn local_selections_in_range(
+        &self,
+        range: Range<Anchor>,
+        display_map: &DisplaySnapshot,
+    ) -> Vec<Selection<Point>> {
         let buffer = &display_map.buffer_snapshot;
-
-        let start = if display_rows.start == 0 {
-            Anchor::min()
-        } else {
-            buffer.anchor_before(
-                DisplayPoint::new(display_rows.start, 0).to_offset(&display_map, Bias::Left),
-            )
-        };
-        let end = if display_rows.end > display_map.max_point().row() {
-            Anchor::max()
-        } else {
-            buffer.anchor_before(
-                DisplayPoint::new(display_rows.end, 0).to_offset(&display_map, Bias::Right),
-            )
-        };
 
         let start_ix = match self
             .selections
-            .binary_search_by(|probe| probe.end.cmp(&start, &buffer).unwrap())
+            .binary_search_by(|probe| probe.end.cmp(&range.start, &buffer).unwrap())
         {
             Ok(ix) | Err(ix) => ix,
         };
         let end_ix = match self
             .selections
-            .binary_search_by(|probe| probe.start.cmp(&end, &buffer).unwrap())
+            .binary_search_by(|probe| probe.start.cmp(&range.end, &buffer).unwrap())
         {
             Ok(ix) => ix + 1,
             Err(ix) => ix,
         };
 
-        fn display_selection(
+        fn point_selection(
             selection: &Selection<Anchor>,
-            display_map: &DisplaySnapshot,
-        ) -> Selection<DisplayPoint> {
+            buffer: &MultiBufferSnapshot,
+        ) -> Selection<Point> {
+            let start = selection.start.to_point(&buffer);
+            let end = selection.end.to_point(&buffer);
             Selection {
                 id: selection.id,
-                start: selection.start.to_display_point(&display_map),
-                end: selection.end.to_display_point(&display_map),
+                start,
+                end,
                 reversed: selection.reversed,
                 goal: selection.goal,
             }
         }
 
-        let mut result = HashMap::default();
-
-        result.insert(
-            self.replica_id(cx),
-            self.selections[start_ix..end_ix]
-                .iter()
-                .chain(
-                    self.pending_selection
-                        .as_ref()
-                        .map(|pending| &pending.selection),
-                )
-                .map(|s| display_selection(s, &display_map))
-                .collect(),
-        );
-
-        for (replica_id, selection) in display_map
-            .buffer_snapshot
-            .remote_selections_in_range(&(start..end))
-        {
-            result
-                .entry(replica_id)
-                .or_insert(Vec::new())
-                .push(display_selection(&selection, &display_map));
-        }
-
-        result
+        self.selections[start_ix..end_ix]
+            .iter()
+            .chain(
+                self.pending_selection
+                    .as_ref()
+                    .map(|pending| &pending.selection),
+            )
+            .map(|s| point_selection(s, &buffer))
+            .collect()
     }
 
     pub fn local_selections<'a, D>(&self, cx: &'a AppContext) -> Vec<Selection<D>>
@@ -3792,8 +3763,8 @@ impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
             end.row -= 1;
         }
 
-        let buffer_start = map.prev_line_boundary(start);
-        let buffer_end = map.next_line_boundary(end);
+        let buffer_start = map.prev_line_boundary(start).0;
+        let buffer_end = map.next_line_boundary(end).0;
         buffer_start.row..buffer_end.row + 1
     }
 }

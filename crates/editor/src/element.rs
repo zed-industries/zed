@@ -1,7 +1,7 @@
 use super::{
     display_map::{BlockContext, ToDisplayPoint},
-    DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, Input, Scroll,
-    Select, SelectPhase, SoftWrap, ToPoint, MAX_LINE_LEN,
+    Anchor, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, Input,
+    Scroll, Select, SelectPhase, SoftWrap, ToPoint, MAX_LINE_LEN,
 };
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
@@ -19,7 +19,7 @@ use gpui::{
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
-use language::Chunk;
+use language::{Bias, Chunk};
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
@@ -731,28 +731,70 @@ impl Element for EditorElement {
         let scroll_top = scroll_position.y() * line_height;
         let end_row = ((scroll_top + size.y()) / line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
 
+        let start_anchor = if start_row == 0 {
+            Anchor::min()
+        } else {
+            snapshot
+                .buffer_snapshot
+                .anchor_before(DisplayPoint::new(start_row, 0).to_offset(&snapshot, Bias::Left))
+        };
+        let end_anchor = if end_row > snapshot.max_point().row() {
+            Anchor::max()
+        } else {
+            snapshot
+                .buffer_snapshot
+                .anchor_before(DisplayPoint::new(end_row, 0).to_offset(&snapshot, Bias::Right))
+        };
+
+        let mut selections = HashMap::default();
         let mut active_rows = BTreeMap::new();
         let mut highlighted_row = None;
-        let selections = self.update_view(cx.app, |view, cx| {
+        self.update_view(cx.app, |view, cx| {
             highlighted_row = view.highlighted_row();
-            let selections = view.visible_selections(start_row..end_row, cx);
-            for (replica_id, selections) in &selections {
-                if *replica_id == view.replica_id(cx) {
-                    for selection in selections {
-                        let is_empty = selection.start == selection.end;
-                        let selection_start = snapshot.prev_row_boundary(selection.start).0;
-                        let selection_end = snapshot.next_row_boundary(selection.end).0;
-                        for row in cmp::max(selection_start.row(), start_row)
-                            ..=cmp::min(selection_end.row(), end_row)
-                        {
-                            let contains_non_empty_selection =
-                                active_rows.entry(row).or_insert(!is_empty);
-                            *contains_non_empty_selection |= !is_empty;
-                        }
-                    }
+            let display_map = view.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+            let local_selections = view
+                .local_selections_in_range(start_anchor.clone()..end_anchor.clone(), &display_map);
+            for selection in &local_selections {
+                let is_empty = selection.start == selection.end;
+                let selection_start = snapshot.prev_line_boundary(selection.start).1;
+                let selection_end = snapshot.next_line_boundary(selection.end).1;
+                for row in cmp::max(selection_start.row(), start_row)
+                    ..=cmp::min(selection_end.row(), end_row)
+                {
+                    let contains_non_empty_selection = active_rows.entry(row).or_insert(!is_empty);
+                    *contains_non_empty_selection |= !is_empty;
                 }
             }
-            selections
+            selections.insert(
+                view.replica_id(cx),
+                local_selections
+                    .into_iter()
+                    .map(|selection| crate::Selection {
+                        id: selection.id,
+                        goal: selection.goal,
+                        reversed: selection.reversed,
+                        start: selection.start.to_display_point(&display_map),
+                        end: selection.end.to_display_point(&display_map),
+                    })
+                    .collect(),
+            );
+
+            for (replica_id, selection) in display_map
+                .buffer_snapshot
+                .remote_selections_in_range(&(start_anchor..end_anchor))
+            {
+                selections
+                    .entry(replica_id)
+                    .or_insert(Vec::new())
+                    .push(crate::Selection {
+                        id: selection.id,
+                        goal: selection.goal,
+                        reversed: selection.reversed,
+                        start: selection.start.to_display_point(&display_map),
+                        end: selection.end.to_display_point(&display_map),
+                    });
+            }
         });
 
         let line_number_layouts = self.layout_rows(start_row..end_row, &active_rows, &snapshot, cx);
