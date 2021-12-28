@@ -1826,6 +1826,7 @@ impl Editor {
 
                 let next_row_display_end =
                     DisplayPoint::new(display_rows.end, display_map.line_len(display_rows.end));
+
                 let next_row_buffer_end = display_map.next_row_boundary(next_row_display_end).1;
                 let next_row_buffer_end_offset = next_row_buffer_end.to_offset(&buffer);
 
@@ -5165,6 +5166,27 @@ mod tests {
                     DisplayPoint::new(4, 0)..DisplayPoint::new(4, 2)
                 ]
             );
+        });
+    }
+
+    #[gpui::test]
+    fn test_move_line_up_down_with_blocks(cx: &mut gpui::MutableAppContext) {
+        let settings = EditorSettings::test(&cx);
+        let buffer = MultiBuffer::build_simple(&sample_text(10, 5, 'a'), cx);
+        let (_, editor) =
+            cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
+        editor.update(cx, |editor, cx| {
+            editor.insert_blocks(
+                [BlockProperties {
+                    position: Point::new(2, 0),
+                    disposition: BlockDisposition::Below,
+                    height: 1,
+                    render: Arc::new(|_| Empty::new().boxed()),
+                }],
+                cx,
+            );
+            editor.select_ranges([Point::new(2, 0)..Point::new(2, 0)], None, cx);
+            editor.move_line_down(&MoveLineDown, cx);
         });
     }
 
