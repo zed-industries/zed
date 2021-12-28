@@ -226,6 +226,19 @@ impl DisplaySnapshot {
         }
     }
 
+    pub fn prev_line_boundary(&self, mut point: Point) -> Point {
+        loop {
+            point.column = 0;
+            let mut display_point = self.point_to_display_point(point, Bias::Left);
+            *display_point.column_mut() = 0;
+            let next_point = self.display_point_to_point(display_point, Bias::Left);
+            if next_point == point {
+                return point;
+            }
+            point = next_point;
+        }
+    }
+
     pub fn next_line_boundary(&self, mut point: Point) -> Point {
         loop {
             point.column = self.buffer_snapshot.line_len(point.row);
@@ -243,16 +256,6 @@ impl DisplaySnapshot {
         let fold_point = point.to_fold_point(&self.folds_snapshot, bias);
         let tab_point = self.tabs_snapshot.to_tab_point(fold_point);
         let wrap_point = self.wraps_snapshot.from_tab_point(tab_point);
-        let block_point = self.blocks_snapshot.to_block_point(wrap_point);
-        DisplayPoint(block_point)
-    }
-
-    fn point_to_display_point_with_clipping(&self, point: Point, bias: Bias) -> DisplayPoint {
-        let fold_point = point.to_fold_point(&self.folds_snapshot, bias);
-        let tab_point = self.tabs_snapshot.to_tab_point(fold_point);
-        let wrap_point = self
-            .wraps_snapshot
-            .from_tab_point_with_clipping(tab_point, bias);
         let block_point = self.blocks_snapshot.to_block_point(wrap_point);
         DisplayPoint(block_point)
     }
