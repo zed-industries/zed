@@ -1395,6 +1395,23 @@ impl MultiBufferSnapshot {
         panic!("excerpt not found");
     }
 
+    pub fn range_contains_excerpt_boundary<T: ToOffset>(&self, range: Range<T>) -> bool {
+        let start = range.start.to_offset(self);
+        let end = range.end.to_offset(self);
+        let mut cursor = self.excerpts.cursor::<(usize, Option<&ExcerptId>)>();
+        cursor.seek(&start, Bias::Right, &());
+        let start_id = cursor
+            .item()
+            .or_else(|| cursor.prev_item())
+            .map(|excerpt| &excerpt.id);
+        cursor.seek_forward(&end, Bias::Right, &());
+        let end_id = cursor
+            .item()
+            .or_else(|| cursor.prev_item())
+            .map(|excerpt| &excerpt.id);
+        start_id != end_id
+    }
+
     pub fn parse_count(&self) -> usize {
         self.parse_count
     }
@@ -2158,6 +2175,12 @@ mod tests {
         );
         assert_eq!(snapshot.buffer_rows(4).collect::<Vec<_>>(), [Some(3)]);
         assert_eq!(snapshot.buffer_rows(5).collect::<Vec<_>>(), []);
+        assert!(!snapshot.range_contains_excerpt_boundary(Point::new(1, 0)..Point::new(1, 5)));
+        assert!(snapshot.range_contains_excerpt_boundary(Point::new(1, 0)..Point::new(2, 0)));
+        assert!(snapshot.range_contains_excerpt_boundary(Point::new(1, 0)..Point::new(4, 0)));
+        assert!(!snapshot.range_contains_excerpt_boundary(Point::new(2, 0)..Point::new(3, 0)));
+        assert!(!snapshot.range_contains_excerpt_boundary(Point::new(4, 0)..Point::new(4, 2)));
+        assert!(!snapshot.range_contains_excerpt_boundary(Point::new(4, 2)..Point::new(4, 2)));
 
         buffer_1.update(cx, |buffer, cx| {
             buffer.edit(

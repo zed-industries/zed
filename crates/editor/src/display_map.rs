@@ -200,39 +200,29 @@ impl DisplaySnapshot {
         self.buffer_snapshot.max_buffer_row()
     }
 
-    pub fn prev_row_boundary(&self, input_display_point: DisplayPoint) -> (DisplayPoint, Point) {
-        let mut display_point = input_display_point;
+    pub fn prev_line_boundary(&self, mut point: Point) -> (Point, DisplayPoint) {
         loop {
-            *display_point.column_mut() = 0;
-            let mut point = display_point.to_point(self);
-            point = self.buffer_snapshot.clip_point(point, Bias::Left);
             point.column = 0;
-            let next_display_point = self.point_to_display_point_with_clipping(point, Bias::Left);
-            if next_display_point == display_point {
-                return (display_point, point);
+            let mut display_point = self.point_to_display_point(point, Bias::Left);
+            *display_point.column_mut() = 0;
+            let next_point = self.display_point_to_point(display_point, Bias::Left);
+            if next_point == point {
+                return (point, display_point);
             }
-            if next_display_point > display_point {
-                panic!("invalid display point {:?}", input_display_point);
-            }
-            display_point = next_display_point;
+            point = next_point;
         }
     }
 
-    pub fn next_row_boundary(&self, input_display_point: DisplayPoint) -> (DisplayPoint, Point) {
-        let mut display_point = input_display_point;
+    pub fn next_line_boundary(&self, mut point: Point) -> (Point, DisplayPoint) {
         loop {
-            *display_point.column_mut() = self.line_len(display_point.row());
-            let mut point = self.display_point_to_point(display_point, Bias::Right);
-            point = self.buffer_snapshot.clip_point(point, Bias::Right);
             point.column = self.buffer_snapshot.line_len(point.row);
-            let next_display_point = self.point_to_display_point(point, Bias::Right);
-            if next_display_point == display_point {
-                return (display_point, point);
+            let mut display_point = self.point_to_display_point(point, Bias::Right);
+            *display_point.column_mut() = self.line_len(display_point.row());
+            let next_point = self.display_point_to_point(display_point, Bias::Right);
+            if next_point == point {
+                return (point, display_point);
             }
-            if next_display_point < display_point {
-                panic!("invalid display point {:?}", input_display_point);
-            }
-            display_point = next_display_point;
+            point = next_point;
         }
     }
 
@@ -240,16 +230,6 @@ impl DisplaySnapshot {
         let fold_point = point.to_fold_point(&self.folds_snapshot, bias);
         let tab_point = self.tabs_snapshot.to_tab_point(fold_point);
         let wrap_point = self.wraps_snapshot.from_tab_point(tab_point);
-        let block_point = self.blocks_snapshot.to_block_point(wrap_point);
-        DisplayPoint(block_point)
-    }
-
-    fn point_to_display_point_with_clipping(&self, point: Point, bias: Bias) -> DisplayPoint {
-        let fold_point = point.to_fold_point(&self.folds_snapshot, bias);
-        let tab_point = self.tabs_snapshot.to_tab_point(fold_point);
-        let wrap_point = self
-            .wraps_snapshot
-            .from_tab_point_with_clipping(tab_point, bias);
         let block_point = self.blocks_snapshot.to_block_point(wrap_point);
         DisplayPoint(block_point)
     }
@@ -625,23 +605,21 @@ mod tests {
             log::info!("display text: {:?}", snapshot.text());
 
             // Line boundaries
+            let buffer = &snapshot.buffer_snapshot;
             for _ in 0..5 {
-                let row = rng.gen_range(0..=snapshot.max_point().row());
-                let column = rng.gen_range(0..=snapshot.line_len(row));
-                let point = snapshot.clip_point(DisplayPoint::new(row, column), Left);
+                let row = rng.gen_range(0..=buffer.max_point().row);
+                let column = rng.gen_range(0..=buffer.line_len(row));
+                let point = buffer.clip_point(Point::new(row, column), Left);
 
-                let (prev_display_bound, prev_buffer_bound) = snapshot.prev_row_boundary(point);
-                let (next_display_bound, next_buffer_bound) = snapshot.next_row_boundary(point);
+                let (prev_buffer_bound, prev_display_bound) = snapshot.prev_line_boundary(point);
+                let (next_buffer_bound, next_display_bound) = snapshot.next_line_boundary(point);
 
-                assert!(prev_display_bound <= point);
-                assert!(next_display_bound >= point);
+                assert!(prev_buffer_bound <= point);
+                assert!(next_buffer_bound >= point);
                 assert_eq!(prev_buffer_bound.column, 0);
                 assert_eq!(prev_display_bound.column(), 0);
-                if next_buffer_bound < snapshot.buffer_snapshot.max_point() {
-                    assert_eq!(
-                        snapshot.buffer_snapshot.chars_at(next_buffer_bound).next(),
-                        Some('\n')
-                    );
+                if next_buffer_bound < buffer.max_point() {
+                    assert_eq!(buffer.chars_at(next_buffer_bound).next(), Some('\n'));
                 }
 
                 assert_eq!(

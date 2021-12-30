@@ -565,6 +565,12 @@ impl Chunk {
 
             if ch == '\n' {
                 point.row += 1;
+                if point.row > target.row {
+                    panic!(
+                        "point {:?} is beyond the end of a line with length {}",
+                        target, point.column
+                    );
+                }
                 point.column = 0;
             } else {
                 point.column += ch.len_utf8() as u32;
