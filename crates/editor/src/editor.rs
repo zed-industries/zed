@@ -1737,8 +1737,13 @@ impl Editor {
                         .chain(['\n'])
                         .collect::<String>();
 
-                    edits.push((insertion_point..insertion_point, text));
-                    edits.push((range_to_move.clone(), String::new()));
+                    edits.push((
+                        buffer.anchor_after(range_to_move.start)
+                            ..buffer.anchor_before(range_to_move.end),
+                        String::new(),
+                    ));
+                    let insertion_anchor = buffer.anchor_after(insertion_point);
+                    edits.push((insertion_anchor.clone()..insertion_anchor, text));
 
                     let row_delta = range_to_move.start.row - insertion_point.row + 1;
 
@@ -1773,7 +1778,7 @@ impl Editor {
         self.start_transaction(cx);
         self.unfold_ranges(unfold_ranges, cx);
         self.buffer.update(cx, |buffer, cx| {
-            for (range, text) in edits.into_iter().rev() {
+            for (range, text) in edits {
                 buffer.edit([range], text, cx);
             }
         });
@@ -1828,8 +1833,13 @@ impl Editor {
                     let mut text = String::from("\n");
                     text.extend(buffer.text_for_range(range_to_move.clone()));
                     text.pop(); // Drop trailing newline
-                    edits.push((range_to_move.clone(), String::new()));
-                    edits.push((insertion_point..insertion_point, text));
+                    edits.push((
+                        buffer.anchor_after(range_to_move.start)
+                            ..buffer.anchor_before(range_to_move.end),
+                        String::new(),
+                    ));
+                    let insertion_anchor = buffer.anchor_after(insertion_point);
+                    edits.push((insertion_anchor.clone()..insertion_anchor, text));
 
                     let row_delta = insertion_point.row - range_to_move.end.row + 1;
 
@@ -1864,7 +1874,7 @@ impl Editor {
         self.start_transaction(cx);
         self.unfold_ranges(unfold_ranges, cx);
         self.buffer.update(cx, |buffer, cx| {
-            for (range, text) in edits.into_iter().rev() {
+            for (range, text) in edits {
                 buffer.edit([range], text, cx);
             }
         });
