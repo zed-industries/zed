@@ -1737,8 +1737,13 @@ impl Editor {
                         .chain(['\n'])
                         .collect::<String>();
 
-                    edits.push((insertion_point..insertion_point, text));
-                    edits.push((range_to_move.clone(), String::new()));
+                    edits.push((
+                        buffer.anchor_after(range_to_move.start)
+                            ..buffer.anchor_before(range_to_move.end),
+                        String::new(),
+                    ));
+                    let insertion_anchor = buffer.anchor_after(insertion_point);
+                    edits.push((insertion_anchor.clone()..insertion_anchor, text));
 
                     let row_delta = range_to_move.start.row - insertion_point.row + 1;
 
@@ -1773,7 +1778,7 @@ impl Editor {
         self.start_transaction(cx);
         self.unfold_ranges(unfold_ranges, cx);
         self.buffer.update(cx, |buffer, cx| {
-            for (range, text) in edits.into_iter().rev() {
+            for (range, text) in edits {
                 buffer.edit([range], text, cx);
             }
         });
@@ -1828,8 +1833,13 @@ impl Editor {
                     let mut text = String::from("\n");
                     text.extend(buffer.text_for_range(range_to_move.clone()));
                     text.pop(); // Drop trailing newline
-                    edits.push((range_to_move.clone(), String::new()));
-                    edits.push((insertion_point..insertion_point, text));
+                    edits.push((
+                        buffer.anchor_after(range_to_move.start)
+                            ..buffer.anchor_before(range_to_move.end),
+                        String::new(),
+                    ));
+                    let insertion_anchor = buffer.anchor_after(insertion_point);
+                    edits.push((insertion_anchor.clone()..insertion_anchor, text));
 
                     let row_delta = insertion_point.row - range_to_move.end.row + 1;
 
@@ -1864,7 +1874,7 @@ impl Editor {
         self.start_transaction(cx);
         self.unfold_ranges(unfold_ranges, cx);
         self.buffer.update(cx, |buffer, cx| {
-            for (range, text) in edits.into_iter().rev() {
+            for (range, text) in edits {
                 buffer.edit([range], text, cx);
             }
         });
@@ -2962,7 +2972,7 @@ impl Editor {
                         let message_height = diagnostic.message.lines().count() as u8;
 
                         BlockProperties {
-                            position: entry.range.start,
+                            position: buffer.anchor_after(entry.range.start),
                             height: message_height,
                             render: diagnostic_block_renderer(diagnostic, true, build_settings),
                             disposition: BlockDisposition::Below,
@@ -3421,14 +3431,11 @@ impl Editor {
         }
     }
 
-    pub fn insert_blocks<P>(
+    pub fn insert_blocks(
         &mut self,
-        blocks: impl IntoIterator<Item = BlockProperties<P>>,
+        blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
         cx: &mut ViewContext<Self>,
-    ) -> Vec<BlockId>
-    where
-        P: ToOffset + Clone,
-    {
+    ) -> Vec<BlockId> {
         let blocks = self
             .display_map
             .update(cx, |display_map, cx| display_map.insert_blocks(blocks, cx));
@@ -5130,12 +5137,13 @@ mod tests {
     fn test_move_line_up_down_with_blocks(cx: &mut gpui::MutableAppContext) {
         let settings = EditorSettings::test(&cx);
         let buffer = MultiBuffer::build_simple(&sample_text(10, 5, 'a'), cx);
+        let snapshot = buffer.read(cx).snapshot(cx);
         let (_, editor) =
             cx.add_window(Default::default(), |cx| build_editor(buffer, settings, cx));
         editor.update(cx, |editor, cx| {
             editor.insert_blocks(
                 [BlockProperties {
-                    position: Point::new(2, 0),
+                    position: snapshot.anchor_after(Point::new(2, 0)),
                     disposition: BlockDisposition::Below,
                     height: 1,
                     render: Arc::new(|_| Empty::new().boxed()),

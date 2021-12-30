@@ -1,5 +1,5 @@
 use super::wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot};
-use crate::{Anchor, ToOffset, ToPoint as _};
+use crate::{Anchor, ToPoint as _};
 use collections::{HashMap, HashSet};
 use gpui::{AppContext, ElementBox};
 use language::Chunk;
@@ -362,13 +362,10 @@ impl std::ops::DerefMut for BlockPoint {
 }
 
 impl<'a> BlockMapWriter<'a> {
-    pub fn insert<P>(
+    pub fn insert(
         &mut self,
-        blocks: impl IntoIterator<Item = BlockProperties<P>>,
-    ) -> Vec<BlockId>
-    where
-        P: ToOffset + Clone,
-    {
+        blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
+    ) -> Vec<BlockId> {
         let mut ids = Vec::new();
         let mut edits = Vec::<Edit<u32>>::new();
         let wrap_snapshot = &*self.0.wrap_snapshot.lock();
@@ -378,7 +375,7 @@ impl<'a> BlockMapWriter<'a> {
             let id = BlockId(self.0.next_block_id.fetch_add(1, SeqCst));
             ids.push(id);
 
-            let position = buffer.anchor_after(block.position);
+            let position = block.position;
             let point = position.to_point(&buffer);
             let wrap_row = wrap_snapshot
                 .from_point(Point::new(point.row, 0), Bias::Left)
@@ -903,8 +900,9 @@ mod tests {
         let text = "aaa\nbbb\nccc\nddd";
 
         let buffer = MultiBuffer::build_simple(text, cx);
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
-        let (fold_map, folds_snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
+        let (fold_map, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), 1);
         let (wrap_map, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, None, cx);
         let mut block_map = BlockMap::new(wraps_snapshot.clone());
@@ -912,19 +910,19 @@ mod tests {
         let mut writer = block_map.write(wraps_snapshot.clone(), vec![]);
         writer.insert(vec![
             BlockProperties {
-                position: Point::new(1, 0),
+                position: buffer_snapshot.anchor_after(Point::new(1, 0)),
                 height: 1,
                 disposition: BlockDisposition::Above,
                 render: Arc::new(|_| Empty::new().named("block 1")),
             },
             BlockProperties {
-                position: Point::new(1, 2),
+                position: buffer_snapshot.anchor_after(Point::new(1, 2)),
                 height: 2,
                 disposition: BlockDisposition::Above,
                 render: Arc::new(|_| Empty::new().named("block 2")),
             },
             BlockProperties {
-                position: Point::new(3, 3),
+                position: buffer_snapshot.anchor_after(Point::new(3, 3)),
                 height: 3,
                 disposition: BlockDisposition::Below,
                 render: Arc::new(|_| Empty::new().named("block 3")),
@@ -1071,7 +1069,8 @@ mod tests {
         let text = "one two three\nfour five six\nseven eight";
 
         let buffer = MultiBuffer::build_simple(text, cx);
-        let (_, folds_snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (_, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (_, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), 1);
         let (_, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, Some(60.), cx);
         let mut block_map = BlockMap::new(wraps_snapshot.clone());
@@ -1079,13 +1078,13 @@ mod tests {
         let mut writer = block_map.write(wraps_snapshot.clone(), vec![]);
         writer.insert(vec![
             BlockProperties {
-                position: Point::new(1, 12),
+                position: buffer_snapshot.anchor_after(Point::new(1, 12)),
                 disposition: BlockDisposition::Above,
                 render: Arc::new(|_| Empty::new().named("block 1")),
                 height: 1,
             },
             BlockProperties {
-                position: Point::new(1, 1),
+                position: buffer_snapshot.anchor_after(Point::new(1, 1)),
                 disposition: BlockDisposition::Below,
                 render: Arc::new(|_| Empty::new().named("block 2")),
                 height: 1,

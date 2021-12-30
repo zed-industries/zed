@@ -123,14 +123,11 @@ impl DisplayMap {
         self.block_map.read(snapshot, edits);
     }
 
-    pub fn insert_blocks<P>(
+    pub fn insert_blocks(
         &mut self,
-        blocks: impl IntoIterator<Item = BlockProperties<P>>,
+        blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
         cx: &mut ModelContext<Self>,
-    ) -> Vec<BlockId>
-    where
-        P: ToOffset + Clone,
-    {
+    ) -> Vec<BlockId> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
