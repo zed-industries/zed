@@ -1634,7 +1634,7 @@ impl Editor {
     pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
-        let mut selections = self.local_selections::<Point>(cx);
+        let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
 
@@ -1664,28 +1664,13 @@ impl Editor {
             edits.push((start, text, rows.len() as u32));
         }
 
-        let mut edits_iter = edits.iter().peekable();
-        let mut row_delta = 0;
-        for selection in selections.iter_mut() {
-            while let Some((point, _, line_count)) = edits_iter.peek() {
-                if *point <= selection.start {
-                    row_delta += line_count;
-                    edits_iter.next();
-                } else {
-                    break;
-                }
-            }
-            selection.start.row += row_delta;
-            selection.end.row += row_delta;
-        }
-
         self.buffer.update(cx, |buffer, cx| {
             for (point, text, _) in edits.into_iter().rev() {
                 buffer.edit(Some(point..point), text, cx);
             }
         });
 
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+        self.request_autoscroll(Autoscroll::Fit, cx);
         self.end_transaction(cx);
     }
 
