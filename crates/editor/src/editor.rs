@@ -1564,7 +1564,6 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
 
-        let mut row_delta = 0;
         let mut new_cursors = Vec::new();
         let mut edit_ranges = Vec::new();
         let mut selections = selections.iter().peekable();
@@ -1590,7 +1589,7 @@ impl Editor {
                 // If there's a line after the range, delete the \n from the end of the row range
                 // and position the cursor on the next line.
                 edit_end = Point::new(rows.end, 0).to_offset(&buffer);
-                cursor_buffer_row = rows.start;
+                cursor_buffer_row = rows.end;
             } else {
                 // If there isn't a line after the range, delete the \n from the line before the
                 // start of the row range and position the cursor there.
@@ -1599,29 +1598,35 @@ impl Editor {
                 cursor_buffer_row = rows.start.saturating_sub(1);
             }
 
-            let mut cursor =
-                Point::new(cursor_buffer_row - row_delta, 0).to_display_point(&display_map);
+            let mut cursor = Point::new(cursor_buffer_row, 0).to_display_point(&display_map);
             *cursor.column_mut() =
                 cmp::min(goal_display_column, display_map.line_len(cursor.row()));
-            row_delta += rows.len() as u32;
 
-            new_cursors.push((selection.id, cursor.to_point(&display_map)));
+            new_cursors.push((
+                selection.id,
+                buffer.anchor_after(cursor.to_point(&display_map)),
+            ));
             edit_ranges.push(edit_start..edit_end);
         }
 
-        new_cursors.sort_unstable_by_key(|(_, point)| point.clone());
+        new_cursors.sort_unstable_by(|a, b| a.1.cmp(&b.1, &buffer).unwrap());
+        let buffer = self.buffer.update(cx, |buffer, cx| {
+            buffer.edit(edit_ranges, "", cx);
+            buffer.snapshot(cx)
+        });
         let new_selections = new_cursors
             .into_iter()
-            .map(|(id, cursor)| Selection {
-                id,
-                start: cursor,
-                end: cursor,
-                reversed: false,
-                goal: SelectionGoal::None,
+            .map(|(id, cursor)| {
+                let cursor = cursor.to_point(&buffer);
+                Selection {
+                    id,
+                    start: cursor,
+                    end: cursor,
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                }
             })
             .collect();
-        self.buffer
-            .update(cx, |buffer, cx| buffer.edit(edit_ranges, "", cx));
         self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
         self.end_transaction(cx);
     }
