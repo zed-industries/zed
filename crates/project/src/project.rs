@@ -475,7 +475,10 @@ impl Project {
 
     fn add_worktree(&mut self, worktree: ModelHandle<Worktree>, cx: &mut ModelContext<Self>) {
         cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&worktree, |_, worktree, event, cx| match event {
+        cx.subscribe(&worktree, |this, worktree, event, cx| match event {
+            worktree::Event::LanguageRegistered => {
+                this.diagnose(cx);
+            }
             worktree::Event::DiagnosticsUpdated(path) => {
                 cx.emit(Event::DiagnosticsUpdated(ProjectPath {
                     worktree_id: worktree.id(),

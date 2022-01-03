@@ -68,6 +68,7 @@ pub enum Worktree {
 
 #[derive(Debug)]
 pub enum Event {
+    LanguageRegistered,
     DiagnosticsUpdated(Arc<Path>),
 }
 
@@ -1060,6 +1061,7 @@ impl LocalWorktree {
     ) -> Option<Arc<LanguageServer>> {
         if !self.languages.iter().any(|l| Arc::ptr_eq(l, language)) {
             self.languages.push(language.clone());
+            cx.emit(Event::LanguageRegistered);
         }
 
         if let Some(server) = self.language_servers.get(language.name()) {
