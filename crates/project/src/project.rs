@@ -898,7 +898,7 @@ impl Collaborator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use client::{http::ServerResponse, test::FakeHttpClient};
+    use client::test::FakeHttpClient;
     use fs::RealFs;
     use gpui::TestAppContext;
     use language::LanguageRegistry;
@@ -1004,8 +1004,8 @@ mod tests {
     fn build_project(cx: &mut TestAppContext) -> ModelHandle<Project> {
         let languages = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(RealFs);
-        let client = client::Client::new();
-        let http_client = FakeHttpClient::new(|_| async move { Ok(ServerResponse::new(404)) });
+        let http_client = FakeHttpClient::with_404_response();
+        let client = client::Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         cx.update(|cx| Project::local(client, user_store, languages, fs, cx))
     }

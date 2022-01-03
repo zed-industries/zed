@@ -55,7 +55,6 @@ workspace = { path = "../workspace" }
 anyhow = "1.0.38"
 async-recursion = "0.3"
 async-trait = "0.1"
-async-tungstenite = { version = "0.14", features = ["async-tls"] }
 crossbeam-channel = "0.5.0"
 ctor = "0.1.20"
 dirs = "3.0"

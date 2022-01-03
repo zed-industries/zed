@@ -1,1 +1,1 @@
-ZED_SITE_URL=http://localhost:3000 ZED_COLLAB_URL=http://localhost:8080 cargo run $@
+ZED_SERVER_URL=http://localhost:3000 cargo run $@

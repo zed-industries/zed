@@ -19,7 +19,7 @@ rpc = { path = "../rpc" }
 anyhow = "1.0.40"
 async-std = { version = "1.8.0", features = ["attributes"] }
 async-trait = "0.1.50"
-async-tungstenite = "0.14"
+async-tungstenite = "0.16"
 base64 = "0.13"
 clap = "=3.0.0-beta.2"
 comrak = "0.10"

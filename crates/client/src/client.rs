@@ -12,6 +12,7 @@ use async_tungstenite::tungstenite::{
     http::{Request, StatusCode},
 };
 use gpui::{action, AsyncAppContext, Entity, ModelContext, MutableAppContext, Task};
+use http::HttpClient;
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use postage::{prelude::Stream, watch};
@@ -26,7 +27,7 @@ use std::{
     sync::{Arc, Weak},
     time::{Duration, Instant},
 };
-use surf::Url;
+use surf::{http::Method, Url};
 use thiserror::Error;
 use util::{ResultExt, TryFutureExt};
 
@@ -35,10 +36,8 @@ pub use rpc::*;
 pub use user::*;
 
 lazy_static! {
-    static ref COLLAB_URL: String =
-        std::env::var("ZED_COLLAB_URL").unwrap_or("https://collab.zed.dev:443".to_string());
-    static ref SITE_URL: String =
-        std::env::var("ZED_SITE_URL").unwrap_or("https://zed.dev".to_string());
+    static ref ZED_SERVER_URL: String =
+        std::env::var("ZED_SERVER_URL").unwrap_or("https://zed.dev".to_string());
     static ref IMPERSONATE_LOGIN: Option<String> = std::env::var("ZED_IMPERSONATE")
         .ok()
         .and_then(|s| if s.is_empty() { None } else { Some(s) });
@@ -56,6 +55,7 @@ pub fn init(rpc: Arc<Client>, cx: &mut MutableAppContext) {
 
 pub struct Client {
     peer: Arc<Peer>,
+    http: Arc<dyn HttpClient>,
     state: RwLock<ClientState>,
     authenticate:
         Option<Box<dyn 'static + Send + Sync + Fn(&AsyncAppContext) -> Task<Result<Credentials>>>>,
@@ -131,7 +131,7 @@ struct ClientState {
     heartbeat_interval: Duration,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Credentials {
     pub user_id: u64,
     pub access_token: String,
@@ -171,9 +171,10 @@ impl Drop for Subscription {
 }
 
 impl Client {
-    pub fn new() -> Arc<Self> {
+    pub fn new(http: Arc<dyn HttpClient>) -> Arc<Self> {
         Arc::new(Self {
             peer: Peer::new(),
+            http,
             state: Default::default(),
             authenticate: None,
             establish_connection: None,
@@ -405,7 +406,6 @@ impl Client {
 
         match self.establish_connection(&credentials, cx).await {
             Ok(conn) => {
-                log::info!("connected to rpc address {}", *COLLAB_URL);
                 self.state.write().credentials = Some(credentials.clone());
                 if !used_keychain && IMPERSONATE_LOGIN.is_none() {
                     write_credentials_to_keychain(&credentials, cx).log_err();
@@ -416,7 +416,7 @@ impl Client {
             Err(EstablishConnectionError::Unauthorized) => {
                 self.state.write().credentials.take();
                 if used_keychain {
-                    cx.platform().delete_credentials(&COLLAB_URL).log_err();
+                    cx.platform().delete_credentials(&ZED_SERVER_URL).log_err();
                     self.set_status(Status::SignedOut, cx);
                     self.authenticate_and_connect(cx).await
                 } else {
@@ -523,20 +523,57 @@ impl Client {
                 format!("{} {}", credentials.user_id, credentials.access_token),
             )
             .header("X-Zed-Protocol-Version", rpc::PROTOCOL_VERSION);
+
+        let http = self.http.clone();
         cx.background().spawn(async move {
-            if let Some(host) = COLLAB_URL.strip_prefix("https://") {
-                let stream = smol::net::TcpStream::connect(host).await?;
-                let request = request.uri(format!("wss://{}/rpc", host)).body(())?;
-                let (stream, _) =
-                    async_tungstenite::async_tls::client_async_tls(request, stream).await?;
-                Ok(Connection::new(stream))
-            } else if let Some(host) = COLLAB_URL.strip_prefix("http://") {
-                let stream = smol::net::TcpStream::connect(host).await?;
-                let request = request.uri(format!("ws://{}/rpc", host)).body(())?;
-                let (stream, _) = async_tungstenite::client_async(request, stream).await?;
-                Ok(Connection::new(stream))
-            } else {
-                Err(anyhow!("invalid server url: {}", *COLLAB_URL))?
+            let mut rpc_url = format!("{}/rpc", *ZED_SERVER_URL);
+            let rpc_request = surf::Request::new(
+                Method::Get,
+                surf::Url::parse(&rpc_url).context("invalid ZED_SERVER_URL")?,
+            );
+            let rpc_response = http.send(rpc_request).await?;
+
+            if rpc_response.status().is_redirection() {
+                rpc_url = rpc_response
+                    .header("Location")
+                    .ok_or_else(|| anyhow!("missing location header in /rpc response"))?
+                    .as_str()
+                    .to_string();
+            }
+            // Until we switch the zed.dev domain to point to the new Next.js app, there
+            // will be no redirect required, and the app will connect directly to
+            // wss://zed.dev/rpc.
+            else if rpc_response.status() != surf::StatusCode::UpgradeRequired {
+                Err(anyhow!(
+                    "unexpected /rpc response status {}",
+                    rpc_response.status()
+                ))?
+            }
+
+            let mut rpc_url = surf::Url::parse(&rpc_url).context("invalid rpc url")?;
+            let rpc_host = rpc_url
+                .host_str()
+                .zip(rpc_url.port_or_known_default())
+                .ok_or_else(|| anyhow!("missing host in rpc url"))?;
+            let stream = smol::net::TcpStream::connect(rpc_host).await?;
+
+            log::info!("connected to rpc endpoint {}", rpc_url);
+
+            match rpc_url.scheme() {
+                "https" => {
+                    rpc_url.set_scheme("wss").unwrap();
+                    let request = request.uri(rpc_url.as_str()).body(())?;
+                    let (stream, _) =
+                        async_tungstenite::async_tls::client_async_tls(request, stream).await?;
+                    Ok(Connection::new(stream))
+                }
+                "http" => {
+                    rpc_url.set_scheme("ws").unwrap();
+                    let request = request.uri(rpc_url.as_str()).body(())?;
+                    let (stream, _) = async_tungstenite::client_async(request, stream).await?;
+                    Ok(Connection::new(stream))
+                }
+                _ => Err(anyhow!("invalid rpc url: {}", rpc_url))?,
             }
         })
     }
@@ -564,7 +601,7 @@ impl Client {
             // that the user is signing in from a Zed app running on the same device.
             let mut url = format!(
                 "{}/native_app_signin?native_app_port={}&native_app_public_key={}",
-                *SITE_URL, port, public_key_string
+                *ZED_SERVER_URL, port, public_key_string
             );
 
             if let Some(impersonate_login) = IMPERSONATE_LOGIN.as_ref() {
@@ -595,7 +632,8 @@ impl Client {
                             }
                         }
 
-                        let post_auth_url = format!("{}/native_app_signin_succeeded", *SITE_URL);
+                        let post_auth_url =
+                            format!("{}/native_app_signin_succeeded", *ZED_SERVER_URL);
                         req.respond(
                             tiny_http::Response::empty(302).with_header(
                                 tiny_http::Header::from_bytes(
@@ -668,7 +706,7 @@ fn read_credentials_from_keychain(cx: &AsyncAppContext) -> Option<Credentials> {
 
     let (user_id, access_token) = cx
         .platform()
-        .read_credentials(&COLLAB_URL)
+        .read_credentials(&ZED_SERVER_URL)
         .log_err()
         .flatten()?;
     Some(Credentials {
@@ -679,7 +717,7 @@ fn read_credentials_from_keychain(cx: &AsyncAppContext) -> Option<Credentials> {
 
 fn write_credentials_to_keychain(credentials: &Credentials, cx: &AsyncAppContext) -> Result<()> {
     cx.platform().write_credentials(
-        &COLLAB_URL,
+        &ZED_SERVER_URL,
         &credentials.user_id.to_string(),
         credentials.access_token.as_bytes(),
     )
@@ -705,7 +743,7 @@ pub fn decode_worktree_url(url: &str) -> Option<(u64, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::FakeServer;
+    use crate::test::{FakeHttpClient, FakeServer};
     use gpui::TestAppContext;
 
     #[gpui::test(iterations = 10)]
@@ -713,7 +751,7 @@ mod tests {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
-        let mut client = Client::new();
+        let mut client = Client::new(FakeHttpClient::with_404_response());
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
 
         cx.foreground().advance_clock(Duration::from_secs(10));
@@ -733,7 +771,7 @@ mod tests {
         cx.foreground().forbid_parking();
 
         let user_id = 5;
-        let mut client = Client::new();
+        let mut client = Client::new(FakeHttpClient::with_404_response());
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
         let mut status = client.status();
         assert!(matches!(

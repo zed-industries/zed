@@ -582,7 +582,7 @@ mod tests {
     async fn test_diagnostics(mut cx: TestAppContext) {
         let settings = cx.update(WorkspaceParams::test).settings;
         let http_client = FakeHttpClient::new(|_| async move { Ok(ServerResponse::new(404)) });
-        let client = Client::new();
+        let client = Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
         let fs = Arc::new(FakeFs::new());
 

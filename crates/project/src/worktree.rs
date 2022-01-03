@@ -3054,8 +3054,8 @@ mod tests {
         )
         .await;
 
-        let client = Client::new();
         let http_client = FakeHttpClient::with_404_response();
+        let client = Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
 
         let tree = Worktree::open_local(
@@ -3092,8 +3092,8 @@ mod tests {
             "file1": "the old contents",
         }));
 
-        let client = Client::new();
         let http_client = FakeHttpClient::with_404_response();
+        let client = Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
 
         let tree = Worktree::open_local(
@@ -3127,8 +3127,8 @@ mod tests {
         }));
         let file_path = dir.path().join("file1");
 
-        let client = Client::new();
         let http_client = FakeHttpClient::with_404_response();
+        let client = Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
 
         let tree = Worktree::open_local(
@@ -3176,7 +3176,8 @@ mod tests {
         }));
 
         let user_id = 5;
-        let mut client = Client::new();
+        let http_client = FakeHttpClient::with_404_response();
+        let mut client = Client::new(http_client.clone());
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
         let user_store = server.build_user_store(client.clone(), &mut cx).await;
         let tree = Worktree::open_local(
@@ -3221,7 +3222,7 @@ mod tests {
             1,
             1,
             initial_snapshot.to_proto(),
-            Client::new(),
+            Client::new(http_client.clone()),
             user_store,
             Default::default(),
             &mut cx.to_async(),
@@ -3327,8 +3328,8 @@ mod tests {
             }
         }));
 
-        let client = Client::new();
         let http_client = FakeHttpClient::with_404_response();
+        let client = Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
 
         let tree = Worktree::open_local(
@@ -3369,7 +3370,8 @@ mod tests {
     #[gpui::test]
     async fn test_buffer_deduping(mut cx: gpui::TestAppContext) {
         let user_id = 100;
-        let mut client = Client::new();
+        let http_client = FakeHttpClient::with_404_response();
+        let mut client = Client::new(http_client);
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
         let user_store = server.build_user_store(client.clone(), &mut cx).await;
 
@@ -3433,8 +3435,8 @@ mod tests {
             "file2": "def",
             "file3": "ghi",
         }));
-        let client = Client::new();
         let http_client = FakeHttpClient::with_404_response();
+        let client = Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
 
         let tree = Worktree::open_local(
@@ -3570,8 +3572,8 @@ mod tests {
 
         let initial_contents = "aaa\nbbbbb\nc\n";
         let dir = temp_tree(json!({ "the-file": initial_contents }));
-        let client = Client::new();
         let http_client = FakeHttpClient::with_404_response();
+        let client = Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
 
         let tree = Worktree::open_local(
@@ -3687,8 +3689,8 @@ mod tests {
             "b.rs": "const y: i32 = 1",
         }));
 
-        let client = Client::new();
         let http_client = FakeHttpClient::with_404_response();
+        let client = Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
 
         let tree = Worktree::open_local(
@@ -3755,8 +3757,8 @@ mod tests {
     #[gpui::test]
     async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
         let fs = Arc::new(FakeFs::new());
-        let client = Client::new();
         let http_client = FakeHttpClient::with_404_response();
+        let client = Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
 
         fs.insert_tree(

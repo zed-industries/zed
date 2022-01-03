@@ -48,8 +48,8 @@ fn main() {
     languages.set_theme(&settings.borrow().theme.editor.syntax);
 
     app.run(move |cx| {
-        let client = client::Client::new();
         let http = http::client();
+        let client = client::Client::new(http.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
         let mut entry_openers = Vec::new();
 
