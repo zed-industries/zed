@@ -68,6 +68,7 @@ struct BufferState {
     buffer: ModelHandle<Buffer>,
     last_version: clock::Global,
     last_parse_count: usize,
+    last_selections_update_count: usize,
     last_diagnostics_update_count: usize,
     excerpts: Vec<ExcerptId>,
     _subscriptions: [gpui::Subscription; 2],
@@ -637,6 +638,7 @@ impl MultiBuffer {
             .or_insert_with(|| BufferState {
                 last_version: buffer_snapshot.version().clone(),
                 last_parse_count: buffer_snapshot.parse_count(),
+                last_selections_update_count: buffer_snapshot.selections_update_count(),
                 last_diagnostics_update_count: buffer_snapshot.diagnostics_update_count(),
                 excerpts: Default::default(),
                 _subscriptions: [
@@ -799,15 +801,23 @@ impl MultiBuffer {
             let buffer = buffer_state.buffer.read(cx);
             let version = buffer.version();
             let parse_count = buffer.parse_count();
+            let selections_update_count = buffer.selections_update_count();
             let diagnostics_update_count = buffer.diagnostics_update_count();
 
             let buffer_edited = version.gt(&buffer_state.last_version);
             let buffer_reparsed = parse_count > buffer_state.last_parse_count;
+            let buffer_selections_updated =
+                selections_update_count > buffer_state.last_selections_update_count;
             let buffer_diagnostics_updated =
                 diagnostics_update_count > buffer_state.last_diagnostics_update_count;
-            if buffer_edited || buffer_reparsed || buffer_diagnostics_updated {
+            if buffer_edited
+                || buffer_reparsed
+                || buffer_selections_updated
+                || buffer_diagnostics_updated
+            {
                 buffer_state.last_version = version;
                 buffer_state.last_parse_count = parse_count;
+                buffer_state.last_selections_update_count = selections_update_count;
                 buffer_state.last_diagnostics_update_count = diagnostics_update_count;
                 excerpts_to_edit.extend(
                     buffer_state

@@ -619,10 +619,10 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<ProjectPath>> {
         let entry = self.worktree_for_abs_path(abs_path, cx);
-        cx.spawn(|_, _| async move {
+        cx.spawn(|_, cx| async move {
             let (worktree, path) = entry.await?;
             Ok(ProjectPath {
-                worktree_id: worktree.id(),
+                worktree_id: worktree.read_with(&cx, |t, _| t.id()),
                 path: path.into(),
             })
         })
@@ -1252,7 +1252,7 @@ impl WorkspaceHandle for ViewHandle<Workspace> {
             .worktrees(cx)
             .iter()
             .flat_map(|worktree| {
-                let worktree_id = worktree.id();
+                let worktree_id = worktree.read(cx).id();
                 worktree.read(cx).files(true, 0).map(move |f| ProjectPath {
                     worktree_id,
                     path: f.path.clone(),

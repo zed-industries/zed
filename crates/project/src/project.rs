@@ -59,14 +59,14 @@ pub struct Collaborator {
 #[derive(Debug)]
 pub enum Event {
     ActiveEntryChanged(Option<ProjectEntry>),
-    WorktreeRemoved(usize),
-    DiskBasedDiagnosticsUpdated { worktree_id: usize },
+    WorktreeRemoved(WorktreeId),
+    DiskBasedDiagnosticsUpdated { worktree_id: WorktreeId },
     DiagnosticsUpdated(ProjectPath),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ProjectPath {
-    pub worktree_id: usize,
+    pub worktree_id: WorktreeId,
     pub path: Arc<Path>,
 }
 
@@ -105,7 +105,7 @@ impl DiagnosticSummary {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ProjectEntry {
-    pub worktree_id: usize,
+    pub worktree_id: WorktreeId,
     pub entry_id: usize,
 }
 
@@ -321,7 +321,11 @@ impl Project {
         &self.worktrees
     }
 
-    pub fn worktree_for_id(&self, id: usize, cx: &AppContext) -> Option<ModelHandle<Worktree>> {
+    pub fn worktree_for_id(
+        &self,
+        id: WorktreeId,
+        cx: &AppContext,
+    ) -> Option<ModelHandle<Worktree>> {
         self.worktrees
             .iter()
             .find(|worktree| worktree.read(cx).id() == id)
@@ -479,13 +483,13 @@ impl Project {
         cx.subscribe(&worktree, |_, worktree, event, cx| match event {
             worktree::Event::DiagnosticsUpdated(path) => {
                 cx.emit(Event::DiagnosticsUpdated(ProjectPath {
-                    worktree_id: worktree.id(),
+                    worktree_id: worktree.read(cx).id(),
                     path: path.clone(),
                 }));
             }
             worktree::Event::DiskBasedDiagnosticsUpdated => {
                 cx.emit(Event::DiskBasedDiagnosticsUpdated {
-                    worktree_id: worktree.id(),
+                    worktree_id: worktree.read(cx).id(),
                 });
             }
         })
@@ -514,9 +518,9 @@ impl Project {
         cx: &'a AppContext,
     ) -> impl Iterator<Item = (ProjectPath, DiagnosticSummary)> + 'a {
         self.worktrees.iter().flat_map(move |worktree| {
+            let worktree = worktree.read(cx);
             let worktree_id = worktree.id();
             worktree
-                .read(cx)
                 .diagnostic_summaries()
                 .map(move |(path, summary)| (ProjectPath { worktree_id, path }, summary))
         })
@@ -634,9 +638,9 @@ impl Project {
         _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        self.worktrees.retain(|worktree| {
-            worktree.read(cx).as_remote().unwrap().remote_id() != envelope.payload.worktree_id
-        });
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        self.worktrees
+            .retain(|worktree| worktree.read(cx).as_remote().unwrap().id() != worktree_id);
         cx.notify();
         Ok(())
     }
@@ -647,7 +651,8 @@ impl Project {
         _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize, cx) {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
             worktree.update(cx, |worktree, cx| {
                 let worktree = worktree.as_remote_mut().unwrap();
                 worktree.update_from_remote(envelope, cx)
@@ -662,7 +667,8 @@ impl Project {
         _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize, cx) {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
             worktree.update(cx, |worktree, cx| {
                 worktree.handle_update_buffer(envelope, cx)
             })?;
@@ -676,7 +682,8 @@ impl Project {
         rpc: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize, cx) {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
             worktree.update(cx, |worktree, cx| {
                 worktree.handle_save_buffer(envelope, rpc, cx)
             })?;
@@ -690,7 +697,8 @@ impl Project {
         rpc: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
-        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize, cx) {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
             return worktree.update(cx, |worktree, cx| {
                 worktree.handle_open_buffer(envelope, rpc, cx)
             });
@@ -705,7 +713,8 @@ impl Project {
         rpc: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
-        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize, cx) {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
             worktree.update(cx, |worktree, cx| {
                 worktree.handle_close_buffer(envelope, rpc, cx)
             })?;
@@ -719,7 +728,8 @@ impl Project {
         _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        if let Some(worktree) = self.worktree_for_id(envelope.payload.worktree_id as usize, cx) {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
             worktree.update(cx, |worktree, cx| {
                 worktree.handle_buffer_saved(envelope, cx)
             })?;
@@ -772,7 +782,7 @@ impl<'a> PathMatchCandidateSet<'a> for CandidateSet {
     type Candidates = CandidateSetIter<'a>;
 
     fn id(&self) -> usize {
-        self.snapshot.id()
+        self.snapshot.id().to_usize()
     }
 
     fn len(&self) -> usize {

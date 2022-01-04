@@ -11,7 +11,7 @@ use gpui::{
 };
 use language::{Bias, Buffer, Diagnostic, DiagnosticEntry, Point};
 use postage::watch;
-use project::{Project, ProjectPath};
+use project::{Project, ProjectPath, WorktreeId};
 use std::{cmp::Ordering, ops::Range, path::Path, sync::Arc};
 use util::TryFutureExt;
 use workspace::Workspace;
@@ -45,7 +45,7 @@ struct ProjectDiagnosticsEditor {
     editor: ViewHandle<Editor>,
     excerpts: ModelHandle<MultiBuffer>,
     path_states: Vec<(Arc<Path>, Vec<DiagnosticGroupState>)>,
-    paths_to_update: HashMap<usize, HashSet<ProjectPath>>,
+    paths_to_update: HashMap<WorktreeId, HashSet<ProjectPath>>,
     build_settings: BuildSettings,
 }
 

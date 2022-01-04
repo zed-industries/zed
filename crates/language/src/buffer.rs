@@ -67,6 +67,7 @@ pub struct Buffer {
     parse_count: usize,
     remote_selections: TreeMap<ReplicaId, Arc<[Selection<Anchor>]>>,
     diagnostics: DiagnosticSet,
+    selections_update_count: usize,
     diagnostics_update_count: usize,
     language_server: Option<LanguageServerState>,
     deferred_ops: OperationQueue<Operation>,
@@ -80,6 +81,7 @@ pub struct BufferSnapshot {
     diagnostics: DiagnosticSet,
     remote_selections: TreeMap<ReplicaId, Arc<[Selection<Anchor>]>>,
     diagnostics_update_count: usize,
+    selections_update_count: usize,
     is_parsing: bool,
     language: Option<Arc<Language>>,
     parse_count: usize,
@@ -148,10 +150,6 @@ pub enum Event {
 }
 
 pub trait File {
-    fn worktree_id(&self) -> usize;
-
-    fn entry_id(&self) -> Option<usize>;
-
     fn mtime(&self) -> SystemTime;
 
     /// Returns the path of this file relative to the worktree's root directory.
@@ -183,8 +181,6 @@ pub trait File {
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext);
 
     fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext);
-
-    fn boxed_clone(&self) -> Box<dyn File>;
 
     fn as_any(&self) -> &dyn Any;
 }
@@ -366,6 +362,7 @@ impl Buffer {
             pending_autoindent: Default::default(),
             language: None,
             remote_selections: Default::default(),
+            selections_update_count: 0,
             diagnostics: Default::default(),
             diagnostics_update_count: 0,
             language_server: None,
@@ -385,6 +382,7 @@ impl Buffer {
             is_parsing: self.parsing_in_background,
             language: self.language.clone(),
             parse_count: self.parse_count,
+            selections_update_count: self.selections_update_count,
         }
     }
 
@@ -608,6 +606,10 @@ impl Buffer {
 
     pub fn parse_count(&self) -> usize {
         self.parse_count
+    }
+
+    pub fn selections_update_count(&self) -> usize {
+        self.selections_update_count
     }
 
     pub fn diagnostics_update_count(&self) -> usize {
@@ -1079,8 +1081,6 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         let lamport_timestamp = self.text.lamport_clock.tick();
-        self.remote_selections
-            .insert(self.text.replica_id(), selections.clone());
         self.send_operation(
             Operation::UpdateSelections {
                 replica_id: self.text.replica_id(),
@@ -1348,6 +1348,7 @@ impl Buffer {
             } => {
                 self.remote_selections.insert(replica_id, selections);
                 self.text.lamport_clock.observe(lamport_timestamp);
+                self.selections_update_count += 1;
             }
             Operation::RemoveSelections {
                 replica_id,
@@ -1355,6 +1356,7 @@ impl Buffer {
             } => {
                 self.remote_selections.remove(&replica_id);
                 self.text.lamport_clock.observe(lamport_timestamp);
+                self.selections_update_count += 1;
             }
         }
     }
@@ -1760,6 +1762,10 @@ impl BufferSnapshot {
     pub fn parse_count(&self) -> usize {
         self.parse_count
     }
+
+    pub fn selections_update_count(&self) -> usize {
+        self.selections_update_count
+    }
 }
 
 impl Clone for BufferSnapshot {
@@ -1769,6 +1775,7 @@ impl Clone for BufferSnapshot {
             tree: self.tree.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
+            selections_update_count: self.selections_update_count,
             diagnostics_update_count: self.diagnostics_update_count,
             is_parsing: self.is_parsing,
             language: self.language.clone(),

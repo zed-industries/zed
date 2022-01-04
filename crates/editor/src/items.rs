@@ -7,7 +7,7 @@ use gpui::{
 };
 use language::{Diagnostic, File as _};
 use postage::watch;
-use project::{ProjectPath, Worktree};
+use project::{File, ProjectPath, Worktree};
 use std::fmt::Write;
 use std::path::Path;
 use text::{Point, Selection};
@@ -66,8 +66,8 @@ impl ItemHandle for BufferItemHandle {
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
-        self.0.read(cx).file(cx).map(|f| ProjectPath {
-            worktree_id: f.worktree_id(),
+        File::from_dyn(self.0.read(cx).file(cx)).map(|f| ProjectPath {
+            worktree_id: f.worktree_id(cx),
             path: f.path().clone(),
         })
     }
@@ -111,8 +111,8 @@ impl ItemView for Editor {
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
-        self.buffer().read(cx).file(cx).map(|file| ProjectPath {
-            worktree_id: file.worktree_id(),
+        File::from_dyn(self.buffer().read(cx).file(cx)).map(|file| ProjectPath {
+            worktree_id: file.worktree_id(cx),
             path: file.path().clone(),
         })
     }
