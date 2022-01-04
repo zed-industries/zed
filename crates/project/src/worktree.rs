@@ -61,6 +61,9 @@ enum ScanState {
     Err(Arc<anyhow::Error>),
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
+pub struct WorktreeId(usize);
+
 pub enum Worktree {
     Local(LocalWorktree),
     Remote(RemoteWorktree),
@@ -171,7 +174,7 @@ impl Worktree {
         let worktree = cx.update(|cx| {
             cx.add_model(|cx: &mut ModelContext<Worktree>| {
                 let snapshot = Snapshot {
-                    id: remote_id as usize,
+                    id: WorktreeId(remote_id as usize),
                     scan_id: 0,
                     abs_path: Path::new("").into(),
                     root_name,
@@ -214,7 +217,6 @@ impl Worktree {
 
                 Worktree::Remote(RemoteWorktree {
                     project_id: project_remote_id,
-                    remote_id,
                     replica_id,
                     snapshot,
                     snapshot_rx,
@@ -824,16 +826,13 @@ impl Worktree {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some((project_id, worktree_id, rpc)) = match self {
-            Worktree::Local(worktree) => worktree.share.as_ref().map(|share| {
-                (
-                    share.project_id,
-                    worktree.id() as u64,
-                    worktree.client.clone(),
-                )
-            }),
+            Worktree::Local(worktree) => worktree
+                .share
+                .as_ref()
+                .map(|share| (share.project_id, worktree.id(), worktree.client.clone())),
             Worktree::Remote(worktree) => Some((
                 worktree.project_id,
-                worktree.remote_id,
+                worktree.snapshot.id(),
                 worktree.client.clone(),
             )),
         } {
@@ -841,7 +840,7 @@ impl Worktree {
                 if let Err(error) = rpc
                     .request(proto::UpdateBuffer {
                         project_id,
-                        worktree_id,
+                        worktree_id: worktree_id.0 as u64,
                         buffer_id,
                         operations: vec![language::proto::serialize_operation(&operation)],
                     })
@@ -862,9 +861,33 @@ impl Worktree {
     }
 }
 
+impl WorktreeId {
+    pub fn from_usize(handle_id: usize) -> Self {
+        Self(handle_id)
+    }
+
+    pub(crate) fn from_proto(id: u64) -> Self {
+        Self(id as usize)
+    }
+
+    pub fn to_proto(&self) -> u64 {
+        self.0 as u64
+    }
+
+    pub fn to_usize(&self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for WorktreeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 #[derive(Clone)]
 pub struct Snapshot {
-    id: usize,
+    id: WorktreeId,
     scan_id: usize,
     abs_path: Arc<Path>,
     root_name: String,
@@ -906,7 +929,6 @@ struct ShareState {
 
 pub struct RemoteWorktree {
     project_id: u64,
-    remote_id: u64,
     snapshot: Snapshot,
     snapshot_rx: watch::Receiver<Snapshot>,
     client: Arc<Client>,
@@ -962,7 +984,7 @@ impl LocalWorktree {
         let (mut last_scan_state_tx, last_scan_state_rx) = watch::channel_with(ScanState::Scanning);
         let tree = cx.add_model(move |cx: &mut ModelContext<Worktree>| {
             let mut snapshot = Snapshot {
-                id: cx.model_id(),
+                id: WorktreeId::from_usize(cx.model_id()),
                 scan_id: 0,
                 abs_path,
                 root_name: root_name.clone(),
@@ -1426,6 +1448,14 @@ impl Deref for LocalWorktree {
     }
 }
 
+impl Deref for RemoteWorktree {
+    type Target = Snapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.snapshot
+    }
+}
+
 impl fmt::Debug for LocalWorktree {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.snapshot.fmt(f)
@@ -1433,10 +1463,6 @@ impl fmt::Debug for LocalWorktree {
 }
 
 impl RemoteWorktree {
-    pub fn remote_id(&self) -> u64 {
-        self.remote_id
-    }
-
     fn get_open_buffer(
         &mut self,
         path: &Path,
@@ -1467,7 +1493,7 @@ impl RemoteWorktree {
         let rpc = self.client.clone();
         let replica_id = self.replica_id;
         let project_id = self.project_id;
-        let remote_worktree_id = self.remote_id;
+        let remote_worktree_id = self.id();
         let root_path = self.snapshot.abs_path.clone();
         let path: Arc<Path> = Arc::from(path);
         let path_string = path.to_string_lossy().to_string();
@@ -1480,7 +1506,7 @@ impl RemoteWorktree {
             let response = rpc
                 .request(proto::OpenBuffer {
                     project_id,
-                    worktree_id: remote_worktree_id as u64,
+                    worktree_id: remote_worktree_id.to_proto(),
                     path: path_string,
                 })
                 .await?;
@@ -1575,14 +1601,14 @@ impl RemoteBuffer {
 }
 
 impl Snapshot {
-    pub fn id(&self) -> usize {
+    pub fn id(&self) -> WorktreeId {
         self.id
     }
 
     pub fn to_proto(&self) -> proto::Worktree {
         let root_name = self.root_name.clone();
         proto::Worktree {
-            id: self.id as u64,
+            id: self.id.0 as u64,
             root_name,
             entries: self
                 .entries_by_path
@@ -2003,7 +2029,7 @@ impl language::File for File {
         version: clock::Global,
         cx: &mut MutableAppContext,
     ) -> Task<Result<(clock::Global, SystemTime)>> {
-        let worktree_id = self.worktree.read(cx).id() as u64;
+        let worktree_id = self.worktree.read(cx).id().to_proto();
         self.worktree.update(cx, |worktree, cx| match worktree {
             Worktree::Local(worktree) => {
                 let rpc = worktree.client.clone();
@@ -2066,7 +2092,7 @@ impl language::File for File {
         self.worktree.update(cx, |worktree, cx| {
             if let Worktree::Remote(worktree) = worktree {
                 let project_id = worktree.project_id;
-                let worktree_id = worktree.remote_id;
+                let worktree_id = worktree.id().to_proto();
                 let rpc = worktree.client.clone();
                 cx.background()
                     .spawn(async move {
@@ -2096,7 +2122,7 @@ impl File {
         file.and_then(|f| f.as_any().downcast_ref())
     }
 
-    pub fn worktree_id(&self, cx: &AppContext) -> usize {
+    pub fn worktree_id(&self, cx: &AppContext) -> WorktreeId {
         self.worktree.read(cx).id()
     }
 }
@@ -4055,7 +4081,7 @@ mod tests {
         let fs = Arc::new(RealFs);
         let next_entry_id = Arc::new(AtomicUsize::new(0));
         let mut initial_snapshot = Snapshot {
-            id: 0,
+            id: WorktreeId::from_usize(0),
             scan_id: 0,
             abs_path: root_dir.path().into(),
             entries_by_path: Default::default(),

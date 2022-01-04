@@ -14,7 +14,7 @@ use gpui::{
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use postage::watch;
-use project::{Project, ProjectEntry, ProjectPath, Worktree};
+use project::{Project, ProjectEntry, ProjectPath, Worktree, WorktreeId};
 use std::{
     collections::{hash_map, HashMap},
     ffi::OsStr,
@@ -26,7 +26,7 @@ pub struct ProjectPanel {
     project: ModelHandle<Project>,
     list: UniformListState,
     visible_entries: Vec<Vec<usize>>,
-    expanded_dir_ids: HashMap<usize, Vec<usize>>,
+    expanded_dir_ids: HashMap<WorktreeId, Vec<usize>>,
     selection: Option<Selection>,
     settings: watch::Receiver<Settings>,
     handle: WeakViewHandle<Self>,
@@ -34,7 +34,7 @@ pub struct ProjectPanel {
 
 #[derive(Copy, Clone)]
 struct Selection {
-    worktree_id: usize,
+    worktree_id: WorktreeId,
     entry_id: usize,
     index: usize,
 }
@@ -67,7 +67,10 @@ pub fn init(cx: &mut MutableAppContext) {
 }
 
 pub enum Event {
-    OpenedEntry { worktree_id: usize, entry_id: usize },
+    OpenedEntry {
+        worktree_id: WorktreeId,
+        entry_id: usize,
+    },
 }
 
 impl ProjectPanel {
@@ -114,16 +117,16 @@ impl ProjectPanel {
             this
         });
         cx.subscribe(&project_panel, move |workspace, _, event, cx| match event {
-            Event::OpenedEntry {
+            &Event::OpenedEntry {
                 worktree_id,
                 entry_id,
             } => {
-                if let Some(worktree) = project.read(cx).worktree_for_id(*worktree_id, cx) {
-                    if let Some(entry) = worktree.read(cx).entry_for_id(*entry_id) {
+                if let Some(worktree) = project.read(cx).worktree_for_id(worktree_id, cx) {
+                    if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
                         workspace
                             .open_entry(
                                 ProjectPath {
-                                    worktree_id: worktree.id(),
+                                    worktree_id,
                                     path: entry.path.clone(),
                                 },
                                 cx,
@@ -259,8 +262,8 @@ impl ProjectPanel {
 
     fn select_first(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(worktree) = self.project.read(cx).worktrees().first() {
-            let worktree_id = worktree.id();
             let worktree = worktree.read(cx);
+            let worktree_id = worktree.id();
             if let Some(root_entry) = worktree.root_entry() {
                 self.selection = Some(Selection {
                     worktree_id,
@@ -313,7 +316,7 @@ impl ProjectPanel {
 
     fn update_visible_entries(
         &mut self,
-        new_selected_entry: Option<(usize, usize)>,
+        new_selected_entry: Option<(WorktreeId, usize)>,
         cx: &mut ViewContext<Self>,
     ) {
         let worktrees = self.project.read(cx).worktrees();
@@ -322,7 +325,7 @@ impl ProjectPanel {
         let mut entry_ix = 0;
         for worktree in worktrees {
             let snapshot = worktree.read(cx).snapshot();
-            let worktree_id = worktree.id();
+            let worktree_id = snapshot.id();
 
             let expanded_dir_ids = match self.expanded_dir_ids.entry(worktree_id) {
                 hash_map::Entry::Occupied(e) => e.into_mut(),
@@ -342,7 +345,7 @@ impl ProjectPanel {
             while let Some(item) = entry_iter.entry() {
                 visible_worktree_entries.push(entry_iter.offset());
                 if let Some(new_selected_entry) = new_selected_entry {
-                    if new_selected_entry == (worktree.id(), item.id) {
+                    if new_selected_entry == (worktree_id, item.id) {
                         self.selection = Some(Selection {
                             worktree_id,
                             entry_id: item.id,
@@ -371,7 +374,12 @@ impl ProjectPanel {
         }
     }
 
-    fn expand_entry(&mut self, worktree_id: usize, entry_id: usize, cx: &mut ViewContext<Self>) {
+    fn expand_entry(
+        &mut self,
+        worktree_id: WorktreeId,
+        entry_id: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
         let project = self.project.read(cx);
         if let Some((worktree, expanded_dir_ids)) = project
             .worktree_for_id(worktree_id, cx)
@@ -417,12 +425,12 @@ impl ProjectPanel {
 
             let end_ix = range.end.min(ix + visible_worktree_entries.len());
             let worktree = &worktrees[worktree_ix];
+            let snapshot = worktree.read(cx).snapshot();
             let expanded_entry_ids = self
                 .expanded_dir_ids
-                .get(&worktree.id())
+                .get(&snapshot.id())
                 .map(Vec::as_slice)
                 .unwrap_or(&[]);
-            let snapshot = worktree.read(cx).snapshot();
             let root_name = OsStr::new(snapshot.root_name());
             let mut cursor = snapshot.entries(false);
 
@@ -439,11 +447,11 @@ impl ProjectPanel {
                         is_dir: entry.is_dir(),
                         is_expanded: expanded_entry_ids.binary_search(&entry.id).is_ok(),
                         is_selected: self.selection.map_or(false, |e| {
-                            e.worktree_id == worktree.id() && e.entry_id == entry.id
+                            e.worktree_id == snapshot.id() && e.entry_id == entry.id
                         }),
                     };
                     let entry = ProjectEntry {
-                        worktree_id: worktree.id(),
+                        worktree_id: snapshot.id(),
                         entry_id: entry.id,
                     };
                     callback(entry, details, cx);
@@ -461,7 +469,7 @@ impl ProjectPanel {
     ) -> ElementBox {
         let is_dir = details.is_dir;
         MouseEventHandler::new::<Self, _, _, _>(
-            (entry.worktree_id, entry.entry_id),
+            (entry.worktree_id.to_usize(), entry.entry_id),
             cx,
             |state, _| {
                 let style = match (details.is_selected, state.hovered) {
@@ -516,7 +524,7 @@ impl ProjectPanel {
             if is_dir {
                 cx.dispatch_action(ToggleExpanded(entry))
             } else {
-                cx.dispatch_action(Open(entry))
+                cx.dispatch_action(Open(dbg!(entry)))
             }
         })
         .with_cursor_style(CursorStyle::PointingHand)

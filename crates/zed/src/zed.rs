@@ -556,7 +556,7 @@ mod tests {
                 workspace
                     .open_entry(
                         ProjectPath {
-                            worktree_id: worktree.id(),
+                            worktree_id: worktree.read(cx).id(),
                             path: Path::new("the-new-name.rs").into(),
                         },
                         cx,

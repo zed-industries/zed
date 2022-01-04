@@ -12,7 +12,7 @@ use gpui::{
     ViewContext, ViewHandle, WeakViewHandle,
 };
 use postage::watch;
-use project::{Project, ProjectPath};
+use project::{Project, ProjectPath, WorktreeId};
 use std::{
     cmp,
     path::Path,
@@ -195,7 +195,7 @@ impl FileFinder {
         .with_style(style.container);
 
         let action = Select(ProjectPath {
-            worktree_id: path_match.worktree_id,
+            worktree_id: WorktreeId::from_usize(path_match.worktree_id),
             path: path_match.path.clone(),
         });
         EventHandler::new(container.boxed())
@@ -370,7 +370,7 @@ impl FileFinder {
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
         if let Some(m) = self.matches.get(self.selected_index()) {
             cx.emit(Event::Selected(ProjectPath {
-                worktree_id: m.worktree_id,
+                worktree_id: WorktreeId::from_usize(m.worktree_id),
                 path: m.path.clone(),
             }));
         }
