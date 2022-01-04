@@ -1,6 +1,6 @@
 pub mod fs;
 mod ignore;
-mod worktree;
+pub mod worktree;
 
 use anyhow::{anyhow, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
@@ -60,6 +60,7 @@ pub struct Collaborator {
 pub enum Event {
     ActiveEntryChanged(Option<ProjectEntry>),
     WorktreeRemoved(usize),
+    DiskBasedDiagnosticsUpdated { worktree_id: usize },
     DiagnosticsUpdated(ProjectPath),
 }
 
@@ -481,6 +482,11 @@ impl Project {
                     worktree_id: worktree.id(),
                     path: path.clone(),
                 }));
+            }
+            worktree::Event::DiskBasedDiagnosticsUpdated => {
+                cx.emit(Event::DiskBasedDiagnosticsUpdated {
+                    worktree_id: worktree.id(),
+                });
             }
         })
         .detach();

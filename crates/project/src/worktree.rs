@@ -66,6 +66,7 @@ pub enum Worktree {
 
 #[derive(Debug)]
 pub enum Event {
+    DiskBasedDiagnosticsUpdated,
     DiagnosticsUpdated(Arc<Path>),
 }
 
@@ -1037,18 +1038,61 @@ impl LocalWorktree {
                 .disk_based_diagnostic_sources()
                 .cloned()
                 .unwrap_or_default();
+            let disk_based_diagnostics_progress_token =
+                language.disk_based_diagnostics_progress_token().cloned();
             let (diagnostics_tx, diagnostics_rx) = smol::channel::unbounded();
             language_server
                 .on_notification::<lsp::notification::PublishDiagnostics, _>(move |params| {
                     smol::block_on(diagnostics_tx.send(params)).ok();
                 })
                 .detach();
+            cx.spawn_weak(|this, mut cx| {
+                let has_disk_based_diagnostic_progress_token =
+                    disk_based_diagnostics_progress_token.is_some();
+                async move {
+                    while let Ok(diagnostics) = diagnostics_rx.recv().await {
+                        if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
+                            handle.update(&mut cx, |this, cx| {
+                                this.update_diagnostics(diagnostics, &disk_based_sources, cx)
+                                    .log_err();
+                                if !has_disk_based_diagnostic_progress_token {
+                                    cx.emit(Event::DiskBasedDiagnosticsUpdated);
+                                }
+                            });
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            })
+            .detach();
+
+            let (mut disk_based_diagnostics_done_tx, mut disk_based_diagnostics_done_rx) =
+                watch::channel_with(());
+            language_server
+                .on_notification::<lsp::notification::Progress, _>(move |params| {
+                    let token = match params.token {
+                        lsp::NumberOrString::Number(_) => None,
+                        lsp::NumberOrString::String(token) => Some(token),
+                    };
+
+                    if token == disk_based_diagnostics_progress_token {
+                        match params.value {
+                            lsp::ProgressParamsValue::WorkDone(progress) => match progress {
+                                lsp::WorkDoneProgress::End(_) => {
+                                    smol::block_on(disk_based_diagnostics_done_tx.send(())).ok();
+                                }
+                                _ => {}
+                            },
+                        }
+                    }
+                })
+                .detach();
             cx.spawn_weak(|this, mut cx| async move {
-                while let Ok(diagnostics) = diagnostics_rx.recv().await {
+                while let Some(()) = disk_based_diagnostics_done_rx.recv().await {
                     if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
-                        handle.update(&mut cx, |this, cx| {
-                            this.update_diagnostics(diagnostics, &disk_based_sources, cx)
-                                .log_err();
+                        handle.update(&mut cx, |_, cx| {
+                            cx.emit(Event::DiskBasedDiagnosticsUpdated);
                         });
                     } else {
                         break;

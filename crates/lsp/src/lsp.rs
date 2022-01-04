@@ -28,7 +28,7 @@ pub use lsp_types::*;
 const JSON_RPC_VERSION: &'static str = "2.0";
 const CONTENT_LEN_HEADER: &'static str = "Content-Length: ";
 
-type NotificationHandler = Box<dyn Send + Sync + Fn(&str)>;
+type NotificationHandler = Box<dyn Send + Sync + FnMut(&str)>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<&str, Error>)>;
 
 pub struct LanguageServer {
@@ -139,7 +139,7 @@ impl LanguageServer {
                         if let Ok(AnyNotification { method, params }) =
                             serde_json::from_slice(&buffer)
                         {
-                            if let Some(handler) = notification_handlers.read().get(method) {
+                            if let Some(handler) = notification_handlers.write().get_mut(method) {
                                 handler(params.get());
                             } else {
                                 log::info!(
@@ -226,15 +226,15 @@ impl LanguageServer {
             process_id: Default::default(),
             root_path: Default::default(),
             root_uri: Some(root_uri),
-            initialization_options: Some(json!({
-                "checkOnSave": {
-                    "enable": false
-                },
-            })),
+            initialization_options: Default::default(),
             capabilities: lsp_types::ClientCapabilities {
                 experimental: Some(json!({
                     "serverStatusNotification": true,
                 })),
+                window: Some(lsp_types::WindowClientCapabilities {
+                    work_done_progress: Some(true),
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
             trace: Default::default(),
@@ -283,10 +283,10 @@ impl LanguageServer {
         }
     }
 
-    pub fn on_notification<T, F>(&self, f: F) -> Subscription
+    pub fn on_notification<T, F>(&self, mut f: F) -> Subscription
     where
         T: lsp_types::notification::Notification,
-        F: 'static + Send + Sync + Fn(T::Params),
+        F: 'static + Send + Sync + FnMut(T::Params),
     {
         let prev_handler = self.notification_handlers.write().insert(
             T::METHOD,

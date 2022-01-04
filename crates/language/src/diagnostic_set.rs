@@ -19,6 +19,7 @@ pub struct DiagnosticEntry<T> {
     pub diagnostic: Diagnostic,
 }
 
+#[derive(Debug)]
 pub struct DiagnosticGroup<T> {
     pub entries: Vec<DiagnosticEntry<T>>,
     pub primary_ix: usize,

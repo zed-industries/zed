@@ -11,7 +11,7 @@ use gpui::{
 };
 use language::{Bias, Buffer, Diagnostic, DiagnosticEntry, Point};
 use postage::watch;
-use project::Project;
+use project::{Project, ProjectPath};
 use std::{cmp::Ordering, ops::Range, path::Path, sync::Arc};
 use util::TryFutureExt;
 use workspace::Workspace;
@@ -41,9 +41,11 @@ struct ProjectDiagnostics {
 }
 
 struct ProjectDiagnosticsEditor {
+    project: ModelHandle<Project>,
     editor: ViewHandle<Editor>,
     excerpts: ModelHandle<MultiBuffer>,
     path_states: Vec<(Arc<Path>, Vec<DiagnosticGroupState>)>,
+    paths_to_update: HashMap<usize, HashSet<ProjectPath>>,
     build_settings: BuildSettings,
 }
 
@@ -95,41 +97,19 @@ impl ProjectDiagnosticsEditor {
         settings: watch::Receiver<workspace::Settings>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let project_paths = project
-            .read(cx)
-            .diagnostic_summaries(cx)
-            .map(|e| e.0)
-            .collect::<Vec<_>>();
-
-        cx.spawn(|this, mut cx| {
-            let project = project.clone();
-            async move {
-                for project_path in project_paths {
-                    let buffer = project
-                        .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))
-                        .await?;
-                    this.update(&mut cx, |view, cx| view.populate_excerpts(buffer, cx))
+        cx.subscribe(&project, |this, _, event, cx| match event {
+            project::Event::DiskBasedDiagnosticsUpdated { worktree_id } => {
+                if let Some(paths) = this.paths_to_update.remove(&worktree_id) {
+                    this.update_excerpts(paths, cx);
                 }
-                Result::<_, anyhow::Error>::Ok(())
             }
-        })
-        .detach();
-
-        cx.subscribe(&project, |_, project, event, cx| {
-            if let project::Event::DiagnosticsUpdated(project_path) = event {
-                let project_path = project_path.clone();
-                cx.spawn(|this, mut cx| {
-                    async move {
-                        let buffer = project
-                            .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))
-                            .await?;
-                        this.update(&mut cx, |view, cx| view.populate_excerpts(buffer, cx));
-                        Ok(())
-                    }
-                    .log_err()
-                })
-                .detach();
+            project::Event::DiagnosticsUpdated(path) => {
+                this.paths_to_update
+                    .entry(path.worktree_id)
+                    .or_default()
+                    .insert(path.clone());
             }
+            _ => {}
         })
         .detach();
 
@@ -139,12 +119,22 @@ impl ProjectDiagnosticsEditor {
             cx.add_view(|cx| Editor::for_buffer(excerpts.clone(), build_settings.clone(), cx));
         cx.subscribe(&editor, |_, _, event, cx| cx.emit(*event))
             .detach();
-        Self {
+
+        let paths_to_update = project
+            .read(cx)
+            .diagnostic_summaries(cx)
+            .map(|e| e.0)
+            .collect();
+        let this = Self {
+            project,
             excerpts,
             editor,
             build_settings,
             path_states: Default::default(),
-        }
+            paths_to_update: Default::default(),
+        };
+        this.update_excerpts(paths_to_update, cx);
+        this
     }
 
     #[cfg(test)]
@@ -187,6 +177,23 @@ impl ProjectDiagnosticsEditor {
         });
         self.editor
             .update(cx, |editor, cx| editor.remove_blocks(blocks_to_delete, cx));
+    }
+
+    fn update_excerpts(&self, paths: HashSet<ProjectPath>, cx: &mut ViewContext<Self>) {
+        let project = self.project.clone();
+        cx.spawn(|this, mut cx| {
+            async move {
+                for path in paths {
+                    let buffer = project
+                        .update(&mut cx, |project, cx| project.open_buffer(path, cx))
+                        .await?;
+                    this.update(&mut cx, |view, cx| view.populate_excerpts(buffer, cx))
+                }
+                Result::<_, anyhow::Error>::Ok(())
+            }
+            .log_err()
+        })
+        .detach();
     }
 
     fn populate_excerpts(&mut self, buffer: ModelHandle<Buffer>, cx: &mut ViewContext<Self>) {
@@ -572,7 +579,7 @@ mod tests {
     use client::{http::ServerResponse, test::FakeHttpClient, Client, UserStore};
     use gpui::TestAppContext;
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, LanguageRegistry, PointUtf16};
-    use project::FakeFs;
+    use project::{worktree, FakeFs};
     use serde_json::json;
     use std::sync::Arc;
     use unindent::Unindent as _;
@@ -813,6 +820,7 @@ mod tests {
                     cx,
                 )
                 .unwrap();
+            cx.emit(worktree::Event::DiskBasedDiagnosticsUpdated);
         });
 
         view.condition(&mut cx, |view, cx| view.text(cx).contains("const a"))

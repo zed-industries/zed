@@ -46,6 +46,7 @@ pub struct LanguageConfig {
 pub struct LanguageServerConfig {
     pub binary: String,
     pub disk_based_diagnostic_sources: HashSet<String>,
+    pub disk_based_diagnostics_progress_token: Option<String>,
     #[cfg(any(test, feature = "test-support"))]
     #[serde(skip)]
     pub fake_server: Option<(Arc<lsp::LanguageServer>, Arc<std::sync::atomic::AtomicBool>)>,
@@ -197,6 +198,13 @@ impl Language {
             .language_server
             .as_ref()
             .map(|config| &config.disk_based_diagnostic_sources)
+    }
+
+    pub fn disk_based_diagnostics_progress_token(&self) -> Option<&String> {
+        self.config
+            .language_server
+            .as_ref()
+            .and_then(|config| config.disk_based_diagnostics_progress_token.as_ref())
     }
 
     pub fn brackets(&self) -> &[BracketPair] {
