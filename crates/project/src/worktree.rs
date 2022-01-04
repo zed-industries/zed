@@ -619,9 +619,9 @@ impl Worktree {
         for (buffer_id, buffer) in open_buffers {
             if let Some(buffer) = buffer.upgrade(cx) {
                 buffer.update(cx, |buffer, cx| {
-                    if let Some(old_file) = buffer.file() {
+                    if let Some(old_file) = File::from_dyn(buffer.file()) {
                         let new_file = if let Some(entry) = old_file
-                            .entry_id()
+                            .entry_id
                             .and_then(|entry_id| self.entry_for_id(entry_id))
                         {
                             File {
@@ -1108,12 +1108,12 @@ impl LocalWorktree {
         path: &Path,
         cx: &mut ModelContext<Worktree>,
     ) -> Option<ModelHandle<Buffer>> {
-        let worktree_id = self.id();
+        let handle = cx.handle();
         let mut result = None;
         self.open_buffers.retain(|_buffer_id, buffer| {
-            if let Some(buffer) = buffer.upgrade(cx.as_ref()) {
-                if let Some(file) = buffer.read(cx.as_ref()).file() {
-                    if file.worktree_id() == worktree_id && file.path().as_ref() == path {
+            if let Some(buffer) = buffer.upgrade(cx) {
+                if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
+                    if file.worktree == handle && file.path().as_ref() == path {
                         result = Some(buffer);
                     }
                 }
@@ -1446,8 +1446,8 @@ impl RemoteWorktree {
         let mut existing_buffer = None;
         self.open_buffers.retain(|_buffer_id, buffer| {
             if let Some(buffer) = buffer.upgrade(cx.as_ref()) {
-                if let Some(file) = buffer.read(cx.as_ref()).file() {
-                    if file.worktree_id() == handle.id() && file.path().as_ref() == path {
+                if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
+                    if file.worktree == handle && file.path().as_ref() == path {
                         existing_buffer = Some(buffer);
                     }
                 }
@@ -1958,14 +1958,6 @@ pub struct File {
 }
 
 impl language::File for File {
-    fn worktree_id(&self) -> usize {
-        self.worktree.id()
-    }
-
-    fn entry_id(&self) -> Option<usize> {
-        self.entry_id
-    }
-
     fn mtime(&self) -> SystemTime {
         self.mtime
     }
@@ -2094,12 +2086,18 @@ impl language::File for File {
         });
     }
 
-    fn boxed_clone(&self) -> Box<dyn language::File> {
-        Box::new(self.clone())
-    }
-
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+impl File {
+    pub fn from_dyn(file: Option<&dyn language::File>) -> Option<&Self> {
+        file.and_then(|f| f.as_any().downcast_ref())
+    }
+
+    pub fn worktree_id(&self, cx: &AppContext) -> usize {
+        self.worktree.read(cx).id()
     }
 }
 

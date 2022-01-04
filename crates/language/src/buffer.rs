@@ -149,10 +149,6 @@ pub enum Event {
 }
 
 pub trait File {
-    fn worktree_id(&self) -> usize;
-
-    fn entry_id(&self) -> Option<usize>;
-
     fn mtime(&self) -> SystemTime;
 
     /// Returns the path of this file relative to the worktree's root directory.
@@ -184,8 +180,6 @@ pub trait File {
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext);
 
     fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext);
-
-    fn boxed_clone(&self) -> Box<dyn File>;
 
     fn as_any(&self) -> &dyn Any;
 }
