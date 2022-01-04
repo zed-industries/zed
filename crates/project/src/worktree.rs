@@ -777,10 +777,38 @@ impl Worktree {
         }
 
         let this = self.as_local_mut().unwrap();
+        let summary = DiagnosticSummary::new(&diagnostics);
         this.diagnostic_summaries
-            .insert(worktree_path.clone(), DiagnosticSummary::new(&diagnostics));
+            .insert(worktree_path.clone(), summary.clone());
         this.diagnostics.insert(worktree_path.clone(), diagnostics);
+
         cx.emit(Event::DiagnosticsUpdated(worktree_path.clone()));
+
+        if let Some(share) = this.share.as_ref() {
+            cx.foreground()
+                .spawn({
+                    let client = this.client.clone();
+                    let project_id = share.project_id;
+                    let worktree_id = this.id().to_proto();
+                    let path = worktree_path.to_string_lossy().to_string();
+                    async move {
+                        client
+                            .send(proto::UpdateDiagnosticSummary {
+                                project_id,
+                                worktree_id,
+                                path,
+                                error_count: summary.error_count as u32,
+                                warning_count: summary.warning_count as u32,
+                                info_count: summary.info_count as u32,
+                                hint_count: summary.hint_count as u32,
+                            })
+                            .await
+                            .log_err()
+                    }
+                })
+                .detach();
+        }
+
         Ok(())
     }
 
@@ -1063,6 +1091,8 @@ impl LocalWorktree {
             let disk_based_diagnostics_progress_token =
                 language.disk_based_diagnostics_progress_token().cloned();
             let (diagnostics_tx, diagnostics_rx) = smol::channel::unbounded();
+            let (disk_based_diagnostics_done_tx, disk_based_diagnostics_done_rx) =
+                smol::channel::unbounded();
             language_server
                 .on_notification::<lsp::notification::PublishDiagnostics, _>(move |params| {
                     smol::block_on(diagnostics_tx.send(params)).ok();
@@ -1071,6 +1101,7 @@ impl LocalWorktree {
             cx.spawn_weak(|this, mut cx| {
                 let has_disk_based_diagnostic_progress_token =
                     disk_based_diagnostics_progress_token.is_some();
+                let disk_based_diagnostics_done_tx = disk_based_diagnostics_done_tx.clone();
                 async move {
                     while let Ok(diagnostics) = diagnostics_rx.recv().await {
                         if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
@@ -1078,9 +1109,9 @@ impl LocalWorktree {
                                 this.update_diagnostics(diagnostics, &disk_based_sources, cx)
                                     .log_err();
                                 if !has_disk_based_diagnostic_progress_token {
-                                    cx.emit(Event::DiskBasedDiagnosticsUpdated);
+                                    smol::block_on(disk_based_diagnostics_done_tx.send(())).ok();
                                 }
-                            });
+                            })
                         } else {
                             break;
                         }
@@ -1089,8 +1120,6 @@ impl LocalWorktree {
             })
             .detach();
 
-            let (mut disk_based_diagnostics_done_tx, mut disk_based_diagnostics_done_rx) =
-                watch::channel_with(());
             language_server
                 .on_notification::<lsp::notification::Progress, _>(move |params| {
                     let token = match params.token {
@@ -1110,12 +1139,24 @@ impl LocalWorktree {
                     }
                 })
                 .detach();
+            let rpc = self.client.clone();
             cx.spawn_weak(|this, mut cx| async move {
-                while let Some(()) = disk_based_diagnostics_done_rx.recv().await {
+                while let Ok(()) = disk_based_diagnostics_done_rx.recv().await {
                     if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
-                        handle.update(&mut cx, |_, cx| {
+                        let message = handle.update(&mut cx, |this, cx| {
                             cx.emit(Event::DiskBasedDiagnosticsUpdated);
+                            let this = this.as_local().unwrap();
+                            this.share
+                                .as_ref()
+                                .map(|share| proto::DiskBasedDiagnosticsUpdated {
+                                    project_id: share.project_id,
+                                    worktree_id: this.id().to_proto(),
+                                })
                         });
+
+                        if let Some(message) = message {
+                            rpc.send(message).await.log_err();
+                        }
                     } else {
                         break;
                     }
@@ -1570,6 +1611,28 @@ impl RemoteWorktree {
             .detach();
 
         Ok(())
+    }
+
+    pub fn update_diagnostic_summary(
+        &mut self,
+        envelope: TypedEnvelope<proto::UpdateDiagnosticSummary>,
+        cx: &mut ModelContext<Worktree>,
+    ) {
+        let path: Arc<Path> = Path::new(&envelope.payload.path).into();
+        self.diagnostic_summaries.insert(
+            path.clone(),
+            DiagnosticSummary {
+                error_count: envelope.payload.error_count as usize,
+                warning_count: envelope.payload.warning_count as usize,
+                info_count: envelope.payload.info_count as usize,
+                hint_count: envelope.payload.hint_count as usize,
+            },
+        );
+        cx.emit(Event::DiagnosticsUpdated(path));
+    }
+
+    pub fn disk_based_diagnostics_updated(&self, cx: &mut ModelContext<Worktree>) {
+        cx.emit(Event::DiskBasedDiagnosticsUpdated);
     }
 
     pub fn remove_collaborator(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Worktree>) {

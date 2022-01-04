@@ -2672,6 +2672,10 @@ impl<T: Entity> ModelHandle<T> {
                         }
                     }
 
+                    if cx.borrow_mut().foreground().would_park() {
+                        panic!("parked while waiting on condition");
+                    }
+
                     rx.recv()
                         .await
                         .expect("model dropped with pending condition");

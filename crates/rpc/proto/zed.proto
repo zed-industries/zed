@@ -23,32 +23,33 @@ message Envelope {
 
         RegisterWorktree register_worktree = 17;
         UnregisterWorktree unregister_worktree = 18;
-        ShareWorktree share_worktree = 100;
-        UpdateWorktree update_worktree = 19;
-        UpdateDiagnosticSummary update_diagnostic_summary = 20;
+        ShareWorktree share_worktree = 19;
+        UpdateWorktree update_worktree = 20;
+        UpdateDiagnosticSummary update_diagnostic_summary = 21;
+        DiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 22;
 
-        OpenBuffer open_buffer = 22;
-        OpenBufferResponse open_buffer_response = 23;
-        CloseBuffer close_buffer = 24;
-        UpdateBuffer update_buffer = 25;
-        SaveBuffer save_buffer = 26;
-        BufferSaved buffer_saved = 27;
+        OpenBuffer open_buffer = 23;
+        OpenBufferResponse open_buffer_response = 24;
+        CloseBuffer close_buffer = 25;
+        UpdateBuffer update_buffer = 26;
+        SaveBuffer save_buffer = 27;
+        BufferSaved buffer_saved = 28;
 
-        GetChannels get_channels = 28;
-        GetChannelsResponse get_channels_response = 29;
-        JoinChannel join_channel = 30;
-        JoinChannelResponse join_channel_response = 31;
-        LeaveChannel leave_channel = 32;
-        SendChannelMessage send_channel_message = 33;
-        SendChannelMessageResponse send_channel_message_response = 34;
-        ChannelMessageSent channel_message_sent = 35;
-        GetChannelMessages get_channel_messages = 36;
-        GetChannelMessagesResponse get_channel_messages_response = 37;
+        GetChannels get_channels = 29;
+        GetChannelsResponse get_channels_response = 30;
+        JoinChannel join_channel = 31;
+        JoinChannelResponse join_channel_response = 32;
+        LeaveChannel leave_channel = 33;
+        SendChannelMessage send_channel_message = 34;
+        SendChannelMessageResponse send_channel_message_response = 35;
+        ChannelMessageSent channel_message_sent = 36;
+        GetChannelMessages get_channel_messages = 37;
+        GetChannelMessagesResponse get_channel_messages_response = 38;
 
-        UpdateContacts update_contacts = 38;
+        UpdateContacts update_contacts = 39;
 
-        GetUsers get_users = 39;
-        GetUsersResponse get_users_response = 40;
+        GetUsers get_users = 40;
+        GetUsersResponse get_users_response = 41;
     }
 }
 
@@ -172,6 +173,13 @@ message UpdateDiagnosticSummary {
     string path = 3;
     uint32 error_count = 4;
     uint32 warning_count = 5;
+    uint32 info_count = 6;
+    uint32 hint_count = 7;
+}
+
+message DiskBasedDiagnosticsUpdated {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
 }
 
 message GetChannels {}

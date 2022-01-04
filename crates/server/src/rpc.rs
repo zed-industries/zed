@@ -71,6 +71,8 @@ impl Server {
             .add_handler(Server::unregister_worktree)
             .add_handler(Server::share_worktree)
             .add_handler(Server::update_worktree)
+            .add_handler(Server::update_diagnostic_summary)
+            .add_handler(Server::disk_based_diagnostics_updated)
             .add_handler(Server::open_buffer)
             .add_handler(Server::close_buffer)
             .add_handler(Server::update_buffer)
@@ -514,6 +516,38 @@ impl Server {
         })
         .await?;
 
+        Ok(())
+    }
+
+    async fn update_diagnostic_summary(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::UpdateDiagnosticSummary>,
+    ) -> tide::Result<()> {
+        let receiver_ids = self
+            .state()
+            .project_connection_ids(request.payload.project_id, request.sender_id)
+            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+        broadcast(request.sender_id, receiver_ids, |connection_id| {
+            self.peer
+                .forward_send(request.sender_id, connection_id, request.payload.clone())
+        })
+        .await?;
+        Ok(())
+    }
+
+    async fn disk_based_diagnostics_updated(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::DiskBasedDiagnosticsUpdated>,
+    ) -> tide::Result<()> {
+        let receiver_ids = self
+            .state()
+            .project_connection_ids(request.payload.project_id, request.sender_id)
+            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+        broadcast(request.sender_id, receiver_ids, |connection_id| {
+            self.peer
+                .forward_send(request.sender_id, connection_id, request.payload.clone())
+        })
+        .await?;
         Ok(())
     }
 
@@ -1026,7 +1060,7 @@ mod tests {
             LanguageRegistry, LanguageServerConfig, Point,
         },
         lsp,
-        project::Project,
+        project::{DiagnosticSummary, Project},
     };
 
     #[gpui::test]
@@ -1781,6 +1815,19 @@ mod tests {
             .await
             .unwrap();
 
+        // Join the worktree as client B.
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
+
         // Simulate a language server reporting errors for a file.
         fake_language_server
             .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
@@ -1806,18 +1853,19 @@ mod tests {
             })
             .await;
 
-        // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
-        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
+        worktree_b
+            .condition(&cx_b, |worktree, _| {
+                worktree.diagnostic_summaries().collect::<Vec<_>>()
+                    == &[(
+                        Arc::from(Path::new("a.rs")),
+                        DiagnosticSummary {
+                            error_count: 1,
+                            warning_count: 1,
+                            ..Default::default()
+                        },
+                    )]
+            })
+            .await;
 
         // Open the file with the errors.
         let buffer_b = cx_b

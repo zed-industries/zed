@@ -70,7 +70,7 @@ pub struct ProjectPath {
     pub path: Arc<Path>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct DiagnosticSummary {
     pub error_count: usize,
     pub warning_count: usize,
@@ -243,6 +243,12 @@ impl Project {
                 client.subscribe_to_entity(remote_id, cx, Self::handle_share_worktree),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_unregister_worktree),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_update_worktree),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_update_diagnostic_summary),
+                client.subscribe_to_entity(
+                    remote_id,
+                    cx,
+                    Self::handle_disk_based_diagnostics_updated,
+                ),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
             ],
@@ -657,6 +663,42 @@ impl Project {
                 let worktree = worktree.as_remote_mut().unwrap();
                 worktree.update_from_remote(envelope, cx)
             })?;
+        }
+        Ok(())
+    }
+
+    fn handle_update_diagnostic_summary(
+        &mut self,
+        envelope: TypedEnvelope<proto::UpdateDiagnosticSummary>,
+        _: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
+            worktree.update(cx, |worktree, cx| {
+                worktree
+                    .as_remote_mut()
+                    .unwrap()
+                    .update_diagnostic_summary(envelope, cx);
+            });
+        }
+        Ok(())
+    }
+
+    fn handle_disk_based_diagnostics_updated(
+        &mut self,
+        envelope: TypedEnvelope<proto::DiskBasedDiagnosticsUpdated>,
+        _: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
+            worktree.update(cx, |worktree, cx| {
+                worktree
+                    .as_remote()
+                    .unwrap()
+                    .disk_based_diagnostics_updated(cx);
+            });
         }
         Ok(())
     }
