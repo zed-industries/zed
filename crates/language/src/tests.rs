@@ -780,6 +780,21 @@ async fn test_empty_diagnostic_ranges(mut cx: gpui::TestAppContext) {
     });
 }
 
+#[gpui::test]
+fn test_serialization(cx: &mut gpui::MutableAppContext) {
+    let buffer1 = cx.add_model(|cx| {
+        let mut buffer = Buffer::new(0, "abc", cx);
+        buffer.edit([3..3], "DE", cx);
+        buffer.undo(cx);
+        buffer
+    });
+    assert_eq!(buffer1.read(cx).text(), "abc");
+
+    let message = buffer1.read(cx).to_proto();
+    let buffer2 = cx.add_model(|cx| Buffer::from_proto(1, message, None, cx).unwrap());
+    assert_eq!(buffer2.read(cx).text(), "abc");
+}
+
 fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
     buffer: &Buffer,
     range: Range<T>,
