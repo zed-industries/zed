@@ -57,16 +57,12 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 lamport_timestamp: lamport_timestamp.value,
             }),
             Operation::UpdateDiagnostics {
-                provider_name,
                 diagnostics,
                 lamport_timestamp,
-            } => proto::operation::Variant::UpdateDiagnosticSet(proto::UpdateDiagnosticSet {
+            } => proto::operation::Variant::UpdateDiagnostics(proto::UpdateDiagnostics {
                 replica_id: lamport_timestamp.replica_id as u32,
                 lamport_timestamp: lamport_timestamp.value,
-                diagnostic_set: Some(serialize_diagnostic_set(
-                    provider_name.clone(),
-                    diagnostics.iter(),
-                )),
+                diagnostics: serialize_diagnostics(diagnostics.iter()),
             }),
         }),
     }
@@ -103,33 +99,29 @@ pub fn serialize_selections(selections: &Arc<[Selection<Anchor>]>) -> Vec<proto:
         .collect()
 }
 
-pub fn serialize_diagnostic_set<'a>(
-    provider_name: String,
+pub fn serialize_diagnostics<'a>(
     diagnostics: impl IntoIterator<Item = &'a DiagnosticEntry<Anchor>>,
-) -> proto::DiagnosticSet {
-    proto::DiagnosticSet {
-        provider_name,
-        diagnostics: diagnostics
-            .into_iter()
-            .map(|entry| proto::Diagnostic {
-                start: Some(serialize_anchor(&entry.range.start)),
-                end: Some(serialize_anchor(&entry.range.end)),
-                message: entry.diagnostic.message.clone(),
-                severity: match entry.diagnostic.severity {
-                    DiagnosticSeverity::ERROR => proto::diagnostic::Severity::Error,
-                    DiagnosticSeverity::WARNING => proto::diagnostic::Severity::Warning,
-                    DiagnosticSeverity::INFORMATION => proto::diagnostic::Severity::Information,
-                    DiagnosticSeverity::HINT => proto::diagnostic::Severity::Hint,
-                    _ => proto::diagnostic::Severity::None,
-                } as i32,
-                group_id: entry.diagnostic.group_id as u64,
-                is_primary: entry.diagnostic.is_primary,
-                is_valid: entry.diagnostic.is_valid,
-                code: entry.diagnostic.code.clone(),
-                is_disk_based: entry.diagnostic.is_disk_based,
-            })
-            .collect(),
-    }
+) -> Vec<proto::Diagnostic> {
+    diagnostics
+        .into_iter()
+        .map(|entry| proto::Diagnostic {
+            start: Some(serialize_anchor(&entry.range.start)),
+            end: Some(serialize_anchor(&entry.range.end)),
+            message: entry.diagnostic.message.clone(),
+            severity: match entry.diagnostic.severity {
+                DiagnosticSeverity::ERROR => proto::diagnostic::Severity::Error,
+                DiagnosticSeverity::WARNING => proto::diagnostic::Severity::Warning,
+                DiagnosticSeverity::INFORMATION => proto::diagnostic::Severity::Information,
+                DiagnosticSeverity::HINT => proto::diagnostic::Severity::Hint,
+                _ => proto::diagnostic::Severity::None,
+            } as i32,
+            group_id: entry.diagnostic.group_id as u64,
+            is_primary: entry.diagnostic.is_primary,
+            is_valid: entry.diagnostic.is_valid,
+            code: entry.diagnostic.code.clone(),
+            is_disk_based: entry.diagnostic.is_disk_based,
+        })
+        .collect()
 }
 
 fn serialize_anchor(anchor: &Anchor) -> proto::Anchor {
@@ -215,21 +207,13 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                     value: message.lamport_timestamp,
                 },
             },
-            proto::operation::Variant::UpdateDiagnosticSet(message) => {
-                let (provider_name, diagnostics) = deserialize_diagnostic_set(
-                    message
-                        .diagnostic_set
-                        .ok_or_else(|| anyhow!("missing diagnostic set"))?,
-                );
-                Operation::UpdateDiagnostics {
-                    provider_name,
-                    diagnostics,
-                    lamport_timestamp: clock::Lamport {
-                        replica_id: message.replica_id as ReplicaId,
-                        value: message.lamport_timestamp,
-                    },
-                }
-            }
+            proto::operation::Variant::UpdateDiagnostics(message) => Operation::UpdateDiagnostics {
+                diagnostics: deserialize_diagnostics(message.diagnostics),
+                lamport_timestamp: clock::Lamport {
+                    replica_id: message.replica_id as ReplicaId,
+                    value: message.lamport_timestamp,
+                },
+            },
         },
     )
 }
@@ -269,40 +253,32 @@ pub fn deserialize_selections(selections: Vec<proto::Selection>) -> Arc<[Selecti
     )
 }
 
-pub fn deserialize_diagnostic_set(
-    message: proto::DiagnosticSet,
-) -> (String, Arc<[DiagnosticEntry<Anchor>]>) {
-    (
-        message.provider_name,
-        message
-            .diagnostics
-            .into_iter()
-            .filter_map(|diagnostic| {
-                Some(DiagnosticEntry {
-                    range: deserialize_anchor(diagnostic.start?)?
-                        ..deserialize_anchor(diagnostic.end?)?,
-                    diagnostic: Diagnostic {
-                        severity: match proto::diagnostic::Severity::from_i32(diagnostic.severity)?
-                        {
-                            proto::diagnostic::Severity::Error => DiagnosticSeverity::ERROR,
-                            proto::diagnostic::Severity::Warning => DiagnosticSeverity::WARNING,
-                            proto::diagnostic::Severity::Information => {
-                                DiagnosticSeverity::INFORMATION
-                            }
-                            proto::diagnostic::Severity::Hint => DiagnosticSeverity::HINT,
-                            proto::diagnostic::Severity::None => return None,
-                        },
-                        message: diagnostic.message,
-                        group_id: diagnostic.group_id as usize,
-                        code: diagnostic.code,
-                        is_valid: diagnostic.is_valid,
-                        is_primary: diagnostic.is_primary,
-                        is_disk_based: diagnostic.is_disk_based,
+pub fn deserialize_diagnostics(
+    diagnostics: Vec<proto::Diagnostic>,
+) -> Arc<[DiagnosticEntry<Anchor>]> {
+    diagnostics
+        .into_iter()
+        .filter_map(|diagnostic| {
+            Some(DiagnosticEntry {
+                range: deserialize_anchor(diagnostic.start?)?..deserialize_anchor(diagnostic.end?)?,
+                diagnostic: Diagnostic {
+                    severity: match proto::diagnostic::Severity::from_i32(diagnostic.severity)? {
+                        proto::diagnostic::Severity::Error => DiagnosticSeverity::ERROR,
+                        proto::diagnostic::Severity::Warning => DiagnosticSeverity::WARNING,
+                        proto::diagnostic::Severity::Information => DiagnosticSeverity::INFORMATION,
+                        proto::diagnostic::Severity::Hint => DiagnosticSeverity::HINT,
+                        proto::diagnostic::Severity::None => return None,
                     },
-                })
+                    message: diagnostic.message,
+                    group_id: diagnostic.group_id as usize,
+                    code: diagnostic.code,
+                    is_valid: diagnostic.is_valid,
+                    is_primary: diagnostic.is_primary,
+                    is_disk_based: diagnostic.is_disk_based,
+                },
             })
-            .collect(),
-    )
+        })
+        .collect()
 }
 
 fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {

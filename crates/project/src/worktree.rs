@@ -50,8 +50,6 @@ use util::{post_inc, ResultExt, TryFutureExt};
 
 lazy_static! {
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
-    static ref DIAGNOSTIC_PROVIDER_NAME: Arc<str> = Arc::from("diagnostic_source");
-    static ref LSP_PROVIDER_NAME: Arc<str> = Arc::from("lsp");
 }
 
 #[derive(Clone, Debug)]
@@ -68,7 +66,6 @@ pub enum Worktree {
 
 #[derive(Debug)]
 pub enum Event {
-    LanguageRegistered,
     DiagnosticsUpdated(Arc<Path>),
 }
 
@@ -675,7 +672,7 @@ impl Worktree {
         }
     }
 
-    pub fn update_diagnostics_from_lsp(
+    pub fn update_diagnostics(
         &mut self,
         mut params: lsp::PublishDiagnosticsParams,
         disk_based_sources: &HashSet<String>,
@@ -745,6 +742,17 @@ impl Worktree {
             })
             .collect::<Vec<_>>();
 
+        self.update_diagnostic_entries(worktree_path, params.version, diagnostics, cx)?;
+        Ok(())
+    }
+
+    pub fn update_diagnostic_entries(
+        &mut self,
+        worktree_path: Arc<Path>,
+        version: Option<i32>,
+        diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
         let this = self.as_local_mut().unwrap();
         for buffer in this.open_buffers.values() {
             if let Some(buffer) = buffer.upgrade(cx) {
@@ -756,12 +764,7 @@ impl Worktree {
                     let (remote_id, operation) = buffer.update(cx, |buffer, cx| {
                         (
                             buffer.remote_id(),
-                            buffer.update_diagnostics(
-                                LSP_PROVIDER_NAME.clone(),
-                                params.version,
-                                diagnostics.clone(),
-                                cx,
-                            ),
+                            buffer.update_diagnostics(version, diagnostics.clone(), cx),
                         )
                     });
                     self.send_buffer_update(remote_id, operation?, cx);
@@ -773,48 +776,8 @@ impl Worktree {
         let this = self.as_local_mut().unwrap();
         this.diagnostic_summaries
             .insert(worktree_path.clone(), DiagnosticSummary::new(&diagnostics));
-        this.lsp_diagnostics
-            .insert(worktree_path.clone(), diagnostics);
+        this.diagnostics.insert(worktree_path.clone(), diagnostics);
         cx.emit(Event::DiagnosticsUpdated(worktree_path.clone()));
-        Ok(())
-    }
-
-    pub fn update_diagnostics_from_provider(
-        &mut self,
-        path: Arc<Path>,
-        diagnostics: Vec<DiagnosticEntry<usize>>,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Result<()> {
-        let this = self.as_local_mut().unwrap();
-        for buffer in this.open_buffers.values() {
-            if let Some(buffer) = buffer.upgrade(cx) {
-                if buffer
-                    .read(cx)
-                    .file()
-                    .map_or(false, |file| *file.path() == path)
-                {
-                    let (remote_id, operation) = buffer.update(cx, |buffer, cx| {
-                        (
-                            buffer.remote_id(),
-                            buffer.update_diagnostics(
-                                DIAGNOSTIC_PROVIDER_NAME.clone(),
-                                None,
-                                diagnostics.clone(),
-                                cx,
-                            ),
-                        )
-                    });
-                    self.send_buffer_update(remote_id, operation?, cx);
-                    break;
-                }
-            }
-        }
-
-        let this = self.as_local_mut().unwrap();
-        this.diagnostic_summaries
-            .insert(path.clone(), DiagnosticSummary::new(&diagnostics));
-        this.provider_diagnostics.insert(path.clone(), diagnostics);
-        cx.emit(Event::DiagnosticsUpdated(path.clone()));
         Ok(())
     }
 
@@ -888,8 +851,7 @@ pub struct LocalWorktree {
     loading_buffers: LoadingBuffers,
     open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
-    lsp_diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<PointUtf16>>>,
-    provider_diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<usize>>>,
+    diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<PointUtf16>>>,
     diagnostic_summaries: BTreeMap<Arc<Path>, DiagnosticSummary>,
     queued_operations: Vec<(u64, Operation)>,
     language_registry: Arc<LanguageRegistry>,
@@ -997,8 +959,7 @@ impl LocalWorktree {
                 loading_buffers: Default::default(),
                 open_buffers: Default::default(),
                 shared_buffers: Default::default(),
-                lsp_diagnostics: Default::default(),
-                provider_diagnostics: Default::default(),
+                diagnostics: Default::default(),
                 diagnostic_summaries: Default::default(),
                 queued_operations: Default::default(),
                 language_registry: languages,
@@ -1061,7 +1022,6 @@ impl LocalWorktree {
     ) -> Option<Arc<LanguageServer>> {
         if !self.languages.iter().any(|l| Arc::ptr_eq(l, language)) {
             self.languages.push(language.clone());
-            cx.emit(Event::LanguageRegistered);
         }
 
         if let Some(server) = self.language_servers.get(language.name()) {
@@ -1087,7 +1047,7 @@ impl LocalWorktree {
                 while let Ok(diagnostics) = diagnostics_rx.recv().await {
                     if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
                         handle.update(&mut cx, |this, cx| {
-                            this.update_diagnostics_from_lsp(diagnostics, &disk_based_sources, cx)
+                            this.update_diagnostics(diagnostics, &disk_based_sources, cx)
                                 .log_err();
                         });
                     } else {
@@ -1138,35 +1098,25 @@ impl LocalWorktree {
                 .update(&mut cx, |t, cx| t.as_local().unwrap().load(&path, cx))
                 .await?;
 
-            let (lsp_diagnostics, provider_diagnostics, language, language_server) =
-                this.update(&mut cx, |this, cx| {
-                    let this = this.as_local_mut().unwrap();
-                    let lsp_diagnostics = this.lsp_diagnostics.remove(&path);
-                    let provider_diagnostics = this.provider_diagnostics.remove(&path);
-                    let language = this
-                        .language_registry
-                        .select_language(file.full_path())
-                        .cloned();
-                    let server = language
-                        .as_ref()
-                        .and_then(|language| this.register_language(language, cx));
-                    (lsp_diagnostics, provider_diagnostics, language, server)
-                });
+            let (diagnostics, language, language_server) = this.update(&mut cx, |this, cx| {
+                let this = this.as_local_mut().unwrap();
+                let diagnostics = this.diagnostics.remove(&path);
+                let language = this
+                    .language_registry
+                    .select_language(file.full_path())
+                    .cloned();
+                let server = language
+                    .as_ref()
+                    .and_then(|language| this.register_language(language, cx));
+                (diagnostics, language, server)
+            });
 
             let mut buffer_operations = Vec::new();
             let buffer = cx.add_model(|cx| {
                 let mut buffer = Buffer::from_file(0, contents, Box::new(file), cx);
                 buffer.set_language(language, language_server, cx);
-                if let Some(diagnostics) = lsp_diagnostics {
-                    let op = buffer
-                        .update_diagnostics(LSP_PROVIDER_NAME.clone(), None, diagnostics, cx)
-                        .unwrap();
-                    buffer_operations.push(op);
-                }
-                if let Some(diagnostics) = provider_diagnostics {
-                    let op = buffer
-                        .update_diagnostics(DIAGNOSTIC_PROVIDER_NAME.clone(), None, diagnostics, cx)
-                        .unwrap();
+                if let Some(diagnostics) = diagnostics {
+                    let op = buffer.update_diagnostics(None, diagnostics, cx).unwrap();
                     buffer_operations.push(op);
                 }
                 buffer
@@ -3739,19 +3689,16 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(
                 diagnostics,
-                &[(
-                    LSP_PROVIDER_NAME.as_ref(),
-                    DiagnosticEntry {
-                        range: Point::new(0, 9)..Point::new(0, 10),
-                        diagnostic: Diagnostic {
-                            severity: lsp::DiagnosticSeverity::ERROR,
-                            message: "undefined variable 'A'".to_string(),
-                            group_id: 0,
-                            is_primary: true,
-                            ..Default::default()
-                        }
+                &[DiagnosticEntry {
+                    range: Point::new(0, 9)..Point::new(0, 10),
+                    diagnostic: Diagnostic {
+                        severity: lsp::DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'A'".to_string(),
+                        group_id: 0,
+                        is_primary: true,
+                        ..Default::default()
                     }
-                )]
+                }]
             )
         });
     }
@@ -3896,7 +3843,7 @@ mod tests {
 
         worktree
             .update(&mut cx, |tree, cx| {
-                tree.update_diagnostics_from_lsp(message, &Default::default(), cx)
+                tree.update_diagnostics(message, &Default::default(), cx)
             })
             .unwrap();
         let buffer = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
@@ -3906,78 +3853,61 @@ mod tests {
                 .diagnostics_in_range::<_, Point>(0..buffer.len())
                 .collect::<Vec<_>>(),
             &[
-                (
-                    LSP_PROVIDER_NAME.as_ref(),
-                    DiagnosticEntry {
-                        range: Point::new(1, 8)..Point::new(1, 9),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::WARNING,
-                            message: "error 1".to_string(),
-                            group_id: 0,
-                            is_primary: true,
-                            ..Default::default()
-                        }
+                DiagnosticEntry {
+                    range: Point::new(1, 8)..Point::new(1, 9),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::WARNING,
+                        message: "error 1".to_string(),
+                        group_id: 0,
+                        is_primary: true,
+                        ..Default::default()
                     }
-                ),
-                (
-                    LSP_PROVIDER_NAME.as_ref(),
-                    DiagnosticEntry {
-                        range: Point::new(1, 8)..Point::new(1, 9),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::HINT,
-                            message: "error 1 hint 1".to_string(),
-                            group_id: 0,
-                            is_primary: false,
-                            ..Default::default()
-                        }
+                },
+                DiagnosticEntry {
+                    range: Point::new(1, 8)..Point::new(1, 9),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 1 hint 1".to_string(),
+                        group_id: 0,
+                        is_primary: false,
+                        ..Default::default()
                     }
-                ),
-                (
-                    LSP_PROVIDER_NAME.as_ref(),
-                    DiagnosticEntry {
-                        range: Point::new(1, 13)..Point::new(1, 15),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::HINT,
-                            message: "error 2 hint 1".to_string(),
-                            group_id: 1,
-                            is_primary: false,
-                            ..Default::default()
-                        }
+                },
+                DiagnosticEntry {
+                    range: Point::new(1, 13)..Point::new(1, 15),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 2 hint 1".to_string(),
+                        group_id: 1,
+                        is_primary: false,
+                        ..Default::default()
                     }
-                ),
-                (
-                    LSP_PROVIDER_NAME.as_ref(),
-                    DiagnosticEntry {
-                        range: Point::new(1, 13)..Point::new(1, 15),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::HINT,
-                            message: "error 2 hint 2".to_string(),
-                            group_id: 1,
-                            is_primary: false,
-                            ..Default::default()
-                        }
+                },
+                DiagnosticEntry {
+                    range: Point::new(1, 13)..Point::new(1, 15),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 2 hint 2".to_string(),
+                        group_id: 1,
+                        is_primary: false,
+                        ..Default::default()
                     }
-                ),
-                (
-                    LSP_PROVIDER_NAME.as_ref(),
-                    DiagnosticEntry {
-                        range: Point::new(2, 8)..Point::new(2, 17),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "error 2".to_string(),
-                            group_id: 1,
-                            is_primary: true,
-                            ..Default::default()
-                        }
+                },
+                DiagnosticEntry {
+                    range: Point::new(2, 8)..Point::new(2, 17),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "error 2".to_string(),
+                        group_id: 1,
+                        is_primary: true,
+                        ..Default::default()
                     }
-                )
+                }
             ]
         );
 
         assert_eq!(
-            buffer
-                .diagnostic_group::<Point>(&LSP_PROVIDER_NAME, 0)
-                .collect::<Vec<_>>(),
+            buffer.diagnostic_group::<Point>(0).collect::<Vec<_>>(),
             &[
                 DiagnosticEntry {
                     range: Point::new(1, 8)..Point::new(1, 9),
@@ -4002,9 +3932,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            buffer
-                .diagnostic_group::<Point>(&LSP_PROVIDER_NAME, 1)
-                .collect::<Vec<_>>(),
+            buffer.diagnostic_group::<Point>(1).collect::<Vec<_>>(),
             &[
                 DiagnosticEntry {
                     range: Point::new(1, 13)..Point::new(1, 15),

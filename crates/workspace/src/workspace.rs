@@ -791,24 +791,16 @@ impl Workspace {
                                     {
                                         error!("failed to save item: {:?}, ", error);
                                     }
-
-                                    handle.update(&mut cx, |this, cx| {
-                                        this.project.update(cx, |project, cx| project.diagnose(cx))
-                                    });
                                 })
                                 .detach();
                             }
                         },
                     );
                 } else {
-                    cx.spawn(|this, mut cx| async move {
+                    cx.spawn(|_, mut cx| async move {
                         if let Err(error) = cx.update(|cx| item.save(cx)).unwrap().await {
                             error!("failed to save item: {:?}, ", error);
                         }
-
-                        this.update(&mut cx, |this, cx| {
-                            this.project.update(cx, |project, cx| project.diagnose(cx))
-                        });
                     })
                     .detach();
                 }
@@ -840,10 +832,6 @@ impl Workspace {
                             if let Err(error) = result {
                                 error!("failed to save item: {:?}, ", error);
                             }
-
-                            handle.update(&mut cx, |this, cx| {
-                                this.project.update(cx, |project, cx| project.diagnose(cx))
-                            });
                         })
                         .detach()
                     }

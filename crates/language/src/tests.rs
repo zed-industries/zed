@@ -455,7 +455,6 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
         // Receive diagnostics for an earlier version of the buffer.
         buffer
             .update_diagnostics(
-                "lsp".into(),
                 Some(open_notification.text_document.version),
                 vec![
                     DiagnosticEntry {
@@ -503,34 +502,28 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                 .diagnostics_in_range::<_, Point>(Point::new(3, 0)..Point::new(5, 0))
                 .collect::<Vec<_>>(),
             &[
-                (
-                    "lsp",
-                    DiagnosticEntry {
-                        range: Point::new(3, 9)..Point::new(3, 11),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "undefined variable 'BB'".to_string(),
-                            is_disk_based: true,
-                            group_id: 1,
-                            is_primary: true,
-                            ..Default::default()
-                        },
+                DiagnosticEntry {
+                    range: Point::new(3, 9)..Point::new(3, 11),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'BB'".to_string(),
+                        is_disk_based: true,
+                        group_id: 1,
+                        is_primary: true,
+                        ..Default::default()
+                    },
+                },
+                DiagnosticEntry {
+                    range: Point::new(4, 9)..Point::new(4, 12),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'CCC'".to_string(),
+                        is_disk_based: true,
+                        group_id: 2,
+                        is_primary: true,
+                        ..Default::default()
                     }
-                ),
-                (
-                    "lsp",
-                    DiagnosticEntry {
-                        range: Point::new(4, 9)..Point::new(4, 12),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "undefined variable 'CCC'".to_string(),
-                            is_disk_based: true,
-                            group_id: 2,
-                            is_primary: true,
-                            ..Default::default()
-                        }
-                    }
-                )
+                }
             ]
         );
         assert_eq!(
@@ -557,7 +550,6 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
         // Ensure overlapping diagnostics are highlighted correctly.
         buffer
             .update_diagnostics(
-                "lsp".into(),
                 Some(open_notification.text_document.version),
                 vec![
                     DiagnosticEntry {
@@ -591,33 +583,27 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                 .diagnostics_in_range::<_, Point>(Point::new(2, 0)..Point::new(3, 0))
                 .collect::<Vec<_>>(),
             &[
-                (
-                    "lsp",
-                    DiagnosticEntry {
-                        range: Point::new(2, 9)..Point::new(2, 12),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::WARNING,
-                            message: "unreachable statement".to_string(),
-                            group_id: 1,
-                            is_primary: true,
-                            ..Default::default()
-                        }
+                DiagnosticEntry {
+                    range: Point::new(2, 9)..Point::new(2, 12),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::WARNING,
+                        message: "unreachable statement".to_string(),
+                        group_id: 1,
+                        is_primary: true,
+                        ..Default::default()
                     }
-                ),
-                (
-                    "lsp",
-                    DiagnosticEntry {
-                        range: Point::new(2, 9)..Point::new(2, 10),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "undefined variable 'A'".to_string(),
-                            is_disk_based: true,
-                            group_id: 0,
-                            is_primary: true,
-                            ..Default::default()
-                        },
-                    }
-                )
+                },
+                DiagnosticEntry {
+                    range: Point::new(2, 9)..Point::new(2, 10),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'A'".to_string(),
+                        is_disk_based: true,
+                        group_id: 0,
+                        is_primary: true,
+                        ..Default::default()
+                    },
+                }
             ]
         );
         assert_eq!(
@@ -654,7 +640,6 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
     buffer.update(&mut cx, |buffer, cx| {
         buffer
             .update_diagnostics(
-                "lsp".into(),
                 Some(change_notification_2.text_document.version),
                 vec![
                     DiagnosticEntry {
@@ -689,34 +674,28 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                 .diagnostics_in_range::<_, Point>(0..buffer.len())
                 .collect::<Vec<_>>(),
             &[
-                (
-                    "lsp",
-                    DiagnosticEntry {
-                        range: Point::new(2, 21)..Point::new(2, 22),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "undefined variable 'A'".to_string(),
-                            is_disk_based: true,
-                            group_id: 0,
-                            is_primary: true,
-                            ..Default::default()
-                        }
+                DiagnosticEntry {
+                    range: Point::new(2, 21)..Point::new(2, 22),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'A'".to_string(),
+                        is_disk_based: true,
+                        group_id: 0,
+                        is_primary: true,
+                        ..Default::default()
                     }
-                ),
-                (
-                    "lsp",
-                    DiagnosticEntry {
-                        range: Point::new(3, 9)..Point::new(3, 11),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "undefined variable 'BB'".to_string(),
-                            is_disk_based: true,
-                            group_id: 1,
-                            is_primary: true,
-                            ..Default::default()
-                        },
-                    }
-                )
+                },
+                DiagnosticEntry {
+                    range: Point::new(3, 9)..Point::new(3, 11),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'BB'".to_string(),
+                        is_disk_based: true,
+                        group_id: 1,
+                        is_primary: true,
+                        ..Default::default()
+                    },
+                }
             ]
         );
     });
@@ -735,7 +714,6 @@ async fn test_empty_diagnostic_ranges(mut cx: gpui::TestAppContext) {
         buffer.set_language(Some(Arc::new(rust_lang())), None, cx);
         buffer
             .update_diagnostics(
-                "lsp".into(),
                 None,
                 vec![
                     DiagnosticEntry {

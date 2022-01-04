@@ -18,7 +18,7 @@ use std::{
     path::Path,
     sync::{atomic::AtomicBool, Arc},
 };
-use util::{ResultExt, TryFutureExt as _};
+use util::TryFutureExt as _;
 
 pub use fs::*;
 pub use worktree::*;
@@ -475,10 +475,7 @@ impl Project {
 
     fn add_worktree(&mut self, worktree: ModelHandle<Worktree>, cx: &mut ModelContext<Self>) {
         cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&worktree, |this, worktree, event, cx| match event {
-            worktree::Event::LanguageRegistered => {
-                this.diagnose(cx);
-            }
+        cx.subscribe(&worktree, |_, worktree, event, cx| match event {
             worktree::Event::DiagnosticsUpdated(path) => {
                 cx.emit(Event::DiagnosticsUpdated(ProjectPath {
                     worktree_id: worktree.id(),
@@ -503,36 +500,6 @@ impl Project {
         if new_active_entry != self.active_entry {
             self.active_entry = new_active_entry;
             cx.emit(Event::ActiveEntryChanged(new_active_entry));
-        }
-    }
-
-    pub fn diagnose(&self, cx: &mut ModelContext<Self>) {
-        for worktree_handle in &self.worktrees {
-            if let Some(worktree) = worktree_handle.read(cx).as_local() {
-                for language in worktree.languages() {
-                    if let Some(provider) = language.diagnostic_provider().cloned() {
-                        let worktree_path = worktree.abs_path().clone();
-                        let worktree_handle = worktree_handle.downgrade();
-                        cx.spawn_weak(|_, mut cx| async move {
-                            let diagnostics = provider.diagnose(worktree_path).await.log_err()?;
-                            let worktree_handle = worktree_handle.upgrade(&cx)?;
-                            worktree_handle.update(&mut cx, |worktree, cx| {
-                                for (path, diagnostics) in diagnostics {
-                                    worktree
-                                        .update_diagnostics_from_provider(
-                                            path.into(),
-                                            diagnostics,
-                                            cx,
-                                        )
-                                        .log_err()?;
-                                }
-                                Some(())
-                            })
-                        })
-                        .detach();
-                    }
-                }
-            }
         }
     }
 

@@ -2857,19 +2857,19 @@ impl Editor {
         loop {
             let next_group = buffer
                 .diagnostics_in_range::<_, usize>(search_start..buffer.len())
-                .find_map(|(provider_name, entry)| {
+                .find_map(|entry| {
                     if entry.diagnostic.is_primary
                         && !entry.range.is_empty()
                         && Some(entry.range.end) != active_primary_range.as_ref().map(|r| *r.end())
                     {
-                        Some((provider_name, entry.range, entry.diagnostic.group_id))
+                        Some((entry.range, entry.diagnostic.group_id))
                     } else {
                         None
                     }
                 });
 
-            if let Some((provider_name, primary_range, group_id)) = next_group {
-                self.activate_diagnostics(provider_name, group_id, cx);
+            if let Some((primary_range, group_id)) = next_group {
+                self.activate_diagnostics(group_id, cx);
                 self.update_selections(
                     vec![Selection {
                         id: selection.id,
@@ -2897,7 +2897,7 @@ impl Editor {
             let primary_range_start = active_diagnostics.primary_range.start.to_offset(&buffer);
             let is_valid = buffer
                 .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone())
-                .any(|(_, entry)| {
+                .any(|entry| {
                     entry.diagnostic.is_primary
                         && !entry.range.is_empty()
                         && entry.range.start == primary_range_start
@@ -2923,12 +2923,7 @@ impl Editor {
         }
     }
 
-    fn activate_diagnostics(
-        &mut self,
-        provider_name: &str,
-        group_id: usize,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) {
         self.dismiss_diagnostics(cx);
         self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
             let buffer = self.buffer.read(cx).snapshot(cx);
@@ -2937,7 +2932,7 @@ impl Editor {
             let mut primary_message = None;
             let mut group_end = Point::zero();
             let diagnostic_group = buffer
-                .diagnostic_group::<Point>(provider_name, group_id)
+                .diagnostic_group::<Point>(group_id)
                 .map(|entry| {
                     if entry.range.end > group_end {
                         group_end = entry.range.end;

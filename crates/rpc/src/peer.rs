@@ -401,7 +401,7 @@ mod tests {
                         content: "path/one content".to_string(),
                         history: vec![],
                         selections: vec![],
-                        diagnostic_sets: vec![],
+                        diagnostics: vec![],
                     }),
                 }
             );
@@ -424,7 +424,7 @@ mod tests {
                         content: "path/two content".to_string(),
                         history: vec![],
                         selections: vec![],
-                        diagnostic_sets: vec![],
+                        diagnostics: vec![],
                     }),
                 }
             );
@@ -455,7 +455,7 @@ mod tests {
                                         content: "path/one content".to_string(),
                                         history: vec![],
                                         selections: vec![],
-                                        diagnostic_sets: vec![],
+                                        diagnostics: vec![],
                                     }),
                                 }
                             }
@@ -467,7 +467,7 @@ mod tests {
                                         content: "path/two content".to_string(),
                                         history: vec![],
                                         selections: vec![],
-                                        diagnostic_sets: vec![],
+                                        diagnostics: vec![],
                                     }),
                                 }
                             }
