@@ -66,6 +66,7 @@ pub struct Buffer {
     parsing_in_background: bool,
     parse_count: usize,
     remote_selections: TreeMap<ReplicaId, Arc<[Selection<Anchor>]>>,
+    selections_update_count: usize,
     diagnostic_sets: Vec<DiagnosticSet>,
     diagnostics_update_count: usize,
     language_server: Option<LanguageServerState>,
@@ -78,8 +79,9 @@ pub struct BufferSnapshot {
     text: text::BufferSnapshot,
     tree: Option<Tree>,
     diagnostic_sets: Vec<DiagnosticSet>,
-    remote_selections: TreeMap<ReplicaId, Arc<[Selection<Anchor>]>>,
     diagnostics_update_count: usize,
+    remote_selections: TreeMap<ReplicaId, Arc<[Selection<Anchor>]>>,
+    selections_update_count: usize,
     is_parsing: bool,
     language: Option<Arc<Language>>,
     parse_count: usize,
@@ -373,6 +375,7 @@ impl Buffer {
             pending_autoindent: Default::default(),
             language: None,
             remote_selections: Default::default(),
+            selections_update_count: 0,
             diagnostic_sets: Default::default(),
             diagnostics_update_count: 0,
             language_server: None,
@@ -392,6 +395,7 @@ impl Buffer {
             is_parsing: self.parsing_in_background,
             language: self.language.clone(),
             parse_count: self.parse_count,
+            selections_update_count: self.selections_update_count,
         }
     }
 
@@ -615,6 +619,10 @@ impl Buffer {
 
     pub fn parse_count(&self) -> usize {
         self.parse_count
+    }
+
+    pub fn selections_update_count(&self) -> usize {
+        self.selections_update_count
     }
 
     pub fn diagnostics_update_count(&self) -> usize {
@@ -1088,8 +1096,6 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         let lamport_timestamp = self.text.lamport_clock.tick();
-        self.remote_selections
-            .insert(self.text.replica_id(), selections.clone());
         self.send_operation(
             Operation::UpdateSelections {
                 replica_id: self.text.replica_id(),
@@ -1362,6 +1368,7 @@ impl Buffer {
             } => {
                 self.remote_selections.insert(replica_id, selections);
                 self.text.lamport_clock.observe(lamport_timestamp);
+                self.selections_update_count += 1;
             }
             Operation::RemoveSelections {
                 replica_id,
@@ -1369,6 +1376,7 @@ impl Buffer {
             } => {
                 self.remote_selections.remove(&replica_id);
                 self.text.lamport_clock.observe(lamport_timestamp);
+                self.selections_update_count += 1;
             }
         }
     }
@@ -1791,6 +1799,10 @@ impl BufferSnapshot {
     pub fn parse_count(&self) -> usize {
         self.parse_count
     }
+
+    pub fn selections_update_count(&self) -> usize {
+        self.selections_update_count
+    }
 }
 
 impl Clone for BufferSnapshot {
@@ -1799,6 +1811,7 @@ impl Clone for BufferSnapshot {
             text: self.text.clone(),
             tree: self.tree.clone(),
             remote_selections: self.remote_selections.clone(),
+            selections_update_count: self.selections_update_count,
             diagnostic_sets: self.diagnostic_sets.clone(),
             diagnostics_update_count: self.diagnostics_update_count,
             is_parsing: self.is_parsing,
