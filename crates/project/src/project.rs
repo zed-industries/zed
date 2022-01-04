@@ -229,35 +229,45 @@ impl Project {
             collaborators.insert(collaborator.peer_id, collaborator);
         }
 
-        Ok(cx.add_model(|cx| Self {
-            worktrees,
-            active_entry: None,
-            collaborators,
-            languages,
-            user_store,
-            fs,
-            subscriptions: vec![
-                client.subscribe_to_entity(remote_id, cx, Self::handle_unshare_project),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_add_collaborator),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_remove_collaborator),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_share_worktree),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_unregister_worktree),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_update_worktree),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_update_diagnostic_summary),
-                client.subscribe_to_entity(
+        Ok(cx.add_model(|cx| {
+            let mut this = Self {
+                worktrees: Vec::new(),
+                active_entry: None,
+                collaborators,
+                languages,
+                user_store,
+                fs,
+                subscriptions: vec![
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_unshare_project),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_add_collaborator),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_remove_collaborator),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_share_worktree),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_unregister_worktree),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_update_worktree),
+                    client.subscribe_to_entity(
+                        remote_id,
+                        cx,
+                        Self::handle_update_diagnostic_summary,
+                    ),
+                    client.subscribe_to_entity(
+                        remote_id,
+                        cx,
+                        Self::handle_disk_based_diagnostics_updated,
+                    ),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
+                ],
+                client,
+                client_state: ProjectClientState::Remote {
+                    sharing_has_stopped: false,
                     remote_id,
-                    cx,
-                    Self::handle_disk_based_diagnostics_updated,
-                ),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
-            ],
-            client,
-            client_state: ProjectClientState::Remote {
-                sharing_has_stopped: false,
-                remote_id,
-                replica_id,
-            },
+                    replica_id,
+                },
+            };
+            for worktree in worktrees {
+                this.add_worktree(worktree, cx);
+            }
+            this
         }))
     }
 

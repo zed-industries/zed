@@ -1060,7 +1060,7 @@ mod tests {
             LanguageRegistry, LanguageServerConfig, Point,
         },
         lsp,
-        project::{DiagnosticSummary, Project},
+        project::{DiagnosticSummary, Project, ProjectPath},
     };
 
     #[gpui::test]
@@ -1801,6 +1801,7 @@ mod tests {
         let project_id = project_a
             .update(&mut cx_a, |project, _| project.next_remote_id())
             .await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
         project_a
             .update(&mut cx_a, |project, cx| project.share(cx))
             .await
@@ -1826,7 +1827,6 @@ mod tests {
         )
         .await
         .unwrap();
-        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
 
         // Simulate a language server reporting errors for a file.
         fake_language_server
@@ -1853,11 +1853,14 @@ mod tests {
             })
             .await;
 
-        worktree_b
-            .condition(&cx_b, |worktree, _| {
-                worktree.diagnostic_summaries().collect::<Vec<_>>()
+        project_b
+            .condition(&cx_b, |project, cx| {
+                project.diagnostic_summaries(cx).collect::<Vec<_>>()
                     == &[(
-                        Arc::from(Path::new("a.rs")),
+                        ProjectPath {
+                            worktree_id,
+                            path: Arc::from(Path::new("a.rs")),
+                        },
                         DiagnosticSummary {
                             error_count: 1,
                             warning_count: 1,
@@ -1868,6 +1871,7 @@ mod tests {
             .await;
 
         // Open the file with the errors.
+        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
         let buffer_b = cx_b
             .background()
             .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.rs", cx)))
