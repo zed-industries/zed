@@ -368,10 +368,10 @@ impl WorkspaceParams {
     pub fn test(cx: &mut MutableAppContext) -> Self {
         let fs = Arc::new(project::FakeFs::new());
         let languages = Arc::new(LanguageRegistry::new());
-        let client = Client::new();
         let http_client = client::test::FakeHttpClient::new(|_| async move {
             Ok(client::http::ServerResponse::new(404))
         });
+        let client = Client::new(http_client.clone());
         let theme =
             gpui::fonts::with_font_cache(cx.font_cache().clone(), || theme::Theme::default());
         let settings = Settings::new("Courier", cx.font_cache(), Arc::new(theme)).unwrap();

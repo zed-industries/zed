@@ -112,6 +112,9 @@ pub fn add_routes(app: &mut Server<Arc<AppState>>) {
     app.at("/sign_in").get(get_sign_in);
     app.at("/sign_out").post(post_sign_out);
     app.at("/auth_callback").get(get_auth_callback);
+    app.at("/native_app_signin").get(get_sign_in);
+    app.at("/native_app_signin_succeeded")
+        .get(get_app_signin_success);
 }
 
 #[derive(Debug, Deserialize)]
@@ -164,6 +167,10 @@ async fn get_sign_in(mut request: Request) -> tide::Result {
         .insert("auth_csrf_token", csrf_token)?;
 
     Ok(tide::Redirect::new(auth_url).into())
+}
+
+async fn get_app_signin_success(_: Request) -> tide::Result {
+    Ok(tide::Redirect::new("/").into())
 }
 
 async fn get_auth_callback(mut request: Request) -> tide::Result {

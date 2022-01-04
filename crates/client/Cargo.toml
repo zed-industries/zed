@@ -16,7 +16,7 @@ rpc = { path = "../rpc" }
 sum_tree = { path = "../sum_tree" }
 anyhow = "1.0.38"
 async-recursion = "0.3"
-async-tungstenite = { version = "0.14", features = ["async-tls"] }
+async-tungstenite = { version = "0.16", features = ["async-tls"] }
 futures = "0.3"
 image = "0.23"
 lazy_static = "1.4.0"

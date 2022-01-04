@@ -13,7 +13,7 @@ test-support = []
 [dependencies]
 anyhow = "1.0"
 async-lock = "2.4"
-async-tungstenite = "0.14"
+async-tungstenite = "0.16"
 base64 = "0.13"
 futures = "0.3"
 log = "0.4"

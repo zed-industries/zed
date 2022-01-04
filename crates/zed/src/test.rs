@@ -1,5 +1,5 @@
 use crate::{assets::Assets, build_window_options, build_workspace, AppState};
-use client::{http::ServerResponse, test::FakeHttpClient, ChannelList, Client, UserStore};
+use client::{test::FakeHttpClient, ChannelList, Client, UserStore};
 use gpui::{AssetSource, MutableAppContext};
 use language::LanguageRegistry;
 use parking_lot::Mutex;
@@ -20,8 +20,8 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
     editor::init(cx, &mut entry_openers);
     let (settings_tx, settings) = watch::channel_with(build_settings(cx));
     let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
-    let client = Client::new();
-    let http = FakeHttpClient::new(|_| async move { Ok(ServerResponse::new(404)) });
+    let http = FakeHttpClient::with_404_response();
+    let client = Client::new(http.clone());
     let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
     let mut languages = LanguageRegistry::new();
     languages.add(Arc::new(language::Language::new(

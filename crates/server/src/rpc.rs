@@ -2440,9 +2440,10 @@ mod tests {
         }
 
         async fn create_client(&mut self, cx: &mut TestAppContext, name: &str) -> TestClient {
+            let http = FakeHttpClient::with_404_response();
             let user_id = self.app_state.db.create_user(name, false).await.unwrap();
             let client_name = name.to_string();
-            let mut client = Client::new();
+            let mut client = Client::new(http.clone());
             let server = self.server.clone();
             let connection_killers = self.connection_killers.clone();
             let forbid_connections = self.forbid_connections.clone();
@@ -2489,7 +2490,6 @@ mod tests {
                     })
                 });
 
-            let http = FakeHttpClient::new(|_| async move { Ok(surf::http::Response::new(404)) });
             client
                 .authenticate_and_connect(&cx.to_async())
                 .await
