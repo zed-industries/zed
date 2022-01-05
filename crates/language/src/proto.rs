@@ -1,6 +1,7 @@
 use crate::{diagnostic_set::DiagnosticEntry, Diagnostic, Operation};
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
+use collections::HashSet;
 use lsp::DiagnosticSeverity;
 use rpc::proto;
 use std::sync::Arc;
@@ -32,7 +33,7 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 counts: undo
                     .counts
                     .iter()
-                    .map(|(edit_id, count)| proto::operation::UndoCount {
+                    .map(|(edit_id, count)| proto::UndoCount {
                         replica_id: edit_id.replica_id as u32,
                         local_timestamp: edit_id.value,
                         count: *count,
@@ -48,13 +49,6 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 replica_id: *replica_id as u32,
                 lamport_timestamp: lamport_timestamp.value,
                 selections: serialize_selections(selections),
-            }),
-            Operation::RemoveSelections {
-                replica_id,
-                lamport_timestamp,
-            } => proto::operation::Variant::RemoveSelections(proto::operation::RemoveSelections {
-                replica_id: *replica_id as u32,
-                lamport_timestamp: lamport_timestamp.value,
             }),
             Operation::UpdateDiagnostics {
                 provider_name,
@@ -88,6 +82,43 @@ pub fn serialize_edit_operation(operation: &EditOperation) -> proto::operation::
         version: From::from(&operation.version),
         ranges,
         new_text: operation.new_text.clone(),
+    }
+}
+
+pub fn serialize_undo_map_entry(
+    (edit_id, counts): (&clock::Local, &[(clock::Local, u32)]),
+) -> proto::UndoMapEntry {
+    proto::UndoMapEntry {
+        replica_id: edit_id.replica_id as u32,
+        local_timestamp: edit_id.value,
+        counts: counts
+            .iter()
+            .map(|(undo_id, count)| proto::UndoCount {
+                replica_id: undo_id.replica_id as u32,
+                local_timestamp: undo_id.value,
+                count: *count,
+            })
+            .collect(),
+    }
+}
+
+pub fn serialize_buffer_fragment(fragment: &text::Fragment) -> proto::BufferFragment {
+    proto::BufferFragment {
+        replica_id: fragment.insertion_timestamp.replica_id as u32,
+        local_timestamp: fragment.insertion_timestamp.local,
+        lamport_timestamp: fragment.insertion_timestamp.lamport,
+        insertion_offset: fragment.insertion_offset as u32,
+        len: fragment.len as u32,
+        visible: fragment.visible,
+        deletions: fragment
+            .deletions
+            .iter()
+            .map(|clock| proto::VectorClockEntry {
+                replica_id: clock.replica_id as u32,
+                timestamp: clock.value,
+            })
+            .collect(),
+        max_undos: From::from(&fragment.max_undos),
     }
 }
 
@@ -208,13 +239,6 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                     selections: Arc::from(selections),
                 }
             }
-            proto::operation::Variant::RemoveSelections(message) => Operation::RemoveSelections {
-                replica_id: message.replica_id as ReplicaId,
-                lamport_timestamp: clock::Lamport {
-                    replica_id: message.replica_id as ReplicaId,
-                    value: message.lamport_timestamp,
-                },
-            },
             proto::operation::Variant::UpdateDiagnosticSet(message) => {
                 let (provider_name, diagnostics) = deserialize_diagnostic_set(
                     message
@@ -249,6 +273,53 @@ pub fn deserialize_edit_operation(edit: proto::operation::Edit) -> EditOperation
         version: edit.version.into(),
         ranges,
         new_text: edit.new_text,
+    }
+}
+
+pub fn deserialize_undo_map_entry(
+    entry: proto::UndoMapEntry,
+) -> (clock::Local, Vec<(clock::Local, u32)>) {
+    (
+        clock::Local {
+            replica_id: entry.replica_id as u16,
+            value: entry.local_timestamp,
+        },
+        entry
+            .counts
+            .into_iter()
+            .map(|undo_count| {
+                (
+                    clock::Local {
+                        replica_id: undo_count.replica_id as u16,
+                        value: undo_count.local_timestamp,
+                    },
+                    undo_count.count,
+                )
+            })
+            .collect(),
+    )
+}
+
+pub fn deserialize_buffer_fragment(
+    message: proto::BufferFragment,
+    ix: usize,
+    count: usize,
+) -> Fragment {
+    Fragment {
+        id: locator::Locator::from_index(ix, count),
+        insertion_timestamp: InsertionTimestamp {
+            replica_id: message.replica_id as ReplicaId,
+            local: message.local_timestamp,
+            lamport: message.lamport_timestamp,
+        },
+        insertion_offset: message.insertion_offset as usize,
+        len: message.len as usize,
+        visible: message.visible,
+        deletions: HashSet::from_iter(message.deletions.into_iter().map(|entry| clock::Local {
+            replica_id: entry.replica_id as ReplicaId,
+            value: entry.timestamp,
+        })),
+        max_undos: From::from(message.max_undos),
     }
 }
 

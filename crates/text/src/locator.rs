@@ -19,6 +19,11 @@ impl Locator {
         Self(smallvec![u64::MAX])
     }
 
+    pub fn from_index(ix: usize, count: usize) -> Self {
+        let id = ((ix as u128 * u64::MAX as u128) / count as u128) as u64;
+        Self(smallvec![id])
+    }
+
     pub fn assign(&mut self, other: &Self) {
         self.0.resize(other.0.len(), 0);
         self.0.copy_from_slice(&other.0);

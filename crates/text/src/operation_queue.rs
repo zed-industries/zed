@@ -53,7 +53,7 @@ impl<T: Operation> OperationQueue<T> {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &T> {
-        self.0.cursor::<()>().map(|i| &i.0)
+        self.0.iter().map(|i| &i.0)
     }
 }
 

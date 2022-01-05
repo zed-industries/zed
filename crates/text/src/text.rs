@@ -42,7 +42,6 @@ pub type TransactionId = usize;
 
 pub struct Buffer {
     snapshot: BufferSnapshot,
-    last_edit: clock::Local,
     history: History,
     deferred_ops: OperationQueue<Operation>,
     deferred_replicas: HashSet<ReplicaId>,
@@ -384,14 +383,14 @@ impl InsertionTimestamp {
 }
 
 #[derive(Eq, PartialEq, Clone, Debug)]
-struct Fragment {
-    id: Locator,
-    insertion_timestamp: InsertionTimestamp,
-    insertion_offset: usize,
-    len: usize,
-    visible: bool,
-    deletions: HashSet<clock::Local>,
-    max_undos: clock::Global,
+pub struct Fragment {
+    pub id: Locator,
+    pub insertion_timestamp: InsertionTimestamp,
+    pub insertion_offset: usize,
+    pub len: usize,
+    pub visible: bool,
+    pub deletions: HashSet<clock::Local>,
+    pub max_undos: clock::Global,
 }
 
 #[derive(Eq, PartialEq, Clone, Debug)]
@@ -496,7 +495,6 @@ impl Buffer {
                 version,
                 undo_map: Default::default(),
             },
-            last_edit: clock::Local::default(),
             history,
             deferred_ops: OperationQueue::new(),
             deferred_replicas: HashSet::default(),
@@ -505,6 +503,56 @@ impl Buffer {
             local_clock,
             lamport_clock,
             subscriptions: Default::default(),
+        }
+    }
+
+    pub fn from_parts(
+        replica_id: u16,
+        remote_id: u64,
+        visible_text: &str,
+        deleted_text: &str,
+        undo_map: impl Iterator<Item = (clock::Local, Vec<(clock::Local, u32)>)>,
+        fragments: impl ExactSizeIterator<Item = Fragment>,
+        lamport_timestamp: u32,
+        version: clock::Global,
+    ) -> Self {
+        let visible_text = visible_text.into();
+        let deleted_text = deleted_text.into();
+        let fragments = SumTree::from_iter(fragments, &None);
+        let mut insertions = fragments
+            .iter()
+            .map(|fragment| InsertionFragment {
+                timestamp: fragment.insertion_timestamp.local(),
+                split_offset: fragment.insertion_offset,
+                fragment_id: fragment.id.clone(),
+            })
+            .collect::<Vec<_>>();
+        insertions.sort_unstable_by_key(|i| (i.timestamp, i.split_offset));
+        Self {
+            remote_id,
+            replica_id,
+
+            history: History::new("".into()),
+            deferred_ops: OperationQueue::new(),
+            deferred_replicas: Default::default(),
+            local_clock: clock::Local {
+                replica_id,
+                value: version.get(replica_id) + 1,
+            },
+            lamport_clock: clock::Lamport {
+                replica_id,
+                value: lamport_timestamp,
+            },
+            subscriptions: Default::default(),
+            snapshot: BufferSnapshot {
+                replica_id,
+                visible_text,
+                deleted_text,
+                undo_map: UndoMap(undo_map.collect()),
+                fragments,
+                insertions: SumTree::from_iter(insertions, &()),
+                version,
+            },
         }
     }
 
@@ -557,7 +605,6 @@ impl Buffer {
 
         self.history.push(edit.clone());
         self.history.push_undo(edit.timestamp.local());
-        self.last_edit = edit.timestamp.local();
         self.snapshot.version.observe(edit.timestamp.local());
         self.end_transaction();
         edit
@@ -1054,6 +1101,10 @@ impl Buffer {
         Ok(())
     }
 
+    pub fn deferred_ops(&self) -> impl Iterator<Item = &Operation> {
+        self.deferred_ops.iter()
+    }
+
     fn flush_deferred_ops(&mut self) -> Result<()> {
         self.deferred_replicas.clear();
         let mut deferred_ops = Vec::new();
@@ -1118,6 +1169,13 @@ impl Buffer {
 
     pub fn history(&self) -> impl Iterator<Item = &EditOperation> {
         self.history.ops.values()
+    }
+
+    pub fn undo_history(&self) -> impl Iterator<Item = (&clock::Local, &[(clock::Local, u32)])> {
+        self.undo_map
+            .0
+            .iter()
+            .map(|(edit_id, undo_counts)| (edit_id, undo_counts.as_slice()))
     }
 
     pub fn undo(&mut self) -> Option<(TransactionId, Operation)> {
@@ -1186,7 +1244,11 @@ impl Buffer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl Buffer {
-    fn random_byte_range(&mut self, start_offset: usize, rng: &mut impl rand::Rng) -> Range<usize> {
+    pub fn set_group_interval(&mut self, group_interval: Duration) {
+        self.history.group_interval = group_interval;
+    }
+
+    pub fn random_byte_range(&self, start_offset: usize, rng: &mut impl rand::Rng) -> Range<usize> {
         let end = self.clip_offset(rng.gen_range(start_offset..=self.len()), Bias::Right);
         let start = self.clip_offset(rng.gen_range(start_offset..=end), Bias::Right);
         start..end
@@ -1288,7 +1350,15 @@ impl BufferSnapshot {
     }
 
     pub fn text(&self) -> String {
-        self.text_for_range(0..self.len()).collect()
+        self.visible_text.to_string()
+    }
+
+    pub fn deleted_text(&self) -> String {
+        self.deleted_text.to_string()
+    }
+
+    pub fn fragments(&self) -> impl Iterator<Item = &Fragment> {
+        self.fragments.iter()
     }
 
     pub fn text_summary(&self) -> TextSummary {
