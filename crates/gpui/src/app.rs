@@ -2660,6 +2660,8 @@ impl<T: Entity> ModelHandle<T> {
                 loop {
                     {
                         let cx = cx.borrow();
+                        let executor = cx.foreground();
+
                         let cx = cx.as_ref();
                         if predicate(
                             handle
@@ -2670,10 +2672,10 @@ impl<T: Entity> ModelHandle<T> {
                         ) {
                             break;
                         }
-                    }
 
-                    if cx.borrow_mut().foreground().would_park() {
-                        panic!("parked while waiting on condition");
+                        if executor.parking_forbidden() && executor.would_park() {
+                            panic!("parked while waiting on condition");
+                        }
                     }
 
                     rx.recv()

@@ -4858,6 +4858,7 @@ dependencies = [
  "rand 0.8.3",
  "smallvec",
  "sum_tree",
+ "util",
 ]
 
 [[package]]
@@ -5382,8 +5383,10 @@ name = "util"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clock",
  "futures",
  "log",
+ "rand 0.8.3",
  "serde_json",
  "surf",
  "tempdir",

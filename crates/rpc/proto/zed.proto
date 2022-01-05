@@ -270,15 +270,32 @@ message Entry {
 
 message Buffer {
     uint64 id = 1;
-    string content = 2;
-    repeated Operation.Edit history = 3;
-    repeated SelectionSet selections = 4;
-    repeated Diagnostic diagnostics = 5;
+    string visible_text = 2;
+    string deleted_text = 3;
+    repeated BufferFragment fragments = 4;
+    repeated UndoMapEntry undo_map = 5;
+    repeated VectorClockEntry version = 6;
+    repeated SelectionSet selections = 7;
+    repeated Diagnostic diagnostics = 8;
+    uint32 lamport_timestamp = 9;
+    repeated Operation deferred_operations = 10;
+}
+
+message BufferFragment {
+    uint32 replica_id = 1;
+    uint32 local_timestamp = 2;
+    uint32 lamport_timestamp = 3;
+    uint32 insertion_offset = 4;
+    uint32 len = 5;
+    bool visible =  6;
+    repeated VectorClockEntry deletions = 7;
+    repeated VectorClockEntry max_undos = 8;
 }
 
 message SelectionSet {
     uint32 replica_id = 1;
     repeated Selection selections = 2;
+    uint32 lamport_timestamp = 3;
 }
 
 message Selection {
@@ -331,8 +348,7 @@ message Operation {
         Edit edit = 1;
         Undo undo = 2;
         UpdateSelections update_selections = 3;
-        RemoveSelections remove_selections = 4;
-        UpdateDiagnostics update_diagnostics = 5;
+        UpdateDiagnostics update_diagnostics = 4;
     }
 
     message Edit {
@@ -353,22 +369,23 @@ message Operation {
         repeated UndoCount counts = 6;
     }
 
-    message UndoCount {
-        uint32 replica_id = 1;
-        uint32 local_timestamp = 2;
-        uint32 count = 3;
-    }
-
     message UpdateSelections {
         uint32 replica_id = 1;
         uint32 lamport_timestamp = 3;
         repeated Selection selections = 4;
     }
+}
 
-    message RemoveSelections {
-        uint32 replica_id = 1;
-        uint32 lamport_timestamp = 3;
-    }
+message UndoMapEntry {
+    uint32 replica_id = 1;
+    uint32 local_timestamp = 2;
+    repeated UndoCount counts = 3;
+}
+
+message UndoCount {
+    uint32 replica_id = 1;
+    uint32 local_timestamp = 2;
+    uint32 count = 3;
 }
 
 message VectorClockEntry {

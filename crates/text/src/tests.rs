@@ -7,6 +7,7 @@ use std::{
     iter::Iterator,
     time::{Duration, Instant},
 };
+use util::test::Network;
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -602,18 +603,6 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
     }
 }
 
-#[derive(Clone)]
-struct Envelope<T: Clone> {
-    message: T,
-    sender: ReplicaId,
-}
-
-struct Network<T: Clone, R: rand::Rng> {
-    inboxes: std::collections::BTreeMap<ReplicaId, Vec<Envelope<T>>>,
-    all_messages: Vec<T>,
-    rng: R,
-}
-
 impl Buffer {
     fn check_invariants(&self) {
         // Ensure every fragment is ordered by locator in the fragment tree and corresponds
@@ -644,71 +633,5 @@ impl Buffer {
             assert_eq!(insertion_fragment.fragment_id, fragment.id);
             assert_eq!(insertion_fragment.split_offset, fragment.insertion_offset);
         }
-    }
-}
-
-impl<T: Clone, R: rand::Rng> Network<T, R> {
-    fn new(rng: R) -> Self {
-        Network {
-            inboxes: Default::default(),
-            all_messages: Vec::new(),
-            rng,
-        }
-    }
-
-    fn add_peer(&mut self, id: ReplicaId) {
-        self.inboxes.insert(id, Vec::new());
-    }
-
-    fn is_idle(&self) -> bool {
-        self.inboxes.values().all(|i| i.is_empty())
-    }
-
-    fn broadcast(&mut self, sender: ReplicaId, messages: Vec<T>) {
-        for (replica, inbox) in self.inboxes.iter_mut() {
-            if *replica != sender {
-                for message in &messages {
-                    let min_index = inbox
-                        .iter()
-                        .enumerate()
-                        .rev()
-                        .find_map(|(index, envelope)| {
-                            if sender == envelope.sender {
-                                Some(index + 1)
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(0);
-
-                    // Insert one or more duplicates of this message *after* the previous
-                    // message delivered by this replica.
-                    for _ in 0..self.rng.gen_range(1..4) {
-                        let insertion_index = self.rng.gen_range(min_index..inbox.len() + 1);
-                        inbox.insert(
-                            insertion_index,
-                            Envelope {
-                                message: message.clone(),
-                                sender,
-                            },
-                        );
-                    }
-                }
-            }
-        }
-        self.all_messages.extend(messages);
-    }
-
-    fn has_unreceived(&self, receiver: ReplicaId) -> bool {
-        !self.inboxes[&receiver].is_empty()
-    }
-
-    fn receive(&mut self, receiver: ReplicaId) -> Vec<T> {
-        let inbox = self.inboxes.get_mut(&receiver).unwrap();
-        let count = self.rng.gen_range(0..inbox.len() + 1);
-        inbox
-            .drain(0..count)
-            .map(|envelope| envelope.message)
-            .collect()
     }
 }

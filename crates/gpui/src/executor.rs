@@ -260,7 +260,8 @@ impl Deterministic {
 
 impl DeterministicState {
     fn would_park(&self) -> bool {
-        self.scheduled_from_foreground.is_empty()
+        self.forbid_parking
+            && self.scheduled_from_foreground.is_empty()
             && self.scheduled_from_background.is_empty()
             && self.spawned_from_foreground.is_empty()
     }
@@ -436,6 +437,13 @@ impl Foreground {
             Self::Test(executor) => smol::block_on(executor.run(future)),
         };
         *any_value.downcast().unwrap()
+    }
+
+    pub fn parking_forbidden(&self) -> bool {
+        match self {
+            Self::Deterministic(executor) => executor.state.lock().forbid_parking,
+            _ => panic!("this method can only be called on a deterministic executor"),
+        }
     }
 
     pub fn would_park(&self) -> bool {
