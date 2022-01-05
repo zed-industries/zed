@@ -1,5 +1,6 @@
 use super::*;
 use clock::ReplicaId;
+use collections::BTreeMap;
 use gpui::{ModelHandle, MutableAppContext};
 use rand::prelude::*;
 use std::{
@@ -848,13 +849,14 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
 
     let mut now = Instant::now();
     let mut mutation_count = operations;
+    let mut active_selections = BTreeMap::default();
     loop {
         let replica_index = rng.gen_range(0..replica_ids.len());
         let replica_id = replica_ids[replica_index];
         let buffer = &mut buffers[replica_index];
         let mut new_buffer = None;
         match rng.gen_range(0..100) {
-            0..=34 if mutation_count != 0 => {
+            0..=29 if mutation_count != 0 => {
                 buffer.update(cx, |buffer, cx| {
                     buffer.start_transaction_at(now);
                     buffer.randomly_edit(&mut rng, 5, cx);
@@ -863,7 +865,31 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
                 });
                 mutation_count -= 1;
             }
-            35..=49 if replica_ids.len() < max_peers => {
+            30..=39 if mutation_count != 0 => {
+                buffer.update(cx, |buffer, cx| {
+                    let mut selections = Vec::new();
+                    for id in 0..rng.gen_range(1..=5) {
+                        let range = buffer.random_byte_range(0, &mut rng);
+                        selections.push(Selection {
+                            id,
+                            start: buffer.anchor_before(range.start),
+                            end: buffer.anchor_before(range.end),
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        });
+                    }
+                    let selections: Arc<[Selection<Anchor>]> = selections.into();
+                    log::info!(
+                        "peer {} setting active selections: {:?}",
+                        replica_id,
+                        selections
+                    );
+                    active_selections.insert(replica_id, selections.clone());
+                    buffer.set_active_selections(selections, cx);
+                });
+                mutation_count -= 1;
+            }
+            40..=49 if replica_ids.len() < max_peers => {
                 let old_buffer = buffer.read(cx).to_proto();
                 let new_replica_id = replica_ids.len() as ReplicaId;
                 log::info!(
@@ -929,6 +955,20 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
             "Replica {} text != Replica 0 text",
             buffer.replica_id()
         );
+    }
+
+    for buffer in &buffers {
+        let buffer = buffer.read(cx).snapshot();
+        let expected_remote_selections = active_selections
+            .iter()
+            .filter(|(replica_id, _)| **replica_id != buffer.replica_id())
+            .map(|(replica_id, selections)| (*replica_id, selections.iter().collect::<Vec<_>>()))
+            .collect::<Vec<_>>();
+        let actual_remote_selections = buffer
+            .remote_selections_in_range(Anchor::min()..Anchor::max())
+            .map(|(replica_id, selections)| (replica_id, selections.collect::<Vec<_>>()))
+            .collect::<Vec<_>>();
+        assert_eq!(actual_remote_selections, expected_remote_selections);
     }
 }
 
