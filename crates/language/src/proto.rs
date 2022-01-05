@@ -32,7 +32,7 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 counts: undo
                     .counts
                     .iter()
-                    .map(|(edit_id, count)| proto::operation::UndoCount {
+                    .map(|(edit_id, count)| proto::UndoCount {
                         replica_id: edit_id.replica_id as u32,
                         local_timestamp: edit_id.value,
                         count: *count,
@@ -88,6 +88,50 @@ pub fn serialize_edit_operation(operation: &EditOperation) -> proto::operation::
         version: From::from(&operation.version),
         ranges,
         new_text: operation.new_text.clone(),
+    }
+}
+
+pub fn serialize_undo_map_entry(
+    (edit_id, counts): (&clock::Local, &[(clock::Local, u32)]),
+) -> proto::UndoMapEntry {
+    proto::UndoMapEntry {
+        replica_id: edit_id.replica_id as u32,
+        local_timestamp: edit_id.value,
+        counts: counts
+            .iter()
+            .map(|(undo_id, count)| proto::UndoCount {
+                replica_id: undo_id.replica_id as u32,
+                local_timestamp: undo_id.value,
+                count: *count,
+            })
+            .collect(),
+    }
+}
+
+pub fn serialize_buffer_fragment(fragment: &text::Fragment) -> proto::BufferFragment {
+    proto::BufferFragment {
+        replica_id: fragment.insertion_timestamp.replica_id as u32,
+        local_timestamp: fragment.insertion_timestamp.local,
+        lamport_timestamp: fragment.insertion_timestamp.lamport,
+        insertion_offset: fragment.insertion_offset as u32,
+        len: fragment.len as u32,
+        visible: fragment.visible,
+        deletions: fragment
+            .deletions
+            .iter()
+            .map(|clock| proto::VectorClockEntry {
+                replica_id: clock.replica_id as u32,
+                timestamp: clock.value,
+            })
+            .collect(),
+        max_undos: fragment
+            .max_undos
+            .iter()
+            .map(|clock| proto::VectorClockEntry {
+                replica_id: clock.replica_id as u32,
+                timestamp: clock.value,
+            })
+            .collect(),
     }
 }
 
@@ -250,6 +294,38 @@ pub fn deserialize_edit_operation(edit: proto::operation::Edit) -> EditOperation
         ranges,
         new_text: edit.new_text,
     }
+}
+
+pub fn deserialize_undo_map_entry(
+    entry: proto::UndoMapEntry,
+) -> (clock::Local, Vec<(clock::Local, u32)>) {
+    (
+        clock::Local {
+            replica_id: entry.replica_id as u16,
+            value: entry.local_timestamp,
+        },
+        entry
+            .counts
+            .into_iter()
+            .map(|undo_count| {
+                (
+                    clock::Local {
+                        replica_id: undo_count.replica_id as u16,
+                        value: undo_count.local_timestamp,
+                    },
+                    undo_count.count,
+                )
+            })
+            .collect(),
+    )
+}
+
+pub fn deserialize_buffer_fragment(
+    message: proto::BufferFragment,
+    ix: usize,
+    count: usize,
+) -> Fragment {
+    todo!()
 }
 
 pub fn deserialize_selections(selections: Vec<proto::Selection>) -> Arc<[Selection<Anchor>]> {

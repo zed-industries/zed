@@ -287,13 +287,24 @@ impl Buffer {
         file: Option<Box<dyn File>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<Self> {
-        let mut buffer =
-            text::Buffer::new(replica_id, message.id, History::new(message.content.into()));
-        let ops = message
-            .history
-            .into_iter()
-            .map(|op| text::Operation::Edit(proto::deserialize_edit_operation(op)));
-        buffer.apply_ops(ops)?;
+        let mut fragments_len = message.fragments.len();
+        let buffer = TextBuffer::from_parts(
+            replica_id,
+            message.id,
+            message.content,
+            message.deleted_content,
+            message
+                .undo_map
+                .into_iter()
+                .map(proto::deserialize_undo_map_entry),
+            message
+                .fragments
+                .into_iter()
+                .enumerate()
+                .map(|(i, fragment)| {
+                    proto::deserialize_buffer_fragment(fragment, i, fragments_len)
+                }),
+        );
         let mut this = Self::build(buffer, file);
         for selection_set in message.selections {
             this.remote_selections.insert(
@@ -320,11 +331,18 @@ impl Buffer {
     pub fn to_proto(&self) -> proto::Buffer {
         proto::Buffer {
             id: self.remote_id(),
-            content: self.text.base_text().to_string(),
-            history: self
+            content: self.text.text(),
+            deleted_content: self.text.deleted_text(),
+            undo_map: self
                 .text
-                .history()
-                .map(proto::serialize_edit_operation)
+                .undo_history()
+                .map(proto::serialize_undo_map_entry)
+                .collect(),
+            version: proto::serialize_vector_clock(&self.version),
+            fragments: self
+                .text
+                .fragments()
+                .map(proto::serialize_buffer_fragment)
                 .collect(),
             selections: self
                 .remote_selections

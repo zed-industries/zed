@@ -399,9 +399,7 @@ mod tests {
                     buffer: Some(proto::Buffer {
                         id: 101,
                         content: "path/one content".to_string(),
-                        history: vec![],
-                        selections: vec![],
-                        diagnostic_sets: vec![],
+                        ..Default::default()
                     }),
                 }
             );
@@ -422,9 +420,7 @@ mod tests {
                     buffer: Some(proto::Buffer {
                         id: 102,
                         content: "path/two content".to_string(),
-                        history: vec![],
-                        selections: vec![],
-                        diagnostic_sets: vec![],
+                        ..Default::default()
                     }),
                 }
             );
@@ -453,9 +449,7 @@ mod tests {
                                     buffer: Some(proto::Buffer {
                                         id: 101,
                                         content: "path/one content".to_string(),
-                                        history: vec![],
-                                        selections: vec![],
-                                        diagnostic_sets: vec![],
+                                        ..Default::default()
                                     }),
                                 }
                             }
@@ -465,9 +459,7 @@ mod tests {
                                     buffer: Some(proto::Buffer {
                                         id: 102,
                                         content: "path/two content".to_string(),
-                                        history: vec![],
-                                        selections: vec![],
-                                        diagnostic_sets: vec![],
+                                        ..Default::default()
                                     }),
                                 }
                             }

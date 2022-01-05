@@ -263,9 +263,23 @@ message Entry {
 message Buffer {
     uint64 id = 1;
     string content = 2;
-    repeated Operation.Edit history = 3;
-    repeated SelectionSet selections = 4;
-    repeated DiagnosticSet diagnostic_sets = 5;
+    string deleted_content = 3;
+    repeated BufferFragment fragments = 4;
+    repeated UndoMapEntry undo_map = 5;
+    repeated VectorClockEntry version = 6;
+    repeated SelectionSet selections = 7;
+    repeated DiagnosticSet diagnostic_sets = 8;
+}
+
+message BufferFragment {
+    uint32 replica_id = 1;
+    uint32 local_timestamp = 2;
+    uint32 lamport_timestamp = 3;
+    uint32 insertion_offset = 4;
+    uint32 len = 5;
+    bool visible =  6;
+    repeated VectorClockEntry deletions = 7;
+    repeated VectorClockEntry max_undos = 8;
 }
 
 message SelectionSet {
@@ -350,12 +364,6 @@ message Operation {
         repeated UndoCount counts = 6;
     }
 
-    message UndoCount {
-        uint32 replica_id = 1;
-        uint32 local_timestamp = 2;
-        uint32 count = 3;
-    }
-
     message UpdateSelections {
         uint32 replica_id = 1;
         uint32 lamport_timestamp = 3;
@@ -366,6 +374,18 @@ message Operation {
         uint32 replica_id = 1;
         uint32 lamport_timestamp = 3;
     }
+}
+
+message UndoMapEntry {
+    uint32 replica_id = 1;
+    uint32 local_timestamp = 2;
+    repeated UndoCount counts = 3;
+}
+
+message UndoCount {
+    uint32 replica_id = 1;
+    uint32 local_timestamp = 2;
+    uint32 count = 3;
 }
 
 message VectorClockEntry {

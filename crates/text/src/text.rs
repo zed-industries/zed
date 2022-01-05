@@ -384,14 +384,14 @@ impl InsertionTimestamp {
 }
 
 #[derive(Eq, PartialEq, Clone, Debug)]
-struct Fragment {
+pub struct Fragment {
     id: Locator,
-    insertion_timestamp: InsertionTimestamp,
-    insertion_offset: usize,
-    len: usize,
-    visible: bool,
-    deletions: HashSet<clock::Local>,
-    max_undos: clock::Global,
+    pub insertion_timestamp: InsertionTimestamp,
+    pub insertion_offset: usize,
+    pub len: usize,
+    pub visible: bool,
+    pub deletions: HashSet<clock::Local>,
+    pub max_undos: clock::Global,
 }
 
 #[derive(Eq, PartialEq, Clone, Debug)]
@@ -504,6 +504,40 @@ impl Buffer {
             remote_id,
             local_clock,
             lamport_clock,
+            subscriptions: Default::default(),
+        }
+    }
+
+    pub fn from_parts(
+        replica_id: u16,
+        remote_id: u64,
+        visible_text: &str,
+        deleted_text: &str,
+        undo_map: impl Iterator<Item = (clock::Local, Vec<(clock::Local, u32)>)>,
+        fragments: impl ExactSizeIterator<Item = Fragment>,
+    ) -> Self {
+        let visible_text = visible_text.into();
+        let deleted_text = deleted_text.into();
+        let fragments = SumTree::from_iter(fragments, &None);
+        let undo_map = UndoMap(undo_map.collect());
+        Self {
+            remote_id,
+            replica_id,
+            snapshot: BufferSnapshot {
+                replica_id,
+                visible_text,
+                deleted_text,
+                undo_map,
+                fragments,
+                insertions: (),
+                version: (),
+            },
+            history: History::new("".into()),
+            deferred_ops: OperationQueue::new(),
+            deferred_replicas: Default::default(),
+            last_edit: todo!(),
+            local_clock: todo!(),
+            lamport_clock: todo!(),
             subscriptions: Default::default(),
         }
     }
@@ -1058,6 +1092,7 @@ impl Buffer {
         self.deferred_replicas.clear();
         let mut deferred_ops = Vec::new();
         for op in self.deferred_ops.drain().iter().cloned() {
+            dbg!(&self.version, &op, self.can_apply_op(&op));
             if self.can_apply_op(&op) {
                 self.apply_op(op)?;
             } else {
@@ -1118,6 +1153,13 @@ impl Buffer {
 
     pub fn history(&self) -> impl Iterator<Item = &EditOperation> {
         self.history.ops.values()
+    }
+
+    pub fn undo_history(&self) -> impl Iterator<Item = (&clock::Local, &[(clock::Local, u32)])> {
+        self.undo_map
+            .0
+            .iter()
+            .map(|(edit_id, undo_counts)| (edit_id, undo_counts.as_slice()))
     }
 
     pub fn undo(&mut self) -> Option<(TransactionId, Operation)> {
@@ -1288,7 +1330,24 @@ impl BufferSnapshot {
     }
 
     pub fn text(&self) -> String {
-        self.text_for_range(0..self.len()).collect()
+        self.visible_text.to_string()
+    }
+
+    pub fn deleted_text(&self) -> String {
+        self.deleted_text.to_string()
+    }
+
+    pub fn fragments(&self) -> impl Iterator<Item = &Fragment> {
+        let mut cursor = self.fragments.cursor::<()>();
+        let mut started = false;
+        std::iter::from_fn(move || {
+            if started {
+                cursor.next(&None);
+            } else {
+                started = true;
+            }
+            cursor.item()
+        })
     }
 
     pub fn text_summary(&self) -> TextSummary {
