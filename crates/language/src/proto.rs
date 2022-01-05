@@ -50,13 +50,6 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 lamport_timestamp: lamport_timestamp.value,
                 selections: serialize_selections(selections),
             }),
-            Operation::RemoveSelections {
-                replica_id,
-                lamport_timestamp,
-            } => proto::operation::Variant::RemoveSelections(proto::operation::RemoveSelections {
-                replica_id: *replica_id as u32,
-                lamport_timestamp: lamport_timestamp.value,
-            }),
             Operation::UpdateDiagnostics {
                 provider_name,
                 diagnostics,
@@ -246,13 +239,6 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                     selections: Arc::from(selections),
                 }
             }
-            proto::operation::Variant::RemoveSelections(message) => Operation::RemoveSelections {
-                replica_id: message.replica_id as ReplicaId,
-                lamport_timestamp: clock::Lamport {
-                    replica_id: message.replica_id as ReplicaId,
-                    value: message.lamport_timestamp,
-                },
-            },
             proto::operation::Variant::UpdateDiagnosticSet(message) => {
                 let (provider_name, diagnostics) = deserialize_diagnostic_set(
                     message

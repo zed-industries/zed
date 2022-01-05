@@ -65,7 +65,7 @@ pub struct Buffer {
     syntax_tree: Mutex<Option<SyntaxTree>>,
     parsing_in_background: bool,
     parse_count: usize,
-    remote_selections: TreeMap<ReplicaId, Arc<[Selection<Anchor>]>>,
+    remote_selections: TreeMap<ReplicaId, SelectionSet>,
     selections_update_count: usize,
     diagnostic_sets: Vec<DiagnosticSet>,
     diagnostics_update_count: usize,
@@ -80,11 +80,17 @@ pub struct BufferSnapshot {
     tree: Option<Tree>,
     diagnostic_sets: Vec<DiagnosticSet>,
     diagnostics_update_count: usize,
-    remote_selections: TreeMap<ReplicaId, Arc<[Selection<Anchor>]>>,
+    remote_selections: TreeMap<ReplicaId, SelectionSet>,
     selections_update_count: usize,
     is_parsing: bool,
     language: Option<Arc<Language>>,
     parse_count: usize,
+}
+
+#[derive(Clone, Debug)]
+struct SelectionSet {
+    selections: Arc<[Selection<Anchor>]>,
+    lamport_timestamp: clock::Lamport,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,10 +136,6 @@ pub enum Operation {
     UpdateSelections {
         replica_id: ReplicaId,
         selections: Arc<[Selection<Anchor>]>,
-        lamport_timestamp: clock::Lamport,
-    },
-    RemoveSelections {
-        replica_id: ReplicaId,
         lamport_timestamp: clock::Lamport,
     },
 }
@@ -311,7 +313,13 @@ impl Buffer {
         for selection_set in message.selections {
             this.remote_selections.insert(
                 selection_set.replica_id as ReplicaId,
-                proto::deserialize_selections(selection_set.selections),
+                SelectionSet {
+                    selections: proto::deserialize_selections(selection_set.selections),
+                    lamport_timestamp: clock::Lamport {
+                        replica_id: selection_set.replica_id as ReplicaId,
+                        value: selection_set.lamport_timestamp,
+                    },
+                },
             );
         }
         let snapshot = this.snapshot();
@@ -357,9 +365,10 @@ impl Buffer {
             selections: self
                 .remote_selections
                 .iter()
-                .map(|(replica_id, selections)| proto::SelectionSet {
+                .map(|(replica_id, set)| proto::SelectionSet {
                     replica_id: *replica_id as u32,
-                    selections: proto::serialize_selections(selections),
+                    selections: proto::serialize_selections(&set.selections),
+                    lamport_timestamp: set.lamport_timestamp.value,
                 })
                 .collect(),
             diagnostic_sets: self
@@ -1134,8 +1143,13 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         let lamport_timestamp = self.text.lamport_clock.tick();
-        self.remote_selections
-            .insert(self.text.replica_id(), selections.clone());
+        self.remote_selections.insert(
+            self.text.replica_id(),
+            SelectionSet {
+                selections: selections.clone(),
+                lamport_timestamp,
+            },
+        );
         self.send_operation(
             Operation::UpdateSelections {
                 replica_id: self.text.replica_id(),
@@ -1147,14 +1161,7 @@ impl Buffer {
     }
 
     pub fn remove_active_selections(&mut self, cx: &mut ModelContext<Self>) {
-        let lamport_timestamp = self.text.lamport_clock.tick();
-        self.send_operation(
-            Operation::RemoveSelections {
-                replica_id: self.text.replica_id(),
-                lamport_timestamp,
-            },
-            cx,
-        );
+        self.set_active_selections(Arc::from([]), cx);
     }
 
     fn update_language_server(&mut self) {
@@ -1378,7 +1385,6 @@ impl Buffer {
             Operation::UpdateSelections { selections, .. } => selections
                 .iter()
                 .all(|s| self.can_resolve(&s.start) && self.can_resolve(&s.end)),
-            Operation::RemoveSelections { .. } => true,
         }
     }
 
@@ -1407,15 +1413,19 @@ impl Buffer {
                 selections,
                 lamport_timestamp,
             } => {
-                self.remote_selections.insert(replica_id, selections);
-                self.text.lamport_clock.observe(lamport_timestamp);
-                self.selections_update_count += 1;
-            }
-            Operation::RemoveSelections {
-                replica_id,
-                lamport_timestamp,
-            } => {
-                self.remote_selections.remove(&replica_id);
+                if let Some(set) = self.remote_selections.get(&replica_id) {
+                    if set.lamport_timestamp > lamport_timestamp {
+                        return;
+                    }
+                }
+
+                self.remote_selections.insert(
+                    replica_id,
+                    SelectionSet {
+                        selections,
+                        lamport_timestamp,
+                    },
+                );
                 self.text.lamport_clock.observe(lamport_timestamp);
                 self.selections_update_count += 1;
             }
@@ -1812,9 +1822,11 @@ impl BufferSnapshot {
     {
         self.remote_selections
             .iter()
-            .filter(|(replica_id, _)| **replica_id != self.text.replica_id())
-            .map(move |(replica_id, selections)| {
-                let start_ix = match selections.binary_search_by(|probe| {
+            .filter(|(replica_id, set)| {
+                **replica_id != self.text.replica_id() && !set.selections.is_empty()
+            })
+            .map(move |(replica_id, set)| {
+                let start_ix = match set.selections.binary_search_by(|probe| {
                     probe
                         .end
                         .cmp(&range.start, self)
@@ -1823,7 +1835,7 @@ impl BufferSnapshot {
                 }) {
                     Ok(ix) | Err(ix) => ix,
                 };
-                let end_ix = match selections.binary_search_by(|probe| {
+                let end_ix = match set.selections.binary_search_by(|probe| {
                     probe
                         .start
                         .cmp(&range.end, self)
@@ -1833,7 +1845,7 @@ impl BufferSnapshot {
                     Ok(ix) | Err(ix) => ix,
                 };
 
-                (*replica_id, selections[start_ix..end_ix].iter())
+                (*replica_id, set.selections[start_ix..end_ix].iter())
             })
     }
 
@@ -2125,9 +2137,6 @@ impl operation_queue::Operation for Operation {
                 lamport_timestamp, ..
             }
             | Operation::UpdateSelections {
-                lamport_timestamp, ..
-            }
-            | Operation::RemoveSelections {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
         }

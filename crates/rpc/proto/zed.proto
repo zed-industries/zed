@@ -287,6 +287,7 @@ message BufferFragment {
 message SelectionSet {
     uint32 replica_id = 1;
     repeated Selection selections = 2;
+    uint32 lamport_timestamp = 3;
 }
 
 message Selection {
@@ -344,8 +345,7 @@ message Operation {
         Edit edit = 1;
         Undo undo = 2;
         UpdateSelections update_selections = 3;
-        RemoveSelections remove_selections = 4;
-        UpdateDiagnosticSet update_diagnostic_set = 5;
+        UpdateDiagnosticSet update_diagnostic_set = 4;
     }
 
     message Edit {
@@ -370,11 +370,6 @@ message Operation {
         uint32 replica_id = 1;
         uint32 lamport_timestamp = 3;
         repeated Selection selections = 4;
-    }
-
-    message RemoveSelections {
-        uint32 replica_id = 1;
-        uint32 lamport_timestamp = 3;
     }
 }
 
