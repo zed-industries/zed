@@ -1,13 +1,17 @@
 use super::*;
+use clock::ReplicaId;
 use gpui::{ModelHandle, MutableAppContext};
+use rand::prelude::*;
 use std::{
     cell::RefCell,
+    env,
     iter::FromIterator,
     ops::Range,
     rc::Rc,
     time::{Duration, Instant},
 };
 use unindent::Unindent as _;
+use util::test::Network;
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -806,6 +810,126 @@ fn test_serialization(cx: &mut gpui::MutableAppContext) {
     let message = buffer1.read(cx).to_proto();
     let buffer2 = cx.add_model(|cx| Buffer::from_proto(1, message, None, cx).unwrap());
     assert_eq!(buffer2.read(cx).text(), "abcDF");
+}
+
+#[gpui::test(iterations = 100)]
+fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
+    let min_peers = env::var("MIN_PEERS")
+        .map(|i| i.parse().expect("invalid `MIN_PEERS` variable"))
+        .unwrap_or(1);
+    let max_peers = env::var("MAX_PEERS")
+        .map(|i| i.parse().expect("invalid `MAX_PEERS` variable"))
+        .unwrap_or(5);
+    let operations = env::var("OPERATIONS")
+        .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+        .unwrap_or(10);
+
+    let base_text_len = rng.gen_range(0..10);
+    let base_text = RandomCharIter::new(&mut rng)
+        .take(base_text_len)
+        .collect::<String>();
+    let mut replica_ids = Vec::new();
+    let mut buffers = Vec::new();
+    let mut network = Network::new(rng.clone());
+
+    for i in 0..rng.gen_range(min_peers..=max_peers) {
+        let buffer = cx.add_model(|cx| {
+            let mut buffer = Buffer::new(i as ReplicaId, base_text.as_str(), cx);
+            buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
+            buffer
+        });
+        buffers.push(buffer);
+        replica_ids.push(i as ReplicaId);
+        network.add_peer(i as ReplicaId);
+        log::info!("Adding initial peer with replica id {}", i);
+    }
+
+    log::info!("initial text: {:?}", base_text);
+
+    let mut now = Instant::now();
+    let mut mutation_count = operations;
+    loop {
+        let replica_index = rng.gen_range(0..replica_ids.len());
+        let replica_id = replica_ids[replica_index];
+        let buffer = &mut buffers[replica_index];
+        let mut new_buffer = None;
+        match rng.gen_range(0..100) {
+            0..=34 if mutation_count != 0 => {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.start_transaction_at(now);
+                    buffer.randomly_edit(&mut rng, 5, cx);
+                    buffer.end_transaction_at(now, cx);
+                    log::info!("buffer {} text: {:?}", buffer.replica_id(), buffer.text());
+                });
+                mutation_count -= 1;
+            }
+            35..=49 if replica_ids.len() < max_peers => {
+                let old_buffer = buffer.read(cx).to_proto();
+                let new_replica_id = replica_ids.len() as ReplicaId;
+                log::info!(
+                    "Adding new replica {} (replicating from {})",
+                    new_replica_id,
+                    replica_id
+                );
+                new_buffer = Some(cx.add_model(|cx| {
+                    let mut new_buffer =
+                        Buffer::from_proto(new_replica_id, old_buffer, None, cx).unwrap();
+                    new_buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
+                    new_buffer
+                }));
+                replica_ids.push(new_replica_id);
+                network.replicate(replica_id, new_replica_id);
+            }
+            50..=69 if mutation_count != 0 => {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.randomly_undo_redo(&mut rng, cx);
+                    log::info!("buffer {} text: {:?}", buffer.replica_id(), buffer.text());
+                });
+                mutation_count -= 1;
+            }
+            70..=99 if network.has_unreceived(replica_id) => {
+                let ops = network
+                    .receive(replica_id)
+                    .into_iter()
+                    .map(|op| proto::deserialize_operation(op).unwrap());
+                if ops.len() > 0 {
+                    log::info!(
+                        "peer {} applying {} ops from the network.",
+                        replica_id,
+                        ops.len()
+                    );
+                    buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx).unwrap());
+                }
+            }
+            _ => {}
+        }
+
+        buffer.update(cx, |buffer, _| {
+            let ops = buffer
+                .operations
+                .drain(..)
+                .map(|op| proto::serialize_operation(&op))
+                .collect();
+            network.broadcast(buffer.replica_id(), ops);
+        });
+        now += Duration::from_millis(rng.gen_range(0..=200));
+        buffers.extend(new_buffer);
+
+        if mutation_count == 0 && network.is_idle() {
+            break;
+        }
+    }
+
+    let first_buffer = buffers[0].read(cx);
+    for buffer in &buffers[1..] {
+        let buffer = buffer.read(cx);
+        assert_eq!(
+            buffer.text(),
+            first_buffer.text(),
+            "Replica {} text != Replica 0 text",
+            buffer.replica_id()
+        );
+    }
 }
 
 fn chunks_with_diagnostics<T: ToOffset + ToPoint>(

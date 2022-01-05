@@ -1498,6 +1498,10 @@ impl Buffer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl Buffer {
+    pub fn set_group_interval(&mut self, group_interval: Duration) {
+        self.text.set_group_interval(group_interval);
+    }
+
     pub fn randomly_edit<T>(
         &mut self,
         rng: &mut T,
@@ -1506,9 +1510,38 @@ impl Buffer {
     ) where
         T: rand::Rng,
     {
-        self.start_transaction();
-        self.text.randomly_edit(rng, old_range_count);
-        self.end_transaction(cx);
+        let mut old_ranges: Vec<Range<usize>> = Vec::new();
+        for _ in 0..old_range_count {
+            let last_end = old_ranges.last().map_or(0, |last_range| last_range.end + 1);
+            if last_end > self.len() {
+                break;
+            }
+            old_ranges.push(self.text.random_byte_range(last_end, rng));
+        }
+        let new_text_len = rng.gen_range(0..10);
+        let new_text: String = crate::random_char_iter::RandomCharIter::new(&mut *rng)
+            .take(new_text_len)
+            .collect();
+        log::info!(
+            "mutating buffer {} at {:?}: {:?}",
+            self.replica_id(),
+            old_ranges,
+            new_text
+        );
+        self.edit(old_ranges.iter().cloned(), new_text.as_str(), cx);
+    }
+
+    pub fn randomly_undo_redo(&mut self, rng: &mut impl rand::Rng, cx: &mut ModelContext<Self>) {
+        let was_dirty = self.is_dirty();
+        let old_version = self.version.clone();
+
+        let ops = self.text.randomly_undo_redo(rng);
+        if !ops.is_empty() {
+            for op in ops {
+                self.send_operation(Operation::Buffer(op), cx);
+                self.did_edit(&old_version, was_dirty, cx);
+            }
+        }
     }
 }
 

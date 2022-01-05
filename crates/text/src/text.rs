@@ -1105,7 +1105,6 @@ impl Buffer {
         self.deferred_replicas.clear();
         let mut deferred_ops = Vec::new();
         for op in self.deferred_ops.drain().iter().cloned() {
-            dbg!(&self.version, &op, self.can_apply_op(&op));
             if self.can_apply_op(&op) {
                 self.apply_op(op)?;
             } else {
@@ -1241,7 +1240,15 @@ impl Buffer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl Buffer {
-    fn random_byte_range(&mut self, start_offset: usize, rng: &mut impl rand::Rng) -> Range<usize> {
+    pub fn set_group_interval(&mut self, group_interval: Duration) {
+        self.history.group_interval = group_interval;
+    }
+
+    pub fn random_byte_range(
+        &mut self,
+        start_offset: usize,
+        rng: &mut impl rand::Rng,
+    ) -> Range<usize> {
         let end = self.clip_offset(rng.gen_range(start_offset..=self.len()), Bias::Right);
         let start = self.clip_offset(rng.gen_range(start_offset..=end), Bias::Right);
         start..end
