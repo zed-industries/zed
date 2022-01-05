@@ -365,7 +365,7 @@ pub struct Editor {
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     scroll_position: Vector2F,
-    scroll_top_anchor: Anchor,
+    scroll_top_anchor: Option<Anchor>,
     autoscroll_request: Option<Autoscroll>,
     build_settings: BuildSettings,
     focused: bool,
@@ -383,7 +383,7 @@ pub struct EditorSnapshot {
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
     scroll_position: Vector2F,
-    scroll_top_anchor: Anchor,
+    scroll_top_anchor: Option<Anchor>,
 }
 
 struct PendingSelection {
@@ -495,7 +495,7 @@ impl Editor {
             active_diagnostics: None,
             build_settings,
             scroll_position: Vector2F::zero(),
-            scroll_top_anchor: Anchor::min(),
+            scroll_top_anchor: None,
             autoscroll_request: None,
             focused: false,
             show_local_cursors: false,
@@ -565,15 +565,22 @@ impl Editor {
 
     pub fn set_scroll_position(&mut self, scroll_position: Vector2F, cx: &mut ViewContext<Self>) {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let scroll_top_buffer_offset =
-            DisplayPoint::new(scroll_position.y() as u32, 0).to_offset(&map, Bias::Right);
-        self.scroll_top_anchor = map
-            .buffer_snapshot
-            .anchor_at(scroll_top_buffer_offset, Bias::Right);
-        self.scroll_position = vec2f(
-            scroll_position.x(),
-            scroll_position.y() - self.scroll_top_anchor.to_display_point(&map).row() as f32,
-        );
+
+        if scroll_position.y() == 0. {
+            self.scroll_top_anchor = None;
+            self.scroll_position = scroll_position;
+        } else {
+            let scroll_top_buffer_offset =
+                DisplayPoint::new(scroll_position.y() as u32, 0).to_offset(&map, Bias::Right);
+            let anchor = map
+                .buffer_snapshot
+                .anchor_at(scroll_top_buffer_offset, Bias::Right);
+            self.scroll_position = vec2f(
+                scroll_position.x(),
+                scroll_position.y() - anchor.to_display_point(&map).row() as f32,
+            );
+            self.scroll_top_anchor = Some(anchor);
+        }
 
         cx.notify();
     }
@@ -3631,10 +3638,14 @@ impl EditorSettings {
 fn compute_scroll_position(
     snapshot: &DisplaySnapshot,
     mut scroll_position: Vector2F,
-    scroll_top_anchor: &Anchor,
+    scroll_top_anchor: &Option<Anchor>,
 ) -> Vector2F {
-    let scroll_top = scroll_top_anchor.to_display_point(snapshot).row() as f32;
-    scroll_position.set_y(scroll_top + scroll_position.y());
+    if let Some(anchor) = scroll_top_anchor {
+        let scroll_top = anchor.to_display_point(snapshot).row() as f32;
+        scroll_position.set_y(scroll_top + scroll_position.y());
+    } else {
+        scroll_position.set_y(0.);
+    }
     scroll_position
 }
 
