@@ -24,6 +24,7 @@ pub struct Theme {
     pub project_panel: ProjectPanel,
     pub selector: Selector,
     pub editor: EditorStyle,
+    pub project_diagnostics: ProjectDiagnostics,
 }
 
 #[derive(Deserialize, Default)]
@@ -224,6 +225,13 @@ pub struct ContainedLabel {
     pub container: ContainerStyle,
     #[serde(flatten)]
     pub label: LabelStyle,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct ProjectDiagnostics {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub empty_message: TextStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]

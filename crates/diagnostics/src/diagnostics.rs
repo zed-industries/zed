@@ -17,21 +17,12 @@ use util::TryFutureExt;
 use workspace::Workspace;
 
 action!(Toggle);
-action!(ClearInvalid);
 
 const CONTEXT_LINE_COUNT: u32 = 1;
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_bindings([
-        Binding::new("alt-shift-D", Toggle, None),
-        Binding::new(
-            "alt-shift-C",
-            ClearInvalid,
-            Some("ProjectDiagnosticsEditor"),
-        ),
-    ]);
+    cx.add_bindings([Binding::new("alt-shift-D", Toggle, None)]);
     cx.add_action(ProjectDiagnosticsEditor::toggle);
-    cx.add_action(ProjectDiagnosticsEditor::clear_invalid);
 }
 
 type Event = editor::Event;
@@ -47,6 +38,7 @@ struct ProjectDiagnosticsEditor {
     path_states: Vec<(Arc<Path>, Vec<DiagnosticGroupState>)>,
     paths_to_update: HashMap<WorktreeId, HashSet<ProjectPath>>,
     build_settings: BuildSettings,
+    settings: watch::Receiver<workspace::Settings>,
 }
 
 struct DiagnosticGroupState {
@@ -83,11 +75,25 @@ impl View for ProjectDiagnosticsEditor {
     }
 
     fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
-        ChildView::new(self.editor.id()).boxed()
+        if self.path_states.is_empty() {
+            let theme = &self.settings.borrow().theme.project_diagnostics;
+            Label::new(
+                "No problems detected in the project".to_string(),
+                theme.empty_message.clone(),
+            )
+            .aligned()
+            .contained()
+            .with_style(theme.container)
+            .boxed()
+        } else {
+            ChildView::new(self.editor.id()).boxed()
+        }
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        cx.focus(&self.editor);
+        if !self.path_states.is_empty() {
+            cx.focus(&self.editor);
+        }
     }
 }
 
@@ -130,6 +136,7 @@ impl ProjectDiagnosticsEditor {
             excerpts,
             editor,
             build_settings,
+            settings,
             path_states: Default::default(),
             paths_to_update: Default::default(),
         };
@@ -145,38 +152,6 @@ impl ProjectDiagnosticsEditor {
     fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
         let diagnostics = cx.add_model(|_| ProjectDiagnostics::new(workspace.project().clone()));
         workspace.add_item(diagnostics, cx);
-    }
-
-    fn clear_invalid(&mut self, _: &ClearInvalid, cx: &mut ViewContext<Self>) {
-        let mut blocks_to_delete = HashSet::default();
-        let mut excerpts_to_delete = Vec::new();
-        let mut path_ixs_to_delete = Vec::new();
-        for (ix, (_, groups)) in self.path_states.iter_mut().enumerate() {
-            groups.retain(|group| {
-                if group.is_valid {
-                    true
-                } else {
-                    blocks_to_delete.extend(group.blocks.keys().copied());
-                    excerpts_to_delete.extend(group.excerpts.iter().cloned());
-                    false
-                }
-            });
-
-            if groups.is_empty() {
-                path_ixs_to_delete.push(ix);
-            }
-        }
-
-        for ix in path_ixs_to_delete.into_iter().rev() {
-            self.path_states.remove(ix);
-        }
-
-        self.excerpts.update(cx, |excerpts, cx| {
-            excerpts_to_delete.sort_unstable();
-            excerpts.remove_excerpts(&excerpts_to_delete, cx)
-        });
-        self.editor
-            .update(cx, |editor, cx| editor.remove_blocks(blocks_to_delete, cx));
     }
 
     fn update_excerpts(&self, paths: HashSet<ProjectPath>, cx: &mut ViewContext<Self>) {
@@ -488,6 +463,9 @@ impl ProjectDiagnosticsEditor {
             self.path_states.remove(path_ix);
         }
 
+        if self.editor.is_focused(cx) && self.path_states.is_empty() {
+            cx.focus_self();
+        }
         cx.notify();
     }
 }

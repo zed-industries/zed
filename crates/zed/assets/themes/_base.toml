@@ -257,3 +257,7 @@ information_diagnostic = { text = "$status.info" }
 invalid_information_diagnostic = { text = "$text.3.color" }
 hint_diagnostic = { text = "$status.info" }
 invalid_hint_diagnostic = { text = "$text.3.color" }
+
+[project_diagnostics]
+background = "$surface.1"
+empty_message = "$text.0"
