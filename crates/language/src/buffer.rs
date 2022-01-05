@@ -1342,6 +1342,7 @@ impl Buffer {
             })
             .collect::<Vec<_>>();
         self.text.apply_ops(buffer_ops)?;
+        self.deferred_ops.insert(deferred_ops);
         self.flush_deferred_ops(cx);
         self.did_edit(&old_version, was_dirty, cx);
         // Notify independently of whether the buffer was edited as the operations could include a
