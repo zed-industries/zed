@@ -287,12 +287,12 @@ impl Buffer {
         file: Option<Box<dyn File>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<Self> {
-        let mut fragments_len = message.fragments.len();
+        let fragments_len = message.fragments.len();
         let buffer = TextBuffer::from_parts(
             replica_id,
             message.id,
-            message.content,
-            message.deleted_content,
+            &message.visible_text,
+            &message.deleted_text,
             message
                 .undo_map
                 .into_iter()
@@ -304,6 +304,8 @@ impl Buffer {
                 .map(|(i, fragment)| {
                     proto::deserialize_buffer_fragment(fragment, i, fragments_len)
                 }),
+            message.lamport_timestamp,
+            From::from(message.version),
         );
         let mut this = Self::build(buffer, file);
         for selection_set in message.selections {
@@ -331,14 +333,15 @@ impl Buffer {
     pub fn to_proto(&self) -> proto::Buffer {
         proto::Buffer {
             id: self.remote_id(),
-            content: self.text.text(),
-            deleted_content: self.text.deleted_text(),
+            visible_text: self.text.text(),
+            deleted_text: self.text.deleted_text(),
             undo_map: self
                 .text
                 .undo_history()
                 .map(proto::serialize_undo_map_entry)
                 .collect(),
-            version: proto::serialize_vector_clock(&self.version),
+            version: From::from(&self.version),
+            lamport_timestamp: self.lamport_clock.value,
             fragments: self
                 .text
                 .fragments()
@@ -1114,6 +1117,8 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         let lamport_timestamp = self.text.lamport_clock.tick();
+        self.remote_selections
+            .insert(self.text.replica_id(), selections.clone());
         self.send_operation(
             Operation::UpdateSelections {
                 replica_id: self.text.replica_id(),

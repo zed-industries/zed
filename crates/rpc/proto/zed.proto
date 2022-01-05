@@ -262,13 +262,14 @@ message Entry {
 
 message Buffer {
     uint64 id = 1;
-    string content = 2;
-    string deleted_content = 3;
+    string visible_text = 2;
+    string deleted_text = 3;
     repeated BufferFragment fragments = 4;
     repeated UndoMapEntry undo_map = 5;
     repeated VectorClockEntry version = 6;
     repeated SelectionSet selections = 7;
     repeated DiagnosticSet diagnostic_sets = 8;
+    uint32 lamport_timestamp = 9;
 }
 
 message BufferFragment {

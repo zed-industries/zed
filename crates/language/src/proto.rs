@@ -1,6 +1,7 @@
 use crate::{diagnostic_set::DiagnosticEntry, Diagnostic, Operation};
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
+use collections::HashSet;
 use lsp::DiagnosticSeverity;
 use rpc::proto;
 use std::sync::Arc;
@@ -124,14 +125,7 @@ pub fn serialize_buffer_fragment(fragment: &text::Fragment) -> proto::BufferFrag
                 timestamp: clock.value,
             })
             .collect(),
-        max_undos: fragment
-            .max_undos
-            .iter()
-            .map(|clock| proto::VectorClockEntry {
-                replica_id: clock.replica_id as u32,
-                timestamp: clock.value,
-            })
-            .collect(),
+        max_undos: From::from(&fragment.max_undos),
     }
 }
 
@@ -325,7 +319,22 @@ pub fn deserialize_buffer_fragment(
     ix: usize,
     count: usize,
 ) -> Fragment {
-    todo!()
+    Fragment {
+        id: locator::Locator::from_index(ix, count),
+        insertion_timestamp: InsertionTimestamp {
+            replica_id: message.replica_id as ReplicaId,
+            local: message.local_timestamp,
+            lamport: message.lamport_timestamp,
+        },
+        insertion_offset: message.insertion_offset as usize,
+        len: message.len as usize,
+        visible: message.visible,
+        deletions: HashSet::from_iter(message.deletions.into_iter().map(|entry| clock::Local {
+            replica_id: entry.replica_id as ReplicaId,
+            value: entry.timestamp,
+        })),
+        max_undos: From::from(message.max_undos),
+    }
 }
 
 pub fn deserialize_selections(selections: Vec<proto::Selection>) -> Arc<[Selection<Anchor>]> {

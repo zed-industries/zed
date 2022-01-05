@@ -42,7 +42,6 @@ pub type TransactionId = usize;
 
 pub struct Buffer {
     snapshot: BufferSnapshot,
-    last_edit: clock::Local,
     history: History,
     deferred_ops: OperationQueue<Operation>,
     deferred_replicas: HashSet<ReplicaId>,
@@ -385,7 +384,7 @@ impl InsertionTimestamp {
 
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub struct Fragment {
-    id: Locator,
+    pub id: Locator,
     pub insertion_timestamp: InsertionTimestamp,
     pub insertion_offset: usize,
     pub len: usize,
@@ -496,7 +495,6 @@ impl Buffer {
                 version,
                 undo_map: Default::default(),
             },
-            last_edit: clock::Local::default(),
             history,
             deferred_ops: OperationQueue::new(),
             deferred_replicas: HashSet::default(),
@@ -515,30 +513,46 @@ impl Buffer {
         deleted_text: &str,
         undo_map: impl Iterator<Item = (clock::Local, Vec<(clock::Local, u32)>)>,
         fragments: impl ExactSizeIterator<Item = Fragment>,
+        lamport_timestamp: u32,
+        version: clock::Global,
     ) -> Self {
         let visible_text = visible_text.into();
         let deleted_text = deleted_text.into();
         let fragments = SumTree::from_iter(fragments, &None);
-        let undo_map = UndoMap(undo_map.collect());
+        let mut insertions = fragments
+            .iter()
+            .map(|fragment| InsertionFragment {
+                timestamp: fragment.insertion_timestamp.local(),
+                split_offset: fragment.insertion_offset,
+                fragment_id: fragment.id.clone(),
+            })
+            .collect::<Vec<_>>();
+        insertions.sort_unstable_by_key(|i| (i.timestamp, i.split_offset));
         Self {
             remote_id,
             replica_id,
+
+            history: History::new("".into()),
+            deferred_ops: OperationQueue::new(),
+            deferred_replicas: Default::default(),
+            local_clock: clock::Local {
+                replica_id,
+                value: version.get(replica_id) + 1,
+            },
+            lamport_clock: clock::Lamport {
+                replica_id,
+                value: lamport_timestamp,
+            },
+            subscriptions: Default::default(),
             snapshot: BufferSnapshot {
                 replica_id,
                 visible_text,
                 deleted_text,
-                undo_map,
+                undo_map: UndoMap(undo_map.collect()),
                 fragments,
-                insertions: (),
-                version: (),
+                insertions: SumTree::from_iter(insertions, &()),
+                version,
             },
-            history: History::new("".into()),
-            deferred_ops: OperationQueue::new(),
-            deferred_replicas: Default::default(),
-            last_edit: todo!(),
-            local_clock: todo!(),
-            lamport_clock: todo!(),
-            subscriptions: Default::default(),
         }
     }
 
@@ -591,7 +605,6 @@ impl Buffer {
 
         self.history.push(edit.clone());
         self.history.push_undo(edit.timestamp.local());
-        self.last_edit = edit.timestamp.local();
         self.snapshot.version.observe(edit.timestamp.local());
         self.end_transaction();
         edit
@@ -1338,16 +1351,7 @@ impl BufferSnapshot {
     }
 
     pub fn fragments(&self) -> impl Iterator<Item = &Fragment> {
-        let mut cursor = self.fragments.cursor::<()>();
-        let mut started = false;
-        std::iter::from_fn(move || {
-            if started {
-                cursor.next(&None);
-            } else {
-                started = true;
-            }
-            cursor.item()
-        })
+        self.fragments.iter()
     }
 
     pub fn text_summary(&self) -> TextSummary {
