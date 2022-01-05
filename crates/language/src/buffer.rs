@@ -327,6 +327,13 @@ impl Buffer {
             );
         }
 
+        let deferred_ops = message
+            .deferred_operations
+            .into_iter()
+            .map(proto::deserialize_operation)
+            .collect::<Result<Vec<_>>>()?;
+        this.apply_ops(deferred_ops, cx)?;
+
         Ok(this)
     }
 
@@ -361,6 +368,16 @@ impl Buffer {
                 .map(|set| {
                     proto::serialize_diagnostic_set(set.provider_name().to_string(), set.iter())
                 })
+                .collect(),
+            deferred_operations: self
+                .deferred_ops
+                .iter()
+                .map(proto::serialize_operation)
+                .chain(
+                    self.text
+                        .deferred_ops()
+                        .map(|op| proto::serialize_operation(&Operation::Buffer(op.clone()))),
+                )
                 .collect(),
         }
     }

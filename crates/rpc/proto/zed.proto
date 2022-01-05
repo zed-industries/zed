@@ -270,6 +270,7 @@ message Buffer {
     repeated SelectionSet selections = 7;
     repeated DiagnosticSet diagnostic_sets = 8;
     uint32 lamport_timestamp = 9;
+    repeated Operation deferred_operations = 10;
 }
 
 message BufferFragment {

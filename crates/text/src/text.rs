@@ -1101,6 +1101,10 @@ impl Buffer {
         Ok(())
     }
 
+    pub fn deferred_ops(&self) -> impl Iterator<Item = &Operation> {
+        self.deferred_ops.iter()
+    }
+
     fn flush_deferred_ops(&mut self) -> Result<()> {
         self.deferred_replicas.clear();
         let mut deferred_ops = Vec::new();
