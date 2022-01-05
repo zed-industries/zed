@@ -1814,14 +1814,22 @@ impl BufferSnapshot {
             .iter()
             .filter(|(replica_id, _)| **replica_id != self.text.replica_id())
             .map(move |(replica_id, selections)| {
-                let start_ix = match selections
-                    .binary_search_by(|probe| probe.end.cmp(&range.start, self).unwrap())
-                {
+                let start_ix = match selections.binary_search_by(|probe| {
+                    probe
+                        .end
+                        .cmp(&range.start, self)
+                        .unwrap()
+                        .then(Ordering::Greater)
+                }) {
                     Ok(ix) | Err(ix) => ix,
                 };
-                let end_ix = match selections
-                    .binary_search_by(|probe| probe.start.cmp(&range.end, self).unwrap())
-                {
+                let end_ix = match selections.binary_search_by(|probe| {
+                    probe
+                        .start
+                        .cmp(&range.end, self)
+                        .unwrap()
+                        .then(Ordering::Less)
+                }) {
                     Ok(ix) | Err(ix) => ix,
                 };
 
