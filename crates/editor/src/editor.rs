@@ -3098,10 +3098,6 @@ impl Editor {
         .collect()
     }
 
-    pub fn local_anchor_selections(&self) -> &Arc<[Selection<Anchor>]> {
-        &self.selections
-    }
-
     fn resolve_selections<'a, D, I>(
         &self,
         selections: I,
