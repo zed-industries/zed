@@ -219,6 +219,7 @@ impl ProjectDiagnosticsEditor {
             loop {
                 let mut to_insert = None;
                 let mut to_invalidate = None;
+                let mut to_keep = None;
                 match (old_groups.peek(), new_groups.peek()) {
                     (None, None) => break,
                     (None, Some(_)) => to_insert = new_groups.next(),
@@ -229,7 +230,7 @@ impl ProjectDiagnosticsEditor {
                         match compare_diagnostics(old_primary, new_primary, &snapshot) {
                             Ordering::Less => to_invalidate = old_groups.next(),
                             Ordering::Equal => {
-                                old_groups.next();
+                                to_keep = old_groups.next();
                                 new_groups.next();
                             }
                             Ordering::Greater => to_insert = new_groups.next(),
@@ -337,6 +338,8 @@ impl ProjectDiagnosticsEditor {
                     excerpts.remove_excerpts(group_state.excerpts.iter(), excerpts_cx);
                     group_ixs_to_remove.push(group_ix);
                     blocks_to_remove.extend(group_state.blocks.keys().copied());
+                } else if let Some((_, group)) = to_keep {
+                    prev_excerpt_id = group.excerpts.last().unwrap().clone();
                 }
             }
 
