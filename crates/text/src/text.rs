@@ -1244,6 +1244,47 @@ impl Buffer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl Buffer {
+    pub fn check_invariants(&self) {
+        // Ensure every fragment is ordered by locator in the fragment tree and corresponds
+        // to an insertion fragment in the insertions tree.
+        let mut prev_fragment_id = Locator::min();
+        for fragment in self.snapshot.fragments.items(&None) {
+            assert!(fragment.id > prev_fragment_id);
+            prev_fragment_id = fragment.id.clone();
+
+            let insertion_fragment = self
+                .snapshot
+                .insertions
+                .get(
+                    &InsertionFragmentKey {
+                        timestamp: fragment.insertion_timestamp.local(),
+                        split_offset: fragment.insertion_offset,
+                    },
+                    &(),
+                )
+                .unwrap();
+            assert_eq!(insertion_fragment.fragment_id, fragment.id);
+        }
+
+        let mut cursor = self.snapshot.fragments.cursor::<Option<&Locator>>();
+        for insertion_fragment in self.snapshot.insertions.cursor::<()>() {
+            cursor.seek(&Some(&insertion_fragment.fragment_id), Bias::Left, &None);
+            let fragment = cursor.item().unwrap();
+            assert_eq!(insertion_fragment.fragment_id, fragment.id);
+            assert_eq!(insertion_fragment.split_offset, fragment.insertion_offset);
+        }
+
+        let fragment_summary = self.snapshot.fragments.summary();
+        assert_eq!(
+            fragment_summary.text.visible,
+            self.snapshot.visible_text.len()
+        );
+        assert_eq!(
+            fragment_summary.text.deleted,
+            self.snapshot.deleted_text.len()
+        );
+    }
+
     pub fn set_group_interval(&mut self, group_interval: Duration) {
         self.history.group_interval = group_interval;
     }
