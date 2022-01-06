@@ -919,6 +919,10 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
         now += Duration::from_millis(rng.gen_range(0..=200));
         buffers.extend(new_buffer);
 
+        for buffer in &buffers {
+            buffer.read(cx).check_invariants();
+        }
+
         if mutation_count == 0 && network.is_idle() {
             break;
         }
