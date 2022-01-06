@@ -3258,6 +3258,19 @@ impl Editor {
         );
     }
 
+    pub fn refresh_selections(&mut self, cx: &mut ViewContext<Self>) {
+        let anchors = self.buffer.update(cx, |buffer, cx| {
+            let snapshot = buffer.read(cx);
+            snapshot.refresh_anchors(
+                self.selections
+                    .iter()
+                    .flat_map(|selection| [&selection.start, &selection.end]),
+            )
+        });
+
+        todo!();
+    }
+
     fn set_selections(&mut self, selections: Arc<[Selection<Anchor>]>, cx: &mut ViewContext<Self>) {
         self.selections = selections;
         self.buffer.update(cx, |buffer, cx| {

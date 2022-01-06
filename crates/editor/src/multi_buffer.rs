@@ -1302,6 +1302,61 @@ impl MultiBufferSnapshot {
         position
     }
 
+    pub fn refresh_anchors<'a, I>(&'a self, anchors: I) -> Vec<Anchor>
+    where
+        I: 'a + IntoIterator<Item = &'a Anchor>,
+    {
+        let mut anchors = anchors.into_iter().peekable();
+        let mut cursor = self.excerpts.cursor::<Option<&ExcerptId>>();
+        let mut result = Vec::new();
+        while let Some(anchor) = anchors.peek() {
+            let old_excerpt_id = &anchor.excerpt_id;
+
+            // Find the location where this anchor's excerpt should be,
+            cursor.seek_forward(&Some(old_excerpt_id), Bias::Left, &());
+            if cursor.item().is_none() {
+                cursor.next(&());
+            }
+
+            let next_excerpt = cursor.item();
+            let prev_excerpt = cursor.prev_item();
+
+            // Process all of the anchors for this excerpt.
+            while let Some(&anchor) = anchors.peek() {
+                if anchor.excerpt_id != *old_excerpt_id {
+                    break;
+                }
+                let mut anchor = anchors.next().unwrap().clone();
+
+                // If the old excerpt no longer exists at this location, then attempt to
+                // find an equivalent position for this anchor in an adjacent excerpt.
+                if next_excerpt.map_or(true, |e| e.id != *old_excerpt_id) {
+                    for excerpt in [next_excerpt, prev_excerpt].iter().filter_map(|e| *e) {
+                        if excerpt.buffer_id == anchor.buffer_id
+                            && excerpt
+                                .range
+                                .start
+                                .cmp(&anchor.text_anchor, &excerpt.buffer)
+                                .unwrap()
+                                .is_le()
+                            && excerpt
+                                .range
+                                .end
+                                .cmp(&anchor.text_anchor, &excerpt.buffer)
+                                .unwrap()
+                                .is_ge()
+                        {
+                            anchor.excerpt_id = excerpt.id.clone();
+                        }
+                    }
+                }
+
+                result.push(anchor);
+            }
+        }
+        result
+    }
+
     pub fn summaries_for_anchors<'a, D, I>(&'a self, anchors: I) -> Vec<D>
     where
         D: TextDimension + Ord + Sub<D, Output = D>,
@@ -2375,17 +2430,17 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_multibuffer_anchors_after_replacing_excerpts(cx: &mut MutableAppContext) {
+    fn test_multibuffer_resolving_anchors_after_replacing_their_excerpts(
+        cx: &mut MutableAppContext,
+    ) {
         let buffer_1 = cx.add_model(|cx| Buffer::new(0, "abcd", cx));
-        let buffer_2 = cx.add_model(|cx| Buffer::new(0, "efghi", cx));
-
-        // Create an insertion id in buffer 1 that doesn't exist in buffer 2
-        buffer_1.update(cx, |buffer, cx| {
-            buffer.edit([4..4], "123", cx);
-        });
-
+        let buffer_2 = cx.add_model(|cx| Buffer::new(0, "ABCDEFGHIJKLMNOP", cx));
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
-        let excerpt_id = multibuffer.update(cx, |multibuffer, cx| {
+
+        // Create an insertion id in buffer 1 that doesn't exist in buffer 2.
+        // Add an excerpt from buffer 1 that spans this new insertion.
+        buffer_1.update(cx, |buffer, cx| buffer.edit([4..4], "123", cx));
+        let excerpt_id_1 = multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.push_excerpt(
                 ExcerptProperties {
                     buffer: &buffer_1,
@@ -2395,31 +2450,95 @@ mod tests {
             )
         });
 
-        // Create an anchor in the second insertion of buffer 1
-        let anchor = multibuffer.read(cx).read(cx).anchor_before(7);
+        let snapshot_1 = multibuffer.read(cx).snapshot(cx);
+        assert_eq!(snapshot_1.text(), "abcd123");
 
-        multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.remove_excerpts([&excerpt_id], cx);
-            let new_excerpt_id = multibuffer.push_excerpt(
+        // Replace the buffer 1 excerpt with new excerpts from buffer 2.
+        let (excerpt_id_2, excerpt_id_3, excerpt_id_4) =
+            multibuffer.update(cx, |multibuffer, cx| {
+                multibuffer.remove_excerpts([&excerpt_id_1], cx);
+                (
+                    multibuffer.push_excerpt(
+                        ExcerptProperties {
+                            buffer: &buffer_2,
+                            range: 0..4,
+                        },
+                        cx,
+                    ),
+                    multibuffer.push_excerpt(
+                        ExcerptProperties {
+                            buffer: &buffer_2,
+                            range: 6..10,
+                        },
+                        cx,
+                    ),
+                    multibuffer.push_excerpt(
+                        ExcerptProperties {
+                            buffer: &buffer_2,
+                            range: 12..16,
+                        },
+                        cx,
+                    ),
+                )
+            });
+        let snapshot_2 = multibuffer.read(cx).snapshot(cx);
+        assert_eq!(snapshot_2.text(), "ABCD\nGHIJ\nMNOP");
+
+        // And excerpt id has been reused.
+        assert_eq!(excerpt_id_2, excerpt_id_1);
+
+        // Resolve some anchors from the previous snapshot in the new snapshot.
+        // Although there is still an excerpt with the same id, it is for
+        // a different buffer, so we don't attempt to resolve the old text
+        // anchor in the new buffer.
+        assert_eq!(
+            snapshot_2.summary_for_anchor::<usize>(&snapshot_1.anchor_before(2)),
+            0
+        );
+        assert_eq!(
+            snapshot_2.summaries_for_anchors::<usize, _>(&[
+                snapshot_1.anchor_before(2),
+                snapshot_1.anchor_after(3)
+            ]),
+            vec![0, 0]
+        );
+
+        // Replace the middle excerpt with a smaller excerpt in buffer 2,
+        // that intersects the old excerpt.
+        let excerpt_id_5 = multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.remove_excerpts([&excerpt_id_3], cx);
+            multibuffer.insert_excerpt_after(
+                &excerpt_id_3,
                 ExcerptProperties {
                     buffer: &buffer_2,
-                    range: 0..5,
+                    range: 5..8,
                 },
                 cx,
-            );
-
-            // The same id is reused for an excerpt in a different buffer.
-            assert_eq!(new_excerpt_id, excerpt_id);
-
-            // We don't attempt to resolve the text anchor from buffer 1
-            // in buffer 2.
-            let snapshot = multibuffer.snapshot(cx);
-            assert_eq!(snapshot.summary_for_anchor::<usize>(&anchor), 0);
-            assert_eq!(
-                snapshot.summaries_for_anchors::<usize, _>(&[anchor]),
-                vec![0]
-            );
+            )
         });
+
+        let snapshot_3 = multibuffer.read(cx).snapshot(cx);
+        assert_eq!(snapshot_3.text(), "ABCD\nFGH\nMNOP");
+        assert_ne!(excerpt_id_5, excerpt_id_3);
+
+        // Resolve some anchors from the previous snapshot in the new snapshot.
+        // The anchor in the middle excerpt snaps to the beginning of the
+        // excerpt, since it is not
+        let anchors = [
+            snapshot_2.anchor_after(2),
+            snapshot_2.anchor_after(6),
+            snapshot_2.anchor_after(14),
+        ];
+        assert_eq!(
+            snapshot_3.summaries_for_anchors::<usize, _>(&anchors),
+            &[2, 9, 13]
+        );
+
+        let new_anchors = snapshot_3.refresh_anchors(&anchors);
+        assert_eq!(
+            snapshot_3.summaries_for_anchors::<usize, _>(&new_anchors),
+            &[2, 7, 13]
+        );
     }
 
     #[gpui::test(iterations = 100)]
