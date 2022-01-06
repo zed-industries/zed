@@ -389,8 +389,14 @@ impl ProjectDiagnosticsEditor {
             self.path_states.remove(path_ix);
         }
 
-        if self.editor.is_focused(cx) && self.path_states.is_empty() {
-            cx.focus_self();
+        if self.path_states.is_empty() {
+            if self.editor.is_focused(cx) {
+                cx.focus_self();
+            }
+        } else {
+            if cx.handle().is_focused(cx) {
+                cx.focus(&self.editor);
+            }
         }
         cx.notify();
     }
