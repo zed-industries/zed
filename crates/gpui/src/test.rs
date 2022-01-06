@@ -7,7 +7,13 @@ use std::{
     },
 };
 
-use crate::{executor, platform, FontCache, MutableAppContext, Platform, TestAppContext};
+use futures::StreamExt;
+use smol::channel;
+
+use crate::{
+    executor, platform, Entity, FontCache, Handle, MutableAppContext, Platform, Subscription,
+    TestAppContext,
+};
 
 #[cfg(test)]
 #[ctor::ctor]
@@ -86,4 +92,48 @@ pub fn run_test(
             }
         }
     }
+}
+
+pub struct Observation<T> {
+    rx: channel::Receiver<T>,
+    _subscription: Subscription,
+}
+
+impl<T> futures::Stream for Observation<T> {
+    type Item = T;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.rx.poll_next_unpin(cx)
+    }
+}
+
+pub fn observe<T: Entity>(entity: &impl Handle<T>, cx: &mut TestAppContext) -> Observation<()> {
+    let (tx, rx) = smol::channel::unbounded();
+    let _subscription = cx.update(|cx| {
+        cx.observe(entity, move |_, _| {
+            let _ = smol::block_on(tx.send(()));
+        })
+    });
+
+    Observation { rx, _subscription }
+}
+
+pub fn subscribe<T: Entity>(
+    entity: &impl Handle<T>,
+    cx: &mut TestAppContext,
+) -> Observation<T::Event>
+where
+    T::Event: Clone,
+{
+    let (tx, rx) = smol::channel::unbounded();
+    let _subscription = cx.update(|cx| {
+        cx.subscribe(entity, move |_, event, _| {
+            let _ = smol::block_on(tx.send(event.clone()));
+        })
+    });
+
+    Observation { rx, _subscription }
 }

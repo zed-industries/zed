@@ -67,7 +67,7 @@ pub enum Worktree {
     Remote(RemoteWorktree),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Event {
     DiskBasedDiagnosticsUpdated,
     DiagnosticsUpdated(Arc<Path>),
@@ -1120,6 +1120,7 @@ impl LocalWorktree {
             })
             .detach();
 
+            let mut pending_disk_based_diagnostics: i32 = 0;
             language_server
                 .on_notification::<lsp::notification::Progress, _>(move |params| {
                     let token = match params.token {
@@ -1130,8 +1131,15 @@ impl LocalWorktree {
                     if token == disk_based_diagnostics_progress_token {
                         match params.value {
                             lsp::ProgressParamsValue::WorkDone(progress) => match progress {
+                                lsp::WorkDoneProgress::Begin(_) => {
+                                    pending_disk_based_diagnostics += 1;
+                                }
                                 lsp::WorkDoneProgress::End(_) => {
-                                    smol::block_on(disk_based_diagnostics_done_tx.send(())).ok();
+                                    pending_disk_based_diagnostics -= 1;
+                                    if pending_disk_based_diagnostics == 0 {
+                                        smol::block_on(disk_based_diagnostics_done_tx.send(()))
+                                            .ok();
+                                    }
                                 }
                                 _ => {}
                             },
@@ -3107,6 +3115,7 @@ mod tests {
     use anyhow::Result;
     use client::test::{FakeHttpClient, FakeServer};
     use fs::RealFs;
+    use gpui::test::subscribe;
     use language::{tree_sitter_rust, DiagnosticEntry, LanguageServerConfig};
     use language::{Diagnostic, LanguageConfig};
     use lsp::Url;
@@ -3756,6 +3765,10 @@ mod tests {
     async fn test_language_server_diagnostics(mut cx: gpui::TestAppContext) {
         let (language_server_config, mut fake_server) =
             LanguageServerConfig::fake(cx.background()).await;
+        let progress_token = language_server_config
+            .disk_based_diagnostics_progress_token
+            .clone()
+            .unwrap();
         let mut languages = LanguageRegistry::new();
         languages.add(Arc::new(Language::new(
             LanguageConfig {
@@ -3795,6 +3808,13 @@ mod tests {
             .await
             .unwrap();
 
+        let mut events = subscribe(&tree, &mut cx);
+
+        fake_server.start_progress(&progress_token).await;
+        fake_server.start_progress(&progress_token).await;
+        fake_server.end_progress(&progress_token).await;
+        fake_server.start_progress(&progress_token).await;
+
         fake_server
             .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
                 uri: Url::from_file_path(dir.path().join("a.rs")).unwrap(),
@@ -3807,6 +3827,18 @@ mod tests {
                 }],
             })
             .await;
+
+        let event = events.next().await.unwrap();
+        assert_eq!(
+            event,
+            Event::DiagnosticsUpdated(Arc::from(Path::new("a.rs")))
+        );
+
+        fake_server.end_progress(&progress_token).await;
+        fake_server.end_progress(&progress_token).await;
+
+        let event = events.next().await.unwrap();
+        assert_eq!(event, Event::DiskBasedDiagnosticsUpdated);
 
         let buffer = tree
             .update(&mut cx, |tree, cx| tree.open_buffer("a.rs", cx))

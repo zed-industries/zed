@@ -237,6 +237,7 @@ impl LanguageServerConfig {
         (
             Self {
                 fake_server: Some((server, started)),
+                disk_based_diagnostics_progress_token: Some("fakeServer/check".to_string()),
                 ..Default::default()
             },
             fake,

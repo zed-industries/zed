@@ -514,6 +514,22 @@ impl FakeLanguageServer {
         notification.params
     }
 
+    pub async fn start_progress(&mut self, token: impl Into<String>) {
+        self.notify::<notification::Progress>(ProgressParams {
+            token: NumberOrString::String(token.into()),
+            value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(Default::default())),
+        })
+        .await;
+    }
+
+    pub async fn end_progress(&mut self, token: impl Into<String>) {
+        self.notify::<notification::Progress>(ProgressParams {
+            token: NumberOrString::String(token.into()),
+            value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(Default::default())),
+        })
+        .await;
+    }
+
     async fn send(&mut self, message: Vec<u8>) {
         self.stdout
             .write_all(CONTENT_LEN_HEADER.as_bytes())

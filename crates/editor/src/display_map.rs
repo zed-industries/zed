@@ -446,10 +446,11 @@ impl ToDisplayPoint for Anchor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{movement, test::*};
-    use gpui::{color::Color, elements::*, MutableAppContext};
+    use crate::movement;
+    use gpui::{color::Color, elements::*, test::observe, MutableAppContext};
     use language::{Buffer, Language, LanguageConfig, RandomCharIter, SelectionGoal};
     use rand::{prelude::*, Rng};
+    use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use theme::SyntaxTheme;
     use util::test::sample_text;
@@ -493,7 +494,7 @@ mod tests {
         let map = cx.add_model(|cx| {
             DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, wrap_width, cx)
         });
-        let (_observer, notifications) = Observer::new(&map, &mut cx);
+        let mut notifications = observe(&map, &mut cx);
         let mut fold_count = 0;
         let mut blocks = Vec::new();
 
@@ -589,7 +590,7 @@ mod tests {
             }
 
             if map.read_with(&cx, |map, cx| map.is_rewrapping(cx)) {
-                notifications.recv().await.unwrap();
+                notifications.next().await.unwrap();
             }
 
             let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));

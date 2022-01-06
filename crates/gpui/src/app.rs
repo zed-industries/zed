@@ -992,7 +992,7 @@ impl MutableAppContext {
         })
     }
 
-    fn observe<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
+    pub fn observe<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
     where
         E: Entity,
         E::Event: 'static,
