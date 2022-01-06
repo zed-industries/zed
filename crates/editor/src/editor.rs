@@ -3267,8 +3267,17 @@ impl Editor {
                     .flat_map(|selection| [&selection.start, &selection.end]),
             )
         });
-
-        todo!();
+        self.selections = self
+            .selections
+            .iter()
+            .cloned()
+            .zip(anchors.chunks(2))
+            .map(|(mut selection, anchors)| {
+                selection.start = anchors[0].clone();
+                selection.end = anchors[1].clone();
+                selection
+            })
+            .collect();
     }
 
     fn set_selections(&mut self, selections: Arc<[Selection<Anchor>]>, cx: &mut ViewContext<Self>) {

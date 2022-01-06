@@ -364,6 +364,8 @@ impl ProjectDiagnosticsEditor {
             for group_state in &mut groups_to_add {
                 group_state.blocks = block_ids.by_ref().take(group_state.block_count).collect();
             }
+
+            editor.refresh_selections(cx);
         });
 
         for ix in group_ixs_to_remove.into_iter().rev() {
