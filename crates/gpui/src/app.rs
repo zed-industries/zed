@@ -2660,8 +2660,6 @@ impl<T: Entity> ModelHandle<T> {
                 loop {
                     {
                         let cx = cx.borrow();
-                        let executor = cx.foreground();
-
                         let cx = cx.as_ref();
                         if predicate(
                             handle
@@ -2672,15 +2670,13 @@ impl<T: Entity> ModelHandle<T> {
                         ) {
                             break;
                         }
-
-                        if executor.parking_forbidden() && executor.would_park() {
-                            panic!("parked while waiting on condition");
-                        }
                     }
 
+                    cx.borrow().foreground().start_waiting();
                     rx.recv()
                         .await
                         .expect("model dropped with pending condition");
+                    cx.borrow().foreground().finish_waiting();
                 }
             })
             .await
@@ -2920,9 +2916,11 @@ impl<T: View> ViewHandle<T> {
                         }
                     }
 
+                    cx.borrow().foreground().start_waiting();
                     rx.recv()
                         .await
                         .expect("view dropped with pending condition");
+                    cx.borrow().foreground().finish_waiting();
                 }
             })
             .await

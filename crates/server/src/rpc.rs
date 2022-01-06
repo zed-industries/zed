@@ -1054,7 +1054,7 @@ mod tests {
     };
     use ::rpc::Peer;
     use async_std::task;
-    use gpui::{ModelHandle, TestAppContext};
+    use gpui::{executor, ModelHandle, TestAppContext};
     use parking_lot::Mutex;
     use postage::{mpsc, watch};
     use rpc::PeerId;
@@ -1063,6 +1063,7 @@ mod tests {
     use std::{
         ops::Deref,
         path::Path,
+        rc::Rc,
         sync::{
             atomic::{AtomicBool, Ordering::SeqCst},
             Arc,
@@ -1092,7 +1093,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1225,7 +1226,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1301,7 +1302,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 3 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
         let client_c = server.create_client(&mut cx_c, "user_c").await;
@@ -1451,7 +1452,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new());
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1547,7 +1548,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new());
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1627,7 +1628,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new());
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1702,7 +1703,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new());
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1789,7 +1790,7 @@ mod tests {
             )));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1988,7 +1989,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -2127,7 +2128,7 @@ mod tests {
     async fn test_chat_message_validation(mut cx_a: TestAppContext) {
         cx_a.foreground().forbid_parking();
 
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
 
         let db = &server.app_state.db;
@@ -2188,7 +2189,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
         let mut status_b = client_b.status();
@@ -2406,7 +2407,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new());
 
         // Connect to a server as 3 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
         let client_c = server.create_client(&mut cx_c, "user_c").await;
@@ -2539,6 +2540,7 @@ mod tests {
         peer: Arc<Peer>,
         app_state: Arc<AppState>,
         server: Arc<Server>,
+        foreground: Rc<executor::Foreground>,
         notifications: mpsc::Receiver<()>,
         connection_killers: Arc<Mutex<HashMap<UserId, watch::Sender<Option<()>>>>>,
         forbid_connections: Arc<AtomicBool>,
@@ -2546,7 +2548,7 @@ mod tests {
     }
 
     impl TestServer {
-        async fn start() -> Self {
+        async fn start(foreground: Rc<executor::Foreground>) -> Self {
             let test_db = TestDb::new();
             let app_state = Self::build_app_state(&test_db).await;
             let peer = Peer::new();
@@ -2556,6 +2558,7 @@ mod tests {
                 peer,
                 app_state,
                 server,
+                foreground,
                 notifications: notifications.1,
                 connection_killers: Default::default(),
                 forbid_connections: Default::default(),
@@ -2671,7 +2674,9 @@ mod tests {
         {
             async_std::future::timeout(Duration::from_millis(500), async {
                 while !(predicate)(&*self.server.store.read()) {
+                    self.foreground.start_waiting();
                     self.notifications.recv().await;
+                    self.foreground.finish_waiting();
                 }
             })
             .await
