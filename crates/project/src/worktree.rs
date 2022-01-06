@@ -7,8 +7,7 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use clock::ReplicaId;
-use collections::{hash_map, HashMap};
-use collections::{BTreeMap, HashSet};
+use collections::{hash_map, HashMap, HashSet};
 use futures::{Stream, StreamExt};
 use fuzzy::CharBag;
 use gpui::{
@@ -44,7 +43,7 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use sum_tree::Bias;
+use sum_tree::{Bias, TreeMap};
 use sum_tree::{Edit, SeekTarget, SumTree};
 use util::{post_inc, ResultExt, TryFutureExt};
 
@@ -142,7 +141,7 @@ impl Worktree {
             .map(|c| c.to_ascii_lowercase())
             .collect();
         let root_name = worktree.root_name.clone();
-        let (entries_by_path, entries_by_id) = cx
+        let (entries_by_path, entries_by_id, diagnostic_summaries) = cx
             .background()
             .spawn(async move {
                 let mut entries_by_path_edits = Vec::new();
@@ -166,7 +165,22 @@ impl Worktree {
                 let mut entries_by_id = SumTree::new();
                 entries_by_path.edit(entries_by_path_edits, &());
                 entries_by_id.edit(entries_by_id_edits, &());
-                (entries_by_path, entries_by_id)
+
+                let diagnostic_summaries = TreeMap::from_ordered_entries(
+                    worktree.diagnostic_summaries.into_iter().map(|summary| {
+                        (
+                            PathKey(PathBuf::from(summary.path).into()),
+                            DiagnosticSummary {
+                                error_count: summary.error_count as usize,
+                                warning_count: summary.warning_count as usize,
+                                info_count: summary.info_count as usize,
+                                hint_count: summary.hint_count as usize,
+                            },
+                        )
+                    }),
+                );
+
+                (entries_by_path, entries_by_id, diagnostic_summaries)
             })
             .await;
 
@@ -183,6 +197,7 @@ impl Worktree {
                     entries_by_id,
                     removed_entry_ids: Default::default(),
                     next_entry_id: Default::default(),
+                    diagnostic_summaries,
                 };
 
                 let (updates_tx, mut updates_rx) = postage::mpsc::channel(64);
@@ -223,7 +238,6 @@ impl Worktree {
                     client: client.clone(),
                     loading_buffers: Default::default(),
                     open_buffers: Default::default(),
-                    diagnostic_summaries: Default::default(),
                     queued_operations: Default::default(),
                     languages,
                     user_store,
@@ -351,7 +365,7 @@ impl Worktree {
             Worktree::Remote(worktree) => &worktree.diagnostic_summaries,
         }
         .iter()
-        .map(|(path, summary)| (path.clone(), summary.clone()))
+        .map(|(path, summary)| (path.0.clone(), summary.clone()))
     }
 
     pub fn loading_buffers<'a>(&'a mut self) -> &'a mut LoadingBuffers {
@@ -778,8 +792,9 @@ impl Worktree {
 
         let this = self.as_local_mut().unwrap();
         let summary = DiagnosticSummary::new(&diagnostics);
-        this.diagnostic_summaries
-            .insert(worktree_path.clone(), summary.clone());
+        this.snapshot
+            .diagnostic_summaries
+            .insert(PathKey(worktree_path.clone()), summary.clone());
         this.diagnostics.insert(worktree_path.clone(), diagnostics);
 
         cx.emit(Event::DiagnosticsUpdated(worktree_path.clone()));
@@ -796,11 +811,13 @@ impl Worktree {
                             .send(proto::UpdateDiagnosticSummary {
                                 project_id,
                                 worktree_id,
-                                path,
-                                error_count: summary.error_count as u32,
-                                warning_count: summary.warning_count as u32,
-                                info_count: summary.info_count as u32,
-                                hint_count: summary.hint_count as u32,
+                                summary: Some(proto::DiagnosticSummary {
+                                    path,
+                                    error_count: summary.error_count as u32,
+                                    warning_count: summary.warning_count as u32,
+                                    info_count: summary.info_count as u32,
+                                    hint_count: summary.hint_count as u32,
+                                }),
                             })
                             .await
                             .log_err()
@@ -890,6 +907,7 @@ pub struct Snapshot {
     entries_by_id: SumTree<PathEntry>,
     removed_entry_ids: HashMap<u64, usize>,
     next_entry_id: Arc<AtomicUsize>,
+    diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
 }
 
 pub struct LocalWorktree {
@@ -904,7 +922,6 @@ pub struct LocalWorktree {
     open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
     diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<PointUtf16>>>,
-    diagnostic_summaries: BTreeMap<Arc<Path>, DiagnosticSummary>,
     queued_operations: Vec<(u64, Operation)>,
     language_registry: Arc<LanguageRegistry>,
     client: Arc<Client>,
@@ -928,7 +945,6 @@ pub struct RemoteWorktree {
     replica_id: ReplicaId,
     loading_buffers: LoadingBuffers,
     open_buffers: HashMap<usize, RemoteBuffer>,
-    diagnostic_summaries: BTreeMap<Arc<Path>, DiagnosticSummary>,
     languages: Arc<LanguageRegistry>,
     user_store: ModelHandle<UserStore>,
     queued_operations: Vec<(u64, Operation)>,
@@ -986,6 +1002,7 @@ impl LocalWorktree {
                 entries_by_id: Default::default(),
                 removed_entry_ids: Default::default(),
                 next_entry_id: Arc::new(next_entry_id),
+                diagnostic_summaries: Default::default(),
             };
             if let Some(metadata) = metadata {
                 snapshot.insert_entry(
@@ -1011,7 +1028,6 @@ impl LocalWorktree {
                 open_buffers: Default::default(),
                 shared_buffers: Default::default(),
                 diagnostics: Default::default(),
-                diagnostic_summaries: Default::default(),
                 queued_operations: Default::default(),
                 language_registry: languages,
                 client,
@@ -1626,17 +1642,19 @@ impl RemoteWorktree {
         envelope: TypedEnvelope<proto::UpdateDiagnosticSummary>,
         cx: &mut ModelContext<Worktree>,
     ) {
-        let path: Arc<Path> = Path::new(&envelope.payload.path).into();
-        self.diagnostic_summaries.insert(
-            path.clone(),
-            DiagnosticSummary {
-                error_count: envelope.payload.error_count as usize,
-                warning_count: envelope.payload.warning_count as usize,
-                info_count: envelope.payload.info_count as usize,
-                hint_count: envelope.payload.hint_count as usize,
-            },
-        );
-        cx.emit(Event::DiagnosticsUpdated(path));
+        if let Some(summary) = envelope.payload.summary {
+            let path: Arc<Path> = Path::new(&summary.path).into();
+            self.snapshot.diagnostic_summaries.insert(
+                PathKey(path.clone()),
+                DiagnosticSummary {
+                    error_count: summary.error_count as usize,
+                    warning_count: summary.warning_count as usize,
+                    info_count: summary.info_count as usize,
+                    hint_count: summary.hint_count as usize,
+                },
+            );
+            cx.emit(Event::DiagnosticsUpdated(path));
+        }
     }
 
     pub fn disk_based_diagnostics_updated(&self, cx: &mut ModelContext<Worktree>) {
@@ -1679,9 +1697,14 @@ impl Snapshot {
             root_name,
             entries: self
                 .entries_by_path
-                .cursor::<()>()
+                .iter()
                 .filter(|e| !e.is_ignored)
                 .map(Into::into)
+                .collect(),
+            diagnostic_summaries: self
+                .diagnostic_summaries
+                .iter()
+                .map(|(path, summary)| summary.to_proto(path.0.clone()))
                 .collect(),
         }
     }
@@ -4160,6 +4183,7 @@ mod tests {
             root_name: Default::default(),
             root_char_bag: Default::default(),
             next_entry_id: next_entry_id.clone(),
+            diagnostic_summaries: Default::default(),
         };
         initial_snapshot.insert_entry(
             Entry::new(

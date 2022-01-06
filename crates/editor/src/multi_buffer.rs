@@ -2454,33 +2454,32 @@ mod tests {
         assert_eq!(snapshot_1.text(), "abcd123");
 
         // Replace the buffer 1 excerpt with new excerpts from buffer 2.
-        let (excerpt_id_2, excerpt_id_3, excerpt_id_4) =
-            multibuffer.update(cx, |multibuffer, cx| {
-                multibuffer.remove_excerpts([&excerpt_id_1], cx);
-                (
-                    multibuffer.push_excerpt(
-                        ExcerptProperties {
-                            buffer: &buffer_2,
-                            range: 0..4,
-                        },
-                        cx,
-                    ),
-                    multibuffer.push_excerpt(
-                        ExcerptProperties {
-                            buffer: &buffer_2,
-                            range: 6..10,
-                        },
-                        cx,
-                    ),
-                    multibuffer.push_excerpt(
-                        ExcerptProperties {
-                            buffer: &buffer_2,
-                            range: 12..16,
-                        },
-                        cx,
-                    ),
-                )
-            });
+        let (excerpt_id_2, excerpt_id_3, _) = multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.remove_excerpts([&excerpt_id_1], cx);
+            (
+                multibuffer.push_excerpt(
+                    ExcerptProperties {
+                        buffer: &buffer_2,
+                        range: 0..4,
+                    },
+                    cx,
+                ),
+                multibuffer.push_excerpt(
+                    ExcerptProperties {
+                        buffer: &buffer_2,
+                        range: 6..10,
+                    },
+                    cx,
+                ),
+                multibuffer.push_excerpt(
+                    ExcerptProperties {
+                        buffer: &buffer_2,
+                        range: 12..16,
+                    },
+                    cx,
+                ),
+            )
+        });
         let snapshot_2 = multibuffer.read(cx).snapshot(cx);
         assert_eq!(snapshot_2.text(), "ABCD\nGHIJ\nMNOP");
 

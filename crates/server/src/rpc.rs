@@ -17,7 +17,7 @@ use rpc::{
     Connection, ConnectionId, Peer, TypedEnvelope,
 };
 use sha1::{Digest as _, Sha1};
-use std::{any::TypeId, future::Future, mem, sync::Arc, time::Instant};
+use std::{any::TypeId, future::Future, mem, path::PathBuf, sync::Arc, time::Instant};
 use store::{Store, Worktree};
 use surf::StatusCode;
 use tide::log;
@@ -302,6 +302,11 @@ impl Server {
                             id: *id,
                             root_name: worktree.root_name.clone(),
                             entries: share.entries.values().cloned().collect(),
+                            diagnostic_summaries: share
+                                .diagnostic_summaries
+                                .values()
+                                .cloned()
+                                .collect(),
                         })
                     })
                     .collect();
@@ -473,11 +478,17 @@ impl Server {
             .map(|entry| (entry.id, entry))
             .collect();
 
+        let diagnostic_summaries = mem::take(&mut worktree.diagnostic_summaries)
+            .into_iter()
+            .map(|summary| (PathBuf::from(summary.path.clone()), summary))
+            .collect();
+
         let contact_user_ids = self.state_mut().share_worktree(
             request.payload.project_id,
             worktree.id,
             request.sender_id,
             entries,
+            diagnostic_summaries,
         );
         if let Some(contact_user_ids) = contact_user_ids {
             self.peer.respond(request.receipt(), proto::Ack {}).await?;
@@ -520,13 +531,23 @@ impl Server {
     }
 
     async fn update_diagnostic_summary(
-        self: Arc<Server>,
+        mut self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateDiagnosticSummary>,
     ) -> tide::Result<()> {
-        let receiver_ids = self
-            .state()
-            .project_connection_ids(request.payload.project_id, request.sender_id)
+        let receiver_ids = request
+            .payload
+            .summary
+            .clone()
+            .and_then(|summary| {
+                self.state_mut().update_diagnostic_summary(
+                    request.payload.project_id,
+                    request.payload.worktree_id,
+                    request.sender_id,
+                    summary,
+                )
+            })
             .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
@@ -1816,6 +1837,39 @@ mod tests {
             .await
             .unwrap();
 
+        // Simulate a language server reporting errors for a file.
+        fake_language_server
+            .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+                uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
+                version: None,
+                diagnostics: vec![lsp::Diagnostic {
+                    severity: Some(lsp::DiagnosticSeverity::ERROR),
+                    range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 7)),
+                    message: "message 1".to_string(),
+                    ..Default::default()
+                }],
+            })
+            .await;
+
+        // Wait for server to see the diagnostics update.
+        server
+            .condition(|store| {
+                let worktree = store
+                    .project(project_id)
+                    .unwrap()
+                    .worktrees
+                    .get(&worktree_id.to_proto())
+                    .unwrap();
+
+                !worktree
+                    .share
+                    .as_ref()
+                    .unwrap()
+                    .diagnostic_summaries
+                    .is_empty()
+            })
+            .await;
+
         // Join the worktree as client B.
         let project_b = Project::remote(
             project_id,
@@ -1828,7 +1882,24 @@ mod tests {
         .await
         .unwrap();
 
-        // Simulate a language server reporting errors for a file.
+        project_b.read_with(&cx_b, |project, cx| {
+            assert_eq!(
+                project.diagnostic_summaries(cx).collect::<Vec<_>>(),
+                &[(
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("a.rs")),
+                    },
+                    DiagnosticSummary {
+                        error_count: 1,
+                        warning_count: 0,
+                        ..Default::default()
+                    },
+                )]
+            )
+        });
+
+        // Simulate a language server reporting more errors for a file.
         fake_language_server
             .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
                 uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
@@ -1853,6 +1924,7 @@ mod tests {
             })
             .await;
 
+        // Client b gets the updated summaries
         project_b
             .condition(&cx_b, |project, cx| {
                 project.diagnostic_summaries(cx).collect::<Vec<_>>()
@@ -1870,7 +1942,7 @@ mod tests {
             })
             .await;
 
-        // Open the file with the errors.
+        // Open the file with the errors on client B. They should be present.
         let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
         let buffer_b = cx_b
             .background()

@@ -101,6 +101,16 @@ impl DiagnosticSummary {
 
         this
     }
+
+    pub fn to_proto(&self, path: Arc<Path>) -> proto::DiagnosticSummary {
+        proto::DiagnosticSummary {
+            path: path.to_string_lossy().to_string(),
+            error_count: self.error_count as u32,
+            warning_count: self.warning_count as u32,
+            info_count: self.info_count as u32,
+            hint_count: self.hint_count as u32,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
