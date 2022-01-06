@@ -281,14 +281,17 @@ impl ProjectDiagnosticsEditor {
                             if is_first_excerpt_for_group {
                                 is_first_excerpt_for_group = false;
                                 let primary = &group.entries[group.primary_ix].diagnostic;
+                                let mut header = primary.clone();
+                                header.message =
+                                    primary.message.split('\n').next().unwrap().to_string();
                                 group_state.block_count += 1;
-                                diagnostic_blocks.push(DiagnosticBlock::Header(primary.clone()));
+                                diagnostic_blocks.push(DiagnosticBlock::Header(header.clone()));
                                 blocks_to_add.push(BlockProperties {
                                     position: header_position,
-                                    height: primary.message.matches('\n').count() as u8 + 2,
+                                    height: 2,
                                     render: diagnostic_header_renderer(
                                         buffer.clone(),
-                                        primary.clone(),
+                                        header,
                                         true,
                                         self.build_settings.clone(),
                                     ),
@@ -306,17 +309,21 @@ impl ProjectDiagnosticsEditor {
                             }
 
                             for entry in &group.entries[*start_ix..ix] {
-                                if !entry.diagnostic.is_primary {
+                                let mut diagnostic = entry.diagnostic.clone();
+                                if diagnostic.is_primary {
+                                    diagnostic.message =
+                                        entry.diagnostic.message.split('\n').skip(1).collect();
+                                }
+
+                                if !diagnostic.message.is_empty() {
                                     group_state.block_count += 1;
                                     diagnostic_blocks
-                                        .push(DiagnosticBlock::Inline(entry.diagnostic.clone()));
+                                        .push(DiagnosticBlock::Inline(diagnostic.clone()));
                                     blocks_to_add.push(BlockProperties {
                                         position: (excerpt_id.clone(), entry.range.start.clone()),
-                                        height: entry.diagnostic.message.matches('\n').count()
-                                            as u8
-                                            + 1,
+                                        height: diagnostic.message.matches('\n').count() as u8 + 1,
                                         render: diagnostic_block_renderer(
-                                            entry.diagnostic.clone(),
+                                            diagnostic,
                                             true,
                                             self.build_settings.clone(),
                                         ),
@@ -601,7 +608,7 @@ mod tests {
                         DiagnosticEntry {
                             range: PointUtf16::new(7, 6)..PointUtf16::new(7, 7),
                             diagnostic: Diagnostic {
-                                message: "use of moved value".to_string(),
+                                message: "use of moved value\nvalue used here after move".to_string(),
                                 severity: DiagnosticSeverity::ERROR,
                                 is_primary: true,
                                 is_disk_based: true,
@@ -610,33 +617,11 @@ mod tests {
                             },
                         },
                         DiagnosticEntry {
-                            range: PointUtf16::new(7, 6)..PointUtf16::new(7, 7),
-                            diagnostic: Diagnostic {
-                                message: "value used here after move".to_string(),
-                                severity: DiagnosticSeverity::INFORMATION,
-                                is_primary: false,
-                                is_disk_based: true,
-                                group_id: 0,
-                                ..Default::default()
-                            },
-                        },
-                        DiagnosticEntry {
                             range: PointUtf16::new(8, 6)..PointUtf16::new(8, 7),
                             diagnostic: Diagnostic {
-                                message: "use of moved value".to_string(),
+                                message: "use of moved value\nvalue used here after move".to_string(),
                                 severity: DiagnosticSeverity::ERROR,
                                 is_primary: true,
-                                is_disk_based: true,
-                                group_id: 1,
-                                ..Default::default()
-                            },
-                        },
-                        DiagnosticEntry {
-                            range: PointUtf16::new(8, 6)..PointUtf16::new(8, 7),
-                            diagnostic: Diagnostic {
-                                message: "value used here after move".to_string(),
-                                severity: DiagnosticSeverity::INFORMATION,
-                                is_primary: false,
                                 is_disk_based: true,
                                 group_id: 1,
                                 ..Default::default()
@@ -703,30 +688,17 @@ mod tests {
                 .update_diagnostic_entries(
                     Arc::from("/test/a.rs".as_ref()),
                     None,
-                    vec![
-                        DiagnosticEntry {
-                            range: PointUtf16::new(0, 15)..PointUtf16::new(0, 15),
-                            diagnostic: Diagnostic {
-                                message: "mismatched types".to_string(),
-                                severity: DiagnosticSeverity::ERROR,
-                                is_primary: true,
-                                is_disk_based: true,
-                                group_id: 0,
-                                ..Default::default()
-                            },
+                    vec![DiagnosticEntry {
+                        range: PointUtf16::new(0, 15)..PointUtf16::new(0, 15),
+                        diagnostic: Diagnostic {
+                            message: "mismatched types\nexpected `usize`, found `char`".to_string(),
+                            severity: DiagnosticSeverity::ERROR,
+                            is_primary: true,
+                            is_disk_based: true,
+                            group_id: 0,
+                            ..Default::default()
                         },
-                        DiagnosticEntry {
-                            range: PointUtf16::new(0, 15)..PointUtf16::new(0, 15),
-                            diagnostic: Diagnostic {
-                                message: "expected `usize`, found `char`".to_string(),
-                                severity: DiagnosticSeverity::INFORMATION,
-                                is_primary: false,
-                                is_disk_based: true,
-                                group_id: 0,
-                                ..Default::default()
-                            },
-                        },
-                    ],
+                    }],
                     cx,
                 )
                 .unwrap();
