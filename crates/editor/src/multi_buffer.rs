@@ -804,7 +804,7 @@ impl MultiBuffer {
             let selections_update_count = buffer.selections_update_count();
             let diagnostics_update_count = buffer.diagnostics_update_count();
 
-            let buffer_edited = version.gt(&buffer_state.last_version);
+            let buffer_edited = version.changed_since(&buffer_state.last_version);
             let buffer_reparsed = parse_count > buffer_state.last_parse_count;
             let buffer_selections_updated =
                 selections_update_count > buffer_state.last_selections_update_count;
@@ -2114,6 +2114,26 @@ mod tests {
                 .map(Some)
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[gpui::test]
+    fn test_remote_multibuffer(cx: &mut MutableAppContext) {
+        let host_buffer = cx.add_model(|cx| Buffer::new(0, "a", cx));
+        let guest_buffer = cx.add_model(|cx| {
+            let message = host_buffer.read(cx).to_proto();
+            Buffer::from_proto(1, message, None, cx).unwrap()
+        });
+        let multibuffer = cx.add_model(|cx| MultiBuffer::singleton(guest_buffer.clone(), cx));
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+        assert_eq!(snapshot.text(), "a");
+
+        guest_buffer.update(cx, |buffer, cx| buffer.edit([1..1], "b", cx));
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+        assert_eq!(snapshot.text(), "ab");
+
+        guest_buffer.update(cx, |buffer, cx| buffer.edit([2..2], "c", cx));
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+        assert_eq!(snapshot.text(), "abc");
     }
 
     #[gpui::test]

@@ -1125,8 +1125,8 @@ impl Buffer {
             false
         } else {
             match op {
-                Operation::Edit(edit) => self.version.ge(&edit.version),
-                Operation::Undo { undo, .. } => self.version.ge(&undo.version),
+                Operation::Edit(edit) => self.version.observed_all(&edit.version),
+                Operation::Undo { undo, .. } => self.version.observed_all(&undo.version),
             }
         }
     }
@@ -1648,10 +1648,10 @@ impl BufferSnapshot {
         let fragments_cursor = if *since == self.version {
             None
         } else {
-            Some(
-                self.fragments
-                    .filter(move |summary| !since.ge(&summary.max_version), &None),
-            )
+            Some(self.fragments.filter(
+                move |summary| !since.observed_all(&summary.max_version),
+                &None,
+            ))
         };
         let mut cursor = self
             .fragments
@@ -2025,7 +2025,7 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for VersionedFullOffset {
     fn add_summary(&mut self, summary: &'a FragmentSummary, cx: &Option<clock::Global>) {
         if let Self::Offset(offset) = self {
             let version = cx.as_ref().unwrap();
-            if version.ge(&summary.max_insertion_version) {
+            if version.observed_all(&summary.max_insertion_version) {
                 *offset += summary.text.visible + summary.text.deleted;
             } else if version.observed_any(&summary.min_insertion_version) {
                 *self = Self::Invalid;
