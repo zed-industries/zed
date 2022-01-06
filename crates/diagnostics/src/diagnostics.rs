@@ -285,7 +285,7 @@ impl ProjectDiagnosticsEditor {
                                 diagnostic_blocks.push(DiagnosticBlock::Header(primary.clone()));
                                 blocks_to_add.push(BlockProperties {
                                     position: header_position,
-                                    height: 2,
+                                    height: primary.message.matches('\n').count() as u8 + 2,
                                     render: diagnostic_header_renderer(
                                         buffer.clone(),
                                         primary.clone(),

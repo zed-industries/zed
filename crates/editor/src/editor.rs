@@ -3800,6 +3800,7 @@ pub fn diagnostic_block_renderer(
         let mut text_style = settings.style.text.clone();
         text_style.color = diagnostic_style(diagnostic.severity, is_valid, &settings.style).text;
         Text::new(diagnostic.message.clone(), text_style)
+            .with_soft_wrap(false)
             .contained()
             .with_margin_left(cx.anchor_x)
             .boxed()
@@ -3823,7 +3824,11 @@ pub fn diagnostic_header_renderer(
         };
 
         Flex::column()
-            .with_child(Label::new(diagnostic.message.clone(), text_style).boxed())
+            .with_child(
+                Text::new(diagnostic.message.clone(), text_style)
+                    .with_soft_wrap(false)
+                    .boxed(),
+            )
             .with_child(Label::new(file_path, settings.style.text.clone()).boxed())
             .boxed()
     })
