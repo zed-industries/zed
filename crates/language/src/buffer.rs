@@ -725,7 +725,8 @@ impl Buffer {
                             let grammar_changed = this
                                 .grammar()
                                 .map_or(true, |curr_grammar| !Arc::ptr_eq(&grammar, curr_grammar));
-                            let parse_again = this.version.gt(&parsed_version) || grammar_changed;
+                            let parse_again =
+                                this.version.changed_since(&parsed_version) || grammar_changed;
                             this.parsing_in_background = false;
                             this.did_finish_parsing(new_tree, parsed_version, cx);
 
@@ -1095,12 +1096,12 @@ impl Buffer {
     }
 
     pub fn is_dirty(&self) -> bool {
-        !self.saved_version.ge(&self.version)
+        !self.saved_version.observed_all(&self.version)
             || self.file.as_ref().map_or(false, |file| file.is_deleted())
     }
 
     pub fn has_conflict(&self) -> bool {
-        !self.saved_version.ge(&self.version)
+        !self.saved_version.observed_all(&self.version)
             && self
                 .file
                 .as_ref()

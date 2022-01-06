@@ -178,7 +178,7 @@ impl Global {
         }
     }
 
-    pub fn ge(&self, other: &Self) -> bool {
+    pub fn observed_all(&self, other: &Self) -> bool {
         let mut lhs = self.0.iter();
         let mut rhs = other.0.iter();
         loop {
@@ -196,22 +196,16 @@ impl Global {
         }
     }
 
-    pub fn gt(&self, other: &Self) -> bool {
-        let mut lhs = self.0.iter();
-        let mut rhs = other.0.iter();
-        loop {
-            if let Some(left) = lhs.next() {
-                if let Some(right) = rhs.next() {
-                    if left <= right {
-                        return false;
-                    }
-                } else {
-                    return true;
-                }
-            } else {
-                return rhs.next().is_none();
+    pub fn changed_since(&self, other: &Self) -> bool {
+        if self.0.len() > other.0.len() {
+            return true;
+        }
+        for (left, right) in self.0.iter().zip(other.0.iter()) {
+            if left > right {
+                return true;
             }
         }
+        false
     }
 
     pub fn iter<'a>(&'a self) -> impl 'a + Iterator<Item = Local> {

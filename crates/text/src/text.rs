@@ -1125,8 +1125,8 @@ impl Buffer {
             false
         } else {
             match op {
-                Operation::Edit(edit) => self.version.ge(&edit.version),
-                Operation::Undo { undo, .. } => self.version.ge(&undo.version),
+                Operation::Edit(edit) => self.version.observed_all(&edit.version),
+                Operation::Undo { undo, .. } => self.version.observed_all(&undo.version),
             }
         }
     }
@@ -1244,6 +1244,47 @@ impl Buffer {
 
 #[cfg(any(test, feature = "test-support"))]
 impl Buffer {
+    pub fn check_invariants(&self) {
+        // Ensure every fragment is ordered by locator in the fragment tree and corresponds
+        // to an insertion fragment in the insertions tree.
+        let mut prev_fragment_id = Locator::min();
+        for fragment in self.snapshot.fragments.items(&None) {
+            assert!(fragment.id > prev_fragment_id);
+            prev_fragment_id = fragment.id.clone();
+
+            let insertion_fragment = self
+                .snapshot
+                .insertions
+                .get(
+                    &InsertionFragmentKey {
+                        timestamp: fragment.insertion_timestamp.local(),
+                        split_offset: fragment.insertion_offset,
+                    },
+                    &(),
+                )
+                .unwrap();
+            assert_eq!(insertion_fragment.fragment_id, fragment.id);
+        }
+
+        let mut cursor = self.snapshot.fragments.cursor::<Option<&Locator>>();
+        for insertion_fragment in self.snapshot.insertions.cursor::<()>() {
+            cursor.seek(&Some(&insertion_fragment.fragment_id), Bias::Left, &None);
+            let fragment = cursor.item().unwrap();
+            assert_eq!(insertion_fragment.fragment_id, fragment.id);
+            assert_eq!(insertion_fragment.split_offset, fragment.insertion_offset);
+        }
+
+        let fragment_summary = self.snapshot.fragments.summary();
+        assert_eq!(
+            fragment_summary.text.visible,
+            self.snapshot.visible_text.len()
+        );
+        assert_eq!(
+            fragment_summary.text.deleted,
+            self.snapshot.deleted_text.len()
+        );
+    }
+
     pub fn set_group_interval(&mut self, group_interval: Duration) {
         self.history.group_interval = group_interval;
     }
@@ -1648,10 +1689,10 @@ impl BufferSnapshot {
         let fragments_cursor = if *since == self.version {
             None
         } else {
-            Some(
-                self.fragments
-                    .filter(move |summary| !since.ge(&summary.max_version), &None),
-            )
+            Some(self.fragments.filter(
+                move |summary| !since.observed_all(&summary.max_version),
+                &None,
+            ))
         };
         let mut cursor = self
             .fragments
@@ -2025,7 +2066,7 @@ impl<'a> sum_tree::Dimension<'a, FragmentSummary> for VersionedFullOffset {
     fn add_summary(&mut self, summary: &'a FragmentSummary, cx: &Option<clock::Global>) {
         if let Self::Offset(offset) = self {
             let version = cx.as_ref().unwrap();
-            if version.ge(&summary.max_insertion_version) {
+            if version.observed_all(&summary.max_insertion_version) {
                 *offset += summary.text.visible + summary.text.deleted;
             } else if version.observed_any(&summary.min_insertion_version) {
                 *self = Self::Invalid;

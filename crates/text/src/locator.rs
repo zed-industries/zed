@@ -20,7 +20,7 @@ impl Locator {
     }
 
     pub fn from_index(ix: usize, count: usize) -> Self {
-        let id = ((ix as u128 * u64::MAX as u128) / count as u128) as u64;
+        let id = (1 + ix as u64) * (u64::MAX / (count as u64 + 2));
         Self(smallvec![id])
     }
 
