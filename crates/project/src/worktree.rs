@@ -34,6 +34,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt,
     future::Future,
+    mem,
     ops::{Deref, Range},
     path::{Path, PathBuf},
     sync::{
@@ -583,7 +584,9 @@ impl Worktree {
         match self {
             Self::Local(worktree) => {
                 let is_fake_fs = worktree.fs.is_fake();
-                worktree.snapshot = worktree.background_snapshot.lock().clone();
+                worktree
+                    .snapshot
+                    .assign(worktree.background_snapshot.lock().clone());
                 if worktree.is_scanning() {
                     if worktree.poll_task.is_none() {
                         worktree.poll_task = Some(cx.spawn(|this, mut cx| async move {
@@ -1840,6 +1843,14 @@ impl Snapshot {
         self.entries_by_id.edit(entries_by_id_edits, &());
 
         Ok(())
+    }
+
+    fn assign(&mut self, mut other: Self) {
+        mem::swap(
+            &mut self.diagnostic_summaries,
+            &mut other.diagnostic_summaries,
+        );
+        *self = other;
     }
 
     pub fn file_count(&self) -> usize {
