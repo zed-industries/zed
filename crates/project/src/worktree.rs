@@ -1267,7 +1267,7 @@ impl LocalWorktree {
 
             let (diagnostics, language, language_server) = this.update(&mut cx, |this, cx| {
                 let this = this.as_local_mut().unwrap();
-                let diagnostics = this.diagnostics.remove(&path);
+                let diagnostics = this.diagnostics.get(&path).cloned();
                 let language = this
                     .language_registry
                     .select_language(file.full_path())
