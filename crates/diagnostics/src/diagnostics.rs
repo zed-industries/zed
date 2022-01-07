@@ -289,7 +289,7 @@ impl ProjectDiagnosticsEditor {
                                 diagnostic_blocks.push(DiagnosticBlock::Header(header.clone()));
                                 blocks_to_add.push(BlockProperties {
                                     position: header_position,
-                                    height: 2,
+                                    height: 3,
                                     render: diagnostic_header_renderer(
                                         buffer.clone(),
                                         header,

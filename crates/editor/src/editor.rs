@@ -3855,7 +3855,8 @@ pub fn diagnostic_header_renderer(
     Arc::new(move |cx| {
         let settings = build_settings(cx);
         let mut text_style = settings.style.text.clone();
-        text_style.color = diagnostic_style(diagnostic.severity, is_valid, &settings.style).text;
+        let diagnostic_style = diagnostic_style(diagnostic.severity, is_valid, &settings.style);
+        text_style.color = diagnostic_style.text;
         let file_path = if let Some(file) = buffer.read(&**cx).file() {
             file.path().to_string_lossy().to_string()
         } else {
@@ -3869,6 +3870,11 @@ pub fn diagnostic_header_renderer(
                     .boxed(),
             )
             .with_child(Label::new(file_path, settings.style.text.clone()).boxed())
+            .aligned()
+            .left()
+            .contained()
+            .with_style(diagnostic_style.header)
+            .expanded()
             .boxed()
     })
 }

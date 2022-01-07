@@ -261,6 +261,8 @@ pub struct EditorStyle {
 #[derive(Copy, Clone, Deserialize, Default)]
 pub struct DiagnosticStyle {
     pub text: Color,
+    #[serde(default)]
+    pub header: ContainerStyle,
 }
 
 #[derive(Clone, Copy, Default, Deserialize)]
