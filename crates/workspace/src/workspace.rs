@@ -96,7 +96,7 @@ pub struct AppState {
     pub user_store: ModelHandle<client::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub channel_list: ModelHandle<client::ChannelList>,
-    pub path_openers: Arc<[Box<dyn EntryOpener>]>,
+    pub path_openers: Arc<[Box<dyn PathOpener>]>,
     pub build_window_options: &'static dyn Fn() -> WindowOptions<'static>,
     pub build_workspace: &'static dyn Fn(
         ModelHandle<Project>,
@@ -117,7 +117,7 @@ pub struct JoinProjectParams {
     pub app_state: Arc<AppState>,
 }
 
-pub trait EntryOpener {
+pub trait PathOpener {
     fn open(
         &self,
         worktree: &mut Worktree,
@@ -396,7 +396,7 @@ pub struct WorkspaceParams {
     pub settings: watch::Receiver<Settings>,
     pub user_store: ModelHandle<UserStore>,
     pub channel_list: ModelHandle<ChannelList>,
-    pub path_openers: Arc<[Box<dyn EntryOpener>]>,
+    pub path_openers: Arc<[Box<dyn PathOpener>]>,
 }
 
 impl WorkspaceParams {
@@ -466,7 +466,7 @@ pub struct Workspace {
     active_pane: ViewHandle<Pane>,
     status_bar: ViewHandle<StatusBar>,
     project: ModelHandle<Project>,
-    path_openers: Arc<[Box<dyn EntryOpener>]>,
+    path_openers: Arc<[Box<dyn PathOpener>]>,
     items: HashSet<Box<dyn WeakItemHandle>>,
     _observe_current_user: Task<()>,
 }

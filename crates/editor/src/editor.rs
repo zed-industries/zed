@@ -46,7 +46,7 @@ use sum_tree::Bias;
 use text::rope::TextDimension;
 use theme::{DiagnosticStyle, EditorStyle};
 use util::post_inc;
-use workspace::{EntryOpener, Workspace};
+use workspace::{PathOpener, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -111,7 +111,7 @@ action!(FoldSelectedRanges);
 action!(Scroll, Vector2F);
 action!(Select, SelectPhase);
 
-pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn EntryOpener>>) {
+pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpener>>) {
     path_openers.push(Box::new(items::BufferOpener));
     cx.add_bindings(vec![
         Binding::new("escape", Cancel, Some("Editor")),
@@ -524,7 +524,6 @@ impl Editor {
         let buffer = cx.add_model(|cx| {
             Buffer::new(0, "", cx).with_language(Some(language::PLAIN_TEXT.clone()), None, cx)
         });
-        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         workspace.open_item(BufferItemHandle(buffer), cx);
     }
 
