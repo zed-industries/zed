@@ -251,7 +251,7 @@ impl FileFinder {
             Event::Selected(project_path) => {
                 workspace
                     .open_path(project_path.clone(), cx)
-                    .map(|d| d.detach());
+                    .detach_and_log_err(cx);
                 workspace.dismiss_modal(cx);
             }
             Event::Dismissed => {
@@ -431,14 +431,14 @@ mod tests {
 
     #[gpui::test]
     async fn test_matching_paths(mut cx: gpui::TestAppContext) {
-        let mut entry_openers = Vec::new();
+        let mut path_openers = Vec::new();
         cx.update(|cx| {
             super::init(cx);
-            editor::init(cx, &mut entry_openers);
+            editor::init(cx, &mut path_openers);
         });
 
         let mut params = cx.update(WorkspaceParams::test);
-        params.entry_openers = Arc::from(entry_openers);
+        params.path_openers = Arc::from(path_openers);
         params
             .fs
             .as_fake()

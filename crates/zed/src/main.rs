@@ -51,11 +51,11 @@ fn main() {
         let http = http::client();
         let client = client::Client::new(http.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
-        let mut entry_openers = Vec::new();
+        let mut path_openers = Vec::new();
 
         client::init(client.clone(), cx);
         workspace::init(cx);
-        editor::init(cx, &mut entry_openers);
+        editor::init(cx, &mut path_openers);
         go_to_line::init(cx);
         file_finder::init(cx);
         chat_panel::init(cx);
@@ -72,7 +72,7 @@ fn main() {
             client,
             user_store,
             fs: Arc::new(RealFs),
-            entry_openers: Arc::from(entry_openers),
+            path_openers: Arc::from(path_openers),
             build_window_options: &build_window_options,
             build_workspace: &build_workspace,
         });

@@ -111,8 +111,8 @@ action!(FoldSelectedRanges);
 action!(Scroll, Vector2F);
 action!(Select, SelectPhase);
 
-pub fn init(cx: &mut MutableAppContext, entry_openers: &mut Vec<Box<dyn EntryOpener>>) {
-    entry_openers.push(Box::new(items::BufferOpener));
+pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn EntryOpener>>) {
+    path_openers.push(Box::new(items::BufferOpener));
     cx.add_bindings(vec![
         Binding::new("escape", Cancel, Some("Editor")),
         Binding::new("backspace", Backspace, Some("Editor")),
@@ -525,7 +525,7 @@ impl Editor {
             Buffer::new(0, "", cx).with_language(Some(language::PLAIN_TEXT.clone()), None, cx)
         });
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-        workspace.add_item(BufferItemHandle(buffer), cx);
+        workspace.open_item(BufferItemHandle(buffer), cx);
     }
 
     pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {

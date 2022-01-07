@@ -7,6 +7,7 @@ mod status_bar;
 use anyhow::{anyhow, Result};
 use client::{Authenticate, ChannelList, Client, User, UserStore};
 use clock::ReplicaId;
+use collections::HashSet;
 use gpui::{
     action,
     color::Color,
@@ -32,6 +33,7 @@ use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
     future::Future,
+    hash::{Hash, Hasher},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -94,7 +96,7 @@ pub struct AppState {
     pub user_store: ModelHandle<client::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub channel_list: ModelHandle<client::ChannelList>,
-    pub entry_openers: Arc<[Box<dyn EntryOpener>]>,
+    pub path_openers: Arc<[Box<dyn EntryOpener>]>,
     pub build_window_options: &'static dyn Fn() -> WindowOptions<'static>,
     pub build_workspace: &'static dyn Fn(
         ModelHandle<Project>,
@@ -137,6 +139,9 @@ pub trait Item: Entity + Sized {
 }
 
 pub trait ItemView: View {
+    type ItemHandle: ItemHandle;
+
+    fn item_handle(&self, cx: &AppContext) -> Self::ItemHandle;
     fn title(&self, cx: &AppContext) -> String;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
@@ -172,6 +177,7 @@ pub trait ItemView: View {
 }
 
 pub trait ItemHandle: Send + Sync {
+    fn id(&self) -> usize;
     fn add_view(
         &self,
         window_id: usize,
@@ -184,15 +190,17 @@ pub trait ItemHandle: Send + Sync {
 }
 
 pub trait WeakItemHandle {
+    fn id(&self) -> usize;
     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>>;
 }
 
 pub trait ItemViewHandle {
+    fn item_handle(&self, cx: &AppContext) -> Box<dyn ItemHandle>;
     fn title(&self, cx: &AppContext) -> String;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle>;
     fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemViewHandle>>;
-    fn set_parent_pane(&self, pane: &ViewHandle<Pane>, cx: &mut MutableAppContext);
+    fn added_to_pane(&self, cx: &mut ViewContext<Pane>);
     fn id(&self) -> usize;
     fn to_any(&self) -> AnyViewHandle;
     fn is_dirty(&self, cx: &AppContext) -> bool;
@@ -209,6 +217,10 @@ pub trait ItemViewHandle {
 }
 
 impl<T: Item> ItemHandle for ModelHandle<T> {
+    fn id(&self) -> usize {
+        self.id()
+    }
+
     fn add_view(
         &self,
         window_id: usize,
@@ -232,6 +244,10 @@ impl<T: Item> ItemHandle for ModelHandle<T> {
 }
 
 impl ItemHandle for Box<dyn ItemHandle> {
+    fn id(&self) -> usize {
+        ItemHandle::id(self.as_ref())
+    }
+
     fn add_view(
         &self,
         window_id: usize,
@@ -255,12 +271,34 @@ impl ItemHandle for Box<dyn ItemHandle> {
 }
 
 impl<T: Item> WeakItemHandle for WeakModelHandle<T> {
+    fn id(&self) -> usize {
+        WeakModelHandle::id(self)
+    }
+
     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
         WeakModelHandle::<T>::upgrade(*self, cx).map(|i| Box::new(i) as Box<dyn ItemHandle>)
     }
 }
 
+impl Hash for Box<dyn WeakItemHandle> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id().hash(state);
+    }
+}
+
+impl PartialEq for Box<dyn WeakItemHandle> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id() == other.id()
+    }
+}
+
+impl Eq for Box<dyn WeakItemHandle> {}
+
 impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
+    fn item_handle(&self, cx: &AppContext) -> Box<dyn ItemHandle> {
+        Box::new(self.read(cx).item_handle(cx))
+    }
+
     fn title(&self, cx: &AppContext) -> String {
         self.read(cx).title(cx)
     }
@@ -280,25 +318,23 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         .map(|handle| Box::new(handle) as Box<dyn ItemViewHandle>)
     }
 
-    fn set_parent_pane(&self, pane: &ViewHandle<Pane>, cx: &mut MutableAppContext) {
-        pane.update(cx, |_, cx| {
-            cx.subscribe(self, |pane, item, event, cx| {
-                if T::should_close_item_on_event(event) {
-                    pane.close_item(item.id(), cx);
-                    return;
+    fn added_to_pane(&self, cx: &mut ViewContext<Pane>) {
+        cx.subscribe(self, |pane, item, event, cx| {
+            if T::should_close_item_on_event(event) {
+                pane.close_item(item.id(), cx);
+                return;
+            }
+            if T::should_activate_item_on_event(event) {
+                if let Some(ix) = pane.item_index(&item) {
+                    pane.activate_item(ix, cx);
+                    pane.activate(cx);
                 }
-                if T::should_activate_item_on_event(event) {
-                    if let Some(ix) = pane.item_index(&item) {
-                        pane.activate_item(ix, cx);
-                        pane.activate(cx);
-                    }
-                }
-                if T::should_update_tab_on_event(event) {
-                    cx.notify()
-                }
-            })
-            .detach();
-        });
+            }
+            if T::should_update_tab_on_event(event) {
+                cx.notify()
+            }
+        })
+        .detach();
     }
 
     fn save(&self, cx: &mut MutableAppContext) -> Result<Task<Result<()>>> {
@@ -360,7 +396,7 @@ pub struct WorkspaceParams {
     pub settings: watch::Receiver<Settings>,
     pub user_store: ModelHandle<UserStore>,
     pub channel_list: ModelHandle<ChannelList>,
-    pub entry_openers: Arc<[Box<dyn EntryOpener>]>,
+    pub path_openers: Arc<[Box<dyn EntryOpener>]>,
 }
 
 impl WorkspaceParams {
@@ -392,7 +428,7 @@ impl WorkspaceParams {
             languages,
             settings: watch::channel_with(settings).1,
             user_store,
-            entry_openers: Arc::from([]),
+            path_openers: Arc::from([]),
         }
     }
 
@@ -412,7 +448,7 @@ impl WorkspaceParams {
             settings: app_state.settings.clone(),
             user_store: app_state.user_store.clone(),
             channel_list: app_state.channel_list.clone(),
-            entry_openers: app_state.entry_openers.clone(),
+            path_openers: app_state.path_openers.clone(),
         }
     }
 }
@@ -430,8 +466,8 @@ pub struct Workspace {
     active_pane: ViewHandle<Pane>,
     status_bar: ViewHandle<StatusBar>,
     project: ModelHandle<Project>,
-    entry_openers: Arc<[Box<dyn EntryOpener>]>,
-    items: Vec<Box<dyn WeakItemHandle>>,
+    path_openers: Arc<[Box<dyn EntryOpener>]>,
+    items: HashSet<Box<dyn WeakItemHandle>>,
     _observe_current_user: Task<()>,
 }
 
@@ -484,7 +520,7 @@ impl Workspace {
             left_sidebar: Sidebar::new(Side::Left),
             right_sidebar: Sidebar::new(Side::Right),
             project: params.project.clone(),
-            entry_openers: params.entry_openers.clone(),
+            path_openers: params.path_openers.clone(),
             items: Default::default(),
             _observe_current_user,
         }
@@ -560,13 +596,13 @@ impl Workspace {
                     async move {
                         let project_path = project_path.await.ok()?;
                         if fs.is_file(&abs_path).await {
-                            if let Some(entry) =
+                            Some(
                                 this.update(&mut cx, |this, cx| this.open_path(project_path, cx))
-                            {
-                                return Some(entry.await);
-                            }
+                                    .await,
+                            )
+                        } else {
+                            None
                         }
-                        None
                     }
                 })
             })
@@ -667,102 +703,51 @@ impl Workspace {
     #[must_use]
     pub fn open_path(
         &mut self,
-        project_path: ProjectPath,
+        path: ProjectPath,
         cx: &mut ViewContext<Self>,
-    ) -> Option<Task<Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>>> {
-        let pane = self.active_pane().clone();
-        if let Some(existing_item) =
-            self.activate_or_open_existing_entry(project_path.clone(), &pane, cx)
-        {
-            return Some(cx.foreground().spawn(async move { Ok(existing_item) }));
+    ) -> Task<Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>> {
+        if let Some(existing_item) = self.item_for_path(&path, cx) {
+            return Task::ready(Ok(self.open_item(existing_item, cx)));
         }
 
-        let worktree = match self
-            .project
-            .read(cx)
-            .worktree_for_id(project_path.worktree_id, cx)
-        {
+        let worktree = match self.project.read(cx).worktree_for_id(path.worktree_id, cx) {
             Some(worktree) => worktree,
             None => {
-                log::error!("worktree {} does not exist", project_path.worktree_id);
-                return None;
+                return Task::ready(Err(Arc::new(anyhow!(
+                    "worktree {} does not exist",
+                    path.worktree_id
+                ))));
             }
         };
 
-        let project_path = project_path.clone();
-        let entry_openers = self.entry_openers.clone();
-        let task = worktree.update(cx, |worktree, cx| {
-            for opener in entry_openers.iter() {
+        let project_path = path.clone();
+        let path_openers = self.path_openers.clone();
+        let open_task = worktree.update(cx, |worktree, cx| {
+            for opener in path_openers.iter() {
                 if let Some(task) = opener.open(worktree, project_path.clone(), cx) {
-                    return Some(task);
+                    return task;
                 }
             }
-            log::error!("no opener for path {:?} found", project_path);
-            None
-        })?;
+            Task::ready(Err(anyhow!("no opener found for path {:?}", project_path)))
+        });
 
-        let pane = pane.downgrade();
-        Some(cx.spawn(|this, mut cx| async move {
-            let load_result = task.await;
+        let pane = self.active_pane().clone().downgrade();
+        cx.spawn(|this, mut cx| async move {
+            let item = open_task.await?;
             this.update(&mut cx, |this, cx| {
                 let pane = pane
                     .upgrade(&cx)
                     .ok_or_else(|| anyhow!("could not upgrade pane reference"))?;
-                let item = load_result?;
-
-                // By the time loading finishes, the entry could have been already added
-                // to the pane. If it was, we activate it, otherwise we'll store the
-                // item and add a new view for it.
-                if let Some(existing) =
-                    this.activate_or_open_existing_entry(project_path, &pane, cx)
-                {
-                    Ok(existing)
-                } else {
-                    Ok(this.add_item(item, cx))
-                }
+                Ok(this.open_item_in_pane(item, &pane, cx))
             })
-        }))
+        })
     }
 
-    fn activate_or_open_existing_entry(
-        &mut self,
-        project_path: ProjectPath,
-        pane: &ViewHandle<Pane>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<Box<dyn ItemViewHandle>> {
-        // If the pane contains a view for this file, then activate
-        // that item view.
-        if let Some(existing_item_view) =
-            pane.update(cx, |pane, cx| pane.activate_entry(project_path.clone(), cx))
-        {
-            return Some(existing_item_view);
-        }
-
-        // Otherwise, if this file is already open somewhere in the workspace,
-        // then add another view for it.
-        let settings = self.settings.clone();
-        let mut view_for_existing_item = None;
-        self.items.retain(|item| {
-            if let Some(item) = item.upgrade(cx) {
-                if view_for_existing_item.is_none()
-                    && item
-                        .project_path(cx)
-                        .map_or(false, |item_project_path| item_project_path == project_path)
-                {
-                    view_for_existing_item =
-                        Some(item.add_view(cx.window_id(), settings.clone(), cx.as_mut()));
-                }
-                true
-            } else {
-                false
-            }
-        });
-        if let Some(view) = view_for_existing_item {
-            pane.add_item_view(view.boxed_clone(), cx.as_mut());
-            Some(view)
-        } else {
-            None
-        }
+    fn item_for_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
+        self.items
+            .iter()
+            .filter_map(|i| i.upgrade(cx))
+            .find(|i| i.project_path(cx).as_ref() == Some(path))
     }
 
     pub fn active_item(&self, cx: &AppContext) -> Option<Box<dyn ItemViewHandle>> {
@@ -908,19 +893,28 @@ impl Workspace {
         pane
     }
 
-    pub fn add_item<T>(
+    pub fn open_item<T>(
         &mut self,
         item_handle: T,
         cx: &mut ViewContext<Self>,
     ) -> Box<dyn ItemViewHandle>
     where
-        T: ItemHandle,
+        T: 'static + ItemHandle,
     {
-        let view = item_handle.add_view(cx.window_id(), self.settings.clone(), cx);
-        self.items.push(item_handle.downgrade());
-        self.active_pane()
-            .add_item_view(view.boxed_clone(), cx.as_mut());
-        view
+        self.open_item_in_pane(item_handle, &self.active_pane().clone(), cx)
+    }
+
+    pub fn open_item_in_pane<T>(
+        &mut self,
+        item_handle: T,
+        pane: &ViewHandle<Pane>,
+        cx: &mut ViewContext<Self>,
+    ) -> Box<dyn ItemViewHandle>
+    where
+        T: 'static + ItemHandle,
+    {
+        self.items.insert(item_handle.downgrade());
+        pane.update(cx, |pane, cx| pane.open_item(item_handle, cx))
     }
 
     fn activate_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
@@ -965,7 +959,7 @@ impl Workspace {
         self.activate_pane(new_pane.clone(), cx);
         if let Some(item) = pane.read(cx).active_item() {
             if let Some(clone) = item.clone_on_split(cx.as_mut()) {
-                new_pane.add_item_view(clone, cx.as_mut());
+                new_pane.update(cx, |new_pane, cx| new_pane.add_item_view(clone, cx));
             }
         }
         self.center

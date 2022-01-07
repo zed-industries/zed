@@ -7,7 +7,7 @@ use rand::prelude::*;
 use smol::{channel, prelude::*, Executor, Timer};
 use std::{
     any::Any,
-    fmt::{self, Debug},
+    fmt::{self, Debug, Display},
     marker::PhantomData,
     mem,
     ops::RangeInclusive,
@@ -25,7 +25,7 @@ use waker_fn::waker_fn;
 
 use crate::{
     platform::{self, Dispatcher},
-    util,
+    util, MutableAppContext,
 };
 
 pub enum Foreground {
@@ -679,6 +679,17 @@ impl<T> Task<T> {
             Task::Local { any_task, .. } => any_task.detach(),
             Task::Send { any_task, .. } => any_task.detach(),
         }
+    }
+}
+
+impl<T: 'static, E: 'static + Display> Task<Result<T, E>> {
+    pub fn detach_and_log_err(self, cx: &mut MutableAppContext) {
+        cx.spawn(|_| async move {
+            if let Err(err) = self.await {
+                log::error!("{}", err);
+            }
+        })
+        .detach();
     }
 }
 

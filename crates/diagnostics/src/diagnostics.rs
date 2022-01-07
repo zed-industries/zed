@@ -43,7 +43,7 @@ struct ProjectDiagnostics {
 }
 
 struct ProjectDiagnosticsEditor {
-    project: ModelHandle<Project>,
+    model: ModelHandle<ProjectDiagnostics>,
     editor: ViewHandle<Editor>,
     excerpts: ModelHandle<MultiBuffer>,
     path_states: Vec<(Arc<Path>, Vec<DiagnosticGroupState>)>,
@@ -109,10 +109,11 @@ impl View for ProjectDiagnosticsEditor {
 
 impl ProjectDiagnosticsEditor {
     fn new(
-        project: ModelHandle<Project>,
+        model: ModelHandle<ProjectDiagnostics>,
         settings: watch::Receiver<workspace::Settings>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let project = model.read(cx).project.clone();
         cx.subscribe(&project, |this, _, event, cx| match event {
             project::Event::DiskBasedDiagnosticsUpdated { worktree_id } => {
                 if let Some(paths) = this.paths_to_update.remove(&worktree_id) {
@@ -142,7 +143,7 @@ impl ProjectDiagnosticsEditor {
             .map(|e| e.0)
             .collect();
         let this = Self {
-            project,
+            model,
             excerpts,
             editor,
             build_settings,
@@ -161,7 +162,7 @@ impl ProjectDiagnosticsEditor {
 
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         let diagnostics = cx.add_model(|_| ProjectDiagnostics::new(workspace.project().clone()));
-        workspace.add_item(diagnostics, cx);
+        workspace.open_item(diagnostics, cx);
     }
 
     fn open_excerpts(&mut self, _: &OpenExcerpts, cx: &mut ViewContext<Self>) {
@@ -183,7 +184,7 @@ impl ProjectDiagnosticsEditor {
     }
 
     fn update_excerpts(&self, paths: HashSet<ProjectPath>, cx: &mut ViewContext<Self>) {
-        let project = self.project.clone();
+        let project = self.model.read(cx).project.clone();
         cx.spawn(|this, mut cx| {
             async move {
                 for path in paths {
@@ -461,8 +462,7 @@ impl workspace::Item for ProjectDiagnostics {
         settings: watch::Receiver<workspace::Settings>,
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View {
-        let project = handle.read(cx).project.clone();
-        ProjectDiagnosticsEditor::new(project, settings, cx)
+        ProjectDiagnosticsEditor::new(handle, settings, cx)
     }
 
     fn project_path(&self) -> Option<project::ProjectPath> {
@@ -471,6 +471,12 @@ impl workspace::Item for ProjectDiagnostics {
 }
 
 impl workspace::ItemView for ProjectDiagnosticsEditor {
+    type ItemHandle = ModelHandle<ProjectDiagnostics>;
+
+    fn item_handle(&self, _: &AppContext) -> Self::ItemHandle {
+        self.model.clone()
+    }
+
     fn title(&self, _: &AppContext) -> String {
         "Project Diagnostics".to_string()
     }
@@ -479,8 +485,24 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         None
     }
 
+    fn is_dirty(&self, cx: &AppContext) -> bool {
+        self.excerpts.read(cx).read(cx).is_dirty()
+    }
+
+    fn has_conflict(&self, cx: &AppContext) -> bool {
+        self.excerpts.read(cx).read(cx).has_conflict()
+    }
+
+    fn can_save(&self, _: &AppContext) -> bool {
+        true
+    }
+
     fn save(&mut self, cx: &mut ViewContext<Self>) -> Result<Task<Result<()>>> {
         self.excerpts.update(cx, |excerpts, cx| excerpts.save(cx))
+    }
+
+    fn can_save_as(&self, _: &AppContext) -> bool {
+        false
     }
 
     fn save_as(
@@ -492,27 +514,11 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         unreachable!()
     }
 
-    fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.excerpts.read(cx).read(cx).is_dirty()
-    }
-
-    fn has_conflict(&self, cx: &AppContext) -> bool {
-        self.excerpts.read(cx).read(cx).has_conflict()
-    }
-
     fn should_update_tab_on_event(event: &Event) -> bool {
         matches!(
             event,
             Event::Saved | Event::Dirtied | Event::FileHandleChanged
         )
-    }
-
-    fn can_save(&self, _: &AppContext) -> bool {
-        true
-    }
-
-    fn can_save_as(&self, _: &AppContext) -> bool {
-        false
     }
 }
 
@@ -677,8 +683,9 @@ mod tests {
                 .unwrap();
         });
 
+        let model = cx.add_model(|_| ProjectDiagnostics::new(project.clone()));
         let view = cx.add_view(Default::default(), |cx| {
-            ProjectDiagnosticsEditor::new(project.clone(), settings, cx)
+            ProjectDiagnosticsEditor::new(model, settings, cx)
         });
 
         view.condition(&mut cx, |view, cx| view.text(cx).contains("fn main()"))

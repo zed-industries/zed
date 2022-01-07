@@ -131,7 +131,7 @@ impl ProjectPanel {
                                 },
                                 cx,
                             )
-                            .map(|t| t.detach());
+                            .detach_and_log_err(cx);
                     }
                 }
             }

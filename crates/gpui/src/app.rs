@@ -2773,6 +2773,10 @@ impl<T: Entity> WeakModelHandle<T> {
         }
     }
 
+    pub fn id(&self) -> usize {
+        self.model_id
+    }
+
     pub fn upgrade(self, cx: &impl UpgradeModelHandle) -> Option<ModelHandle<T>> {
         cx.upgrade_model_handle(self)
     }

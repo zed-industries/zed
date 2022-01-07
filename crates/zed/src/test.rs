@@ -16,8 +16,8 @@ fn init_logger() {
 }
 
 pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
-    let mut entry_openers = Vec::new();
-    editor::init(cx, &mut entry_openers);
+    let mut path_openers = Vec::new();
+    editor::init(cx, &mut path_openers);
     let (settings_tx, settings) = watch::channel_with(build_settings(cx));
     let themes = ThemeRegistry::new(Assets, cx.font_cache().clone());
     let http = FakeHttpClient::with_404_response();
@@ -41,7 +41,7 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
         client,
         user_store,
         fs: Arc::new(FakeFs::new()),
-        entry_openers: Arc::from(entry_openers),
+        path_openers: Arc::from(path_openers),
         build_window_options: &build_window_options,
         build_workspace: &build_workspace,
     })

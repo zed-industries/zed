@@ -71,6 +71,10 @@ impl ItemHandle for BufferItemHandle {
             path: f.path().clone(),
         })
     }
+
+    fn id(&self) -> usize {
+        self.0.id()
+    }
 }
 
 impl WeakItemHandle for WeakBufferItemHandle {
@@ -79,22 +83,17 @@ impl WeakItemHandle for WeakBufferItemHandle {
             .upgrade(cx)
             .map(|buffer| Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)
     }
+
+    fn id(&self) -> usize {
+        self.0.id()
+    }
 }
 
 impl ItemView for Editor {
-    fn should_activate_item_on_event(event: &Event) -> bool {
-        matches!(event, Event::Activate)
-    }
+    type ItemHandle = BufferItemHandle;
 
-    fn should_close_item_on_event(event: &Event) -> bool {
-        matches!(event, Event::Closed)
-    }
-
-    fn should_update_tab_on_event(event: &Event) -> bool {
-        matches!(
-            event,
-            Event::Saved | Event::Dirtied | Event::FileHandleChanged
-        )
+    fn item_handle(&self, cx: &AppContext) -> Self::ItemHandle {
+        BufferItemHandle(self.buffer.clone())
     }
 
     fn title(&self, cx: &AppContext) -> String {
@@ -124,12 +123,28 @@ impl ItemView for Editor {
         Some(self.clone(cx))
     }
 
+    fn is_dirty(&self, cx: &AppContext) -> bool {
+        self.buffer().read(cx).read(cx).is_dirty()
+    }
+
+    fn has_conflict(&self, cx: &AppContext) -> bool {
+        self.buffer().read(cx).read(cx).has_conflict()
+    }
+
+    fn can_save(&self, cx: &AppContext) -> bool {
+        self.project_path(cx).is_some()
+    }
+
     fn save(&mut self, cx: &mut ViewContext<Self>) -> Result<Task<Result<()>>> {
         let save = self.buffer().update(cx, |b, cx| b.save(cx))?;
         Ok(cx.spawn(|_, _| async move {
             save.await?;
             Ok(())
         }))
+    }
+
+    fn can_save_as(&self, _: &AppContext) -> bool {
+        true
     }
 
     fn save_as(
@@ -180,20 +195,19 @@ impl ItemView for Editor {
         })
     }
 
-    fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.buffer().read(cx).read(cx).is_dirty()
+    fn should_activate_item_on_event(event: &Event) -> bool {
+        matches!(event, Event::Activate)
     }
 
-    fn has_conflict(&self, cx: &AppContext) -> bool {
-        self.buffer().read(cx).read(cx).has_conflict()
+    fn should_close_item_on_event(event: &Event) -> bool {
+        matches!(event, Event::Closed)
     }
 
-    fn can_save(&self, cx: &AppContext) -> bool {
-        self.project_path(cx).is_some()
-    }
-
-    fn can_save_as(&self, _: &AppContext) -> bool {
-        true
+    fn should_update_tab_on_event(event: &Event) -> bool {
+        matches!(
+            event,
+            Event::Saved | Event::Dirtied | Event::FileHandleChanged
+        )
     }
 }
 
