@@ -34,7 +34,6 @@ use std::{
     ffi::{OsStr, OsString},
     fmt,
     future::Future,
-    mem,
     ops::{Deref, Range},
     path::{Path, PathBuf},
     sync::{
@@ -197,7 +196,6 @@ impl Worktree {
                     entries_by_id,
                     removed_entry_ids: Default::default(),
                     next_entry_id: Default::default(),
-                    diagnostic_summaries,
                 };
 
                 let (updates_tx, mut updates_rx) = postage::mpsc::channel(64);
@@ -241,6 +239,7 @@ impl Worktree {
                     queued_operations: Default::default(),
                     languages,
                     user_store,
+                    diagnostic_summaries,
                 })
             })
         });
@@ -584,9 +583,7 @@ impl Worktree {
         match self {
             Self::Local(worktree) => {
                 let is_fake_fs = worktree.fs.is_fake();
-                worktree
-                    .snapshot
-                    .assign(worktree.background_snapshot.lock().clone());
+                worktree.snapshot = worktree.background_snapshot.lock().clone();
                 if worktree.is_scanning() {
                     if worktree.poll_task.is_none() {
                         worktree.poll_task = Some(cx.spawn(|this, mut cx| async move {
@@ -828,8 +825,7 @@ impl Worktree {
 
         let this = self.as_local_mut().unwrap();
         let summary = DiagnosticSummary::new(&diagnostics);
-        this.snapshot
-            .diagnostic_summaries
+        this.diagnostic_summaries
             .insert(PathKey(worktree_path.clone()), summary.clone());
         this.diagnostics.insert(worktree_path.clone(), diagnostics);
 
@@ -943,7 +939,6 @@ pub struct Snapshot {
     entries_by_id: SumTree<PathEntry>,
     removed_entry_ids: HashMap<u64, usize>,
     next_entry_id: Arc<AtomicUsize>,
-    diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
 }
 
 pub struct LocalWorktree {
@@ -958,6 +953,7 @@ pub struct LocalWorktree {
     open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
     diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<PointUtf16>>>,
+    diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
     queued_operations: Vec<(u64, Operation)>,
     language_registry: Arc<LanguageRegistry>,
     client: Arc<Client>,
@@ -984,6 +980,7 @@ pub struct RemoteWorktree {
     languages: Arc<LanguageRegistry>,
     user_store: ModelHandle<UserStore>,
     queued_operations: Vec<(u64, Operation)>,
+    diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
 }
 
 type LoadingBuffers = HashMap<
@@ -1038,7 +1035,6 @@ impl LocalWorktree {
                 entries_by_id: Default::default(),
                 removed_entry_ids: Default::default(),
                 next_entry_id: Arc::new(next_entry_id),
-                diagnostic_summaries: Default::default(),
             };
             if let Some(metadata) = metadata {
                 snapshot.insert_entry(
@@ -1064,6 +1060,7 @@ impl LocalWorktree {
                 open_buffers: Default::default(),
                 shared_buffers: Default::default(),
                 diagnostics: Default::default(),
+                diagnostic_summaries: Default::default(),
                 queued_operations: Default::default(),
                 language_registry: languages,
                 client,
@@ -1502,10 +1499,11 @@ impl LocalWorktree {
             })
             .detach();
 
+        let diagnostic_summaries = self.diagnostic_summaries.clone();
         let share_message = cx.background().spawn(async move {
             proto::ShareWorktree {
                 project_id,
-                worktree: Some(snapshot.to_proto()),
+                worktree: Some(snapshot.to_proto(&diagnostic_summaries)),
             }
         });
 
@@ -1680,7 +1678,7 @@ impl RemoteWorktree {
     ) {
         if let Some(summary) = envelope.payload.summary {
             let path: Arc<Path> = Path::new(&summary.path).into();
-            self.snapshot.diagnostic_summaries.insert(
+            self.diagnostic_summaries.insert(
                 PathKey(path.clone()),
                 DiagnosticSummary {
                     error_count: summary.error_count as usize,
@@ -1726,7 +1724,10 @@ impl Snapshot {
         self.id
     }
 
-    pub fn to_proto(&self) -> proto::Worktree {
+    pub fn to_proto(
+        &self,
+        diagnostic_summaries: &TreeMap<PathKey, DiagnosticSummary>,
+    ) -> proto::Worktree {
         let root_name = self.root_name.clone();
         proto::Worktree {
             id: self.id.0 as u64,
@@ -1737,8 +1738,7 @@ impl Snapshot {
                 .filter(|e| !e.is_ignored)
                 .map(Into::into)
                 .collect(),
-            diagnostic_summaries: self
-                .diagnostic_summaries
+            diagnostic_summaries: diagnostic_summaries
                 .iter()
                 .map(|(path, summary)| summary.to_proto(path.0.clone()))
                 .collect(),
@@ -1843,14 +1843,6 @@ impl Snapshot {
         self.entries_by_id.edit(entries_by_id_edits, &());
 
         Ok(())
-    }
-
-    fn assign(&mut self, mut other: Self) {
-        mem::swap(
-            &mut self.diagnostic_summaries,
-            &mut other.diagnostic_summaries,
-        );
-        *self = other;
     }
 
     pub fn file_count(&self) -> usize {
@@ -3358,7 +3350,7 @@ mod tests {
         let remote = Worktree::remote(
             1,
             1,
-            initial_snapshot.to_proto(),
+            initial_snapshot.to_proto(&Default::default()),
             Client::new(http_client.clone()),
             user_store,
             Default::default(),
@@ -4205,7 +4197,6 @@ mod tests {
             root_name: Default::default(),
             root_char_bag: Default::default(),
             next_entry_id: next_entry_id.clone(),
-            diagnostic_summaries: Default::default(),
         };
         initial_snapshot.insert_entry(
             Entry::new(
