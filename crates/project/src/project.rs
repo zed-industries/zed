@@ -539,6 +539,17 @@ impl Project {
         }
     }
 
+    pub fn diagnostic_summary(&self, cx: &AppContext) -> DiagnosticSummary {
+        let mut summary = DiagnosticSummary::default();
+        for (_, path_summary) in self.diagnostic_summaries(cx) {
+            summary.error_count += path_summary.error_count;
+            summary.warning_count += path_summary.warning_count;
+            summary.info_count += path_summary.info_count;
+            summary.hint_count += path_summary.hint_count;
+        }
+        summary
+    }
+
     pub fn diagnostic_summaries<'a>(
         &'a self,
         cx: &'a AppContext,

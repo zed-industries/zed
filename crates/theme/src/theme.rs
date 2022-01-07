@@ -232,6 +232,7 @@ pub struct ProjectDiagnostics {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub empty_message: TextStyle,
+    pub status_bar_item: ContainedText,
 }
 
 #[derive(Clone, Deserialize, Default)]

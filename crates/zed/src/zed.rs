@@ -88,12 +88,20 @@ pub fn build_workspace(
         .into(),
     );
 
-    let diagnostic =
+    let diagnostic_message =
         cx.add_view(|_| editor::items::DiagnosticMessage::new(app_state.settings.clone()));
+    let diagnostic_summary = cx.add_view(|cx| {
+        diagnostics::items::DiagnosticSummary::new(
+            workspace.project(),
+            app_state.settings.clone(),
+            cx,
+        )
+    });
     let cursor_position =
         cx.add_view(|_| editor::items::CursorPosition::new(app_state.settings.clone()));
     workspace.status_bar().update(cx, |status_bar, cx| {
-        status_bar.add_left_item(diagnostic, cx);
+        status_bar.add_left_item(diagnostic_summary, cx);
+        status_bar.add_left_item(diagnostic_message, cx);
         status_bar.add_right_item(cursor_position, cx);
     });
 

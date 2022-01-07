@@ -1,3 +1,5 @@
+pub mod items;
+
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use editor::{
@@ -16,13 +18,13 @@ use std::{cmp::Ordering, ops::Range, path::Path, sync::Arc};
 use util::TryFutureExt;
 use workspace::Workspace;
 
-action!(Toggle);
+action!(Deploy);
 
 const CONTEXT_LINE_COUNT: u32 = 1;
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_bindings([Binding::new("alt-shift-D", Toggle, None)]);
-    cx.add_action(ProjectDiagnosticsEditor::toggle);
+    cx.add_bindings([Binding::new("alt-shift-D", Deploy, None)]);
+    cx.add_action(ProjectDiagnosticsEditor::deploy);
 }
 
 type Event = editor::Event;
@@ -148,7 +150,7 @@ impl ProjectDiagnosticsEditor {
         self.editor.read(cx).text(cx)
     }
 
-    fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
+    fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         let diagnostics = cx.add_model(|_| ProjectDiagnostics::new(workspace.project().clone()));
         workspace.add_item(diagnostics, cx);
     }
