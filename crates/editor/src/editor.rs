@@ -1056,6 +1056,45 @@ impl Editor {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn selected_ranges<D: TextDimension + Ord + Sub<D, Output = D>>(
+        &self,
+        cx: &mut MutableAppContext,
+    ) -> Vec<Range<D>> {
+        self.local_selections::<D>(cx)
+            .iter()
+            .map(|s| {
+                if s.reversed {
+                    s.end.clone()..s.start.clone()
+                } else {
+                    s.start.clone()..s.end.clone()
+                }
+            })
+            .collect()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn selected_display_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
+        let display_map = self
+            .display_map
+            .update(cx, |display_map, cx| display_map.snapshot(cx));
+        self.selections
+            .iter()
+            .chain(
+                self.pending_selection
+                    .as_ref()
+                    .map(|pending| &pending.selection),
+            )
+            .map(|s| {
+                if s.reversed {
+                    s.end.to_display_point(&display_map)..s.start.to_display_point(&display_map)
+                } else {
+                    s.start.to_display_point(&display_map)..s.end.to_display_point(&display_map)
+                }
+            })
+            .collect()
+    }
+
     pub fn select_ranges<I, T>(
         &mut self,
         ranges: I,
@@ -6177,45 +6216,6 @@ mod tests {
                 )
             );
         });
-    }
-
-    impl Editor {
-        fn selected_ranges<D: TextDimension + Ord + Sub<D, Output = D>>(
-            &self,
-            cx: &mut MutableAppContext,
-        ) -> Vec<Range<D>> {
-            self.local_selections::<D>(cx)
-                .iter()
-                .map(|s| {
-                    if s.reversed {
-                        s.end.clone()..s.start.clone()
-                    } else {
-                        s.start.clone()..s.end.clone()
-                    }
-                })
-                .collect()
-        }
-
-        fn selected_display_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
-            let display_map = self
-                .display_map
-                .update(cx, |display_map, cx| display_map.snapshot(cx));
-            self.selections
-                .iter()
-                .chain(
-                    self.pending_selection
-                        .as_ref()
-                        .map(|pending| &pending.selection),
-                )
-                .map(|s| {
-                    if s.reversed {
-                        s.end.to_display_point(&display_map)..s.start.to_display_point(&display_map)
-                    } else {
-                        s.start.to_display_point(&display_map)..s.end.to_display_point(&display_map)
-                    }
-                })
-                .collect()
-        }
     }
 
     fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

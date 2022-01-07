@@ -9,7 +9,7 @@ use gpui::{
     action, elements::*, keymap::Binding, AppContext, Entity, ModelHandle, MutableAppContext,
     RenderContext, Task, View, ViewContext, ViewHandle,
 };
-use language::{Bias, Buffer, Diagnostic, DiagnosticEntry, Point};
+use language::{Bias, Buffer, Diagnostic, DiagnosticEntry, Point, Selection, SelectionGoal};
 use postage::watch;
 use project::{Project, ProjectPath, WorktreeId};
 use std::{cmp::Ordering, ops::Range, path::Path, sync::Arc};
@@ -183,6 +183,7 @@ impl ProjectDiagnosticsEditor {
             }
         }
 
+        let was_empty = self.path_states.is_empty();
         let path_ix = match self
             .path_states
             .binary_search_by_key(&path.as_ref(), |e| e.0.as_ref())
@@ -375,7 +376,21 @@ impl ProjectDiagnosticsEditor {
                 group_state.blocks = block_ids.by_ref().take(group_state.block_count).collect();
             }
 
-            editor.refresh_selections(cx);
+            if was_empty {
+                editor.update_selections(
+                    vec![Selection {
+                        id: 0,
+                        start: 0,
+                        end: 0,
+                        reversed: false,
+                        goal: SelectionGoal::None,
+                    }],
+                    None,
+                    cx,
+                );
+            } else {
+                editor.refresh_selections(cx);
+            }
         });
 
         for ix in group_ixs_to_remove.into_iter().rev() {
@@ -681,6 +696,10 @@ mod tests {
                     "}"
                 )
             );
+
+            view.editor.update(cx, |editor, cx| {
+                assert_eq!(editor.selected_ranges::<usize>(cx), [0..0]);
+            });
         });
 
         worktree.update(&mut cx, |worktree, cx| {
