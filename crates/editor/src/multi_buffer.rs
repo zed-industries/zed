@@ -496,6 +496,14 @@ impl MultiBuffer {
             }
         }
 
+        for (buffer_id, buffer_state) in self.buffers.borrow().iter() {
+            if !selections_by_buffer.contains_key(buffer_id) {
+                buffer_state
+                    .buffer
+                    .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
+            }
+        }
+
         for (buffer_id, mut selections) in selections_by_buffer {
             self.buffers.borrow()[&buffer_id]
                 .buffer
