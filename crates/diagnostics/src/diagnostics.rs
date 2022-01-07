@@ -165,8 +165,13 @@ impl ProjectDiagnosticsEditor {
     }
 
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
-        let diagnostics = cx.add_model(|_| ProjectDiagnostics::new(workspace.project().clone()));
-        workspace.open_item(diagnostics, cx);
+        if let Some(existing) = workspace.item_of_type::<ProjectDiagnostics>(cx) {
+            workspace.activate_pane_for_item(&existing, cx);
+        } else {
+            let diagnostics =
+                cx.add_model(|_| ProjectDiagnostics::new(workspace.project().clone()));
+            workspace.open_item(diagnostics, cx);
+        }
     }
 
     fn open_excerpts(&mut self, _: &OpenExcerpts, cx: &mut ViewContext<Self>) {
@@ -191,8 +196,10 @@ impl ProjectDiagnosticsEditor {
 
             workspace.update(cx, |workspace, cx| {
                 for (buffer, ranges) in new_selections_by_buffer {
+                    let buffer = BufferItemHandle(buffer);
+                    workspace.activate_pane_for_item(&buffer, cx);
                     let editor = workspace
-                        .open_item(BufferItemHandle(buffer), cx)
+                        .open_item(buffer, cx)
                         .to_any()
                         .downcast::<Editor>()
                         .unwrap();

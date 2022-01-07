@@ -3097,7 +3097,31 @@ impl Drop for AnyViewHandle {
 
 pub struct AnyModelHandle {
     model_id: usize,
+    model_type: TypeId,
     ref_counts: Arc<Mutex<RefCounts>>,
+}
+
+impl AnyModelHandle {
+    pub fn downcast<T: Entity>(self) -> Option<ModelHandle<T>> {
+        if self.is::<T>() {
+            let result = Some(ModelHandle {
+                model_id: self.model_id,
+                model_type: PhantomData,
+                ref_counts: self.ref_counts.clone(),
+            });
+            unsafe {
+                Arc::decrement_strong_count(&self.ref_counts);
+            }
+            std::mem::forget(self);
+            result
+        } else {
+            None
+        }
+    }
+
+    pub fn is<T: Entity>(&self) -> bool {
+        self.model_type == TypeId::of::<T>()
+    }
 }
 
 impl<T: Entity> From<ModelHandle<T>> for AnyModelHandle {
@@ -3105,6 +3129,7 @@ impl<T: Entity> From<ModelHandle<T>> for AnyModelHandle {
         handle.ref_counts.lock().inc_model(handle.model_id);
         Self {
             model_id: handle.model_id,
+            model_type: TypeId::of::<T>(),
             ref_counts: handle.ref_counts.clone(),
         }
     }

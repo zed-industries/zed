@@ -16,9 +16,9 @@ use gpui::{
     json::{self, to_string_pretty, ToJson},
     keymap::Binding,
     platform::{CursorStyle, WindowOptions},
-    AnyViewHandle, AppContext, ClipboardItem, Entity, ModelContext, ModelHandle, MutableAppContext,
-    PathPromptOptions, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
-    WeakModelHandle, WeakViewHandle,
+    AnyModelHandle, AnyViewHandle, AppContext, ClipboardItem, Entity, ModelContext, ModelHandle,
+    MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View, ViewContext,
+    ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use language::LanguageRegistry;
 use log::error;
@@ -186,6 +186,7 @@ pub trait ItemHandle: Send + Sync {
     ) -> Box<dyn ItemViewHandle>;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
     fn downgrade(&self) -> Box<dyn WeakItemHandle>;
+    fn to_any(&self) -> AnyModelHandle;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
 }
 
@@ -238,6 +239,10 @@ impl<T: Item> ItemHandle for ModelHandle<T> {
         Box::new(self.downgrade())
     }
 
+    fn to_any(&self) -> AnyModelHandle {
+        self.clone().into()
+    }
+
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
         self.read(cx).project_path()
     }
@@ -263,6 +268,10 @@ impl ItemHandle for Box<dyn ItemHandle> {
 
     fn downgrade(&self) -> Box<dyn WeakItemHandle> {
         self.as_ref().downgrade()
+    }
+
+    fn to_any(&self) -> AnyModelHandle {
+        self.as_ref().to_any()
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
@@ -760,6 +769,12 @@ impl Workspace {
             .find(|i| i.project_path(cx).as_ref() == Some(path))
     }
 
+    pub fn item_of_type<T: Item>(&self, cx: &AppContext) -> Option<ModelHandle<T>> {
+        self.items
+            .iter()
+            .find_map(|i| i.upgrade(cx).and_then(|i| i.to_any().downcast()))
+    }
+
     pub fn active_item(&self, cx: &AppContext) -> Option<Box<dyn ItemViewHandle>> {
         self.active_pane().read(cx).active_item()
     }
@@ -925,6 +940,26 @@ impl Workspace {
     {
         self.items.insert(item_handle.downgrade());
         pane.update(cx, |pane, cx| pane.open_item(item_handle, self, cx))
+    }
+
+    pub fn activate_pane_for_item(
+        &mut self,
+        item: &dyn ItemHandle,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        let pane = self.panes.iter().find_map(|pane| {
+            if pane.read(cx).contains_item(item) {
+                Some(pane.clone())
+            } else {
+                None
+            }
+        });
+        if let Some(pane) = pane {
+            self.activate_pane(pane.clone(), cx);
+            true
+        } else {
+            false
+        }
     }
 
     fn activate_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {

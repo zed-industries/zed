@@ -62,6 +62,10 @@ impl ItemHandle for BufferItemHandle {
         Box::new(self.clone())
     }
 
+    fn to_any(&self) -> gpui::AnyModelHandle {
+        self.0.clone().into()
+    }
+
     fn downgrade(&self) -> Box<dyn workspace::WeakItemHandle> {
         Box::new(WeakBufferItemHandle(self.0.downgrade()))
     }

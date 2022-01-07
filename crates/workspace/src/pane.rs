@@ -69,7 +69,7 @@ pub struct TabState {
 }
 
 pub struct Pane {
-    item_views: Vec<Box<dyn ItemViewHandle>>,
+    item_views: Vec<(usize, Box<dyn ItemViewHandle>)>,
     active_item: usize,
     settings: watch::Receiver<Settings>,
 }
@@ -96,8 +96,8 @@ impl Pane {
     where
         T: 'static + ItemHandle,
     {
-        for (ix, item_view) in self.item_views.iter().enumerate() {
-            if item_view.item_handle(cx).id() == item_handle.id() {
+        for (ix, (item_id, item_view)) in self.item_views.iter().enumerate() {
+            if *item_id == item_handle.id() {
                 let item_view = item_view.boxed_clone();
                 self.activate_item(ix, cx);
                 return item_view;
@@ -116,21 +116,33 @@ impl Pane {
     ) {
         item_view.added_to_pane(cx);
         let item_idx = cmp::min(self.active_item + 1, self.item_views.len());
-        self.item_views.insert(item_idx, item_view);
+        self.item_views
+            .insert(item_idx, (item_view.item_handle(cx).id(), item_view));
         self.activate_item(item_idx, cx);
         cx.notify();
     }
 
-    pub fn item_views(&self) -> &[Box<dyn ItemViewHandle>] {
-        &self.item_views
+    pub fn contains_item(&self, item: &dyn ItemHandle) -> bool {
+        let item_id = item.id();
+        self.item_views
+            .iter()
+            .any(|(existing_item_id, _)| *existing_item_id == item_id)
+    }
+
+    pub fn item_views(&self) -> impl Iterator<Item = &Box<dyn ItemViewHandle>> {
+        self.item_views.iter().map(|(_, view)| view)
     }
 
     pub fn active_item(&self) -> Option<Box<dyn ItemViewHandle>> {
-        self.item_views.get(self.active_item).cloned()
+        self.item_views
+            .get(self.active_item)
+            .map(|(_, view)| view.clone())
     }
 
     pub fn item_index(&self, item: &dyn ItemViewHandle) -> Option<usize> {
-        self.item_views.iter().position(|i| i.id() == item.id())
+        self.item_views
+            .iter()
+            .position(|(_, i)| i.id() == item.id())
     }
 
     pub fn activate_item(&mut self, index: usize, cx: &mut ViewContext<Self>) {
@@ -163,12 +175,12 @@ impl Pane {
 
     pub fn close_active_item(&mut self, cx: &mut ViewContext<Self>) {
         if !self.item_views.is_empty() {
-            self.close_item(self.item_views[self.active_item].id(), cx)
+            self.close_item(self.item_views[self.active_item].1.id(), cx)
         }
     }
 
     pub fn close_item(&mut self, item_id: usize, cx: &mut ViewContext<Self>) {
-        self.item_views.retain(|item| item.id() != item_id);
+        self.item_views.retain(|(_, item)| item.id() != item_id);
         self.active_item = cmp::min(self.active_item, self.item_views.len().saturating_sub(1));
         if self.item_views.is_empty() {
             cx.emit(Event::Remove);
@@ -193,7 +205,7 @@ impl Pane {
         enum Tabs {}
         let tabs = MouseEventHandler::new::<Tabs, _, _, _>(cx.view_id(), cx, |mouse_state, cx| {
             let mut row = Flex::row();
-            for (ix, item_view) in self.item_views.iter().enumerate() {
+            for (ix, (_, item_view)) in self.item_views.iter().enumerate() {
                 let is_active = ix == self.active_item;
 
                 row.add_child({
