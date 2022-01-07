@@ -264,7 +264,7 @@ mod tests {
 
         // Open the first entry
         let entry_1 = workspace
-            .update(&mut cx, |w, cx| w.open_entry(file1.clone(), cx))
+            .update(&mut cx, |w, cx| w.open_path(file1.clone(), cx))
             .unwrap()
             .await
             .unwrap();
@@ -279,7 +279,7 @@ mod tests {
 
         // Open the second entry
         workspace
-            .update(&mut cx, |w, cx| w.open_entry(file2.clone(), cx))
+            .update(&mut cx, |w, cx| w.open_path(file2.clone(), cx))
             .unwrap()
             .await
             .unwrap();
@@ -294,7 +294,7 @@ mod tests {
 
         // Open the first entry again. The existing pane item is activated.
         let entry_1b = workspace
-            .update(&mut cx, |w, cx| w.open_entry(file1.clone(), cx).unwrap())
+            .update(&mut cx, |w, cx| w.open_path(file1.clone(), cx).unwrap())
             .await
             .unwrap();
         assert_eq!(entry_1.id(), entry_1b.id());
@@ -312,7 +312,7 @@ mod tests {
         workspace
             .update(&mut cx, |w, cx| {
                 w.split_pane(w.active_pane().clone(), SplitDirection::Right, cx);
-                w.open_entry(file2.clone(), cx).unwrap()
+                w.open_path(file2.clone(), cx).unwrap()
             })
             .await
             .unwrap();
@@ -331,8 +331,8 @@ mod tests {
         // Open the third entry twice concurrently. Only one pane item is added.
         let (t1, t2) = workspace.update(&mut cx, |w, cx| {
             (
-                w.open_entry(file3.clone(), cx).unwrap(),
-                w.open_entry(file3.clone(), cx).unwrap(),
+                w.open_path(file3.clone(), cx).unwrap(),
+                w.open_path(file3.clone(), cx).unwrap(),
             )
         });
         t1.await.unwrap();
@@ -562,7 +562,7 @@ mod tests {
             .update(&mut cx, |workspace, cx| {
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
                 workspace
-                    .open_entry(
+                    .open_path(
                         ProjectPath {
                             worktree_id: worktree.read(cx).id(),
                             path: Path::new("the-new-name.rs").into(),
@@ -666,7 +666,7 @@ mod tests {
         let pane_1 = cx.read(|cx| workspace.read(cx).active_pane().clone());
 
         workspace
-            .update(&mut cx, |w, cx| w.open_entry(file1.clone(), cx))
+            .update(&mut cx, |w, cx| w.open_path(file1.clone(), cx))
             .unwrap()
             .await
             .unwrap();

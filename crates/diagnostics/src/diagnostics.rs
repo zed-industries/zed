@@ -19,12 +19,21 @@ use util::TryFutureExt;
 use workspace::Workspace;
 
 action!(Deploy);
+action!(OpenExcerpts);
 
 const CONTEXT_LINE_COUNT: u32 = 1;
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_bindings([Binding::new("alt-shift-D", Deploy, None)]);
+    cx.add_bindings([
+        Binding::new("alt-shift-D", Deploy, Some("Workspace")),
+        Binding::new(
+            "alt-shift-D",
+            OpenExcerpts,
+            Some("ProjectDiagnosticsEditor"),
+        ),
+    ]);
     cx.add_action(ProjectDiagnosticsEditor::deploy);
+    cx.add_action(ProjectDiagnosticsEditor::open_excerpts);
 }
 
 type Event = editor::Event;
@@ -153,6 +162,24 @@ impl ProjectDiagnosticsEditor {
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         let diagnostics = cx.add_model(|_| ProjectDiagnostics::new(workspace.project().clone()));
         workspace.add_item(diagnostics, cx);
+    }
+
+    fn open_excerpts(&mut self, _: &OpenExcerpts, cx: &mut ViewContext<Self>) {
+        let editor = self.editor.read(cx);
+        let excerpts = self.excerpts.read(cx);
+        let mut new_selections_by_buffer = HashMap::default();
+        for selection in editor.local_selections::<usize>(cx) {
+            for (buffer, range) in excerpts.excerpted_buffers(selection.start..selection.end, cx) {
+                new_selections_by_buffer
+                    .entry(buffer)
+                    .or_insert(Vec::new())
+                    .push((range.start, range.end, selection.reversed))
+            }
+        }
+
+        for (buffer, selections) in new_selections_by_buffer {
+            // buffer.read(cx).
+        }
     }
 
     fn update_excerpts(&self, paths: HashSet<ProjectPath>, cx: &mut ViewContext<Self>) {

@@ -689,6 +689,33 @@ impl MultiBuffer {
             .map_or(Vec::new(), |state| state.excerpts.clone())
     }
 
+    pub fn excerpted_buffers<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+        cx: &AppContext,
+    ) -> Vec<(ModelHandle<Buffer>, Range<usize>)> {
+        let snapshot = self.snapshot(cx);
+        let start = range.start.to_offset(&snapshot);
+        let end = range.end.to_offset(&snapshot);
+
+        let mut result = Vec::new();
+        let mut cursor = snapshot.excerpts.cursor::<usize>();
+        cursor.seek(&start, Bias::Right, &());
+        while let Some(excerpt) = cursor.item() {
+            if *cursor.start() > end {
+                break;
+            }
+
+            let excerpt_start = excerpt.range.start.to_offset(&excerpt.buffer);
+            let start = excerpt_start + (cmp::max(start, *cursor.start()) - *cursor.start());
+            let end = excerpt_start + (cmp::min(end, cursor.end(&())) - *cursor.start());
+            let buffer = self.buffers.borrow()[&excerpt.buffer_id].buffer.clone();
+            result.push((buffer, start..end));
+        }
+
+        result
+    }
+
     pub fn remove_excerpts<'a>(
         &mut self,
         excerpt_ids: impl IntoIterator<Item = &'a ExcerptId>,

@@ -250,7 +250,7 @@ impl FileFinder {
         match event {
             Event::Selected(project_path) => {
                 workspace
-                    .open_entry(project_path.clone(), cx)
+                    .open_path(project_path.clone(), cx)
                     .map(|d| d.detach());
                 workspace.dismiss_modal(cx);
             }

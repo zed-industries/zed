@@ -561,7 +561,7 @@ impl Workspace {
                         let project_path = project_path.await.ok()?;
                         if fs.is_file(&abs_path).await {
                             if let Some(entry) =
-                                this.update(&mut cx, |this, cx| this.open_entry(project_path, cx))
+                                this.update(&mut cx, |this, cx| this.open_path(project_path, cx))
                             {
                                 return Some(entry.await);
                             }
@@ -665,7 +665,7 @@ impl Workspace {
     }
 
     #[must_use]
-    pub fn open_entry(
+    pub fn open_path(
         &mut self,
         project_path: ProjectPath,
         cx: &mut ViewContext<Self>,

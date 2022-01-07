@@ -1105,7 +1105,7 @@ impl Editor {
         T: ToOffset,
     {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let selections = ranges
+        let mut selections = ranges
             .into_iter()
             .map(|range| {
                 let mut start = range.start.to_offset(&buffer);
@@ -1124,7 +1124,8 @@ impl Editor {
                     goal: SelectionGoal::None,
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
+        selections.sort_unstable_by_key(|s| s.start);
         self.update_selections(selections, autoscroll, cx);
     }
 
