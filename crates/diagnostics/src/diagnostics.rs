@@ -5,16 +5,17 @@ use collections::{HashMap, HashSet};
 use editor::{
     context_header_renderer, diagnostic_block_renderer, diagnostic_header_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties},
-    BuildSettings, Editor, ExcerptId, ExcerptProperties, MultiBuffer,
+    items::BufferItemHandle,
+    Autoscroll, BuildSettings, Editor, ExcerptId, ExcerptProperties, MultiBuffer,
 };
 use gpui::{
     action, elements::*, keymap::Binding, AppContext, Entity, ModelHandle, MutableAppContext,
-    RenderContext, Task, View, ViewContext, ViewHandle,
+    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{Bias, Buffer, Diagnostic, DiagnosticEntry, Point, Selection, SelectionGoal};
 use postage::watch;
 use project::{Project, ProjectPath, WorktreeId};
-use std::{cmp::Ordering, ops::Range, path::Path, sync::Arc};
+use std::{cmp::Ordering, mem, ops::Range, path::Path, sync::Arc};
 use util::TryFutureExt;
 use workspace::Workspace;
 
@@ -44,6 +45,7 @@ struct ProjectDiagnostics {
 
 struct ProjectDiagnosticsEditor {
     model: ModelHandle<ProjectDiagnostics>,
+    workspace: WeakViewHandle<Workspace>,
     editor: ViewHandle<Editor>,
     excerpts: ModelHandle<MultiBuffer>,
     path_states: Vec<(Arc<Path>, Vec<DiagnosticGroupState>)>,
@@ -110,6 +112,7 @@ impl View for ProjectDiagnosticsEditor {
 impl ProjectDiagnosticsEditor {
     fn new(
         model: ModelHandle<ProjectDiagnostics>,
+        workspace: WeakViewHandle<Workspace>,
         settings: watch::Receiver<workspace::Settings>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -144,6 +147,7 @@ impl ProjectDiagnosticsEditor {
             .collect();
         let this = Self {
             model,
+            workspace,
             excerpts,
             editor,
             build_settings,
@@ -166,20 +170,37 @@ impl ProjectDiagnosticsEditor {
     }
 
     fn open_excerpts(&mut self, _: &OpenExcerpts, cx: &mut ViewContext<Self>) {
-        let editor = self.editor.read(cx);
-        let excerpts = self.excerpts.read(cx);
-        let mut new_selections_by_buffer = HashMap::default();
-        for selection in editor.local_selections::<usize>(cx) {
-            for (buffer, range) in excerpts.excerpted_buffers(selection.start..selection.end, cx) {
-                new_selections_by_buffer
-                    .entry(buffer)
-                    .or_insert(Vec::new())
-                    .push((range.start, range.end, selection.reversed))
-            }
-        }
+        if let Some(workspace) = self.workspace.upgrade(cx) {
+            let editor = self.editor.read(cx);
+            let excerpts = self.excerpts.read(cx);
+            let mut new_selections_by_buffer = HashMap::default();
 
-        for (buffer, selections) in new_selections_by_buffer {
-            // buffer.read(cx).
+            for selection in editor.local_selections::<usize>(cx) {
+                for (buffer, mut range) in
+                    excerpts.excerpted_buffers(selection.start..selection.end, cx)
+                {
+                    if selection.reversed {
+                        mem::swap(&mut range.start, &mut range.end);
+                    }
+                    new_selections_by_buffer
+                        .entry(buffer)
+                        .or_insert(Vec::new())
+                        .push(range)
+                }
+            }
+
+            workspace.update(cx, |workspace, cx| {
+                for (buffer, ranges) in new_selections_by_buffer {
+                    let editor = workspace
+                        .open_item(BufferItemHandle(buffer), cx)
+                        .to_any()
+                        .downcast::<Editor>()
+                        .unwrap();
+                    editor.update(cx, |editor, cx| {
+                        editor.select_ranges(ranges, Some(Autoscroll::Center), cx)
+                    });
+                }
+            });
         }
     }
 
@@ -459,10 +480,10 @@ impl workspace::Item for ProjectDiagnostics {
 
     fn build_view(
         handle: ModelHandle<Self>,
-        settings: watch::Receiver<workspace::Settings>,
+        workspace: &Workspace,
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View {
-        ProjectDiagnosticsEditor::new(handle, settings, cx)
+        ProjectDiagnosticsEditor::new(handle, workspace.weak_handle(), workspace.settings(), cx)
     }
 
     fn project_path(&self) -> Option<project::ProjectPath> {
@@ -554,7 +575,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_diagnostics(mut cx: TestAppContext) {
-        let settings = cx.update(WorkspaceParams::test).settings;
+        let workspace_params = cx.update(WorkspaceParams::test);
+        let settings = workspace_params.settings.clone();
         let http_client = FakeHttpClient::new(|_| async move { Ok(ServerResponse::new(404)) });
         let client = Client::new(http_client.clone());
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
@@ -684,8 +706,10 @@ mod tests {
         });
 
         let model = cx.add_model(|_| ProjectDiagnostics::new(project.clone()));
-        let view = cx.add_view(Default::default(), |cx| {
-            ProjectDiagnosticsEditor::new(model, settings, cx)
+        let workspace = cx.add_view(0, |cx| Workspace::new(&workspace_params, cx));
+
+        let view = cx.add_view(0, |cx| {
+            ProjectDiagnosticsEditor::new(model, workspace.downgrade(), settings, cx)
         });
 
         view.condition(&mut cx, |view, cx| view.text(cx).contains("fn main()"))

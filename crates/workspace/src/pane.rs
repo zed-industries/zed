@@ -1,5 +1,5 @@
 use super::{ItemViewHandle, SplitDirection};
-use crate::{ItemHandle, Settings};
+use crate::{ItemHandle, Settings, Workspace};
 use gpui::{
     action,
     elements::*,
@@ -90,6 +90,7 @@ impl Pane {
     pub fn open_item<T>(
         &mut self,
         item_handle: T,
+        workspace: &Workspace,
         cx: &mut ViewContext<Self>,
     ) -> Box<dyn ItemViewHandle>
     where
@@ -103,7 +104,7 @@ impl Pane {
             }
         }
 
-        let item_view = item_handle.add_view(cx.window_id(), self.settings.clone(), cx);
+        let item_view = item_handle.add_view(cx.window_id(), workspace, cx);
         self.add_item_view(item_view.boxed_clone(), cx);
         item_view
     }

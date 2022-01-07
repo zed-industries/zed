@@ -13,6 +13,7 @@ use std::path::Path;
 use text::{Point, Selection};
 use workspace::{
     ItemHandle, ItemView, ItemViewHandle, PathOpener, Settings, StatusItemView, WeakItemHandle,
+    Workspace,
 };
 
 pub struct BufferOpener;
@@ -43,13 +44,17 @@ impl ItemHandle for BufferItemHandle {
     fn add_view(
         &self,
         window_id: usize,
-        settings: watch::Receiver<Settings>,
+        workspace: &Workspace,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(self.0.clone(), cx));
         let weak_buffer = buffer.downgrade();
         Box::new(cx.add_view(window_id, |cx| {
-            Editor::for_buffer(buffer, crate::settings_builder(weak_buffer, settings), cx)
+            Editor::for_buffer(
+                buffer,
+                crate::settings_builder(weak_buffer, workspace.settings()),
+                cx,
+            )
         }))
     }
 

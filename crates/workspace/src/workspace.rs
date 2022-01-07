@@ -18,7 +18,7 @@ use gpui::{
     platform::{CursorStyle, WindowOptions},
     AnyViewHandle, AppContext, ClipboardItem, Entity, ModelContext, ModelHandle, MutableAppContext,
     PathPromptOptions, PromptLevel, RenderContext, Task, View, ViewContext, ViewHandle,
-    WeakModelHandle,
+    WeakModelHandle, WeakViewHandle,
 };
 use language::LanguageRegistry;
 use log::error;
@@ -131,7 +131,7 @@ pub trait Item: Entity + Sized {
 
     fn build_view(
         handle: ModelHandle<Self>,
-        settings: watch::Receiver<Settings>,
+        workspace: &Workspace,
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View;
 
@@ -181,7 +181,7 @@ pub trait ItemHandle: Send + Sync {
     fn add_view(
         &self,
         window_id: usize,
-        settings: watch::Receiver<Settings>,
+        workspace: &Workspace,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle>;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
@@ -224,10 +224,10 @@ impl<T: Item> ItemHandle for ModelHandle<T> {
     fn add_view(
         &self,
         window_id: usize,
-        settings: watch::Receiver<Settings>,
+        workspace: &Workspace,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
-        Box::new(cx.add_view(window_id, |cx| T::build_view(self.clone(), settings, cx)))
+        Box::new(cx.add_view(window_id, |cx| T::build_view(self.clone(), workspace, cx)))
     }
 
     fn boxed_clone(&self) -> Box<dyn ItemHandle> {
@@ -251,10 +251,10 @@ impl ItemHandle for Box<dyn ItemHandle> {
     fn add_view(
         &self,
         window_id: usize,
-        settings: watch::Receiver<Settings>,
+        workspace: &Workspace,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
-        ItemHandle::add_view(self.as_ref(), window_id, settings, cx)
+        ItemHandle::add_view(self.as_ref(), window_id, workspace, cx)
     }
 
     fn boxed_clone(&self) -> Box<dyn ItemHandle> {
@@ -455,6 +455,7 @@ impl WorkspaceParams {
 
 pub struct Workspace {
     pub settings: watch::Receiver<Settings>,
+    weak_self: WeakViewHandle<Self>,
     client: Arc<Client>,
     user_store: ModelHandle<client::UserStore>,
     fs: Arc<dyn Fs>,
@@ -509,6 +510,7 @@ impl Workspace {
 
         Workspace {
             modal: None,
+            weak_self: cx.weak_handle(),
             center: PaneGroup::new(pane.id()),
             panes: vec![pane.clone()],
             active_pane: pane.clone(),
@@ -524,6 +526,14 @@ impl Workspace {
             items: Default::default(),
             _observe_current_user,
         }
+    }
+
+    pub fn weak_handle(&self) -> WeakViewHandle<Self> {
+        self.weak_self.clone()
+    }
+
+    pub fn settings(&self) -> watch::Receiver<Settings> {
+        self.settings.clone()
     }
 
     pub fn left_sidebar_mut(&mut self) -> &mut Sidebar {
@@ -914,7 +924,7 @@ impl Workspace {
         T: 'static + ItemHandle,
     {
         self.items.insert(item_handle.downgrade());
-        pane.update(cx, |pane, cx| pane.open_item(item_handle, cx))
+        pane.update(cx, |pane, cx| pane.open_item(item_handle, self, cx))
     }
 
     fn activate_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {

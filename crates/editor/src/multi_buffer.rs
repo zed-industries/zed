@@ -706,11 +706,16 @@ impl MultiBuffer {
                 break;
             }
 
+            let mut end_before_newline = cursor.end(&());
+            if excerpt.has_trailing_newline {
+                end_before_newline -= 1;
+            }
             let excerpt_start = excerpt.range.start.to_offset(&excerpt.buffer);
             let start = excerpt_start + (cmp::max(start, *cursor.start()) - *cursor.start());
-            let end = excerpt_start + (cmp::min(end, cursor.end(&())) - *cursor.start());
+            let end = excerpt_start + (cmp::min(end, end_before_newline) - *cursor.start());
             let buffer = self.buffers.borrow()[&excerpt.buffer_id].buffer.clone();
             result.push((buffer, start..end));
+            cursor.next(&());
         }
 
         result
@@ -2582,7 +2587,7 @@ mod tests {
             .unwrap_or(10);
 
         let mut buffers: Vec<ModelHandle<Buffer>> = Vec::new();
-        let list = cx.add_model(|_| MultiBuffer::new(0));
+        let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
         let mut excerpt_ids = Vec::new();
         let mut expected_excerpts = Vec::<(ModelHandle<Buffer>, Range<text::Anchor>)>::new();
         let mut old_versions = Vec::new();
@@ -2613,7 +2618,9 @@ mod tests {
                         );
                     }
                     ids_to_remove.sort_unstable();
-                    list.update(cx, |list, cx| list.remove_excerpts(&ids_to_remove, cx));
+                    multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer.remove_excerpts(&ids_to_remove, cx)
+                    });
                 }
                 _ => {
                     let buffer_handle = if buffers.is_empty() || rng.gen_bool(0.4) {
@@ -2645,8 +2652,8 @@ mod tests {
                         &buffer.text()[start_ix..end_ix]
                     );
 
-                    let excerpt_id = list.update(cx, |list, cx| {
-                        list.insert_excerpt_after(
+                    let excerpt_id = multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer.insert_excerpt_after(
                             &prev_excerpt_id,
                             ExcerptProperties {
                                 buffer: &buffer_handle,
@@ -2662,12 +2669,12 @@ mod tests {
             }
 
             if rng.gen_bool(0.3) {
-                list.update(cx, |list, cx| {
-                    old_versions.push((list.snapshot(cx), list.subscribe()));
+                multibuffer.update(cx, |multibuffer, cx| {
+                    old_versions.push((multibuffer.snapshot(cx), multibuffer.subscribe()));
                 })
             }
 
-            let snapshot = list.read(cx).snapshot(cx);
+            let snapshot = multibuffer.read(cx).snapshot(cx);
 
             let mut excerpt_starts = Vec::new();
             let mut expected_text = String::new();
@@ -2862,14 +2869,29 @@ mod tests {
                 let end_ix = text_rope.clip_offset(rng.gen_range(0..=text_rope.len()), Bias::Right);
                 let start_ix = text_rope.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
 
+                let text_for_range = snapshot
+                    .text_for_range(start_ix..end_ix)
+                    .collect::<String>();
                 assert_eq!(
-                    snapshot
-                        .text_for_range(start_ix..end_ix)
-                        .collect::<String>(),
+                    text_for_range,
                     &expected_text[start_ix..end_ix],
                     "incorrect text for range {:?}",
                     start_ix..end_ix
                 );
+
+                let excerpted_buffer_ranges =
+                    multibuffer.read(cx).excerpted_buffers(start_ix..end_ix, cx);
+                let excerpted_buffers_text = excerpted_buffer_ranges
+                    .into_iter()
+                    .map(|(buffer, buffer_range)| {
+                        buffer
+                            .read(cx)
+                            .text_for_range(buffer_range)
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                assert_eq!(excerpted_buffers_text, text_for_range);
 
                 let expected_summary = TextSummary::from(&expected_text[start_ix..end_ix]);
                 assert_eq!(
@@ -2904,7 +2926,7 @@ mod tests {
             }
         }
 
-        let snapshot = list.read(cx).snapshot(cx);
+        let snapshot = multibuffer.read(cx).snapshot(cx);
         for (old_snapshot, subscription) in old_versions {
             let edits = subscription.consume().into_inner();
 
