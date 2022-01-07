@@ -83,7 +83,7 @@ impl View for FileFinder {
                                 .with_style(settings.theme.selector.input_editor.container)
                                 .boxed(),
                         )
-                        .with_child(Flexible::new(1.0, self.render_matches()).boxed())
+                        .with_child(Flexible::new(1.0, false, self.render_matches()).boxed())
                         .boxed(),
                 )
                 .with_style(settings.theme.selector.container)
@@ -175,6 +175,7 @@ impl FileFinder {
                 .with_child(
                     Flexible::new(
                         1.0,
+                        false,
                         Flex::column()
                             .with_child(
                                 Label::new(file_name.to_string(), style.label.clone())

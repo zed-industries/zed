@@ -183,7 +183,7 @@ impl PaneAxis {
                     member = Container::new(member).with_border(border).boxed();
                 }
 
-                Expanded::new(1.0, member).boxed()
+                Flexible::new(1.0, true, member).boxed()
             }))
             .boxed()
     }

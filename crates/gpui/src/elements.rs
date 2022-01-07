@@ -130,11 +130,11 @@ pub trait Element {
         Container::new(self.boxed())
     }
 
-    fn expanded(self, flex: f32) -> Expanded
+    fn flexible(self, flex: f32, expanded: bool) -> Flexible
     where
         Self: 'static + Sized,
     {
-        Expanded::new(flex, self.boxed())
+        Flexible::new(flex, expanded, self.boxed())
     }
 }
 

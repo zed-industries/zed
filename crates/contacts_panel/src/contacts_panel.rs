@@ -214,7 +214,7 @@ impl ContactsPanel {
                                         }));
                                     }
                                 })
-                                .expanded(1.0)
+                                .flexible(1., true)
                                 .boxed()
                             })
                             .constrained()

@@ -228,88 +228,15 @@ struct FlexParentData {
     expanded: bool,
 }
 
-pub struct Expanded {
-    metadata: FlexParentData,
-    child: ElementBox,
-}
-
-impl Expanded {
-    pub fn new(flex: f32, child: ElementBox) -> Self {
-        Expanded {
-            metadata: FlexParentData {
-                flex,
-                expanded: true,
-            },
-            child,
-        }
-    }
-}
-
-impl Element for Expanded {
-    type LayoutState = ();
-    type PaintState = ();
-
-    fn layout(
-        &mut self,
-        constraint: SizeConstraint,
-        cx: &mut LayoutContext,
-    ) -> (Vector2F, Self::LayoutState) {
-        let size = self.child.layout(constraint, cx);
-        (size, ())
-    }
-
-    fn paint(
-        &mut self,
-        bounds: RectF,
-        visible_bounds: RectF,
-        _: &mut Self::LayoutState,
-        cx: &mut PaintContext,
-    ) -> Self::PaintState {
-        self.child.paint(bounds.origin(), visible_bounds, cx)
-    }
-
-    fn dispatch_event(
-        &mut self,
-        event: &Event,
-        _: RectF,
-        _: &mut Self::LayoutState,
-        _: &mut Self::PaintState,
-        cx: &mut EventContext,
-    ) -> bool {
-        self.child.dispatch_event(event, cx)
-    }
-
-    fn metadata(&self) -> Option<&dyn Any> {
-        Some(&self.metadata)
-    }
-
-    fn debug(
-        &self,
-        _: RectF,
-        _: &Self::LayoutState,
-        _: &Self::PaintState,
-        cx: &DebugContext,
-    ) -> Value {
-        json!({
-            "type": "Expanded",
-            "flex": self.metadata.flex,
-            "child": self.child.debug(cx)
-        })
-    }
-}
-
 pub struct Flexible {
     metadata: FlexParentData,
     child: ElementBox,
 }
 
 impl Flexible {
-    pub fn new(flex: f32, child: ElementBox) -> Self {
+    pub fn new(flex: f32, expanded: bool, child: ElementBox) -> Self {
         Flexible {
-            metadata: FlexParentData {
-                flex,
-                expanded: false,
-            },
+            metadata: FlexParentData { flex, expanded },
             child,
         }
     }

@@ -135,19 +135,16 @@ impl Sidebar {
             }
 
             container.add_child(
-                Flexible::new(
-                    1.,
-                    Hook::new(
-                        ConstrainedBox::new(ChildView::new(active_item.id()).boxed())
-                            .with_max_width(*self.width.borrow())
-                            .boxed(),
-                    )
-                    .on_after_layout({
-                        let width = self.width.clone();
-                        move |size, _| *width.borrow_mut() = size.x()
-                    })
-                    .boxed(),
+                Hook::new(
+                    ConstrainedBox::new(ChildView::new(active_item.id()).boxed())
+                        .with_max_width(*self.width.borrow())
+                        .boxed(),
                 )
+                .on_after_layout({
+                    let width = self.width.clone();
+                    move |size, _| *width.borrow_mut() = size.x()
+                })
+                .flexible(1., false)
                 .boxed(),
             );
             if matches!(self.side, Side::Left) {

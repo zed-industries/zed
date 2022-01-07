@@ -314,13 +314,11 @@ impl Pane {
             }
 
             row.add_child(
-                Expanded::new(
-                    0.0,
-                    Container::new(Empty::new().boxed())
-                        .with_border(theme.workspace.tab.container.border)
-                        .boxed(),
-                )
-                .named("filler"),
+                Empty::new()
+                    .contained()
+                    .with_border(theme.workspace.tab.container.border)
+                    .flexible(0., true)
+                    .named("filler"),
             );
 
             row.boxed()
@@ -345,7 +343,7 @@ impl View for Pane {
         if let Some(active_item) = self.active_item() {
             Flex::column()
                 .with_child(self.render_tabs(cx))
-                .with_child(Expanded::new(1.0, ChildView::new(active_item.id()).boxed()).boxed())
+                .with_child(ChildView::new(active_item.id()).flexible(1., true).boxed())
                 .named("pane")
         } else {
             Empty::new().named("pane")
