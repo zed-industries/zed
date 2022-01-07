@@ -4,6 +4,7 @@ mod constrained_box;
 mod container;
 mod empty;
 mod event_handler;
+mod expanded;
 mod flex;
 mod hook;
 mod image;
@@ -16,6 +17,7 @@ mod svg;
 mod text;
 mod uniform_list;
 
+use self::expanded::Expanded;
 pub use self::{
     align::*, canvas::*, constrained_box::*, container::*, empty::*, event_handler::*, flex::*,
     hook::*, image::*, label::*, list::*, mouse_event_handler::*, overlay::*, stack::*, svg::*,
@@ -128,6 +130,13 @@ pub trait Element {
         Self: 'static + Sized,
     {
         Container::new(self.boxed())
+    }
+
+    fn expanded(self) -> Expanded
+    where
+        Self: 'static + Sized,
+    {
+        Expanded::new(self.boxed())
     }
 
     fn flexible(self, flex: f32, expanded: bool) -> Flexible
