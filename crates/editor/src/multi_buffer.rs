@@ -1342,7 +1342,7 @@ impl MultiBufferSnapshot {
         position
     }
 
-    pub fn refresh_anchors<'a, I>(&'a self, anchors: I) -> Vec<Anchor>
+    pub fn refresh_anchors<'a, I>(&'a self, anchors: I) -> Vec<(Anchor, bool)>
     where
         I: 'a + IntoIterator<Item = &'a Anchor>,
     {
@@ -1352,7 +1352,7 @@ impl MultiBufferSnapshot {
         while let Some(anchor) = anchors.peek() {
             let old_excerpt_id = &anchor.excerpt_id;
 
-            // Find the location where this anchor's excerpt should be,
+            // Find the location where this anchor's excerpt should be.
             cursor.seek_forward(&Some(old_excerpt_id), Bias::Left, &());
             if cursor.item().is_none() {
                 cursor.next(&());
@@ -1366,32 +1366,58 @@ impl MultiBufferSnapshot {
                 if anchor.excerpt_id != *old_excerpt_id {
                     break;
                 }
+                let mut kept_position = false;
                 let mut anchor = anchors.next().unwrap().clone();
 
+                // Leave min and max anchors unchanged.
+                if *old_excerpt_id == ExcerptId::max() || *old_excerpt_id == ExcerptId::min() {
+                    kept_position = true;
+                }
+                // If the old excerpt still exists at this location, then leave
+                // the anchor unchanged.
+                else if next_excerpt.map_or(false, |excerpt| {
+                    excerpt.id == *old_excerpt_id && excerpt.buffer_id == anchor.buffer_id
+                }) {
+                    kept_position = true;
+                }
                 // If the old excerpt no longer exists at this location, then attempt to
                 // find an equivalent position for this anchor in an adjacent excerpt.
-                if next_excerpt.map_or(true, |e| e.id != *old_excerpt_id) {
+                else {
                     for excerpt in [next_excerpt, prev_excerpt].iter().filter_map(|e| *e) {
-                        if excerpt.buffer_id == anchor.buffer_id
-                            && excerpt
-                                .range
-                                .start
-                                .cmp(&anchor.text_anchor, &excerpt.buffer)
-                                .unwrap()
-                                .is_le()
-                            && excerpt
-                                .range
-                                .end
-                                .cmp(&anchor.text_anchor, &excerpt.buffer)
-                                .unwrap()
-                                .is_ge()
-                        {
+                        if excerpt.contains(&anchor) {
                             anchor.excerpt_id = excerpt.id.clone();
+                            kept_position = true;
+                            break;
                         }
                     }
                 }
+                // If there's no adjacent excerpt that contains the anchor's position,
+                // then report that the anchor has lost its position.
+                if !kept_position {
+                    anchor = if let Some(excerpt) = next_excerpt {
+                        Anchor {
+                            buffer_id: excerpt.buffer_id,
+                            excerpt_id: excerpt.id.clone(),
+                            text_anchor: excerpt
+                                .buffer
+                                .anchor_at(&excerpt.range.start, anchor.text_anchor.bias),
+                        }
+                    } else if let Some(excerpt) = prev_excerpt {
+                        Anchor {
+                            buffer_id: excerpt.buffer_id,
+                            excerpt_id: excerpt.id.clone(),
+                            text_anchor: excerpt
+                                .buffer
+                                .anchor_at(&excerpt.range.end, anchor.text_anchor.bias),
+                        }
+                    } else if anchor.text_anchor.bias == Bias::Left {
+                        Anchor::min()
+                    } else {
+                        Anchor::max()
+                    };
+                }
 
-                result.push(anchor);
+                result.push((anchor, kept_position));
             }
         }
         result
@@ -1893,6 +1919,22 @@ impl Excerpt {
         } else {
             text_anchor
         }
+    }
+
+    fn contains(&self, anchor: &Anchor) -> bool {
+        self.buffer_id == anchor.buffer_id
+            && self
+                .range
+                .start
+                .cmp(&anchor.text_anchor, &self.buffer)
+                .unwrap()
+                .is_le()
+            && self
+                .range
+                .end
+                .cmp(&anchor.text_anchor, &self.buffer)
+                .unwrap()
+                .is_ge()
     }
 }
 
@@ -2523,7 +2565,7 @@ mod tests {
         let snapshot_2 = multibuffer.read(cx).snapshot(cx);
         assert_eq!(snapshot_2.text(), "ABCD\nGHIJ\nMNOP");
 
-        // And excerpt id has been reused.
+        // The old excerpt id has been reused.
         assert_eq!(excerpt_id_2, excerpt_id_1);
 
         // Resolve some anchors from the previous snapshot in the new snapshot.
@@ -2540,6 +2582,15 @@ mod tests {
                 snapshot_1.anchor_after(3)
             ]),
             vec![0, 0]
+        );
+        let refresh =
+            snapshot_2.refresh_anchors(&[snapshot_1.anchor_before(2), snapshot_1.anchor_after(3)]);
+        assert_eq!(
+            refresh,
+            &[
+                (snapshot_2.anchor_before(0), false),
+                (snapshot_2.anchor_after(0), false),
+            ]
         );
 
         // Replace the middle excerpt with a smaller excerpt in buffer 2,
@@ -2564,19 +2615,24 @@ mod tests {
         // The anchor in the middle excerpt snaps to the beginning of the
         // excerpt, since it is not
         let anchors = [
+            snapshot_2.anchor_before(0),
             snapshot_2.anchor_after(2),
             snapshot_2.anchor_after(6),
             snapshot_2.anchor_after(14),
         ];
         assert_eq!(
             snapshot_3.summaries_for_anchors::<usize, _>(&anchors),
-            &[2, 9, 13]
+            &[0, 2, 9, 13]
         );
 
         let new_anchors = snapshot_3.refresh_anchors(&anchors);
         assert_eq!(
-            snapshot_3.summaries_for_anchors::<usize, _>(&new_anchors),
-            &[2, 7, 13]
+            new_anchors.iter().map(|a| a.1).collect::<Vec<_>>(),
+            &[true, true, true, true]
+        );
+        assert_eq!(
+            snapshot_3.summaries_for_anchors::<usize, _>(new_anchors.iter().map(|a| &a.0)),
+            &[0, 2, 7, 13]
         );
     }
 

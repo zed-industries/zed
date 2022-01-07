@@ -28,8 +28,8 @@ use language::{
     BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point, Selection, SelectionGoal,
     TransactionId,
 };
-pub use multi_buffer::{Anchor, ExcerptId, ExcerptProperties, MultiBuffer};
-use multi_buffer::{AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, ToOffset, ToPoint};
+pub use multi_buffer::{Anchor, ExcerptId, ExcerptProperties, MultiBuffer, ToOffset, ToPoint};
+use multi_buffer::{AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot};
 use postage::watch;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -3297,8 +3297,14 @@ impl Editor {
         );
     }
 
-    pub fn refresh_selections(&mut self, cx: &mut ViewContext<Self>) {
-        let anchors = self.buffer.update(cx, |buffer, cx| {
+    /// Compute new ranges for any selections that were located in excerpts that have
+    /// since been removed.
+    ///
+    /// Returns a `HashMap` indicating which selections whose former head position
+    /// was no longer present. The keys of the map are selection ids. The values are
+    /// the id of the new excerpt where the head of the selection has been moved.
+    pub fn refresh_selections(&mut self, cx: &mut ViewContext<Self>) -> HashMap<usize, ExcerptId> {
+        let anchors_with_status = self.buffer.update(cx, |buffer, cx| {
             let snapshot = buffer.read(cx);
             snapshot.refresh_anchors(
                 self.selections
@@ -3306,17 +3312,28 @@ impl Editor {
                     .flat_map(|selection| [&selection.start, &selection.end]),
             )
         });
+        let mut selections_with_lost_position = HashMap::default();
         self.selections = self
             .selections
             .iter()
             .cloned()
-            .zip(anchors.chunks(2))
+            .zip(anchors_with_status.chunks(2))
             .map(|(mut selection, anchors)| {
-                selection.start = anchors[0].clone();
-                selection.end = anchors[1].clone();
+                selection.start = anchors[0].0.clone();
+                selection.end = anchors[1].0.clone();
+                let kept_head_position = if selection.reversed {
+                    anchors[0].1
+                } else {
+                    anchors[1].1
+                };
+                if !kept_head_position {
+                    selections_with_lost_position
+                        .insert(selection.id, selection.head().excerpt_id.clone());
+                }
                 selection
             })
             .collect();
+        selections_with_lost_position
     }
 
     fn set_selections(&mut self, selections: Arc<[Selection<Anchor>]>, cx: &mut ViewContext<Self>) {
