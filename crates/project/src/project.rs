@@ -33,6 +33,7 @@ pub struct Project {
     client_state: ProjectClientState,
     collaborators: HashMap<PeerId, Collaborator>,
     subscriptions: Vec<client::Subscription>,
+    pending_disk_based_diagnostics: isize,
 }
 
 enum ProjectClientState {
@@ -60,7 +61,9 @@ pub struct Collaborator {
 pub enum Event {
     ActiveEntryChanged(Option<ProjectEntry>),
     WorktreeRemoved(WorktreeId),
+    DiskBasedDiagnosticsStarted,
     DiskBasedDiagnosticsUpdated { worktree_id: WorktreeId },
+    DiskBasedDiagnosticsFinished,
     DiagnosticsUpdated(ProjectPath),
 }
 
@@ -187,6 +190,7 @@ impl Project {
                 client,
                 user_store,
                 fs,
+                pending_disk_based_diagnostics: 0,
             }
         })
     }
@@ -262,6 +266,11 @@ impl Project {
                     client.subscribe_to_entity(
                         remote_id,
                         cx,
+                        Self::handle_disk_based_diagnostics_updating,
+                    ),
+                    client.subscribe_to_entity(
+                        remote_id,
+                        cx,
                         Self::handle_disk_based_diagnostics_updated,
                     ),
                     client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
@@ -273,6 +282,7 @@ impl Project {
                     remote_id,
                     replica_id,
                 },
+                pending_disk_based_diagnostics: 0,
             };
             for worktree in worktrees {
                 this.add_worktree(worktree, cx);
@@ -506,17 +516,29 @@ impl Project {
 
     fn add_worktree(&mut self, worktree: ModelHandle<Worktree>, cx: &mut ModelContext<Self>) {
         cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&worktree, |_, worktree, event, cx| match event {
+        cx.subscribe(&worktree, move |this, worktree, event, cx| match event {
             worktree::Event::DiagnosticsUpdated(path) => {
                 cx.emit(Event::DiagnosticsUpdated(ProjectPath {
                     worktree_id: worktree.read(cx).id(),
                     path: path.clone(),
                 }));
             }
+            worktree::Event::DiskBasedDiagnosticsUpdating => {
+                if this.pending_disk_based_diagnostics == 0 {
+                    cx.emit(Event::DiskBasedDiagnosticsStarted);
+                }
+                this.pending_disk_based_diagnostics += 1;
+            }
             worktree::Event::DiskBasedDiagnosticsUpdated => {
+                this.pending_disk_based_diagnostics -= 1;
                 cx.emit(Event::DiskBasedDiagnosticsUpdated {
                     worktree_id: worktree.read(cx).id(),
                 });
+                if this.pending_disk_based_diagnostics == 0 {
+                    if this.pending_disk_based_diagnostics == 0 {
+                        cx.emit(Event::DiskBasedDiagnosticsFinished);
+                    }
+                }
             }
         })
         .detach();
@@ -537,6 +559,10 @@ impl Project {
             self.active_entry = new_active_entry;
             cx.emit(Event::ActiveEntryChanged(new_active_entry));
         }
+    }
+
+    pub fn is_running_disk_based_diagnostics(&self) -> bool {
+        self.pending_disk_based_diagnostics > 0
     }
 
     pub fn diagnostic_summary(&self, cx: &AppContext) -> DiagnosticSummary {
@@ -711,6 +737,24 @@ impl Project {
                     .as_remote_mut()
                     .unwrap()
                     .update_diagnostic_summary(envelope, cx);
+            });
+        }
+        Ok(())
+    }
+
+    fn handle_disk_based_diagnostics_updating(
+        &mut self,
+        envelope: TypedEnvelope<proto::DiskBasedDiagnosticsUpdating>,
+        _: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
+            worktree.update(cx, |worktree, cx| {
+                worktree
+                    .as_remote()
+                    .unwrap()
+                    .disk_based_diagnostics_updating(cx);
             });
         }
         Ok(())

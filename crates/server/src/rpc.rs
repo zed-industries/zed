@@ -72,6 +72,7 @@ impl Server {
             .add_handler(Server::share_worktree)
             .add_handler(Server::update_worktree)
             .add_handler(Server::update_diagnostic_summary)
+            .add_handler(Server::disk_based_diagnostics_updating)
             .add_handler(Server::disk_based_diagnostics_updated)
             .add_handler(Server::open_buffer)
             .add_handler(Server::close_buffer)
@@ -548,6 +549,22 @@ impl Server {
             })
             .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
 
+        broadcast(request.sender_id, receiver_ids, |connection_id| {
+            self.peer
+                .forward_send(request.sender_id, connection_id, request.payload.clone())
+        })
+        .await?;
+        Ok(())
+    }
+
+    async fn disk_based_diagnostics_updating(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::DiskBasedDiagnosticsUpdating>,
+    ) -> tide::Result<()> {
+        let receiver_ids = self
+            .state()
+            .project_connection_ids(request.payload.project_id, request.sender_id)
+            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())

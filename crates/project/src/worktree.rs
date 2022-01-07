@@ -67,6 +67,7 @@ pub enum Worktree {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Event {
+    DiskBasedDiagnosticsUpdating,
     DiskBasedDiagnosticsUpdated,
     DiagnosticsUpdated(Arc<Path>),
 }
@@ -1133,6 +1134,11 @@ impl LocalWorktree {
             .log_err()
             .flatten()
         {
+            enum DiagnosticProgress {
+                Updating,
+                Updated,
+            }
+
             let disk_based_sources = language
                 .disk_based_diagnostic_sources()
                 .cloned()
@@ -1155,10 +1161,21 @@ impl LocalWorktree {
                     while let Ok(diagnostics) = diagnostics_rx.recv().await {
                         if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
                             handle.update(&mut cx, |this, cx| {
+                                if !has_disk_based_diagnostic_progress_token {
+                                    smol::block_on(
+                                        disk_based_diagnostics_done_tx
+                                            .send(DiagnosticProgress::Updating),
+                                    )
+                                    .ok();
+                                }
                                 this.update_diagnostics(diagnostics, &disk_based_sources, cx)
                                     .log_err();
                                 if !has_disk_based_diagnostic_progress_token {
-                                    smol::block_on(disk_based_diagnostics_done_tx.send(())).ok();
+                                    smol::block_on(
+                                        disk_based_diagnostics_done_tx
+                                            .send(DiagnosticProgress::Updated),
+                                    )
+                                    .ok();
                                 }
                             })
                         } else {
@@ -1181,13 +1198,23 @@ impl LocalWorktree {
                         match params.value {
                             lsp::ProgressParamsValue::WorkDone(progress) => match progress {
                                 lsp::WorkDoneProgress::Begin(_) => {
+                                    if pending_disk_based_diagnostics == 0 {
+                                        smol::block_on(
+                                            disk_based_diagnostics_done_tx
+                                                .send(DiagnosticProgress::Updating),
+                                        )
+                                        .ok();
+                                    }
                                     pending_disk_based_diagnostics += 1;
                                 }
                                 lsp::WorkDoneProgress::End(_) => {
                                     pending_disk_based_diagnostics -= 1;
                                     if pending_disk_based_diagnostics == 0 {
-                                        smol::block_on(disk_based_diagnostics_done_tx.send(()))
-                                            .ok();
+                                        smol::block_on(
+                                            disk_based_diagnostics_done_tx
+                                                .send(DiagnosticProgress::Updated),
+                                        )
+                                        .ok();
                                     }
                                 }
                                 _ => {}
@@ -1198,21 +1225,41 @@ impl LocalWorktree {
                 .detach();
             let rpc = self.client.clone();
             cx.spawn_weak(|this, mut cx| async move {
-                while let Ok(()) = disk_based_diagnostics_done_rx.recv().await {
+                while let Ok(progress) = disk_based_diagnostics_done_rx.recv().await {
                     if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
-                        let message = handle.update(&mut cx, |this, cx| {
-                            cx.emit(Event::DiskBasedDiagnosticsUpdated);
-                            let this = this.as_local().unwrap();
-                            this.share
-                                .as_ref()
-                                .map(|share| proto::DiskBasedDiagnosticsUpdated {
-                                    project_id: share.project_id,
-                                    worktree_id: this.id().to_proto(),
-                                })
-                        });
+                        match progress {
+                            DiagnosticProgress::Updating => {
+                                let message = handle.update(&mut cx, |this, cx| {
+                                    cx.emit(Event::DiskBasedDiagnosticsUpdating);
+                                    let this = this.as_local().unwrap();
+                                    this.share.as_ref().map(|share| {
+                                        proto::DiskBasedDiagnosticsUpdating {
+                                            project_id: share.project_id,
+                                            worktree_id: this.id().to_proto(),
+                                        }
+                                    })
+                                });
 
-                        if let Some(message) = message {
-                            rpc.send(message).await.log_err();
+                                if let Some(message) = message {
+                                    rpc.send(message).await.log_err();
+                                }
+                            }
+                            DiagnosticProgress::Updated => {
+                                let message = handle.update(&mut cx, |this, cx| {
+                                    cx.emit(Event::DiskBasedDiagnosticsUpdated);
+                                    let this = this.as_local().unwrap();
+                                    this.share.as_ref().map(|share| {
+                                        proto::DiskBasedDiagnosticsUpdated {
+                                            project_id: share.project_id,
+                                            worktree_id: this.id().to_proto(),
+                                        }
+                                    })
+                                });
+
+                                if let Some(message) = message {
+                                    rpc.send(message).await.log_err();
+                                }
+                            }
                         }
                     } else {
                         break;
@@ -1689,6 +1736,10 @@ impl RemoteWorktree {
             );
             cx.emit(Event::DiagnosticsUpdated(path));
         }
+    }
+
+    pub fn disk_based_diagnostics_updating(&self, cx: &mut ModelContext<Worktree>) {
+        cx.emit(Event::DiskBasedDiagnosticsUpdating);
     }
 
     pub fn disk_based_diagnostics_updated(&self, cx: &mut ModelContext<Worktree>) {
@@ -3848,6 +3899,11 @@ mod tests {
         let mut events = subscribe(&tree, &mut cx);
 
         fake_server.start_progress(&progress_token).await;
+        assert_eq!(
+            events.next().await.unwrap(),
+            Event::DiskBasedDiagnosticsUpdating
+        );
+
         fake_server.start_progress(&progress_token).await;
         fake_server.end_progress(&progress_token).await;
         fake_server.start_progress(&progress_token).await;
@@ -3864,18 +3920,17 @@ mod tests {
                 }],
             })
             .await;
-
-        let event = events.next().await.unwrap();
         assert_eq!(
-            event,
+            events.next().await.unwrap(),
             Event::DiagnosticsUpdated(Arc::from(Path::new("a.rs")))
         );
 
         fake_server.end_progress(&progress_token).await;
         fake_server.end_progress(&progress_token).await;
-
-        let event = events.next().await.unwrap();
-        assert_eq!(event, Event::DiskBasedDiagnosticsUpdated);
+        assert_eq!(
+            events.next().await.unwrap(),
+            Event::DiskBasedDiagnosticsUpdated
+        );
 
         let buffer = tree
             .update(&mut cx, |tree, cx| tree.open_buffer("a.rs", cx))
