@@ -139,10 +139,14 @@ impl Pane {
             .map(|(_, view)| view.clone())
     }
 
-    pub fn item_index(&self, item: &dyn ItemViewHandle) -> Option<usize> {
+    pub fn index_for_item_view(&self, item_view: &dyn ItemViewHandle) -> Option<usize> {
         self.item_views
             .iter()
-            .position(|(_, i)| i.id() == item.id())
+            .position(|(_, i)| i.id() == item_view.id())
+    }
+
+    pub fn index_for_item(&self, item: &dyn ItemHandle) -> Option<usize> {
+        self.item_views.iter().position(|(id, _)| *id == item.id())
     }
 
     pub fn activate_item(&mut self, index: usize, cx: &mut ViewContext<Self>) {

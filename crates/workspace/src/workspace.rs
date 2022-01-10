@@ -334,7 +334,7 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
                 return;
             }
             if T::should_activate_item_on_event(event) {
-                if let Some(ix) = pane.item_index(&item) {
+                if let Some(ix) = pane.index_for_item_view(&item) {
                     pane.activate_item(ix, cx);
                     pane.activate(cx);
                 }
@@ -956,6 +956,23 @@ impl Workspace {
         });
         if let Some(pane) = pane {
             self.activate_pane(pane.clone(), cx);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn activate_item(&mut self, item: &dyn ItemHandle, cx: &mut ViewContext<Self>) -> bool {
+        let result = self.panes.iter().find_map(|pane| {
+            if let Some(ix) = pane.read(cx).index_for_item(item) {
+                Some((pane.clone(), ix))
+            } else {
+                None
+            }
+        });
+        if let Some((pane, ix)) = result {
+            self.activate_pane(pane.clone(), cx);
+            pane.update(cx, |pane, cx| pane.activate_item(ix, cx));
             true
         } else {
             false

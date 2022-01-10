@@ -167,7 +167,7 @@ impl ProjectDiagnosticsEditor {
 
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         if let Some(existing) = workspace.item_of_type::<ProjectDiagnostics>(cx) {
-            workspace.activate_pane_for_item(&existing, cx);
+            workspace.activate_item(&existing, cx);
         } else {
             let diagnostics =
                 cx.add_model(|_| ProjectDiagnostics::new(workspace.project().clone()));
