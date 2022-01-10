@@ -12,7 +12,7 @@ use gpui::{
     action, elements::*, keymap::Binding, AppContext, Entity, ModelHandle, MutableAppContext,
     RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use language::{Bias, Buffer, Diagnostic, DiagnosticEntry, Point, Selection, SelectionGoal};
+use language::{Bias, Buffer, DiagnosticEntry, Point, Selection, SelectionGoal};
 use postage::watch;
 use project::{Project, ProjectPath, WorktreeId};
 use std::{cmp::Ordering, mem, ops::Range, path::Path, sync::Arc};
@@ -58,14 +58,8 @@ struct DiagnosticGroupState {
     primary_diagnostic: DiagnosticEntry<language::Anchor>,
     primary_excerpt_ix: usize,
     excerpts: Vec<ExcerptId>,
-    blocks: HashMap<BlockId, DiagnosticBlock>,
+    blocks: HashSet<BlockId>,
     block_count: usize,
-}
-
-enum DiagnosticBlock {
-    Header(Diagnostic),
-    Inline(Diagnostic),
-    Context,
 }
 
 impl ProjectDiagnostics {
@@ -267,7 +261,6 @@ impl ProjectDiagnosticsEditor {
         let mut group_ixs_to_remove = Vec::new();
         let mut blocks_to_add = Vec::new();
         let mut blocks_to_remove = HashSet::default();
-        let mut diagnostic_blocks = Vec::new();
         let excerpts_snapshot = self.excerpts.update(cx, |excerpts, excerpts_cx| {
             let mut old_groups = groups.iter().enumerate().peekable();
             let mut new_groups = snapshot
@@ -346,7 +339,6 @@ impl ProjectDiagnosticsEditor {
                                 header.message =
                                     primary.message.split('\n').next().unwrap().to_string();
                                 group_state.block_count += 1;
-                                diagnostic_blocks.push(DiagnosticBlock::Header(header.clone()));
                                 blocks_to_add.push(BlockProperties {
                                     position: header_position,
                                     height: 3,
@@ -360,7 +352,6 @@ impl ProjectDiagnosticsEditor {
                                 });
                             } else {
                                 group_state.block_count += 1;
-                                diagnostic_blocks.push(DiagnosticBlock::Context);
                                 blocks_to_add.push(BlockProperties {
                                     position: header_position,
                                     height: 1,
@@ -379,8 +370,6 @@ impl ProjectDiagnosticsEditor {
 
                                 if !diagnostic.message.is_empty() {
                                     group_state.block_count += 1;
-                                    diagnostic_blocks
-                                        .push(DiagnosticBlock::Inline(diagnostic.clone()));
                                     blocks_to_add.push(BlockProperties {
                                         position: (excerpt_id.clone(), entry.range.start.clone()),
                                         height: diagnostic.message.matches('\n').count() as u8 + 1,
@@ -406,7 +395,7 @@ impl ProjectDiagnosticsEditor {
                 } else if let Some((group_ix, group_state)) = to_invalidate {
                     excerpts.remove_excerpts(group_state.excerpts.iter(), excerpts_cx);
                     group_ixs_to_remove.push(group_ix);
-                    blocks_to_remove.extend(group_state.blocks.keys().copied());
+                    blocks_to_remove.extend(group_state.blocks.iter().copied());
                 } else if let Some((_, group)) = to_keep {
                     prev_excerpt_id = group.excerpts.last().unwrap().clone();
                 }
@@ -430,8 +419,7 @@ impl ProjectDiagnosticsEditor {
                     }),
                     cx,
                 )
-                .into_iter()
-                .zip(diagnostic_blocks);
+                .into_iter();
 
             for group_state in &mut groups_to_add {
                 group_state.blocks = block_ids.by_ref().take(group_state.block_count).collect();
