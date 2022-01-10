@@ -1074,7 +1074,7 @@ impl Workspace {
                     Align::new(
                         ConstrainedBox::new(
                             Svg::new("icons/offline-14.svg")
-                                .with_color(theme.workspace.titlebar.icon_color)
+                                .with_color(theme.workspace.titlebar.offline_icon.color)
                                 .boxed(),
                         )
                         .with_width(theme.workspace.titlebar.offline_icon.width)
@@ -1113,7 +1113,7 @@ impl Workspace {
                     .with_child(
                         Align::new(
                             Flex::row()
-                                .with_children(self.render_share_icon(cx))
+                                .with_children(self.render_share_icon(theme, cx))
                                 .with_children(self.render_collaborators(theme, cx))
                                 .with_child(self.render_avatar(
                                     self.user_store.read(cx).current_user().as_ref(),
@@ -1205,14 +1205,14 @@ impl Workspace {
         }
     }
 
-    fn render_share_icon(&self, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
+    fn render_share_icon(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> Option<ElementBox> {
         if self.project().read(cx).is_local() && self.client.user_id().is_some() {
             enum Share {}
 
             let color = if self.project().read(cx).is_shared() {
-                Color::green()
+                theme.workspace.titlebar.share_icon_active_color
             } else {
-                Color::red()
+                theme.workspace.titlebar.share_icon_color
             };
             Some(
                 MouseEventHandler::new::<Share, _, _, _>(0, cx, |_, _| {

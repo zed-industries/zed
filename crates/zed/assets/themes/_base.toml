@@ -12,8 +12,9 @@ title = "$text.0"
 avatar_width = 18
 avatar = { corner_radius = 10, border = { width = 1, color = "#00000088" } }
 avatar_ribbon = { background = "#ff0000", height = 3, width = 12 }
-icon_color = "$text.2.color"
 outdated_warning = { extends = "$text.2", size = 13 }
+share_icon_color = "$text.2.color"
+share_icon_active_color = "$text.0.color"
 
 [workspace.titlebar.sign_in_prompt]
 extends = "$text.2"
@@ -28,6 +29,7 @@ color = "$text.1.color"
 [workspace.titlebar.offline_icon]
 padding = { right = 4 }
 width = 16
+color = "$text.2.color"
 
 [workspace.tab]
 height = 34
