@@ -848,14 +848,13 @@ mod tests {
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
 
         let model = cx.add_model(|_| Model { subscription: None });
-        let (done_tx, mut done_rx) = postage::oneshot::channel();
-        let mut done_tx = Some(done_tx);
+        let (mut done_tx, mut done_rx) = postage::oneshot::channel();
         model.update(&mut cx, |model, cx| {
             model.subscription = Some(client.subscribe(
                 cx,
                 move |model, _: TypedEnvelope<proto::Ping>, _, _| {
                     model.subscription.take();
-                    postage::sink::Sink::try_send(&mut done_tx.take().unwrap(), ()).unwrap();
+                    postage::sink::Sink::try_send(&mut done_tx, ()).unwrap();
                     Ok(())
                 },
             ));
