@@ -158,14 +158,9 @@ pub struct Subscription {
 impl Drop for Subscription {
     fn drop(&mut self) {
         if let Some(client) = self.client.upgrade() {
-            drop(
-                client
-                    .state
-                    .write()
-                    .model_handlers
-                    .remove(&self.id)
-                    .unwrap(),
-            );
+            let mut state = client.state.write();
+            let _ = state.entity_id_extractors.remove(&self.id.0).unwrap();
+            let _ = state.model_handlers.remove(&self.id).unwrap();
         }
     }
 }
@@ -814,6 +809,34 @@ mod tests {
             Some((5, "deadbeef".to_string()))
         );
         assert_eq!(decode_worktree_url("not://the-right-format"), None);
+    }
+
+    #[gpui::test]
+    async fn test_subscribing_after_dropping_subscription(mut cx: TestAppContext) {
+        cx.foreground().forbid_parking();
+
+        let user_id = 5;
+        let mut client = Client::new(FakeHttpClient::with_404_response());
+        let server = FakeServer::for_client(user_id, &mut client, &cx).await;
+
+        let model = cx.add_model(|_| Model { subscription: None });
+        let (mut done_tx1, _done_rx1) = postage::oneshot::channel();
+        let (mut done_tx2, mut done_rx2) = postage::oneshot::channel();
+        let subscription1 = model.update(&mut cx, |_, cx| {
+            client.subscribe(cx, move |_, _: TypedEnvelope<proto::Ping>, _, _| {
+                postage::sink::Sink::try_send(&mut done_tx1, ()).unwrap();
+                Ok(())
+            })
+        });
+        drop(subscription1);
+        let _subscription2 = model.update(&mut cx, |_, cx| {
+            client.subscribe(cx, move |_, _: TypedEnvelope<proto::Ping>, _, _| {
+                postage::sink::Sink::try_send(&mut done_tx2, ()).unwrap();
+                Ok(())
+            })
+        });
+        server.send(proto::Ping {}).await;
+        done_rx2.recv().await.unwrap();
     }
 
     #[gpui::test]
