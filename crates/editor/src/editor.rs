@@ -1556,29 +1556,23 @@ impl Editor {
         self.start_transaction(cx);
         let tab_size = (self.build_settings)(cx).tab_size;
         let selections = self.local_selections::<Point>(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut deletion_ranges = Vec::new();
         let mut last_outdent = None;
         {
             let buffer = self.buffer.read(cx).read(cx);
             for selection in &selections {
-                let mut start_row = selection.start.row;
-                let mut end_row = selection.end.row + 1;
-
-                // If a selection ends at the beginning of a line, don't indent
-                // that last line.
-                if selection.end.column == 0 {
-                    end_row -= 1;
-                }
+                let mut rows = selection.spanned_rows(false, &display_map);
 
                 // Avoid re-outdenting a row that has already been outdented by a
                 // previous selection.
                 if let Some(last_row) = last_outdent {
-                    if last_row == selection.start.row {
-                        start_row += 1;
+                    if last_row == rows.start {
+                        rows.start += 1;
                     }
                 }
 
-                for row in start_row..end_row {
+                for row in rows {
                     let column = buffer.indent_column_for_line(row) as usize;
                     if column > 0 {
                         let mut deletion_len = (column % tab_size) as u32;
@@ -3832,11 +3826,7 @@ impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
     ) -> Range<u32> {
         let start = self.start.to_point(&map.buffer_snapshot);
         let mut end = self.end.to_point(&map.buffer_snapshot);
-        if !include_end_if_at_line_start
-            && end.row != map.buffer_snapshot.max_point().row
-            && start.row != end.row
-            && end.column == 0
-        {
+        if !include_end_if_at_line_start && start.row != end.row && end.column == 0 {
             end.row -= 1;
         }
 
@@ -4957,6 +4947,25 @@ mod tests {
             assert_eq!(
                 view.selected_display_ranges(cx),
                 &[DisplayPoint::new(1, 1)..DisplayPoint::new(2, 0)]
+            );
+
+            // Ensure that indenting/outdenting works when the cursor is at column 0.
+            view.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx)
+                .unwrap();
+            view.tab(&Tab, cx);
+            assert_eq!(view.text(cx), "one two\n    three\n four");
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[DisplayPoint::new(1, 4)..DisplayPoint::new(1, 4)]
+            );
+
+            view.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx)
+                .unwrap();
+            view.outdent(&Outdent, cx);
+            assert_eq!(view.text(cx), "one two\nthree\n four");
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)]
             );
         });
     }
