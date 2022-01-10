@@ -590,6 +590,7 @@ fn compare_diagnostics<L: language::ToOffset, R: language::ToOffset>(
 mod tests {
     use super::*;
     use client::{http::ServerResponse, test::FakeHttpClient, Client, UserStore};
+    use editor::DisplayPoint;
     use gpui::TestAppContext;
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, LanguageRegistry, PointUtf16};
     use project::{worktree, FakeFs};
@@ -749,6 +750,7 @@ mod tests {
                     //
                     // main.rs, diagnostic group 1
                     //
+                    "\n", // padding
                     "\n", // primary message
                     "\n", // filename
                     "    let x = vec![];\n",
@@ -765,6 +767,7 @@ mod tests {
                     //
                     // main.rs, diagnostic group 2
                     //
+                    "\n", // padding
                     "\n", // primary message
                     "\n", // filename
                     "fn main() {\n",
@@ -783,7 +786,10 @@ mod tests {
             );
 
             view.editor.update(cx, |editor, cx| {
-                assert_eq!(editor.selected_ranges::<usize>(cx), [0..0]);
+                assert_eq!(
+                    editor.selected_display_ranges(cx),
+                    [DisplayPoint::new(11, 6)..DisplayPoint::new(11, 6)]
+                );
             });
         });
 
@@ -821,6 +827,7 @@ mod tests {
                     //
                     // a.rs
                     //
+                    "\n", // padding
                     "\n", // primary message
                     "\n", // filename
                     "const a: i32 = 'a';\n",
@@ -829,6 +836,7 @@ mod tests {
                     //
                     // main.rs, diagnostic group 1
                     //
+                    "\n", // padding
                     "\n", // primary message
                     "\n", // filename
                     "    let x = vec![];\n",
@@ -845,6 +853,7 @@ mod tests {
                     //
                     // main.rs, diagnostic group 2
                     //
+                    "\n", // padding
                     "\n", // primary message
                     "\n", // filename
                     "fn main() {\n",
