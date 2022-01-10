@@ -37,7 +37,6 @@ impl FoldPoint {
         &mut self.0.row
     }
 
-    #[cfg(test)]
     pub fn column_mut(&mut self) -> &mut u32 {
         &mut self.0.column
     }
@@ -549,7 +548,6 @@ impl FoldSnapshot {
         FoldOffset(self.transforms.summary().output.bytes)
     }
 
-    #[cfg(test)]
     pub fn line_len(&self, row: u32) -> u32 {
         let line_start = FoldPoint::new(row, 0).to_offset(self).0;
         let line_end = if row >= self.max_point().row() {
