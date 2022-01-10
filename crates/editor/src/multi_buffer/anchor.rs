@@ -9,6 +9,7 @@ use text::{rope::TextDimension, Point};
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
 pub struct Anchor {
+    pub(crate) buffer_id: usize,
     pub(crate) excerpt_id: ExcerptId,
     pub(crate) text_anchor: text::Anchor,
 }
@@ -16,6 +17,7 @@ pub struct Anchor {
 impl Anchor {
     pub fn min() -> Self {
         Self {
+            buffer_id: 0,
             excerpt_id: ExcerptId::min(),
             text_anchor: text::Anchor::min(),
         }
@@ -23,6 +25,7 @@ impl Anchor {
 
     pub fn max() -> Self {
         Self {
+            buffer_id: 0,
             excerpt_id: ExcerptId::max(),
             text_anchor: text::Anchor::max(),
         }
@@ -54,6 +57,7 @@ impl Anchor {
         if self.text_anchor.bias != Bias::Left {
             if let Some(buffer_snapshot) = snapshot.buffer_snapshot_for_excerpt(&self.excerpt_id) {
                 return Self {
+                    buffer_id: self.buffer_id,
                     excerpt_id: self.excerpt_id.clone(),
                     text_anchor: self.text_anchor.bias_left(buffer_snapshot),
                 };
@@ -66,6 +70,7 @@ impl Anchor {
         if self.text_anchor.bias != Bias::Right {
             if let Some(buffer_snapshot) = snapshot.buffer_snapshot_for_excerpt(&self.excerpt_id) {
                 return Self {
+                    buffer_id: self.buffer_id,
                     excerpt_id: self.excerpt_id.clone(),
                     text_anchor: self.text_anchor.bias_right(buffer_snapshot),
                 };

@@ -17,7 +17,7 @@ use rpc::{
     Connection, ConnectionId, Peer, TypedEnvelope,
 };
 use sha1::{Digest as _, Sha1};
-use std::{any::TypeId, future::Future, mem, sync::Arc, time::Instant};
+use std::{any::TypeId, future::Future, mem, path::PathBuf, sync::Arc, time::Instant};
 use store::{Store, Worktree};
 use surf::StatusCode;
 use tide::log;
@@ -71,6 +71,9 @@ impl Server {
             .add_handler(Server::unregister_worktree)
             .add_handler(Server::share_worktree)
             .add_handler(Server::update_worktree)
+            .add_handler(Server::update_diagnostic_summary)
+            .add_handler(Server::disk_based_diagnostics_updating)
+            .add_handler(Server::disk_based_diagnostics_updated)
             .add_handler(Server::open_buffer)
             .add_handler(Server::close_buffer)
             .add_handler(Server::update_buffer)
@@ -300,6 +303,11 @@ impl Server {
                             id: *id,
                             root_name: worktree.root_name.clone(),
                             entries: share.entries.values().cloned().collect(),
+                            diagnostic_summaries: share
+                                .diagnostic_summaries
+                                .values()
+                                .cloned()
+                                .collect(),
                         })
                     })
                     .collect();
@@ -471,11 +479,17 @@ impl Server {
             .map(|entry| (entry.id, entry))
             .collect();
 
+        let diagnostic_summaries = mem::take(&mut worktree.diagnostic_summaries)
+            .into_iter()
+            .map(|summary| (PathBuf::from(summary.path.clone()), summary))
+            .collect();
+
         let contact_user_ids = self.state_mut().share_worktree(
             request.payload.project_id,
             worktree.id,
             request.sender_id,
             entries,
+            diagnostic_summaries,
         );
         if let Some(contact_user_ids) = contact_user_ids {
             self.peer.respond(request.receipt(), proto::Ack {}).await?;
@@ -514,6 +528,64 @@ impl Server {
         })
         .await?;
 
+        Ok(())
+    }
+
+    async fn update_diagnostic_summary(
+        mut self: Arc<Server>,
+        request: TypedEnvelope<proto::UpdateDiagnosticSummary>,
+    ) -> tide::Result<()> {
+        let receiver_ids = request
+            .payload
+            .summary
+            .clone()
+            .and_then(|summary| {
+                self.state_mut().update_diagnostic_summary(
+                    request.payload.project_id,
+                    request.payload.worktree_id,
+                    request.sender_id,
+                    summary,
+                )
+            })
+            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+
+        broadcast(request.sender_id, receiver_ids, |connection_id| {
+            self.peer
+                .forward_send(request.sender_id, connection_id, request.payload.clone())
+        })
+        .await?;
+        Ok(())
+    }
+
+    async fn disk_based_diagnostics_updating(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::DiskBasedDiagnosticsUpdating>,
+    ) -> tide::Result<()> {
+        let receiver_ids = self
+            .state()
+            .project_connection_ids(request.payload.project_id, request.sender_id)
+            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+        broadcast(request.sender_id, receiver_ids, |connection_id| {
+            self.peer
+                .forward_send(request.sender_id, connection_id, request.payload.clone())
+        })
+        .await?;
+        Ok(())
+    }
+
+    async fn disk_based_diagnostics_updated(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::DiskBasedDiagnosticsUpdated>,
+    ) -> tide::Result<()> {
+        let receiver_ids = self
+            .state()
+            .project_connection_ids(request.payload.project_id, request.sender_id)
+            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+        broadcast(request.sender_id, receiver_ids, |connection_id| {
+            self.peer
+                .forward_send(request.sender_id, connection_id, request.payload.clone())
+        })
+        .await?;
         Ok(())
     }
 
@@ -999,7 +1071,7 @@ mod tests {
     };
     use ::rpc::Peer;
     use async_std::task;
-    use gpui::{ModelHandle, TestAppContext};
+    use gpui::{executor, ModelHandle, TestAppContext};
     use parking_lot::Mutex;
     use postage::{mpsc, watch};
     use rpc::PeerId;
@@ -1008,6 +1080,7 @@ mod tests {
     use std::{
         ops::Deref,
         path::Path,
+        rc::Rc,
         sync::{
             atomic::{AtomicBool, Ordering::SeqCst},
             Arc,
@@ -1026,7 +1099,7 @@ mod tests {
             LanguageRegistry, LanguageServerConfig, Point,
         },
         lsp,
-        project::Project,
+        project::{DiagnosticSummary, Project, ProjectPath},
     };
 
     #[gpui::test]
@@ -1037,7 +1110,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1170,7 +1243,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1246,7 +1319,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 3 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
         let client_c = server.create_client(&mut cx_c, "user_c").await;
@@ -1396,7 +1469,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new());
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1492,7 +1565,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new());
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1572,7 +1645,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new());
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1647,7 +1720,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new());
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1734,7 +1807,7 @@ mod tests {
             )));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1767,6 +1840,7 @@ mod tests {
         let project_id = project_a
             .update(&mut cx_a, |project, _| project.next_remote_id())
             .await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
         project_a
             .update(&mut cx_a, |project, cx| project.share(cx))
             .await
@@ -1782,6 +1856,68 @@ mod tests {
             .unwrap();
 
         // Simulate a language server reporting errors for a file.
+        fake_language_server
+            .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+                uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
+                version: None,
+                diagnostics: vec![lsp::Diagnostic {
+                    severity: Some(lsp::DiagnosticSeverity::ERROR),
+                    range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 7)),
+                    message: "message 1".to_string(),
+                    ..Default::default()
+                }],
+            })
+            .await;
+
+        // Wait for server to see the diagnostics update.
+        server
+            .condition(|store| {
+                let worktree = store
+                    .project(project_id)
+                    .unwrap()
+                    .worktrees
+                    .get(&worktree_id.to_proto())
+                    .unwrap();
+
+                !worktree
+                    .share
+                    .as_ref()
+                    .unwrap()
+                    .diagnostic_summaries
+                    .is_empty()
+            })
+            .await;
+
+        // Join the worktree as client B.
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+
+        project_b.read_with(&cx_b, |project, cx| {
+            assert_eq!(
+                project.diagnostic_summaries(cx).collect::<Vec<_>>(),
+                &[(
+                    ProjectPath {
+                        worktree_id,
+                        path: Arc::from(Path::new("a.rs")),
+                    },
+                    DiagnosticSummary {
+                        error_count: 1,
+                        warning_count: 0,
+                        ..Default::default()
+                    },
+                )]
+            )
+        });
+
+        // Simulate a language server reporting more errors for a file.
         fake_language_server
             .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
                 uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
@@ -1806,20 +1942,26 @@ mod tests {
             })
             .await;
 
-        // Join the worktree as client B.
-        let project_b = Project::remote(
-            project_id,
-            client_b.clone(),
-            client_b.user_store.clone(),
-            lang_registry.clone(),
-            fs.clone(),
-            &mut cx_b.to_async(),
-        )
-        .await
-        .unwrap();
-        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
+        // Client b gets the updated summaries
+        project_b
+            .condition(&cx_b, |project, cx| {
+                project.diagnostic_summaries(cx).collect::<Vec<_>>()
+                    == &[(
+                        ProjectPath {
+                            worktree_id,
+                            path: Arc::from(Path::new("a.rs")),
+                        },
+                        DiagnosticSummary {
+                            error_count: 1,
+                            warning_count: 1,
+                            ..Default::default()
+                        },
+                    )]
+            })
+            .await;
 
-        // Open the file with the errors.
+        // Open the file with the errors on client B. They should be present.
+        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
         let buffer_b = cx_b
             .background()
             .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.rs", cx)))
@@ -1831,7 +1973,7 @@ mod tests {
                 buffer
                     .snapshot()
                     .diagnostics_in_range::<_, Point>(0..buffer.len())
-                    .map(|(_, entry)| entry)
+                    .map(|entry| entry)
                     .collect::<Vec<_>>(),
                 &[
                     DiagnosticEntry {
@@ -1864,7 +2006,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -2003,7 +2145,7 @@ mod tests {
     async fn test_chat_message_validation(mut cx_a: TestAppContext) {
         cx_a.foreground().forbid_parking();
 
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
 
         let db = &server.app_state.db;
@@ -2064,7 +2206,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
         let mut status_b = client_b.status();
@@ -2282,7 +2424,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new());
 
         // Connect to a server as 3 clients.
-        let mut server = TestServer::start().await;
+        let mut server = TestServer::start(cx_a.foreground()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
         let client_c = server.create_client(&mut cx_c, "user_c").await;
@@ -2415,6 +2557,7 @@ mod tests {
         peer: Arc<Peer>,
         app_state: Arc<AppState>,
         server: Arc<Server>,
+        foreground: Rc<executor::Foreground>,
         notifications: mpsc::Receiver<()>,
         connection_killers: Arc<Mutex<HashMap<UserId, watch::Sender<Option<()>>>>>,
         forbid_connections: Arc<AtomicBool>,
@@ -2422,7 +2565,7 @@ mod tests {
     }
 
     impl TestServer {
-        async fn start() -> Self {
+        async fn start(foreground: Rc<executor::Foreground>) -> Self {
             let test_db = TestDb::new();
             let app_state = Self::build_app_state(&test_db).await;
             let peer = Peer::new();
@@ -2432,6 +2575,7 @@ mod tests {
                 peer,
                 app_state,
                 server,
+                foreground,
                 notifications: notifications.1,
                 connection_killers: Default::default(),
                 forbid_connections: Default::default(),
@@ -2547,7 +2691,9 @@ mod tests {
         {
             async_std::future::timeout(Duration::from_millis(500), async {
                 while !(predicate)(&*self.server.store.read()) {
+                    self.foreground.start_waiting();
                     self.notifications.recv().await;
+                    self.foreground.finish_waiting();
                 }
             })
             .await

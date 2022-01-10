@@ -28,8 +28,8 @@ use language::{
     BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point, Selection, SelectionGoal,
     TransactionId,
 };
-pub use multi_buffer::{Anchor, ExcerptId, ExcerptProperties, MultiBuffer};
-use multi_buffer::{AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot, ToOffset, ToPoint};
+pub use multi_buffer::{Anchor, ExcerptId, ExcerptProperties, MultiBuffer, ToOffset, ToPoint};
+use multi_buffer::{AnchorRangeExt, MultiBufferChunks, MultiBufferSnapshot};
 use postage::watch;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
@@ -46,7 +46,7 @@ use sum_tree::Bias;
 use text::rope::TextDimension;
 use theme::{DiagnosticStyle, EditorStyle};
 use util::post_inc;
-use workspace::{EntryOpener, Workspace};
+use workspace::{PathOpener, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -111,8 +111,8 @@ action!(FoldSelectedRanges);
 action!(Scroll, Vector2F);
 action!(Select, SelectPhase);
 
-pub fn init(cx: &mut MutableAppContext, entry_openers: &mut Vec<Box<dyn EntryOpener>>) {
-    entry_openers.push(Box::new(items::BufferOpener));
+pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpener>>) {
+    path_openers.push(Box::new(items::BufferOpener));
     cx.add_bindings(vec![
         Binding::new("escape", Cancel, Some("Editor")),
         Binding::new("backspace", Backspace, Some("Editor")),
@@ -365,7 +365,7 @@ pub struct Editor {
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     scroll_position: Vector2F,
-    scroll_top_anchor: Anchor,
+    scroll_top_anchor: Option<Anchor>,
     autoscroll_request: Option<Autoscroll>,
     build_settings: BuildSettings,
     focused: bool,
@@ -383,7 +383,7 @@ pub struct EditorSnapshot {
     pub placeholder_text: Option<Arc<str>>,
     is_focused: bool,
     scroll_position: Vector2F,
-    scroll_top_anchor: Anchor,
+    scroll_top_anchor: Option<Anchor>,
 }
 
 struct PendingSelection {
@@ -495,7 +495,7 @@ impl Editor {
             active_diagnostics: None,
             build_settings,
             scroll_position: Vector2F::zero(),
-            scroll_top_anchor: Anchor::min(),
+            scroll_top_anchor: None,
             autoscroll_request: None,
             focused: false,
             show_local_cursors: false,
@@ -524,8 +524,7 @@ impl Editor {
         let buffer = cx.add_model(|cx| {
             Buffer::new(0, "", cx).with_language(Some(language::PLAIN_TEXT.clone()), None, cx)
         });
-        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-        workspace.add_item(BufferItemHandle(buffer), cx);
+        workspace.open_item(BufferItemHandle(buffer), cx);
     }
 
     pub fn replica_id(&self, cx: &AppContext) -> ReplicaId {
@@ -565,15 +564,22 @@ impl Editor {
 
     pub fn set_scroll_position(&mut self, scroll_position: Vector2F, cx: &mut ViewContext<Self>) {
         let map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let scroll_top_buffer_offset =
-            DisplayPoint::new(scroll_position.y() as u32, 0).to_offset(&map, Bias::Right);
-        self.scroll_top_anchor = map
-            .buffer_snapshot
-            .anchor_at(scroll_top_buffer_offset, Bias::Right);
-        self.scroll_position = vec2f(
-            scroll_position.x(),
-            scroll_position.y() - self.scroll_top_anchor.to_display_point(&map).row() as f32,
-        );
+
+        if scroll_position.y() == 0. {
+            self.scroll_top_anchor = None;
+            self.scroll_position = scroll_position;
+        } else {
+            let scroll_top_buffer_offset =
+                DisplayPoint::new(scroll_position.y() as u32, 0).to_offset(&map, Bias::Right);
+            let anchor = map
+                .buffer_snapshot
+                .anchor_at(scroll_top_buffer_offset, Bias::Right);
+            self.scroll_position = vec2f(
+                scroll_position.x(),
+                scroll_position.y() - anchor.to_display_point(&map).row() as f32,
+            );
+            self.scroll_top_anchor = Some(anchor);
+        }
 
         cx.notify();
     }
@@ -1049,6 +1055,45 @@ impl Editor {
         }
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn selected_ranges<D: TextDimension + Ord + Sub<D, Output = D>>(
+        &self,
+        cx: &mut MutableAppContext,
+    ) -> Vec<Range<D>> {
+        self.local_selections::<D>(cx)
+            .iter()
+            .map(|s| {
+                if s.reversed {
+                    s.end.clone()..s.start.clone()
+                } else {
+                    s.start.clone()..s.end.clone()
+                }
+            })
+            .collect()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn selected_display_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
+        let display_map = self
+            .display_map
+            .update(cx, |display_map, cx| display_map.snapshot(cx));
+        self.selections
+            .iter()
+            .chain(
+                self.pending_selection
+                    .as_ref()
+                    .map(|pending| &pending.selection),
+            )
+            .map(|s| {
+                if s.reversed {
+                    s.end.to_display_point(&display_map)..s.start.to_display_point(&display_map)
+                } else {
+                    s.start.to_display_point(&display_map)..s.end.to_display_point(&display_map)
+                }
+            })
+            .collect()
+    }
+
     pub fn select_ranges<I, T>(
         &mut self,
         ranges: I,
@@ -1059,7 +1104,7 @@ impl Editor {
         T: ToOffset,
     {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let selections = ranges
+        let mut selections = ranges
             .into_iter()
             .map(|range| {
                 let mut start = range.start.to_offset(&buffer);
@@ -1078,7 +1123,8 @@ impl Editor {
                     goal: SelectionGoal::None,
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
+        selections.sort_unstable_by_key(|s| s.start);
         self.update_selections(selections, autoscroll, cx);
     }
 
@@ -1564,7 +1610,6 @@ impl Editor {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = self.buffer.read(cx).snapshot(cx);
 
-        let mut row_delta = 0;
         let mut new_cursors = Vec::new();
         let mut edit_ranges = Vec::new();
         let mut selections = selections.iter().peekable();
@@ -1590,7 +1635,7 @@ impl Editor {
                 // If there's a line after the range, delete the \n from the end of the row range
                 // and position the cursor on the next line.
                 edit_end = Point::new(rows.end, 0).to_offset(&buffer);
-                cursor_buffer_row = rows.start;
+                cursor_buffer_row = rows.end;
             } else {
                 // If there isn't a line after the range, delete the \n from the line before the
                 // start of the row range and position the cursor there.
@@ -1599,29 +1644,35 @@ impl Editor {
                 cursor_buffer_row = rows.start.saturating_sub(1);
             }
 
-            let mut cursor =
-                Point::new(cursor_buffer_row - row_delta, 0).to_display_point(&display_map);
+            let mut cursor = Point::new(cursor_buffer_row, 0).to_display_point(&display_map);
             *cursor.column_mut() =
                 cmp::min(goal_display_column, display_map.line_len(cursor.row()));
-            row_delta += rows.len() as u32;
 
-            new_cursors.push((selection.id, cursor.to_point(&display_map)));
+            new_cursors.push((
+                selection.id,
+                buffer.anchor_after(cursor.to_point(&display_map)),
+            ));
             edit_ranges.push(edit_start..edit_end);
         }
 
-        new_cursors.sort_unstable_by_key(|(_, point)| point.clone());
+        new_cursors.sort_unstable_by(|a, b| a.1.cmp(&b.1, &buffer).unwrap());
+        let buffer = self.buffer.update(cx, |buffer, cx| {
+            buffer.edit(edit_ranges, "", cx);
+            buffer.snapshot(cx)
+        });
         let new_selections = new_cursors
             .into_iter()
-            .map(|(id, cursor)| Selection {
-                id,
-                start: cursor,
-                end: cursor,
-                reversed: false,
-                goal: SelectionGoal::None,
+            .map(|(id, cursor)| {
+                let cursor = cursor.to_point(&buffer);
+                Selection {
+                    id,
+                    start: cursor,
+                    end: cursor,
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                }
             })
             .collect();
-        self.buffer
-            .update(cx, |buffer, cx| buffer.edit(edit_ranges, "", cx));
         self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
         self.end_transaction(cx);
     }
@@ -1629,7 +1680,7 @@ impl Editor {
     pub fn duplicate_line(&mut self, _: &DuplicateLine, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
 
-        let mut selections = self.local_selections::<Point>(cx);
+        let selections = self.local_selections::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
 
@@ -1659,28 +1710,13 @@ impl Editor {
             edits.push((start, text, rows.len() as u32));
         }
 
-        let mut edits_iter = edits.iter().peekable();
-        let mut row_delta = 0;
-        for selection in selections.iter_mut() {
-            while let Some((point, _, line_count)) = edits_iter.peek() {
-                if *point <= selection.start {
-                    row_delta += line_count;
-                    edits_iter.next();
-                } else {
-                    break;
-                }
-            }
-            selection.start.row += row_delta;
-            selection.end.row += row_delta;
-        }
-
         self.buffer.update(cx, |buffer, cx| {
             for (point, text, _) in edits.into_iter().rev() {
                 buffer.edit(Some(point..point), text, cx);
             }
         });
 
-        self.update_selections(selections, Some(Autoscroll::Fit), cx);
+        self.request_autoscroll(Autoscroll::Fit, cx);
         self.end_transaction(cx);
     }
 
@@ -2867,19 +2903,19 @@ impl Editor {
         loop {
             let next_group = buffer
                 .diagnostics_in_range::<_, usize>(search_start..buffer.len())
-                .find_map(|(provider_name, entry)| {
+                .find_map(|entry| {
                     if entry.diagnostic.is_primary
                         && !entry.range.is_empty()
                         && Some(entry.range.end) != active_primary_range.as_ref().map(|r| *r.end())
                     {
-                        Some((provider_name, entry.range, entry.diagnostic.group_id))
+                        Some((entry.range, entry.diagnostic.group_id))
                     } else {
                         None
                     }
                 });
 
-            if let Some((provider_name, primary_range, group_id)) = next_group {
-                self.activate_diagnostics(provider_name, group_id, cx);
+            if let Some((primary_range, group_id)) = next_group {
+                self.activate_diagnostics(group_id, cx);
                 self.update_selections(
                     vec![Selection {
                         id: selection.id,
@@ -2907,7 +2943,7 @@ impl Editor {
             let primary_range_start = active_diagnostics.primary_range.start.to_offset(&buffer);
             let is_valid = buffer
                 .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone())
-                .any(|(_, entry)| {
+                .any(|entry| {
                     entry.diagnostic.is_primary
                         && !entry.range.is_empty()
                         && entry.range.start == primary_range_start
@@ -2933,12 +2969,7 @@ impl Editor {
         }
     }
 
-    fn activate_diagnostics(
-        &mut self,
-        provider_name: &str,
-        group_id: usize,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) {
         self.dismiss_diagnostics(cx);
         self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
             let buffer = self.buffer.read(cx).snapshot(cx);
@@ -2947,7 +2978,7 @@ impl Editor {
             let mut primary_message = None;
             let mut group_end = Point::zero();
             let diagnostic_group = buffer
-                .diagnostic_group::<Point>(provider_name, group_id)
+                .diagnostic_group::<Point>(group_id)
                 .map(|entry| {
                     if entry.range.end > group_end {
                         group_end = entry.range.end;
@@ -3113,10 +3144,6 @@ impl Editor {
         .collect()
     }
 
-    pub fn local_anchor_selections(&self) -> &Arc<[Selection<Anchor>]> {
-        &self.selections
-    }
-
     fn resolve_selections<'a, D, I>(
         &self,
         selections: I,
@@ -3268,6 +3295,45 @@ impl Editor {
             })),
             cx,
         );
+    }
+
+    /// Compute new ranges for any selections that were located in excerpts that have
+    /// since been removed.
+    ///
+    /// Returns a `HashMap` indicating which selections whose former head position
+    /// was no longer present. The keys of the map are selection ids. The values are
+    /// the id of the new excerpt where the head of the selection has been moved.
+    pub fn refresh_selections(&mut self, cx: &mut ViewContext<Self>) -> HashMap<usize, ExcerptId> {
+        let anchors_with_status = self.buffer.update(cx, |buffer, cx| {
+            let snapshot = buffer.read(cx);
+            snapshot.refresh_anchors(
+                self.selections
+                    .iter()
+                    .flat_map(|selection| [&selection.start, &selection.end]),
+            )
+        });
+        let mut selections_with_lost_position = HashMap::default();
+        self.selections = self
+            .selections
+            .iter()
+            .cloned()
+            .zip(anchors_with_status.chunks(2))
+            .map(|(mut selection, anchors)| {
+                selection.start = anchors[0].0.clone();
+                selection.end = anchors[1].0.clone();
+                let kept_head_position = if selection.reversed {
+                    anchors[0].1
+                } else {
+                    anchors[1].1
+                };
+                if !kept_head_position {
+                    selections_with_lost_position
+                        .insert(selection.id, selection.head().excerpt_id.clone());
+                }
+                selection
+            })
+            .collect();
+        selections_with_lost_position
     }
 
     fn set_selections(&mut self, selections: Arc<[Selection<Anchor>]>, cx: &mut ViewContext<Self>) {
@@ -3650,10 +3716,14 @@ impl EditorSettings {
 fn compute_scroll_position(
     snapshot: &DisplaySnapshot,
     mut scroll_position: Vector2F,
-    scroll_top_anchor: &Anchor,
+    scroll_top_anchor: &Option<Anchor>,
 ) -> Vector2F {
-    let scroll_top = scroll_top_anchor.to_display_point(snapshot).row() as f32;
-    scroll_position.set_y(scroll_top + scroll_position.y());
+    if let Some(anchor) = scroll_top_anchor {
+        let scroll_top = anchor.to_display_point(snapshot).row() as f32;
+        scroll_position.set_y(scroll_top + scroll_position.y());
+    } else {
+        scroll_position.set_y(0.);
+    }
     scroll_position
 }
 
@@ -3786,6 +3856,7 @@ pub fn diagnostic_block_renderer(
         let mut text_style = settings.style.text.clone();
         text_style.color = diagnostic_style(diagnostic.severity, is_valid, &settings.style).text;
         Text::new(diagnostic.message.clone(), text_style)
+            .with_soft_wrap(false)
             .contained()
             .with_margin_left(cx.anchor_x)
             .boxed()
@@ -3801,7 +3872,8 @@ pub fn diagnostic_header_renderer(
     Arc::new(move |cx| {
         let settings = build_settings(cx);
         let mut text_style = settings.style.text.clone();
-        text_style.color = diagnostic_style(diagnostic.severity, is_valid, &settings.style).text;
+        let diagnostic_style = diagnostic_style(diagnostic.severity, is_valid, &settings.style);
+        text_style.color = diagnostic_style.text;
         let file_path = if let Some(file) = buffer.read(&**cx).file() {
             file.path().to_string_lossy().to_string()
         } else {
@@ -3809,8 +3881,17 @@ pub fn diagnostic_header_renderer(
         };
 
         Flex::column()
-            .with_child(Label::new(diagnostic.message.clone(), text_style).boxed())
+            .with_child(
+                Text::new(diagnostic.message.clone(), text_style)
+                    .with_soft_wrap(false)
+                    .boxed(),
+            )
             .with_child(Label::new(file_path, settings.style.text.clone()).boxed())
+            .aligned()
+            .left()
+            .contained()
+            .with_style(diagnostic_style.header)
+            .expanded()
             .boxed()
     })
 }
@@ -6158,45 +6239,6 @@ mod tests {
                 )
             );
         });
-    }
-
-    impl Editor {
-        fn selected_ranges<D: TextDimension + Ord + Sub<D, Output = D>>(
-            &self,
-            cx: &mut MutableAppContext,
-        ) -> Vec<Range<D>> {
-            self.local_selections::<D>(cx)
-                .iter()
-                .map(|s| {
-                    if s.reversed {
-                        s.end.clone()..s.start.clone()
-                    } else {
-                        s.start.clone()..s.end.clone()
-                    }
-                })
-                .collect()
-        }
-
-        fn selected_display_ranges(&self, cx: &mut MutableAppContext) -> Vec<Range<DisplayPoint>> {
-            let display_map = self
-                .display_map
-                .update(cx, |display_map, cx| display_map.snapshot(cx));
-            self.selections
-                .iter()
-                .chain(
-                    self.pending_selection
-                        .as_ref()
-                        .map(|pending| &pending.selection),
-                )
-                .map(|s| {
-                    if s.reversed {
-                        s.end.to_display_point(&display_map)..s.start.to_display_point(&display_map)
-                    } else {
-                        s.start.to_display_point(&display_map)..s.end.to_display_point(&display_map)
-                    }
-                })
-                .collect()
-        }
     }
 
     fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

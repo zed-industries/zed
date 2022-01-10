@@ -1,6 +1,6 @@
 pub mod fs;
 mod ignore;
-mod worktree;
+pub mod worktree;
 
 use anyhow::{anyhow, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
@@ -18,7 +18,7 @@ use std::{
     path::Path,
     sync::{atomic::AtomicBool, Arc},
 };
-use util::{ResultExt, TryFutureExt as _};
+use util::TryFutureExt as _;
 
 pub use fs::*;
 pub use worktree::*;
@@ -33,6 +33,7 @@ pub struct Project {
     client_state: ProjectClientState,
     collaborators: HashMap<PeerId, Collaborator>,
     subscriptions: Vec<client::Subscription>,
+    pending_disk_based_diagnostics: isize,
 }
 
 enum ProjectClientState {
@@ -60,6 +61,9 @@ pub struct Collaborator {
 pub enum Event {
     ActiveEntryChanged(Option<ProjectEntry>),
     WorktreeRemoved(WorktreeId),
+    DiskBasedDiagnosticsStarted,
+    DiskBasedDiagnosticsUpdated { worktree_id: WorktreeId },
+    DiskBasedDiagnosticsFinished,
     DiagnosticsUpdated(ProjectPath),
 }
 
@@ -69,7 +73,7 @@ pub struct ProjectPath {
     pub path: Arc<Path>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct DiagnosticSummary {
     pub error_count: usize,
     pub warning_count: usize,
@@ -99,6 +103,16 @@ impl DiagnosticSummary {
         }
 
         this
+    }
+
+    pub fn to_proto(&self, path: Arc<Path>) -> proto::DiagnosticSummary {
+        proto::DiagnosticSummary {
+            path: path.to_string_lossy().to_string(),
+            error_count: self.error_count as u32,
+            warning_count: self.warning_count as u32,
+            info_count: self.info_count as u32,
+            hint_count: self.hint_count as u32,
+        }
     }
 }
 
@@ -176,6 +190,7 @@ impl Project {
                 client,
                 user_store,
                 fs,
+                pending_disk_based_diagnostics: 0,
             }
         })
     }
@@ -228,29 +243,51 @@ impl Project {
             collaborators.insert(collaborator.peer_id, collaborator);
         }
 
-        Ok(cx.add_model(|cx| Self {
-            worktrees,
-            active_entry: None,
-            collaborators,
-            languages,
-            user_store,
-            fs,
-            subscriptions: vec![
-                client.subscribe_to_entity(remote_id, cx, Self::handle_unshare_project),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_add_collaborator),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_remove_collaborator),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_share_worktree),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_unregister_worktree),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_update_worktree),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
-            ],
-            client,
-            client_state: ProjectClientState::Remote {
-                sharing_has_stopped: false,
-                remote_id,
-                replica_id,
-            },
+        Ok(cx.add_model(|cx| {
+            let mut this = Self {
+                worktrees: Vec::new(),
+                active_entry: None,
+                collaborators,
+                languages,
+                user_store,
+                fs,
+                subscriptions: vec![
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_unshare_project),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_add_collaborator),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_remove_collaborator),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_share_worktree),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_unregister_worktree),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_update_worktree),
+                    client.subscribe_to_entity(
+                        remote_id,
+                        cx,
+                        Self::handle_update_diagnostic_summary,
+                    ),
+                    client.subscribe_to_entity(
+                        remote_id,
+                        cx,
+                        Self::handle_disk_based_diagnostics_updating,
+                    ),
+                    client.subscribe_to_entity(
+                        remote_id,
+                        cx,
+                        Self::handle_disk_based_diagnostics_updated,
+                    ),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
+                ],
+                client,
+                client_state: ProjectClientState::Remote {
+                    sharing_has_stopped: false,
+                    remote_id,
+                    replica_id,
+                },
+                pending_disk_based_diagnostics: 0,
+            };
+            for worktree in worktrees {
+                this.add_worktree(worktree, cx);
+            }
+            this
         }))
     }
 
@@ -479,12 +516,29 @@ impl Project {
 
     fn add_worktree(&mut self, worktree: ModelHandle<Worktree>, cx: &mut ModelContext<Self>) {
         cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&worktree, |_, worktree, event, cx| match event {
+        cx.subscribe(&worktree, move |this, worktree, event, cx| match event {
             worktree::Event::DiagnosticsUpdated(path) => {
                 cx.emit(Event::DiagnosticsUpdated(ProjectPath {
                     worktree_id: worktree.read(cx).id(),
                     path: path.clone(),
                 }));
+            }
+            worktree::Event::DiskBasedDiagnosticsUpdating => {
+                if this.pending_disk_based_diagnostics == 0 {
+                    cx.emit(Event::DiskBasedDiagnosticsStarted);
+                }
+                this.pending_disk_based_diagnostics += 1;
+            }
+            worktree::Event::DiskBasedDiagnosticsUpdated => {
+                this.pending_disk_based_diagnostics -= 1;
+                cx.emit(Event::DiskBasedDiagnosticsUpdated {
+                    worktree_id: worktree.read(cx).id(),
+                });
+                if this.pending_disk_based_diagnostics == 0 {
+                    if this.pending_disk_based_diagnostics == 0 {
+                        cx.emit(Event::DiskBasedDiagnosticsFinished);
+                    }
+                }
             }
         })
         .detach();
@@ -507,34 +561,19 @@ impl Project {
         }
     }
 
-    pub fn diagnose(&self, cx: &mut ModelContext<Self>) {
-        for worktree_handle in &self.worktrees {
-            if let Some(worktree) = worktree_handle.read(cx).as_local() {
-                for language in worktree.languages() {
-                    if let Some(provider) = language.diagnostic_provider().cloned() {
-                        let worktree_path = worktree.abs_path().clone();
-                        let worktree_handle = worktree_handle.downgrade();
-                        cx.spawn_weak(|_, mut cx| async move {
-                            let diagnostics = provider.diagnose(worktree_path).await.log_err()?;
-                            let worktree_handle = worktree_handle.upgrade(&cx)?;
-                            worktree_handle.update(&mut cx, |worktree, cx| {
-                                for (path, diagnostics) in diagnostics {
-                                    worktree
-                                        .update_diagnostics_from_provider(
-                                            path.into(),
-                                            diagnostics,
-                                            cx,
-                                        )
-                                        .log_err()?;
-                                }
-                                Some(())
-                            })
-                        })
-                        .detach();
-                    }
-                }
-            }
+    pub fn is_running_disk_based_diagnostics(&self) -> bool {
+        self.pending_disk_based_diagnostics > 0
+    }
+
+    pub fn diagnostic_summary(&self, cx: &AppContext) -> DiagnosticSummary {
+        let mut summary = DiagnosticSummary::default();
+        for (_, path_summary) in self.diagnostic_summaries(cx) {
+            summary.error_count += path_summary.error_count;
+            summary.warning_count += path_summary.warning_count;
+            summary.info_count += path_summary.info_count;
+            summary.hint_count += path_summary.hint_count;
         }
+        summary
     }
 
     pub fn diagnostic_summaries<'a>(
@@ -681,6 +720,60 @@ impl Project {
                 let worktree = worktree.as_remote_mut().unwrap();
                 worktree.update_from_remote(envelope, cx)
             })?;
+        }
+        Ok(())
+    }
+
+    fn handle_update_diagnostic_summary(
+        &mut self,
+        envelope: TypedEnvelope<proto::UpdateDiagnosticSummary>,
+        _: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
+            worktree.update(cx, |worktree, cx| {
+                worktree
+                    .as_remote_mut()
+                    .unwrap()
+                    .update_diagnostic_summary(envelope, cx);
+            });
+        }
+        Ok(())
+    }
+
+    fn handle_disk_based_diagnostics_updating(
+        &mut self,
+        envelope: TypedEnvelope<proto::DiskBasedDiagnosticsUpdating>,
+        _: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
+            worktree.update(cx, |worktree, cx| {
+                worktree
+                    .as_remote()
+                    .unwrap()
+                    .disk_based_diagnostics_updating(cx);
+            });
+        }
+        Ok(())
+    }
+
+    fn handle_disk_based_diagnostics_updated(
+        &mut self,
+        envelope: TypedEnvelope<proto::DiskBasedDiagnosticsUpdated>,
+        _: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
+            worktree.update(cx, |worktree, cx| {
+                worktree
+                    .as_remote()
+                    .unwrap()
+                    .disk_based_diagnostics_updated(cx);
+            });
         }
         Ok(())
     }

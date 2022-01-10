@@ -7,7 +7,7 @@ use rand::prelude::*;
 use smol::{channel, prelude::*, Executor, Timer};
 use std::{
     any::Any,
-    fmt::{self, Debug},
+    fmt::{self, Debug, Display},
     marker::PhantomData,
     mem,
     ops::RangeInclusive,
@@ -25,7 +25,7 @@ use waker_fn::waker_fn;
 
 use crate::{
     platform::{self, Dispatcher},
-    util,
+    util, MutableAppContext,
 };
 
 pub enum Foreground {
@@ -77,6 +77,7 @@ struct DeterministicState {
     block_on_ticks: RangeInclusive<usize>,
     now: Instant,
     pending_timers: Vec<(Instant, barrier::Sender)>,
+    waiting_backtrace: Option<Backtrace>,
 }
 
 pub struct Deterministic {
@@ -97,6 +98,7 @@ impl Deterministic {
                 block_on_ticks: 0..=1000,
                 now: Instant::now(),
                 pending_timers: Default::default(),
+                waiting_backtrace: None,
             })),
             parker: Default::default(),
         }
@@ -143,8 +145,8 @@ impl Deterministic {
                 return result;
             }
 
-            if !woken.load(SeqCst) && self.state.lock().forbid_parking {
-                panic!("deterministic executor parked after a call to forbid_parking");
+            if !woken.load(SeqCst) {
+                self.state.lock().will_park();
             }
 
             woken.store(false, SeqCst);
@@ -206,6 +208,7 @@ impl Deterministic {
                 }
 
                 let state = self.state.lock();
+
                 if state.scheduled_from_foreground.is_empty()
                     && state.scheduled_from_background.is_empty()
                     && state.spawned_from_foreground.is_empty()
@@ -244,11 +247,9 @@ impl Deterministic {
                 if let Poll::Ready(result) = future.as_mut().poll(&mut cx) {
                     return Some(result);
                 }
-                let state = self.state.lock();
+                let mut state = self.state.lock();
                 if state.scheduled_from_background.is_empty() {
-                    if state.forbid_parking {
-                        panic!("deterministic executor parked after a call to forbid_parking");
-                    }
+                    state.will_park();
                     drop(state);
                     self.parker.lock().park();
                 }
@@ -258,6 +259,26 @@ impl Deterministic {
         }
 
         None
+    }
+}
+
+impl DeterministicState {
+    fn will_park(&mut self) {
+        if self.forbid_parking {
+            let mut backtrace_message = String::new();
+            if let Some(backtrace) = self.waiting_backtrace.as_mut() {
+                backtrace.resolve();
+                backtrace_message = format!(
+                    "\nbacktrace of waiting future:\n{:?}",
+                    CwdBacktrace::new(backtrace)
+                );
+            }
+
+            panic!(
+                "deterministic executor parked after a call to forbid_parking{}",
+                backtrace_message
+            );
+        }
     }
 }
 
@@ -306,32 +327,53 @@ impl Trace {
     }
 }
 
-impl Debug for Trace {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        struct FirstCwdFrameInBacktrace<'a>(&'a Backtrace);
+struct CwdBacktrace<'a> {
+    backtrace: &'a Backtrace,
+    first_frame_only: bool,
+}
 
-        impl<'a> Debug for FirstCwdFrameInBacktrace<'a> {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
-                let cwd = std::env::current_dir().unwrap();
-                let mut print_path = |fmt: &mut fmt::Formatter<'_>, path: BytesOrWideString<'_>| {
-                    fmt::Display::fmt(&path, fmt)
-                };
-                let mut fmt = BacktraceFmt::new(f, backtrace::PrintFmt::Full, &mut print_path);
-                for frame in self.0.frames() {
-                    let mut formatted_frame = fmt.frame();
-                    if frame
-                        .symbols()
-                        .iter()
-                        .any(|s| s.filename().map_or(false, |f| f.starts_with(&cwd)))
-                    {
-                        formatted_frame.backtrace_frame(frame)?;
-                        break;
-                    }
+impl<'a> CwdBacktrace<'a> {
+    fn new(backtrace: &'a Backtrace) -> Self {
+        Self {
+            backtrace,
+            first_frame_only: false,
+        }
+    }
+
+    fn first_frame(backtrace: &'a Backtrace) -> Self {
+        Self {
+            backtrace,
+            first_frame_only: true,
+        }
+    }
+}
+
+impl<'a> Debug for CwdBacktrace<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+        let cwd = std::env::current_dir().unwrap();
+        let mut print_path = |fmt: &mut fmt::Formatter<'_>, path: BytesOrWideString<'_>| {
+            fmt::Display::fmt(&path, fmt)
+        };
+        let mut fmt = BacktraceFmt::new(f, backtrace::PrintFmt::Full, &mut print_path);
+        for frame in self.backtrace.frames() {
+            let mut formatted_frame = fmt.frame();
+            if frame
+                .symbols()
+                .iter()
+                .any(|s| s.filename().map_or(false, |f| f.starts_with(&cwd)))
+            {
+                formatted_frame.backtrace_frame(frame)?;
+                if self.first_frame_only {
+                    break;
                 }
-                fmt.finish()
             }
         }
+        fmt.finish()
+    }
+}
 
+impl Debug for Trace {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for ((backtrace, scheduled), spawned_from_foreground) in self
             .executed
             .iter()
@@ -340,7 +382,7 @@ impl Debug for Trace {
         {
             writeln!(f, "Scheduled")?;
             for backtrace in scheduled {
-                writeln!(f, "- {:?}", FirstCwdFrameInBacktrace(backtrace))?;
+                writeln!(f, "- {:?}", CwdBacktrace::first_frame(backtrace))?;
             }
             if scheduled.is_empty() {
                 writeln!(f, "None")?;
@@ -349,14 +391,14 @@ impl Debug for Trace {
 
             writeln!(f, "Spawned from foreground")?;
             for backtrace in spawned_from_foreground {
-                writeln!(f, "- {:?}", FirstCwdFrameInBacktrace(backtrace))?;
+                writeln!(f, "- {:?}", CwdBacktrace::first_frame(backtrace))?;
             }
             if spawned_from_foreground.is_empty() {
                 writeln!(f, "None")?;
             }
             writeln!(f, "==========")?;
 
-            writeln!(f, "Run: {:?}", FirstCwdFrameInBacktrace(backtrace))?;
+            writeln!(f, "Run: {:?}", CwdBacktrace::first_frame(backtrace))?;
             writeln!(f, "+++++++++++++++++++")?;
         }
 
@@ -431,6 +473,31 @@ impl Foreground {
             Self::Test(executor) => smol::block_on(executor.run(future)),
         };
         *any_value.downcast().unwrap()
+    }
+
+    pub fn parking_forbidden(&self) -> bool {
+        match self {
+            Self::Deterministic(executor) => executor.state.lock().forbid_parking,
+            _ => panic!("this method can only be called on a deterministic executor"),
+        }
+    }
+
+    pub fn start_waiting(&self) {
+        match self {
+            Self::Deterministic(executor) => {
+                executor.state.lock().waiting_backtrace = Some(Backtrace::new_unresolved());
+            }
+            _ => panic!("this method can only be called on a deterministic executor"),
+        }
+    }
+
+    pub fn finish_waiting(&self) {
+        match self {
+            Self::Deterministic(executor) => {
+                executor.state.lock().waiting_backtrace.take();
+            }
+            _ => panic!("this method can only be called on a deterministic executor"),
+        }
     }
 
     pub fn forbid_parking(&self) {
@@ -612,6 +679,17 @@ impl<T> Task<T> {
             Task::Local { any_task, .. } => any_task.detach(),
             Task::Send { any_task, .. } => any_task.detach(),
         }
+    }
+}
+
+impl<T: 'static, E: 'static + Display> Task<Result<T, E>> {
+    pub fn detach_and_log_err(self, cx: &mut MutableAppContext) {
+        cx.spawn(|_| async move {
+            if let Err(err) = self.await {
+                log::error!("{}", err);
+            }
+        })
+        .detach();
     }
 }
 

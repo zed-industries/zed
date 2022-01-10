@@ -62,7 +62,7 @@ pub fn build_workspace(
         settings: app_state.settings.clone(),
         user_store: app_state.user_store.clone(),
         channel_list: app_state.channel_list.clone(),
-        entry_openers: app_state.entry_openers.clone(),
+        path_openers: app_state.path_openers.clone(),
     };
     let mut workspace = Workspace::new(&workspace_params, cx);
     let project = workspace.project().clone();
@@ -88,12 +88,20 @@ pub fn build_workspace(
         .into(),
     );
 
-    let diagnostic =
+    let diagnostic_message =
         cx.add_view(|_| editor::items::DiagnosticMessage::new(app_state.settings.clone()));
+    let diagnostic_summary = cx.add_view(|cx| {
+        diagnostics::items::DiagnosticSummary::new(
+            workspace.project(),
+            app_state.settings.clone(),
+            cx,
+        )
+    });
     let cursor_position =
         cx.add_view(|_| editor::items::CursorPosition::new(app_state.settings.clone()));
     workspace.status_bar().update(cx, |status_bar, cx| {
-        status_bar.add_left_item(diagnostic, cx);
+        status_bar.add_left_item(diagnostic_summary, cx);
+        status_bar.add_left_item(diagnostic_message, cx);
         status_bar.add_right_item(cursor_position, cx);
     });
 
@@ -256,8 +264,7 @@ mod tests {
 
         // Open the first entry
         let entry_1 = workspace
-            .update(&mut cx, |w, cx| w.open_entry(file1.clone(), cx))
-            .unwrap()
+            .update(&mut cx, |w, cx| w.open_path(file1.clone(), cx))
             .await
             .unwrap();
         cx.read(|cx| {
@@ -266,13 +273,12 @@ mod tests {
                 pane.active_item().unwrap().project_path(cx),
                 Some(file1.clone())
             );
-            assert_eq!(pane.items().len(), 1);
+            assert_eq!(pane.item_views().count(), 1);
         });
 
         // Open the second entry
         workspace
-            .update(&mut cx, |w, cx| w.open_entry(file2.clone(), cx))
-            .unwrap()
+            .update(&mut cx, |w, cx| w.open_path(file2.clone(), cx))
             .await
             .unwrap();
         cx.read(|cx| {
@@ -281,12 +287,12 @@ mod tests {
                 pane.active_item().unwrap().project_path(cx),
                 Some(file2.clone())
             );
-            assert_eq!(pane.items().len(), 2);
+            assert_eq!(pane.item_views().count(), 2);
         });
 
         // Open the first entry again. The existing pane item is activated.
         let entry_1b = workspace
-            .update(&mut cx, |w, cx| w.open_entry(file1.clone(), cx).unwrap())
+            .update(&mut cx, |w, cx| w.open_path(file1.clone(), cx))
             .await
             .unwrap();
         assert_eq!(entry_1.id(), entry_1b.id());
@@ -297,14 +303,14 @@ mod tests {
                 pane.active_item().unwrap().project_path(cx),
                 Some(file1.clone())
             );
-            assert_eq!(pane.items().len(), 2);
+            assert_eq!(pane.item_views().count(), 2);
         });
 
         // Split the pane with the first entry, then open the second entry again.
         workspace
             .update(&mut cx, |w, cx| {
                 w.split_pane(w.active_pane().clone(), SplitDirection::Right, cx);
-                w.open_entry(file2.clone(), cx).unwrap()
+                w.open_path(file2.clone(), cx)
             })
             .await
             .unwrap();
@@ -323,8 +329,8 @@ mod tests {
         // Open the third entry twice concurrently. Only one pane item is added.
         let (t1, t2) = workspace.update(&mut cx, |w, cx| {
             (
-                w.open_entry(file3.clone(), cx).unwrap(),
-                w.open_entry(file3.clone(), cx).unwrap(),
+                w.open_path(file3.clone(), cx),
+                w.open_path(file3.clone(), cx),
             )
         });
         t1.await.unwrap();
@@ -336,8 +342,7 @@ mod tests {
                 Some(file3.clone())
             );
             let pane_entries = pane
-                .items()
-                .iter()
+                .item_views()
                 .map(|i| i.project_path(cx).unwrap())
                 .collect::<Vec<_>>();
             assert_eq!(pane_entries, &[file1, file2, file3]);
@@ -553,15 +558,13 @@ mod tests {
         workspace
             .update(&mut cx, |workspace, cx| {
                 workspace.split_pane(workspace.active_pane().clone(), SplitDirection::Right, cx);
-                workspace
-                    .open_entry(
-                        ProjectPath {
-                            worktree_id: worktree.read(cx).id(),
-                            path: Path::new("the-new-name.rs").into(),
-                        },
-                        cx,
-                    )
-                    .unwrap()
+                workspace.open_path(
+                    ProjectPath {
+                        worktree_id: worktree.read(cx).id(),
+                        path: Path::new("the-new-name.rs").into(),
+                    },
+                    cx,
+                )
             })
             .await
             .unwrap();
@@ -574,7 +577,10 @@ mod tests {
                 .unwrap()
         });
         cx.read(|cx| {
-            assert_eq!(editor2.read(cx).buffer(), editor.read(cx).buffer());
+            assert_eq!(
+                editor2.read(cx).buffer().read(cx).as_singleton().unwrap(),
+                editor.read(cx).buffer().read(cx).as_singleton().unwrap()
+            );
         })
     }
 
@@ -658,8 +664,7 @@ mod tests {
         let pane_1 = cx.read(|cx| workspace.read(cx).active_pane().clone());
 
         workspace
-            .update(&mut cx, |w, cx| w.open_entry(file1.clone(), cx))
-            .unwrap()
+            .update(&mut cx, |w, cx| w.open_path(file1.clone(), cx))
             .await
             .unwrap();
         cx.read(|cx| {

@@ -5,25 +5,26 @@ use gpui::{
     elements::*, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, RenderContext,
     Subscription, Task, View, ViewContext, ViewHandle, WeakModelHandle,
 };
-use language::{Diagnostic, File as _};
+use language::{Buffer, Diagnostic, File as _};
 use postage::watch;
 use project::{File, ProjectPath, Worktree};
 use std::fmt::Write;
 use std::path::Path;
 use text::{Point, Selection};
 use workspace::{
-    EntryOpener, ItemHandle, ItemView, ItemViewHandle, Settings, StatusItemView, WeakItemHandle,
+    ItemHandle, ItemView, ItemViewHandle, PathOpener, Settings, StatusItemView, WeakItemHandle,
+    Workspace,
 };
 
 pub struct BufferOpener;
 
 #[derive(Clone)]
-pub struct BufferItemHandle(pub ModelHandle<MultiBuffer>);
+pub struct BufferItemHandle(pub ModelHandle<Buffer>);
 
 #[derive(Clone)]
-struct WeakBufferItemHandle(WeakModelHandle<MultiBuffer>);
+struct WeakBufferItemHandle(WeakModelHandle<Buffer>);
 
-impl EntryOpener for BufferOpener {
+impl PathOpener for BufferOpener {
     fn open(
         &self,
         worktree: &mut Worktree,
@@ -31,9 +32,8 @@ impl EntryOpener for BufferOpener {
         cx: &mut ModelContext<Worktree>,
     ) -> Option<Task<Result<Box<dyn ItemHandle>>>> {
         let buffer = worktree.open_buffer(project_path.path, cx);
-        let task = cx.spawn(|_, mut cx| async move {
+        let task = cx.spawn(|_, _| async move {
             let buffer = buffer.await?;
-            let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
             Ok(Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)
         });
         Some(task)
@@ -44,14 +44,15 @@ impl ItemHandle for BufferItemHandle {
     fn add_view(
         &self,
         window_id: usize,
-        settings: watch::Receiver<Settings>,
+        workspace: &Workspace,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
-        let buffer = self.0.downgrade();
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(self.0.clone(), cx));
+        let weak_buffer = buffer.downgrade();
         Box::new(cx.add_view(window_id, |cx| {
             Editor::for_buffer(
-                self.0.clone(),
-                crate::settings_builder(buffer, settings),
+                buffer,
+                crate::settings_builder(weak_buffer, workspace.settings()),
                 cx,
             )
         }))
@@ -61,15 +62,23 @@ impl ItemHandle for BufferItemHandle {
         Box::new(self.clone())
     }
 
+    fn to_any(&self) -> gpui::AnyModelHandle {
+        self.0.clone().into()
+    }
+
     fn downgrade(&self) -> Box<dyn workspace::WeakItemHandle> {
         Box::new(WeakBufferItemHandle(self.0.downgrade()))
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
-        File::from_dyn(self.0.read(cx).file(cx)).map(|f| ProjectPath {
+        File::from_dyn(self.0.read(cx).file()).map(|f| ProjectPath {
             worktree_id: f.worktree_id(cx),
             path: f.path().clone(),
         })
+    }
+
+    fn id(&self) -> usize {
+        self.0.id()
     }
 }
 
@@ -79,22 +88,17 @@ impl WeakItemHandle for WeakBufferItemHandle {
             .upgrade(cx)
             .map(|buffer| Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)
     }
+
+    fn id(&self) -> usize {
+        self.0.id()
+    }
 }
 
 impl ItemView for Editor {
-    fn should_activate_item_on_event(event: &Event) -> bool {
-        matches!(event, Event::Activate)
-    }
+    type ItemHandle = BufferItemHandle;
 
-    fn should_close_item_on_event(event: &Event) -> bool {
-        matches!(event, Event::Closed)
-    }
-
-    fn should_update_tab_on_event(event: &Event) -> bool {
-        matches!(
-            event,
-            Event::Saved | Event::Dirtied | Event::FileHandleChanged
-        )
+    fn item_handle(&self, cx: &AppContext) -> Self::ItemHandle {
+        BufferItemHandle(self.buffer.read(cx).as_singleton().unwrap())
     }
 
     fn title(&self, cx: &AppContext) -> String {
@@ -124,12 +128,28 @@ impl ItemView for Editor {
         Some(self.clone(cx))
     }
 
+    fn is_dirty(&self, cx: &AppContext) -> bool {
+        self.buffer().read(cx).read(cx).is_dirty()
+    }
+
+    fn has_conflict(&self, cx: &AppContext) -> bool {
+        self.buffer().read(cx).read(cx).has_conflict()
+    }
+
+    fn can_save(&self, cx: &AppContext) -> bool {
+        self.project_path(cx).is_some()
+    }
+
     fn save(&mut self, cx: &mut ViewContext<Self>) -> Result<Task<Result<()>>> {
         let save = self.buffer().update(cx, |b, cx| b.save(cx))?;
         Ok(cx.spawn(|_, _| async move {
             save.await?;
             Ok(())
         }))
+    }
+
+    fn can_save_as(&self, _: &AppContext) -> bool {
+        true
     }
 
     fn save_as(
@@ -180,20 +200,19 @@ impl ItemView for Editor {
         })
     }
 
-    fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.buffer().read(cx).read(cx).is_dirty()
+    fn should_activate_item_on_event(event: &Event) -> bool {
+        matches!(event, Event::Activate)
     }
 
-    fn has_conflict(&self, cx: &AppContext) -> bool {
-        self.buffer().read(cx).read(cx).has_conflict()
+    fn should_close_item_on_event(event: &Event) -> bool {
+        matches!(event, Event::Closed)
     }
 
-    fn can_save(&self, cx: &AppContext) -> bool {
-        self.project_path(cx).is_some()
-    }
-
-    fn can_save_as(&self, _: &AppContext) -> bool {
-        true
+    fn should_update_tab_on_event(event: &Event) -> bool {
+        matches!(
+            event,
+            Event::Saved | Event::Dirtied | Event::FileHandleChanged
+        )
     }
 }
 
@@ -298,9 +317,9 @@ impl DiagnosticMessage {
         let new_diagnostic = buffer
             .read(cx)
             .diagnostics_in_range::<_, usize>(cursor_position..cursor_position)
-            .filter(|(_, entry)| !entry.range.is_empty())
-            .min_by_key(|(_, entry)| (entry.diagnostic.severity, entry.range.len()))
-            .map(|(_, entry)| entry.diagnostic);
+            .filter(|entry| !entry.range.is_empty())
+            .min_by_key(|entry| (entry.diagnostic.severity, entry.range.len()))
+            .map(|entry| entry.diagnostic);
         if new_diagnostic != self.diagnostic {
             self.diagnostic = new_diagnostic;
             cx.notify();

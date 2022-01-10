@@ -124,14 +124,14 @@ impl ProjectPanel {
                 if let Some(worktree) = project.read(cx).worktree_for_id(worktree_id, cx) {
                     if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
                         workspace
-                            .open_entry(
+                            .open_path(
                                 ProjectPath {
                                     worktree_id,
                                     path: entry.path.clone(),
                                 },
                                 cx,
                             )
-                            .map(|t| t.detach());
+                            .detach_and_log_err(cx);
                     }
                 }
             }

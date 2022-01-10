@@ -3502,6 +3502,7 @@ dependencies = [
  "project",
  "serde_json",
  "theme",
+ "util",
  "workspace",
 ]
 
@@ -5650,6 +5651,7 @@ dependencies = [
  "anyhow",
  "client",
  "clock",
+ "collections",
  "gpui",
  "language",
  "log",

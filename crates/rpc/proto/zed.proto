@@ -23,32 +23,34 @@ message Envelope {
 
         RegisterWorktree register_worktree = 17;
         UnregisterWorktree unregister_worktree = 18;
-        ShareWorktree share_worktree = 100;
-        UpdateWorktree update_worktree = 19;
-        UpdateDiagnosticSummary update_diagnostic_summary = 20;
+        ShareWorktree share_worktree = 19;
+        UpdateWorktree update_worktree = 20;
+        UpdateDiagnosticSummary update_diagnostic_summary = 21;
+        DiskBasedDiagnosticsUpdating disk_based_diagnostics_updating = 22;
+        DiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 23;
 
-        OpenBuffer open_buffer = 22;
-        OpenBufferResponse open_buffer_response = 23;
-        CloseBuffer close_buffer = 24;
-        UpdateBuffer update_buffer = 25;
-        SaveBuffer save_buffer = 26;
-        BufferSaved buffer_saved = 27;
+        OpenBuffer open_buffer = 24;
+        OpenBufferResponse open_buffer_response = 25;
+        CloseBuffer close_buffer = 26;
+        UpdateBuffer update_buffer = 27;
+        SaveBuffer save_buffer = 28;
+        BufferSaved buffer_saved = 29;
 
-        GetChannels get_channels = 28;
-        GetChannelsResponse get_channels_response = 29;
-        JoinChannel join_channel = 30;
-        JoinChannelResponse join_channel_response = 31;
-        LeaveChannel leave_channel = 32;
-        SendChannelMessage send_channel_message = 33;
-        SendChannelMessageResponse send_channel_message_response = 34;
-        ChannelMessageSent channel_message_sent = 35;
-        GetChannelMessages get_channel_messages = 36;
-        GetChannelMessagesResponse get_channel_messages_response = 37;
+        GetChannels get_channels = 30;
+        GetChannelsResponse get_channels_response = 31;
+        JoinChannel join_channel = 32;
+        JoinChannelResponse join_channel_response = 33;
+        LeaveChannel leave_channel = 34;
+        SendChannelMessage send_channel_message = 35;
+        SendChannelMessageResponse send_channel_message_response = 36;
+        ChannelMessageSent channel_message_sent = 37;
+        GetChannelMessages get_channel_messages = 38;
+        GetChannelMessagesResponse get_channel_messages_response = 39;
 
-        UpdateContacts update_contacts = 38;
+        UpdateContacts update_contacts = 40;
 
-        GetUsers get_users = 39;
-        GetUsersResponse get_users_response = 40;
+        GetUsers get_users = 41;
+        GetUsersResponse get_users_response = 42;
     }
 }
 
@@ -169,9 +171,25 @@ message BufferSaved {
 message UpdateDiagnosticSummary {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
+    DiagnosticSummary summary = 3;
+}
+
+message DiagnosticSummary {
     string path = 3;
     uint32 error_count = 4;
     uint32 warning_count = 5;
+    uint32 info_count = 6;
+    uint32 hint_count = 7;
+}
+
+message DiskBasedDiagnosticsUpdating {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+}
+
+message DiskBasedDiagnosticsUpdated {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
 }
 
 message GetChannels {}
@@ -248,6 +266,7 @@ message Worktree {
     uint64 id = 1;
     string root_name = 2;
     repeated Entry entries = 3;
+    repeated DiagnosticSummary diagnostic_summaries = 4;
 }
 
 message Entry {
@@ -268,7 +287,7 @@ message Buffer {
     repeated UndoMapEntry undo_map = 5;
     repeated VectorClockEntry version = 6;
     repeated SelectionSet selections = 7;
-    repeated DiagnosticSet diagnostic_sets = 8;
+    repeated Diagnostic diagnostics = 8;
     uint32 lamport_timestamp = 9;
     repeated Operation deferred_operations = 10;
 }
@@ -309,15 +328,10 @@ enum Bias {
     Right = 1;
 }
 
-message UpdateDiagnosticSet {
+message UpdateDiagnostics {
     uint32 replica_id = 1;
     uint32 lamport_timestamp = 2;
-    DiagnosticSet diagnostic_set = 3;
-}
-
-message DiagnosticSet {
-    string provider_name = 1;
-    repeated Diagnostic diagnostics = 2;
+    repeated Diagnostic diagnostics = 3;
 }
 
 message Diagnostic {
@@ -345,7 +359,7 @@ message Operation {
         Edit edit = 1;
         Undo undo = 2;
         UpdateSelections update_selections = 3;
-        UpdateDiagnosticSet update_diagnostic_set = 4;
+        UpdateDiagnostics update_diagnostics = 4;
     }
 
     message Edit {

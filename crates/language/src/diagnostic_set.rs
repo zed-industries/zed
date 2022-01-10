@@ -4,14 +4,12 @@ use std::{
     cmp::{Ordering, Reverse},
     iter,
     ops::Range,
-    sync::Arc,
 };
 use sum_tree::{self, Bias, SumTree};
 use text::{Anchor, FromAnchor, Point, ToOffset};
 
 #[derive(Clone, Debug)]
 pub struct DiagnosticSet {
-    provider_name: Arc<str>,
     diagnostics: SumTree<DiagnosticEntry<Anchor>>,
 }
 
@@ -21,6 +19,7 @@ pub struct DiagnosticEntry<T> {
     pub diagnostic: Diagnostic,
 }
 
+#[derive(Debug)]
 pub struct DiagnosticGroup<T> {
     pub entries: Vec<DiagnosticEntry<T>>,
     pub primary_ix: usize,
@@ -36,32 +35,22 @@ pub struct Summary {
 }
 
 impl DiagnosticSet {
-    pub fn provider_name(&self) -> &str {
-        &self.provider_name
-    }
-
-    pub fn from_sorted_entries<I>(
-        provider_name: impl Into<Arc<str>>,
-        iter: I,
-        buffer: &text::BufferSnapshot,
-    ) -> Self
+    pub fn from_sorted_entries<I>(iter: I, buffer: &text::BufferSnapshot) -> Self
     where
         I: IntoIterator<Item = DiagnosticEntry<Anchor>>,
     {
         Self {
-            provider_name: provider_name.into(),
             diagnostics: SumTree::from_iter(iter, buffer),
         }
     }
 
-    pub fn new<I>(provider_name: Arc<str>, iter: I, buffer: &text::BufferSnapshot) -> Self
+    pub fn new<I>(iter: I, buffer: &text::BufferSnapshot) -> Self
     where
         I: IntoIterator<Item = DiagnosticEntry<Point>>,
     {
         let mut entries = iter.into_iter().collect::<Vec<_>>();
         entries.sort_unstable_by_key(|entry| (entry.range.start, Reverse(entry.range.end)));
         Self {
-            provider_name,
             diagnostics: SumTree::from_iter(
                 entries.into_iter().map(|entry| DiagnosticEntry {
                     range: buffer.anchor_before(entry.range.start)
@@ -159,7 +148,6 @@ impl DiagnosticSet {
 impl Default for DiagnosticSet {
     fn default() -> Self {
         Self {
-            provider_name: "".into(),
             diagnostics: Default::default(),
         }
     }

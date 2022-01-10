@@ -1014,11 +1014,12 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{fold_map::FoldMap, tab_map::TabMap},
-        test::Observer,
         MultiBuffer,
     };
+    use gpui::test::observe;
     use language::RandomCharIter;
     use rand::prelude::*;
+    use smol::stream::StreamExt;
     use std::{cmp, env};
     use text::Rope;
 
@@ -1072,10 +1073,10 @@ mod tests {
 
         let (wrap_map, _) =
             cx.update(|cx| WrapMap::new(tabs_snapshot.clone(), font_id, font_size, wrap_width, cx));
-        let (_observer, notifications) = Observer::new(&wrap_map, &mut cx);
+        let mut notifications = observe(&wrap_map, &mut cx);
 
         if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
-            notifications.recv().await.unwrap();
+            notifications.next().await.unwrap();
         }
 
         let (initial_snapshot, _) = wrap_map.update(&mut cx, |map, cx| {
@@ -1148,7 +1149,7 @@ mod tests {
             if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) && rng.gen_bool(0.4) {
                 log::info!("Waiting for wrapping to finish");
                 while wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
-                    notifications.recv().await.unwrap();
+                    notifications.next().await.unwrap();
                 }
                 wrap_map.read_with(&cx, |map, _| assert!(map.pending_edits.is_empty()));
             }
@@ -1236,7 +1237,7 @@ mod tests {
         if wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
             log::info!("Waiting for wrapping to finish");
             while wrap_map.read_with(&cx, |map, _| map.is_rewrapping()) {
-                notifications.recv().await.unwrap();
+                notifications.next().await.unwrap();
             }
         }
         wrap_map.read_with(&cx, |map, _| assert!(map.pending_edits.is_empty()));

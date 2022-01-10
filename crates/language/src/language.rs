@@ -6,10 +6,9 @@ pub mod proto;
 mod tests;
 
 use anyhow::{anyhow, Result};
-use async_trait::async_trait;
 pub use buffer::Operation;
 pub use buffer::*;
-use collections::{HashMap, HashSet};
+use collections::HashSet;
 pub use diagnostic_set::DiagnosticEntry;
 use gpui::AppContext;
 use highlight_map::HighlightMap;
@@ -47,6 +46,7 @@ pub struct LanguageConfig {
 pub struct LanguageServerConfig {
     pub binary: String,
     pub disk_based_diagnostic_sources: HashSet<String>,
+    pub disk_based_diagnostics_progress_token: Option<String>,
     #[cfg(any(test, feature = "test-support"))]
     #[serde(skip)]
     pub fake_server: Option<(Arc<lsp::LanguageServer>, Arc<std::sync::atomic::AtomicBool>)>,
@@ -60,18 +60,9 @@ pub struct BracketPair {
     pub newline: bool,
 }
 
-#[async_trait]
-pub trait DiagnosticProvider: 'static + Send + Sync {
-    async fn diagnose(
-        &self,
-        path: Arc<Path>,
-    ) -> Result<HashMap<Arc<Path>, Vec<DiagnosticEntry<usize>>>>;
-}
-
 pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
-    pub(crate) diagnostic_provider: Option<Arc<dyn DiagnosticProvider>>,
 }
 
 pub struct Grammar {
@@ -136,7 +127,6 @@ impl Language {
                     highlight_map: Default::default(),
                 })
             }),
-            diagnostic_provider: None,
         }
     }
 
@@ -168,11 +158,6 @@ impl Language {
             .ok_or_else(|| anyhow!("grammar does not exist or is already being used"))?;
         grammar.indents_query = Query::new(grammar.ts_language, source)?;
         Ok(self)
-    }
-
-    pub fn with_diagnostic_provider(mut self, source: impl DiagnosticProvider) -> Self {
-        self.diagnostic_provider = Some(Arc::new(source));
-        self
     }
 
     pub fn name(&self) -> &str {
@@ -208,15 +193,18 @@ impl Language {
         }
     }
 
-    pub fn diagnostic_provider(&self) -> Option<&Arc<dyn DiagnosticProvider>> {
-        self.diagnostic_provider.as_ref()
-    }
-
     pub fn disk_based_diagnostic_sources(&self) -> Option<&HashSet<String>> {
         self.config
             .language_server
             .as_ref()
             .map(|config| &config.disk_based_diagnostic_sources)
+    }
+
+    pub fn disk_based_diagnostics_progress_token(&self) -> Option<&String> {
+        self.config
+            .language_server
+            .as_ref()
+            .and_then(|config| config.disk_based_diagnostics_progress_token.as_ref())
     }
 
     pub fn brackets(&self) -> &[BracketPair] {
@@ -249,6 +237,7 @@ impl LanguageServerConfig {
         (
             Self {
                 fake_server: Some((server, started)),
+                disk_based_diagnostics_progress_token: Some("fakeServer/check".to_string()),
                 ..Default::default()
             },
             fake,

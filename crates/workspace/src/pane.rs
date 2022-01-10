@@ -1,15 +1,14 @@
 use super::{ItemViewHandle, SplitDirection};
-use crate::Settings;
+use crate::{ItemHandle, Settings, Workspace};
 use gpui::{
     action,
     elements::*,
     geometry::{rect::RectF, vector::vec2f},
     keymap::Binding,
     platform::CursorStyle,
-    Entity, MutableAppContext, Quad, RenderContext, View, ViewContext, ViewHandle,
+    Entity, MutableAppContext, Quad, RenderContext, View, ViewContext,
 };
 use postage::watch;
-use project::ProjectPath;
 use std::cmp;
 
 action!(Split, SplitDirection);
@@ -70,7 +69,7 @@ pub struct TabState {
 }
 
 pub struct Pane {
-    items: Vec<Box<dyn ItemViewHandle>>,
+    item_views: Vec<(usize, Box<dyn ItemViewHandle>)>,
     active_item: usize,
     settings: watch::Receiver<Settings>,
 }
@@ -78,7 +77,7 @@ pub struct Pane {
 impl Pane {
     pub fn new(settings: watch::Receiver<Settings>) -> Self {
         Self {
-            items: Vec::new(),
+            item_views: Vec::new(),
             active_item: 0,
             settings,
         }
@@ -88,43 +87,70 @@ impl Pane {
         cx.emit(Event::Activate);
     }
 
-    pub fn add_item(&mut self, item: Box<dyn ItemViewHandle>, cx: &mut ViewContext<Self>) -> usize {
-        let item_idx = cmp::min(self.active_item + 1, self.items.len());
-        self.items.insert(item_idx, item);
-        cx.notify();
-        item_idx
+    pub fn open_item<T>(
+        &mut self,
+        item_handle: T,
+        workspace: &Workspace,
+        cx: &mut ViewContext<Self>,
+    ) -> Box<dyn ItemViewHandle>
+    where
+        T: 'static + ItemHandle,
+    {
+        for (ix, (item_id, item_view)) in self.item_views.iter().enumerate() {
+            if *item_id == item_handle.id() {
+                let item_view = item_view.boxed_clone();
+                self.activate_item(ix, cx);
+                return item_view;
+            }
+        }
+
+        let item_view = item_handle.add_view(cx.window_id(), workspace, cx);
+        self.add_item_view(item_view.boxed_clone(), cx);
+        item_view
     }
 
-    pub fn items(&self) -> &[Box<dyn ItemViewHandle>] {
-        &self.items
+    pub fn add_item_view(
+        &mut self,
+        item_view: Box<dyn ItemViewHandle>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        item_view.added_to_pane(cx);
+        let item_idx = cmp::min(self.active_item + 1, self.item_views.len());
+        self.item_views
+            .insert(item_idx, (item_view.item_handle(cx).id(), item_view));
+        self.activate_item(item_idx, cx);
+        cx.notify();
+    }
+
+    pub fn contains_item(&self, item: &dyn ItemHandle) -> bool {
+        let item_id = item.id();
+        self.item_views
+            .iter()
+            .any(|(existing_item_id, _)| *existing_item_id == item_id)
+    }
+
+    pub fn item_views(&self) -> impl Iterator<Item = &Box<dyn ItemViewHandle>> {
+        self.item_views.iter().map(|(_, view)| view)
     }
 
     pub fn active_item(&self) -> Option<Box<dyn ItemViewHandle>> {
-        self.items.get(self.active_item).cloned()
+        self.item_views
+            .get(self.active_item)
+            .map(|(_, view)| view.clone())
     }
 
-    pub fn activate_entry(
-        &mut self,
-        project_path: ProjectPath,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<Box<dyn ItemViewHandle>> {
-        if let Some(index) = self.items.iter().position(|item| {
-            item.project_path(cx.as_ref())
-                .map_or(false, |item_path| item_path == project_path)
-        }) {
-            self.activate_item(index, cx);
-            self.items.get(index).map(|handle| handle.boxed_clone())
-        } else {
-            None
-        }
+    pub fn index_for_item_view(&self, item_view: &dyn ItemViewHandle) -> Option<usize> {
+        self.item_views
+            .iter()
+            .position(|(_, i)| i.id() == item_view.id())
     }
 
-    pub fn item_index(&self, item: &dyn ItemViewHandle) -> Option<usize> {
-        self.items.iter().position(|i| i.id() == item.id())
+    pub fn index_for_item(&self, item: &dyn ItemHandle) -> Option<usize> {
+        self.item_views.iter().position(|(id, _)| *id == item.id())
     }
 
     pub fn activate_item(&mut self, index: usize, cx: &mut ViewContext<Self>) {
-        if index < self.items.len() {
+        if index < self.item_views.len() {
             self.active_item = index;
             self.focus_active_item(cx);
             cx.notify();
@@ -134,15 +160,15 @@ impl Pane {
     pub fn activate_prev_item(&mut self, cx: &mut ViewContext<Self>) {
         if self.active_item > 0 {
             self.active_item -= 1;
-        } else if self.items.len() > 0 {
-            self.active_item = self.items.len() - 1;
+        } else if self.item_views.len() > 0 {
+            self.active_item = self.item_views.len() - 1;
         }
         self.focus_active_item(cx);
         cx.notify();
     }
 
     pub fn activate_next_item(&mut self, cx: &mut ViewContext<Self>) {
-        if self.active_item + 1 < self.items.len() {
+        if self.active_item + 1 < self.item_views.len() {
             self.active_item += 1;
         } else {
             self.active_item = 0;
@@ -152,15 +178,15 @@ impl Pane {
     }
 
     pub fn close_active_item(&mut self, cx: &mut ViewContext<Self>) {
-        if !self.items.is_empty() {
-            self.close_item(self.items[self.active_item].id(), cx)
+        if !self.item_views.is_empty() {
+            self.close_item(self.item_views[self.active_item].1.id(), cx)
         }
     }
 
     pub fn close_item(&mut self, item_id: usize, cx: &mut ViewContext<Self>) {
-        self.items.retain(|item| item.id() != item_id);
-        self.active_item = cmp::min(self.active_item, self.items.len().saturating_sub(1));
-        if self.items.is_empty() {
+        self.item_views.retain(|(_, item)| item.id() != item_id);
+        self.active_item = cmp::min(self.active_item, self.item_views.len().saturating_sub(1));
+        if self.item_views.is_empty() {
             cx.emit(Event::Remove);
         }
         cx.notify();
@@ -183,11 +209,11 @@ impl Pane {
         enum Tabs {}
         let tabs = MouseEventHandler::new::<Tabs, _, _, _>(cx.view_id(), cx, |mouse_state, cx| {
             let mut row = Flex::row();
-            for (ix, item) in self.items.iter().enumerate() {
+            for (ix, (_, item_view)) in self.item_views.iter().enumerate() {
                 let is_active = ix == self.active_item;
 
                 row.add_child({
-                    let mut title = item.title(cx);
+                    let mut title = item_view.title(cx);
                     if title.len() > MAX_TAB_TITLE_LEN {
                         let mut truncated_len = MAX_TAB_TITLE_LEN;
                         while !title.is_char_boundary(truncated_len) {
@@ -212,9 +238,9 @@ impl Pane {
                                 .with_child(
                                     Align::new({
                                         let diameter = 7.0;
-                                        let icon_color = if item.has_conflict(cx) {
+                                        let icon_color = if item_view.has_conflict(cx) {
                                             Some(style.icon_conflict)
-                                        } else if item.is_dirty(cx) {
+                                        } else if item_view.is_dirty(cx) {
                                             Some(style.icon_dirty)
                                         } else {
                                             None
@@ -271,7 +297,7 @@ impl Pane {
                                 .with_child(
                                     Align::new(
                                         ConstrainedBox::new(if mouse_state.hovered {
-                                            let item_id = item.id();
+                                            let item_id = item_view.id();
                                             enum TabCloseButton {}
                                             let icon = Svg::new("icons/x.svg");
                                             MouseEventHandler::new::<TabCloseButton, _, _, _>(
@@ -314,13 +340,11 @@ impl Pane {
             }
 
             row.add_child(
-                Expanded::new(
-                    0.0,
-                    Container::new(Empty::new().boxed())
-                        .with_border(theme.workspace.tab.container.border)
-                        .boxed(),
-                )
-                .named("filler"),
+                Empty::new()
+                    .contained()
+                    .with_border(theme.workspace.tab.container.border)
+                    .flexible(0., true)
+                    .named("filler"),
             );
 
             row.boxed()
@@ -345,7 +369,7 @@ impl View for Pane {
         if let Some(active_item) = self.active_item() {
             Flex::column()
                 .with_child(self.render_tabs(cx))
-                .with_child(Expanded::new(1.0, ChildView::new(active_item.id()).boxed()).boxed())
+                .with_child(ChildView::new(active_item.id()).flexible(1., true).boxed())
                 .named("pane")
         } else {
             Empty::new().named("pane")
@@ -354,19 +378,5 @@ impl View for Pane {
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
         self.focus_active_item(cx);
-    }
-}
-
-pub trait PaneHandle {
-    fn add_item_view(&self, item: Box<dyn ItemViewHandle>, cx: &mut MutableAppContext);
-}
-
-impl PaneHandle for ViewHandle<Pane> {
-    fn add_item_view(&self, item: Box<dyn ItemViewHandle>, cx: &mut MutableAppContext) {
-        item.set_parent_pane(self, cx);
-        self.update(cx, |pane, cx| {
-            let item_idx = pane.add_item(item, cx);
-            pane.activate_item(item_idx, cx);
-        });
     }
 }

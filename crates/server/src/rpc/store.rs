@@ -1,8 +1,8 @@
 use crate::db::{ChannelId, UserId};
 use anyhow::anyhow;
-use collections::{HashMap, HashSet};
+use collections::{BTreeMap, HashMap, HashSet};
 use rpc::{proto, ConnectionId};
-use std::collections::hash_map;
+use std::{collections::hash_map, path::PathBuf};
 
 #[derive(Default)]
 pub struct Store {
@@ -41,6 +41,7 @@ pub struct ProjectShare {
 
 pub struct WorktreeShare {
     pub entries: HashMap<u64, proto::Entry>,
+    pub diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
 }
 
 #[derive(Default)]
@@ -385,15 +386,40 @@ impl Store {
         worktree_id: u64,
         connection_id: ConnectionId,
         entries: HashMap<u64, proto::Entry>,
+        diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
     ) -> Option<Vec<UserId>> {
         let project = self.projects.get_mut(&project_id)?;
         let worktree = project.worktrees.get_mut(&worktree_id)?;
         if project.host_connection_id == connection_id && project.share.is_some() {
-            worktree.share = Some(WorktreeShare { entries });
+            worktree.share = Some(WorktreeShare {
+                entries,
+                diagnostic_summaries,
+            });
             Some(project.authorized_user_ids())
         } else {
             None
         }
+    }
+
+    pub fn update_diagnostic_summary(
+        &mut self,
+        project_id: u64,
+        worktree_id: u64,
+        connection_id: ConnectionId,
+        summary: proto::DiagnosticSummary,
+    ) -> Option<Vec<ConnectionId>> {
+        let project = self.projects.get_mut(&project_id)?;
+        let worktree = project.worktrees.get_mut(&worktree_id)?;
+        if project.host_connection_id == connection_id {
+            if let Some(share) = worktree.share.as_mut() {
+                share
+                    .diagnostic_summaries
+                    .insert(summary.path.clone().into(), summary);
+                return Some(project.connection_ids());
+            }
+        }
+
+        None
     }
 
     pub fn join_project(
@@ -495,6 +521,11 @@ impl Store {
 
     pub fn channel_connection_ids(&self, channel_id: ChannelId) -> Option<Vec<ConnectionId>> {
         Some(self.channels.get(&channel_id)?.connection_ids())
+    }
+
+    #[cfg(test)]
+    pub fn project(&self, project_id: u64) -> Option<&Project> {
+        self.projects.get(&project_id)
     }
 
     pub fn read_project(&self, project_id: u64, connection_id: ConnectionId) -> Option<&Project> {

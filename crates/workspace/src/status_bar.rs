@@ -47,7 +47,7 @@ impl View for StatusBar {
                     .iter()
                     .map(|i| ChildView::new(i.id()).aligned().boxed()),
             )
-            .with_child(Empty::new().expanded(1.).boxed())
+            .with_child(Empty::new().flexible(1., true).boxed())
             .with_children(
                 self.right_items
                     .iter()

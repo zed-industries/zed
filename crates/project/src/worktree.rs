@@ -7,8 +7,7 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
 use clock::ReplicaId;
-use collections::{hash_map, HashMap};
-use collections::{BTreeMap, HashSet};
+use collections::{hash_map, HashMap, HashSet};
 use futures::{Stream, StreamExt};
 use fuzzy::CharBag;
 use gpui::{
@@ -35,7 +34,6 @@ use std::{
     ffi::{OsStr, OsString},
     fmt,
     future::Future,
-    mem,
     ops::{Deref, Range},
     path::{Path, PathBuf},
     sync::{
@@ -44,14 +42,12 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use sum_tree::Bias;
+use sum_tree::{Bias, TreeMap};
 use sum_tree::{Edit, SeekTarget, SumTree};
 use util::{post_inc, ResultExt, TryFutureExt};
 
 lazy_static! {
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
-    static ref DIAGNOSTIC_PROVIDER_NAME: Arc<str> = Arc::from("diagnostic_source");
-    static ref LSP_PROVIDER_NAME: Arc<str> = Arc::from("lsp");
 }
 
 #[derive(Clone, Debug)]
@@ -69,8 +65,10 @@ pub enum Worktree {
     Remote(RemoteWorktree),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Event {
+    DiskBasedDiagnosticsUpdating,
+    DiskBasedDiagnosticsUpdated,
     DiagnosticsUpdated(Arc<Path>),
 }
 
@@ -143,7 +141,7 @@ impl Worktree {
             .map(|c| c.to_ascii_lowercase())
             .collect();
         let root_name = worktree.root_name.clone();
-        let (entries_by_path, entries_by_id) = cx
+        let (entries_by_path, entries_by_id, diagnostic_summaries) = cx
             .background()
             .spawn(async move {
                 let mut entries_by_path_edits = Vec::new();
@@ -167,7 +165,22 @@ impl Worktree {
                 let mut entries_by_id = SumTree::new();
                 entries_by_path.edit(entries_by_path_edits, &());
                 entries_by_id.edit(entries_by_id_edits, &());
-                (entries_by_path, entries_by_id)
+
+                let diagnostic_summaries = TreeMap::from_ordered_entries(
+                    worktree.diagnostic_summaries.into_iter().map(|summary| {
+                        (
+                            PathKey(PathBuf::from(summary.path).into()),
+                            DiagnosticSummary {
+                                error_count: summary.error_count as usize,
+                                warning_count: summary.warning_count as usize,
+                                info_count: summary.info_count as usize,
+                                hint_count: summary.hint_count as usize,
+                            },
+                        )
+                    }),
+                );
+
+                (entries_by_path, entries_by_id, diagnostic_summaries)
             })
             .await;
 
@@ -224,10 +237,10 @@ impl Worktree {
                     client: client.clone(),
                     loading_buffers: Default::default(),
                     open_buffers: Default::default(),
-                    diagnostic_summaries: Default::default(),
                     queued_operations: Default::default(),
                     languages,
                     user_store,
+                    diagnostic_summaries,
                 })
             })
         });
@@ -352,7 +365,7 @@ impl Worktree {
             Worktree::Remote(worktree) => &worktree.diagnostic_summaries,
         }
         .iter()
-        .map(|(path, summary)| (path.clone(), summary.clone()))
+        .map(|(path, summary)| (path.0.clone(), summary.clone()))
     }
 
     pub fn loading_buffers<'a>(&'a mut self) -> &'a mut LoadingBuffers {
@@ -676,9 +689,9 @@ impl Worktree {
         }
     }
 
-    pub fn update_diagnostics_from_lsp(
+    pub fn update_diagnostics(
         &mut self,
-        mut params: lsp::PublishDiagnosticsParams,
+        params: lsp::PublishDiagnosticsParams,
         disk_based_sources: &HashSet<String>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
@@ -693,59 +706,104 @@ impl Worktree {
                 .context("path is not within worktree")?,
         );
 
-        let mut group_ids_by_diagnostic_range = HashMap::default();
-        let mut diagnostics_by_group_id = HashMap::default();
         let mut next_group_id = 0;
-        for diagnostic in &mut params.diagnostics {
+        let mut diagnostics = Vec::default();
+        let mut primary_diagnostic_group_ids = HashMap::default();
+        let mut sources_by_group_id = HashMap::default();
+        let mut supporting_diagnostic_severities = HashMap::default();
+        for diagnostic in &params.diagnostics {
             let source = diagnostic.source.as_ref();
-            let code = diagnostic.code.as_ref();
-            let group_id = diagnostic_ranges(&diagnostic, &abs_path)
-                .find_map(|range| group_ids_by_diagnostic_range.get(&(source, code, range)))
-                .copied()
-                .unwrap_or_else(|| {
-                    let group_id = post_inc(&mut next_group_id);
-                    for range in diagnostic_ranges(&diagnostic, &abs_path) {
-                        group_ids_by_diagnostic_range.insert((source, code, range), group_id);
-                    }
-                    group_id
+            let code = diagnostic.code.as_ref().map(|code| match code {
+                lsp::NumberOrString::Number(code) => code.to_string(),
+                lsp::NumberOrString::String(code) => code.clone(),
+            });
+            let range = range_from_lsp(diagnostic.range);
+            let is_supporting = diagnostic
+                .related_information
+                .as_ref()
+                .map_or(false, |infos| {
+                    infos.iter().any(|info| {
+                        primary_diagnostic_group_ids.contains_key(&(
+                            source,
+                            code.clone(),
+                            range_from_lsp(info.location.range),
+                        ))
+                    })
                 });
 
-            diagnostics_by_group_id
-                .entry(group_id)
-                .or_insert(Vec::new())
-                .push(DiagnosticEntry {
-                    range: diagnostic.range.start.to_point_utf16()
-                        ..diagnostic.range.end.to_point_utf16(),
+            if is_supporting {
+                if let Some(severity) = diagnostic.severity {
+                    supporting_diagnostic_severities
+                        .insert((source, code.clone(), range), severity);
+                }
+            } else {
+                let group_id = post_inc(&mut next_group_id);
+                let is_disk_based =
+                    source.map_or(false, |source| disk_based_sources.contains(source));
+
+                sources_by_group_id.insert(group_id, source);
+                primary_diagnostic_group_ids
+                    .insert((source, code.clone(), range.clone()), group_id);
+
+                diagnostics.push(DiagnosticEntry {
+                    range,
                     diagnostic: Diagnostic {
-                        code: diagnostic.code.clone().map(|code| match code {
-                            lsp::NumberOrString::Number(code) => code.to_string(),
-                            lsp::NumberOrString::String(code) => code,
-                        }),
+                        code: code.clone(),
                         severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
-                        message: mem::take(&mut diagnostic.message),
+                        message: diagnostic.message.clone(),
                         group_id,
-                        is_primary: false,
+                        is_primary: true,
                         is_valid: true,
-                        is_disk_based: diagnostic
-                            .source
-                            .as_ref()
-                            .map_or(false, |source| disk_based_sources.contains(source)),
+                        is_disk_based,
                     },
                 });
+                if let Some(infos) = &diagnostic.related_information {
+                    for info in infos {
+                        if info.location.uri == params.uri {
+                            let range = range_from_lsp(info.location.range);
+                            diagnostics.push(DiagnosticEntry {
+                                range,
+                                diagnostic: Diagnostic {
+                                    code: code.clone(),
+                                    severity: DiagnosticSeverity::INFORMATION,
+                                    message: info.message.clone(),
+                                    group_id,
+                                    is_primary: false,
+                                    is_valid: true,
+                                    is_disk_based,
+                                },
+                            });
+                        }
+                    }
+                }
+            }
         }
 
-        let diagnostics = diagnostics_by_group_id
-            .into_values()
-            .flat_map(|mut diagnostics| {
-                let primary = diagnostics
-                    .iter_mut()
-                    .min_by_key(|entry| entry.diagnostic.severity)
-                    .unwrap();
-                primary.diagnostic.is_primary = true;
-                diagnostics
-            })
-            .collect::<Vec<_>>();
+        for entry in &mut diagnostics {
+            let diagnostic = &mut entry.diagnostic;
+            if !diagnostic.is_primary {
+                let source = *sources_by_group_id.get(&diagnostic.group_id).unwrap();
+                if let Some(&severity) = supporting_diagnostic_severities.get(&(
+                    source,
+                    diagnostic.code.clone(),
+                    entry.range.clone(),
+                )) {
+                    diagnostic.severity = severity;
+                }
+            }
+        }
 
+        self.update_diagnostic_entries(worktree_path, params.version, diagnostics, cx)?;
+        Ok(())
+    }
+
+    pub fn update_diagnostic_entries(
+        &mut self,
+        worktree_path: Arc<Path>,
+        version: Option<i32>,
+        diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
         let this = self.as_local_mut().unwrap();
         for buffer in this.open_buffers.values() {
             if let Some(buffer) = buffer.upgrade(cx) {
@@ -757,12 +815,7 @@ impl Worktree {
                     let (remote_id, operation) = buffer.update(cx, |buffer, cx| {
                         (
                             buffer.remote_id(),
-                            buffer.update_diagnostics(
-                                LSP_PROVIDER_NAME.clone(),
-                                params.version,
-                                diagnostics.clone(),
-                                cx,
-                            ),
+                            buffer.update_diagnostics(version, diagnostics.clone(), cx),
                         )
                     });
                     self.send_buffer_update(remote_id, operation?, cx);
@@ -772,50 +825,40 @@ impl Worktree {
         }
 
         let this = self.as_local_mut().unwrap();
+        let summary = DiagnosticSummary::new(&diagnostics);
         this.diagnostic_summaries
-            .insert(worktree_path.clone(), DiagnosticSummary::new(&diagnostics));
-        this.lsp_diagnostics
-            .insert(worktree_path.clone(), diagnostics);
+            .insert(PathKey(worktree_path.clone()), summary.clone());
+        this.diagnostics.insert(worktree_path.clone(), diagnostics);
+
         cx.emit(Event::DiagnosticsUpdated(worktree_path.clone()));
-        Ok(())
-    }
 
-    pub fn update_diagnostics_from_provider(
-        &mut self,
-        path: Arc<Path>,
-        diagnostics: Vec<DiagnosticEntry<usize>>,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Result<()> {
-        let this = self.as_local_mut().unwrap();
-        for buffer in this.open_buffers.values() {
-            if let Some(buffer) = buffer.upgrade(cx) {
-                if buffer
-                    .read(cx)
-                    .file()
-                    .map_or(false, |file| *file.path() == path)
-                {
-                    let (remote_id, operation) = buffer.update(cx, |buffer, cx| {
-                        (
-                            buffer.remote_id(),
-                            buffer.update_diagnostics(
-                                DIAGNOSTIC_PROVIDER_NAME.clone(),
-                                None,
-                                diagnostics.clone(),
-                                cx,
-                            ),
-                        )
-                    });
-                    self.send_buffer_update(remote_id, operation?, cx);
-                    break;
-                }
-            }
+        if let Some(share) = this.share.as_ref() {
+            cx.foreground()
+                .spawn({
+                    let client = this.client.clone();
+                    let project_id = share.project_id;
+                    let worktree_id = this.id().to_proto();
+                    let path = worktree_path.to_string_lossy().to_string();
+                    async move {
+                        client
+                            .send(proto::UpdateDiagnosticSummary {
+                                project_id,
+                                worktree_id,
+                                summary: Some(proto::DiagnosticSummary {
+                                    path,
+                                    error_count: summary.error_count as u32,
+                                    warning_count: summary.warning_count as u32,
+                                    info_count: summary.info_count as u32,
+                                    hint_count: summary.hint_count as u32,
+                                }),
+                            })
+                            .await
+                            .log_err()
+                    }
+                })
+                .detach();
         }
 
-        let this = self.as_local_mut().unwrap();
-        this.diagnostic_summaries
-            .insert(path.clone(), DiagnosticSummary::new(&diagnostics));
-        this.provider_diagnostics.insert(path.clone(), diagnostics);
-        cx.emit(Event::DiagnosticsUpdated(path.clone()));
         Ok(())
     }
 
@@ -910,9 +953,8 @@ pub struct LocalWorktree {
     loading_buffers: LoadingBuffers,
     open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
-    lsp_diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<PointUtf16>>>,
-    provider_diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<usize>>>,
-    diagnostic_summaries: BTreeMap<Arc<Path>, DiagnosticSummary>,
+    diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<PointUtf16>>>,
+    diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
     queued_operations: Vec<(u64, Operation)>,
     language_registry: Arc<LanguageRegistry>,
     client: Arc<Client>,
@@ -936,10 +978,10 @@ pub struct RemoteWorktree {
     replica_id: ReplicaId,
     loading_buffers: LoadingBuffers,
     open_buffers: HashMap<usize, RemoteBuffer>,
-    diagnostic_summaries: BTreeMap<Arc<Path>, DiagnosticSummary>,
     languages: Arc<LanguageRegistry>,
     user_store: ModelHandle<UserStore>,
     queued_operations: Vec<(u64, Operation)>,
+    diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
 }
 
 type LoadingBuffers = HashMap<
@@ -1018,8 +1060,7 @@ impl LocalWorktree {
                 loading_buffers: Default::default(),
                 open_buffers: Default::default(),
                 shared_buffers: Default::default(),
-                lsp_diagnostics: Default::default(),
-                provider_diagnostics: Default::default(),
+                diagnostics: Default::default(),
                 diagnostic_summaries: Default::default(),
                 queued_operations: Default::default(),
                 language_registry: languages,
@@ -1093,23 +1134,133 @@ impl LocalWorktree {
             .log_err()
             .flatten()
         {
+            enum DiagnosticProgress {
+                Updating,
+                Updated,
+            }
+
             let disk_based_sources = language
                 .disk_based_diagnostic_sources()
                 .cloned()
                 .unwrap_or_default();
+            let disk_based_diagnostics_progress_token =
+                language.disk_based_diagnostics_progress_token().cloned();
             let (diagnostics_tx, diagnostics_rx) = smol::channel::unbounded();
+            let (disk_based_diagnostics_done_tx, disk_based_diagnostics_done_rx) =
+                smol::channel::unbounded();
             language_server
                 .on_notification::<lsp::notification::PublishDiagnostics, _>(move |params| {
                     smol::block_on(diagnostics_tx.send(params)).ok();
                 })
                 .detach();
+            cx.spawn_weak(|this, mut cx| {
+                let has_disk_based_diagnostic_progress_token =
+                    disk_based_diagnostics_progress_token.is_some();
+                let disk_based_diagnostics_done_tx = disk_based_diagnostics_done_tx.clone();
+                async move {
+                    while let Ok(diagnostics) = diagnostics_rx.recv().await {
+                        if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
+                            handle.update(&mut cx, |this, cx| {
+                                if !has_disk_based_diagnostic_progress_token {
+                                    smol::block_on(
+                                        disk_based_diagnostics_done_tx
+                                            .send(DiagnosticProgress::Updating),
+                                    )
+                                    .ok();
+                                }
+                                this.update_diagnostics(diagnostics, &disk_based_sources, cx)
+                                    .log_err();
+                                if !has_disk_based_diagnostic_progress_token {
+                                    smol::block_on(
+                                        disk_based_diagnostics_done_tx
+                                            .send(DiagnosticProgress::Updated),
+                                    )
+                                    .ok();
+                                }
+                            })
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            })
+            .detach();
+
+            let mut pending_disk_based_diagnostics: i32 = 0;
+            language_server
+                .on_notification::<lsp::notification::Progress, _>(move |params| {
+                    let token = match params.token {
+                        lsp::NumberOrString::Number(_) => None,
+                        lsp::NumberOrString::String(token) => Some(token),
+                    };
+
+                    if token == disk_based_diagnostics_progress_token {
+                        match params.value {
+                            lsp::ProgressParamsValue::WorkDone(progress) => match progress {
+                                lsp::WorkDoneProgress::Begin(_) => {
+                                    if pending_disk_based_diagnostics == 0 {
+                                        smol::block_on(
+                                            disk_based_diagnostics_done_tx
+                                                .send(DiagnosticProgress::Updating),
+                                        )
+                                        .ok();
+                                    }
+                                    pending_disk_based_diagnostics += 1;
+                                }
+                                lsp::WorkDoneProgress::End(_) => {
+                                    pending_disk_based_diagnostics -= 1;
+                                    if pending_disk_based_diagnostics == 0 {
+                                        smol::block_on(
+                                            disk_based_diagnostics_done_tx
+                                                .send(DiagnosticProgress::Updated),
+                                        )
+                                        .ok();
+                                    }
+                                }
+                                _ => {}
+                            },
+                        }
+                    }
+                })
+                .detach();
+            let rpc = self.client.clone();
             cx.spawn_weak(|this, mut cx| async move {
-                while let Ok(diagnostics) = diagnostics_rx.recv().await {
+                while let Ok(progress) = disk_based_diagnostics_done_rx.recv().await {
                     if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
-                        handle.update(&mut cx, |this, cx| {
-                            this.update_diagnostics_from_lsp(diagnostics, &disk_based_sources, cx)
-                                .log_err();
-                        });
+                        match progress {
+                            DiagnosticProgress::Updating => {
+                                let message = handle.update(&mut cx, |this, cx| {
+                                    cx.emit(Event::DiskBasedDiagnosticsUpdating);
+                                    let this = this.as_local().unwrap();
+                                    this.share.as_ref().map(|share| {
+                                        proto::DiskBasedDiagnosticsUpdating {
+                                            project_id: share.project_id,
+                                            worktree_id: this.id().to_proto(),
+                                        }
+                                    })
+                                });
+
+                                if let Some(message) = message {
+                                    rpc.send(message).await.log_err();
+                                }
+                            }
+                            DiagnosticProgress::Updated => {
+                                let message = handle.update(&mut cx, |this, cx| {
+                                    cx.emit(Event::DiskBasedDiagnosticsUpdated);
+                                    let this = this.as_local().unwrap();
+                                    this.share.as_ref().map(|share| {
+                                        proto::DiskBasedDiagnosticsUpdated {
+                                            project_id: share.project_id,
+                                            worktree_id: this.id().to_proto(),
+                                        }
+                                    })
+                                });
+
+                                if let Some(message) = message {
+                                    rpc.send(message).await.log_err();
+                                }
+                            }
+                        }
                     } else {
                         break;
                     }
@@ -1158,35 +1309,25 @@ impl LocalWorktree {
                 .update(&mut cx, |t, cx| t.as_local().unwrap().load(&path, cx))
                 .await?;
 
-            let (lsp_diagnostics, provider_diagnostics, language, language_server) =
-                this.update(&mut cx, |this, cx| {
-                    let this = this.as_local_mut().unwrap();
-                    let lsp_diagnostics = this.lsp_diagnostics.remove(&path);
-                    let provider_diagnostics = this.provider_diagnostics.remove(&path);
-                    let language = this
-                        .language_registry
-                        .select_language(file.full_path())
-                        .cloned();
-                    let server = language
-                        .as_ref()
-                        .and_then(|language| this.register_language(language, cx));
-                    (lsp_diagnostics, provider_diagnostics, language, server)
-                });
+            let (diagnostics, language, language_server) = this.update(&mut cx, |this, cx| {
+                let this = this.as_local_mut().unwrap();
+                let diagnostics = this.diagnostics.get(&path).cloned();
+                let language = this
+                    .language_registry
+                    .select_language(file.full_path())
+                    .cloned();
+                let server = language
+                    .as_ref()
+                    .and_then(|language| this.register_language(language, cx));
+                (diagnostics, language, server)
+            });
 
             let mut buffer_operations = Vec::new();
             let buffer = cx.add_model(|cx| {
                 let mut buffer = Buffer::from_file(0, contents, Box::new(file), cx);
                 buffer.set_language(language, language_server, cx);
-                if let Some(diagnostics) = lsp_diagnostics {
-                    let op = buffer
-                        .update_diagnostics(LSP_PROVIDER_NAME.clone(), None, diagnostics, cx)
-                        .unwrap();
-                    buffer_operations.push(op);
-                }
-                if let Some(diagnostics) = provider_diagnostics {
-                    let op = buffer
-                        .update_diagnostics(DIAGNOSTIC_PROVIDER_NAME.clone(), None, diagnostics, cx)
-                        .unwrap();
+                if let Some(diagnostics) = diagnostics {
+                    let op = buffer.update_diagnostics(None, diagnostics, cx).unwrap();
                     buffer_operations.push(op);
                 }
                 buffer
@@ -1405,10 +1546,11 @@ impl LocalWorktree {
             })
             .detach();
 
+        let diagnostic_summaries = self.diagnostic_summaries.clone();
         let share_message = cx.background().spawn(async move {
             proto::ShareWorktree {
                 project_id,
-                worktree: Some(snapshot.to_proto()),
+                worktree: Some(snapshot.to_proto(&diagnostic_summaries)),
             }
         });
 
@@ -1576,6 +1718,34 @@ impl RemoteWorktree {
         Ok(())
     }
 
+    pub fn update_diagnostic_summary(
+        &mut self,
+        envelope: TypedEnvelope<proto::UpdateDiagnosticSummary>,
+        cx: &mut ModelContext<Worktree>,
+    ) {
+        if let Some(summary) = envelope.payload.summary {
+            let path: Arc<Path> = Path::new(&summary.path).into();
+            self.diagnostic_summaries.insert(
+                PathKey(path.clone()),
+                DiagnosticSummary {
+                    error_count: summary.error_count as usize,
+                    warning_count: summary.warning_count as usize,
+                    info_count: summary.info_count as usize,
+                    hint_count: summary.hint_count as usize,
+                },
+            );
+            cx.emit(Event::DiagnosticsUpdated(path));
+        }
+    }
+
+    pub fn disk_based_diagnostics_updating(&self, cx: &mut ModelContext<Worktree>) {
+        cx.emit(Event::DiskBasedDiagnosticsUpdating);
+    }
+
+    pub fn disk_based_diagnostics_updated(&self, cx: &mut ModelContext<Worktree>) {
+        cx.emit(Event::DiskBasedDiagnosticsUpdated);
+    }
+
     pub fn remove_collaborator(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Worktree>) {
         for (_, buffer) in &self.open_buffers {
             if let Some(buffer) = buffer.upgrade(cx) {
@@ -1605,16 +1775,23 @@ impl Snapshot {
         self.id
     }
 
-    pub fn to_proto(&self) -> proto::Worktree {
+    pub fn to_proto(
+        &self,
+        diagnostic_summaries: &TreeMap<PathKey, DiagnosticSummary>,
+    ) -> proto::Worktree {
         let root_name = self.root_name.clone();
         proto::Worktree {
             id: self.id.0 as u64,
             root_name,
             entries: self
                 .entries_by_path
-                .cursor::<()>()
+                .iter()
                 .filter(|e| !e.is_ignored)
                 .map(Into::into)
+                .collect(),
+            diagnostic_summaries: diagnostic_summaries
+                .iter()
+                .map(|(path, summary)| summary.to_proto(path.0.clone()))
                 .collect(),
         }
     }
@@ -3013,32 +3190,10 @@ impl ToPointUtf16 for lsp::Position {
     }
 }
 
-fn diagnostic_ranges<'a>(
-    diagnostic: &'a lsp::Diagnostic,
-    abs_path: &'a Path,
-) -> impl 'a + Iterator<Item = Range<PointUtf16>> {
-    diagnostic
-        .related_information
-        .iter()
-        .flatten()
-        .filter_map(move |info| {
-            if info.location.uri.to_file_path().ok()? == abs_path {
-                let info_start = PointUtf16::new(
-                    info.location.range.start.line,
-                    info.location.range.start.character,
-                );
-                let info_end = PointUtf16::new(
-                    info.location.range.end.line,
-                    info.location.range.end.character,
-                );
-                Some(info_start..info_end)
-            } else {
-                None
-            }
-        })
-        .chain(Some(
-            diagnostic.range.start.to_point_utf16()..diagnostic.range.end.to_point_utf16(),
-        ))
+fn range_from_lsp(range: lsp::Range) -> Range<PointUtf16> {
+    let start = PointUtf16::new(range.start.line, range.start.character);
+    let end = PointUtf16::new(range.end.line, range.end.character);
+    start..end
 }
 
 #[cfg(test)]
@@ -3048,6 +3203,7 @@ mod tests {
     use anyhow::Result;
     use client::test::{FakeHttpClient, FakeServer};
     use fs::RealFs;
+    use gpui::test::subscribe;
     use language::{tree_sitter_rust, DiagnosticEntry, LanguageServerConfig};
     use language::{Diagnostic, LanguageConfig};
     use lsp::Url;
@@ -3245,7 +3401,7 @@ mod tests {
         let remote = Worktree::remote(
             1,
             1,
-            initial_snapshot.to_proto(),
+            initial_snapshot.to_proto(&Default::default()),
             Client::new(http_client.clone()),
             user_store,
             Default::default(),
@@ -3697,6 +3853,10 @@ mod tests {
     async fn test_language_server_diagnostics(mut cx: gpui::TestAppContext) {
         let (language_server_config, mut fake_server) =
             LanguageServerConfig::fake(cx.background()).await;
+        let progress_token = language_server_config
+            .disk_based_diagnostics_progress_token
+            .clone()
+            .unwrap();
         let mut languages = LanguageRegistry::new();
         languages.add(Arc::new(Language::new(
             LanguageConfig {
@@ -3736,6 +3896,18 @@ mod tests {
             .await
             .unwrap();
 
+        let mut events = subscribe(&tree, &mut cx);
+
+        fake_server.start_progress(&progress_token).await;
+        assert_eq!(
+            events.next().await.unwrap(),
+            Event::DiskBasedDiagnosticsUpdating
+        );
+
+        fake_server.start_progress(&progress_token).await;
+        fake_server.end_progress(&progress_token).await;
+        fake_server.start_progress(&progress_token).await;
+
         fake_server
             .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
                 uri: Url::from_file_path(dir.path().join("a.rs")).unwrap(),
@@ -3748,6 +3920,17 @@ mod tests {
                 }],
             })
             .await;
+        assert_eq!(
+            events.next().await.unwrap(),
+            Event::DiagnosticsUpdated(Arc::from(Path::new("a.rs")))
+        );
+
+        fake_server.end_progress(&progress_token).await;
+        fake_server.end_progress(&progress_token).await;
+        assert_eq!(
+            events.next().await.unwrap(),
+            Event::DiskBasedDiagnosticsUpdated
+        );
 
         let buffer = tree
             .update(&mut cx, |tree, cx| tree.open_buffer("a.rs", cx))
@@ -3761,19 +3944,16 @@ mod tests {
                 .collect::<Vec<_>>();
             assert_eq!(
                 diagnostics,
-                &[(
-                    LSP_PROVIDER_NAME.as_ref(),
-                    DiagnosticEntry {
-                        range: Point::new(0, 9)..Point::new(0, 10),
-                        diagnostic: Diagnostic {
-                            severity: lsp::DiagnosticSeverity::ERROR,
-                            message: "undefined variable 'A'".to_string(),
-                            group_id: 0,
-                            is_primary: true,
-                            ..Default::default()
-                        }
+                &[DiagnosticEntry {
+                    range: Point::new(0, 9)..Point::new(0, 10),
+                    diagnostic: Diagnostic {
+                        severity: lsp::DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'A'".to_string(),
+                        group_id: 0,
+                        is_primary: true,
+                        ..Default::default()
                     }
-                )]
+                }]
             )
         });
     }
@@ -3918,7 +4098,7 @@ mod tests {
 
         worktree
             .update(&mut cx, |tree, cx| {
-                tree.update_diagnostics_from_lsp(message, &Default::default(), cx)
+                tree.update_diagnostics(message, &Default::default(), cx)
             })
             .unwrap();
         let buffer = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
@@ -3928,78 +4108,61 @@ mod tests {
                 .diagnostics_in_range::<_, Point>(0..buffer.len())
                 .collect::<Vec<_>>(),
             &[
-                (
-                    LSP_PROVIDER_NAME.as_ref(),
-                    DiagnosticEntry {
-                        range: Point::new(1, 8)..Point::new(1, 9),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::WARNING,
-                            message: "error 1".to_string(),
-                            group_id: 0,
-                            is_primary: true,
-                            ..Default::default()
-                        }
+                DiagnosticEntry {
+                    range: Point::new(1, 8)..Point::new(1, 9),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::WARNING,
+                        message: "error 1".to_string(),
+                        group_id: 0,
+                        is_primary: true,
+                        ..Default::default()
                     }
-                ),
-                (
-                    LSP_PROVIDER_NAME.as_ref(),
-                    DiagnosticEntry {
-                        range: Point::new(1, 8)..Point::new(1, 9),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::HINT,
-                            message: "error 1 hint 1".to_string(),
-                            group_id: 0,
-                            is_primary: false,
-                            ..Default::default()
-                        }
+                },
+                DiagnosticEntry {
+                    range: Point::new(1, 8)..Point::new(1, 9),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 1 hint 1".to_string(),
+                        group_id: 0,
+                        is_primary: false,
+                        ..Default::default()
                     }
-                ),
-                (
-                    LSP_PROVIDER_NAME.as_ref(),
-                    DiagnosticEntry {
-                        range: Point::new(1, 13)..Point::new(1, 15),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::HINT,
-                            message: "error 2 hint 1".to_string(),
-                            group_id: 1,
-                            is_primary: false,
-                            ..Default::default()
-                        }
+                },
+                DiagnosticEntry {
+                    range: Point::new(1, 13)..Point::new(1, 15),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 2 hint 1".to_string(),
+                        group_id: 1,
+                        is_primary: false,
+                        ..Default::default()
                     }
-                ),
-                (
-                    LSP_PROVIDER_NAME.as_ref(),
-                    DiagnosticEntry {
-                        range: Point::new(1, 13)..Point::new(1, 15),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::HINT,
-                            message: "error 2 hint 2".to_string(),
-                            group_id: 1,
-                            is_primary: false,
-                            ..Default::default()
-                        }
+                },
+                DiagnosticEntry {
+                    range: Point::new(1, 13)..Point::new(1, 15),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: "error 2 hint 2".to_string(),
+                        group_id: 1,
+                        is_primary: false,
+                        ..Default::default()
                     }
-                ),
-                (
-                    LSP_PROVIDER_NAME.as_ref(),
-                    DiagnosticEntry {
-                        range: Point::new(2, 8)..Point::new(2, 17),
-                        diagnostic: Diagnostic {
-                            severity: DiagnosticSeverity::ERROR,
-                            message: "error 2".to_string(),
-                            group_id: 1,
-                            is_primary: true,
-                            ..Default::default()
-                        }
+                },
+                DiagnosticEntry {
+                    range: Point::new(2, 8)..Point::new(2, 17),
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: "error 2".to_string(),
+                        group_id: 1,
+                        is_primary: true,
+                        ..Default::default()
                     }
-                )
+                }
             ]
         );
 
         assert_eq!(
-            buffer
-                .diagnostic_group::<Point>(&LSP_PROVIDER_NAME, 0)
-                .collect::<Vec<_>>(),
+            buffer.diagnostic_group::<Point>(0).collect::<Vec<_>>(),
             &[
                 DiagnosticEntry {
                     range: Point::new(1, 8)..Point::new(1, 9),
@@ -4024,9 +4187,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            buffer
-                .diagnostic_group::<Point>(&LSP_PROVIDER_NAME, 1)
-                .collect::<Vec<_>>(),
+            buffer.diagnostic_group::<Point>(1).collect::<Vec<_>>(),
             &[
                 DiagnosticEntry {
                     range: Point::new(1, 13)..Point::new(1, 15),

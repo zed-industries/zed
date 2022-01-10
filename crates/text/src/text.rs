@@ -1536,7 +1536,7 @@ impl BufferSnapshot {
                 insertion_cursor.prev(&());
             }
             let insertion = insertion_cursor.item().expect("invalid insertion");
-            debug_assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
+            assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
 
             fragment_cursor.seek_forward(&Some(&insertion.fragment_id), Bias::Left, &None);
             let fragment = fragment_cursor.item().unwrap();
@@ -1578,7 +1578,7 @@ impl BufferSnapshot {
                 insertion_cursor.prev(&());
             }
             let insertion = insertion_cursor.item().expect("invalid insertion");
-            debug_assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
+            assert_eq!(insertion.timestamp, anchor.timestamp, "invalid insertion");
 
             let mut fragment_cursor = self.fragments.cursor::<(Option<&Locator>, usize)>();
             fragment_cursor.seek(&Some(&insertion.fragment_id), Bias::Left, &None);

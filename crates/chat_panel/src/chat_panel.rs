@@ -233,7 +233,7 @@ impl ChatPanel {
             Empty::new().boxed()
         };
 
-        Expanded::new(1., messages).boxed()
+        Flexible::new(1., true, messages).boxed()
     }
 
     fn render_message(&self, message: &ChannelMessage) -> ElementBox {

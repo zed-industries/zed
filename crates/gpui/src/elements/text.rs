@@ -14,6 +14,7 @@ use serde_json::json;
 pub struct Text {
     text: String,
     style: TextStyle,
+    soft_wrap: bool,
 }
 
 pub struct LayoutState {
@@ -23,11 +24,20 @@ pub struct LayoutState {
 
 impl Text {
     pub fn new(text: String, style: TextStyle) -> Self {
-        Self { text, style }
+        Self {
+            text,
+            style,
+            soft_wrap: true,
+        }
     }
 
     pub fn with_default_color(mut self, color: Color) -> Self {
         self.style.color = color;
+        self
+    }
+
+    pub fn with_soft_wrap(mut self, soft_wrap: bool) -> Self {
+        self.soft_wrap = soft_wrap;
         self
     }
 }
@@ -54,9 +64,13 @@ impl Element for Text {
                 self.style.font_size,
                 &[(line.len(), self.style.to_run())],
             );
-            let wrap_boundaries = wrapper
-                .wrap_shaped_line(line, &shaped_line, constraint.max.x())
-                .collect::<Vec<_>>();
+            let wrap_boundaries = if self.soft_wrap {
+                wrapper
+                    .wrap_shaped_line(line, &shaped_line, constraint.max.x())
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
 
             max_line_width = max_line_width.max(shaped_line.width());
             line_count += wrap_boundaries.len() + 1;

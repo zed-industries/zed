@@ -249,11 +249,28 @@ line_number_active = "$text.0.color"
 selection = "$selection.host"
 guest_selections = "$selection.guests"
 error_color = "$status.bad"
-error_diagnostic = { text = "$status.bad" }
 invalid_error_diagnostic = { text = "$text.3.color" }
-warning_diagnostic = { text = "$status.warn" }
 invalid_warning_diagnostic = { text = "$text.3.color" }
-information_diagnostic = { text = "$status.info" }
 invalid_information_diagnostic = { text = "$text.3.color" }
-hint_diagnostic = { text = "$status.info" }
 invalid_hint_diagnostic = { text = "$text.3.color" }
+
+[editor.error_diagnostic]
+text = "$status.bad"
+header = { padding = { left = 10 }, background = "#ffffff08" }
+
+[editor.warning_diagnostic]
+text = "$status.warn"
+header = { padding = { left = 10 }, background = "#ffffff08" }
+
+[editor.information_diagnostic]
+text = "$status.info"
+header = { padding = { left = 10 }, background = "#ffffff08" }
+
+[editor.hint_diagnostic]
+text = "$status.info"
+header = { padding = { left = 10 }, background = "#ffffff08" }
+
+[project_diagnostics]
+background = "$surface.1"
+empty_message = "$text.0"
+status_bar_item = { extends = "$text.2", margin.right = 10 }

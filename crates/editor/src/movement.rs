@@ -172,7 +172,7 @@ pub fn next_word_boundary(map: &DisplaySnapshot, mut point: DisplayPoint) -> Dis
         }
         prev_char_kind = Some(char_kind);
     }
-    point
+    map.clip_point(point, Bias::Right)
 }
 
 pub fn is_inside_word(map: &DisplaySnapshot, point: DisplayPoint) -> bool {

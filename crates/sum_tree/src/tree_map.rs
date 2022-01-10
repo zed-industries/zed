@@ -21,6 +21,16 @@ pub struct MapKey<K>(K);
 pub struct MapKeyRef<'a, K>(Option<&'a K>);
 
 impl<K: Clone + Debug + Default + Ord, V: Clone + Debug> TreeMap<K, V> {
+    pub fn from_ordered_entries(entries: impl IntoIterator<Item = (K, V)>) -> Self {
+        let tree = SumTree::from_iter(
+            entries
+                .into_iter()
+                .map(|(key, value)| MapEntry { key, value }),
+            &(),
+        );
+        Self(tree)
+    }
+
     pub fn get<'a>(&self, key: &'a K) -> Option<&V> {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
         cursor.seek(&MapKeyRef(Some(key)), Bias::Left, &());

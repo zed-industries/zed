@@ -125,6 +125,8 @@ messages!(
     BufferSaved,
     ChannelMessageSent,
     CloseBuffer,
+    DiskBasedDiagnosticsUpdated,
+    DiskBasedDiagnosticsUpdating,
     Error,
     GetChannelMessages,
     GetChannelMessagesResponse,
@@ -155,6 +157,7 @@ messages!(
     UnshareProject,
     UpdateBuffer,
     UpdateContacts,
+    UpdateDiagnosticSummary,
     UpdateWorktree,
 );
 
@@ -178,17 +181,20 @@ request_messages!(
 entity_messages!(
     project_id,
     AddProjectCollaborator,
-    RemoveProjectCollaborator,
+    BufferSaved,
+    CloseBuffer,
+    DiskBasedDiagnosticsUpdated,
+    DiskBasedDiagnosticsUpdating,
     JoinProject,
     LeaveProject,
-    BufferSaved,
     OpenBuffer,
-    CloseBuffer,
+    RemoveProjectCollaborator,
     SaveBuffer,
     ShareWorktree,
     UnregisterWorktree,
     UnshareProject,
     UpdateBuffer,
+    UpdateDiagnosticSummary,
     UpdateWorktree,
 );
 

@@ -199,7 +199,10 @@ impl DisplaySnapshot {
 
     pub fn prev_line_boundary(&self, mut point: Point) -> (Point, DisplayPoint) {
         loop {
-            point.column = 0;
+            let mut fold_point = point.to_fold_point(&self.folds_snapshot, Bias::Left);
+            *fold_point.column_mut() = 0;
+            point = fold_point.to_buffer_point(&self.folds_snapshot);
+
             let mut display_point = self.point_to_display_point(point, Bias::Left);
             *display_point.column_mut() = 0;
             let next_point = self.display_point_to_point(display_point, Bias::Left);
@@ -212,7 +215,10 @@ impl DisplaySnapshot {
 
     pub fn next_line_boundary(&self, mut point: Point) -> (Point, DisplayPoint) {
         loop {
-            point.column = self.buffer_snapshot.line_len(point.row);
+            let mut fold_point = point.to_fold_point(&self.folds_snapshot, Bias::Right);
+            *fold_point.column_mut() = self.folds_snapshot.line_len(fold_point.row());
+            point = fold_point.to_buffer_point(&self.folds_snapshot);
+
             let mut display_point = self.point_to_display_point(point, Bias::Right);
             *display_point.column_mut() = self.line_len(display_point.row());
             let next_point = self.display_point_to_point(display_point, Bias::Right);
@@ -446,10 +452,11 @@ impl ToDisplayPoint for Anchor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{movement, test::*};
-    use gpui::{color::Color, elements::*, MutableAppContext};
+    use crate::movement;
+    use gpui::{color::Color, elements::*, test::observe, MutableAppContext};
     use language::{Buffer, Language, LanguageConfig, RandomCharIter, SelectionGoal};
     use rand::{prelude::*, Rng};
+    use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use theme::SyntaxTheme;
     use util::test::sample_text;
@@ -493,7 +500,7 @@ mod tests {
         let map = cx.add_model(|cx| {
             DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, wrap_width, cx)
         });
-        let (_observer, notifications) = Observer::new(&map, &mut cx);
+        let mut notifications = observe(&map, &mut cx);
         let mut fold_count = 0;
         let mut blocks = Vec::new();
 
@@ -589,7 +596,7 @@ mod tests {
             }
 
             if map.read_with(&cx, |map, cx| map.is_rewrapping(cx)) {
-                notifications.recv().await.unwrap();
+                notifications.next().await.unwrap();
             }
 
             let snapshot = map.update(&mut cx, |map, cx| map.snapshot(cx));
