@@ -577,7 +577,10 @@ mod tests {
                 .unwrap()
         });
         cx.read(|cx| {
-            assert_eq!(editor2.read(cx).buffer(), editor.read(cx).buffer());
+            assert_eq!(
+                editor2.read(cx).buffer().read(cx).as_singleton().unwrap(),
+                editor.read(cx).buffer().read(cx).as_singleton().unwrap()
+            );
         })
     }
 
