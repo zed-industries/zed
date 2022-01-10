@@ -7,7 +7,7 @@ edition = "2018"
 path = "src/client.rs"
 
 [features]
-test-support = ["rpc/test-support"]
+test-support = ["gpui/test-support", "rpc/test-support"]
 
 [dependencies]
 gpui = { path = "../gpui" }
@@ -29,3 +29,7 @@ surf = "2.2"
 thiserror = "1.0.29"
 time = "0.3"
 tiny_http = "0.8"
+
+[dev-dependencies]
+gpui = { path = "../gpui", features = ["test-support"] }
+rpc = { path = "../rpc", features = ["test-support"] }
