@@ -2688,6 +2688,15 @@ mod tests {
                     anchors.push(multibuffer.anchor_at(offset, bias));
                     anchors.sort_by(|a, b| a.cmp(&b, &multibuffer).unwrap());
                 }
+                40..=44 if !anchors.is_empty() => {
+                    let multibuffer = multibuffer.read(cx).read(cx);
+                    anchors = multibuffer
+                        .refresh_anchors(&anchors)
+                        .into_iter()
+                        .map(|a| a.0)
+                        .collect();
+                    anchors.sort_by(|a, b| a.cmp(&b, &multibuffer).unwrap());
+                }
                 _ => {
                     let buffer_handle = if buffers.is_empty() || rng.gen_bool(0.4) {
                         let base_text = RandomCharIter::new(&mut rng).take(10).collect::<String>();

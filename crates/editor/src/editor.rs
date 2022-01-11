@@ -1104,7 +1104,7 @@ impl Editor {
         T: ToOffset,
     {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let mut selections = ranges
+        let selections = ranges
             .into_iter()
             .map(|range| {
                 let mut start = range.start.to_offset(&buffer);
@@ -1124,7 +1124,6 @@ impl Editor {
                 }
             })
             .collect::<Vec<_>>();
-        selections.sort_unstable_by_key(|s| s.start);
         self.update_selections(selections, autoscroll, cx);
     }
 
@@ -1649,7 +1648,6 @@ impl Editor {
             edit_ranges.push(edit_start..edit_end);
         }
 
-        new_cursors.sort_unstable_by(|a, b| a.1.cmp(&b.1, &buffer).unwrap());
         let buffer = self.buffer.update(cx, |buffer, cx| {
             buffer.edit(edit_ranges, "", cx);
             buffer.snapshot(cx)
@@ -2648,7 +2646,6 @@ impl Editor {
                         reversed: false,
                         goal: SelectionGoal::None,
                     });
-                    selections.sort_unstable_by_key(|s| s.start);
                     self.update_selections(selections, Some(Autoscroll::Newest), cx);
                 } else {
                     select_next_state.done = true;
@@ -2801,7 +2798,7 @@ impl Editor {
 
         let mut stack = mem::take(&mut self.select_larger_syntax_node_stack);
         let mut selected_larger_node = false;
-        let mut new_selections = old_selections
+        let new_selections = old_selections
             .iter()
             .map(|selection| {
                 let old_range = selection.start..selection.end;
@@ -2830,7 +2827,6 @@ impl Editor {
 
         if selected_larger_node {
             stack.push(old_selections);
-            new_selections.sort_unstable_by_key(|selection| selection.start);
             self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
         }
         self.select_larger_syntax_node_stack = stack;
@@ -3225,6 +3221,8 @@ impl Editor {
     ) where
         T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
     {
+        selections.sort_unstable_by_key(|s| s.start);
+
         // Merge overlapping selections.
         let buffer = self.buffer.read(cx).snapshot(cx);
         let mut i = 1;
@@ -3298,35 +3296,45 @@ impl Editor {
     /// was no longer present. The keys of the map are selection ids. The values are
     /// the id of the new excerpt where the head of the selection has been moved.
     pub fn refresh_selections(&mut self, cx: &mut ViewContext<Self>) -> HashMap<usize, ExcerptId> {
-        let anchors_with_status = self.buffer.update(cx, |buffer, cx| {
-            let snapshot = buffer.read(cx);
-            snapshot.refresh_anchors(
-                self.selections
-                    .iter()
-                    .flat_map(|selection| [&selection.start, &selection.end]),
-            )
-        });
+        let snapshot = self.buffer.read(cx).read(cx);
+        let anchors_with_status = snapshot.refresh_anchors(
+            self.selections
+                .iter()
+                .flat_map(|selection| [&selection.start, &selection.end]),
+        );
+        let offsets =
+            snapshot.summaries_for_anchors::<usize, _>(anchors_with_status.iter().map(|a| &a.0));
+        let offsets = offsets.chunks(2);
+        let statuses = anchors_with_status.chunks(2).map(|a| (a[0].1, a[1].1));
+
         let mut selections_with_lost_position = HashMap::default();
-        self.selections = self
+        let new_selections = self
             .selections
             .iter()
-            .cloned()
-            .zip(anchors_with_status.chunks(2))
-            .map(|(mut selection, anchors)| {
-                selection.start = anchors[0].0.clone();
-                selection.end = anchors[1].0.clone();
-                let kept_head_position = if selection.reversed {
-                    anchors[0].1
+            .zip(offsets)
+            .zip(statuses)
+            .map(|((selection, offsets), (kept_start, kept_end))| {
+                let kept_head = if selection.reversed {
+                    kept_start
                 } else {
-                    anchors[1].1
+                    kept_end
                 };
-                if !kept_head_position {
+                if !kept_head {
                     selections_with_lost_position
                         .insert(selection.id, selection.head().excerpt_id.clone());
                 }
-                selection
+
+                Selection {
+                    id: selection.id,
+                    start: offsets[0],
+                    end: offsets[1],
+                    reversed: selection.reversed,
+                    goal: selection.goal,
+                }
             })
             .collect();
+        drop(snapshot);
+        self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
         selections_with_lost_position
     }
 
