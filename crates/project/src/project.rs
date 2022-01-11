@@ -67,7 +67,7 @@ pub enum Event {
     DiagnosticsUpdated(ProjectPath),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct ProjectPath {
     pub worktree_id: WorktreeId,
     pub path: Arc<Path>,

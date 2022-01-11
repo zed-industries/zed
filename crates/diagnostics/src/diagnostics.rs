@@ -1,7 +1,7 @@
 pub mod items;
 
 use anyhow::Result;
-use collections::{HashMap, HashSet};
+use collections::{HashMap, HashSet, BTreeSet};
 use editor::{
     context_header_renderer, diagnostic_block_renderer, diagnostic_header_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties},
@@ -15,7 +15,7 @@ use gpui::{
 use language::{Bias, Buffer, DiagnosticEntry, Point, Selection, SelectionGoal};
 use postage::watch;
 use project::{Project, ProjectPath, WorktreeId};
-use std::{cmp::Ordering, mem, ops::Range, path::Path, sync::Arc};
+use std::{cmp::Ordering, mem, ops::Range};
 use util::TryFutureExt;
 use workspace::Workspace;
 
@@ -48,8 +48,8 @@ struct ProjectDiagnosticsEditor {
     workspace: WeakViewHandle<Workspace>,
     editor: ViewHandle<Editor>,
     excerpts: ModelHandle<MultiBuffer>,
-    path_states: Vec<(Arc<Path>, Vec<DiagnosticGroupState>)>,
-    paths_to_update: HashMap<WorktreeId, HashSet<ProjectPath>>,
+    path_states: Vec<(ProjectPath, Vec<DiagnosticGroupState>)>,
+    paths_to_update: HashMap<WorktreeId, BTreeSet<ProjectPath>>,
     build_settings: BuildSettings,
     settings: watch::Receiver<workspace::Settings>,
 }
@@ -192,7 +192,9 @@ impl ProjectDiagnosticsEditor {
             workspace.update(cx, |workspace, cx| {
                 for (buffer, ranges) in new_selections_by_buffer {
                     let buffer = BufferItemHandle(buffer);
-                    workspace.activate_pane_for_item(&buffer, cx);
+                    if !workspace.activate_pane_for_item(&buffer, cx) {
+                        workspace.activate_next_pane(cx);
+                    }
                     let editor = workspace
                         .open_item(buffer, cx)
                         .to_any()
@@ -206,15 +208,21 @@ impl ProjectDiagnosticsEditor {
         }
     }
 
-    fn update_excerpts(&self, paths: HashSet<ProjectPath>, cx: &mut ViewContext<Self>) {
+    fn update_excerpts(
+        &self,
+        paths: BTreeSet<ProjectPath>,
+        cx: &mut ViewContext<Self>,
+    ) {
         let project = self.model.read(cx).project.clone();
         cx.spawn(|this, mut cx| {
             async move {
                 for path in paths {
                     let buffer = project
-                        .update(&mut cx, |project, cx| project.open_buffer(path, cx))
+                        .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))
                         .await?;
-                    this.update(&mut cx, |view, cx| view.populate_excerpts(buffer, cx))
+                    this.update(&mut cx, |view, cx| {
+                        view.populate_excerpts(path, buffer, cx)
+                    })
                 }
                 Result::<_, anyhow::Error>::Ok(())
             }
@@ -223,23 +231,17 @@ impl ProjectDiagnosticsEditor {
         .detach();
     }
 
-    fn populate_excerpts(&mut self, buffer: ModelHandle<Buffer>, cx: &mut ViewContext<Self>) {
-        let snapshot;
-        let path;
-        {
-            let buffer = buffer.read(cx);
-            snapshot = buffer.snapshot();
-            if let Some(file) = buffer.file() {
-                path = file.path().clone();
-            } else {
-                return;
-            }
-        }
-
+    fn populate_excerpts(
+        &mut self,
+        path: ProjectPath,
+        buffer: ModelHandle<Buffer>,
+        cx: &mut ViewContext<Self>,
+    ) {
         let was_empty = self.path_states.is_empty();
+        let snapshot = buffer.read(cx).snapshot();
         let path_ix = match self
             .path_states
-            .binary_search_by_key(&path.as_ref(), |e| e.0.as_ref())
+            .binary_search_by_key(&&path, |e| &e.0)
         {
             Ok(ix) => ix,
             Err(ix) => {
@@ -445,11 +447,11 @@ impl ProjectDiagnosticsEditor {
         }
 
         self.editor.update(cx, |editor, cx| {
-            let groups = self.path_states.get(path_ix)?.1.as_slice();
-
+            let groups;
             let mut selections;
             let new_excerpt_ids_by_selection_id;
             if was_empty {
+                groups = self.path_states.first()?.1.as_slice();
                 new_excerpt_ids_by_selection_id = [(0, ExcerptId::min())].into_iter().collect();
                 selections = vec![Selection {
                     id: 0,
@@ -459,6 +461,7 @@ impl ProjectDiagnosticsEditor {
                     goal: SelectionGoal::None,
                 }];
             } else {
+                groups = self.path_states.get(path_ix)?.1.as_slice();
                 new_excerpt_ids_by_selection_id = editor.refresh_selections(cx);
                 selections = editor.local_selections::<usize>(cx);
             }
@@ -558,6 +561,10 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         _: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         unreachable!()
+    }
+
+    fn should_activate_item_on_event(event: &Self::Event) -> bool {
+        Editor::should_activate_item_on_event(event)
     }
 
     fn should_update_tab_on_event(event: &Event) -> bool {

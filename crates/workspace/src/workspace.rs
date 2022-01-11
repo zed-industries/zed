@@ -979,6 +979,12 @@ impl Workspace {
         }
     }
 
+    pub fn activate_next_pane(&mut self, cx: &mut ViewContext<Self>) {
+        let ix = self.panes.iter().position(|pane| pane == &self.active_pane).unwrap();
+        let next_ix = (ix + 1) % self.panes.len();
+        self.activate_pane(self.panes[next_ix].clone(), cx);
+    }
+
     fn activate_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
         self.active_pane = pane;
         self.status_bar.update(cx, |status_bar, cx| {
