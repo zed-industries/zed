@@ -1342,6 +1342,58 @@ impl MultiBufferSnapshot {
         position
     }
 
+    pub fn summaries_for_anchors<'a, D, I>(&'a self, anchors: I) -> Vec<D>
+    where
+        D: TextDimension + Ord + Sub<D, Output = D>,
+        I: 'a + IntoIterator<Item = &'a Anchor>,
+    {
+        let mut anchors = anchors.into_iter().peekable();
+        let mut cursor = self.excerpts.cursor::<ExcerptSummary>();
+        let mut summaries = Vec::new();
+        while let Some(anchor) = anchors.peek() {
+            let excerpt_id = &anchor.excerpt_id;
+            let buffer_id = anchor.buffer_id;
+            let excerpt_anchors = iter::from_fn(|| {
+                let anchor = anchors.peek()?;
+                if anchor.excerpt_id == *excerpt_id && anchor.buffer_id == buffer_id {
+                    Some(&anchors.next().unwrap().text_anchor)
+                } else {
+                    None
+                }
+            });
+
+            cursor.seek_forward(&Some(excerpt_id), Bias::Left, &());
+            if cursor.item().is_none() {
+                cursor.next(&());
+            }
+
+            let position = D::from_text_summary(&cursor.start().text);
+            if let Some(excerpt) = cursor.item() {
+                if excerpt.id == *excerpt_id && excerpt.buffer_id == buffer_id {
+                    let excerpt_buffer_start = excerpt.range.start.summary::<D>(&excerpt.buffer);
+                    summaries.extend(
+                        excerpt
+                            .buffer
+                            .summaries_for_anchors::<D, _>(excerpt_anchors)
+                            .map(move |summary| {
+                                let mut position = position.clone();
+                                let excerpt_buffer_start = excerpt_buffer_start.clone();
+                                if summary > excerpt_buffer_start {
+                                    position.add_assign(&(summary - excerpt_buffer_start));
+                                }
+                                position
+                            }),
+                    );
+                    continue;
+                }
+            }
+
+            summaries.extend(excerpt_anchors.map(|_| position.clone()));
+        }
+
+        summaries
+    }
+
     pub fn refresh_anchors<'a, I>(&'a self, anchors: I) -> Vec<(Anchor, bool)>
     where
         I: 'a + IntoIterator<Item = &'a Anchor>,
@@ -1421,58 +1473,6 @@ impl MultiBufferSnapshot {
             }
         }
         result
-    }
-
-    pub fn summaries_for_anchors<'a, D, I>(&'a self, anchors: I) -> Vec<D>
-    where
-        D: TextDimension + Ord + Sub<D, Output = D>,
-        I: 'a + IntoIterator<Item = &'a Anchor>,
-    {
-        let mut anchors = anchors.into_iter().peekable();
-        let mut cursor = self.excerpts.cursor::<ExcerptSummary>();
-        let mut summaries = Vec::new();
-        while let Some(anchor) = anchors.peek() {
-            let excerpt_id = &anchor.excerpt_id;
-            let buffer_id = anchor.buffer_id;
-            let excerpt_anchors = iter::from_fn(|| {
-                let anchor = anchors.peek()?;
-                if anchor.excerpt_id == *excerpt_id {
-                    Some(&anchors.next().unwrap().text_anchor)
-                } else {
-                    None
-                }
-            });
-
-            cursor.seek_forward(&Some(excerpt_id), Bias::Left, &());
-            if cursor.item().is_none() {
-                cursor.next(&());
-            }
-
-            let position = D::from_text_summary(&cursor.start().text);
-            if let Some(excerpt) = cursor.item() {
-                if excerpt.id == *excerpt_id && excerpt.buffer_id == buffer_id {
-                    let excerpt_buffer_start = excerpt.range.start.summary::<D>(&excerpt.buffer);
-                    summaries.extend(
-                        excerpt
-                            .buffer
-                            .summaries_for_anchors::<D, _>(excerpt_anchors)
-                            .map(move |summary| {
-                                let mut position = position.clone();
-                                let excerpt_buffer_start = excerpt_buffer_start.clone();
-                                if summary > excerpt_buffer_start {
-                                    position.add_assign(&(summary - excerpt_buffer_start));
-                                }
-                                position
-                            }),
-                    );
-                    continue;
-                }
-            }
-
-            summaries.extend(excerpt_anchors.map(|_| position.clone()));
-        }
-
-        summaries
     }
 
     pub fn anchor_before<T: ToOffset>(&self, position: T) -> Anchor {
@@ -1685,12 +1685,12 @@ impl MultiBufferSnapshot {
     fn buffer_snapshot_for_excerpt<'a>(
         &'a self,
         excerpt_id: &'a ExcerptId,
-    ) -> Option<&'a BufferSnapshot> {
+    ) -> Option<(usize, &'a BufferSnapshot)> {
         let mut cursor = self.excerpts.cursor::<Option<&ExcerptId>>();
         cursor.seek(&Some(excerpt_id), Bias::Left, &());
         if let Some(excerpt) = cursor.item() {
             if excerpt.id == *excerpt_id {
-                return Some(&excerpt.buffer);
+                return Some((excerpt.buffer_id, &excerpt.buffer));
             }
         }
         None
@@ -2637,7 +2637,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    fn test_random_excerpts(cx: &mut MutableAppContext, mut rng: StdRng) {
+    fn test_random_multibuffer(cx: &mut MutableAppContext, mut rng: StdRng) {
         let operations = env::var("OPERATIONS")
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
@@ -2646,6 +2646,7 @@ mod tests {
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
         let mut excerpt_ids = Vec::new();
         let mut expected_excerpts = Vec::<(ModelHandle<Buffer>, Range<text::Anchor>)>::new();
+        let mut anchors = Vec::new();
         let mut old_versions = Vec::new();
 
         for _ in 0..operations {
@@ -2677,6 +2678,15 @@ mod tests {
                     multibuffer.update(cx, |multibuffer, cx| {
                         multibuffer.remove_excerpts(&ids_to_remove, cx)
                     });
+                }
+                30..=39 if !expected_excerpts.is_empty() => {
+                    let multibuffer = multibuffer.read(cx).read(cx);
+                    let offset =
+                        multibuffer.clip_offset(rng.gen_range(0..=multibuffer.len()), Bias::Left);
+                    let bias = if rng.gen() { Bias::Left } else { Bias::Right };
+                    log::info!("Creating anchor at {} with bias {:?}", offset, bias);
+                    anchors.push(multibuffer.anchor_at(offset, bias));
+                    anchors.sort_by(|a, b| a.cmp(&b, &multibuffer).unwrap());
                 }
                 _ => {
                     let buffer_handle = if buffers.is_empty() || rng.gen_bool(0.4) {
@@ -2955,6 +2965,17 @@ mod tests {
                     expected_summary,
                     "incorrect summary for range {:?}",
                     start_ix..end_ix
+                );
+            }
+
+            // Anchor resolution
+            for (anchor, resolved_offset) in anchors
+                .iter()
+                .zip(snapshot.summaries_for_anchors::<usize, _>(&anchors))
+            {
+                assert_eq!(
+                    snapshot.summary_for_anchor::<usize>(anchor),
+                    resolved_offset
                 );
             }
 
