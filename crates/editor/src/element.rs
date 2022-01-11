@@ -624,6 +624,7 @@ impl EditorElement {
         rows: Range<u32>,
         snapshot: &EditorSnapshot,
         width: f32,
+        line_number_x: f32,
         text_x: f32,
         line_height: f32,
         style: &EditorStyle,
@@ -647,7 +648,7 @@ impl EditorElement {
                         .x_for_index(block.column() as usize)
                 };
 
-                let mut element = block.render(&BlockContext { cx, anchor_x });
+                let mut element = block.render(&BlockContext { cx, anchor_x, line_number_x, });
                 element.layout(
                     SizeConstraint {
                         min: Vector2F::zero(),
@@ -812,6 +813,7 @@ impl Element for EditorElement {
             start_row..end_row,
             &snapshot,
             size.x(),
+            gutter_padding,
             gutter_width + text_offset.x(),
             line_height,
             &style,

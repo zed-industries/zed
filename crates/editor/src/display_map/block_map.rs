@@ -69,6 +69,7 @@ where
 pub struct BlockContext<'a> {
     pub cx: &'a AppContext,
     pub anchor_x: f32,
+    pub line_number_x: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -939,7 +940,7 @@ mod tests {
                     start_row..start_row + block.height(),
                     block.column(),
                     block
-                        .render(&BlockContext { cx, anchor_x: 0. })
+                        .render(&BlockContext { cx, anchor_x: 0., line_number_x: 0., })
                         .name()
                         .unwrap()
                         .to_string(),

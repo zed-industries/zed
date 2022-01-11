@@ -1,10 +1,10 @@
 pub mod items;
 
 use anyhow::Result;
-use collections::{HashMap, HashSet, BTreeSet};
+use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
-    context_header_renderer, diagnostic_block_renderer, diagnostic_header_renderer,
-    display_map::{BlockDisposition, BlockId, BlockProperties},
+    diagnostic_block_renderer, diagnostic_style,
+    display_map::{BlockDisposition, BlockId, BlockProperties, RenderBlock},
     items::BufferItemHandle,
     Autoscroll, BuildSettings, Editor, ExcerptId, ExcerptProperties, MultiBuffer, ToOffset,
 };
@@ -12,10 +12,10 @@ use gpui::{
     action, elements::*, keymap::Binding, AppContext, Entity, ModelHandle, MutableAppContext,
     RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use language::{Bias, Buffer, DiagnosticEntry, Point, Selection, SelectionGoal};
+use language::{Bias, Buffer, Diagnostic, DiagnosticEntry, Point, Selection, SelectionGoal};
 use postage::watch;
 use project::{Project, ProjectPath, WorktreeId};
-use std::{cmp::Ordering, mem, ops::Range};
+use std::{cmp::Ordering, mem, ops::Range, sync::Arc};
 use util::TryFutureExt;
 use workspace::Workspace;
 
@@ -48,10 +48,16 @@ struct ProjectDiagnosticsEditor {
     workspace: WeakViewHandle<Workspace>,
     editor: ViewHandle<Editor>,
     excerpts: ModelHandle<MultiBuffer>,
-    path_states: Vec<(ProjectPath, Vec<DiagnosticGroupState>)>,
+    path_states: Vec<PathState>,
     paths_to_update: HashMap<WorktreeId, BTreeSet<ProjectPath>>,
     build_settings: BuildSettings,
     settings: watch::Receiver<workspace::Settings>,
+}
+
+struct PathState {
+    path: ProjectPath,
+    header: Option<BlockId>,
+    diagnostic_groups: Vec<DiagnosticGroupState>,
 }
 
 struct DiagnosticGroupState {
@@ -208,11 +214,7 @@ impl ProjectDiagnosticsEditor {
         }
     }
 
-    fn update_excerpts(
-        &self,
-        paths: BTreeSet<ProjectPath>,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn update_excerpts(&self, paths: BTreeSet<ProjectPath>, cx: &mut ViewContext<Self>) {
         let project = self.model.read(cx).project.clone();
         cx.spawn(|this, mut cx| {
             async move {
@@ -220,9 +222,7 @@ impl ProjectDiagnosticsEditor {
                     let buffer = project
                         .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))
                         .await?;
-                    this.update(&mut cx, |view, cx| {
-                        view.populate_excerpts(path, buffer, cx)
-                    })
+                    this.update(&mut cx, |view, cx| view.populate_excerpts(path, buffer, cx))
                 }
                 Result::<_, anyhow::Error>::Ok(())
             }
@@ -239,32 +239,39 @@ impl ProjectDiagnosticsEditor {
     ) {
         let was_empty = self.path_states.is_empty();
         let snapshot = buffer.read(cx).snapshot();
-        let path_ix = match self
-            .path_states
-            .binary_search_by_key(&&path, |e| &e.0)
-        {
+        let path_ix = match self.path_states.binary_search_by_key(&&path, |e| &e.path) {
             Ok(ix) => ix,
             Err(ix) => {
-                self.path_states
-                    .insert(ix, (path.clone(), Default::default()));
+                self.path_states.insert(
+                    ix,
+                    PathState {
+                        path: path.clone(),
+                        header: None,
+                        diagnostic_groups: Default::default(),
+                    },
+                );
                 ix
             }
         };
 
         let mut prev_excerpt_id = if path_ix > 0 {
-            let prev_path_last_group = &self.path_states[path_ix - 1].1.last().unwrap();
+            let prev_path_last_group = &self.path_states[path_ix - 1]
+                .diagnostic_groups
+                .last()
+                .unwrap();
             prev_path_last_group.excerpts.last().unwrap().clone()
         } else {
             ExcerptId::min()
         };
 
-        let groups = &mut self.path_states[path_ix].1;
+        let path_state = &mut self.path_states[path_ix];
         let mut groups_to_add = Vec::new();
         let mut group_ixs_to_remove = Vec::new();
         let mut blocks_to_add = Vec::new();
         let mut blocks_to_remove = HashSet::default();
+        let mut first_excerpt_id = None;
         let excerpts_snapshot = self.excerpts.update(cx, |excerpts, excerpts_cx| {
-            let mut old_groups = groups.iter().enumerate().peekable();
+            let mut old_groups = path_state.diagnostic_groups.iter().enumerate().peekable();
             let mut new_groups = snapshot
                 .diagnostic_groups()
                 .into_iter()
@@ -273,17 +280,17 @@ impl ProjectDiagnosticsEditor {
 
             loop {
                 let mut to_insert = None;
-                let mut to_invalidate = None;
+                let mut to_remove = None;
                 let mut to_keep = None;
                 match (old_groups.peek(), new_groups.peek()) {
                     (None, None) => break,
                     (None, Some(_)) => to_insert = new_groups.next(),
-                    (Some(_), None) => to_invalidate = old_groups.next(),
+                    (Some(_), None) => to_remove = old_groups.next(),
                     (Some((_, old_group)), Some(new_group)) => {
                         let old_primary = &old_group.primary_diagnostic;
                         let new_primary = &new_group.entries[new_group.primary_ix];
                         match compare_diagnostics(old_primary, new_primary, &snapshot) {
-                            Ordering::Less => to_invalidate = old_groups.next(),
+                            Ordering::Less => to_remove = old_groups.next(),
                             Ordering::Equal => {
                                 to_keep = old_groups.next();
                                 new_groups.next();
@@ -331,6 +338,7 @@ impl ProjectDiagnosticsEditor {
                             );
 
                             prev_excerpt_id = excerpt_id.clone();
+                            first_excerpt_id.get_or_insert_with(|| prev_excerpt_id.clone());
                             group_state.excerpts.push(excerpt_id.clone());
                             let header_position = (excerpt_id.clone(), language::Anchor::min());
 
@@ -343,9 +351,8 @@ impl ProjectDiagnosticsEditor {
                                 group_state.block_count += 1;
                                 blocks_to_add.push(BlockProperties {
                                     position: header_position,
-                                    height: 3,
+                                    height: 2,
                                     render: diagnostic_header_renderer(
-                                        buffer.clone(),
                                         header,
                                         true,
                                         self.build_settings.clone(),
@@ -394,12 +401,13 @@ impl ProjectDiagnosticsEditor {
                     }
 
                     groups_to_add.push(group_state);
-                } else if let Some((group_ix, group_state)) = to_invalidate {
+                } else if let Some((group_ix, group_state)) = to_remove {
                     excerpts.remove_excerpts(group_state.excerpts.iter(), excerpts_cx);
                     group_ixs_to_remove.push(group_ix);
                     blocks_to_remove.extend(group_state.blocks.iter().copied());
                 } else if let Some((_, group)) = to_keep {
                     prev_excerpt_id = group.excerpts.last().unwrap().clone();
+                    first_excerpt_id.get_or_insert_with(|| prev_excerpt_id.clone());
                 }
             }
 
@@ -407,32 +415,43 @@ impl ProjectDiagnosticsEditor {
         });
 
         self.editor.update(cx, |editor, cx| {
+            blocks_to_remove.extend(path_state.header);
             editor.remove_blocks(blocks_to_remove, cx);
+            let header_block = first_excerpt_id.map(|excerpt_id| BlockProperties {
+                position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, language::Anchor::min()),
+                height: 2,
+                render: path_header_renderer(buffer, self.build_settings.clone()),
+                disposition: BlockDisposition::Above,
+            });
             let mut block_ids = editor
                 .insert_blocks(
-                    blocks_to_add.into_iter().map(|block| {
-                        let (excerpt_id, text_anchor) = block.position;
-                        BlockProperties {
-                            position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor),
-                            height: block.height,
-                            render: block.render,
-                            disposition: block.disposition,
-                        }
-                    }),
+                    header_block
+                        .into_iter()
+                        .chain(blocks_to_add.into_iter().map(|block| {
+                            let (excerpt_id, text_anchor) = block.position;
+                            BlockProperties {
+                                position: excerpts_snapshot
+                                    .anchor_in_excerpt(excerpt_id, text_anchor),
+                                height: block.height,
+                                render: block.render,
+                                disposition: block.disposition,
+                            }
+                        })),
                     cx,
                 )
                 .into_iter();
 
+            path_state.header = block_ids.next();
             for group_state in &mut groups_to_add {
                 group_state.blocks = block_ids.by_ref().take(group_state.block_count).collect();
             }
         });
 
         for ix in group_ixs_to_remove.into_iter().rev() {
-            groups.remove(ix);
+            path_state.diagnostic_groups.remove(ix);
         }
-        groups.extend(groups_to_add);
-        groups.sort_unstable_by(|a, b| {
+        path_state.diagnostic_groups.extend(groups_to_add);
+        path_state.diagnostic_groups.sort_unstable_by(|a, b| {
             let range_a = &a.primary_diagnostic.range;
             let range_b = &b.primary_diagnostic.range;
             range_a
@@ -442,7 +461,7 @@ impl ProjectDiagnosticsEditor {
                 .then_with(|| range_a.end.cmp(&range_b.end, &snapshot).unwrap())
         });
 
-        if groups.is_empty() {
+        if path_state.diagnostic_groups.is_empty() {
             self.path_states.remove(path_ix);
         }
 
@@ -451,7 +470,7 @@ impl ProjectDiagnosticsEditor {
             let mut selections;
             let new_excerpt_ids_by_selection_id;
             if was_empty {
-                groups = self.path_states.first()?.1.as_slice();
+                groups = self.path_states.first()?.diagnostic_groups.as_slice();
                 new_excerpt_ids_by_selection_id = [(0, ExcerptId::min())].into_iter().collect();
                 selections = vec![Selection {
                     id: 0,
@@ -461,7 +480,7 @@ impl ProjectDiagnosticsEditor {
                     goal: SelectionGoal::None,
                 }];
             } else {
-                groups = self.path_states.get(path_ix)?.1.as_slice();
+                groups = self.path_states.get(path_ix)?.diagnostic_groups.as_slice();
                 new_excerpt_ids_by_selection_id = editor.refresh_selections(cx);
                 selections = editor.local_selections::<usize>(cx);
             }
@@ -573,6 +592,57 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
             Event::Saved | Event::Dirtied | Event::FileHandleChanged
         )
     }
+}
+
+fn path_header_renderer(buffer: ModelHandle<Buffer>, build_settings: BuildSettings) -> RenderBlock {
+    Arc::new(move |cx| {
+        let settings = build_settings(cx);
+        let file_path = if let Some(file) = buffer.read(&**cx).file() {
+            file.path().to_string_lossy().to_string()
+        } else {
+            "untitled".to_string()
+        };
+        Label::new(file_path, settings.style.text.clone())
+            .aligned()
+            .left()
+            .contained()
+            .with_padding_left(cx.line_number_x)
+            .expanded()
+            .boxed()
+    })
+}
+
+fn diagnostic_header_renderer(
+    diagnostic: Diagnostic,
+    is_valid: bool,
+    build_settings: BuildSettings,
+) -> RenderBlock {
+    Arc::new(move |cx| {
+        let settings = build_settings(cx);
+        let mut text_style = settings.style.text.clone();
+        let diagnostic_style = diagnostic_style(diagnostic.severity, is_valid, &settings.style);
+        text_style.color = diagnostic_style.text;
+        Text::new(diagnostic.message.clone(), text_style)
+            .with_soft_wrap(false)
+            .aligned()
+            .left()
+            .contained()
+            .with_style(diagnostic_style.header)
+            .with_padding_left(cx.line_number_x)
+            .expanded()
+            .boxed()
+    })
+}
+
+fn context_header_renderer(build_settings: BuildSettings) -> RenderBlock {
+    Arc::new(move |cx| {
+        let settings = build_settings(cx);
+        let text_style = settings.style.text.clone();
+        Label::new("…".to_string(), text_style)
+            .contained()
+            .with_padding_left(cx.line_number_x)
+            .boxed()
+    })
 }
 
 fn compare_diagnostics<L: language::ToOffset, R: language::ToOffset>(
