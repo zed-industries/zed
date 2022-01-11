@@ -1216,7 +1216,6 @@ impl Editor {
             }
         }
 
-        let mut new_selections = Vec::with_capacity(old_selections.len());
         self.buffer.update(cx, |buffer, cx| {
             let mut delta = 0_isize;
             let mut pending_edit: Option<PendingEdit> = None;
@@ -1259,31 +1258,27 @@ impl Editor {
             }
             buffer.edit_with_autoindent(pending.ranges, new_text, cx);
 
-            let mut delta = 0_isize;
-            new_selections.extend(old_selections.into_iter().map(
-                |(id, range, indent, insert_extra_newline)| {
-                    let start = (range.start as isize + delta) as usize;
-                    let end = (range.end as isize + delta) as usize;
-                    let text_before_cursor_len = indent as usize + 1;
-                    let cursor = start + text_before_cursor_len;
-                    let text_len = if insert_extra_newline {
-                        text_before_cursor_len * 2
-                    } else {
-                        text_before_cursor_len
-                    };
-                    delta += text_len as isize - (end - start) as isize;
-                    Selection {
-                        id,
-                        start: cursor,
-                        end: cursor,
-                        reversed: false,
-                        goal: SelectionGoal::None,
+            let buffer = buffer.read(cx);
+            self.selections = self
+                .selections
+                .iter()
+                .cloned()
+                .zip(old_selections)
+                .map(|(mut new_selection, (_, _, _, insert_extra_newline))| {
+                    if insert_extra_newline {
+                        let mut cursor = new_selection.start.to_point(&buffer);
+                        cursor.row -= 1;
+                        cursor.column = buffer.line_len(cursor.row);
+                        let anchor = buffer.anchor_after(cursor);
+                        new_selection.start = anchor.clone();
+                        new_selection.end = anchor;
                     }
-                },
-            ))
+                    new_selection
+                })
+                .collect();
         });
 
-        self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
+        self.request_autoscroll(Autoscroll::Fit, cx);
         self.end_transaction(cx);
 
         #[derive(Default)]
@@ -6186,7 +6181,17 @@ mod tests {
                     DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
                     DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
                 ]
-            )
+            );
+
+            view.newline(&Newline, cx);
+            assert_eq!(view.text(cx), "aaaa\nbX\nbbX\nb\nbX\nbbX\nb\ncccc");
+            assert_eq!(
+                view.selected_display_ranges(cx),
+                &[
+                    DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
+                    DisplayPoint::new(6, 0)..DisplayPoint::new(6, 0),
+                ]
+            );
         });
     }
 
