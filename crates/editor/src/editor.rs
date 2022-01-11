@@ -3691,6 +3691,7 @@ impl EditorSettings {
                     selection: Default::default(),
                     guest_selections: Default::default(),
                     syntax: Default::default(),
+                    diagnostic_path_header: Default::default(),
                     error_diagnostic: Default::default(),
                     invalid_error_diagnostic: Default::default(),
                     warning_diagnostic: Default::default(),

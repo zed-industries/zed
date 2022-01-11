@@ -602,10 +602,14 @@ fn path_header_renderer(buffer: ModelHandle<Buffer>, build_settings: BuildSettin
         } else {
             "untitled".to_string()
         };
-        Label::new(file_path, settings.style.text.clone())
+        let mut text_style = settings.style.text.clone();
+        let style = settings.style.diagnostic_path_header;
+        text_style.color = style.text;
+        Label::new(file_path, text_style)
             .aligned()
             .left()
             .contained()
+            .with_style(style.header)
             .with_padding_left(cx.line_number_x)
             .expanded()
             .boxed()
