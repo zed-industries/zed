@@ -192,7 +192,9 @@ impl ProjectDiagnosticsEditor {
             workspace.update(cx, |workspace, cx| {
                 for (buffer, ranges) in new_selections_by_buffer {
                     let buffer = BufferItemHandle(buffer);
-                    workspace.activate_pane_for_item(&buffer, cx);
+                    if !workspace.activate_pane_for_item(&buffer, cx) {
+                        workspace.activate_next_pane(cx);
+                    }
                     let editor = workspace
                         .open_item(buffer, cx)
                         .to_any()
@@ -559,6 +561,10 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         _: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         unreachable!()
+    }
+
+    fn should_activate_item_on_event(event: &Self::Event) -> bool {
+        Editor::should_activate_item_on_event(event)
     }
 
     fn should_update_tab_on_event(event: &Event) -> bool {
