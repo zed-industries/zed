@@ -346,6 +346,10 @@ impl Client {
         }
     }
 
+    pub fn has_keychain_credentials(&self, cx: &AsyncAppContext) -> bool {
+        read_credentials_from_keychain(cx).is_some()
+    }
+
     #[async_recursion(?Send)]
     pub async fn authenticate_and_connect(
         self: &Arc<Self>,

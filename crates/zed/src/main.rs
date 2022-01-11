@@ -61,6 +61,16 @@ fn main() {
         chat_panel::init(cx);
         project_panel::init(cx);
         diagnostics::init(cx);
+        cx.spawn({
+            let client = client.clone();
+            |cx| async move {
+                if client.has_keychain_credentials(&cx) {
+                    client.authenticate_and_connect(&cx).await?;
+                }
+                Ok::<_, anyhow::Error>(())
+            }
+        })
+        .detach_and_log_err(cx);
 
         let app_state = Arc::new(AppState {
             languages: languages.clone(),
