@@ -711,7 +711,7 @@ impl Worktree {
         let mut primary_diagnostic_group_ids = HashMap::default();
         let mut sources_by_group_id = HashMap::default();
         let mut supporting_diagnostic_severities = HashMap::default();
-        for diagnostic in dbg!(&params.diagnostics) {
+        for diagnostic in &params.diagnostics {
             let source = diagnostic.source.as_ref();
             let code = diagnostic.code.as_ref().map(|code| match code {
                 lsp::NumberOrString::Number(code) => code.to_string(),

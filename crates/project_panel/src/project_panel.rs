@@ -524,7 +524,7 @@ impl ProjectPanel {
             if is_dir {
                 cx.dispatch_action(ToggleExpanded(entry))
             } else {
-                cx.dispatch_action(Open(dbg!(entry)))
+                cx.dispatch_action(Open(entry))
             }
         })
         .with_cursor_style(CursorStyle::PointingHand)
