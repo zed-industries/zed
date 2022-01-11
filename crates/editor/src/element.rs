@@ -417,7 +417,7 @@ impl EditorElement {
 
     fn paint_blocks(
         &mut self,
-        text_bounds: RectF,
+        bounds: RectF,
         visible_bounds: RectF,
         layout: &mut LayoutState,
         cx: &mut PaintContext,
@@ -427,7 +427,7 @@ impl EditorElement {
         let scroll_top = scroll_position.y() * layout.line_height;
 
         for (row, element) in &mut layout.blocks {
-            let origin = text_bounds.origin()
+            let origin = bounds.origin()
                 + vec2f(-scroll_left, *row as f32 * layout.line_height - scroll_top);
             element.paint(origin, visible_bounds, cx);
         }
@@ -623,7 +623,8 @@ impl EditorElement {
         &mut self,
         rows: Range<u32>,
         snapshot: &EditorSnapshot,
-        text_width: f32,
+        width: f32,
+        text_x: f32,
         line_height: f32,
         style: &EditorStyle,
         line_layouts: &[text_layout::Line],
@@ -638,7 +639,7 @@ impl EditorElement {
                     .to_display_point(snapshot)
                     .row();
 
-                let anchor_x = if rows.contains(&anchor_row) {
+                let anchor_x = text_x + if rows.contains(&anchor_row) {
                     line_layouts[(anchor_row - rows.start) as usize]
                         .x_for_index(block.column() as usize)
                 } else {
@@ -650,7 +651,7 @@ impl EditorElement {
                 element.layout(
                     SizeConstraint {
                         min: Vector2F::zero(),
-                        max: vec2f(text_width, block.height() as f32 * line_height),
+                        max: vec2f(width, block.height() as f32 * line_height),
                     },
                     cx,
                 );
@@ -810,7 +811,8 @@ impl Element for EditorElement {
         let blocks = self.layout_blocks(
             start_row..end_row,
             &snapshot,
-            text_size.x(),
+            size.x(),
+            gutter_width + text_offset.x(),
             line_height,
             &style,
             &line_layouts,
@@ -886,7 +888,7 @@ impl Element for EditorElement {
                 self.paint_gutter(gutter_bounds, visible_bounds, layout, cx);
             }
             self.paint_text(text_bounds, visible_bounds, layout, cx);
-            self.paint_blocks(text_bounds, visible_bounds, layout, cx);
+            self.paint_blocks(bounds, visible_bounds, layout, cx);
 
             cx.scene.pop_layer();
 
