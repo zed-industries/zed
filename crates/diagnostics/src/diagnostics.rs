@@ -829,11 +829,13 @@ mod tests {
                 editor.text(),
                 concat!(
                     //
-                    // main.rs, diagnostic group 1
+                    // main.rs
                     //
-                    "\n", // padding
-                    "\n", // primary message
                     "\n", // filename
+                    "\n", // padding
+                    // diagnostic group 1
+                    "\n", // primary message
+                    "\n", // padding
                     "    let x = vec![];\n",
                     "    let y = vec![];\n",
                     "\n", // supporting diagnostic
@@ -845,12 +847,9 @@ mod tests {
                     "    c(y);\n",
                     "\n", // supporting diagnostic
                     "    d(x);\n",
-                    //
-                    // main.rs, diagnostic group 2
-                    //
-                    "\n", // padding
+                    // diagnostic group 2
                     "\n", // primary message
-                    "\n", // filename
+                    "\n", // padding
                     "fn main() {\n",
                     "    let x = vec![];\n",
                     "\n", // supporting diagnostic
@@ -869,7 +868,7 @@ mod tests {
             view.editor.update(cx, |editor, cx| {
                 assert_eq!(
                     editor.selected_display_ranges(cx),
-                    [DisplayPoint::new(11, 6)..DisplayPoint::new(11, 6)]
+                    [DisplayPoint::new(12, 6)..DisplayPoint::new(12, 6)]
                 );
             });
         });
@@ -908,18 +907,22 @@ mod tests {
                     //
                     // a.rs
                     //
-                    "\n", // padding
-                    "\n", // primary message
                     "\n", // filename
+                    "\n", // padding
+                    // diagnostic group 1
+                    "\n", // primary message
+                    "\n", // padding
                     "const a: i32 = 'a';\n",
                     "\n", // supporting diagnostic
                     "\n", // context line
                     //
-                    // main.rs, diagnostic group 1
+                    // main.rs
                     //
-                    "\n", // padding
-                    "\n", // primary message
                     "\n", // filename
+                    "\n", // padding
+                    // diagnostic group 1
+                    "\n", // primary message
+                    "\n", // padding
                     "    let x = vec![];\n",
                     "    let y = vec![];\n",
                     "\n", // supporting diagnostic
@@ -931,10 +934,7 @@ mod tests {
                     "    c(y);\n",
                     "\n", // supporting diagnostic
                     "    d(x);\n",
-                    //
-                    // main.rs, diagnostic group 2
-                    //
-                    "\n", // padding
+                    // diagnostic group 2
                     "\n", // primary message
                     "\n", // filename
                     "fn main() {\n",
