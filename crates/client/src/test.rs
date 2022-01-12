@@ -72,8 +72,8 @@ impl FakeServer {
         server
     }
 
-    pub async fn disconnect(&self) {
-        self.peer.disconnect(self.connection_id()).await;
+    pub fn disconnect(&self) {
+        self.peer.disconnect(self.connection_id());
         self.connection_id.lock().take();
         self.incoming.lock().take();
     }

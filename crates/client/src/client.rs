@@ -661,9 +661,9 @@ impl Client {
         })
     }
 
-    pub async fn disconnect(self: &Arc<Self>, cx: &AsyncAppContext) -> Result<()> {
+    pub fn disconnect(self: &Arc<Self>, cx: &AsyncAppContext) -> Result<()> {
         let conn_id = self.connection_id()?;
-        self.peer.disconnect(conn_id).await;
+        self.peer.disconnect(conn_id);
         self.set_status(Status::SignedOut, cx);
         Ok(())
     }
@@ -764,7 +764,7 @@ mod tests {
         let ping = server.receive::<proto::Ping>().await.unwrap();
         server.respond(ping.receipt(), proto::Ack {}).await;
 
-        client.disconnect(&cx.to_async()).await.unwrap();
+        client.disconnect(&cx.to_async()).unwrap();
         assert!(server.receive::<proto::Ping>().await.is_err());
     }
 
@@ -783,7 +783,7 @@ mod tests {
         assert_eq!(server.auth_count(), 1);
 
         server.forbid_connections();
-        server.disconnect().await;
+        server.disconnect();
         while !matches!(status.recv().await, Some(Status::ReconnectionError { .. })) {}
 
         server.allow_connections();
@@ -792,7 +792,7 @@ mod tests {
         assert_eq!(server.auth_count(), 1); // Client reused the cached credentials when reconnecting
 
         server.forbid_connections();
-        server.disconnect().await;
+        server.disconnect();
         while !matches!(status.recv().await, Some(Status::ReconnectionError { .. })) {}
 
         // Clear cached credentials after authentication fails

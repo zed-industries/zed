@@ -174,7 +174,7 @@ impl Server {
     }
 
     async fn sign_out(self: &mut Arc<Self>, connection_id: ConnectionId) -> tide::Result<()> {
-        self.peer.disconnect(connection_id).await;
+        self.peer.disconnect(connection_id);
         let removed_connection = self.state_mut().remove_connection(connection_id)?;
 
         for (project_id, project) in removed_connection.hosted_projects {
@@ -1801,7 +1801,7 @@ mod tests {
             .await;
 
         // Drop client B's connection and ensure client A observes client B leaving the worktree.
-        client_b.disconnect(&cx_b.to_async()).await.unwrap();
+        client_b.disconnect(&cx_b.to_async()).unwrap();
         project_a
             .condition(&cx_a, |p, _| p.collaborators().len() == 0)
             .await;
@@ -2833,7 +2833,7 @@ mod tests {
 
     impl Drop for TestServer {
         fn drop(&mut self) {
-            task::block_on(self.peer.reset());
+            self.peer.reset();
         }
     }
 
