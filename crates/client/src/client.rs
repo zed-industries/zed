@@ -691,6 +691,14 @@ impl Client {
     ) -> impl Future<Output = Result<()>> {
         self.peer.respond(receipt, response)
     }
+
+    pub fn respond_with_error<T: RequestMessage>(
+        &self,
+        receipt: Receipt<T>,
+        error: proto::Error,
+    ) -> impl Future<Output = Result<()>> {
+        self.peer.respond_with_error(receipt, error)
+    }
 }
 
 fn read_credentials_from_keychain(cx: &AsyncAppContext) -> Option<Credentials> {

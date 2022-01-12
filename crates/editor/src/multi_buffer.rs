@@ -798,6 +798,20 @@ impl MultiBuffer {
         cx.emit(event.clone());
     }
 
+    pub fn format(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let mut format_tasks = Vec::new();
+        for BufferState { buffer, .. } in self.buffers.borrow().values() {
+            format_tasks.push(buffer.update(cx, |buffer, cx| buffer.format(cx)));
+        }
+
+        cx.spawn(|_, _| async move {
+            for format in format_tasks {
+                format.await?;
+            }
+            Ok(())
+        })
+    }
+
     pub fn save(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<()>>> {
         let mut save_tasks = Vec::new();
         for BufferState { buffer, .. } in self.buffers.borrow().values() {

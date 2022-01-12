@@ -79,6 +79,7 @@ impl Server {
             .add_handler(Server::update_buffer)
             .add_handler(Server::buffer_saved)
             .add_handler(Server::save_buffer)
+            .add_handler(Server::format_buffer)
             .add_handler(Server::get_channels)
             .add_handler(Server::get_users)
             .add_handler(Server::join_channel)
@@ -656,6 +657,30 @@ impl Server {
             }
         })
         .await?;
+
+        Ok(())
+    }
+
+    async fn format_buffer(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::FormatBuffer>,
+    ) -> tide::Result<()> {
+        let host;
+        {
+            let state = self.state();
+            let project = state
+                .read_project(request.payload.project_id, request.sender_id)
+                .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+            host = project.host_connection_id;
+        }
+
+        let sender = request.sender_id;
+        let receipt = request.receipt();
+        let response = self
+            .peer
+            .forward_request(sender, host, request.payload.clone())
+            .await?;
+        self.peer.respond(receipt, response).await?;
 
         Ok(())
     }
@@ -1999,6 +2024,111 @@ mod tests {
                 ]
             );
         });
+    }
+
+    #[gpui::test(iterations = 1, seed = 2)]
+    async fn test_formatting_buffer(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+        cx_a.foreground().forbid_parking();
+        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(FakeFs::new());
+
+        // Set up a fake language server.
+        let (language_server_config, mut fake_language_server) =
+            LanguageServerConfig::fake(cx_a.background()).await;
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Rust".to_string(),
+                    path_suffixes: vec!["rs".to_string()],
+                    language_server: Some(language_server_config),
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )));
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground()).await;
+        let client_a = server.create_client(&mut cx_a, "user_a").await;
+        let client_b = server.create_client(&mut cx_b, "user_b").await;
+
+        // Share a project as client A
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "a.rs": "let one = two",
+            }),
+        )
+        .await;
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", cx))
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let project_id = project_a
+            .update(&mut cx_a, |project, _| project.next_remote_id())
+            .await;
+        project_a
+            .update(&mut cx_a, |project, cx| project.share(cx))
+            .await
+            .unwrap();
+
+        // Join the worktree as client B.
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+
+        // Open the file to be formatted on client B.
+        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
+        let buffer_b = cx_b
+            .background()
+            .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.rs", cx)))
+            .await
+            .unwrap();
+
+        let format = buffer_b.update(&mut cx_b, |buffer, cx| buffer.format(cx));
+        let (request_id, _) = fake_language_server
+            .receive_request::<lsp::request::Formatting>()
+            .await;
+        fake_language_server
+            .respond(
+                request_id,
+                Some(vec![
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 4)),
+                        new_text: "h".to_string(),
+                    },
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 7), lsp::Position::new(0, 7)),
+                        new_text: "y".to_string(),
+                    },
+                ]),
+            )
+            .await;
+        format.await.unwrap();
+        assert_eq!(
+            buffer_b.read_with(&cx_b, |buffer, _| buffer.text()),
+            "let honey = two"
+        );
     }
 
     #[gpui::test]

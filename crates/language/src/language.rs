@@ -15,7 +15,7 @@ use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Deserialize;
-use std::{path::Path, str, sync::Arc};
+use std::{ops::Range, path::Path, str, sync::Arc};
 use theme::SyntaxTheme;
 use tree_sitter::{self, Query};
 pub use tree_sitter::{Parser, Tree};
@@ -31,6 +31,10 @@ lazy_static! {
         },
         None,
     ));
+}
+
+pub trait ToPointUtf16 {
+    fn to_point_utf16(self) -> PointUtf16;
 }
 
 #[derive(Default, Deserialize)]
@@ -243,4 +247,16 @@ impl LanguageServerConfig {
             fake,
         )
     }
+}
+
+impl ToPointUtf16 for lsp::Position {
+    fn to_point_utf16(self) -> PointUtf16 {
+        PointUtf16::new(self.line, self.character)
+    }
+}
+
+pub fn range_from_lsp(range: lsp::Range) -> Range<PointUtf16> {
+    let start = PointUtf16::new(range.start.line, range.start.character);
+    let end = PointUtf16::new(range.end.line, range.end.character);
+    start..end
 }

@@ -15,8 +15,8 @@ use gpui::{
     Task, UpgradeModelHandle, WeakModelHandle,
 };
 use language::{
-    Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, File as _, Language, LanguageRegistry,
-    Operation, PointUtf16, Rope,
+    range_from_lsp, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, File as _, Language,
+    LanguageRegistry, Operation, PointUtf16, Rope,
 };
 use lazy_static::lazy_static;
 use lsp::LanguageServer;
@@ -34,7 +34,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt,
     future::Future,
-    ops::{Deref, Range},
+    ops::Deref,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -580,6 +580,49 @@ impl Worktree {
         Ok(())
     }
 
+    pub fn handle_format_buffer(
+        &mut self,
+        envelope: TypedEnvelope<proto::FormatBuffer>,
+        rpc: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let sender_id = envelope.original_sender_id()?;
+        let this = self.as_local().unwrap();
+        let buffer = this
+            .shared_buffers
+            .get(&sender_id)
+            .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
+            .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
+
+        let receipt = envelope.receipt();
+        cx.spawn(|_, mut cx| async move {
+            let format = buffer.update(&mut cx, |buffer, cx| buffer.format(cx)).await;
+            // We spawn here in order to enqueue the sending of `Ack` *after* transmission of edits
+            // associated with formatting.
+            cx.spawn(|_| async move {
+                dbg!("responding");
+                match format {
+                    Ok(()) => rpc.respond(receipt, proto::Ack {}).await?,
+                    Err(error) => {
+                        rpc.respond_with_error(
+                            receipt,
+                            proto::Error {
+                                message: error.to_string(),
+                            },
+                        )
+                        .await?
+                    }
+                }
+                Ok::<_, anyhow::Error>(())
+            })
+            .await
+            .log_err();
+        })
+        .detach();
+
+        Ok(())
+    }
+
     fn poll_snapshot(&mut self, cx: &mut ModelContext<Self>) {
         match self {
             Self::Local(worktree) => {
@@ -880,6 +923,7 @@ impl Worktree {
             )),
         } {
             cx.spawn(|worktree, mut cx| async move {
+                dbg!(&operation);
                 if let Err(error) = rpc
                     .request(proto::UpdateBuffer {
                         project_id,
@@ -2259,6 +2303,27 @@ impl language::File for File {
         )
     }
 
+    fn format_remote(
+        &self,
+        buffer_id: u64,
+        cx: &mut MutableAppContext,
+    ) -> Option<Task<Result<()>>> {
+        let worktree = self.worktree.read(cx);
+        let worktree_id = worktree.id().to_proto();
+        let worktree = worktree.as_remote()?;
+        let rpc = worktree.client.clone();
+        let project_id = worktree.project_id;
+        Some(cx.foreground().spawn(async move {
+            rpc.request(proto::FormatBuffer {
+                project_id,
+                worktree_id,
+                buffer_id,
+            })
+            .await?;
+            Ok(())
+        }))
+    }
+
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext) {
         self.worktree.update(cx, |worktree, cx| {
             worktree.send_buffer_update(buffer_id, operation, cx);
@@ -3178,22 +3243,6 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
             ))
         }
     }
-}
-
-trait ToPointUtf16 {
-    fn to_point_utf16(self) -> PointUtf16;
-}
-
-impl ToPointUtf16 for lsp::Position {
-    fn to_point_utf16(self) -> PointUtf16 {
-        PointUtf16::new(self.line, self.character)
-    }
-}
-
-fn range_from_lsp(range: lsp::Range) -> Range<PointUtf16> {
-    let start = PointUtf16::new(range.start.line, range.start.character);
-    let end = PointUtf16::new(range.end.line, range.end.character);
-    start..end
 }
 
 #[cfg(test)]

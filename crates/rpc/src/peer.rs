@@ -398,7 +398,7 @@ mod tests {
                 proto::OpenBufferResponse {
                     buffer: Some(proto::Buffer {
                         id: 101,
-                        visible_text: "path/one content".to_string(),
+                        content: "path/one content".to_string(),
                         ..Default::default()
                     }),
                 }
@@ -419,7 +419,7 @@ mod tests {
                 proto::OpenBufferResponse {
                     buffer: Some(proto::Buffer {
                         id: 102,
-                        visible_text: "path/two content".to_string(),
+                        content: "path/two content".to_string(),
                         ..Default::default()
                     }),
                 }
@@ -448,7 +448,7 @@ mod tests {
                                 proto::OpenBufferResponse {
                                     buffer: Some(proto::Buffer {
                                         id: 101,
-                                        visible_text: "path/one content".to_string(),
+                                        content: "path/one content".to_string(),
                                         ..Default::default()
                                     }),
                                 }
@@ -458,7 +458,7 @@ mod tests {
                                 proto::OpenBufferResponse {
                                     buffer: Some(proto::Buffer {
                                         id: 102,
-                                        visible_text: "path/two content".to_string(),
+                                        content: "path/two content".to_string(),
                                         ..Default::default()
                                     }),
                                 }

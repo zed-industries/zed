@@ -494,17 +494,25 @@ impl FakeLanguageServer {
     }
 
     pub async fn receive_request<T: request::Request>(&mut self) -> (RequestId<T>, T::Params) {
-        self.receive().await;
-        let request = serde_json::from_slice::<Request<T::Params>>(&self.buffer).unwrap();
-        assert_eq!(request.method, T::METHOD);
-        assert_eq!(request.jsonrpc, JSON_RPC_VERSION);
-        (
-            RequestId {
-                id: request.id,
-                _type: std::marker::PhantomData,
-            },
-            request.params,
-        )
+        loop {
+            self.receive().await;
+            if let Ok(request) = serde_json::from_slice::<Request<T::Params>>(&self.buffer) {
+                assert_eq!(request.method, T::METHOD);
+                assert_eq!(request.jsonrpc, JSON_RPC_VERSION);
+                return (
+                    RequestId {
+                        id: request.id,
+                        _type: std::marker::PhantomData,
+                    },
+                    request.params,
+                );
+            } else {
+                println!(
+                    "skipping message in fake language server {:?}",
+                    std::str::from_utf8(&self.buffer)
+                );
+            }
+        }
     }
 
     pub async fn receive_notification<T: notification::Notification>(&mut self) -> T::Params {
