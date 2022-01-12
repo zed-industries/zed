@@ -3293,17 +3293,17 @@ impl Editor {
                 .flat_map(|selection| [&selection.start, &selection.end]),
         );
         let offsets =
-            snapshot.summaries_for_anchors::<usize, _>(anchors_with_status.iter().map(|a| &a.0));
+            snapshot.summaries_for_anchors::<usize, _>(anchors_with_status.iter().map(|a| &a.1));
         let offsets = offsets.chunks(2);
-        let statuses = anchors_with_status.chunks(2).map(|a| (a[0].1, a[1].1));
+        let statuses = anchors_with_status
+            .chunks(2)
+            .map(|a| (a[0].0 / 2, a[0].2, a[1].2));
 
         let mut selections_with_lost_position = HashMap::default();
-        let new_selections = self
-            .selections
-            .iter()
-            .zip(offsets)
+        let new_selections = offsets
             .zip(statuses)
-            .map(|((selection, offsets), (kept_start, kept_end))| {
+            .map(|(offsets, (selection_ix, kept_start, kept_end))| {
+                let selection = &self.selections[selection_ix];
                 let kept_head = if selection.reversed {
                     kept_start
                 } else {

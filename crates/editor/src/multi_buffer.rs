@@ -1394,14 +1394,14 @@ impl MultiBufferSnapshot {
         summaries
     }
 
-    pub fn refresh_anchors<'a, I>(&'a self, anchors: I) -> Vec<(Anchor, bool)>
+    pub fn refresh_anchors<'a, I>(&'a self, anchors: I) -> Vec<(usize, Anchor, bool)>
     where
         I: 'a + IntoIterator<Item = &'a Anchor>,
     {
-        let mut anchors = anchors.into_iter().peekable();
+        let mut anchors = anchors.into_iter().enumerate().peekable();
         let mut cursor = self.excerpts.cursor::<Option<&ExcerptId>>();
         let mut result = Vec::new();
-        while let Some(anchor) = anchors.peek() {
+        while let Some((_, anchor)) = anchors.peek() {
             let old_excerpt_id = &anchor.excerpt_id;
 
             // Find the location where this anchor's excerpt should be.
@@ -1414,12 +1414,13 @@ impl MultiBufferSnapshot {
             let prev_excerpt = cursor.prev_item();
 
             // Process all of the anchors for this excerpt.
-            while let Some(&anchor) = anchors.peek() {
+            while let Some((_, anchor)) = anchors.peek() {
                 if anchor.excerpt_id != *old_excerpt_id {
                     break;
                 }
                 let mut kept_position = false;
-                let mut anchor = anchors.next().unwrap().clone();
+                let (anchor_ix, anchor) = anchors.next().unwrap();
+                let mut anchor = anchor.clone();
 
                 // Leave min and max anchors unchanged.
                 if *old_excerpt_id == ExcerptId::max() || *old_excerpt_id == ExcerptId::min() {
@@ -1469,9 +1470,10 @@ impl MultiBufferSnapshot {
                     };
                 }
 
-                result.push((anchor, kept_position));
+                result.push((anchor_ix, anchor, kept_position));
             }
         }
+        result.sort_unstable_by(|a, b| a.1.cmp(&b.1, self).unwrap());
         result
     }
 
@@ -2588,8 +2590,8 @@ mod tests {
         assert_eq!(
             refresh,
             &[
-                (snapshot_2.anchor_before(0), false),
-                (snapshot_2.anchor_after(0), false),
+                (0, snapshot_2.anchor_before(0), false),
+                (1, snapshot_2.anchor_after(0), false),
             ]
         );
 
@@ -2627,11 +2629,11 @@ mod tests {
 
         let new_anchors = snapshot_3.refresh_anchors(&anchors);
         assert_eq!(
-            new_anchors.iter().map(|a| a.1).collect::<Vec<_>>(),
-            &[true, true, true, true]
+            new_anchors.iter().map(|a| (a.0, a.2)).collect::<Vec<_>>(),
+            &[(0, true), (1, true), (2, true), (3, true)]
         );
         assert_eq!(
-            snapshot_3.summaries_for_anchors::<usize, _>(new_anchors.iter().map(|a| &a.0)),
+            snapshot_3.summaries_for_anchors::<usize, _>(new_anchors.iter().map(|a| &a.1)),
             &[0, 2, 7, 13]
         );
     }
@@ -2693,9 +2695,8 @@ mod tests {
                     anchors = multibuffer
                         .refresh_anchors(&anchors)
                         .into_iter()
-                        .map(|a| a.0)
+                        .map(|a| a.1)
                         .collect();
-                    anchors.sort_by(|a, b| a.cmp(&b, &multibuffer).unwrap());
                 }
                 _ => {
                     let buffer_handle = if buffers.is_empty() || rng.gen_bool(0.4) {
