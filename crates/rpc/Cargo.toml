@@ -30,5 +30,6 @@ zstd = "0.9"
 prost-build = "0.8"
 
 [dev-dependencies]
+gpui = { path = "../gpui", features = ["test-support"] }
 smol = "1.2.5"
 tempdir = "0.3.7"
