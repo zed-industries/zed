@@ -1,0 +1,1 @@
+ZED_ENVIRONMENT=production
