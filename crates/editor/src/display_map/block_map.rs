@@ -955,11 +955,13 @@ mod tests {
                 )
             })
             .collect::<Vec<_>>();
+
+        // When multiple blocks are on the same line, the newer blocks appear first.
         assert_eq!(
             blocks,
             &[
-                (1..2, 0, "block 1".to_string()),
-                (2..4, 2, "block 2".to_string()),
+                (1..3, 2, "block 2".to_string()),
+                (3..4, 0, "block 1".to_string()),
                 (7..10, 3, "block 3".to_string()),
             ]
         );
@@ -1270,13 +1272,15 @@ mod tests {
                     )
                 })
                 .collect::<Vec<_>>();
-            sorted_blocks
-                .sort_unstable_by_key(|(id, block)| (block.position.row, block.disposition, *id));
-            let mut sorted_blocks = sorted_blocks.into_iter().peekable();
+            sorted_blocks.sort_unstable_by_key(|(id, block)| {
+                (block.position.row, block.disposition, Reverse(*id))
+            });
+            let mut sorted_blocks_iter = sorted_blocks.iter().peekable();
 
             let input_buffer_rows = buffer_snapshot.buffer_rows(0).collect::<Vec<_>>();
             let mut expected_buffer_rows = Vec::new();
             let mut expected_text = String::new();
+            let mut expected_block_positions = Vec::new();
             let input_text = wraps_snapshot.text();
             for (row, input_line) in input_text.split('\n').enumerate() {
                 let row = row as u32;
@@ -1288,14 +1292,16 @@ mod tests {
                     .to_point(WrapPoint::new(row, 0), Bias::Left)
                     .row as usize];
 
-                while let Some((_, block)) = sorted_blocks.peek() {
+                while let Some((block_id, block)) = sorted_blocks_iter.peek() {
                     if block.position.row == row && block.disposition == BlockDisposition::Above {
+                        expected_block_positions
+                            .push((expected_text.matches('\n').count() as u32, *block_id));
                         let text = "\n".repeat(block.height as usize);
                         expected_text.push_str(&text);
                         for _ in 0..block.height {
                             expected_buffer_rows.push(None);
                         }
-                        sorted_blocks.next();
+                        sorted_blocks_iter.next();
                     } else {
                         break;
                     }
@@ -1305,14 +1311,16 @@ mod tests {
                 expected_buffer_rows.push(if soft_wrapped { None } else { buffer_row });
                 expected_text.push_str(input_line);
 
-                while let Some((_, block)) = sorted_blocks.peek() {
+                while let Some((block_id, block)) = sorted_blocks_iter.peek() {
                     if block.position.row == row && block.disposition == BlockDisposition::Below {
+                        expected_block_positions
+                            .push((expected_text.matches('\n').count() as u32 + 1, *block_id));
                         let text = "\n".repeat(block.height as usize);
                         expected_text.push_str(&text);
                         for _ in 0..block.height {
                             expected_buffer_rows.push(None);
                         }
-                        sorted_blocks.next();
+                        sorted_blocks_iter.next();
                     } else {
                         break;
                     }
@@ -1339,6 +1347,14 @@ mod tests {
                     &expected_buffer_rows[start_row..]
                 );
             }
+
+            assert_eq!(
+                blocks_snapshot
+                    .blocks_in_range(0..(expected_row_count as u32))
+                    .map(|(row, block)| (row, block.id))
+                    .collect::<Vec<_>>(),
+                expected_block_positions
+            );
 
             let mut expected_longest_rows = Vec::new();
             let mut longest_line_len = -1_isize;
