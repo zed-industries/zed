@@ -1,10 +1,10 @@
 pub mod items;
 
 use anyhow::Result;
-use collections::{HashMap, HashSet, BTreeSet};
+use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
-    context_header_renderer, diagnostic_block_renderer, diagnostic_header_renderer,
-    display_map::{BlockDisposition, BlockId, BlockProperties},
+    diagnostic_block_renderer, diagnostic_style,
+    display_map::{BlockDisposition, BlockId, BlockProperties, RenderBlock},
     items::BufferItemHandle,
     Autoscroll, BuildSettings, Editor, ExcerptId, ExcerptProperties, MultiBuffer, ToOffset,
 };
@@ -12,10 +12,10 @@ use gpui::{
     action, elements::*, keymap::Binding, AppContext, Entity, ModelHandle, MutableAppContext,
     RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use language::{Bias, Buffer, DiagnosticEntry, Point, Selection, SelectionGoal};
+use language::{Bias, Buffer, Diagnostic, DiagnosticEntry, Point, Selection, SelectionGoal};
 use postage::watch;
 use project::{Project, ProjectPath, WorktreeId};
-use std::{cmp::Ordering, mem, ops::Range};
+use std::{cmp::Ordering, mem, ops::Range, sync::Arc};
 use util::TryFutureExt;
 use workspace::Workspace;
 
@@ -48,10 +48,16 @@ struct ProjectDiagnosticsEditor {
     workspace: WeakViewHandle<Workspace>,
     editor: ViewHandle<Editor>,
     excerpts: ModelHandle<MultiBuffer>,
-    path_states: Vec<(ProjectPath, Vec<DiagnosticGroupState>)>,
+    path_states: Vec<PathState>,
     paths_to_update: HashMap<WorktreeId, BTreeSet<ProjectPath>>,
     build_settings: BuildSettings,
     settings: watch::Receiver<workspace::Settings>,
+}
+
+struct PathState {
+    path: ProjectPath,
+    header: Option<BlockId>,
+    diagnostic_groups: Vec<DiagnosticGroupState>,
 }
 
 struct DiagnosticGroupState {
@@ -154,11 +160,6 @@ impl ProjectDiagnosticsEditor {
         this
     }
 
-    #[cfg(test)]
-    fn text(&self, cx: &AppContext) -> String {
-        self.editor.read(cx).text(cx)
-    }
-
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         if let Some(existing) = workspace.item_of_type::<ProjectDiagnostics>(cx) {
             workspace.activate_item(&existing, cx);
@@ -208,11 +209,7 @@ impl ProjectDiagnosticsEditor {
         }
     }
 
-    fn update_excerpts(
-        &self,
-        paths: BTreeSet<ProjectPath>,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn update_excerpts(&self, paths: BTreeSet<ProjectPath>, cx: &mut ViewContext<Self>) {
         let project = self.model.read(cx).project.clone();
         cx.spawn(|this, mut cx| {
             async move {
@@ -220,9 +217,7 @@ impl ProjectDiagnosticsEditor {
                     let buffer = project
                         .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))
                         .await?;
-                    this.update(&mut cx, |view, cx| {
-                        view.populate_excerpts(path, buffer, cx)
-                    })
+                    this.update(&mut cx, |view, cx| view.populate_excerpts(path, buffer, cx))
                 }
                 Result::<_, anyhow::Error>::Ok(())
             }
@@ -239,32 +234,39 @@ impl ProjectDiagnosticsEditor {
     ) {
         let was_empty = self.path_states.is_empty();
         let snapshot = buffer.read(cx).snapshot();
-        let path_ix = match self
-            .path_states
-            .binary_search_by_key(&&path, |e| &e.0)
-        {
+        let path_ix = match self.path_states.binary_search_by_key(&&path, |e| &e.path) {
             Ok(ix) => ix,
             Err(ix) => {
-                self.path_states
-                    .insert(ix, (path.clone(), Default::default()));
+                self.path_states.insert(
+                    ix,
+                    PathState {
+                        path: path.clone(),
+                        header: None,
+                        diagnostic_groups: Default::default(),
+                    },
+                );
                 ix
             }
         };
 
         let mut prev_excerpt_id = if path_ix > 0 {
-            let prev_path_last_group = &self.path_states[path_ix - 1].1.last().unwrap();
+            let prev_path_last_group = &self.path_states[path_ix - 1]
+                .diagnostic_groups
+                .last()
+                .unwrap();
             prev_path_last_group.excerpts.last().unwrap().clone()
         } else {
             ExcerptId::min()
         };
 
-        let groups = &mut self.path_states[path_ix].1;
+        let path_state = &mut self.path_states[path_ix];
         let mut groups_to_add = Vec::new();
         let mut group_ixs_to_remove = Vec::new();
         let mut blocks_to_add = Vec::new();
         let mut blocks_to_remove = HashSet::default();
+        let mut first_excerpt_id = None;
         let excerpts_snapshot = self.excerpts.update(cx, |excerpts, excerpts_cx| {
-            let mut old_groups = groups.iter().enumerate().peekable();
+            let mut old_groups = path_state.diagnostic_groups.iter().enumerate().peekable();
             let mut new_groups = snapshot
                 .diagnostic_groups()
                 .into_iter()
@@ -273,17 +275,17 @@ impl ProjectDiagnosticsEditor {
 
             loop {
                 let mut to_insert = None;
-                let mut to_invalidate = None;
+                let mut to_remove = None;
                 let mut to_keep = None;
                 match (old_groups.peek(), new_groups.peek()) {
                     (None, None) => break,
                     (None, Some(_)) => to_insert = new_groups.next(),
-                    (Some(_), None) => to_invalidate = old_groups.next(),
+                    (Some(_), None) => to_remove = old_groups.next(),
                     (Some((_, old_group)), Some(new_group)) => {
                         let old_primary = &old_group.primary_diagnostic;
                         let new_primary = &new_group.entries[new_group.primary_ix];
                         match compare_diagnostics(old_primary, new_primary, &snapshot) {
-                            Ordering::Less => to_invalidate = old_groups.next(),
+                            Ordering::Less => to_remove = old_groups.next(),
                             Ordering::Equal => {
                                 to_keep = old_groups.next();
                                 new_groups.next();
@@ -331,6 +333,7 @@ impl ProjectDiagnosticsEditor {
                             );
 
                             prev_excerpt_id = excerpt_id.clone();
+                            first_excerpt_id.get_or_insert_with(|| prev_excerpt_id.clone());
                             group_state.excerpts.push(excerpt_id.clone());
                             let header_position = (excerpt_id.clone(), language::Anchor::min());
 
@@ -343,9 +346,8 @@ impl ProjectDiagnosticsEditor {
                                 group_state.block_count += 1;
                                 blocks_to_add.push(BlockProperties {
                                     position: header_position,
-                                    height: 3,
+                                    height: 2,
                                     render: diagnostic_header_renderer(
-                                        buffer.clone(),
                                         header,
                                         true,
                                         self.build_settings.clone(),
@@ -394,12 +396,13 @@ impl ProjectDiagnosticsEditor {
                     }
 
                     groups_to_add.push(group_state);
-                } else if let Some((group_ix, group_state)) = to_invalidate {
+                } else if let Some((group_ix, group_state)) = to_remove {
                     excerpts.remove_excerpts(group_state.excerpts.iter(), excerpts_cx);
                     group_ixs_to_remove.push(group_ix);
                     blocks_to_remove.extend(group_state.blocks.iter().copied());
                 } else if let Some((_, group)) = to_keep {
                     prev_excerpt_id = group.excerpts.last().unwrap().clone();
+                    first_excerpt_id.get_or_insert_with(|| prev_excerpt_id.clone());
                 }
             }
 
@@ -407,10 +410,18 @@ impl ProjectDiagnosticsEditor {
         });
 
         self.editor.update(cx, |editor, cx| {
+            blocks_to_remove.extend(path_state.header);
             editor.remove_blocks(blocks_to_remove, cx);
-            let mut block_ids = editor
-                .insert_blocks(
-                    blocks_to_add.into_iter().map(|block| {
+            let header_block = first_excerpt_id.map(|excerpt_id| BlockProperties {
+                position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, language::Anchor::min()),
+                height: 2,
+                render: path_header_renderer(buffer, self.build_settings.clone()),
+                disposition: BlockDisposition::Above,
+            });
+            let block_ids = editor.insert_blocks(
+                blocks_to_add
+                    .into_iter()
+                    .map(|block| {
                         let (excerpt_id, text_anchor) = block.position;
                         BlockProperties {
                             position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor),
@@ -418,21 +429,23 @@ impl ProjectDiagnosticsEditor {
                             render: block.render,
                             disposition: block.disposition,
                         }
-                    }),
-                    cx,
-                )
-                .into_iter();
+                    })
+                    .chain(header_block.into_iter()),
+                cx,
+            );
 
+            let mut block_ids = block_ids.into_iter();
             for group_state in &mut groups_to_add {
                 group_state.blocks = block_ids.by_ref().take(group_state.block_count).collect();
             }
+            path_state.header = block_ids.next();
         });
 
         for ix in group_ixs_to_remove.into_iter().rev() {
-            groups.remove(ix);
+            path_state.diagnostic_groups.remove(ix);
         }
-        groups.extend(groups_to_add);
-        groups.sort_unstable_by(|a, b| {
+        path_state.diagnostic_groups.extend(groups_to_add);
+        path_state.diagnostic_groups.sort_unstable_by(|a, b| {
             let range_a = &a.primary_diagnostic.range;
             let range_b = &b.primary_diagnostic.range;
             range_a
@@ -442,7 +455,7 @@ impl ProjectDiagnosticsEditor {
                 .then_with(|| range_a.end.cmp(&range_b.end, &snapshot).unwrap())
         });
 
-        if groups.is_empty() {
+        if path_state.diagnostic_groups.is_empty() {
             self.path_states.remove(path_ix);
         }
 
@@ -451,7 +464,7 @@ impl ProjectDiagnosticsEditor {
             let mut selections;
             let new_excerpt_ids_by_selection_id;
             if was_empty {
-                groups = self.path_states.first()?.1.as_slice();
+                groups = self.path_states.first()?.diagnostic_groups.as_slice();
                 new_excerpt_ids_by_selection_id = [(0, ExcerptId::min())].into_iter().collect();
                 selections = vec![Selection {
                     id: 0,
@@ -461,7 +474,7 @@ impl ProjectDiagnosticsEditor {
                     goal: SelectionGoal::None,
                 }];
             } else {
-                groups = self.path_states.get(path_ix)?.1.as_slice();
+                groups = self.path_states.get(path_ix)?.diagnostic_groups.as_slice();
                 new_excerpt_ids_by_selection_id = editor.refresh_selections(cx);
                 selections = editor.local_selections::<usize>(cx);
             }
@@ -575,6 +588,61 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
     }
 }
 
+fn path_header_renderer(buffer: ModelHandle<Buffer>, build_settings: BuildSettings) -> RenderBlock {
+    Arc::new(move |cx| {
+        let settings = build_settings(cx);
+        let file_path = if let Some(file) = buffer.read(&**cx).file() {
+            file.path().to_string_lossy().to_string()
+        } else {
+            "untitled".to_string()
+        };
+        let mut text_style = settings.style.text.clone();
+        let style = settings.style.diagnostic_path_header;
+        text_style.color = style.text;
+        Label::new(file_path, text_style)
+            .aligned()
+            .left()
+            .contained()
+            .with_style(style.header)
+            .with_padding_left(cx.line_number_x)
+            .expanded()
+            .named("path header block")
+    })
+}
+
+fn diagnostic_header_renderer(
+    diagnostic: Diagnostic,
+    is_valid: bool,
+    build_settings: BuildSettings,
+) -> RenderBlock {
+    Arc::new(move |cx| {
+        let settings = build_settings(cx);
+        let mut text_style = settings.style.text.clone();
+        let diagnostic_style = diagnostic_style(diagnostic.severity, is_valid, &settings.style);
+        text_style.color = diagnostic_style.text;
+        Text::new(diagnostic.message.clone(), text_style)
+            .with_soft_wrap(false)
+            .aligned()
+            .left()
+            .contained()
+            .with_style(diagnostic_style.header)
+            .with_padding_left(cx.line_number_x)
+            .expanded()
+            .named("diagnostic header")
+    })
+}
+
+fn context_header_renderer(build_settings: BuildSettings) -> RenderBlock {
+    Arc::new(move |cx| {
+        let settings = build_settings(cx);
+        let text_style = settings.style.text.clone();
+        Label::new("…".to_string(), text_style)
+            .contained()
+            .with_padding_left(cx.line_number_x)
+            .named("collapsed context")
+    })
+}
+
 fn compare_diagnostics<L: language::ToOffset, R: language::ToOffset>(
     lhs: &DiagnosticEntry<L>,
     rhs: &DiagnosticEntry<R>,
@@ -596,11 +664,10 @@ fn compare_diagnostics<L: language::ToOffset, R: language::ToOffset>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use client::{http::ServerResponse, test::FakeHttpClient, Client, UserStore};
-    use editor::DisplayPoint;
+    use editor::{display_map::BlockContext, DisplayPoint, EditorSnapshot};
     use gpui::TestAppContext;
-    use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, LanguageRegistry, PointUtf16};
-    use project::{worktree, FakeFs};
+    use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16};
+    use project::worktree;
     use serde_json::json;
     use std::sync::Arc;
     use unindent::Unindent as _;
@@ -608,31 +675,23 @@ mod tests {
 
     #[gpui::test]
     async fn test_diagnostics(mut cx: TestAppContext) {
-        let workspace_params = cx.update(WorkspaceParams::test);
-        let settings = workspace_params.settings.clone();
-        let http_client = FakeHttpClient::new(|_| async move { Ok(ServerResponse::new(404)) });
-        let client = Client::new(http_client.clone());
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let fs = Arc::new(FakeFs::new());
+        let params = cx.update(WorkspaceParams::test);
+        let project = params.project.clone();
+        let workspace = cx.add_view(0, |cx| Workspace::new(&params, cx));
 
-        let project = cx.update(|cx| {
-            Project::local(
-                client.clone(),
-                user_store,
-                Arc::new(LanguageRegistry::new()),
-                fs.clone(),
-                cx,
-            )
-        });
-
-        fs.insert_tree(
-            "/test",
-            json!({
-                "a.rs": "
+        params
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/test",
+                json!({
+                    "consts.rs": "
                     const a: i32 = 'a';
-                ".unindent(),
+                    const b: i32 = c;
+                "
+                    .unindent(),
 
-                "main.rs": "
+                    "main.rs": "
                     fn main() {
                         let x = vec![];
                         let y = vec![];
@@ -644,10 +703,10 @@ mod tests {
                         d(x);
                     }
                 "
-                .unindent(),
-            }),
-        )
-        .await;
+                    .unindent(),
+                }),
+            )
+            .await;
 
         let worktree = project
             .update(&mut cx, |project, cx| {
@@ -656,6 +715,7 @@ mod tests {
             .await
             .unwrap();
 
+        // Create some diagnostics
         worktree.update(&mut cx, |worktree, cx| {
             worktree
                 .update_diagnostic_entries(
@@ -738,28 +798,36 @@ mod tests {
                 .unwrap();
         });
 
+        // Open the project diagnostics view while there are already diagnostics.
         let model = cx.add_model(|_| ProjectDiagnostics::new(project.clone()));
-        let workspace = cx.add_view(0, |cx| Workspace::new(&workspace_params, cx));
-
         let view = cx.add_view(0, |cx| {
-            ProjectDiagnosticsEditor::new(model, workspace.downgrade(), settings, cx)
+            ProjectDiagnosticsEditor::new(model, workspace.downgrade(), params.settings, cx)
         });
 
-        view.condition(&mut cx, |view, cx| view.text(cx).contains("fn main()"))
-            .await;
-
+        view.next_notification(&cx).await;
         view.update(&mut cx, |view, cx| {
             let editor = view.editor.update(cx, |editor, cx| editor.snapshot(cx));
 
             assert_eq!(
+                editor_blocks(&editor, cx),
+                [
+                    (0, "path header block".into()),
+                    (2, "diagnostic header".into()),
+                    (15, "diagnostic header".into()),
+                    (24, "collapsed context".into()),
+                ]
+            );
+            assert_eq!(
                 editor.text(),
                 concat!(
                     //
-                    // main.rs, diagnostic group 1
+                    // main.rs
                     //
-                    "\n", // padding
-                    "\n", // primary message
                     "\n", // filename
+                    "\n", // padding
+                    // diagnostic group 1
+                    "\n", // primary message
+                    "\n", // padding
                     "    let x = vec![];\n",
                     "    let y = vec![];\n",
                     "\n", // supporting diagnostic
@@ -771,12 +839,9 @@ mod tests {
                     "    c(y);\n",
                     "\n", // supporting diagnostic
                     "    d(x);\n",
-                    //
-                    // main.rs, diagnostic group 2
-                    //
-                    "\n", // padding
+                    // diagnostic group 2
                     "\n", // primary message
-                    "\n", // filename
+                    "\n", // padding
                     "fn main() {\n",
                     "    let x = vec![];\n",
                     "\n", // supporting diagnostic
@@ -792,18 +857,20 @@ mod tests {
                 )
             );
 
+            // Cursor is at the first diagnostic
             view.editor.update(cx, |editor, cx| {
                 assert_eq!(
                     editor.selected_display_ranges(cx),
-                    [DisplayPoint::new(11, 6)..DisplayPoint::new(11, 6)]
+                    [DisplayPoint::new(12, 6)..DisplayPoint::new(12, 6)]
                 );
             });
         });
 
+        // Diagnostics are added for another earlier path.
         worktree.update(&mut cx, |worktree, cx| {
             worktree
                 .update_diagnostic_entries(
-                    Arc::from("/test/a.rs".as_ref()),
+                    Arc::from("/test/consts.rs".as_ref()),
                     None,
                     vec![DiagnosticEntry {
                         range: PointUtf16::new(0, 15)..PointUtf16::new(0, 15),
@@ -822,30 +889,43 @@ mod tests {
             cx.emit(worktree::Event::DiskBasedDiagnosticsUpdated);
         });
 
-        view.condition(&mut cx, |view, cx| view.text(cx).contains("const a"))
-            .await;
-
+        view.next_notification(&cx).await;
         view.update(&mut cx, |view, cx| {
             let editor = view.editor.update(cx, |editor, cx| editor.snapshot(cx));
 
             assert_eq!(
+                editor_blocks(&editor, cx),
+                [
+                    (0, "path header block".into()),
+                    (2, "diagnostic header".into()),
+                    (7, "path header block".into()),
+                    (9, "diagnostic header".into()),
+                    (22, "diagnostic header".into()),
+                    (31, "collapsed context".into()),
+                ]
+            );
+            assert_eq!(
                 editor.text(),
                 concat!(
                     //
-                    // a.rs
+                    // consts.rs
                     //
-                    "\n", // padding
-                    "\n", // primary message
                     "\n", // filename
+                    "\n", // padding
+                    // diagnostic group 1
+                    "\n", // primary message
+                    "\n", // padding
                     "const a: i32 = 'a';\n",
                     "\n", // supporting diagnostic
-                    "\n", // context line
+                    "const b: i32 = c;\n",
                     //
-                    // main.rs, diagnostic group 1
+                    // main.rs
                     //
-                    "\n", // padding
-                    "\n", // primary message
                     "\n", // filename
+                    "\n", // padding
+                    // diagnostic group 1
+                    "\n", // primary message
+                    "\n", // padding
                     "    let x = vec![];\n",
                     "    let y = vec![];\n",
                     "\n", // supporting diagnostic
@@ -857,10 +937,126 @@ mod tests {
                     "    c(y);\n",
                     "\n", // supporting diagnostic
                     "    d(x);\n",
+                    // diagnostic group 2
+                    "\n", // primary message
+                    "\n", // filename
+                    "fn main() {\n",
+                    "    let x = vec![];\n",
+                    "\n", // supporting diagnostic
+                    "    let y = vec![];\n",
+                    "    a(x);\n",
+                    "\n", // supporting diagnostic
+                    "    b(y);\n",
+                    "\n", // context ellipsis
+                    "    c(y);\n",
+                    "    d(x);\n",
+                    "\n", // supporting diagnostic
+                    "}"
+                )
+            );
+
+            // Cursor keeps its position.
+            view.editor.update(cx, |editor, cx| {
+                assert_eq!(
+                    editor.selected_display_ranges(cx),
+                    [DisplayPoint::new(19, 6)..DisplayPoint::new(19, 6)]
+                );
+            });
+        });
+
+        // Diagnostics are added to the first path
+        worktree.update(&mut cx, |worktree, cx| {
+            worktree
+                .update_diagnostic_entries(
+                    Arc::from("/test/consts.rs".as_ref()),
+                    None,
+                    vec![
+                        DiagnosticEntry {
+                            range: PointUtf16::new(0, 15)..PointUtf16::new(0, 15),
+                            diagnostic: Diagnostic {
+                                message: "mismatched types\nexpected `usize`, found `char`"
+                                    .to_string(),
+                                severity: DiagnosticSeverity::ERROR,
+                                is_primary: true,
+                                is_disk_based: true,
+                                group_id: 0,
+                                ..Default::default()
+                            },
+                        },
+                        DiagnosticEntry {
+                            range: PointUtf16::new(1, 15)..PointUtf16::new(1, 15),
+                            diagnostic: Diagnostic {
+                                message: "unresolved name `c`".to_string(),
+                                severity: DiagnosticSeverity::ERROR,
+                                is_primary: true,
+                                is_disk_based: true,
+                                group_id: 1,
+                                ..Default::default()
+                            },
+                        },
+                    ],
+                    cx,
+                )
+                .unwrap();
+            cx.emit(worktree::Event::DiskBasedDiagnosticsUpdated);
+        });
+
+        view.next_notification(&cx).await;
+        view.update(&mut cx, |view, cx| {
+            let editor = view.editor.update(cx, |editor, cx| editor.snapshot(cx));
+
+            assert_eq!(
+                editor_blocks(&editor, cx),
+                [
+                    (0, "path header block".into()),
+                    (2, "diagnostic header".into()),
+                    (7, "diagnostic header".into()),
+                    (12, "path header block".into()),
+                    (14, "diagnostic header".into()),
+                    (27, "diagnostic header".into()),
+                    (36, "collapsed context".into()),
+                ]
+            );
+            assert_eq!(
+                editor.text(),
+                concat!(
                     //
-                    // main.rs, diagnostic group 2
+                    // consts.rs
                     //
+                    "\n", // filename
                     "\n", // padding
+                    // diagnostic group 1
+                    "\n", // primary message
+                    "\n", // padding
+                    "const a: i32 = 'a';\n",
+                    "\n", // supporting diagnostic
+                    "const b: i32 = c;\n",
+                    // diagnostic group 2
+                    "\n", // primary message
+                    "\n", // padding
+                    "const a: i32 = 'a';\n",
+                    "const b: i32 = c;\n",
+                    "\n", // supporting diagnostic
+                    //
+                    // main.rs
+                    //
+                    "\n", // filename
+                    "\n", // padding
+                    // diagnostic group 1
+                    "\n", // primary message
+                    "\n", // padding
+                    "    let x = vec![];\n",
+                    "    let y = vec![];\n",
+                    "\n", // supporting diagnostic
+                    "    a(x);\n",
+                    "    b(y);\n",
+                    "\n", // supporting diagnostic
+                    "    // comment 1\n",
+                    "    // comment 2\n",
+                    "    c(y);\n",
+                    "\n", // supporting diagnostic
+                    "    d(x);\n",
+                    // diagnostic group 2
                     "\n", // primary message
                     "\n", // filename
                     "fn main() {\n",
@@ -878,5 +1074,21 @@ mod tests {
                 )
             );
         });
+    }
+
+    fn editor_blocks(editor: &EditorSnapshot, cx: &AppContext) -> Vec<(u32, String)> {
+        editor
+            .blocks_in_range(0..editor.max_point().row())
+            .filter_map(|(row, block)| {
+                block
+                    .render(&BlockContext {
+                        cx,
+                        anchor_x: 0.,
+                        line_number_x: 0.,
+                    })
+                    .name()
+                    .map(|s| (row, s.to_string()))
+            })
+            .collect()
     }
 }

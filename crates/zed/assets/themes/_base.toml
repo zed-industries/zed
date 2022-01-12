@@ -187,7 +187,7 @@ corner_radius = 6
 
 [project_panel]
 extends = "$panel"
-padding.top = 6 # ($workspace.tab.height - $project_panel.entry.height) / 2
+padding.top = 6    # ($workspace.tab.height - $project_panel.entry.height) / 2
 
 [project_panel.entry]
 text = "$text.1"
@@ -256,21 +256,26 @@ invalid_warning_diagnostic = { text = "$text.3.color" }
 invalid_information_diagnostic = { text = "$text.3.color" }
 invalid_hint_diagnostic = { text = "$text.3.color" }
 
+[editor.diagnostic_path_header]
+text = "$text.0.color"
+header.background = "#ffffff08"
+header.border = { width = 1, top = true, color = "$border.0" }
+
 [editor.error_diagnostic]
 text = "$status.bad"
-header = { padding = { left = 10 }, background = "#ffffff08" }
+header.border = { width = 1, top = true, color = "$border.0" }
 
 [editor.warning_diagnostic]
 text = "$status.warn"
-header = { padding = { left = 10 }, background = "#ffffff08" }
+header.border = { width = 1, top = true, color = "$border.0" }
 
 [editor.information_diagnostic]
 text = "$status.info"
-header = { padding = { left = 10 }, background = "#ffffff08" }
+border = { width = 1, top = true, color = "$border.0" }
 
 [editor.hint_diagnostic]
 text = "$status.info"
-header = { padding = { left = 10 }, background = "#ffffff08" }
+border = { width = 1, top = true, color = "$border.0" }
 
 [project_diagnostics]
 background = "$surface.1"
