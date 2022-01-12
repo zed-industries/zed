@@ -142,7 +142,7 @@ pub trait ItemView: View {
     type ItemHandle: ItemHandle;
 
     fn item_handle(&self, cx: &AppContext) -> Self::ItemHandle;
-    fn title(&self, cx: &AppContext) -> String;
+    fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
     where
@@ -197,7 +197,7 @@ pub trait WeakItemHandle {
 
 pub trait ItemViewHandle {
     fn item_handle(&self, cx: &AppContext) -> Box<dyn ItemHandle>;
-    fn title(&self, cx: &AppContext) -> String;
+    fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle>;
     fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemViewHandle>>;
@@ -308,8 +308,8 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         Box::new(self.read(cx).item_handle(cx))
     }
 
-    fn title(&self, cx: &AppContext) -> String {
-        self.read(cx).title(cx)
+    fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox {
+        self.read(cx).tab_content(style, cx)
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
@@ -980,7 +980,11 @@ impl Workspace {
     }
 
     pub fn activate_next_pane(&mut self, cx: &mut ViewContext<Self>) {
-        let ix = self.panes.iter().position(|pane| pane == &self.active_pane).unwrap();
+        let ix = self
+            .panes
+            .iter()
+            .position(|pane| pane == &self.active_pane)
+            .unwrap();
         let next_ix = (ix + 1) % self.panes.len();
         self.activate_pane(self.panes[next_ix].clone(), cx);
     }

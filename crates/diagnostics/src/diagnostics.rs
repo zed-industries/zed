@@ -14,7 +14,7 @@ use gpui::{
 };
 use language::{Bias, Buffer, Diagnostic, DiagnosticEntry, Point, Selection, SelectionGoal};
 use postage::watch;
-use project::{Project, ProjectPath, WorktreeId};
+use project::{DiagnosticSummary, Project, ProjectPath, WorktreeId};
 use std::{cmp::Ordering, mem, ops::Range, sync::Arc};
 use util::TryFutureExt;
 use workspace::Workspace;
@@ -47,6 +47,7 @@ struct ProjectDiagnosticsEditor {
     model: ModelHandle<ProjectDiagnostics>,
     workspace: WeakViewHandle<Workspace>,
     editor: ViewHandle<Editor>,
+    summary: DiagnosticSummary,
     excerpts: ModelHandle<MultiBuffer>,
     path_states: Vec<PathState>,
     paths_to_update: HashMap<WorktreeId, BTreeSet<ProjectPath>>,
@@ -120,9 +121,11 @@ impl ProjectDiagnosticsEditor {
         let project = model.read(cx).project.clone();
         cx.subscribe(&project, |this, _, event, cx| match event {
             project::Event::DiskBasedDiagnosticsUpdated { worktree_id } => {
+                this.summary = this.model.read(cx).project.read(cx).diagnostic_summary(cx);
                 if let Some(paths) = this.paths_to_update.remove(&worktree_id) {
                     this.update_excerpts(paths, cx);
                 }
+                cx.emit(Event::TitleChanged)
             }
             project::Event::DiagnosticsUpdated(path) => {
                 this.paths_to_update
@@ -141,13 +144,11 @@ impl ProjectDiagnosticsEditor {
         cx.subscribe(&editor, |_, _, event, cx| cx.emit(*event))
             .detach();
 
-        let paths_to_update = project
-            .read(cx)
-            .diagnostic_summaries(cx)
-            .map(|e| e.0)
-            .collect();
+        let project = project.read(cx);
+        let paths_to_update = project.diagnostic_summaries(cx).map(|e| e.0).collect();
         let this = Self {
             model,
+            summary: project.diagnostic_summary(cx),
             workspace,
             excerpts,
             editor,
@@ -544,8 +545,38 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         self.model.clone()
     }
 
-    fn title(&self, _: &AppContext) -> String {
-        "Project Diagnostics".to_string()
+    fn tab_content(&self, style: &theme::Tab, _: &AppContext) -> ElementBox {
+        let theme = &self.settings.borrow().theme.project_diagnostics;
+        let icon_width = theme.tab_icon_width;
+        let icon_spacing = theme.tab_icon_spacing;
+        let summary_spacing = theme.tab_summary_spacing;
+        Flex::row()
+            .with_children([
+                Svg::new("icons/no.svg")
+                    .with_color(style.label.text.color)
+                    .constrained()
+                    .with_width(icon_width)
+                    .aligned()
+                    .contained()
+                    .with_margin_right(icon_spacing)
+                    .named("no-icon"),
+                Label::new(self.summary.error_count.to_string(), style.label.clone())
+                    .aligned()
+                    .boxed(),
+                Svg::new("icons/warning.svg")
+                    .with_color(style.label.text.color)
+                    .constrained()
+                    .with_width(icon_width)
+                    .aligned()
+                    .contained()
+                    .with_margin_left(summary_spacing)
+                    .with_margin_right(icon_spacing)
+                    .named("warn-icon"),
+                Label::new(self.summary.warning_count.to_string(), style.label.clone())
+                    .aligned()
+                    .boxed(),
+            ])
+            .boxed()
     }
 
     fn project_path(&self, _: &AppContext) -> Option<project::ProjectPath> {
@@ -586,10 +617,7 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
     }
 
     fn should_update_tab_on_event(event: &Event) -> bool {
-        matches!(
-            event,
-            Event::Saved | Event::Dirtied | Event::FileHandleChanged
-        )
+        matches!(event, Event::Saved | Event::Dirtied | Event::TitleChanged)
     }
 }
 

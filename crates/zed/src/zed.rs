@@ -382,6 +382,10 @@ mod tests {
                     .read(cx)
                     .active_item()
                     .unwrap()
+                    .to_any()
+                    .downcast::<Editor>()
+                    .unwrap()
+                    .read(cx)
                     .title(cx),
                 "a.txt"
             );
@@ -413,6 +417,10 @@ mod tests {
                     .read(cx)
                     .active_item()
                     .unwrap()
+                    .to_any()
+                    .downcast::<Editor>()
+                    .unwrap()
+                    .read(cx)
                     .title(cx),
                 "b.txt"
             );
@@ -502,14 +510,14 @@ mod tests {
         });
 
         editor.update(&mut cx, |editor, cx| {
-            assert!(!editor.is_dirty(cx.as_ref()));
-            assert_eq!(editor.title(cx.as_ref()), "untitled");
+            assert!(!editor.is_dirty(cx));
+            assert_eq!(editor.title(cx), "untitled");
             assert!(Arc::ptr_eq(
                 editor.language(cx).unwrap(),
                 &language::PLAIN_TEXT
             ));
             editor.handle_input(&editor::Input("hi".into()), cx);
-            assert!(editor.is_dirty(cx.as_ref()));
+            assert!(editor.is_dirty(cx));
         });
 
         // Save the buffer. This prompts for a filename.
@@ -522,7 +530,7 @@ mod tests {
         });
         cx.read(|cx| {
             assert!(editor.is_dirty(cx));
-            assert_eq!(editor.title(cx), "untitled");
+            assert_eq!(editor.read(cx).title(cx), "untitled");
         });
 
         // When the save completes, the buffer's title is updated.
@@ -531,7 +539,7 @@ mod tests {
             .await;
         cx.read(|cx| {
             assert!(!editor.is_dirty(cx));
-            assert_eq!(editor.title(cx), "the-new-name.rs");
+            assert_eq!(editor.read(cx).title(cx), "the-new-name.rs");
         });
         // The language is assigned based on the path
         editor.read_with(&cx, |editor, cx| {
@@ -550,7 +558,7 @@ mod tests {
         editor
             .condition(&cx, |editor, cx| !editor.is_dirty(cx))
             .await;
-        cx.read(|cx| assert_eq!(editor.title(cx), "the-new-name.rs"));
+        cx.read(|cx| assert_eq!(editor.read(cx).title(cx), "the-new-name.rs"));
 
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.

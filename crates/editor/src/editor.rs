@@ -535,6 +535,19 @@ impl Editor {
         &self.buffer
     }
 
+    pub fn title(&self, cx: &AppContext) -> String {
+        let filename = self
+            .buffer()
+            .read(cx)
+            .file(cx)
+            .and_then(|file| file.file_name());
+        if let Some(name) = filename {
+            name.to_string_lossy().into()
+        } else {
+            "untitled".into()
+        }
+    }
+
     pub fn snapshot(&mut self, cx: &mut MutableAppContext) -> EditorSnapshot {
         EditorSnapshot {
             mode: self.mode,
@@ -3619,8 +3632,8 @@ impl Editor {
             language::Event::Edited => cx.emit(Event::Edited),
             language::Event::Dirtied => cx.emit(Event::Dirtied),
             language::Event::Saved => cx.emit(Event::Saved),
-            language::Event::FileHandleChanged => cx.emit(Event::FileHandleChanged),
-            language::Event::Reloaded => cx.emit(Event::FileHandleChanged),
+            language::Event::FileHandleChanged => cx.emit(Event::TitleChanged),
+            language::Event::Reloaded => cx.emit(Event::TitleChanged),
             language::Event::Closed => cx.emit(Event::Closed),
             _ => {}
         }
@@ -3727,7 +3740,7 @@ pub enum Event {
     Blurred,
     Dirtied,
     Saved,
-    FileHandleChanged,
+    TitleChanged,
     Closed,
 }
 

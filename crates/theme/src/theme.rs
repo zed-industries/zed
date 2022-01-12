@@ -235,6 +235,9 @@ pub struct ProjectDiagnostics {
     pub container: ContainerStyle,
     pub empty_message: TextStyle,
     pub status_bar_item: ContainedText,
+    pub tab_icon_width: f32,
+    pub tab_icon_spacing: f32,
+    pub tab_summary_spacing: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
