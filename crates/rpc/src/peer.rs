@@ -170,11 +170,7 @@ impl Peer {
             let response_channels = response_channels.clone();
             async move {
                 if let Some(responding_to) = incoming.responding_to {
-                    let channel = response_channels
-                        .lock()
-                        .as_mut()
-                        .unwrap()
-                        .remove(&responding_to);
+                    let channel = response_channels.lock().as_mut()?.remove(&responding_to);
                     if let Some(mut tx) = channel {
                         tx.send(incoming).await.ok();
                     } else {
@@ -356,21 +352,25 @@ mod tests {
             let client2 = Peer::new();
 
             let (client1_to_server_conn, server_to_client_1_conn, _) = Connection::in_memory();
-            let (client1_conn_id, io_task1, _) =
+            let (client1_conn_id, io_task1, client1_incoming) =
                 client1.add_connection(client1_to_server_conn).await;
-            let (_, io_task2, incoming1) = server.add_connection(server_to_client_1_conn).await;
+            let (_, io_task2, server_incoming1) =
+                server.add_connection(server_to_client_1_conn).await;
 
             let (client2_to_server_conn, server_to_client_2_conn, _) = Connection::in_memory();
-            let (client2_conn_id, io_task3, _) =
+            let (client2_conn_id, io_task3, client2_incoming) =
                 client2.add_connection(client2_to_server_conn).await;
-            let (_, io_task4, incoming2) = server.add_connection(server_to_client_2_conn).await;
+            let (_, io_task4, server_incoming2) =
+                server.add_connection(server_to_client_2_conn).await;
 
             smol::spawn(io_task1).detach();
             smol::spawn(io_task2).detach();
             smol::spawn(io_task3).detach();
             smol::spawn(io_task4).detach();
-            smol::spawn(handle_messages(incoming1, server.clone())).detach();
-            smol::spawn(handle_messages(incoming2, server.clone())).detach();
+            smol::spawn(handle_messages(server_incoming1, server.clone())).detach();
+            smol::spawn(handle_messages(client1_incoming, client1.clone())).detach();
+            smol::spawn(handle_messages(server_incoming2, server.clone())).detach();
+            smol::spawn(handle_messages(client2_incoming, client2.clone())).detach();
 
             assert_eq!(
                 client1

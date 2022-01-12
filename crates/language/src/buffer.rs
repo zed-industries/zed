@@ -6,7 +6,7 @@ pub use crate::{
 };
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
-    range_from_lsp, ToPointUtf16,
+    range_from_lsp,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
