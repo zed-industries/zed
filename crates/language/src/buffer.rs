@@ -1,9 +1,12 @@
-use crate::diagnostic_set::{DiagnosticEntry, DiagnosticGroup};
 pub use crate::{
     diagnostic_set::DiagnosticSet,
     highlight_map::{HighlightId, HighlightMap},
     proto, BracketPair, Grammar, Language, LanguageConfig, LanguageRegistry, LanguageServerConfig,
     PLAIN_TEXT,
+};
+use crate::{
+    diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
+    range_from_lsp,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
@@ -179,6 +182,9 @@ pub trait File {
     ) -> Task<Result<(clock::Global, SystemTime)>>;
 
     fn load_local(&self, cx: &AppContext) -> Option<Task<Result<String>>>;
+
+    fn format_remote(&self, buffer_id: u64, cx: &mut MutableAppContext)
+        -> Option<Task<Result<()>>>;
 
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext);
 
@@ -435,6 +441,65 @@ impl Buffer {
 
     pub fn file(&self) -> Option<&dyn File> {
         self.file.as_deref()
+    }
+
+    pub fn format(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let file = if let Some(file) = self.file.as_ref() {
+            file
+        } else {
+            return Task::ready(Err(anyhow!("buffer has no file")));
+        };
+
+        if let Some(LanguageServerState { server, .. }) = self.language_server.as_ref() {
+            let server = server.clone();
+            let abs_path = file.abs_path().unwrap();
+            let version = self.version();
+            cx.spawn(|this, mut cx| async move {
+                let edits = server
+                    .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
+                        text_document: lsp::TextDocumentIdentifier::new(
+                            lsp::Url::from_file_path(&abs_path).unwrap(),
+                        ),
+                        options: Default::default(),
+                        work_done_progress_params: Default::default(),
+                    })
+                    .await?;
+
+                if let Some(edits) = edits {
+                    this.update(&mut cx, |this, cx| {
+                        if this.version == version {
+                            for edit in &edits {
+                                let range = range_from_lsp(edit.range);
+                                if this.clip_point_utf16(range.start, Bias::Left) != range.start
+                                    || this.clip_point_utf16(range.end, Bias::Left) != range.end
+                                {
+                                    return Err(anyhow!(
+                                        "invalid formatting edits received from language server"
+                                    ));
+                                }
+                            }
+
+                            for edit in edits.into_iter().rev() {
+                                this.edit([range_from_lsp(edit.range)], edit.new_text, cx);
+                            }
+                            Ok(())
+                        } else {
+                            Err(anyhow!("buffer edited since starting to format"))
+                        }
+                    })
+                } else {
+                    Ok(())
+                }
+            })
+        } else {
+            let format = file.format_remote(self.remote_id(), cx.as_mut());
+            cx.spawn(|_, _| async move {
+                if let Some(format) = format {
+                    format.await?;
+                }
+                Ok(())
+            })
+        }
     }
 
     pub fn save(

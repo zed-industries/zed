@@ -9,9 +9,9 @@ use anyhow::anyhow;
 use async_std::task;
 use async_tungstenite::{tungstenite::protocol::Role, WebSocketStream};
 use collections::{HashMap, HashSet};
-use futures::{future::BoxFuture, FutureExt};
+use futures::{future::BoxFuture, FutureExt, StreamExt};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use postage::{mpsc, prelude::Sink as _, prelude::Stream as _};
+use postage::{mpsc, prelude::Sink as _};
 use rpc::{
     proto::{self, AnyTypedEnvelope, EnvelopedMessage},
     Connection, ConnectionId, Peer, TypedEnvelope,
@@ -79,6 +79,7 @@ impl Server {
             .add_handler(Server::update_buffer)
             .add_handler(Server::buffer_saved)
             .add_handler(Server::save_buffer)
+            .add_handler(Server::format_buffer)
             .add_handler(Server::get_channels)
             .add_handler(Server::get_users)
             .add_handler(Server::join_channel)
@@ -132,7 +133,7 @@ impl Server {
             let handle_io = handle_io.fuse();
             futures::pin_mut!(handle_io);
             loop {
-                let next_message = incoming_rx.recv().fuse();
+                let next_message = incoming_rx.next().fuse();
                 futures::pin_mut!(next_message);
                 futures::select_biased! {
                     message = next_message => {
@@ -173,7 +174,7 @@ impl Server {
     }
 
     async fn sign_out(self: &mut Arc<Self>, connection_id: ConnectionId) -> tide::Result<()> {
-        self.peer.disconnect(connection_id).await;
+        self.peer.disconnect(connection_id);
         let removed_connection = self.state_mut().remove_connection(connection_id)?;
 
         for (project_id, project) in removed_connection.hosted_projects {
@@ -656,6 +657,30 @@ impl Server {
             }
         })
         .await?;
+
+        Ok(())
+    }
+
+    async fn format_buffer(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::FormatBuffer>,
+    ) -> tide::Result<()> {
+        let host;
+        {
+            let state = self.state();
+            let project = state
+                .read_project(request.payload.project_id, request.sender_id)
+                .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+            host = project.host_connection_id;
+        }
+
+        let sender = request.sender_id;
+        let receipt = request.receipt();
+        let response = self
+            .peer
+            .forward_request(sender, host, request.payload.clone())
+            .await?;
+        self.peer.respond(receipt, response).await?;
 
         Ok(())
     }
@@ -1776,7 +1801,7 @@ mod tests {
             .await;
 
         // Drop client B's connection and ensure client A observes client B leaving the worktree.
-        client_b.disconnect(&cx_b.to_async()).await.unwrap();
+        client_b.disconnect(&cx_b.to_async()).unwrap();
         project_a
             .condition(&cx_a, |p, _| p.collaborators().len() == 0)
             .await;
@@ -1999,6 +2024,111 @@ mod tests {
                 ]
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_formatting_buffer(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+        cx_a.foreground().forbid_parking();
+        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(FakeFs::new());
+
+        // Set up a fake language server.
+        let (language_server_config, mut fake_language_server) =
+            LanguageServerConfig::fake(cx_a.background()).await;
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Rust".to_string(),
+                    path_suffixes: vec!["rs".to_string()],
+                    language_server: Some(language_server_config),
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )));
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground()).await;
+        let client_a = server.create_client(&mut cx_a, "user_a").await;
+        let client_b = server.create_client(&mut cx_b, "user_b").await;
+
+        // Share a project as client A
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "a.rs": "let one = two",
+            }),
+        )
+        .await;
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", cx))
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let project_id = project_a
+            .update(&mut cx_a, |project, _| project.next_remote_id())
+            .await;
+        project_a
+            .update(&mut cx_a, |project, cx| project.share(cx))
+            .await
+            .unwrap();
+
+        // Join the worktree as client B.
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+
+        // Open the file to be formatted on client B.
+        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
+        let buffer_b = cx_b
+            .background()
+            .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.rs", cx)))
+            .await
+            .unwrap();
+
+        let format = buffer_b.update(&mut cx_b, |buffer, cx| buffer.format(cx));
+        let (request_id, _) = fake_language_server
+            .receive_request::<lsp::request::Formatting>()
+            .await;
+        fake_language_server
+            .respond(
+                request_id,
+                Some(vec![
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 4)),
+                        new_text: "h".to_string(),
+                    },
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 7), lsp::Position::new(0, 7)),
+                        new_text: "y".to_string(),
+                    },
+                ]),
+            )
+            .await;
+        format.await.unwrap();
+        assert_eq!(
+            buffer_b.read_with(&cx_b, |buffer, _| buffer.text()),
+            "let honey = two"
+        );
     }
 
     #[gpui::test]
@@ -2295,7 +2425,7 @@ mod tests {
         server.forbid_connections();
         server.disconnect_client(client_b.current_user_id(&cx_b));
         while !matches!(
-            status_b.recv().await,
+            status_b.next().await,
             Some(client::Status::ReconnectionError { .. })
         ) {}
 
@@ -2639,11 +2769,11 @@ mod tests {
                 .await
                 .unwrap();
 
-            let peer_id = PeerId(connection_id_rx.recv().await.unwrap().0);
+            let peer_id = PeerId(connection_id_rx.next().await.unwrap().0);
             let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
             let mut authed_user =
                 user_store.read_with(cx, |user_store, _| user_store.watch_current_user());
-            while authed_user.recv().await.unwrap().is_none() {}
+            while authed_user.next().await.unwrap().is_none() {}
 
             TestClient {
                 client,
@@ -2692,7 +2822,7 @@ mod tests {
             async_std::future::timeout(Duration::from_millis(500), async {
                 while !(predicate)(&*self.server.store.read()) {
                     self.foreground.start_waiting();
-                    self.notifications.recv().await;
+                    self.notifications.next().await;
                     self.foreground.finish_waiting();
                 }
             })
@@ -2703,7 +2833,7 @@ mod tests {
 
     impl Drop for TestServer {
         fn drop(&mut self) {
-            task::block_on(self.peer.reset());
+            self.peer.reset();
         }
     }
 

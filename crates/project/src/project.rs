@@ -308,6 +308,7 @@ impl Project {
                 client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_save_buffer),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_format_buffer),
             ]);
         }
     }
@@ -803,6 +804,21 @@ impl Project {
         if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
             worktree.update(cx, |worktree, cx| {
                 worktree.handle_save_buffer(envelope, rpc, cx)
+            })?;
+        }
+        Ok(())
+    }
+
+    pub fn handle_format_buffer(
+        &mut self,
+        envelope: TypedEnvelope<proto::FormatBuffer>,
+        rpc: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
+            worktree.update(cx, |worktree, cx| {
+                worktree.handle_format_buffer(envelope, rpc, cx)
             })?;
         }
         Ok(())

@@ -1,4 +1,4 @@
-use crate::{Editor, Event};
+use crate::{Autoscroll, Editor, Event};
 use crate::{MultiBuffer, ToPoint as _};
 use anyhow::Result;
 use gpui::{
@@ -11,6 +11,7 @@ use project::{File, ProjectPath, Worktree};
 use std::fmt::Write;
 use std::path::Path;
 use text::{Point, Selection};
+use util::TryFutureExt;
 use workspace::{
     ItemHandle, ItemView, ItemViewHandle, PathOpener, Settings, StatusItemView, WeakItemHandle,
     Workspace,
@@ -141,9 +142,17 @@ impl ItemView for Editor {
     }
 
     fn save(&mut self, cx: &mut ViewContext<Self>) -> Result<Task<Result<()>>> {
-        let save = self.buffer().update(cx, |b, cx| b.save(cx))?;
-        Ok(cx.spawn(|_, _| async move {
-            save.await?;
+        let buffer = self.buffer().clone();
+        Ok(cx.spawn(|editor, mut cx| async move {
+            buffer
+                .update(&mut cx, |buffer, cx| buffer.format(cx).log_err())
+                .await;
+            editor.update(&mut cx, |editor, cx| {
+                editor.request_autoscroll(Autoscroll::Fit, cx)
+            });
+            buffer
+                .update(&mut cx, |buffer, cx| buffer.save(cx))?
+                .await?;
             Ok(())
         }))
     }

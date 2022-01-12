@@ -3837,6 +3837,7 @@ dependencies = [
  "async-tungstenite",
  "base64 0.13.0",
  "futures",
+ "gpui",
  "log",
  "parking_lot",
  "postage",

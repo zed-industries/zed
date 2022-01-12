@@ -1,8 +1,9 @@
 use super::proto::{self, AnyTypedEnvelope, EnvelopedMessage, MessageStream, RequestMessage};
 use super::Connection;
 use anyhow::{anyhow, Context, Result};
-use async_lock::{Mutex, RwLock};
-use futures::FutureExt as _;
+use futures::stream::BoxStream;
+use futures::{FutureExt as _, StreamExt};
+use parking_lot::{Mutex, RwLock};
 use postage::{
     mpsc,
     prelude::{Sink as _, Stream as _},
@@ -109,7 +110,7 @@ impl Peer {
     ) -> (
         ConnectionId,
         impl Future<Output = anyhow::Result<()>> + Send,
-        mpsc::Receiver<Box<dyn AnyTypedEnvelope>>,
+        BoxStream<'static, Box<dyn AnyTypedEnvelope>>,
     ) {
         let connection_id = ConnectionId(self.next_connection_id.fetch_add(1, SeqCst));
         let (mut incoming_tx, incoming_rx) = mpsc::channel(64);
@@ -132,23 +133,9 @@ impl Peer {
                     futures::select_biased! {
                         incoming = read_message => match incoming {
                             Ok(incoming) => {
-                                if let Some(responding_to) = incoming.responding_to {
-                                    let channel = response_channels.lock().await.as_mut().unwrap().remove(&responding_to);
-                                    if let Some(mut tx) = channel {
-                                        tx.send(incoming).await.ok();
-                                    } else {
-                                        log::warn!("received RPC response to unknown request {}", responding_to);
-                                    }
-                                } else {
-                                    if let Some(envelope) = proto::build_typed_envelope(connection_id, incoming) {
-                                        if incoming_tx.send(envelope).await.is_err() {
-                                            break 'outer Ok(())
-                                        }
-                                    } else {
-                                        log::error!("unable to construct a typed envelope");
-                                    }
+                                if incoming_tx.send(incoming).await.is_err() {
+                                    break 'outer Ok(());
                                 }
-
                                 break;
                             }
                             Err(error) => {
@@ -169,25 +156,47 @@ impl Peer {
                 }
             };
 
-            response_channels.lock().await.take();
-            this.connections.write().await.remove(&connection_id);
+            response_channels.lock().take();
+            this.connections.write().remove(&connection_id);
             result
         };
 
+        let response_channels = connection_state.response_channels.clone();
         self.connections
             .write()
-            .await
             .insert(connection_id, connection_state);
 
-        (connection_id, handle_io, incoming_rx)
+        let incoming_rx = incoming_rx.filter_map(move |incoming| {
+            let response_channels = response_channels.clone();
+            async move {
+                if let Some(responding_to) = incoming.responding_to {
+                    let channel = response_channels.lock().as_mut()?.remove(&responding_to);
+                    if let Some(mut tx) = channel {
+                        tx.send(incoming).await.ok();
+                    } else {
+                        log::warn!("received RPC response to unknown request {}", responding_to);
+                    }
+
+                    None
+                } else {
+                    if let Some(envelope) = proto::build_typed_envelope(connection_id, incoming) {
+                        Some(envelope)
+                    } else {
+                        log::error!("unable to construct a typed envelope");
+                        None
+                    }
+                }
+            }
+        });
+        (connection_id, handle_io, incoming_rx.boxed())
     }
 
-    pub async fn disconnect(&self, connection_id: ConnectionId) {
-        self.connections.write().await.remove(&connection_id);
+    pub fn disconnect(&self, connection_id: ConnectionId) {
+        self.connections.write().remove(&connection_id);
     }
 
-    pub async fn reset(&self) {
-        self.connections.write().await.clear();
+    pub fn reset(&self) {
+        self.connections.write().clear();
     }
 
     pub fn request<T: RequestMessage>(
@@ -216,12 +225,11 @@ impl Peer {
         let this = self.clone();
         let (tx, mut rx) = mpsc::channel(1);
         async move {
-            let mut connection = this.connection_state(receiver_id).await?;
+            let mut connection = this.connection_state(receiver_id)?;
             let message_id = connection.next_message_id.fetch_add(1, SeqCst);
             connection
                 .response_channels
                 .lock()
-                .await
                 .as_mut()
                 .ok_or_else(|| anyhow!("connection was closed"))?
                 .insert(message_id, tx);
@@ -250,7 +258,7 @@ impl Peer {
     ) -> impl Future<Output = Result<()>> {
         let this = self.clone();
         async move {
-            let mut connection = this.connection_state(receiver_id).await?;
+            let mut connection = this.connection_state(receiver_id)?;
             let message_id = connection
                 .next_message_id
                 .fetch_add(1, atomic::Ordering::SeqCst);
@@ -270,7 +278,7 @@ impl Peer {
     ) -> impl Future<Output = Result<()>> {
         let this = self.clone();
         async move {
-            let mut connection = this.connection_state(receiver_id).await?;
+            let mut connection = this.connection_state(receiver_id)?;
             let message_id = connection
                 .next_message_id
                 .fetch_add(1, atomic::Ordering::SeqCst);
@@ -289,7 +297,7 @@ impl Peer {
     ) -> impl Future<Output = Result<()>> {
         let this = self.clone();
         async move {
-            let mut connection = this.connection_state(receipt.sender_id).await?;
+            let mut connection = this.connection_state(receipt.sender_id)?;
             let message_id = connection
                 .next_message_id
                 .fetch_add(1, atomic::Ordering::SeqCst);
@@ -308,7 +316,7 @@ impl Peer {
     ) -> impl Future<Output = Result<()>> {
         let this = self.clone();
         async move {
-            let mut connection = this.connection_state(receipt.sender_id).await?;
+            let mut connection = this.connection_state(receipt.sender_id)?;
             let message_id = connection
                 .next_message_id
                 .fetch_add(1, atomic::Ordering::SeqCst);
@@ -320,18 +328,12 @@ impl Peer {
         }
     }
 
-    fn connection_state(
-        self: &Arc<Self>,
-        connection_id: ConnectionId,
-    ) -> impl Future<Output = Result<ConnectionState>> {
-        let this = self.clone();
-        async move {
-            let connections = this.connections.read().await;
-            let connection = connections
-                .get(&connection_id)
-                .ok_or_else(|| anyhow!("no such connection: {}", connection_id))?;
-            Ok(connection.clone())
-        }
+    fn connection_state(&self, connection_id: ConnectionId) -> Result<ConnectionState> {
+        let connections = self.connections.read();
+        let connection = connections
+            .get(&connection_id)
+            .ok_or_else(|| anyhow!("no such connection: {}", connection_id))?;
+        Ok(connection.clone())
     }
 }
 
@@ -340,198 +342,311 @@ mod tests {
     use super::*;
     use crate::TypedEnvelope;
     use async_tungstenite::tungstenite::Message as WebSocketMessage;
-    use futures::StreamExt as _;
+    use gpui::TestAppContext;
 
-    #[test]
-    fn test_request_response() {
-        smol::block_on(async move {
-            // create 2 clients connected to 1 server
-            let server = Peer::new();
-            let client1 = Peer::new();
-            let client2 = Peer::new();
+    #[gpui::test(iterations = 10)]
+    async fn test_request_response(cx: TestAppContext) {
+        let executor = cx.foreground();
 
-            let (client1_to_server_conn, server_to_client_1_conn, _) = Connection::in_memory();
-            let (client1_conn_id, io_task1, _) =
-                client1.add_connection(client1_to_server_conn).await;
-            let (_, io_task2, incoming1) = server.add_connection(server_to_client_1_conn).await;
+        // create 2 clients connected to 1 server
+        let server = Peer::new();
+        let client1 = Peer::new();
+        let client2 = Peer::new();
 
-            let (client2_to_server_conn, server_to_client_2_conn, _) = Connection::in_memory();
-            let (client2_conn_id, io_task3, _) =
-                client2.add_connection(client2_to_server_conn).await;
-            let (_, io_task4, incoming2) = server.add_connection(server_to_client_2_conn).await;
+        let (client1_to_server_conn, server_to_client_1_conn, _) = Connection::in_memory();
+        let (client1_conn_id, io_task1, client1_incoming) =
+            client1.add_connection(client1_to_server_conn).await;
+        let (_, io_task2, server_incoming1) = server.add_connection(server_to_client_1_conn).await;
 
-            smol::spawn(io_task1).detach();
-            smol::spawn(io_task2).detach();
-            smol::spawn(io_task3).detach();
-            smol::spawn(io_task4).detach();
-            smol::spawn(handle_messages(incoming1, server.clone())).detach();
-            smol::spawn(handle_messages(incoming2, server.clone())).detach();
+        let (client2_to_server_conn, server_to_client_2_conn, _) = Connection::in_memory();
+        let (client2_conn_id, io_task3, client2_incoming) =
+            client2.add_connection(client2_to_server_conn).await;
+        let (_, io_task4, server_incoming2) = server.add_connection(server_to_client_2_conn).await;
 
-            assert_eq!(
-                client1
-                    .request(client1_conn_id, proto::Ping {},)
-                    .await
-                    .unwrap(),
-                proto::Ack {}
-            );
+        executor.spawn(io_task1).detach();
+        executor.spawn(io_task2).detach();
+        executor.spawn(io_task3).detach();
+        executor.spawn(io_task4).detach();
+        executor
+            .spawn(handle_messages(server_incoming1, server.clone()))
+            .detach();
+        executor
+            .spawn(handle_messages(client1_incoming, client1.clone()))
+            .detach();
+        executor
+            .spawn(handle_messages(server_incoming2, server.clone()))
+            .detach();
+        executor
+            .spawn(handle_messages(client2_incoming, client2.clone()))
+            .detach();
 
-            assert_eq!(
-                client2
-                    .request(client2_conn_id, proto::Ping {},)
-                    .await
-                    .unwrap(),
-                proto::Ack {}
-            );
+        assert_eq!(
+            client1
+                .request(client1_conn_id, proto::Ping {},)
+                .await
+                .unwrap(),
+            proto::Ack {}
+        );
 
-            assert_eq!(
-                client1
-                    .request(
-                        client1_conn_id,
-                        proto::OpenBuffer {
-                            project_id: 0,
-                            worktree_id: 1,
-                            path: "path/one".to_string(),
-                        },
-                    )
-                    .await
-                    .unwrap(),
-                proto::OpenBufferResponse {
-                    buffer: Some(proto::Buffer {
-                        id: 101,
-                        visible_text: "path/one content".to_string(),
-                        ..Default::default()
-                    }),
-                }
-            );
+        assert_eq!(
+            client2
+                .request(client2_conn_id, proto::Ping {},)
+                .await
+                .unwrap(),
+            proto::Ack {}
+        );
 
-            assert_eq!(
-                client2
-                    .request(
-                        client2_conn_id,
-                        proto::OpenBuffer {
-                            project_id: 0,
-                            worktree_id: 2,
-                            path: "path/two".to_string(),
-                        },
-                    )
-                    .await
-                    .unwrap(),
-                proto::OpenBufferResponse {
-                    buffer: Some(proto::Buffer {
-                        id: 102,
-                        visible_text: "path/two content".to_string(),
-                        ..Default::default()
-                    }),
-                }
-            );
-
-            client1.disconnect(client1_conn_id).await;
-            client2.disconnect(client1_conn_id).await;
-
-            async fn handle_messages(
-                mut messages: mpsc::Receiver<Box<dyn AnyTypedEnvelope>>,
-                peer: Arc<Peer>,
-            ) -> Result<()> {
-                while let Some(envelope) = messages.next().await {
-                    let envelope = envelope.into_any();
-                    if let Some(envelope) = envelope.downcast_ref::<TypedEnvelope<proto::Ping>>() {
-                        let receipt = envelope.receipt();
-                        peer.respond(receipt, proto::Ack {}).await?
-                    } else if let Some(envelope) =
-                        envelope.downcast_ref::<TypedEnvelope<proto::OpenBuffer>>()
-                    {
-                        let message = &envelope.payload;
-                        let receipt = envelope.receipt();
-                        let response = match message.path.as_str() {
-                            "path/one" => {
-                                assert_eq!(message.worktree_id, 1);
-                                proto::OpenBufferResponse {
-                                    buffer: Some(proto::Buffer {
-                                        id: 101,
-                                        visible_text: "path/one content".to_string(),
-                                        ..Default::default()
-                                    }),
-                                }
-                            }
-                            "path/two" => {
-                                assert_eq!(message.worktree_id, 2);
-                                proto::OpenBufferResponse {
-                                    buffer: Some(proto::Buffer {
-                                        id: 102,
-                                        visible_text: "path/two content".to_string(),
-                                        ..Default::default()
-                                    }),
-                                }
-                            }
-                            _ => {
-                                panic!("unexpected path {}", message.path);
-                            }
-                        };
-
-                        peer.respond(receipt, response).await?
-                    } else {
-                        panic!("unknown message type");
-                    }
-                }
-
-                Ok(())
+        assert_eq!(
+            client1
+                .request(
+                    client1_conn_id,
+                    proto::OpenBuffer {
+                        project_id: 0,
+                        worktree_id: 1,
+                        path: "path/one".to_string(),
+                    },
+                )
+                .await
+                .unwrap(),
+            proto::OpenBufferResponse {
+                buffer: Some(proto::Buffer {
+                    id: 101,
+                    visible_text: "path/one content".to_string(),
+                    ..Default::default()
+                }),
             }
-        });
+        );
+
+        assert_eq!(
+            client2
+                .request(
+                    client2_conn_id,
+                    proto::OpenBuffer {
+                        project_id: 0,
+                        worktree_id: 2,
+                        path: "path/two".to_string(),
+                    },
+                )
+                .await
+                .unwrap(),
+            proto::OpenBufferResponse {
+                buffer: Some(proto::Buffer {
+                    id: 102,
+                    visible_text: "path/two content".to_string(),
+                    ..Default::default()
+                }),
+            }
+        );
+
+        client1.disconnect(client1_conn_id);
+        client2.disconnect(client1_conn_id);
+
+        async fn handle_messages(
+            mut messages: BoxStream<'static, Box<dyn AnyTypedEnvelope>>,
+            peer: Arc<Peer>,
+        ) -> Result<()> {
+            while let Some(envelope) = messages.next().await {
+                let envelope = envelope.into_any();
+                if let Some(envelope) = envelope.downcast_ref::<TypedEnvelope<proto::Ping>>() {
+                    let receipt = envelope.receipt();
+                    peer.respond(receipt, proto::Ack {}).await?
+                } else if let Some(envelope) =
+                    envelope.downcast_ref::<TypedEnvelope<proto::OpenBuffer>>()
+                {
+                    let message = &envelope.payload;
+                    let receipt = envelope.receipt();
+                    let response = match message.path.as_str() {
+                        "path/one" => {
+                            assert_eq!(message.worktree_id, 1);
+                            proto::OpenBufferResponse {
+                                buffer: Some(proto::Buffer {
+                                    id: 101,
+                                    visible_text: "path/one content".to_string(),
+                                    ..Default::default()
+                                }),
+                            }
+                        }
+                        "path/two" => {
+                            assert_eq!(message.worktree_id, 2);
+                            proto::OpenBufferResponse {
+                                buffer: Some(proto::Buffer {
+                                    id: 102,
+                                    visible_text: "path/two content".to_string(),
+                                    ..Default::default()
+                                }),
+                            }
+                        }
+                        _ => {
+                            panic!("unexpected path {}", message.path);
+                        }
+                    };
+
+                    peer.respond(receipt, response).await?
+                } else {
+                    panic!("unknown message type");
+                }
+            }
+
+            Ok(())
+        }
     }
 
-    #[test]
-    fn test_disconnect() {
-        smol::block_on(async move {
-            let (client_conn, mut server_conn, _) = Connection::in_memory();
+    #[gpui::test(iterations = 10)]
+    async fn test_order_of_response_and_incoming(cx: TestAppContext) {
+        let executor = cx.foreground();
+        let server = Peer::new();
+        let client = Peer::new();
 
-            let client = Peer::new();
-            let (connection_id, io_handler, mut incoming) =
-                client.add_connection(client_conn).await;
+        let (client_to_server_conn, server_to_client_conn, _) = Connection::in_memory();
+        let (client_to_server_conn_id, io_task1, mut client_incoming) =
+            client.add_connection(client_to_server_conn).await;
+        let (server_to_client_conn_id, io_task2, mut server_incoming) =
+            server.add_connection(server_to_client_conn).await;
 
-            let (mut io_ended_tx, mut io_ended_rx) = postage::barrier::channel();
-            smol::spawn(async move {
+        executor.spawn(io_task1).detach();
+        executor.spawn(io_task2).detach();
+
+        executor
+            .spawn(async move {
+                let request = server_incoming
+                    .next()
+                    .await
+                    .unwrap()
+                    .into_any()
+                    .downcast::<TypedEnvelope<proto::Ping>>()
+                    .unwrap();
+
+                server
+                    .send(
+                        server_to_client_conn_id,
+                        proto::Error {
+                            message: "message 1".to_string(),
+                        },
+                    )
+                    .await
+                    .unwrap();
+                server
+                    .send(
+                        server_to_client_conn_id,
+                        proto::Error {
+                            message: "message 2".to_string(),
+                        },
+                    )
+                    .await
+                    .unwrap();
+                server
+                    .respond(request.receipt(), proto::Ack {})
+                    .await
+                    .unwrap();
+
+                // Prevent the connection from being dropped
+                server_incoming.next().await;
+            })
+            .detach();
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+
+        let response = client.request(client_to_server_conn_id, proto::Ping {});
+        let response_task = executor.spawn({
+            let events = events.clone();
+            async move {
+                response.await.unwrap();
+                events.lock().push("response".to_string());
+            }
+        });
+
+        executor
+            .spawn({
+                let events = events.clone();
+                async move {
+                    let incoming1 = client_incoming
+                        .next()
+                        .await
+                        .unwrap()
+                        .into_any()
+                        .downcast::<TypedEnvelope<proto::Error>>()
+                        .unwrap();
+                    events.lock().push(incoming1.payload.message);
+                    let incoming2 = client_incoming
+                        .next()
+                        .await
+                        .unwrap()
+                        .into_any()
+                        .downcast::<TypedEnvelope<proto::Error>>()
+                        .unwrap();
+                    events.lock().push(incoming2.payload.message);
+
+                    // Prevent the connection from being dropped
+                    client_incoming.next().await;
+                }
+            })
+            .detach();
+
+        response_task.await;
+        assert_eq!(
+            &*events.lock(),
+            &[
+                "message 1".to_string(),
+                "message 2".to_string(),
+                "response".to_string()
+            ]
+        );
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_disconnect(cx: TestAppContext) {
+        let executor = cx.foreground();
+
+        let (client_conn, mut server_conn, _) = Connection::in_memory();
+
+        let client = Peer::new();
+        let (connection_id, io_handler, mut incoming) = client.add_connection(client_conn).await;
+
+        let (mut io_ended_tx, mut io_ended_rx) = postage::barrier::channel();
+        executor
+            .spawn(async move {
                 io_handler.await.ok();
                 io_ended_tx.send(()).await.unwrap();
             })
             .detach();
 
-            let (mut messages_ended_tx, mut messages_ended_rx) = postage::barrier::channel();
-            smol::spawn(async move {
+        let (mut messages_ended_tx, mut messages_ended_rx) = postage::barrier::channel();
+        executor
+            .spawn(async move {
                 incoming.next().await;
                 messages_ended_tx.send(()).await.unwrap();
             })
             .detach();
 
-            client.disconnect(connection_id).await;
+        client.disconnect(connection_id);
 
-            io_ended_rx.recv().await;
-            messages_ended_rx.recv().await;
-            assert!(server_conn
-                .send(WebSocketMessage::Binary(vec![]))
-                .await
-                .is_err());
-        });
+        io_ended_rx.recv().await;
+        messages_ended_rx.recv().await;
+        assert!(server_conn
+            .send(WebSocketMessage::Binary(vec![]))
+            .await
+            .is_err());
     }
 
-    #[test]
-    fn test_io_error() {
-        smol::block_on(async move {
-            let (client_conn, mut server_conn, _) = Connection::in_memory();
+    #[gpui::test(iterations = 10)]
+    async fn test_io_error(cx: TestAppContext) {
+        let executor = cx.foreground();
+        let (client_conn, mut server_conn, _) = Connection::in_memory();
 
-            let client = Peer::new();
-            let (connection_id, io_handler, mut incoming) =
-                client.add_connection(client_conn).await;
-            smol::spawn(io_handler).detach();
-            smol::spawn(async move { incoming.next().await }).detach();
+        let client = Peer::new();
+        let (connection_id, io_handler, mut incoming) = client.add_connection(client_conn).await;
+        executor.spawn(io_handler).detach();
+        executor
+            .spawn(async move { incoming.next().await })
+            .detach();
 
-            let response = smol::spawn(client.request(connection_id, proto::Ping {}));
-            let _request = server_conn.rx.next().await.unwrap().unwrap();
+        let response = executor.spawn(client.request(connection_id, proto::Ping {}));
+        let _request = server_conn.rx.next().await.unwrap().unwrap();
 
-            drop(server_conn);
-            assert_eq!(
-                response.await.unwrap_err().to_string(),
-                "connection was closed"
-            );
-        });
+        drop(server_conn);
+        assert_eq!(
+            response.await.unwrap_err().to_string(),
+            "connection was closed"
+        );
     }
 }

@@ -128,6 +128,7 @@ messages!(
     DiskBasedDiagnosticsUpdated,
     DiskBasedDiagnosticsUpdating,
     Error,
+    FormatBuffer,
     GetChannelMessages,
     GetChannelMessagesResponse,
     GetChannels,
@@ -162,6 +163,7 @@ messages!(
 );
 
 request_messages!(
+    (FormatBuffer, Ack),
     (GetChannelMessages, GetChannelMessagesResponse),
     (GetChannels, GetChannelsResponse),
     (GetUsers, GetUsersResponse),
@@ -185,6 +187,7 @@ entity_messages!(
     CloseBuffer,
     DiskBasedDiagnosticsUpdated,
     DiskBasedDiagnosticsUpdating,
+    FormatBuffer,
     JoinProject,
     LeaveProject,
     OpenBuffer,

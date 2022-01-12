@@ -35,22 +35,23 @@ message Envelope {
         UpdateBuffer update_buffer = 27;
         SaveBuffer save_buffer = 28;
         BufferSaved buffer_saved = 29;
+        FormatBuffer format_buffer = 30;
 
-        GetChannels get_channels = 30;
-        GetChannelsResponse get_channels_response = 31;
-        JoinChannel join_channel = 32;
-        JoinChannelResponse join_channel_response = 33;
-        LeaveChannel leave_channel = 34;
-        SendChannelMessage send_channel_message = 35;
-        SendChannelMessageResponse send_channel_message_response = 36;
-        ChannelMessageSent channel_message_sent = 37;
-        GetChannelMessages get_channel_messages = 38;
-        GetChannelMessagesResponse get_channel_messages_response = 39;
+        GetChannels get_channels = 31;
+        GetChannelsResponse get_channels_response = 32;
+        JoinChannel join_channel = 33;
+        JoinChannelResponse join_channel_response = 34;
+        LeaveChannel leave_channel = 35;
+        SendChannelMessage send_channel_message = 36;
+        SendChannelMessageResponse send_channel_message_response = 37;
+        ChannelMessageSent channel_message_sent = 38;
+        GetChannelMessages get_channel_messages = 39;
+        GetChannelMessagesResponse get_channel_messages_response = 40;
 
-        UpdateContacts update_contacts = 40;
+        UpdateContacts update_contacts = 41;
 
-        GetUsers get_users = 41;
-        GetUsersResponse get_users_response = 42;
+        GetUsers get_users = 42;
+        GetUsersResponse get_users_response = 43;
     }
 }
 
@@ -166,6 +167,12 @@ message BufferSaved {
     uint64 buffer_id = 3;
     repeated VectorClockEntry version = 4;
     Timestamp mtime = 5;
+}
+
+message FormatBuffer {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    uint64 buffer_id = 3;
 }
 
 message UpdateDiagnosticSummary {
