@@ -11,11 +11,12 @@ use async_tungstenite::tungstenite::{
     error::Error as WebsocketError,
     http::{Request, StatusCode},
 };
+use futures::StreamExt;
 use gpui::{action, AsyncAppContext, Entity, ModelContext, MutableAppContext, Task};
 use http::HttpClient;
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
-use postage::{prelude::Stream, watch};
+use postage::watch;
 use rand::prelude::*;
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage};
 use std::{
@@ -436,7 +437,7 @@ impl Client {
                 let mut cx = cx.clone();
                 let this = self.clone();
                 async move {
-                    while let Some(message) = incoming.recv().await {
+                    while let Some(message) = incoming.next().await {
                         let mut state = this.state.write();
                         let payload_type_id = message.payload_type_id();
                         let entity_id = if let Some(extract_entity_id) =
@@ -777,23 +778,23 @@ mod tests {
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
         let mut status = client.status();
         assert!(matches!(
-            status.recv().await,
+            status.next().await,
             Some(Status::Connected { .. })
         ));
         assert_eq!(server.auth_count(), 1);
 
         server.forbid_connections();
         server.disconnect();
-        while !matches!(status.recv().await, Some(Status::ReconnectionError { .. })) {}
+        while !matches!(status.next().await, Some(Status::ReconnectionError { .. })) {}
 
         server.allow_connections();
         cx.foreground().advance_clock(Duration::from_secs(10));
-        while !matches!(status.recv().await, Some(Status::Connected { .. })) {}
+        while !matches!(status.next().await, Some(Status::Connected { .. })) {}
         assert_eq!(server.auth_count(), 1); // Client reused the cached credentials when reconnecting
 
         server.forbid_connections();
         server.disconnect();
-        while !matches!(status.recv().await, Some(Status::ReconnectionError { .. })) {}
+        while !matches!(status.next().await, Some(Status::ReconnectionError { .. })) {}
 
         // Clear cached credentials after authentication fails
         server.roll_access_token();
@@ -801,7 +802,7 @@ mod tests {
         cx.foreground().advance_clock(Duration::from_secs(10));
         assert_eq!(server.auth_count(), 1);
         cx.foreground().advance_clock(Duration::from_secs(10));
-        while !matches!(status.recv().await, Some(Status::Connected { .. })) {}
+        while !matches!(status.next().await, Some(Status::Connected { .. })) {}
         assert_eq!(server.auth_count(), 2); // Client re-authenticated due to an invalid token
     }
 
@@ -861,8 +862,8 @@ mod tests {
 
         server.send(proto::UnshareProject { project_id: 1 }).await;
         server.send(proto::UnshareProject { project_id: 2 }).await;
-        done_rx1.recv().await.unwrap();
-        done_rx2.recv().await.unwrap();
+        done_rx1.next().await.unwrap();
+        done_rx2.next().await.unwrap();
     }
 
     #[gpui::test]
@@ -890,7 +891,7 @@ mod tests {
             })
         });
         server.send(proto::Ping {}).await;
-        done_rx2.recv().await.unwrap();
+        done_rx2.next().await.unwrap();
     }
 
     #[gpui::test]
@@ -914,7 +915,7 @@ mod tests {
             ));
         });
         server.send(proto::Ping {}).await;
-        done_rx.recv().await.unwrap();
+        done_rx.next().await.unwrap();
     }
 
     struct Model {

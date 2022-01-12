@@ -1,10 +1,9 @@
 use super::Client;
 use super::*;
 use crate::http::{HttpClient, Request, Response, ServerResponse};
-use futures::{future::BoxFuture, Future};
+use futures::{future::BoxFuture, stream::BoxStream, Future, StreamExt};
 use gpui::{ModelHandle, TestAppContext};
 use parking_lot::Mutex;
-use postage::{mpsc, prelude::Stream};
 use rpc::{proto, ConnectionId, Peer, Receipt, TypedEnvelope};
 use std::fmt;
 use std::sync::atomic::Ordering::SeqCst;
@@ -15,7 +14,7 @@ use std::sync::{
 
 pub struct FakeServer {
     peer: Arc<Peer>,
-    incoming: Mutex<Option<mpsc::Receiver<Box<dyn proto::AnyTypedEnvelope>>>>,
+    incoming: Mutex<Option<BoxStream<'static, Box<dyn proto::AnyTypedEnvelope>>>>,
     connection_id: Mutex<Option<ConnectionId>>,
     forbid_connections: AtomicBool,
     auth_count: AtomicUsize,
@@ -129,7 +128,7 @@ impl FakeServer {
             .lock()
             .as_mut()
             .expect("not connected")
-            .recv()
+            .next()
             .await
             .ok_or_else(|| anyhow!("other half hung up"))?;
         let type_name = message.payload_type_name();

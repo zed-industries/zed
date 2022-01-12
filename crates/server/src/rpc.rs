@@ -9,9 +9,9 @@ use anyhow::anyhow;
 use async_std::task;
 use async_tungstenite::{tungstenite::protocol::Role, WebSocketStream};
 use collections::{HashMap, HashSet};
-use futures::{future::BoxFuture, FutureExt};
+use futures::{future::BoxFuture, FutureExt, StreamExt};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use postage::{mpsc, prelude::Sink as _, prelude::Stream as _};
+use postage::{mpsc, prelude::Sink as _};
 use rpc::{
     proto::{self, AnyTypedEnvelope, EnvelopedMessage},
     Connection, ConnectionId, Peer, TypedEnvelope,
@@ -133,7 +133,7 @@ impl Server {
             let handle_io = handle_io.fuse();
             futures::pin_mut!(handle_io);
             loop {
-                let next_message = incoming_rx.recv().fuse();
+                let next_message = incoming_rx.next().fuse();
                 futures::pin_mut!(next_message);
                 futures::select_biased! {
                     message = next_message => {
@@ -2026,7 +2026,7 @@ mod tests {
         });
     }
 
-    #[gpui::test(iterations = 1, seed = 2)]
+    #[gpui::test]
     async fn test_formatting_buffer(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
@@ -2425,7 +2425,7 @@ mod tests {
         server.forbid_connections();
         server.disconnect_client(client_b.current_user_id(&cx_b));
         while !matches!(
-            status_b.recv().await,
+            status_b.next().await,
             Some(client::Status::ReconnectionError { .. })
         ) {}
 
@@ -2769,11 +2769,11 @@ mod tests {
                 .await
                 .unwrap();
 
-            let peer_id = PeerId(connection_id_rx.recv().await.unwrap().0);
+            let peer_id = PeerId(connection_id_rx.next().await.unwrap().0);
             let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
             let mut authed_user =
                 user_store.read_with(cx, |user_store, _| user_store.watch_current_user());
-            while authed_user.recv().await.unwrap().is_none() {}
+            while authed_user.next().await.unwrap().is_none() {}
 
             TestClient {
                 client,
@@ -2822,7 +2822,7 @@ mod tests {
             async_std::future::timeout(Duration::from_millis(500), async {
                 while !(predicate)(&*self.server.store.read()) {
                     self.foreground.start_waiting();
-                    self.notifications.recv().await;
+                    self.notifications.next().await;
                     self.foreground.finish_waiting();
                 }
             })

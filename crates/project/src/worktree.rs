@@ -600,7 +600,6 @@ impl Worktree {
             // We spawn here in order to enqueue the sending of `Ack` *after* transmission of edits
             // associated with formatting.
             cx.spawn(|_| async move {
-                dbg!("responding");
                 match format {
                     Ok(()) => rpc.respond(receipt, proto::Ack {}).await?,
                     Err(error) => {
@@ -923,7 +922,6 @@ impl Worktree {
             )),
         } {
             cx.spawn(|worktree, mut cx| async move {
-                dbg!(&operation);
                 if let Err(error) = rpc
                     .request(proto::UpdateBuffer {
                         project_id,
