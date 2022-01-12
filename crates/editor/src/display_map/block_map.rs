@@ -5,7 +5,7 @@ use gpui::{AppContext, ElementBox};
 use language::Chunk;
 use parking_lot::Mutex;
 use std::{
-    cmp::{self, Ordering},
+    cmp::{self, Ordering, Reverse},
     fmt::Debug,
     ops::{Deref, Range},
     sync::{
@@ -276,7 +276,11 @@ impl BlockMap {
                         (position.row(), column, block.clone())
                     }),
             );
-            blocks_in_edit.sort_by_key(|(row, _, block)| (*row, block.disposition, block.id));
+
+            // When multiple blocks are on the same row, newer blocks appear above older
+            // blocks. This is arbitrary, but we currently rely on it in ProjectDiagnosticsEditor.
+            blocks_in_edit
+                .sort_by_key(|(row, _, block)| (*row, block.disposition, Reverse(block.id)));
 
             // For each of these blocks, insert a new isomorphic transform preceding the block,
             // and then insert the block itself.
@@ -940,7 +944,11 @@ mod tests {
                     start_row..start_row + block.height(),
                     block.column(),
                     block
-                        .render(&BlockContext { cx, anchor_x: 0., line_number_x: 0., })
+                        .render(&BlockContext {
+                            cx,
+                            anchor_x: 0.,
+                            line_number_x: 0.,
+                        })
                         .name()
                         .unwrap()
                         .to_string(),

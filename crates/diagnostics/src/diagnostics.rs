@@ -423,28 +423,27 @@ impl ProjectDiagnosticsEditor {
                 render: path_header_renderer(buffer, self.build_settings.clone()),
                 disposition: BlockDisposition::Above,
             });
-            let mut block_ids = editor
-                .insert_blocks(
-                    header_block
-                        .into_iter()
-                        .chain(blocks_to_add.into_iter().map(|block| {
-                            let (excerpt_id, text_anchor) = block.position;
-                            BlockProperties {
-                                position: excerpts_snapshot
-                                    .anchor_in_excerpt(excerpt_id, text_anchor),
-                                height: block.height,
-                                render: block.render,
-                                disposition: block.disposition,
-                            }
-                        })),
-                    cx,
-                )
-                .into_iter();
+            let block_ids = editor.insert_blocks(
+                blocks_to_add
+                    .into_iter()
+                    .map(|block| {
+                        let (excerpt_id, text_anchor) = block.position;
+                        BlockProperties {
+                            position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor),
+                            height: block.height,
+                            render: block.render,
+                            disposition: block.disposition,
+                        }
+                    })
+                    .chain(header_block.into_iter()),
+                cx,
+            );
 
-            path_state.header = block_ids.next();
+            let mut block_ids = block_ids.into_iter();
             for group_state in &mut groups_to_add {
                 group_state.blocks = block_ids.by_ref().take(group_state.block_count).collect();
             }
+            path_state.header = block_ids.next();
         });
 
         for ix in group_ixs_to_remove.into_iter().rev() {
