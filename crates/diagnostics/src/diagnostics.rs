@@ -160,11 +160,6 @@ impl ProjectDiagnosticsEditor {
         this
     }
 
-    #[cfg(test)]
-    fn text(&self, cx: &AppContext) -> String {
-        self.editor.read(cx).text(cx)
-    }
-
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         if let Some(existing) = workspace.item_of_type::<ProjectDiagnostics>(cx) {
             workspace.activate_item(&existing, cx);
@@ -611,7 +606,7 @@ fn path_header_renderer(buffer: ModelHandle<Buffer>, build_settings: BuildSettin
             .with_style(style.header)
             .with_padding_left(cx.line_number_x)
             .expanded()
-            .boxed()
+            .named("path header block")
     })
 }
 
@@ -633,7 +628,7 @@ fn diagnostic_header_renderer(
             .with_style(diagnostic_style.header)
             .with_padding_left(cx.line_number_x)
             .expanded()
-            .boxed()
+            .named("diagnostic header")
     })
 }
 
@@ -644,7 +639,7 @@ fn context_header_renderer(build_settings: BuildSettings) -> RenderBlock {
         Label::new("…".to_string(), text_style)
             .contained()
             .with_padding_left(cx.line_number_x)
-            .boxed()
+            .named("collapsed context")
     })
 }
 
@@ -669,11 +664,10 @@ fn compare_diagnostics<L: language::ToOffset, R: language::ToOffset>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use client::{http::ServerResponse, test::FakeHttpClient, Client, UserStore};
-    use editor::DisplayPoint;
+    use editor::{display_map::BlockContext, DisplayPoint, EditorSnapshot};
     use gpui::TestAppContext;
-    use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, LanguageRegistry, PointUtf16};
-    use project::{worktree, FakeFs};
+    use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16};
+    use project::worktree;
     use serde_json::json;
     use std::sync::Arc;
     use unindent::Unindent as _;
@@ -681,31 +675,23 @@ mod tests {
 
     #[gpui::test]
     async fn test_diagnostics(mut cx: TestAppContext) {
-        let workspace_params = cx.update(WorkspaceParams::test);
-        let settings = workspace_params.settings.clone();
-        let http_client = FakeHttpClient::new(|_| async move { Ok(ServerResponse::new(404)) });
-        let client = Client::new(http_client.clone());
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let fs = Arc::new(FakeFs::new());
+        let params = cx.update(WorkspaceParams::test);
+        let project = params.project.clone();
+        let workspace = cx.add_view(0, |cx| Workspace::new(&params, cx));
 
-        let project = cx.update(|cx| {
-            Project::local(
-                client.clone(),
-                user_store,
-                Arc::new(LanguageRegistry::new()),
-                fs.clone(),
-                cx,
-            )
-        });
-
-        fs.insert_tree(
-            "/test",
-            json!({
-                "a.rs": "
+        params
+            .fs
+            .as_fake()
+            .insert_tree(
+                "/test",
+                json!({
+                    "consts.rs": "
                     const a: i32 = 'a';
-                ".unindent(),
+                    const b: i32 = c;
+                "
+                    .unindent(),
 
-                "main.rs": "
+                    "main.rs": "
                     fn main() {
                         let x = vec![];
                         let y = vec![];
@@ -717,10 +703,10 @@ mod tests {
                         d(x);
                     }
                 "
-                .unindent(),
-            }),
-        )
-        .await;
+                    .unindent(),
+                }),
+            )
+            .await;
 
         let worktree = project
             .update(&mut cx, |project, cx| {
@@ -729,6 +715,7 @@ mod tests {
             .await
             .unwrap();
 
+        // Create some diagnostics
         worktree.update(&mut cx, |worktree, cx| {
             worktree
                 .update_diagnostic_entries(
@@ -811,19 +798,25 @@ mod tests {
                 .unwrap();
         });
 
+        // Open the project diagnostics view while there are already diagnostics.
         let model = cx.add_model(|_| ProjectDiagnostics::new(project.clone()));
-        let workspace = cx.add_view(0, |cx| Workspace::new(&workspace_params, cx));
-
         let view = cx.add_view(0, |cx| {
-            ProjectDiagnosticsEditor::new(model, workspace.downgrade(), settings, cx)
+            ProjectDiagnosticsEditor::new(model, workspace.downgrade(), params.settings, cx)
         });
 
-        view.condition(&mut cx, |view, cx| view.text(cx).contains("fn main()"))
-            .await;
-
+        view.next_notification(&cx).await;
         view.update(&mut cx, |view, cx| {
             let editor = view.editor.update(cx, |editor, cx| editor.snapshot(cx));
 
+            assert_eq!(
+                editor_blocks(&editor, cx),
+                [
+                    (0, "path header block".into()),
+                    (2, "diagnostic header".into()),
+                    (15, "diagnostic header".into()),
+                    (24, "collapsed context".into()),
+                ]
+            );
             assert_eq!(
                 editor.text(),
                 concat!(
@@ -864,6 +857,7 @@ mod tests {
                 )
             );
 
+            // Cursor is at the first diagnostic
             view.editor.update(cx, |editor, cx| {
                 assert_eq!(
                     editor.selected_display_ranges(cx),
@@ -872,10 +866,11 @@ mod tests {
             });
         });
 
+        // Diagnostics are added for another earlier path.
         worktree.update(&mut cx, |worktree, cx| {
             worktree
                 .update_diagnostic_entries(
-                    Arc::from("/test/a.rs".as_ref()),
+                    Arc::from("/test/consts.rs".as_ref()),
                     None,
                     vec![DiagnosticEntry {
                         range: PointUtf16::new(0, 15)..PointUtf16::new(0, 15),
@@ -894,17 +889,26 @@ mod tests {
             cx.emit(worktree::Event::DiskBasedDiagnosticsUpdated);
         });
 
-        view.condition(&mut cx, |view, cx| view.text(cx).contains("const a"))
-            .await;
-
+        view.next_notification(&cx).await;
         view.update(&mut cx, |view, cx| {
             let editor = view.editor.update(cx, |editor, cx| editor.snapshot(cx));
 
             assert_eq!(
+                editor_blocks(&editor, cx),
+                [
+                    (0, "path header block".into()),
+                    (2, "diagnostic header".into()),
+                    (7, "path header block".into()),
+                    (9, "diagnostic header".into()),
+                    (22, "diagnostic header".into()),
+                    (31, "collapsed context".into()),
+                ]
+            );
+            assert_eq!(
                 editor.text(),
                 concat!(
                     //
-                    // a.rs
+                    // consts.rs
                     //
                     "\n", // filename
                     "\n", // padding
@@ -913,7 +917,126 @@ mod tests {
                     "\n", // padding
                     "const a: i32 = 'a';\n",
                     "\n", // supporting diagnostic
-                    "\n", // context line
+                    "const b: i32 = c;\n",
+                    //
+                    // main.rs
+                    //
+                    "\n", // filename
+                    "\n", // padding
+                    // diagnostic group 1
+                    "\n", // primary message
+                    "\n", // padding
+                    "    let x = vec![];\n",
+                    "    let y = vec![];\n",
+                    "\n", // supporting diagnostic
+                    "    a(x);\n",
+                    "    b(y);\n",
+                    "\n", // supporting diagnostic
+                    "    // comment 1\n",
+                    "    // comment 2\n",
+                    "    c(y);\n",
+                    "\n", // supporting diagnostic
+                    "    d(x);\n",
+                    // diagnostic group 2
+                    "\n", // primary message
+                    "\n", // filename
+                    "fn main() {\n",
+                    "    let x = vec![];\n",
+                    "\n", // supporting diagnostic
+                    "    let y = vec![];\n",
+                    "    a(x);\n",
+                    "\n", // supporting diagnostic
+                    "    b(y);\n",
+                    "\n", // context ellipsis
+                    "    c(y);\n",
+                    "    d(x);\n",
+                    "\n", // supporting diagnostic
+                    "}"
+                )
+            );
+
+            // Cursor keeps its position.
+            view.editor.update(cx, |editor, cx| {
+                assert_eq!(
+                    editor.selected_display_ranges(cx),
+                    [DisplayPoint::new(19, 6)..DisplayPoint::new(19, 6)]
+                );
+            });
+        });
+
+        // Diagnostics are added to the first path
+        worktree.update(&mut cx, |worktree, cx| {
+            worktree
+                .update_diagnostic_entries(
+                    Arc::from("/test/consts.rs".as_ref()),
+                    None,
+                    vec![
+                        DiagnosticEntry {
+                            range: PointUtf16::new(0, 15)..PointUtf16::new(0, 15),
+                            diagnostic: Diagnostic {
+                                message: "mismatched types\nexpected `usize`, found `char`"
+                                    .to_string(),
+                                severity: DiagnosticSeverity::ERROR,
+                                is_primary: true,
+                                is_disk_based: true,
+                                group_id: 0,
+                                ..Default::default()
+                            },
+                        },
+                        DiagnosticEntry {
+                            range: PointUtf16::new(1, 15)..PointUtf16::new(1, 15),
+                            diagnostic: Diagnostic {
+                                message: "unresolved name `c`".to_string(),
+                                severity: DiagnosticSeverity::ERROR,
+                                is_primary: true,
+                                is_disk_based: true,
+                                group_id: 1,
+                                ..Default::default()
+                            },
+                        },
+                    ],
+                    cx,
+                )
+                .unwrap();
+            cx.emit(worktree::Event::DiskBasedDiagnosticsUpdated);
+        });
+
+        view.next_notification(&cx).await;
+        view.update(&mut cx, |view, cx| {
+            let editor = view.editor.update(cx, |editor, cx| editor.snapshot(cx));
+
+            assert_eq!(
+                editor_blocks(&editor, cx),
+                [
+                    (0, "path header block".into()),
+                    (2, "diagnostic header".into()),
+                    (7, "diagnostic header".into()),
+                    (12, "path header block".into()),
+                    (14, "diagnostic header".into()),
+                    (27, "diagnostic header".into()),
+                    (36, "collapsed context".into()),
+                ]
+            );
+            assert_eq!(
+                editor.text(),
+                concat!(
+                    //
+                    // consts.rs
+                    //
+                    "\n", // filename
+                    "\n", // padding
+                    // diagnostic group 1
+                    "\n", // primary message
+                    "\n", // padding
+                    "const a: i32 = 'a';\n",
+                    "\n", // supporting diagnostic
+                    "const b: i32 = c;\n",
+                    // diagnostic group 2
+                    "\n", // primary message
+                    "\n", // padding
+                    "const a: i32 = 'a';\n",
+                    "const b: i32 = c;\n",
+                    "\n", // supporting diagnostic
                     //
                     // main.rs
                     //
@@ -951,5 +1074,21 @@ mod tests {
                 )
             );
         });
+    }
+
+    fn editor_blocks(editor: &EditorSnapshot, cx: &AppContext) -> Vec<(u32, String)> {
+        editor
+            .blocks_in_range(0..editor.max_point().row())
+            .filter_map(|(row, block)| {
+                block
+                    .render(&BlockContext {
+                        cx,
+                        anchor_x: 0.,
+                        line_number_x: 0.,
+                    })
+                    .name()
+                    .map(|s| (row, s.to_string()))
+            })
+            .collect()
     }
 }
