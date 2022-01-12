@@ -6148,6 +6148,83 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_refresh_selections(cx: &mut gpui::MutableAppContext) {
+        let settings = EditorSettings::test(cx);
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
+        let mut excerpt1_id = None;
+        let multibuffer = cx.add_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(0);
+            excerpt1_id = Some(multibuffer.push_excerpt(
+                ExcerptProperties {
+                    buffer: &buffer,
+                    range: Point::new(0, 0)..Point::new(1, 4),
+                },
+                cx,
+            ));
+            multibuffer.push_excerpt(
+                ExcerptProperties {
+                    buffer: &buffer,
+                    range: Point::new(1, 0)..Point::new(2, 4),
+                },
+                cx,
+            );
+            multibuffer
+        });
+        assert_eq!(
+            multibuffer.read(cx).read(cx).text(),
+            "aaaa\nbbbb\nbbbb\ncccc"
+        );
+        let (_, editor) = cx.add_window(Default::default(), |cx| {
+            let mut editor = build_editor(multibuffer.clone(), settings, cx);
+            editor.select_display_ranges(
+                &[
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
+                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                ],
+                cx,
+            );
+            editor
+        });
+
+        // Refreshing selections is a no-op when excerpts haven't changed.
+        editor.update(cx, |editor, cx| {
+            editor.refresh_selections(cx);
+            assert_eq!(
+                editor.selected_display_ranges(cx),
+                [
+                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
+                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                ]
+            );
+        });
+
+        multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.remove_excerpts([&excerpt1_id.unwrap()], cx);
+        });
+        editor.update(cx, |editor, cx| {
+            // Removing an excerpt causes the first selection to become degenerate.
+            assert_eq!(
+                editor.selected_display_ranges(cx),
+                [
+                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)
+                ]
+            );
+
+            // Refreshing selections will relocate the first selection to the original buffer
+            // location.
+            editor.refresh_selections(cx);
+            assert_eq!(
+                editor.selected_display_ranges(cx),
+                [
+                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
+                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3)
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_extra_newline_insertion(mut cx: gpui::TestAppContext) {
         let settings = cx.read(EditorSettings::test);
         let language = Some(Arc::new(Language::new(
