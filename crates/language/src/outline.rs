@@ -55,24 +55,29 @@ impl Outline {
                 *position += outline_match.name_range_in_text.start;
             }
 
+            let mut cur_depth = outline_match.depth;
             for (ix, item) in self.items[prev_item_ix..string_match.candidate_index]
                 .iter()
                 .enumerate()
+                .rev()
             {
+                if cur_depth == 0 {
+                    break;
+                }
+
                 let candidate_index = ix + prev_item_ix;
-                if item.range.contains(&outline_match.range.start)
-                    && item.range.contains(&outline_match.range.end)
-                {
+                if item.depth == cur_depth - 1 {
                     tree_matches.push(StringMatch {
                         candidate_index,
                         score: Default::default(),
                         positions: Default::default(),
                         string: Default::default(),
                     });
+                    cur_depth -= 1;
                 }
             }
 
-            prev_item_ix = string_match.candidate_index;
+            prev_item_ix = string_match.candidate_index + 1;
             tree_matches.push(string_match);
         }
 
