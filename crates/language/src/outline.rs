@@ -1,5 +1,5 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::executor::Background;
+use gpui::{executor::Background, fonts::HighlightStyle};
 use std::{ops::Range, sync::Arc};
 
 #[derive(Debug)]
@@ -14,6 +14,7 @@ pub struct OutlineItem<T> {
     pub range: Range<T>,
     pub text: String,
     pub name_ranges: Box<[Range<u32>]>,
+    pub text_runs: Vec<(usize, Option<HighlightStyle>)>,
 }
 
 impl<T> Outline<T> {

@@ -167,11 +167,16 @@ impl OutlineView {
             .to_any()
             .downcast::<Editor>()
             .unwrap();
-        let buffer = editor.read(cx).buffer().read(cx).read(cx).outline();
+        let settings = workspace.settings();
+        let buffer = editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .read(cx)
+            .outline(Some(settings.borrow().theme.editor.syntax.as_ref()));
         if let Some(outline) = buffer {
-            workspace.toggle_modal(cx, |cx, workspace| {
-                let view =
-                    cx.add_view(|cx| OutlineView::new(outline, editor, workspace.settings(), cx));
+            workspace.toggle_modal(cx, |cx, _| {
+                let view = cx.add_view(|cx| OutlineView::new(outline, editor, settings, cx));
                 cx.subscribe(&view, Self::on_event).detach();
                 view
             })

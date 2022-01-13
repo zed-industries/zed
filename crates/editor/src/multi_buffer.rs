@@ -1698,9 +1698,9 @@ impl MultiBufferSnapshot {
             })
     }
 
-    pub fn outline(&self) -> Option<Outline<Anchor>> {
+    pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
         let buffer = self.as_singleton()?;
-        let outline = buffer.outline()?;
+        let outline = buffer.outline(theme)?;
         let excerpt_id = &self.excerpts.iter().next().unwrap().id;
         Some(Outline::new(
             outline
@@ -1711,6 +1711,7 @@ impl MultiBufferSnapshot {
                     range: self.anchor_in_excerpt(excerpt_id.clone(), item.range.start)
                         ..self.anchor_in_excerpt(excerpt_id.clone(), item.range.end),
                     text: item.text,
+                    text_runs: item.text_runs,
                     name_ranges: item.name_ranges,
                 })
                 .collect(),

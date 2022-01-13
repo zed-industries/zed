@@ -1835,7 +1835,7 @@ impl BufferSnapshot {
         }
     }
 
-    pub fn outline(&self) -> Option<Outline<Anchor>> {
+    pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
         let tree = self.tree.as_ref()?;
         let grammar = self
             .language
@@ -1848,6 +1848,8 @@ impl BufferSnapshot {
             tree.root_node(),
             TextProvider(self.as_rope()),
         );
+
+        let mut chunks = self.chunks(0..self.len(), theme);
 
         let item_capture_ix = grammar.outline_query.capture_index_for_name("item")?;
         let name_capture_ix = grammar.outline_query.capture_index_for_name("name")?;
@@ -1863,6 +1865,7 @@ impl BufferSnapshot {
                 let range = item_node.start_byte()..item_node.end_byte();
                 let mut text = String::new();
                 let mut name_ranges = Vec::new();
+                let mut text_runs = Vec::new();
 
                 for capture in mat.captures {
                     let node_is_name;
@@ -1890,7 +1893,22 @@ impl BufferSnapshot {
 
                         name_ranges.push(start..end);
                     }
-                    text.extend(self.text_for_range(range));
+
+                    let mut offset = range.start;
+                    chunks.seek(offset);
+                    while let Some(mut chunk) = chunks.next() {
+                        if chunk.text.len() > range.end - offset {
+                            chunk.text = &chunk.text[0..(range.end - offset)];
+                            offset = range.end;
+                        } else {
+                            offset += chunk.text.len();
+                        }
+                        text_runs.push((chunk.text.len(), chunk.highlight_style));
+                        text.push_str(chunk.text);
+                        if offset >= range.end {
+                            break;
+                        }
+                    }
                 }
 
                 while stack.last().map_or(false, |prev_range| {
@@ -1905,6 +1923,7 @@ impl BufferSnapshot {
                     range: self.anchor_after(range.start)..self.anchor_before(range.end),
                     text,
                     name_ranges: name_ranges.into_boxed_slice(),
+                    text_runs,
                 })
             })
             .collect::<Vec<_>>();

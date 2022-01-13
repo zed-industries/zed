@@ -332,7 +332,7 @@ async fn test_outline(mut cx: gpui::TestAppContext) {
 
     let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
     let outline = buffer
-        .read_with(&cx, |buffer, _| buffer.snapshot().outline())
+        .read_with(&cx, |buffer, _| buffer.snapshot().outline(None))
         .unwrap();
 
     assert_eq!(
