@@ -167,7 +167,9 @@ impl ThemeSelector {
         self.matches = if query.is_empty() {
             candidates
                 .into_iter()
-                .map(|candidate| StringMatch {
+                .enumerate()
+                .map(|(index, candidate)| StringMatch {
+                    candidate_index: index,
                     string: candidate.string,
                     positions: Vec::new(),
                     score: 0.0,
