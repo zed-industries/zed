@@ -1,10 +1,18 @@
 use editor::{Editor, EditorSettings};
 use fuzzy::StringMatch;
 use gpui::{
-    action, elements::*, keymap::Binding, Axis, Entity, MutableAppContext, RenderContext, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    action,
+    elements::*,
+    keymap::{
+        self,
+        menu::{SelectNext, SelectPrev},
+        Binding,
+    },
+    AppContext, Axis, Entity, MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use language::Outline;
+use ordered_float::OrderedFloat;
 use postage::watch;
 use std::{cmp, sync::Arc};
 use workspace::{Settings, Workspace};
@@ -20,11 +28,14 @@ pub fn init(cx: &mut MutableAppContext) {
     ]);
     cx.add_action(OutlineView::toggle);
     cx.add_action(OutlineView::confirm);
+    cx.add_action(OutlineView::select_prev);
+    cx.add_action(OutlineView::select_next);
 }
 
 struct OutlineView {
     handle: WeakViewHandle<Self>,
     outline: Outline,
+    selected_match_index: usize,
     matches: Vec<StringMatch>,
     query_editor: ViewHandle<Editor>,
     list_state: UniformListState,
@@ -38,6 +49,12 @@ impl Entity for OutlineView {
 impl View for OutlineView {
     fn ui_name() -> &'static str {
         "OutlineView"
+    }
+
+    fn keymap_context(&self, _: &AppContext) -> keymap::Context {
+        let mut cx = Self::default_keymap_context();
+        cx.set.insert("menu".into());
+        cx
     }
 
     fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
@@ -98,6 +115,7 @@ impl OutlineView {
         let mut this = Self {
             handle: cx.weak_handle(),
             matches: Default::default(),
+            selected_match_index: 0,
             outline,
             query_editor,
             list_state: Default::default(),
@@ -122,7 +140,23 @@ impl OutlineView {
         }
     }
 
-    fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {}
+    fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
+        if self.selected_match_index > 0 {
+            self.selected_match_index -= 1;
+            self.list_state.scroll_to(self.selected_match_index);
+            cx.notify();
+        }
+    }
+
+    fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
+        if self.selected_match_index + 1 < self.matches.len() {
+            self.selected_match_index += 1;
+            self.list_state.scroll_to(self.selected_match_index);
+            cx.notify();
+        }
+    }
+
+    fn confirm(&mut self, _: &Confirm, _: &mut ViewContext<Self>) {}
 
     fn on_query_editor_event(
         &mut self,
@@ -151,9 +185,19 @@ impl OutlineView {
                     string: Default::default(),
                 })
                 .collect();
+            self.selected_match_index = 0;
         } else {
             self.matches = self.outline.search(&query, cx);
+            self.selected_match_index = self
+                .matches
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, m)| OrderedFloat(m.score))
+                .map(|(ix, _)| ix)
+                .unwrap_or(0);
         }
+
+        self.list_state.scroll_to(self.selected_match_index);
         cx.notify();
     }
 
@@ -172,21 +216,23 @@ impl OutlineView {
         }
 
         let handle = self.handle.clone();
-        let list =
-            UniformList::new(
-                self.list_state.clone(),
-                self.matches.len(),
-                move |mut range, items, cx| {
-                    let cx = cx.as_ref();
-                    let view = handle.upgrade(cx).unwrap();
-                    let view = view.read(cx);
-                    let start = range.start;
-                    range.end = cmp::min(range.end, view.matches.len());
-                    items.extend(view.matches[range].iter().enumerate().map(
-                        move |(i, outline_match)| view.render_match(outline_match, start + i),
-                    ));
-                },
-            );
+        let list = UniformList::new(
+            self.list_state.clone(),
+            self.matches.len(),
+            move |mut range, items, cx| {
+                let cx = cx.as_ref();
+                let view = handle.upgrade(cx).unwrap();
+                let view = view.read(cx);
+                let start = range.start;
+                range.end = cmp::min(range.end, view.matches.len());
+                items.extend(
+                    view.matches[range]
+                        .iter()
+                        .enumerate()
+                        .map(move |(ix, m)| view.render_match(m, start + ix)),
+                );
+            },
+        );
 
         Container::new(list.boxed())
             .with_margin_top(6.0)
@@ -194,10 +240,8 @@ impl OutlineView {
     }
 
     fn render_match(&self, string_match: &StringMatch, index: usize) -> ElementBox {
-        // TODO: maintain selected index.
-        let selected_index = 0;
         let settings = self.settings.borrow();
-        let style = if index == selected_index {
+        let style = if index == self.selected_match_index {
             &settings.theme.selector.active_item
         } else {
             &settings.theme.selector.item

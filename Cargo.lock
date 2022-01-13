@@ -3130,6 +3130,7 @@ dependencies = [
  "fuzzy",
  "gpui",
  "language",
+ "ordered-float",
  "postage",
  "text",
  "workspace",
