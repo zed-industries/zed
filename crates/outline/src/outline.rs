@@ -1,4 +1,4 @@
-use editor::{Anchor, Editor, EditorSettings};
+use editor::{Anchor, AnchorRangeExt, Editor, EditorSettings};
 use fuzzy::StringMatch;
 use gpui::{
     action,
@@ -14,7 +14,10 @@ use gpui::{
 use language::Outline;
 use ordered_float::OrderedFloat;
 use postage::watch;
-use std::{cmp, sync::Arc};
+use std::{
+    cmp::{self, Reverse},
+    sync::Arc,
+};
 use workspace::{Settings, Workspace};
 
 action!(Toggle);
@@ -34,6 +37,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
 struct OutlineView {
     handle: WeakViewHandle<Self>,
+    editor: ViewHandle<Editor>,
     outline: Outline<Anchor>,
     selected_match_index: usize,
     matches: Vec<StringMatch>,
@@ -91,6 +95,7 @@ impl View for OutlineView {
 impl OutlineView {
     fn new(
         outline: Outline<Anchor>,
+        editor: ViewHandle<Editor>,
         settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -114,6 +119,7 @@ impl OutlineView {
             .detach();
         let mut this = Self {
             handle: cx.weak_handle(),
+            editor,
             matches: Default::default(),
             selected_match_index: 0,
             outline,
@@ -135,7 +141,7 @@ impl OutlineView {
         let buffer = editor.read(cx).buffer().read(cx).read(cx).outline();
         if let Some(outline) = buffer {
             workspace.toggle_modal(cx, |cx, workspace| {
-                cx.add_view(|cx| OutlineView::new(outline, workspace.settings(), cx))
+                cx.add_view(|cx| OutlineView::new(outline, editor, workspace.settings(), cx))
             })
         }
     }
@@ -185,7 +191,31 @@ impl OutlineView {
                     string: Default::default(),
                 })
                 .collect();
-            self.selected_match_index = 0;
+
+            let editor = self.editor.read(cx);
+            let buffer = editor.buffer().read(cx).read(cx);
+            let cursor_offset = editor.newest_selection::<usize>(&buffer).head();
+            self.selected_match_index = self
+                .outline
+                .items
+                .iter()
+                .enumerate()
+                .map(|(ix, item)| {
+                    let range = item.range.to_offset(&buffer);
+                    let distance_to_closest_endpoint = cmp::min(
+                        (range.start as isize - cursor_offset as isize).abs() as usize,
+                        (range.end as isize - cursor_offset as isize).abs() as usize,
+                    );
+                    let depth = if range.contains(&cursor_offset) {
+                        Some(item.depth)
+                    } else {
+                        None
+                    };
+                    (ix, depth, distance_to_closest_endpoint)
+                })
+                .max_by_key(|(_, depth, distance)| (*depth, Reverse(*distance)))
+                .unwrap()
+                .0;
         } else {
             self.matches = self.outline.search(&query, cx);
             self.selected_match_index = self

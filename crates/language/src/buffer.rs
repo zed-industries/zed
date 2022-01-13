@@ -1917,7 +1917,11 @@ impl BufferSnapshot {
             })
             .collect::<Vec<_>>();
 
-        Some(Outline::new(items))
+        if items.is_empty() {
+            None
+        } else {
+            Some(Outline::new(items))
+        }
     }
 
     pub fn enclosing_bracket_ranges<T: ToOffset>(
