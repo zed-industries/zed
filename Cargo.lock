@@ -3127,6 +3127,7 @@ version = "0.1.0"
 dependencies = [
  "editor",
  "gpui",
+ "language",
  "postage",
  "text",
  "workspace",

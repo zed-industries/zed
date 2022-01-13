@@ -3,7 +3,7 @@ use std::ops::Range;
 #[derive(Debug)]
 pub struct Outline(pub Vec<OutlineItem>);
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct OutlineItem {
     pub id: usize,
     pub depth: usize,

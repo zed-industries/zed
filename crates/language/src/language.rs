@@ -14,7 +14,7 @@ pub use diagnostic_set::DiagnosticEntry;
 use gpui::AppContext;
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
-pub use outline::Outline;
+pub use outline::{Outline, OutlineItem};
 use parking_lot::Mutex;
 use serde::Deserialize;
 use std::{ops::Range, path::Path, str, sync::Arc};
