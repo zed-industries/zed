@@ -1850,52 +1850,45 @@ impl BufferSnapshot {
         );
 
         let item_capture_ix = grammar.outline_query.capture_index_for_name("item")?;
-        let context_capture_ix = grammar.outline_query.capture_index_for_name("context")?;
         let name_capture_ix = grammar.outline_query.capture_index_for_name("name")?;
+        let context_capture_ix = grammar
+            .outline_query
+            .capture_index_for_name("context")
+            .unwrap_or(u32::MAX);
 
-        let mut stack: Vec<Range<usize>> = Default::default();
-        let mut id = 0;
+        let mut stack = Vec::<Range<usize>>::new();
         let items = matches
             .filter_map(|mat| {
                 let item_node = mat.nodes_for_capture_index(item_capture_ix).next()?;
-                let mut name_node = Some(mat.nodes_for_capture_index(name_capture_ix).next()?);
-                let mut context_nodes = mat.nodes_for_capture_index(context_capture_ix).peekable();
-
-                let id = post_inc(&mut id);
                 let range = item_node.start_byte()..item_node.end_byte();
-
                 let mut text = String::new();
-                let mut name_range_in_text = 0..0;
-                loop {
-                    let node;
+                let mut name_ranges = Vec::new();
+
+                for capture in mat.captures {
                     let node_is_name;
-                    match (context_nodes.peek(), name_node.as_ref()) {
-                        (None, None) => break,
-                        (None, Some(_)) => {
-                            node = name_node.take().unwrap();
-                            node_is_name = true;
-                        }
-                        (Some(_), None) => {
-                            node = context_nodes.next().unwrap();
-                            node_is_name = false;
-                        }
-                        (Some(context_node), Some(name)) => {
-                            if context_node.start_byte() < name.start_byte() {
-                                node = context_nodes.next().unwrap();
-                                node_is_name = false;
-                            } else {
-                                node = name_node.take().unwrap();
-                                node_is_name = true;
-                            }
-                        }
+                    if capture.index == name_capture_ix {
+                        node_is_name = true;
+                    } else if capture.index == context_capture_ix {
+                        node_is_name = false;
+                    } else {
+                        continue;
                     }
 
+                    let range = capture.node.start_byte()..capture.node.end_byte();
                     if !text.is_empty() {
                         text.push(' ');
                     }
-                    let range = node.start_byte()..node.end_byte();
                     if node_is_name {
-                        name_range_in_text = text.len()..(text.len() + range.len())
+                        let mut start = text.len() as u32;
+                        let end = start + range.len() as u32;
+
+                        // When multiple names are captured, then the matcheable text
+                        // includes the whitespace in between the names.
+                        if !name_ranges.is_empty() {
+                            start -= 1;
+                        }
+
+                        name_ranges.push(start..end);
                     }
                     text.extend(self.text_for_range(range));
                 }
@@ -1908,11 +1901,10 @@ impl BufferSnapshot {
                 stack.push(range.clone());
 
                 Some(OutlineItem {
-                    id,
                     depth: stack.len() - 1,
                     range: self.anchor_after(range.start)..self.anchor_before(range.end),
                     text,
-                    name_range_in_text,
+                    name_ranges: name_ranges.into_boxed_slice(),
                 })
             })
             .collect::<Vec<_>>();

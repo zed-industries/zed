@@ -1707,12 +1707,11 @@ impl MultiBufferSnapshot {
                 .items
                 .into_iter()
                 .map(|item| OutlineItem {
-                    id: item.id,
                     depth: item.depth,
                     range: self.anchor_in_excerpt(excerpt_id.clone(), item.range.start)
                         ..self.anchor_in_excerpt(excerpt_id.clone(), item.range.end),
                     text: item.text,
-                    name_range_in_text: item.name_range_in_text,
+                    name_ranges: item.name_ranges,
                 })
                 .collect(),
         ))

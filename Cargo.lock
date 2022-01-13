@@ -3132,6 +3132,7 @@ dependencies = [
  "language",
  "ordered-float",
  "postage",
+ "smol",
  "text",
  "workspace",
 ]

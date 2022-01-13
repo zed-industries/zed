@@ -1,7 +1,6 @@
-use std::ops::Range;
-
 use fuzzy::{StringMatch, StringMatchCandidate};
-use gpui::AppContext;
+use gpui::executor::Background;
+use std::{ops::Range, sync::Arc};
 
 #[derive(Debug)]
 pub struct Outline<T> {
@@ -11,11 +10,10 @@ pub struct Outline<T> {
 
 #[derive(Clone, Debug)]
 pub struct OutlineItem<T> {
-    pub id: usize,
     pub depth: usize,
     pub range: Range<T>,
     pub text: String,
-    pub name_range_in_text: Range<usize>,
+    pub name_ranges: Box<[Range<u32>]>,
 }
 
 impl<T> Outline<T> {
@@ -24,10 +22,14 @@ impl<T> Outline<T> {
             candidates: items
                 .iter()
                 .map(|item| {
-                    let text = &item.text[item.name_range_in_text.clone()];
+                    let text = item
+                        .name_ranges
+                        .iter()
+                        .map(|range| &item.text[range.start as usize..range.end as usize])
+                        .collect::<String>();
                     StringMatchCandidate {
-                        string: text.to_string(),
-                        char_bag: text.into(),
+                        char_bag: text.as_str().into(),
+                        string: text,
                     }
                 })
                 .collect(),
@@ -35,15 +37,16 @@ impl<T> Outline<T> {
         }
     }
 
-    pub fn search(&self, query: &str, cx: &AppContext) -> Vec<StringMatch> {
-        let mut matches = smol::block_on(fuzzy::match_strings(
+    pub async fn search(&self, query: &str, executor: Arc<Background>) -> Vec<StringMatch> {
+        let mut matches = fuzzy::match_strings(
             &self.candidates,
             query,
             true,
             100,
             &Default::default(),
-            cx.background().clone(),
-        ));
+            executor,
+        )
+        .await;
         matches.sort_unstable_by_key(|m| m.candidate_index);
 
         let mut tree_matches = Vec::new();
@@ -51,8 +54,16 @@ impl<T> Outline<T> {
         let mut prev_item_ix = 0;
         for mut string_match in matches {
             let outline_match = &self.items[string_match.candidate_index];
+
+            let mut name_ranges = outline_match.name_ranges.iter();
+            let mut name_range = name_ranges.next().unwrap();
+            let mut preceding_ranges_len = 0;
             for position in &mut string_match.positions {
-                *position += outline_match.name_range_in_text.start;
+                while *position >= preceding_ranges_len + name_range.len() as usize {
+                    preceding_ranges_len += name_range.len();
+                    name_range = name_ranges.next().unwrap();
+                }
+                *position = name_range.start as usize + (*position - preceding_ranges_len);
             }
 
             let mut cur_depth = outline_match.depth;

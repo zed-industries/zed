@@ -301,7 +301,7 @@ impl OutlineView {
                 .0;
             navigate_to_selected_index = false;
         } else {
-            self.matches = self.outline.search(&query, cx);
+            self.matches = smol::block_on(self.outline.search(&query, cx.background().clone()));
             selected_index = self
                 .matches
                 .iter()
@@ -309,7 +309,7 @@ impl OutlineView {
                 .max_by_key(|(_, m)| OrderedFloat(m.score))
                 .map(|(ix, _)| ix)
                 .unwrap_or(0);
-            navigate_to_selected_index = true;
+            navigate_to_selected_index = !self.matches.is_empty();
         }
         self.select(selected_index, navigate_to_selected_index, cx);
     }

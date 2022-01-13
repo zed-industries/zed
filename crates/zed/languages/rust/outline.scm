@@ -14,7 +14,7 @@
 
 (impl_item
     "impl" @context
-    trait: (_)? @context
+    trait: (_)? @name
     "for"? @context
     type: (_) @name) @item
 
