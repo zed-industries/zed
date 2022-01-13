@@ -1853,8 +1853,9 @@ impl BufferSnapshot {
         let context_capture_ix = grammar.outline_query.capture_index_for_name("context")?;
         let name_capture_ix = grammar.outline_query.capture_index_for_name("name")?;
 
+        let mut stack: Vec<Range<usize>> = Default::default();
         let mut id = 0;
-        let mut items = matches
+        let items = matches
             .filter_map(|mat| {
                 let item_node = mat.nodes_for_capture_index(item_capture_ix).next()?;
                 let mut name_node = Some(mat.nodes_for_capture_index(name_capture_ix).next()?);
@@ -1899,8 +1900,16 @@ impl BufferSnapshot {
                     text.extend(self.text_for_range(range));
                 }
 
+                while stack.last().map_or(false, |prev_range| {
+                    !prev_range.contains(&range.start) || !prev_range.contains(&range.end)
+                }) {
+                    stack.pop();
+                }
+                stack.push(range.clone());
+
                 Some(OutlineItem {
                     id,
+                    depth: stack.len() - 1,
                     range,
                     text,
                     name_range_in_text,
