@@ -586,6 +586,18 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
             Event::Saved | Event::Dirtied | Event::FileHandleChanged
         )
     }
+
+    fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        Some(ProjectDiagnosticsEditor::new(
+            self.model.clone(),
+            self.workspace.clone(),
+            self.settings.clone(),
+            cx,
+        ))
+    }
 }
 
 fn path_header_renderer(buffer: ModelHandle<Buffer>, build_settings: BuildSettings) -> RenderBlock {
