@@ -7,7 +7,7 @@ use collections::{HashMap, HashSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 use language::{
     Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Selection,
-    ToOffset as _, ToPoint as _, TransactionId,
+    ToOffset as _, ToPoint as _, TransactionId, Outline,
 };
 use std::{
     cell::{Ref, RefCell},
@@ -1696,6 +1696,10 @@ impl MultiBufferSnapshot {
                 let end = cursor.start() + (ancestor_buffer_range.end - excerpt_buffer_start);
                 Some(start..end)
             })
+    }
+
+    pub fn outline(&self) -> Option<Outline> {
+        self.as_singleton().and_then(move |buffer| buffer.outline())
     }
 
     fn buffer_snapshot_for_excerpt<'a>(

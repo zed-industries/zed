@@ -6,7 +6,8 @@ pub use crate::{
 };
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
-    range_from_lsp,
+    outline::OutlineItem,
+    range_from_lsp, Outline,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
@@ -193,7 +194,7 @@ pub trait File {
     fn as_any(&self) -> &dyn Any;
 }
 
-struct QueryCursorHandle(Option<QueryCursor>);
+pub(crate) struct QueryCursorHandle(Option<QueryCursor>);
 
 #[derive(Clone)]
 struct SyntaxTree {
@@ -1264,6 +1265,13 @@ impl Buffer {
         self.edit_internal(ranges_iter, new_text, true, cx)
     }
 
+    /*
+    impl Buffer
+        pub fn edit
+        pub fn edit_internal
+        pub fn edit_with_autoindent
+    */
+
     pub fn edit_internal<I, S, T>(
         &mut self,
         ranges_iter: I,
@@ -1827,6 +1835,82 @@ impl BufferSnapshot {
         }
     }
 
+    pub fn outline(&self) -> Option<Outline> {
+        let tree = self.tree.as_ref()?;
+        let grammar = self
+            .language
+            .as_ref()
+            .and_then(|language| language.grammar.as_ref())?;
+
+        let mut cursor = QueryCursorHandle::new();
+        let matches = cursor.matches(
+            &grammar.outline_query,
+            tree.root_node(),
+            TextProvider(self.as_rope()),
+        );
+
+        let item_capture_ix = grammar.outline_query.capture_index_for_name("item")?;
+        let context_capture_ix = grammar.outline_query.capture_index_for_name("context")?;
+        let name_capture_ix = grammar.outline_query.capture_index_for_name("name")?;
+
+        let mut id = 0;
+        let mut items = matches
+            .filter_map(|mat| {
+                let item_node = mat.nodes_for_capture_index(item_capture_ix).next()?;
+                let mut name_node = Some(mat.nodes_for_capture_index(name_capture_ix).next()?);
+                let mut context_nodes = mat.nodes_for_capture_index(context_capture_ix).peekable();
+
+                let id = post_inc(&mut id);
+                let range = item_node.start_byte()..item_node.end_byte();
+
+                let mut text = String::new();
+                let mut name_range_in_text = 0..0;
+                loop {
+                    let node;
+                    let node_is_name;
+                    match (context_nodes.peek(), name_node.as_ref()) {
+                        (None, None) => break,
+                        (None, Some(_)) => {
+                            node = name_node.take().unwrap();
+                            node_is_name = true;
+                        }
+                        (Some(_), None) => {
+                            node = context_nodes.next().unwrap();
+                            node_is_name = false;
+                        }
+                        (Some(context_node), Some(name)) => {
+                            if context_node.start_byte() < name.start_byte() {
+                                node = context_nodes.next().unwrap();
+                                node_is_name = false;
+                            } else {
+                                node = name_node.take().unwrap();
+                                node_is_name = true;
+                            }
+                        }
+                    }
+
+                    if !text.is_empty() {
+                        text.push(' ');
+                    }
+                    let range = node.start_byte()..node.end_byte();
+                    if node_is_name {
+                        name_range_in_text = text.len()..(text.len() + range.len())
+                    }
+                    text.extend(self.text_for_range(range));
+                }
+
+                Some(OutlineItem {
+                    id,
+                    range,
+                    text,
+                    name_range_in_text,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        Some(Outline(items))
+    }
+
     pub fn enclosing_bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
@@ -1853,6 +1937,12 @@ impl BufferSnapshot {
             })
             .min_by_key(|(open_range, close_range)| close_range.end - open_range.start)
     }
+
+    /*
+    impl BufferSnapshot
+      pub fn remote_selections_in_range(&self, Range<Anchor>) -> impl Iterator<Item = (ReplicaId, impl Iterator<Item = &Selection<Anchor>>)>
+      pub fn remote_selections_in_range(&self, Range<Anchor>) -> impl Iterator<Item = (ReplicaId, i
+    */
 
     pub fn remote_selections_in_range<'a>(
         &'a self,
@@ -2108,7 +2198,7 @@ impl<'a> Iterator for BufferChunks<'a> {
 }
 
 impl QueryCursorHandle {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         QueryCursorHandle(Some(
             QUERY_CURSORS
                 .lock()
