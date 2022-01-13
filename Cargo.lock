@@ -2602,6 +2602,7 @@ dependencies = [
  "ctor",
  "env_logger",
  "futures",
+ "fuzzy",
  "gpui",
  "lazy_static",
  "log",
@@ -3126,6 +3127,7 @@ name = "outline"
 version = "0.1.0"
 dependencies = [
  "editor",
+ "fuzzy",
  "gpui",
  "language",
  "postage",

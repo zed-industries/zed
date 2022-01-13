@@ -1,12 +1,12 @@
-use editor::{display_map::ToDisplayPoint, Autoscroll, Editor, EditorSettings};
+use editor::{Editor, EditorSettings};
+use fuzzy::StringMatch;
 use gpui::{
-    action, elements::*, geometry::vector::Vector2F, keymap::Binding, Axis, Entity,
-    MutableAppContext, RenderContext, View, ViewContext, ViewHandle, WeakViewHandle,
+    action, elements::*, keymap::Binding, Axis, Entity, MutableAppContext, RenderContext, View,
+    ViewContext, ViewHandle, WeakViewHandle,
 };
-use language::{Outline, OutlineItem};
+use language::Outline;
 use postage::watch;
 use std::{cmp, sync::Arc};
-use text::{Bias, Point, Selection};
 use workspace::{Settings, Workspace};
 
 action!(Toggle);
@@ -25,7 +25,7 @@ pub fn init(cx: &mut MutableAppContext) {
 struct OutlineView {
     handle: WeakViewHandle<Self>,
     outline: Outline,
-    matches: Vec<OutlineItem>,
+    matches: Vec<StringMatch>,
     query_editor: ViewHandle<Editor>,
     list_state: UniformListState,
     settings: watch::Receiver<Settings>,
@@ -40,7 +40,7 @@ impl View for OutlineView {
         "OutlineView"
     }
 
-    fn render(&mut self, cx: &mut RenderContext<'_, Self>) -> ElementBox {
+    fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
 
         Align::new(
@@ -95,14 +95,16 @@ impl OutlineView {
         });
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
-        Self {
+        let mut this = Self {
             handle: cx.weak_handle(),
-            matches: outline.0.clone(),
+            matches: Default::default(),
             outline,
             query_editor,
             list_state: Default::default(),
             settings,
-        }
+        };
+        this.update_matches(cx);
+        this
     }
 
     fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
@@ -129,11 +131,30 @@ impl OutlineView {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            editor::Event::Edited => {
-                let query = self.query_editor.update(cx, |buffer, cx| buffer.text(cx));
-            }
+            editor::Event::Edited => self.update_matches(cx),
             _ => {}
         }
+    }
+
+    fn update_matches(&mut self, cx: &mut ViewContext<Self>) {
+        let query = self.query_editor.update(cx, |buffer, cx| buffer.text(cx));
+        if query.is_empty() {
+            self.matches = self
+                .outline
+                .items
+                .iter()
+                .enumerate()
+                .map(|(index, _)| StringMatch {
+                    candidate_index: index,
+                    score: Default::default(),
+                    positions: Default::default(),
+                    string: Default::default(),
+                })
+                .collect();
+        } else {
+            self.matches = self.outline.search(&query, cx);
+        }
+        cx.notify();
     }
 
     fn render_matches(&self) -> ElementBox {
@@ -172,7 +193,7 @@ impl OutlineView {
             .named("matches")
     }
 
-    fn render_match(&self, outline_match: &OutlineItem, index: usize) -> ElementBox {
+    fn render_match(&self, string_match: &StringMatch, index: usize) -> ElementBox {
         // TODO: maintain selected index.
         let selected_index = 0;
         let settings = self.settings.borrow();
@@ -181,8 +202,10 @@ impl OutlineView {
         } else {
             &settings.theme.selector.item
         };
+        let outline_match = &self.outline.items[string_match.candidate_index];
 
         Label::new(outline_match.text.clone(), style.label.clone())
+            .with_highlights(string_match.positions.clone())
             .contained()
             .with_padding_left(20. * outline_match.depth as f32)
             .contained()

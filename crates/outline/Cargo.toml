@@ -8,6 +8,7 @@ path = "src/outline.rs"
 
 [dependencies]
 editor = { path = "../editor" }
+fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 text = { path = "../text" }
