@@ -6,8 +6,8 @@ use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 use language::{
-    Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Selection,
-    ToOffset as _, ToPoint as _, TransactionId, Outline,
+    Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Outline,
+    OutlineItem, Selection, ToOffset as _, ToPoint as _, TransactionId,
 };
 use std::{
     cell::{Ref, RefCell},
@@ -1698,8 +1698,24 @@ impl MultiBufferSnapshot {
             })
     }
 
-    pub fn outline(&self) -> Option<Outline> {
-        self.as_singleton().and_then(move |buffer| buffer.outline())
+    pub fn outline(&self) -> Option<Outline<Anchor>> {
+        let buffer = self.as_singleton()?;
+        let outline = buffer.outline()?;
+        let excerpt_id = &self.excerpts.iter().next().unwrap().id;
+        Some(Outline::new(
+            outline
+                .items
+                .into_iter()
+                .map(|item| OutlineItem {
+                    id: item.id,
+                    depth: item.depth,
+                    range: self.anchor_in_excerpt(excerpt_id.clone(), item.range.start)
+                        ..self.anchor_in_excerpt(excerpt_id.clone(), item.range.end),
+                    text: item.text,
+                    name_range_in_text: item.name_range_in_text,
+                })
+                .collect(),
+        ))
     }
 
     fn buffer_snapshot_for_excerpt<'a>(

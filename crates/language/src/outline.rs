@@ -4,22 +4,22 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::AppContext;
 
 #[derive(Debug)]
-pub struct Outline {
-    pub items: Vec<OutlineItem>,
+pub struct Outline<T> {
+    pub items: Vec<OutlineItem<T>>,
     candidates: Vec<StringMatchCandidate>,
 }
 
 #[derive(Clone, Debug)]
-pub struct OutlineItem {
+pub struct OutlineItem<T> {
     pub id: usize,
     pub depth: usize,
-    pub range: Range<usize>,
+    pub range: Range<T>,
     pub text: String,
     pub name_range_in_text: Range<usize>,
 }
 
-impl Outline {
-    pub fn new(items: Vec<OutlineItem>) -> Self {
+impl<T> Outline<T> {
+    pub fn new(items: Vec<OutlineItem<T>>) -> Self {
         Self {
             candidates: items
                 .iter()

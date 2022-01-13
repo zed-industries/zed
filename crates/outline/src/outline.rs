@@ -1,4 +1,4 @@
-use editor::{Editor, EditorSettings};
+use editor::{Anchor, Editor, EditorSettings};
 use fuzzy::StringMatch;
 use gpui::{
     action,
@@ -34,7 +34,7 @@ pub fn init(cx: &mut MutableAppContext) {
 
 struct OutlineView {
     handle: WeakViewHandle<Self>,
-    outline: Outline,
+    outline: Outline<Anchor>,
     selected_match_index: usize,
     matches: Vec<StringMatch>,
     query_editor: ViewHandle<Editor>,
@@ -90,7 +90,7 @@ impl View for OutlineView {
 
 impl OutlineView {
     fn new(
-        outline: Outline,
+        outline: Outline<Anchor>,
         settings: watch::Receiver<Settings>,
         cx: &mut ViewContext<Self>,
     ) -> Self {

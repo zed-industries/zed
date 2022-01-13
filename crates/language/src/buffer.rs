@@ -1835,7 +1835,7 @@ impl BufferSnapshot {
         }
     }
 
-    pub fn outline(&self) -> Option<Outline> {
+    pub fn outline(&self) -> Option<Outline<Anchor>> {
         let tree = self.tree.as_ref()?;
         let grammar = self
             .language
@@ -1910,7 +1910,7 @@ impl BufferSnapshot {
                 Some(OutlineItem {
                     id,
                     depth: stack.len() - 1,
-                    range,
+                    range: self.anchor_after(range.start)..self.anchor_before(range.end),
                     text,
                     name_range_in_text,
                 })
