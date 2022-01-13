@@ -376,7 +376,7 @@ pub struct Editor {
     blinking_paused: bool,
     mode: EditorMode,
     placeholder_text: Option<Arc<str>>,
-    highlighted_row: Option<u32>,
+    highlighted_rows: Option<Range<u32>>,
 }
 
 pub struct EditorSnapshot {
@@ -505,7 +505,7 @@ impl Editor {
             blinking_paused: false,
             mode: EditorMode::Full,
             placeholder_text: None,
-            highlighted_row: None,
+            highlighted_rows: None,
         };
         let selection = Selection {
             id: post_inc(&mut this.next_selection_id),
@@ -3546,12 +3546,12 @@ impl Editor {
             .update(cx, |map, cx| map.set_wrap_width(width, cx))
     }
 
-    pub fn set_highlighted_row(&mut self, row: Option<u32>) {
-        self.highlighted_row = row;
+    pub fn set_highlighted_rows(&mut self, rows: Option<Range<u32>>) {
+        self.highlighted_rows = rows;
     }
 
-    pub fn highlighted_row(&mut self) -> Option<u32> {
-        self.highlighted_row
+    pub fn highlighted_rows(&self) -> Option<Range<u32>> {
+        self.highlighted_rows.clone()
     }
 
     fn next_blink_epoch(&mut self) -> usize {

@@ -143,8 +143,9 @@ impl GoToLine {
                         let snapshot = active_editor.snapshot(cx).display_snapshot;
                         let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
                         let display_point = point.to_display_point(&snapshot);
+                        let row = display_point.row();
                         active_editor.select_ranges([point..point], Some(Autoscroll::Center), cx);
-                        active_editor.set_highlighted_row(Some(display_point.row()));
+                        active_editor.set_highlighted_rows(Some(row..row + 1));
                         Some(active_editor.newest_selection(&snapshot.buffer_snapshot))
                     });
                     cx.notify();
@@ -162,7 +163,7 @@ impl Entity for GoToLine {
         let line_selection = self.line_selection.take();
         let restore_state = self.restore_state.take();
         self.active_editor.update(cx, |editor, cx| {
-            editor.set_highlighted_row(None);
+            editor.set_highlighted_rows(None);
             if let Some((line_selection, restore_state)) = line_selection.zip(restore_state) {
                 let newest_selection =
                     editor.newest_selection::<usize>(&editor.buffer().read(cx).read(cx));

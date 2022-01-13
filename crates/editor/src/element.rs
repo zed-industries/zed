@@ -263,12 +263,16 @@ impl EditorElement {
                 }
             }
 
-            if let Some(highlighted_row) = layout.highlighted_row {
+            if let Some(highlighted_rows) = &layout.highlighted_rows {
                 let origin = vec2f(
                     bounds.origin_x(),
-                    bounds.origin_y() + (layout.line_height * highlighted_row as f32) - scroll_top,
+                    bounds.origin_y() + (layout.line_height * highlighted_rows.start as f32)
+                        - scroll_top,
                 );
-                let size = vec2f(bounds.width(), layout.line_height);
+                let size = vec2f(
+                    bounds.width(),
+                    layout.line_height * highlighted_rows.len() as f32,
+                );
                 cx.scene.push_quad(Quad {
                     bounds: RectF::new(origin, size),
                     background: Some(style.highlighted_line_background),
@@ -640,15 +644,20 @@ impl EditorElement {
                     .to_display_point(snapshot)
                     .row();
 
-                let anchor_x = text_x + if rows.contains(&anchor_row) {
-                    line_layouts[(anchor_row - rows.start) as usize]
-                        .x_for_index(block.column() as usize)
-                } else {
-                    layout_line(anchor_row, snapshot, style, cx.text_layout_cache)
-                        .x_for_index(block.column() as usize)
-                };
+                let anchor_x = text_x
+                    + if rows.contains(&anchor_row) {
+                        line_layouts[(anchor_row - rows.start) as usize]
+                            .x_for_index(block.column() as usize)
+                    } else {
+                        layout_line(anchor_row, snapshot, style, cx.text_layout_cache)
+                            .x_for_index(block.column() as usize)
+                    };
 
-                let mut element = block.render(&BlockContext { cx, anchor_x, line_number_x, });
+                let mut element = block.render(&BlockContext {
+                    cx,
+                    anchor_x,
+                    line_number_x,
+                });
                 element.layout(
                     SizeConstraint {
                         min: Vector2F::zero(),
@@ -750,9 +759,9 @@ impl Element for EditorElement {
 
         let mut selections = HashMap::default();
         let mut active_rows = BTreeMap::new();
-        let mut highlighted_row = None;
+        let mut highlighted_rows = None;
         self.update_view(cx.app, |view, cx| {
-            highlighted_row = view.highlighted_row();
+            highlighted_rows = view.highlighted_rows();
             let display_map = view.display_map.update(cx, |map, cx| map.snapshot(cx));
 
             let local_selections = view
@@ -831,7 +840,7 @@ impl Element for EditorElement {
             snapshot,
             style: self.settings.style.clone(),
             active_rows,
-            highlighted_row,
+            highlighted_rows,
             line_layouts,
             line_number_layouts,
             blocks,
@@ -962,7 +971,7 @@ pub struct LayoutState {
     style: EditorStyle,
     snapshot: EditorSnapshot,
     active_rows: BTreeMap<u32, bool>,
-    highlighted_row: Option<u32>,
+    highlighted_rows: Option<Range<u32>>,
     line_layouts: Vec<text_layout::Line>,
     line_number_layouts: Vec<Option<text_layout::Line>>,
     blocks: Vec<(u32, ElementBox)>,
