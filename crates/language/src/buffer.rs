@@ -1917,7 +1917,7 @@ impl BufferSnapshot {
             })
             .collect::<Vec<_>>();
 
-        Some(Outline(items))
+        Some(Outline::new(items))
     }
 
     pub fn enclosing_bracket_ranges<T: ToOffset>(
