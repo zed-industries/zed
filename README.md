@@ -6,14 +6,6 @@ Welcome to Zed, a lightning-fast, collaborative code editor that makes your drea
 
 ## Development tips
 
-### Compiling on macOS Monterey
-
-The Zed server uses libcurl, which currently triggers [a bug](https://github.com/rust-lang/rust/issues/90342) in `rustc`. To work around this bug, export the following environment variable:
-
-```
-export MACOSX_DEPLOYMENT_TARGET=10.7
-```
-
 ### Testing against locally-running servers
 
 Make sure you have `zed.dev` cloned as a sibling to this repo.
