@@ -433,13 +433,17 @@ impl<'a> Matcher<'a> {
         }
     }
 
-    fn find_last_positions(&mut self, prefix: &[char], path: &[char]) -> bool {
-        let mut path = path.iter();
-        let mut prefix_iter = prefix.iter();
-        for (i, char) in self.query.iter().enumerate().rev() {
-            if let Some(j) = path.rposition(|c| c == char) {
-                self.last_positions[i] = j + prefix.len();
-            } else if let Some(j) = prefix_iter.rposition(|c| c == char) {
+    fn find_last_positions(
+        &mut self,
+        lowercase_prefix: &[char],
+        lowercase_candidate: &[char],
+    ) -> bool {
+        let mut lowercase_prefix = lowercase_prefix.iter();
+        let mut lowercase_candidate = lowercase_candidate.iter();
+        for (i, char) in self.lowercase_query.iter().enumerate().rev() {
+            if let Some(j) = lowercase_candidate.rposition(|c| c == char) {
+                self.last_positions[i] = j + lowercase_prefix.len();
+            } else if let Some(j) = lowercase_prefix.rposition(|c| c == char) {
                 self.last_positions[i] = j;
             } else {
                 return false;
