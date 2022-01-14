@@ -1864,15 +1864,11 @@ impl BufferSnapshot {
                 let item_node = mat.nodes_for_capture_index(item_capture_ix).next()?;
                 let range = item_node.start_byte()..item_node.end_byte();
                 let mut text = String::new();
-                let mut name_ranges = Vec::new();
                 let mut highlight_ranges = Vec::new();
 
                 for capture in mat.captures {
-                    let node_is_name;
                     if capture.index == name_capture_ix {
-                        node_is_name = true;
                     } else if capture.index == context_capture_ix {
-                        node_is_name = false;
                     } else {
                         continue;
                     }
@@ -1880,18 +1876,6 @@ impl BufferSnapshot {
                     let range = capture.node.start_byte()..capture.node.end_byte();
                     if !text.is_empty() {
                         text.push(' ');
-                    }
-                    if node_is_name {
-                        let mut start = text.len() as u32;
-                        let end = start + range.len() as u32;
-
-                        // When multiple names are captured, then the matcheable text
-                        // includes the whitespace in between the names.
-                        if !name_ranges.is_empty() {
-                            start -= 1;
-                        }
-
-                        name_ranges.push(start..end);
                     }
 
                     let mut offset = range.start;
@@ -1926,7 +1910,6 @@ impl BufferSnapshot {
                     depth: stack.len() - 1,
                     range: self.anchor_after(range.start)..self.anchor_before(range.end),
                     text,
-                    name_ranges,
                     highlight_ranges,
                 })
             })

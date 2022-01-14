@@ -13,7 +13,6 @@ pub struct OutlineItem<T> {
     pub depth: usize,
     pub range: Range<T>,
     pub text: String,
-    pub name_ranges: Vec<Range<u32>>,
     pub highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
 }
 
@@ -22,16 +21,9 @@ impl<T> Outline<T> {
         Self {
             candidates: items
                 .iter()
-                .map(|item| {
-                    let text = item
-                        .name_ranges
-                        .iter()
-                        .map(|range| &item.text[range.start as usize..range.end as usize])
-                        .collect::<String>();
-                    StringMatchCandidate {
-                        char_bag: text.as_str().into(),
-                        string: text,
-                    }
+                .map(|item| StringMatchCandidate {
+                    char_bag: item.text.as_str().into(),
+                    string: item.text.clone(),
                 })
                 .collect(),
             items,
@@ -53,20 +45,8 @@ impl<T> Outline<T> {
         let mut tree_matches = Vec::new();
 
         let mut prev_item_ix = 0;
-        for mut string_match in matches {
+        for string_match in matches {
             let outline_match = &self.items[string_match.candidate_index];
-
-            let mut name_ranges = outline_match.name_ranges.iter();
-            let mut name_range = name_ranges.next().unwrap();
-            let mut preceding_ranges_len = 0;
-            for position in &mut string_match.positions {
-                while *position >= preceding_ranges_len + name_range.len() as usize {
-                    preceding_ranges_len += name_range.len();
-                    name_range = name_ranges.next().unwrap();
-                }
-                *position = name_range.start as usize + (*position - preceding_ranges_len);
-            }
-
             let insertion_ix = tree_matches.len();
             let mut cur_depth = outline_match.depth;
             for (ix, item) in self.items[prev_item_ix..string_match.candidate_index]

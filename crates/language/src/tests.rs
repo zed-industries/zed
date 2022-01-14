@@ -302,6 +302,9 @@ async fn test_outline(mut cx: gpui::TestAppContext) {
                 (function_item
                     "fn" @context
                     name: (_) @name) @item
+                (mod_item
+                    "mod" @context
+                    name: (_) @name) @item
                 "#,
             )
             .unwrap(),
@@ -313,14 +316,18 @@ async fn test_outline(mut cx: gpui::TestAppContext) {
             age: usize,
         }
 
-        enum LoginState {
-            LoggedOut,
-            LoggingOn,
-            LoggedIn {
-                person: Person,
-                time: Instant,
+        mod module {
+            enum LoginState {
+                LoggedOut,
+                LoggingOn,
+                LoggedIn {
+                    person: Person,
+                    time: Instant,
+                }
             }
         }
+
+        impl Eq for Person {}
 
         impl Drop for Person {
             fn drop(&mut self) {
@@ -339,38 +346,49 @@ async fn test_outline(mut cx: gpui::TestAppContext) {
         outline
             .items
             .iter()
-            .map(|item| (item.text.as_str(), item.name_ranges.as_ref(), item.depth))
+            .map(|item| (item.text.as_str(), item.depth))
             .collect::<Vec<_>>(),
         &[
-            ("struct Person", [7..13].as_slice(), 0),
-            ("name", &[0..4], 1),
-            ("age", &[0..3], 1),
-            ("enum LoginState", &[5..15], 0),
-            ("LoggedOut", &[0..9], 1),
-            ("LoggingOn", &[0..9], 1),
-            ("LoggedIn", &[0..8], 1),
-            ("person", &[0..6], 2),
-            ("time", &[0..4], 2),
-            ("impl Drop for Person", &[5..9, 13..20], 0),
-            ("fn drop", &[3..7], 1),
+            ("struct Person", 0),
+            ("name", 1),
+            ("age", 1),
+            ("mod module", 0),
+            ("enum LoginState", 1),
+            ("LoggedOut", 2),
+            ("LoggingOn", 2),
+            ("LoggedIn", 2),
+            ("person", 3),
+            ("time", 3),
+            ("impl Eq for Person", 0),
+            ("impl Drop for Person", 0),
+            ("fn drop", 1),
         ]
     );
 
     assert_eq!(
         search(&outline, "oon", &cx).await,
         &[
-            ("enum LoginState", vec![]),  // included as the parent of a match
-            ("LoggingOn", vec![1, 7, 8]), // matches
-            ("impl Drop for Person", vec![7, 18, 19]), // matches in two disjoint names
+            ("mod module", vec![]),                  // included as the parent of a match
+            ("enum LoginState", vec![]),             // included as the parent of a match
+            ("LoggingOn", vec![1, 7, 8]),            // matches
+            ("impl Eq for Person", vec![9, 16, 17]), // matches part of the context
+            ("impl Drop for Person", vec![11, 18, 19]), // matches in two disjoint names
         ]
     );
     assert_eq!(
         search(&outline, "dp p", &cx).await,
-        &[("impl Drop for Person", vec![5, 8, 13, 14])]
+        &[("impl Drop for Person", vec![5, 8, 9, 14])]
     );
     assert_eq!(
         search(&outline, "dpn", &cx).await,
         &[("impl Drop for Person", vec![5, 8, 19])]
+    );
+    assert_eq!(
+        search(&outline, "impl", &cx).await,
+        &[
+            ("impl Eq for Person", vec![0, 1, 2, 3]),
+            ("impl Drop for Person", vec![0, 1, 2, 3])
+        ]
     );
 
     async fn search<'a>(
