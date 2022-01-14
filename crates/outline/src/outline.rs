@@ -84,27 +84,21 @@ impl View for OutlineView {
     fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
 
-        Align::new(
-            ConstrainedBox::new(
-                Container::new(
-                    Flex::new(Axis::Vertical)
-                        .with_child(
-                            Container::new(ChildView::new(self.query_editor.id()).boxed())
-                                .with_style(settings.theme.selector.input_editor.container)
-                                .boxed(),
-                        )
-                        .with_child(Flexible::new(1.0, false, self.render_matches()).boxed())
-                        .boxed(),
-                )
-                .with_style(settings.theme.selector.container)
-                .boxed(),
+        Flex::new(Axis::Vertical)
+            .with_child(
+                Container::new(ChildView::new(self.query_editor.id()).boxed())
+                    .with_style(settings.theme.selector.input_editor.container)
+                    .boxed(),
             )
+            .with_child(Flexible::new(1.0, false, self.render_matches()).boxed())
+            .contained()
+            .with_style(settings.theme.selector.container)
+            .constrained()
             .with_max_width(800.0)
             .with_max_height(1200.0)
-            .boxed(),
-        )
-        .top()
-        .named("outline view")
+            .aligned()
+            .top()
+            .named("outline view")
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
