@@ -157,7 +157,9 @@ impl ThemeSelector {
         let candidates = self
             .themes
             .list()
-            .map(|name| StringMatchCandidate {
+            .enumerate()
+            .map(|(id, name)| StringMatchCandidate {
+                id,
                 char_bag: name.as_str().into(),
                 string: name,
             })
@@ -169,7 +171,7 @@ impl ThemeSelector {
                 .into_iter()
                 .enumerate()
                 .map(|(index, candidate)| StringMatch {
-                    candidate_index: index,
+                    candidate_id: index,
                     string: candidate.string,
                     positions: Vec::new(),
                     score: 0.0,

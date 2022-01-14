@@ -55,6 +55,7 @@ pub struct PathMatch {
 
 #[derive(Clone, Debug)]
 pub struct StringMatchCandidate {
+    pub id: usize,
     pub string: String,
     pub char_bag: CharBag,
 }
@@ -109,7 +110,7 @@ impl<'a> MatchCandidate for &'a StringMatchCandidate {
 
 #[derive(Clone, Debug)]
 pub struct StringMatch {
-    pub candidate_index: usize,
+    pub candidate_id: usize,
     pub score: f64,
     pub positions: Vec<usize>,
     pub string: String,
@@ -134,7 +135,7 @@ impl Ord for StringMatch {
         self.score
             .partial_cmp(&other.score)
             .unwrap_or(Ordering::Equal)
-            .then_with(|| self.candidate_index.cmp(&other.candidate_index))
+            .then_with(|| self.candidate_id.cmp(&other.candidate_id))
     }
 }
 
@@ -198,7 +199,6 @@ pub async fn match_strings(
                         max_results,
                     );
                     matcher.match_strings(
-                        segment_start,
                         &candidates[segment_start..segment_end],
                         results,
                         cancel_flag,
@@ -321,7 +321,6 @@ impl<'a> Matcher<'a> {
 
     pub fn match_strings(
         &mut self,
-        start_index: usize,
         candidates: &[StringMatchCandidate],
         results: &mut Vec<StringMatch>,
         cancel_flag: &AtomicBool,
@@ -329,12 +328,11 @@ impl<'a> Matcher<'a> {
         self.match_internal(
             &[],
             &[],
-            start_index,
             candidates.iter(),
             results,
             cancel_flag,
-            |candidate_index, candidate, score| StringMatch {
-                candidate_index,
+            |candidate, score| StringMatch {
+                candidate_id: candidate.id,
                 score,
                 positions: Vec::new(),
                 string: candidate.string.to_string(),
@@ -358,11 +356,10 @@ impl<'a> Matcher<'a> {
         self.match_internal(
             &prefix,
             &lowercase_prefix,
-            0,
             path_entries,
             results,
             cancel_flag,
-            |_, candidate, score| PathMatch {
+            |candidate, score| PathMatch {
                 score,
                 worktree_id: tree_id,
                 positions: Vec::new(),
@@ -376,19 +373,18 @@ impl<'a> Matcher<'a> {
         &mut self,
         prefix: &[char],
         lowercase_prefix: &[char],
-        start_index: usize,
         candidates: impl Iterator<Item = C>,
         results: &mut Vec<R>,
         cancel_flag: &AtomicBool,
         build_match: F,
     ) where
         R: Match,
-        F: Fn(usize, &C, f64) -> R,
+        F: Fn(&C, f64) -> R,
     {
         let mut candidate_chars = Vec::new();
         let mut lowercase_candidate_chars = Vec::new();
 
-        for (candidate_ix, candidate) in candidates.enumerate() {
+        for candidate in candidates {
             if !candidate.has_chars(self.query_char_bag) {
                 continue;
             }
@@ -422,7 +418,7 @@ impl<'a> Matcher<'a> {
             );
 
             if score > 0.0 {
-                let mut mat = build_match(start_index + candidate_ix, &candidate, score);
+                let mut mat = build_match(&candidate, score);
                 if let Err(i) = results.binary_search_by(|m| mat.cmp(&m)) {
                     if results.len() < self.max_results {
                         mat.set_positions(self.match_positions.clone());

@@ -401,12 +401,7 @@ async fn test_outline(mut cx: gpui::TestAppContext) {
             .await;
         matches
             .into_iter()
-            .map(|mat| {
-                (
-                    outline.items[mat.candidate_index].text.as_str(),
-                    mat.positions,
-                )
-            })
+            .map(|mat| (outline.items[mat.candidate_id].text.as_str(), mat.positions))
             .collect::<Vec<_>>()
     }
 }

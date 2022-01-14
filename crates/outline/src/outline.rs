@@ -202,7 +202,7 @@ impl OutlineView {
         self.list_state.scroll_to(self.selected_match_index);
         if navigate {
             let selected_match = &self.matches[self.selected_match_index];
-            let outline_item = &self.outline.items[selected_match.candidate_index];
+            let outline_item = &self.outline.items[selected_match.candidate_id];
             self.symbol_selection_id = self.active_editor.update(cx, |active_editor, cx| {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
                 let buffer_snapshot = &snapshot.buffer_snapshot;
@@ -275,7 +275,7 @@ impl OutlineView {
                 .iter()
                 .enumerate()
                 .map(|(index, _)| StringMatch {
-                    candidate_index: index,
+                    candidate_id: index,
                     score: Default::default(),
                     positions: Default::default(),
                     string: Default::default(),
@@ -366,7 +366,7 @@ impl OutlineView {
         } else {
             &settings.theme.selector.item
         };
-        let outline_item = &self.outline.items[string_match.candidate_index];
+        let outline_item = &self.outline.items[string_match.candidate_id];
 
         Text::new(outline_item.text.clone(), style.label.text.clone())
             .with_soft_wrap(false)

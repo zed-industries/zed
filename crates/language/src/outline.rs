@@ -21,7 +21,9 @@ impl<T> Outline<T> {
         Self {
             candidates: items
                 .iter()
-                .map(|item| StringMatchCandidate {
+                .enumerate()
+                .map(|(id, item)| StringMatchCandidate {
+                    id,
                     char_bag: item.text.as_str().into(),
                     string: item.text.clone(),
                 })
@@ -37,19 +39,19 @@ impl<T> Outline<T> {
             true,
             100,
             &Default::default(),
-            executor,
+            executor.clone(),
         )
         .await;
-        matches.sort_unstable_by_key(|m| m.candidate_index);
+        matches.sort_unstable_by_key(|m| m.candidate_id);
 
         let mut tree_matches = Vec::new();
 
         let mut prev_item_ix = 0;
         for string_match in matches {
-            let outline_match = &self.items[string_match.candidate_index];
+            let outline_match = &self.items[string_match.candidate_id];
             let insertion_ix = tree_matches.len();
             let mut cur_depth = outline_match.depth;
-            for (ix, item) in self.items[prev_item_ix..string_match.candidate_index]
+            for (ix, item) in self.items[prev_item_ix..string_match.candidate_id]
                 .iter()
                 .enumerate()
                 .rev()
@@ -63,7 +65,7 @@ impl<T> Outline<T> {
                     tree_matches.insert(
                         insertion_ix,
                         StringMatch {
-                            candidate_index,
+                            candidate_id: candidate_index,
                             score: Default::default(),
                             positions: Default::default(),
                             string: Default::default(),
@@ -73,7 +75,7 @@ impl<T> Outline<T> {
                 }
             }
 
-            prev_item_ix = string_match.candidate_index + 1;
+            prev_item_ix = string_match.candidate_id + 1;
             tree_matches.push(string_match);
         }
 
