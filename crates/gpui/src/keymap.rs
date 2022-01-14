@@ -23,6 +23,7 @@ struct Pending {
     context: Option<Context>,
 }
 
+#[derive(Default)]
 pub struct Keymap(Vec<Binding>);
 
 pub struct Binding {
@@ -150,24 +151,6 @@ impl Keymap {
 
     fn add_bindings<T: IntoIterator<Item = Binding>>(&mut self, bindings: T) {
         self.0.extend(bindings.into_iter());
-    }
-}
-
-pub mod menu {
-    use crate::action;
-
-    action!(SelectPrev);
-    action!(SelectNext);
-}
-
-impl Default for Keymap {
-    fn default() -> Self {
-        Self(vec![
-            Binding::new("up", menu::SelectPrev, Some("menu")),
-            Binding::new("ctrl-p", menu::SelectPrev, Some("menu")),
-            Binding::new("down", menu::SelectNext, Some("menu")),
-            Binding::new("ctrl-n", menu::SelectNext, Some("menu")),
-        ])
     }
 }
 

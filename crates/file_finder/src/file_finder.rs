@@ -3,11 +3,7 @@ use fuzzy::PathMatch;
 use gpui::{
     action,
     elements::*,
-    keymap::{
-        self,
-        menu::{SelectNext, SelectPrev},
-        Binding,
-    },
+    keymap::{self, Binding},
     AppContext, Axis, Entity, ModelHandle, MutableAppContext, RenderContext, Task, View,
     ViewContext, ViewHandle, WeakViewHandle,
 };
@@ -22,7 +18,10 @@ use std::{
     },
 };
 use util::post_inc;
-use workspace::{Settings, Workspace};
+use workspace::{
+    menu::{Confirm, SelectNext, SelectPrev},
+    Settings, Workspace,
+};
 
 pub struct FileFinder {
     handle: WeakViewHandle<Self>,
@@ -40,7 +39,6 @@ pub struct FileFinder {
 }
 
 action!(Toggle);
-action!(Confirm);
 action!(Select, ProjectPath);
 
 pub fn init(cx: &mut MutableAppContext) {
@@ -53,7 +51,6 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings(vec![
         Binding::new("cmd-p", Toggle, None),
         Binding::new("escape", Toggle, Some("FileFinder")),
-        Binding::new("enter", Confirm, Some("FileFinder")),
     ]);
 }
 

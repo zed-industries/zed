@@ -1,3 +1,4 @@
+pub mod menu;
 pub mod pane;
 pub mod pane_group;
 pub mod settings;
@@ -48,6 +49,9 @@ action!(Save);
 action!(DebugElements);
 
 pub fn init(cx: &mut MutableAppContext) {
+    pane::init(cx);
+    menu::init(cx);
+
     cx.add_global_action(open);
     cx.add_global_action(move |action: &OpenPaths, cx: &mut MutableAppContext| {
         open_paths(&action.0.paths, &action.0.app_state, cx).detach();
@@ -84,7 +88,6 @@ pub fn init(cx: &mut MutableAppContext) {
             None,
         ),
     ]);
-    pane::init(cx);
 }
 
 pub struct AppState {

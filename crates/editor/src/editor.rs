@@ -2390,6 +2390,11 @@ impl Editor {
     }
 
     pub fn move_to_beginning(&mut self, _: &MoveToBeginning, cx: &mut ViewContext<Self>) {
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate_action();
+            return;
+        }
+
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
             start: 0,
@@ -2407,6 +2412,11 @@ impl Editor {
     }
 
     pub fn move_to_end(&mut self, _: &MoveToEnd, cx: &mut ViewContext<Self>) {
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate_action();
+            return;
+        }
+
         let cursor = self.buffer.read(cx).read(cx).len();
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),

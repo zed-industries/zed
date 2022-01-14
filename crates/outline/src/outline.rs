@@ -8,11 +8,7 @@ use gpui::{
     elements::*,
     fonts::{self, HighlightStyle},
     geometry::vector::Vector2F,
-    keymap::{
-        self,
-        menu::{SelectNext, SelectPrev},
-        Binding,
-    },
+    keymap::{self, Binding},
     AppContext, Axis, Entity, MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
@@ -24,21 +20,24 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use workspace::{Settings, Workspace};
+use workspace::{
+    menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev},
+    Settings, Workspace,
+};
 
 action!(Toggle);
-action!(Confirm);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([
         Binding::new("cmd-shift-O", Toggle, Some("Editor")),
         Binding::new("escape", Toggle, Some("OutlineView")),
-        Binding::new("enter", Confirm, Some("OutlineView")),
     ]);
     cx.add_action(OutlineView::toggle);
     cx.add_action(OutlineView::confirm);
     cx.add_action(OutlineView::select_prev);
     cx.add_action(OutlineView::select_next);
+    cx.add_action(OutlineView::select_first);
+    cx.add_action(OutlineView::select_last);
 }
 
 struct OutlineView {
@@ -195,6 +194,14 @@ impl OutlineView {
         if self.selected_match_index + 1 < self.matches.len() {
             self.select(self.selected_match_index + 1, true, false, cx);
         }
+    }
+
+    fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
+        self.select(0, true, false, cx);
+    }
+
+    fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
+        self.select(self.matches.len().saturating_sub(1), true, false, cx);
     }
 
     fn select(&mut self, index: usize, navigate: bool, center: bool, cx: &mut ViewContext<Self>) {

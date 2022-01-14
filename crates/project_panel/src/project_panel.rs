@@ -4,11 +4,7 @@ use gpui::{
         Align, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement, ScrollTarget,
         Svg, UniformList, UniformListState,
     },
-    keymap::{
-        self,
-        menu::{SelectNext, SelectPrev},
-        Binding,
-    },
+    keymap::{self, Binding},
     platform::CursorStyle,
     AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, ReadModel, View,
     ViewContext, ViewHandle, WeakViewHandle,
@@ -20,7 +16,10 @@ use std::{
     ffi::OsStr,
     ops::Range,
 };
-use workspace::{Settings, Workspace};
+use workspace::{
+    menu::{SelectNext, SelectPrev},
+    Settings, Workspace,
+};
 
 pub struct ProjectPanel {
     project: ModelHandle<Project>,
