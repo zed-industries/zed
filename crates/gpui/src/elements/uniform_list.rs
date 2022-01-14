@@ -14,6 +14,7 @@ use std::{cmp, ops::Range, sync::Arc};
 #[derive(Clone, Default)]
 pub struct UniformListState(Arc<Mutex<StateInner>>);
 
+#[derive(Debug)]
 pub enum ScrollTarget {
     Show(usize),
     Center(usize),
@@ -98,10 +99,6 @@ where
     fn autoscroll(&mut self, scroll_max: f32, list_height: f32, item_height: f32) {
         let mut state = self.state.0.lock();
 
-        if state.scroll_top > scroll_max {
-            state.scroll_top = scroll_max;
-        }
-
         if let Some(scroll_to) = state.scroll_to.take() {
             let item_ix;
             let center;
@@ -129,6 +126,10 @@ where
                     state.scroll_top = item_bottom - list_height;
                 }
             }
+        }
+
+        if state.scroll_top > scroll_max {
+            state.scroll_top = scroll_max;
         }
     }
 
