@@ -1,8 +1,8 @@
 use gpui::{
     action,
     elements::{
-        Align, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement, Svg,
-        UniformList, UniformListState,
+        Align, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement, ScrollTarget,
+        Svg, UniformList, UniformListState,
     },
     keymap::{
         self,
@@ -278,7 +278,7 @@ impl ProjectPanel {
 
     fn autoscroll(&mut self) {
         if let Some(selection) = self.selection {
-            self.list.scroll_to(selection.index);
+            self.list.scroll_to(ScrollTarget::Show(selection.index));
         }
     }
 

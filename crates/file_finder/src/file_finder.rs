@@ -353,7 +353,8 @@ impl FileFinder {
             let mat = &self.matches[selected_index];
             self.selected = Some((mat.worktree_id, mat.path.clone()));
         }
-        self.list_state.scroll_to(selected_index);
+        self.list_state
+            .scroll_to(ScrollTarget::Show(selected_index));
         cx.notify();
     }
 
@@ -364,7 +365,8 @@ impl FileFinder {
             let mat = &self.matches[selected_index];
             self.selected = Some((mat.worktree_id, mat.path.clone()));
         }
-        self.list_state.scroll_to(selected_index);
+        self.list_state
+            .scroll_to(ScrollTarget::Show(selected_index));
         cx.notify();
     }
 
@@ -415,7 +417,8 @@ impl FileFinder {
             }
             self.latest_search_query = query;
             self.latest_search_did_cancel = did_cancel;
-            self.list_state.scroll_to(self.selected_index());
+            self.list_state
+                .scroll_to(ScrollTarget::Show(self.selected_index()));
             cx.notify();
         }
     }

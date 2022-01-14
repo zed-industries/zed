@@ -140,7 +140,8 @@ impl ThemeSelector {
         if self.selected_index > 0 {
             self.selected_index -= 1;
         }
-        self.list_state.scroll_to(self.selected_index);
+        self.list_state
+            .scroll_to(ScrollTarget::Show(self.selected_index));
         cx.notify();
     }
 
@@ -148,7 +149,8 @@ impl ThemeSelector {
         if self.selected_index + 1 < self.matches.len() {
             self.selected_index += 1;
         }
-        self.list_state.scroll_to(self.selected_index);
+        self.list_state
+            .scroll_to(ScrollTarget::Show(self.selected_index));
         cx.notify();
     }
 

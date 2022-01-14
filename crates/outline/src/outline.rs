@@ -187,19 +187,23 @@ impl OutlineView {
 
     fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
         if self.selected_match_index > 0 {
-            self.select(self.selected_match_index - 1, true, cx);
+            self.select(self.selected_match_index - 1, true, false, cx);
         }
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
         if self.selected_match_index + 1 < self.matches.len() {
-            self.select(self.selected_match_index + 1, true, cx);
+            self.select(self.selected_match_index + 1, true, false, cx);
         }
     }
 
-    fn select(&mut self, index: usize, navigate: bool, cx: &mut ViewContext<Self>) {
+    fn select(&mut self, index: usize, navigate: bool, center: bool, cx: &mut ViewContext<Self>) {
         self.selected_match_index = index;
-        self.list_state.scroll_to(self.selected_match_index);
+        self.list_state.scroll_to(if center {
+            ScrollTarget::Center(index)
+        } else {
+            ScrollTarget::Show(index)
+        });
         if navigate {
             let selected_match = &self.matches[self.selected_match_index];
             let outline_item = &self.outline.items[selected_match.candidate_id];
@@ -319,7 +323,7 @@ impl OutlineView {
                 .unwrap_or(0);
             navigate_to_selected_index = !self.matches.is_empty();
         }
-        self.select(selected_index, navigate_to_selected_index, cx);
+        self.select(selected_index, navigate_to_selected_index, true, cx);
     }
 
     fn render_matches(&self) -> ElementBox {
