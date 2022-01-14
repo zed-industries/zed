@@ -1712,6 +1712,7 @@ impl MultiBufferSnapshot {
                         ..self.anchor_in_excerpt(excerpt_id.clone(), item.range.end),
                     text: item.text,
                     highlight_ranges: item.highlight_ranges,
+                    name_ranges: item.name_ranges,
                 })
                 .collect(),
         ))

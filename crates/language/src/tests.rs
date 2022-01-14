@@ -365,29 +365,34 @@ async fn test_outline(mut cx: gpui::TestAppContext) {
         ]
     );
 
+    // Without space, we only match on names
     assert_eq!(
         search(&outline, "oon", &cx).await,
         &[
-            ("mod module", vec![]),                  // included as the parent of a match
-            ("enum LoginState", vec![]),             // included as the parent of a match
-            ("LoggingOn", vec![1, 7, 8]),            // matches
-            ("impl Eq for Person", vec![9, 16, 17]), // matches part of the context
-            ("impl Drop for Person", vec![11, 18, 19]), // matches in two disjoint names
+            ("mod module", vec![]),                    // included as the parent of a match
+            ("enum LoginState", vec![]),               // included as the parent of a match
+            ("LoggingOn", vec![1, 7, 8]),              // matches
+            ("impl Drop for Person", vec![7, 18, 19]), // matches in two disjoint names
+        ]
+    );
+
+    assert_eq!(
+        search(&outline, "dp p", &cx).await,
+        &[
+            ("impl Drop for Person", vec![5, 8, 9, 14]),
+            ("fn drop", vec![]),
         ]
     );
     assert_eq!(
-        search(&outline, "dp p", &cx).await,
-        &[("impl Drop for Person", vec![5, 8, 9, 14])]
-    );
-    assert_eq!(
         search(&outline, "dpn", &cx).await,
-        &[("impl Drop for Person", vec![5, 8, 19])]
+        &[("impl Drop for Person", vec![5, 14, 19])]
     );
     assert_eq!(
-        search(&outline, "impl", &cx).await,
+        search(&outline, "impl ", &cx).await,
         &[
-            ("impl Eq for Person", vec![0, 1, 2, 3]),
-            ("impl Drop for Person", vec![0, 1, 2, 3])
+            ("impl Eq for Person", vec![0, 1, 2, 3, 4]),
+            ("impl Drop for Person", vec![0, 1, 2, 3, 4]),
+            ("fn drop", vec![]),
         ]
     );
 

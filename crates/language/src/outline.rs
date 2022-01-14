@@ -16,44 +16,49 @@ pub struct OutlineItem<T> {
     pub range: Range<T>,
     pub text: String,
     pub highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
+    pub name_ranges: Vec<Range<usize>>,
 }
 
 impl<T> Outline<T> {
     pub fn new(items: Vec<OutlineItem<T>>) -> Self {
+        let mut candidates = Vec::new();
         let mut path_candidates = Vec::new();
         let mut path_candidate_prefixes = Vec::new();
-        let mut item_text = String::new();
-        let mut stack = Vec::new();
+        let mut path_text = String::new();
+        let mut path_stack = Vec::new();
 
         for (id, item) in items.iter().enumerate() {
-            if item.depth < stack.len() {
-                stack.truncate(item.depth);
-                item_text.truncate(stack.last().copied().unwrap_or(0));
+            if item.depth < path_stack.len() {
+                path_stack.truncate(item.depth);
+                path_text.truncate(path_stack.last().copied().unwrap_or(0));
             }
-            if !item_text.is_empty() {
-                item_text.push(' ');
+            if !path_text.is_empty() {
+                path_text.push(' ');
             }
-            path_candidate_prefixes.push(item_text.len());
-            item_text.push_str(&item.text);
-            stack.push(item_text.len());
+            path_candidate_prefixes.push(path_text.len());
+            path_text.push_str(&item.text);
+            path_stack.push(path_text.len());
+
+            let candidate_text = item
+                .name_ranges
+                .iter()
+                .map(|range| &item.text[range.start as usize..range.end as usize])
+                .collect::<String>();
 
             path_candidates.push(StringMatchCandidate {
                 id,
-                string: item_text.clone(),
-                char_bag: item_text.as_str().into(),
+                char_bag: path_text.as_str().into(),
+                string: path_text.clone(),
+            });
+            candidates.push(StringMatchCandidate {
+                id,
+                char_bag: candidate_text.as_str().into(),
+                string: candidate_text,
             });
         }
 
         Self {
-            candidates: items
-                .iter()
-                .enumerate()
-                .map(|(id, item)| StringMatchCandidate {
-                    id,
-                    char_bag: item.text.as_str().into(),
-                    string: item.text.clone(),
-                })
-                .collect(),
+            candidates,
             path_candidates,
             path_candidate_prefixes,
             items,
@@ -92,6 +97,17 @@ impl<T> Outline<T> {
                     .retain(|position| *position >= prefix_len);
                 for position in &mut string_match.positions {
                     *position -= prefix_len;
+                }
+            } else {
+                let mut name_ranges = outline_match.name_ranges.iter();
+                let mut name_range = name_ranges.next().unwrap();
+                let mut preceding_ranges_len = 0;
+                for position in &mut string_match.positions {
+                    while *position >= preceding_ranges_len + name_range.len() as usize {
+                        preceding_ranges_len += name_range.len();
+                        name_range = name_ranges.next().unwrap();
+                    }
+                    *position = name_range.start as usize + (*position - preceding_ranges_len);
                 }
             }
 
