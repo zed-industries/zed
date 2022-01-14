@@ -67,6 +67,7 @@ impl<T> Outline<T> {
                 *position = name_range.start as usize + (*position - preceding_ranges_len);
             }
 
+            let insertion_ix = tree_matches.len();
             let mut cur_depth = outline_match.depth;
             for (ix, item) in self.items[prev_item_ix..string_match.candidate_index]
                 .iter()
@@ -79,12 +80,15 @@ impl<T> Outline<T> {
 
                 let candidate_index = ix + prev_item_ix;
                 if item.depth == cur_depth - 1 {
-                    tree_matches.push(StringMatch {
-                        candidate_index,
-                        score: Default::default(),
-                        positions: Default::default(),
-                        string: Default::default(),
-                    });
+                    tree_matches.insert(
+                        insertion_ix,
+                        StringMatch {
+                            candidate_index,
+                            score: Default::default(),
+                            positions: Default::default(),
+                            string: Default::default(),
+                        },
+                    );
                     cur_depth -= 1;
                 }
             }
