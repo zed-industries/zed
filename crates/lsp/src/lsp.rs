@@ -16,7 +16,7 @@ use std::{
     io::Write,
     str::FromStr,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
 };
@@ -431,7 +431,7 @@ pub struct FakeLanguageServer {
     buffer: Vec<u8>,
     stdin: smol::io::BufReader<async_pipe::PipeReader>,
     stdout: smol::io::BufWriter<async_pipe::PipeWriter>,
-    pub started: Arc<AtomicBool>,
+    pub started: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -449,7 +449,7 @@ impl LanguageServer {
             stdin: smol::io::BufReader::new(stdin.1),
             stdout: smol::io::BufWriter::new(stdout.0),
             buffer: Vec::new(),
-            started: Arc::new(AtomicBool::new(true)),
+            started: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         };
 
         let server = Self::new_internal(stdin.0, stdout.1, Path::new("/"), executor).unwrap();
