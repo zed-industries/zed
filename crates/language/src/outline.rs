@@ -63,6 +63,7 @@ impl<T> Outline<T> {
     pub async fn search(&self, query: &str, executor: Arc<Background>) -> Vec<StringMatch> {
         let query = query.trim_start();
         let is_path_query = query.contains(' ');
+        let smart_case = query.chars().any(|c| c.is_uppercase());
         let mut matches = fuzzy::match_strings(
             if is_path_query {
                 &self.path_candidates
@@ -70,7 +71,7 @@ impl<T> Outline<T> {
                 &self.candidates
             },
             query,
-            true,
+            smart_case,
             100,
             &Default::default(),
             executor.clone(),
