@@ -5,9 +5,8 @@ use editor::{
 use fuzzy::StringMatch;
 use gpui::{
     action,
-    color::Color,
     elements::*,
-    fonts::HighlightStyle,
+    fonts::{self, HighlightStyle},
     geometry::vector::Vector2F,
     keymap::{
         self,
@@ -376,7 +375,6 @@ impl OutlineView {
                 style.label.text.clone().into(),
                 &outline_item.highlight_ranges,
                 &string_match.positions,
-                Color::red(),
             ))
             .contained()
             .with_padding_left(20. * outline_item.depth as f32)
@@ -391,16 +389,17 @@ fn combine_syntax_and_fuzzy_match_highlights(
     default_style: HighlightStyle,
     syntax_ranges: &[(Range<usize>, HighlightStyle)],
     match_indices: &[usize],
-    match_underline: Color,
 ) -> Vec<(Range<usize>, HighlightStyle)> {
     let mut result = Vec::new();
     let mut match_indices = match_indices.iter().copied().peekable();
 
-    for (range, syntax_highlight) in syntax_ranges
+    for (range, mut syntax_highlight) in syntax_ranges
         .iter()
         .cloned()
         .chain([(usize::MAX..0, Default::default())])
     {
+        syntax_highlight.font_properties.weight(Default::default());
+
         // Add highlights for any fuzzy match characters before the next
         // syntax highlight range.
         while let Some(&match_index) = match_indices.peek() {
@@ -409,13 +408,9 @@ fn combine_syntax_and_fuzzy_match_highlights(
             }
             match_indices.next();
             let end_index = char_ix_after(match_index, text);
-            result.push((
-                match_index..end_index,
-                HighlightStyle {
-                    underline: Some(match_underline),
-                    ..default_style
-                },
-            ));
+            let mut match_style = default_style;
+            match_style.font_properties.weight(fonts::Weight::BOLD);
+            result.push((match_index..end_index, match_style));
         }
 
         if range.start == usize::MAX {
@@ -445,13 +440,9 @@ fn combine_syntax_and_fuzzy_match_highlights(
                 }
             }
 
-            result.push((
-                match_index..end_index,
-                HighlightStyle {
-                    underline: Some(match_underline),
-                    ..syntax_highlight
-                },
-            ));
+            let mut match_style = syntax_highlight;
+            match_style.font_properties.weight(fonts::Weight::BOLD);
+            result.push((match_index..end_index, match_style));
             offset = end_index;
         }
 
@@ -470,7 +461,7 @@ fn char_ix_after(ix: usize, text: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::fonts::HighlightStyle;
+    use gpui::{color::Color, fonts::HighlightStyle};
 
     #[test]
     fn test_combine_syntax_and_fuzzy_match_highlights() {
@@ -493,14 +484,12 @@ mod tests {
             ),
         ];
         let match_indices = [4, 6, 7, 8];
-        let match_underline = Color::white();
         assert_eq!(
             combine_syntax_and_fuzzy_match_highlights(
                 &string,
                 default,
                 &syntax_ranges,
                 &match_indices,
-                match_underline
             ),
             &[
                 (
@@ -514,7 +503,7 @@ mod tests {
                     4..5,
                     HighlightStyle {
                         color: Color::green(),
-                        underline: Some(match_underline),
+                        font_properties: *fonts::Properties::default().weight(fonts::Weight::BOLD),
                         ..default
                     },
                 ),
@@ -529,14 +518,14 @@ mod tests {
                     6..8,
                     HighlightStyle {
                         color: Color::green(),
-                        underline: Some(match_underline),
+                        font_properties: *fonts::Properties::default().weight(fonts::Weight::BOLD),
                         ..default
                     },
                 ),
                 (
                     8..9,
                     HighlightStyle {
-                        underline: Some(match_underline),
+                        font_properties: *fonts::Properties::default().weight(fonts::Weight::BOLD),
                         ..default
                     },
                 ),
