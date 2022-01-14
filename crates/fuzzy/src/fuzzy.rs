@@ -117,7 +117,7 @@ pub struct StringMatch {
 
 impl PartialEq for StringMatch {
     fn eq(&self, other: &Self) -> bool {
-        self.score.eq(&other.score)
+        self.cmp(other).is_eq()
     }
 }
 
@@ -134,13 +134,13 @@ impl Ord for StringMatch {
         self.score
             .partial_cmp(&other.score)
             .unwrap_or(Ordering::Equal)
-            .then_with(|| self.string.cmp(&other.string))
+            .then_with(|| self.candidate_index.cmp(&other.candidate_index))
     }
 }
 
 impl PartialEq for PathMatch {
     fn eq(&self, other: &Self) -> bool {
-        self.score.eq(&other.score)
+        self.cmp(other).is_eq()
     }
 }
 
