@@ -162,25 +162,24 @@ impl OutlineView {
     }
 
     fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
-        let editor = workspace
+        if let Some(editor) = workspace
             .active_item(cx)
-            .unwrap()
-            .to_any()
-            .downcast::<Editor>()
-            .unwrap();
-        let settings = workspace.settings();
-        let buffer = editor
-            .read(cx)
-            .buffer()
-            .read(cx)
-            .read(cx)
-            .outline(Some(settings.borrow().theme.editor.syntax.as_ref()));
-        if let Some(outline) = buffer {
-            workspace.toggle_modal(cx, |cx, _| {
-                let view = cx.add_view(|cx| OutlineView::new(outline, editor, settings, cx));
-                cx.subscribe(&view, Self::on_event).detach();
-                view
-            })
+            .and_then(|item| item.to_any().downcast::<Editor>())
+        {
+            let settings = workspace.settings();
+            let buffer = editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .read(cx)
+                .outline(Some(settings.borrow().theme.editor.syntax.as_ref()));
+            if let Some(outline) = buffer {
+                workspace.toggle_modal(cx, |cx, _| {
+                    let view = cx.add_view(|cx| OutlineView::new(outline, editor, settings, cx));
+                    cx.subscribe(&view, Self::on_event).detach();
+                    view
+                })
+            }
         }
     }
 
