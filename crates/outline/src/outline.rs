@@ -437,7 +437,7 @@ fn combine_syntax_and_fuzzy_match_highlights(
 
             let mut end_index = char_ix_after(match_index, text);
             while let Some(&next_match_index) = match_indices.peek() {
-                if next_match_index == end_index {
+                if next_match_index == end_index && next_match_index < range.end {
                     end_index = char_ix_after(next_match_index, text);
                     match_indices.next();
                 } else {
@@ -485,14 +485,14 @@ mod tests {
                 },
             ),
             (
-                4..10,
+                4..8,
                 HighlightStyle {
                     color: Color::green(),
                     ..default
                 },
             ),
         ];
-        let match_indices = [4, 6, 7];
+        let match_indices = [4, 6, 7, 8];
         let match_underline = Color::white();
         assert_eq!(
             combine_syntax_and_fuzzy_match_highlights(
@@ -534,9 +534,9 @@ mod tests {
                     },
                 ),
                 (
-                    8..10,
+                    8..9,
                     HighlightStyle {
-                        color: Color::green(),
+                        underline: Some(match_underline),
                         ..default
                     },
                 ),
