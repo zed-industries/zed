@@ -224,6 +224,4 @@ impl View for GoToLine {
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
         cx.focus(&self.line_editor);
     }
-
-    fn on_blur(&mut self, _: &mut ViewContext<Self>) {}
 }

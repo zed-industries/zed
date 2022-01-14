@@ -258,6 +258,7 @@ impl OutlineView {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
+            editor::Event::Blurred => cx.emit(Event::Dismissed),
             editor::Event::Edited => self.update_matches(cx),
             _ => {}
         }
