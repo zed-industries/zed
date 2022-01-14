@@ -41,7 +41,7 @@
 
 (mod_item
     (visibility_modifier)? @context
-    "mod"
+    "mod" @context
     name: (_) @name) @item
 
 (type_item
