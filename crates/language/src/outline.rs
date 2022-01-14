@@ -13,8 +13,8 @@ pub struct OutlineItem<T> {
     pub depth: usize,
     pub range: Range<T>,
     pub text: String,
-    pub name_ranges: Box<[Range<u32>]>,
-    pub text_runs: Vec<(usize, Option<HighlightStyle>)>,
+    pub name_ranges: Vec<Range<u32>>,
+    pub highlight_ranges: Vec<(Range<usize>, HighlightStyle)>,
 }
 
 impl<T> Outline<T> {

@@ -1865,7 +1865,7 @@ impl BufferSnapshot {
                 let range = item_node.start_byte()..item_node.end_byte();
                 let mut text = String::new();
                 let mut name_ranges = Vec::new();
-                let mut text_runs = Vec::new();
+                let mut highlight_ranges = Vec::new();
 
                 for capture in mat.captures {
                     let node_is_name;
@@ -1903,7 +1903,11 @@ impl BufferSnapshot {
                         } else {
                             offset += chunk.text.len();
                         }
-                        text_runs.push((chunk.text.len(), chunk.highlight_style));
+                        if let Some(style) = chunk.highlight_style {
+                            let start = text.len();
+                            let end = start + chunk.text.len();
+                            highlight_ranges.push((start..end, style));
+                        }
                         text.push_str(chunk.text);
                         if offset >= range.end {
                             break;
@@ -1922,8 +1926,8 @@ impl BufferSnapshot {
                     depth: stack.len() - 1,
                     range: self.anchor_after(range.start)..self.anchor_before(range.end),
                     text,
-                    name_ranges: name_ranges.into_boxed_slice(),
-                    text_runs,
+                    name_ranges,
+                    highlight_ranges,
                 })
             })
             .collect::<Vec<_>>();

@@ -5,7 +5,9 @@ use editor::{
 use fuzzy::StringMatch;
 use gpui::{
     action,
+    color::Color,
     elements::*,
+    fonts::HighlightStyle,
     geometry::vector::Vector2F,
     keymap::{
         self,
@@ -20,6 +22,7 @@ use ordered_float::OrderedFloat;
 use postage::watch;
 use std::{
     cmp::{self, Reverse},
+    ops::Range,
     sync::Arc,
 };
 use workspace::{Settings, Workspace};
@@ -364,14 +367,180 @@ impl OutlineView {
         } else {
             &settings.theme.selector.item
         };
-        let outline_match = &self.outline.items[string_match.candidate_index];
+        let outline_item = &self.outline.items[string_match.candidate_index];
 
-        Label::new(outline_match.text.clone(), style.label.clone())
-            .with_highlights(string_match.positions.clone())
+        Text::new(outline_item.text.clone(), style.label.text.clone())
+            .with_soft_wrap(false)
+            .with_highlights(combine_syntax_and_fuzzy_match_highlights(
+                &outline_item.text,
+                style.label.text.clone().into(),
+                &outline_item.highlight_ranges,
+                &string_match.positions,
+                Color::red(),
+            ))
             .contained()
-            .with_padding_left(20. * outline_match.depth as f32)
+            .with_padding_left(20. * outline_item.depth as f32)
             .contained()
             .with_style(style.container)
             .boxed()
+    }
+}
+
+fn combine_syntax_and_fuzzy_match_highlights(
+    text: &str,
+    default_style: HighlightStyle,
+    syntax_ranges: &[(Range<usize>, HighlightStyle)],
+    match_indices: &[usize],
+    match_underline: Color,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let mut result = Vec::new();
+    let mut match_indices = match_indices.iter().copied().peekable();
+
+    for (range, syntax_highlight) in syntax_ranges
+        .iter()
+        .cloned()
+        .chain([(usize::MAX..0, Default::default())])
+    {
+        // Add highlights for any fuzzy match characters before the next
+        // syntax highlight range.
+        while let Some(&match_index) = match_indices.peek() {
+            if match_index >= range.start {
+                break;
+            }
+            match_indices.next();
+            let end_index = char_ix_after(match_index, text);
+            result.push((
+                match_index..end_index,
+                HighlightStyle {
+                    underline: Some(match_underline),
+                    ..default_style
+                },
+            ));
+        }
+
+        if range.start == usize::MAX {
+            break;
+        }
+
+        // Add highlights for any fuzzy match characters within the
+        // syntax highlight range.
+        let mut offset = range.start;
+        while let Some(&match_index) = match_indices.peek() {
+            if match_index >= range.end {
+                break;
+            }
+
+            match_indices.next();
+            if match_index > offset {
+                result.push((offset..match_index, syntax_highlight));
+            }
+
+            let mut end_index = char_ix_after(match_index, text);
+            while let Some(&next_match_index) = match_indices.peek() {
+                if next_match_index == end_index {
+                    end_index = char_ix_after(next_match_index, text);
+                    match_indices.next();
+                } else {
+                    break;
+                }
+            }
+
+            result.push((
+                match_index..end_index,
+                HighlightStyle {
+                    underline: Some(match_underline),
+                    ..syntax_highlight
+                },
+            ));
+            offset = end_index;
+        }
+
+        if offset < range.end {
+            result.push((offset..range.end, syntax_highlight));
+        }
+    }
+
+    result
+}
+
+fn char_ix_after(ix: usize, text: &str) -> usize {
+    ix + text[ix..].chars().next().unwrap().len_utf8()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::fonts::HighlightStyle;
+
+    #[test]
+    fn test_combine_syntax_and_fuzzy_match_highlights() {
+        let string = "abcdefghijklmnop";
+        let default = HighlightStyle::default();
+        let syntax_ranges = [
+            (
+                0..3,
+                HighlightStyle {
+                    color: Color::red(),
+                    ..default
+                },
+            ),
+            (
+                4..10,
+                HighlightStyle {
+                    color: Color::green(),
+                    ..default
+                },
+            ),
+        ];
+        let match_indices = [4, 6, 7];
+        let match_underline = Color::white();
+        assert_eq!(
+            combine_syntax_and_fuzzy_match_highlights(
+                &string,
+                default,
+                &syntax_ranges,
+                &match_indices,
+                match_underline
+            ),
+            &[
+                (
+                    0..3,
+                    HighlightStyle {
+                        color: Color::red(),
+                        ..default
+                    },
+                ),
+                (
+                    4..5,
+                    HighlightStyle {
+                        color: Color::green(),
+                        underline: Some(match_underline),
+                        ..default
+                    },
+                ),
+                (
+                    5..6,
+                    HighlightStyle {
+                        color: Color::green(),
+                        ..default
+                    },
+                ),
+                (
+                    6..8,
+                    HighlightStyle {
+                        color: Color::green(),
+                        underline: Some(match_underline),
+                        ..default
+                    },
+                ),
+                (
+                    8..10,
+                    HighlightStyle {
+                        color: Color::green(),
+                        ..default
+                    },
+                ),
+            ]
+        );
     }
 }

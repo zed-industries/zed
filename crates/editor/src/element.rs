@@ -7,6 +7,8 @@ use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
 use gpui::{
     color::Color,
+    elements::layout_highlighted_chunks,
+    fonts::HighlightStyle,
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -19,7 +21,7 @@ use gpui::{
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
-use language::{Bias, Chunk};
+use language::Bias;
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
@@ -541,86 +543,37 @@ impl EditorElement {
                     )
                 })
                 .collect();
-        }
-
-        let style = &self.settings.style;
-        let mut prev_font_properties = style.text.font_properties.clone();
-        let mut prev_font_id = style.text.font_id;
-
-        let mut layouts = Vec::with_capacity(rows.len());
-        let mut line = String::new();
-        let mut styles = Vec::new();
-        let mut row = rows.start;
-        let mut line_exceeded_max_len = false;
-        let chunks = snapshot.chunks(rows.clone(), Some(&style.syntax));
-
-        let newline_chunk = Chunk {
-            text: "\n",
-            ..Default::default()
-        };
-        'outer: for chunk in chunks.chain([newline_chunk]) {
-            for (ix, mut line_chunk) in chunk.text.split('\n').enumerate() {
-                if ix > 0 {
-                    layouts.push(cx.text_layout_cache.layout_str(
-                        &line,
-                        style.text.font_size,
-                        &styles,
-                    ));
-                    line.clear();
-                    styles.clear();
-                    row += 1;
-                    line_exceeded_max_len = false;
-                    if row == rows.end {
-                        break 'outer;
-                    }
-                }
-
-                if !line_chunk.is_empty() && !line_exceeded_max_len {
-                    let highlight_style =
-                        chunk.highlight_style.unwrap_or(style.text.clone().into());
-                    // Avoid a lookup if the font properties match the previous ones.
-                    let font_id = if highlight_style.font_properties == prev_font_properties {
-                        prev_font_id
-                    } else {
-                        cx.font_cache
-                            .select_font(
-                                style.text.font_family_id,
-                                &highlight_style.font_properties,
-                            )
-                            .unwrap_or(style.text.font_id)
-                    };
-
-                    if line.len() + line_chunk.len() > MAX_LINE_LEN {
-                        let mut chunk_len = MAX_LINE_LEN - line.len();
-                        while !line_chunk.is_char_boundary(chunk_len) {
-                            chunk_len -= 1;
+        } else {
+            let style = &self.settings.style;
+            let chunks = snapshot
+                .chunks(rows.clone(), Some(&style.syntax))
+                .map(|chunk| {
+                    let highlight = if let Some(severity) = chunk.diagnostic {
+                        let underline = Some(super::diagnostic_style(severity, true, style).text);
+                        if let Some(mut highlight) = chunk.highlight_style {
+                            highlight.underline = underline;
+                            Some(highlight)
+                        } else {
+                            Some(HighlightStyle {
+                                underline,
+                                color: style.text.color,
+                                font_properties: style.text.font_properties,
+                            })
                         }
-                        line_chunk = &line_chunk[..chunk_len];
-                        line_exceeded_max_len = true;
-                    }
-
-                    let underline = if let Some(severity) = chunk.diagnostic {
-                        Some(super::diagnostic_style(severity, true, style).text)
                     } else {
-                        highlight_style.underline
+                        chunk.highlight_style
                     };
-
-                    line.push_str(line_chunk);
-                    styles.push((
-                        line_chunk.len(),
-                        RunStyle {
-                            font_id,
-                            color: highlight_style.color,
-                            underline,
-                        },
-                    ));
-                    prev_font_id = font_id;
-                    prev_font_properties = highlight_style.font_properties;
-                }
-            }
+                    (chunk.text, highlight)
+                });
+            layout_highlighted_chunks(
+                chunks,
+                &style.text,
+                &cx.text_layout_cache,
+                &cx.font_cache,
+                MAX_LINE_LEN,
+                rows.len() as usize,
+            )
         }
-
-        layouts
     }
 
     fn layout_blocks(
