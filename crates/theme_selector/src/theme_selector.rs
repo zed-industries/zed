@@ -3,7 +3,7 @@ use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     action,
     elements::*,
-    keymap::{self, menu, Binding},
+    keymap::{self, Binding},
     AppContext, Axis, Element, ElementBox, Entity, MutableAppContext, RenderContext, View,
     ViewContext, ViewHandle,
 };
@@ -11,7 +11,10 @@ use parking_lot::Mutex;
 use postage::watch;
 use std::{cmp, sync::Arc};
 use theme::ThemeRegistry;
-use workspace::{AppState, Settings, Workspace};
+use workspace::{
+    menu::{Confirm, SelectNext, SelectPrev},
+    AppState, Settings, Workspace,
+};
 
 #[derive(Clone)]
 pub struct ThemeSelectorParams {
@@ -30,7 +33,6 @@ pub struct ThemeSelector {
     selected_index: usize,
 }
 
-action!(Confirm);
 action!(Toggle, ThemeSelectorParams);
 action!(Reload, ThemeSelectorParams);
 
@@ -45,7 +47,6 @@ pub fn init(params: ThemeSelectorParams, cx: &mut MutableAppContext) {
         Binding::new("cmd-k cmd-t", Toggle(params.clone()), None),
         Binding::new("cmd-k t", Reload(params.clone()), None),
         Binding::new("escape", Toggle(params.clone()), Some("ThemeSelector")),
-        Binding::new("enter", Confirm, Some("ThemeSelector")),
     ]);
 }
 
@@ -136,19 +137,21 @@ impl ThemeSelector {
         }
     }
 
-    fn select_prev(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+    fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
         if self.selected_index > 0 {
             self.selected_index -= 1;
         }
-        self.list_state.scroll_to(self.selected_index);
+        self.list_state
+            .scroll_to(ScrollTarget::Show(self.selected_index));
         cx.notify();
     }
 
-    fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+    fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
         if self.selected_index + 1 < self.matches.len() {
             self.selected_index += 1;
         }
-        self.list_state.scroll_to(self.selected_index);
+        self.list_state
+            .scroll_to(ScrollTarget::Show(self.selected_index));
         cx.notify();
     }
 
@@ -157,7 +160,9 @@ impl ThemeSelector {
         let candidates = self
             .themes
             .list()
-            .map(|name| StringMatchCandidate {
+            .enumerate()
+            .map(|(id, name)| StringMatchCandidate {
+                id,
                 char_bag: name.as_str().into(),
                 string: name,
             })
@@ -167,7 +172,9 @@ impl ThemeSelector {
         self.matches = if query.is_empty() {
             candidates
                 .into_iter()
-                .map(|candidate| StringMatch {
+                .enumerate()
+                .map(|(index, candidate)| StringMatch {
+                    candidate_id: index,
                     string: candidate.string,
                     positions: Vec::new(),
                     score: 0.0,

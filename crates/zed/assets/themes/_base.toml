@@ -211,7 +211,7 @@ text = { extends = "$text.0" }
 [selector]
 background = "$surface.0"
 padding = 8
-margin.top = 52
+margin = { top = 52, bottom = 52 }
 corner_radius = 6
 shadow = { offset = [0, 2], blur = 16, color = "$shadow.0" }
 border = { width = 1, color = "$border.0" }

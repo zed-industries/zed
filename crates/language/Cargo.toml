@@ -19,6 +19,7 @@ test-support = [
 [dependencies]
 clock = { path = "../clock" }
 collections = { path = "../collections" }
+fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 lsp = { path = "../lsp" }
 rpc = { path = "../rpc" }

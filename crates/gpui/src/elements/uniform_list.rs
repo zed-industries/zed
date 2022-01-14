@@ -14,9 +14,15 @@ use std::{cmp, ops::Range, sync::Arc};
 #[derive(Clone, Default)]
 pub struct UniformListState(Arc<Mutex<StateInner>>);
 
+#[derive(Debug)]
+pub enum ScrollTarget {
+    Show(usize),
+    Center(usize),
+}
+
 impl UniformListState {
-    pub fn scroll_to(&self, item_ix: usize) {
-        self.0.lock().scroll_to = Some(item_ix);
+    pub fn scroll_to(&self, scroll_to: ScrollTarget) {
+        self.0.lock().scroll_to = Some(scroll_to);
     }
 
     pub fn scroll_top(&self) -> f32 {
@@ -27,7 +33,7 @@ impl UniformListState {
 #[derive(Default)]
 struct StateInner {
     scroll_top: f32,
-    scroll_to: Option<usize>,
+    scroll_to: Option<ScrollTarget>,
 }
 
 pub struct LayoutState {
@@ -93,19 +99,37 @@ where
     fn autoscroll(&mut self, scroll_max: f32, list_height: f32, item_height: f32) {
         let mut state = self.state.0.lock();
 
-        if state.scroll_top > scroll_max {
-            state.scroll_top = scroll_max;
-        }
+        if let Some(scroll_to) = state.scroll_to.take() {
+            let item_ix;
+            let center;
+            match scroll_to {
+                ScrollTarget::Show(ix) => {
+                    item_ix = ix;
+                    center = false;
+                }
+                ScrollTarget::Center(ix) => {
+                    item_ix = ix;
+                    center = true;
+                }
+            }
 
-        if let Some(item_ix) = state.scroll_to.take() {
             let item_top = self.padding_top + item_ix as f32 * item_height;
             let item_bottom = item_top + item_height;
-
-            if item_top < state.scroll_top {
-                state.scroll_top = item_top;
-            } else if item_bottom > (state.scroll_top + list_height) {
-                state.scroll_top = item_bottom - list_height;
+            if center {
+                let item_center = item_top + item_height / 2.;
+                state.scroll_top = (item_center - list_height / 2.).max(0.);
+            } else {
+                let scroll_bottom = state.scroll_top + list_height;
+                if item_top < state.scroll_top {
+                    state.scroll_top = item_top;
+                } else if item_bottom > scroll_bottom {
+                    state.scroll_top = item_bottom - list_height;
+                }
             }
+        }
+
+        if state.scroll_top > scroll_max {
+            state.scroll_top = scroll_max;
         }
     }
 

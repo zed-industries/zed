@@ -9,6 +9,7 @@ impl CharBag {
     }
 
     fn insert(&mut self, c: char) {
+        let c = c.to_ascii_lowercase();
         if c >= 'a' && c <= 'z' {
             let mut count = self.0;
             let idx = c as u8 - 'a' as u8;

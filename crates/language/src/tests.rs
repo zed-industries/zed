@@ -279,6 +279,139 @@ async fn test_reparse(mut cx: gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_outline(mut cx: gpui::TestAppContext) {
+    let language = Some(Arc::new(
+        rust_lang()
+            .with_outline_query(
+                r#"
+                (struct_item
+                    "struct" @context
+                    name: (_) @name) @item
+                (enum_item
+                    "enum" @context
+                    name: (_) @name) @item
+                (enum_variant
+                    name: (_) @name) @item
+                (field_declaration
+                    name: (_) @name) @item
+                (impl_item
+                    "impl" @context
+                    trait: (_) @name
+                    "for" @context
+                    type: (_) @name) @item
+                (function_item
+                    "fn" @context
+                    name: (_) @name) @item
+                (mod_item
+                    "mod" @context
+                    name: (_) @name) @item
+                "#,
+            )
+            .unwrap(),
+    ));
+
+    let text = r#"
+        struct Person {
+            name: String,
+            age: usize,
+        }
+
+        mod module {
+            enum LoginState {
+                LoggedOut,
+                LoggingOn,
+                LoggedIn {
+                    person: Person,
+                    time: Instant,
+                }
+            }
+        }
+
+        impl Eq for Person {}
+
+        impl Drop for Person {
+            fn drop(&mut self) {
+                println!("bye");
+            }
+        }
+    "#
+    .unindent();
+
+    let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+    let outline = buffer
+        .read_with(&cx, |buffer, _| buffer.snapshot().outline(None))
+        .unwrap();
+
+    assert_eq!(
+        outline
+            .items
+            .iter()
+            .map(|item| (item.text.as_str(), item.depth))
+            .collect::<Vec<_>>(),
+        &[
+            ("struct Person", 0),
+            ("name", 1),
+            ("age", 1),
+            ("mod module", 0),
+            ("enum LoginState", 1),
+            ("LoggedOut", 2),
+            ("LoggingOn", 2),
+            ("LoggedIn", 2),
+            ("person", 3),
+            ("time", 3),
+            ("impl Eq for Person", 0),
+            ("impl Drop for Person", 0),
+            ("fn drop", 1),
+        ]
+    );
+
+    // Without space, we only match on names
+    assert_eq!(
+        search(&outline, "oon", &cx).await,
+        &[
+            ("mod module", vec![]),                    // included as the parent of a match
+            ("enum LoginState", vec![]),               // included as the parent of a match
+            ("LoggingOn", vec![1, 7, 8]),              // matches
+            ("impl Drop for Person", vec![7, 18, 19]), // matches in two disjoint names
+        ]
+    );
+
+    assert_eq!(
+        search(&outline, "dp p", &cx).await,
+        &[
+            ("impl Drop for Person", vec![5, 8, 9, 14]),
+            ("fn drop", vec![]),
+        ]
+    );
+    assert_eq!(
+        search(&outline, "dpn", &cx).await,
+        &[("impl Drop for Person", vec![5, 14, 19])]
+    );
+    assert_eq!(
+        search(&outline, "impl ", &cx).await,
+        &[
+            ("impl Eq for Person", vec![0, 1, 2, 3, 4]),
+            ("impl Drop for Person", vec![0, 1, 2, 3, 4]),
+            ("fn drop", vec![]),
+        ]
+    );
+
+    async fn search<'a>(
+        outline: &'a Outline<Anchor>,
+        query: &str,
+        cx: &gpui::TestAppContext,
+    ) -> Vec<(&'a str, Vec<usize>)> {
+        let matches = cx
+            .read(|cx| outline.search(query, cx.background().clone()))
+            .await;
+        matches
+            .into_iter()
+            .map(|mat| (outline.items[mat.candidate_id].text.as_str(), mat.positions))
+            .collect::<Vec<_>>()
+    }
+}
+
+#[gpui::test]
 fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
     let buffer = cx.add_model(|cx| {
         let text = "
@@ -1017,14 +1150,18 @@ fn rust_lang() -> Language {
     )
     .with_indents_query(
         r#"
-                (call_expression) @indent
-                (field_expression) @indent
-                (_ "(" ")" @end) @indent
-                (_ "{" "}" @end) @indent
-            "#,
+        (call_expression) @indent
+        (field_expression) @indent
+        (_ "(" ")" @end) @indent
+        (_ "{" "}" @end) @indent
+        "#,
     )
     .unwrap()
-    .with_brackets_query(r#" ("{" @open "}" @close) "#)
+    .with_brackets_query(
+        r#"
+        ("{" @open "}" @close)
+        "#,
+    )
     .unwrap()
 }
 

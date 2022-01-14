@@ -52,6 +52,11 @@ impl Container {
         self
     }
 
+    pub fn with_margin_bottom(mut self, margin: f32) -> Self {
+        self.style.margin.bottom = margin;
+        self
+    }
+
     pub fn with_margin_left(mut self, margin: f32) -> Self {
         self.style.margin.left = margin;
         self

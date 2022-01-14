@@ -6,7 +6,8 @@ pub use crate::{
 };
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
-    range_from_lsp,
+    outline::OutlineItem,
+    range_from_lsp, Outline,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
@@ -193,7 +194,7 @@ pub trait File {
     fn as_any(&self) -> &dyn Any;
 }
 
-struct QueryCursorHandle(Option<QueryCursor>);
+pub(crate) struct QueryCursorHandle(Option<QueryCursor>);
 
 #[derive(Clone)]
 struct SyntaxTree {
@@ -1264,6 +1265,13 @@ impl Buffer {
         self.edit_internal(ranges_iter, new_text, true, cx)
     }
 
+    /*
+    impl Buffer
+        pub fn edit
+        pub fn edit_internal
+        pub fn edit_with_autoindent
+    */
+
     pub fn edit_internal<I, S, T>(
         &mut self,
         ranges_iter: I,
@@ -1827,6 +1835,110 @@ impl BufferSnapshot {
         }
     }
 
+    pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
+        let tree = self.tree.as_ref()?;
+        let grammar = self
+            .language
+            .as_ref()
+            .and_then(|language| language.grammar.as_ref())?;
+
+        let mut cursor = QueryCursorHandle::new();
+        let matches = cursor.matches(
+            &grammar.outline_query,
+            tree.root_node(),
+            TextProvider(self.as_rope()),
+        );
+
+        let mut chunks = self.chunks(0..self.len(), theme);
+
+        let item_capture_ix = grammar.outline_query.capture_index_for_name("item")?;
+        let name_capture_ix = grammar.outline_query.capture_index_for_name("name")?;
+        let context_capture_ix = grammar
+            .outline_query
+            .capture_index_for_name("context")
+            .unwrap_or(u32::MAX);
+
+        let mut stack = Vec::<Range<usize>>::new();
+        let items = matches
+            .filter_map(|mat| {
+                let item_node = mat.nodes_for_capture_index(item_capture_ix).next()?;
+                let range = item_node.start_byte()..item_node.end_byte();
+                let mut text = String::new();
+                let mut name_ranges = Vec::new();
+                let mut highlight_ranges = Vec::new();
+
+                for capture in mat.captures {
+                    let node_is_name;
+                    if capture.index == name_capture_ix {
+                        node_is_name = true;
+                    } else if capture.index == context_capture_ix {
+                        node_is_name = false;
+                    } else {
+                        continue;
+                    }
+
+                    let range = capture.node.start_byte()..capture.node.end_byte();
+                    if !text.is_empty() {
+                        text.push(' ');
+                    }
+                    if node_is_name {
+                        let mut start = text.len();
+                        let end = start + range.len();
+
+                        // When multiple names are captured, then the matcheable text
+                        // includes the whitespace in between the names.
+                        if !name_ranges.is_empty() {
+                            start -= 1;
+                        }
+
+                        name_ranges.push(start..end);
+                    }
+
+                    let mut offset = range.start;
+                    chunks.seek(offset);
+                    while let Some(mut chunk) = chunks.next() {
+                        if chunk.text.len() > range.end - offset {
+                            chunk.text = &chunk.text[0..(range.end - offset)];
+                            offset = range.end;
+                        } else {
+                            offset += chunk.text.len();
+                        }
+                        if let Some(style) = chunk.highlight_style {
+                            let start = text.len();
+                            let end = start + chunk.text.len();
+                            highlight_ranges.push((start..end, style));
+                        }
+                        text.push_str(chunk.text);
+                        if offset >= range.end {
+                            break;
+                        }
+                    }
+                }
+
+                while stack.last().map_or(false, |prev_range| {
+                    !prev_range.contains(&range.start) || !prev_range.contains(&range.end)
+                }) {
+                    stack.pop();
+                }
+                stack.push(range.clone());
+
+                Some(OutlineItem {
+                    depth: stack.len() - 1,
+                    range: self.anchor_after(range.start)..self.anchor_before(range.end),
+                    text,
+                    highlight_ranges,
+                    name_ranges,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        if items.is_empty() {
+            None
+        } else {
+            Some(Outline::new(items))
+        }
+    }
+
     pub fn enclosing_bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
@@ -1853,6 +1965,12 @@ impl BufferSnapshot {
             })
             .min_by_key(|(open_range, close_range)| close_range.end - open_range.start)
     }
+
+    /*
+    impl BufferSnapshot
+      pub fn remote_selections_in_range(&self, Range<Anchor>) -> impl Iterator<Item = (ReplicaId, impl Iterator<Item = &Selection<Anchor>>)>
+      pub fn remote_selections_in_range(&self, Range<Anchor>) -> impl Iterator<Item = (ReplicaId, i
+    */
 
     pub fn remote_selections_in_range<'a>(
         &'a self,
@@ -2108,7 +2226,7 @@ impl<'a> Iterator for BufferChunks<'a> {
 }
 
 impl QueryCursorHandle {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         QueryCursorHandle(Some(
             QUERY_CURSORS
                 .lock()

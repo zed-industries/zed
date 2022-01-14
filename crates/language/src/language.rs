@@ -1,6 +1,7 @@
 mod buffer;
 mod diagnostic_set;
 mod highlight_map;
+mod outline;
 pub mod proto;
 #[cfg(test)]
 mod tests;
@@ -13,6 +14,7 @@ pub use diagnostic_set::DiagnosticEntry;
 use gpui::AppContext;
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
+pub use outline::{Outline, OutlineItem};
 use parking_lot::Mutex;
 use serde::Deserialize;
 use std::{ops::Range, path::Path, str, sync::Arc};
@@ -74,6 +76,7 @@ pub struct Grammar {
     pub(crate) highlights_query: Query,
     pub(crate) brackets_query: Query,
     pub(crate) indents_query: Query,
+    pub(crate) outline_query: Query,
     pub(crate) highlight_map: Mutex<HighlightMap>,
 }
 
@@ -127,6 +130,7 @@ impl Language {
                     brackets_query: Query::new(ts_language, "").unwrap(),
                     highlights_query: Query::new(ts_language, "").unwrap(),
                     indents_query: Query::new(ts_language, "").unwrap(),
+                    outline_query: Query::new(ts_language, "").unwrap(),
                     ts_language,
                     highlight_map: Default::default(),
                 })
@@ -161,6 +165,16 @@ impl Language {
             .and_then(Arc::get_mut)
             .ok_or_else(|| anyhow!("grammar does not exist or is already being used"))?;
         grammar.indents_query = Query::new(grammar.ts_language, source)?;
+        Ok(self)
+    }
+
+    pub fn with_outline_query(mut self, source: &str) -> Result<Self> {
+        let grammar = self
+            .grammar
+            .as_mut()
+            .and_then(Arc::get_mut)
+            .ok_or_else(|| anyhow!("grammar does not exist or is already being used"))?;
+        grammar.outline_query = Query::new(grammar.ts_language, source)?;
         Ok(self)
     }
 

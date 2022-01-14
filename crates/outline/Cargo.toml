@@ -1,0 +1,18 @@
+[package]
+name = "outline"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/outline.rs"
+
+[dependencies]
+editor = { path = "../editor" }
+fuzzy = { path = "../fuzzy" }
+gpui = { path = "../gpui" }
+language = { path = "../language" }
+text = { path = "../text" }
+workspace = { path = "../workspace" }
+ordered-float = "2.1.1"
+postage = { version = "0.4", features = ["futures-traits"] }
+smol = "1.2"

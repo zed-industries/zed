@@ -24,6 +24,8 @@ fn rust() -> Language {
         .unwrap()
         .with_indents_query(load_query("rust/indents.scm").as_ref())
         .unwrap()
+        .with_outline_query(load_query("rust/outline.scm").as_ref())
+        .unwrap()
 }
 
 fn markdown() -> Language {

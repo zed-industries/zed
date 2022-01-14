@@ -55,6 +55,7 @@ pub struct PathMatch {
 
 #[derive(Clone, Debug)]
 pub struct StringMatchCandidate {
+    pub id: usize,
     pub string: String,
     pub char_bag: CharBag,
 }
@@ -109,6 +110,7 @@ impl<'a> MatchCandidate for &'a StringMatchCandidate {
 
 #[derive(Clone, Debug)]
 pub struct StringMatch {
+    pub candidate_id: usize,
     pub score: f64,
     pub positions: Vec<usize>,
     pub string: String,
@@ -116,7 +118,7 @@ pub struct StringMatch {
 
 impl PartialEq for StringMatch {
     fn eq(&self, other: &Self) -> bool {
-        self.score.eq(&other.score)
+        self.cmp(other).is_eq()
     }
 }
 
@@ -133,13 +135,13 @@ impl Ord for StringMatch {
         self.score
             .partial_cmp(&other.score)
             .unwrap_or(Ordering::Equal)
-            .then_with(|| self.string.cmp(&other.string))
+            .then_with(|| self.candidate_id.cmp(&other.candidate_id))
     }
 }
 
 impl PartialEq for PathMatch {
     fn eq(&self, other: &Self) -> bool {
-        self.score.eq(&other.score)
+        self.cmp(other).is_eq()
     }
 }
 
@@ -187,8 +189,8 @@ pub async fn match_strings(
             for (segment_idx, results) in segment_results.iter_mut().enumerate() {
                 let cancel_flag = &cancel_flag;
                 scope.spawn(async move {
-                    let segment_start = segment_idx * segment_size;
-                    let segment_end = segment_start + segment_size;
+                    let segment_start = cmp::min(segment_idx * segment_size, candidates.len());
+                    let segment_end = cmp::min(segment_start + segment_size, candidates.len());
                     let mut matcher = Matcher::new(
                         query,
                         lowercase_query,
@@ -330,6 +332,7 @@ impl<'a> Matcher<'a> {
             results,
             cancel_flag,
             |candidate, score| StringMatch {
+                candidate_id: candidate.id,
                 score,
                 positions: Vec::new(),
                 string: candidate.string.to_string(),
@@ -433,13 +436,17 @@ impl<'a> Matcher<'a> {
         }
     }
 
-    fn find_last_positions(&mut self, prefix: &[char], path: &[char]) -> bool {
-        let mut path = path.iter();
-        let mut prefix_iter = prefix.iter();
-        for (i, char) in self.query.iter().enumerate().rev() {
-            if let Some(j) = path.rposition(|c| c == char) {
-                self.last_positions[i] = j + prefix.len();
-            } else if let Some(j) = prefix_iter.rposition(|c| c == char) {
+    fn find_last_positions(
+        &mut self,
+        lowercase_prefix: &[char],
+        lowercase_candidate: &[char],
+    ) -> bool {
+        let mut lowercase_prefix = lowercase_prefix.iter();
+        let mut lowercase_candidate = lowercase_candidate.iter();
+        for (i, char) in self.lowercase_query.iter().enumerate().rev() {
+            if let Some(j) = lowercase_candidate.rposition(|c| c == char) {
+                self.last_positions[i] = j + lowercase_prefix.len();
+            } else if let Some(j) = lowercase_prefix.rposition(|c| c == char) {
                 self.last_positions[i] = j;
             } else {
                 return false;

@@ -30,7 +30,7 @@ pub struct TextStyle {
     pub underline: Option<Color>,
 }
 
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct HighlightStyle {
     pub color: Color,
     pub font_properties: Properties,

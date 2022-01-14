@@ -1,14 +1,10 @@
 use gpui::{
     action,
     elements::{
-        Align, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement, Svg,
-        UniformList, UniformListState,
+        Align, ConstrainedBox, Empty, Flex, Label, MouseEventHandler, ParentElement, ScrollTarget,
+        Svg, UniformList, UniformListState,
     },
-    keymap::{
-        self,
-        menu::{SelectNext, SelectPrev},
-        Binding,
-    },
+    keymap::{self, Binding},
     platform::CursorStyle,
     AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, ReadModel, View,
     ViewContext, ViewHandle, WeakViewHandle,
@@ -20,7 +16,10 @@ use std::{
     ffi::OsStr,
     ops::Range,
 };
-use workspace::{Settings, Workspace};
+use workspace::{
+    menu::{SelectNext, SelectPrev},
+    Settings, Workspace,
+};
 
 pub struct ProjectPanel {
     project: ModelHandle<Project>,
@@ -278,7 +277,7 @@ impl ProjectPanel {
 
     fn autoscroll(&mut self) {
         if let Some(selection) = self.selection {
-            self.list.scroll_to(selection.index);
+            self.list.scroll_to(ScrollTarget::Show(selection.index));
         }
     }
 

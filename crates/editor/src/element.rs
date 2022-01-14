@@ -7,6 +7,8 @@ use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
 use gpui::{
     color::Color,
+    elements::layout_highlighted_chunks,
+    fonts::HighlightStyle,
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -19,7 +21,7 @@ use gpui::{
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
-use language::{Bias, Chunk};
+use language::Bias;
 use smallvec::SmallVec;
 use std::{
     cmp::{self, Ordering},
@@ -263,12 +265,16 @@ impl EditorElement {
                 }
             }
 
-            if let Some(highlighted_row) = layout.highlighted_row {
+            if let Some(highlighted_rows) = &layout.highlighted_rows {
                 let origin = vec2f(
                     bounds.origin_x(),
-                    bounds.origin_y() + (layout.line_height * highlighted_row as f32) - scroll_top,
+                    bounds.origin_y() + (layout.line_height * highlighted_rows.start as f32)
+                        - scroll_top,
                 );
-                let size = vec2f(bounds.width(), layout.line_height);
+                let size = vec2f(
+                    bounds.width(),
+                    layout.line_height * highlighted_rows.len() as f32,
+                );
                 cx.scene.push_quad(Quad {
                     bounds: RectF::new(origin, size),
                     background: Some(style.highlighted_line_background),
@@ -537,86 +543,37 @@ impl EditorElement {
                     )
                 })
                 .collect();
-        }
-
-        let style = &self.settings.style;
-        let mut prev_font_properties = style.text.font_properties.clone();
-        let mut prev_font_id = style.text.font_id;
-
-        let mut layouts = Vec::with_capacity(rows.len());
-        let mut line = String::new();
-        let mut styles = Vec::new();
-        let mut row = rows.start;
-        let mut line_exceeded_max_len = false;
-        let chunks = snapshot.chunks(rows.clone(), Some(&style.syntax));
-
-        let newline_chunk = Chunk {
-            text: "\n",
-            ..Default::default()
-        };
-        'outer: for chunk in chunks.chain([newline_chunk]) {
-            for (ix, mut line_chunk) in chunk.text.split('\n').enumerate() {
-                if ix > 0 {
-                    layouts.push(cx.text_layout_cache.layout_str(
-                        &line,
-                        style.text.font_size,
-                        &styles,
-                    ));
-                    line.clear();
-                    styles.clear();
-                    row += 1;
-                    line_exceeded_max_len = false;
-                    if row == rows.end {
-                        break 'outer;
-                    }
-                }
-
-                if !line_chunk.is_empty() && !line_exceeded_max_len {
-                    let highlight_style =
-                        chunk.highlight_style.unwrap_or(style.text.clone().into());
-                    // Avoid a lookup if the font properties match the previous ones.
-                    let font_id = if highlight_style.font_properties == prev_font_properties {
-                        prev_font_id
-                    } else {
-                        cx.font_cache
-                            .select_font(
-                                style.text.font_family_id,
-                                &highlight_style.font_properties,
-                            )
-                            .unwrap_or(style.text.font_id)
-                    };
-
-                    if line.len() + line_chunk.len() > MAX_LINE_LEN {
-                        let mut chunk_len = MAX_LINE_LEN - line.len();
-                        while !line_chunk.is_char_boundary(chunk_len) {
-                            chunk_len -= 1;
+        } else {
+            let style = &self.settings.style;
+            let chunks = snapshot
+                .chunks(rows.clone(), Some(&style.syntax))
+                .map(|chunk| {
+                    let highlight = if let Some(severity) = chunk.diagnostic {
+                        let underline = Some(super::diagnostic_style(severity, true, style).text);
+                        if let Some(mut highlight) = chunk.highlight_style {
+                            highlight.underline = underline;
+                            Some(highlight)
+                        } else {
+                            Some(HighlightStyle {
+                                underline,
+                                color: style.text.color,
+                                font_properties: style.text.font_properties,
+                            })
                         }
-                        line_chunk = &line_chunk[..chunk_len];
-                        line_exceeded_max_len = true;
-                    }
-
-                    let underline = if let Some(severity) = chunk.diagnostic {
-                        Some(super::diagnostic_style(severity, true, style).text)
                     } else {
-                        highlight_style.underline
+                        chunk.highlight_style
                     };
-
-                    line.push_str(line_chunk);
-                    styles.push((
-                        line_chunk.len(),
-                        RunStyle {
-                            font_id,
-                            color: highlight_style.color,
-                            underline,
-                        },
-                    ));
-                    prev_font_id = font_id;
-                    prev_font_properties = highlight_style.font_properties;
-                }
-            }
+                    (chunk.text, highlight)
+                });
+            layout_highlighted_chunks(
+                chunks,
+                &style.text,
+                &cx.text_layout_cache,
+                &cx.font_cache,
+                MAX_LINE_LEN,
+                rows.len() as usize,
+            )
         }
-
-        layouts
     }
 
     fn layout_blocks(
@@ -640,15 +597,20 @@ impl EditorElement {
                     .to_display_point(snapshot)
                     .row();
 
-                let anchor_x = text_x + if rows.contains(&anchor_row) {
-                    line_layouts[(anchor_row - rows.start) as usize]
-                        .x_for_index(block.column() as usize)
-                } else {
-                    layout_line(anchor_row, snapshot, style, cx.text_layout_cache)
-                        .x_for_index(block.column() as usize)
-                };
+                let anchor_x = text_x
+                    + if rows.contains(&anchor_row) {
+                        line_layouts[(anchor_row - rows.start) as usize]
+                            .x_for_index(block.column() as usize)
+                    } else {
+                        layout_line(anchor_row, snapshot, style, cx.text_layout_cache)
+                            .x_for_index(block.column() as usize)
+                    };
 
-                let mut element = block.render(&BlockContext { cx, anchor_x, line_number_x, });
+                let mut element = block.render(&BlockContext {
+                    cx,
+                    anchor_x,
+                    line_number_x,
+                });
                 element.layout(
                     SizeConstraint {
                         min: Vector2F::zero(),
@@ -750,9 +712,9 @@ impl Element for EditorElement {
 
         let mut selections = HashMap::default();
         let mut active_rows = BTreeMap::new();
-        let mut highlighted_row = None;
+        let mut highlighted_rows = None;
         self.update_view(cx.app, |view, cx| {
-            highlighted_row = view.highlighted_row();
+            highlighted_rows = view.highlighted_rows();
             let display_map = view.display_map.update(cx, |map, cx| map.snapshot(cx));
 
             let local_selections = view
@@ -831,7 +793,7 @@ impl Element for EditorElement {
             snapshot,
             style: self.settings.style.clone(),
             active_rows,
-            highlighted_row,
+            highlighted_rows,
             line_layouts,
             line_number_layouts,
             blocks,
@@ -962,7 +924,7 @@ pub struct LayoutState {
     style: EditorStyle,
     snapshot: EditorSnapshot,
     active_rows: BTreeMap<u32, bool>,
-    highlighted_row: Option<u32>,
+    highlighted_rows: Option<Range<u32>>,
     line_layouts: Vec<text_layout::Line>,
     line_number_layouts: Vec<Option<text_layout::Line>>,
     blocks: Vec<(u32, ElementBox)>,

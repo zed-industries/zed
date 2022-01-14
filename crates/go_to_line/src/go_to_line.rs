@@ -26,7 +26,7 @@ pub struct GoToLine {
     line_editor: ViewHandle<Editor>,
     active_editor: ViewHandle<Editor>,
     restore_state: Option<RestoreState>,
-    line_selection: Option<Selection<usize>>,
+    line_selection_id: Option<usize>,
     cursor_point: Point,
     max_point: Point,
 }
@@ -84,7 +84,7 @@ impl GoToLine {
             line_editor,
             active_editor,
             restore_state,
-            line_selection: None,
+            line_selection_id: None,
             cursor_point,
             max_point,
         }
@@ -139,13 +139,18 @@ impl GoToLine {
                         column.map(|column| column.saturating_sub(1)).unwrap_or(0),
                     )
                 }) {
-                    self.line_selection = self.active_editor.update(cx, |active_editor, cx| {
+                    self.line_selection_id = self.active_editor.update(cx, |active_editor, cx| {
                         let snapshot = active_editor.snapshot(cx).display_snapshot;
                         let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
                         let display_point = point.to_display_point(&snapshot);
+                        let row = display_point.row();
                         active_editor.select_ranges([point..point], Some(Autoscroll::Center), cx);
-                        active_editor.set_highlighted_row(Some(display_point.row()));
-                        Some(active_editor.newest_selection(&snapshot.buffer_snapshot))
+                        active_editor.set_highlighted_rows(Some(row..row + 1));
+                        Some(
+                            active_editor
+                                .newest_selection::<usize>(&snapshot.buffer_snapshot)
+                                .id,
+                        )
                     });
                     cx.notify();
                 }
@@ -159,14 +164,14 @@ impl Entity for GoToLine {
     type Event = Event;
 
     fn release(&mut self, cx: &mut MutableAppContext) {
-        let line_selection = self.line_selection.take();
+        let line_selection_id = self.line_selection_id.take();
         let restore_state = self.restore_state.take();
         self.active_editor.update(cx, |editor, cx| {
-            editor.set_highlighted_row(None);
-            if let Some((line_selection, restore_state)) = line_selection.zip(restore_state) {
+            editor.set_highlighted_rows(None);
+            if let Some((line_selection_id, restore_state)) = line_selection_id.zip(restore_state) {
                 let newest_selection =
                     editor.newest_selection::<usize>(&editor.buffer().read(cx).read(cx));
-                if line_selection.id == newest_selection.id {
+                if line_selection_id == newest_selection.id {
                     editor.set_scroll_position(restore_state.scroll_position, cx);
                     editor.update_selections(restore_state.selections, None, cx);
                 }
@@ -219,6 +224,4 @@ impl View for GoToLine {
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
         cx.focus(&self.line_editor);
     }
-
-    fn on_blur(&mut self, _: &mut ViewContext<Self>) {}
 }
