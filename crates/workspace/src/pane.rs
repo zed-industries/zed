@@ -57,17 +57,6 @@ pub enum Event {
 
 const MAX_TAB_TITLE_LEN: usize = 24;
 
-#[derive(Debug, Eq, PartialEq)]
-pub struct State {
-    pub tabs: Vec<TabState>,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct TabState {
-    pub title: String,
-    pub active: bool,
-}
-
 pub struct Pane {
     item_views: Vec<(usize, Box<dyn ItemViewHandle>)>,
     active_item: usize,
