@@ -227,6 +227,7 @@ pub trait ItemViewHandle {
 }
 
 pub trait WeakItemViewHandle {
+    fn id(&self) -> usize;
     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemViewHandle>>;
 }
 
@@ -418,6 +419,10 @@ impl Clone for Box<dyn ItemHandle> {
 }
 
 impl<T: ItemView> WeakItemViewHandle for WeakViewHandle<T> {
+    fn id(&self) -> usize {
+        self.id()
+    }
+
     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemViewHandle>> {
         self.upgrade(cx)
             .map(|v| Box::new(v) as Box<dyn ItemViewHandle>)
@@ -747,46 +752,49 @@ impl Workspace {
         }
     }
 
-    #[must_use]
     pub fn open_path(
         &mut self,
         path: ProjectPath,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>> {
-        if let Some(existing_item) = self.item_for_path(&path, cx) {
-            return Task::ready(Ok(self.open_item(existing_item, cx)));
-        }
-
-        let worktree = match self.project.read(cx).worktree_for_id(path.worktree_id, cx) {
-            Some(worktree) => worktree,
-            None => {
-                return Task::ready(Err(Arc::new(anyhow!(
-                    "worktree {} does not exist",
-                    path.worktree_id
-                ))));
-            }
-        };
-
-        let project_path = path.clone();
-        let path_openers = self.path_openers.clone();
-        let open_task = worktree.update(cx, |worktree, cx| {
-            for opener in path_openers.iter() {
-                if let Some(task) = opener.open(worktree, project_path.clone(), cx) {
-                    return task;
-                }
-            }
-            Task::ready(Err(anyhow!("no opener found for path {:?}", project_path)))
-        });
-
+        let load_task = self.load_path(path, cx);
         let pane = self.active_pane().clone().downgrade();
         cx.spawn(|this, mut cx| async move {
-            let item = open_task.await?;
+            let item = load_task.await?;
             this.update(&mut cx, |this, cx| {
                 let pane = pane
                     .upgrade(&cx)
                     .ok_or_else(|| anyhow!("could not upgrade pane reference"))?;
                 Ok(this.open_item_in_pane(item, &pane, cx))
             })
+        })
+    }
+
+    pub fn load_path(
+        &mut self,
+        path: ProjectPath,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<Box<dyn ItemHandle>>> {
+        if let Some(existing_item) = self.item_for_path(&path, cx) {
+            return Task::ready(Ok(existing_item));
+        }
+
+        let worktree = match self.project.read(cx).worktree_for_id(path.worktree_id, cx) {
+            Some(worktree) => worktree,
+            None => {
+                return Task::ready(Err(anyhow!("worktree {} does not exist", path.worktree_id)));
+            }
+        };
+
+        let project_path = path.clone();
+        let path_openers = self.path_openers.clone();
+        worktree.update(cx, |worktree, cx| {
+            for opener in path_openers.iter() {
+                if let Some(task) = opener.open(worktree, project_path.clone(), cx) {
+                    return task;
+                }
+            }
+            Task::ready(Err(anyhow!("no opener found for path {:?}", project_path)))
         })
     }
 

@@ -12,6 +12,7 @@ use gpui::{
 use postage::watch;
 use project::ProjectPath;
 use std::{any::Any, cell::RefCell, cmp, mem, rc::Rc};
+use util::TryFutureExt;
 
 action!(Split, SplitDirection);
 action!(ActivateItem, usize);
@@ -114,29 +115,51 @@ impl Pane {
         cx.emit(Event::Activate);
     }
 
-    pub fn go_back(&mut self, _: &GoBack, cx: &mut ViewContext<Self>) {
-        if self.navigation.0.borrow().backward_stack.is_empty() {
-            return;
-        }
+    pub fn go_back(workspace: &mut Workspace, _: &GoBack, cx: &mut ViewContext<Workspace>) {
+        let project_path = workspace.active_pane().update(cx, |pane, cx| {
+            let mut navigation = pane.navigation.0.borrow_mut();
+            if let Some(entry) = navigation.backward_stack.pop() {
+                if let Some(index) = entry
+                    .item_view
+                    .upgrade(cx)
+                    .and_then(|v| pane.index_for_item_view(v.as_ref()))
+                {
+                    if let Some(item_view) = pane.active_item() {
+                        pane.navigation.0.borrow_mut().mode = NavigationHistoryMode::GoingBack;
+                        item_view.deactivated(cx);
+                        pane.navigation.0.borrow_mut().mode = NavigationHistoryMode::Normal;
+                    }
 
-        if let Some(item_view) = self.active_item() {
-            self.navigation.0.borrow_mut().mode = NavigationHistoryMode::GoingBack;
-            item_view.deactivated(cx);
-            self.navigation.0.borrow_mut().mode = NavigationHistoryMode::Normal;
-        }
-
-        let mut navigation = self.navigation.0.borrow_mut();
-        if let Some(entry) = navigation.backward_stack.pop() {
-            if let Some(index) = entry
-                .item_view
-                .upgrade(cx)
-                .and_then(|v| self.index_for_item_view(v.as_ref()))
-            {
-                self.active_item_index = index;
-                drop(navigation);
-                self.focus_active_item(cx);
-                cx.notify();
+                    pane.active_item_index = index;
+                    drop(navigation);
+                    pane.focus_active_item(cx);
+                    cx.notify();
+                } else {
+                    return navigation.paths_by_item.get(&entry.item_view.id()).cloned();
+                }
             }
+
+            None
+        });
+
+        if let Some(project_path) = project_path {
+            let task = workspace.load_path(project_path, cx);
+            cx.spawn(|workspace, mut cx| {
+                async move {
+                    let item = task.await?;
+                    workspace.update(&mut cx, |workspace, cx| {
+                        let pane = workspace.active_pane().clone();
+                        pane.update(cx, |pane, cx| {
+                            pane.navigation.0.borrow_mut().mode = NavigationHistoryMode::GoingBack;
+                            pane.open_item(item, workspace, cx);
+                            pane.navigation.0.borrow_mut().mode = NavigationHistoryMode::Normal;
+                        });
+                    });
+                    Ok(())
+                }
+                .log_err()
+            })
+            .detach();
         }
     }
 
@@ -268,17 +291,17 @@ impl Pane {
 
     pub fn close_item(&mut self, item_view_id: usize, cx: &mut ViewContext<Self>) {
         let mut item_ix = 0;
-        self.item_views.retain(|(item_id, item)| {
-            if item.id() == item_view_id {
+        self.item_views.retain(|(_, item_view)| {
+            if item_view.id() == item_view_id {
                 let mut navigation = self.navigation.0.borrow_mut();
-                if let Some(path) = item.project_path(cx) {
-                    navigation.paths_by_item.insert(*item_id, path);
+                if let Some(path) = item_view.project_path(cx) {
+                    navigation.paths_by_item.insert(item_view.id(), path);
                 } else {
-                    navigation.paths_by_item.remove(item_id);
+                    navigation.paths_by_item.remove(&item_view.id());
                 }
 
                 if item_ix == self.active_item_index {
-                    item.deactivated(cx);
+                    item_view.deactivated(cx);
                 }
                 item_ix += 1;
                 false

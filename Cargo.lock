@@ -5677,6 +5677,7 @@ dependencies = [
  "project",
  "serde_json",
  "theme",
+ "util",
 ]
 
 [[package]]
