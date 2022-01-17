@@ -63,7 +63,7 @@ pub struct JoinedProject<'a> {
     pub project: &'a Project,
 }
 
-pub struct UnsharedWorktree {
+pub struct UnsharedProject {
     pub connection_ids: Vec<ConnectionId>,
     pub authorized_user_ids: Vec<UserId>,
 }
@@ -348,7 +348,7 @@ impl Store {
         &mut self,
         project_id: u64,
         acting_connection_id: ConnectionId,
-    ) -> tide::Result<UnsharedWorktree> {
+    ) -> tide::Result<UnsharedProject> {
         let project = if let Some(project) = self.projects.get_mut(&project_id) {
             project
         } else {
@@ -368,10 +368,14 @@ impl Store {
                 }
             }
 
+            for worktree in project.worktrees.values_mut() {
+                worktree.share.take();
+            }
+
             #[cfg(test)]
             self.check_invariants();
 
-            Ok(UnsharedWorktree {
+            Ok(UnsharedProject {
                 connection_ids,
                 authorized_user_ids,
             })
