@@ -1009,6 +1009,7 @@ pub struct LocalWorktree {
 struct ShareState {
     project_id: u64,
     snapshots_tx: Sender<Snapshot>,
+    _maintain_remote_snapshot: Option<Task<()>>,
 }
 
 pub struct RemoteWorktree {
@@ -1565,28 +1566,26 @@ impl LocalWorktree {
         let rpc = self.client.clone();
         let worktree_id = cx.model_id() as u64;
         let (snapshots_to_send_tx, snapshots_to_send_rx) = smol::channel::unbounded::<Snapshot>();
+        let maintain_remote_snapshot = cx.background().spawn({
+            let rpc = rpc.clone();
+            let snapshot = snapshot.clone();
+            async move {
+                let mut prev_snapshot = snapshot;
+                while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
+                    let message =
+                        snapshot.build_update(&prev_snapshot, project_id, worktree_id, false);
+                    match rpc.send(message).await {
+                        Ok(()) => prev_snapshot = snapshot,
+                        Err(err) => log::error!("error sending snapshot diff {}", err),
+                    }
+                }
+            }
+        });
         self.share = Some(ShareState {
             project_id,
             snapshots_tx: snapshots_to_send_tx,
+            _maintain_remote_snapshot: Some(maintain_remote_snapshot),
         });
-
-        cx.background()
-            .spawn({
-                let rpc = rpc.clone();
-                let snapshot = snapshot.clone();
-                async move {
-                    let mut prev_snapshot = snapshot;
-                    while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
-                        let message =
-                            snapshot.build_update(&prev_snapshot, project_id, worktree_id, false);
-                        match rpc.send(message).await {
-                            Ok(()) => prev_snapshot = snapshot,
-                            Err(err) => log::error!("error sending snapshot diff {}", err),
-                        }
-                    }
-                }
-            })
-            .detach();
 
         let diagnostic_summaries = self.diagnostic_summaries.clone();
         let share_message = cx.background().spawn(async move {
@@ -1600,6 +1599,14 @@ impl LocalWorktree {
             rpc.request(share_message.await).await?;
             Ok(())
         })
+    }
+
+    pub fn unshare(&mut self) {
+        self.share.take();
+    }
+
+    pub fn is_shared(&self) -> bool {
+        self.share.is_some()
     }
 }
 

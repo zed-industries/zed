@@ -428,6 +428,11 @@ impl Project {
             rpc.send(proto::UnshareProject { project_id }).await?;
             this.update(&mut cx, |this, cx| {
                 this.collaborators.clear();
+                for worktree in &this.worktrees {
+                    worktree.update(cx, |worktree, _| {
+                        worktree.as_local_mut().unwrap().unshare();
+                    });
+                }
                 cx.notify()
             });
             Ok(())

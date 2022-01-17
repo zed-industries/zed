@@ -1305,6 +1305,7 @@ mod tests {
             .update(&mut cx_a, |project, cx| project.share(cx))
             .await
             .unwrap();
+        assert!(worktree_a.read_with(&cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
 
         // Join that project as client B
         let project_b = Project::remote(
@@ -1331,6 +1332,30 @@ mod tests {
         project_b
             .condition(&mut cx_b, |project, _| project.is_read_only())
             .await;
+        assert!(worktree_a.read_with(&cx_a, |tree, _| !tree.as_local().unwrap().is_shared()));
+        drop(project_b);
+
+        // Share the project again and ensure guests can still join.
+        project_a
+            .update(&mut cx_a, |project, cx| project.share(cx))
+            .await
+            .unwrap();
+        assert!(worktree_a.read_with(&cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
+        let project_c = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+        let worktree_c = project_c.read_with(&cx_b, |p, _| p.worktrees()[0].clone());
+        worktree_c
+            .update(&mut cx_b, |tree, cx| tree.open_buffer("a.txt", cx))
+            .await
+            .unwrap();
     }
 
     #[gpui::test]
