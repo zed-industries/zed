@@ -11,7 +11,7 @@ use gpui::{
 };
 use postage::watch;
 use project::ProjectPath;
-use std::{any::Any, cell::RefCell, cmp, rc::Rc};
+use std::{any::Any, cell::RefCell, cmp, mem, rc::Rc};
 
 action!(Split, SplitDirection);
 action!(ActivateItem, usize);
@@ -52,8 +52,8 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("cmd-k down", Split(SplitDirection::Down), Some("Pane")),
         Binding::new("cmd-k left", Split(SplitDirection::Left), Some("Pane")),
         Binding::new("cmd-k right", Split(SplitDirection::Right), Some("Pane")),
-        Binding::new("ctrl-", GoBack, Some("Pane")),
-        Binding::new("ctrl-shift-_", GoForward, Some("Pane")),
+        Binding::new("ctrl--", GoBack, Some("Pane")),
+        Binding::new("shift-ctrl-_", GoForward, Some("Pane")),
     ]);
 }
 
@@ -67,7 +67,7 @@ const MAX_TAB_TITLE_LEN: usize = 24;
 
 pub struct Pane {
     item_views: Vec<(usize, Box<dyn ItemViewHandle>)>,
-    active_item: usize,
+    active_item_index: usize,
     settings: watch::Receiver<Settings>,
     navigation: Rc<Navigation>,
 }
@@ -77,9 +77,22 @@ pub struct Navigation(RefCell<NavigationHistory>);
 
 #[derive(Default)]
 struct NavigationHistory {
+    mode: NavigationHistoryMode,
     backward_stack: Vec<NavigationEntry>,
     forward_stack: Vec<NavigationEntry>,
     paths_by_item: HashMap<usize, ProjectPath>,
+}
+
+enum NavigationHistoryMode {
+    Normal,
+    GoingBack,
+    GoingForward,
+}
+
+impl Default for NavigationHistoryMode {
+    fn default() -> Self {
+        Self::Normal
+    }
 }
 
 struct NavigationEntry {
@@ -91,7 +104,7 @@ impl Pane {
     pub fn new(settings: watch::Receiver<Settings>) -> Self {
         Self {
             item_views: Vec::new(),
-            active_item: 0,
+            active_item_index: 0,
             settings,
             navigation: Default::default(),
         }
@@ -102,13 +115,55 @@ impl Pane {
     }
 
     pub fn go_back(&mut self, _: &GoBack, cx: &mut ViewContext<Self>) {
+        if self.navigation.0.borrow().backward_stack.is_empty() {
+            return;
+        }
+
+        if let Some(item_view) = self.active_item() {
+            self.navigation.0.borrow_mut().mode = NavigationHistoryMode::GoingBack;
+            item_view.deactivated(cx);
+            self.navigation.0.borrow_mut().mode = NavigationHistoryMode::Normal;
+        }
+
         let mut navigation = self.navigation.0.borrow_mut();
-        if let Some(entry) = navigation.go_back() {}
+        if let Some(entry) = navigation.backward_stack.pop() {
+            if let Some(index) = entry
+                .item_view
+                .upgrade(cx)
+                .and_then(|v| self.index_for_item_view(v.as_ref()))
+            {
+                self.active_item_index = index;
+                drop(navigation);
+                self.focus_active_item(cx);
+                cx.notify();
+            }
+        }
     }
 
     pub fn go_forward(&mut self, _: &GoForward, cx: &mut ViewContext<Self>) {
+        if self.navigation.0.borrow().forward_stack.is_empty() {
+            return;
+        }
+
+        if let Some(item_view) = self.active_item() {
+            self.navigation.0.borrow_mut().mode = NavigationHistoryMode::GoingForward;
+            item_view.deactivated(cx);
+            self.navigation.0.borrow_mut().mode = NavigationHistoryMode::Normal;
+        }
+
         let mut navigation = self.navigation.0.borrow_mut();
-        if let Some(entry) = navigation.go_forward() {}
+        if let Some(entry) = navigation.forward_stack.pop() {
+            if let Some(index) = entry
+                .item_view
+                .upgrade(cx)
+                .and_then(|v| self.index_for_item_view(v.as_ref()))
+            {
+                self.active_item_index = index;
+                drop(navigation);
+                self.focus_active_item(cx);
+                cx.notify();
+            }
+        }
     }
 
     pub fn open_item<T>(
@@ -140,7 +195,7 @@ impl Pane {
         cx: &mut ViewContext<Self>,
     ) {
         item_view.added_to_pane(cx);
-        let item_idx = cmp::min(self.active_item + 1, self.item_views.len());
+        let item_idx = cmp::min(self.active_item_index + 1, self.item_views.len());
         self.item_views
             .insert(item_idx, (item_view.item_handle(cx).id(), item_view));
         self.activate_item(item_idx, cx);
@@ -160,7 +215,7 @@ impl Pane {
 
     pub fn active_item(&self) -> Option<Box<dyn ItemViewHandle>> {
         self.item_views
-            .get(self.active_item)
+            .get(self.active_item_index)
             .map(|(_, view)| view.clone())
     }
 
@@ -176,40 +231,43 @@ impl Pane {
 
     pub fn activate_item(&mut self, index: usize, cx: &mut ViewContext<Self>) {
         if index < self.item_views.len() {
-            self.active_item = index;
-            self.focus_active_item(cx);
-            self.item_views[index].1.activated(cx);
-            cx.notify();
+            let prev_active_item_ix = mem::replace(&mut self.active_item_index, index);
+            if prev_active_item_ix != self.active_item_index {
+                self.item_views[prev_active_item_ix].1.deactivated(cx);
+                self.focus_active_item(cx);
+                cx.notify();
+            }
         }
     }
 
     pub fn activate_prev_item(&mut self, cx: &mut ViewContext<Self>) {
-        if self.active_item > 0 {
-            self.active_item -= 1;
+        let mut index = self.active_item_index;
+        if index > 0 {
+            index -= 1;
         } else if self.item_views.len() > 0 {
-            self.active_item = self.item_views.len() - 1;
+            index = self.item_views.len() - 1;
         }
-        self.focus_active_item(cx);
-        cx.notify();
+        self.activate_item(index, cx);
     }
 
     pub fn activate_next_item(&mut self, cx: &mut ViewContext<Self>) {
-        if self.active_item + 1 < self.item_views.len() {
-            self.active_item += 1;
+        let mut index = self.active_item_index;
+        if index + 1 < self.item_views.len() {
+            index += 1;
         } else {
-            self.active_item = 0;
+            index = 0;
         }
-        self.focus_active_item(cx);
-        cx.notify();
+        self.activate_item(index, cx);
     }
 
     pub fn close_active_item(&mut self, cx: &mut ViewContext<Self>) {
         if !self.item_views.is_empty() {
-            self.close_item(self.item_views[self.active_item].1.id(), cx)
+            self.close_item(self.item_views[self.active_item_index].1.id(), cx)
         }
     }
 
     pub fn close_item(&mut self, item_view_id: usize, cx: &mut ViewContext<Self>) {
+        let mut item_ix = 0;
         self.item_views.retain(|(item_id, item)| {
             if item.id() == item_view_id {
                 let mut navigation = self.navigation.0.borrow_mut();
@@ -219,12 +277,21 @@ impl Pane {
                     navigation.paths_by_item.remove(item_id);
                 }
 
+                if item_ix == self.active_item_index {
+                    item.deactivated(cx);
+                }
+                item_ix += 1;
                 false
             } else {
+                item_ix += 1;
                 true
             }
         });
-        self.active_item = cmp::min(self.active_item, self.item_views.len().saturating_sub(1));
+        self.active_item_index = cmp::min(
+            self.active_item_index,
+            self.item_views.len().saturating_sub(1),
+        );
+
         if self.item_views.is_empty() {
             cx.emit(Event::Remove);
         }
@@ -249,7 +316,7 @@ impl Pane {
         let tabs = MouseEventHandler::new::<Tabs, _, _, _>(cx.view_id(), cx, |mouse_state, cx| {
             let mut row = Flex::row();
             for (ix, (_, item_view)) in self.item_views.iter().enumerate() {
-                let is_active = ix == self.active_item;
+                let is_active = ix == self.active_item_index;
 
                 row.add_child({
                     let mut title = item_view.title(cx);
@@ -423,29 +490,26 @@ impl View for Pane {
 impl Navigation {
     pub fn push<D: 'static + Any, T: ItemView>(&self, data: Option<D>, cx: &mut ViewContext<T>) {
         let mut state = self.0.borrow_mut();
-        state.backward_stack.push(NavigationEntry {
-            item_view: Box::new(cx.weak_handle()),
-            data: data.map(|data| Box::new(data) as Box<dyn Any>),
-        });
-    }
-}
-
-impl NavigationHistory {
-    fn go_back(&mut self) -> Option<&NavigationEntry> {
-        if let Some(backward) = self.backward_stack.pop() {
-            self.forward_stack.push(backward);
-            self.forward_stack.last()
-        } else {
-            None
-        }
-    }
-
-    fn go_forward(&mut self) -> Option<&NavigationEntry> {
-        if let Some(forward) = self.forward_stack.pop() {
-            self.backward_stack.push(forward);
-            self.backward_stack.last()
-        } else {
-            None
+        match state.mode {
+            NavigationHistoryMode::Normal => {
+                state.backward_stack.push(NavigationEntry {
+                    item_view: Box::new(cx.weak_handle()),
+                    data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                });
+                state.forward_stack.clear();
+            }
+            NavigationHistoryMode::GoingBack => {
+                state.forward_stack.push(NavigationEntry {
+                    item_view: Box::new(cx.weak_handle()),
+                    data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                });
+            }
+            NavigationHistoryMode::GoingForward => {
+                state.backward_stack.push(NavigationEntry {
+                    item_view: Box::new(cx.weak_handle()),
+                    data: data.map(|data| Box::new(data) as Box<dyn Any>),
+                });
+            }
         }
     }
 }

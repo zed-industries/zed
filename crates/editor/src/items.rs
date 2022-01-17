@@ -133,7 +133,7 @@ impl ItemView for Editor {
         Some(self.clone(cx))
     }
 
-    fn activated(&mut self, cx: &mut ViewContext<Self>) {
+    fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(navigation) = self.navigation.as_ref() {
             navigation.push::<(), _>(None, cx);
         }
