@@ -36,6 +36,7 @@ use std::{
     future::Future,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
 };
 use theme::{Theme, ThemeRegistry};
@@ -135,6 +136,7 @@ pub trait Item: Entity + Sized {
     fn build_view(
         handle: ModelHandle<Self>,
         workspace: &Workspace,
+        navigation: Rc<Navigation>,
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View;
 
@@ -144,6 +146,8 @@ pub trait Item: Entity + Sized {
 pub trait ItemView: View {
     type ItemHandle: ItemHandle;
 
+    fn added_to_pane(&mut self, _: Rc<Navigation>, _: &mut ViewContext<Self>) {}
+    fn activated(&mut self, _: &mut ViewContext<Self>) {}
     fn item_handle(&self, cx: &AppContext) -> Self::ItemHandle;
     fn title(&self, cx: &AppContext) -> String;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
@@ -185,6 +189,7 @@ pub trait ItemHandle: Send + Sync {
         &self,
         window_id: usize,
         workspace: &Workspace,
+        navigation: Rc<Navigation>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle>;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
@@ -204,7 +209,8 @@ pub trait ItemViewHandle {
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle>;
     fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemViewHandle>>;
-    fn added_to_pane(&self, cx: &mut ViewContext<Pane>);
+    fn added_to_pane(&mut self, cx: &mut ViewContext<Pane>);
+    fn activated(&mut self, cx: &mut MutableAppContext);
     fn id(&self) -> usize;
     fn to_any(&self) -> AnyViewHandle;
     fn is_dirty(&self, cx: &AppContext) -> bool;
@@ -220,6 +226,10 @@ pub trait ItemViewHandle {
     ) -> Task<anyhow::Result<()>>;
 }
 
+pub trait WeakItemViewHandle {
+    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemViewHandle>>;
+}
+
 impl<T: Item> ItemHandle for ModelHandle<T> {
     fn id(&self) -> usize {
         self.id()
@@ -229,9 +239,12 @@ impl<T: Item> ItemHandle for ModelHandle<T> {
         &self,
         window_id: usize,
         workspace: &Workspace,
+        navigation: Rc<Navigation>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
-        Box::new(cx.add_view(window_id, |cx| T::build_view(self.clone(), workspace, cx)))
+        Box::new(cx.add_view(window_id, |cx| {
+            T::build_view(self.clone(), workspace, navigation, cx)
+        }))
     }
 
     fn boxed_clone(&self) -> Box<dyn ItemHandle> {
@@ -260,9 +273,10 @@ impl ItemHandle for Box<dyn ItemHandle> {
         &self,
         window_id: usize,
         workspace: &Workspace,
+        navigation: Rc<Navigation>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
-        ItemHandle::add_view(self.as_ref(), window_id, workspace, cx)
+        ItemHandle::add_view(self.as_ref(), window_id, workspace, navigation, cx)
     }
 
     fn boxed_clone(&self) -> Box<dyn ItemHandle> {
@@ -330,7 +344,7 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         .map(|handle| Box::new(handle) as Box<dyn ItemViewHandle>)
     }
 
-    fn added_to_pane(&self, cx: &mut ViewContext<Pane>) {
+    fn added_to_pane(&mut self, cx: &mut ViewContext<Pane>) {
         cx.subscribe(self, |pane, item, event, cx| {
             if T::should_close_item_on_event(event) {
                 pane.close_item(item.id(), cx);
@@ -347,6 +361,10 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
             }
         })
         .detach();
+    }
+
+    fn activated(&mut self, cx: &mut MutableAppContext) {
+        self.update(cx, |this, cx| this.activated(cx));
     }
 
     fn save(&self, cx: &mut MutableAppContext) -> Result<Task<Result<()>>> {
@@ -396,6 +414,13 @@ impl Clone for Box<dyn ItemViewHandle> {
 impl Clone for Box<dyn ItemHandle> {
     fn clone(&self) -> Box<dyn ItemHandle> {
         self.boxed_clone()
+    }
+}
+
+impl<T: ItemView> WeakItemViewHandle for WeakViewHandle<T> {
+    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemViewHandle>> {
+        self.upgrade(cx)
+            .map(|v| Box::new(v) as Box<dyn ItemViewHandle>)
     }
 }
 

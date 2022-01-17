@@ -41,6 +41,7 @@ use std::{
     iter::{self, FromIterator},
     mem,
     ops::{Deref, Range, RangeInclusive, Sub},
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -48,7 +49,7 @@ use sum_tree::Bias;
 use text::rope::TextDimension;
 use theme::{DiagnosticStyle, EditorStyle};
 use util::post_inc;
-use workspace::{PathOpener, Workspace};
+use workspace::{Navigation, PathOpener, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -377,6 +378,7 @@ pub struct Editor {
     mode: EditorMode,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
+    navigation: Option<Rc<Navigation>>,
 }
 
 pub struct EditorSnapshot {
@@ -457,6 +459,7 @@ impl Editor {
         let mut clone = Self::new(self.buffer.clone(), self.build_settings.clone(), cx);
         clone.scroll_position = self.scroll_position;
         clone.scroll_top_anchor = self.scroll_top_anchor.clone();
+        clone.navigation = self.navigation.clone();
         clone
     }
 
@@ -506,6 +509,7 @@ impl Editor {
             mode: EditorMode::Full,
             placeholder_text: None,
             highlighted_rows: None,
+            navigation: None,
         };
         let selection = Selection {
             id: post_inc(&mut this.next_selection_id),

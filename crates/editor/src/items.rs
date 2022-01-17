@@ -10,11 +10,12 @@ use postage::watch;
 use project::{File, ProjectPath, Worktree};
 use std::fmt::Write;
 use std::path::Path;
+use std::rc::Rc;
 use text::{Point, Selection};
 use util::TryFutureExt;
 use workspace::{
-    ItemHandle, ItemView, ItemViewHandle, PathOpener, Settings, StatusItemView, WeakItemHandle,
-    Workspace,
+    ItemHandle, ItemView, ItemViewHandle, Navigation, PathOpener, Settings, StatusItemView,
+    WeakItemHandle, Workspace,
 };
 
 pub struct BufferOpener;
@@ -46,16 +47,19 @@ impl ItemHandle for BufferItemHandle {
         &self,
         window_id: usize,
         workspace: &Workspace,
+        navigation: Rc<Navigation>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(self.0.clone(), cx));
         let weak_buffer = buffer.downgrade();
         Box::new(cx.add_view(window_id, |cx| {
-            Editor::for_buffer(
+            let mut editor = Editor::for_buffer(
                 buffer,
                 crate::settings_builder(weak_buffer, workspace.settings()),
                 cx,
-            )
+            );
+            editor.navigation = Some(navigation);
+            editor
         }))
     }
 
@@ -127,6 +131,12 @@ impl ItemView for Editor {
         Self: Sized,
     {
         Some(self.clone(cx))
+    }
+
+    fn activated(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(navigation) = self.navigation.as_ref() {
+            navigation.push::<(), _>(None, cx);
+        }
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
