@@ -218,8 +218,8 @@ impl OutlineView {
                 active_editor.set_highlighted_rows(Some(display_rows));
                 Some(active_editor.newest_selection::<usize>(&buffer_snapshot).id)
             });
-            cx.notify();
         }
+        cx.notify();
     }
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
