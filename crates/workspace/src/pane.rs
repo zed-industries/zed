@@ -316,6 +316,10 @@ impl Pane {
         let mut item_ix = 0;
         self.item_views.retain(|(_, item_view)| {
             if item_view.id() == item_view_id {
+                if item_ix == self.active_item_index {
+                    item_view.deactivated(cx);
+                }
+
                 let mut navigation = self.navigation.0.borrow_mut();
                 if let Some(path) = item_view.project_path(cx) {
                     navigation.paths_by_item.insert(item_view.id(), path);
@@ -323,9 +327,6 @@ impl Pane {
                     navigation.paths_by_item.remove(&item_view.id());
                 }
 
-                if item_ix == self.active_item_index {
-                    item_view.deactivated(cx);
-                }
                 item_ix += 1;
                 false
             } else {
