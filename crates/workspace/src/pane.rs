@@ -84,6 +84,7 @@ struct NavigationHistory {
     paths_by_item: HashMap<usize, ProjectPath>,
 }
 
+#[derive(Copy, Clone)]
 enum NavigationHistoryMode {
     Normal,
     GoingBack,
@@ -116,77 +117,81 @@ impl Pane {
     }
 
     pub fn go_back(workspace: &mut Workspace, _: &GoBack, cx: &mut ViewContext<Workspace>) {
-        let project_path = workspace.active_pane().update(cx, |pane, cx| {
-            let mut navigation = pane.navigation.0.borrow_mut();
-            if let Some(entry) = navigation.backward_stack.pop() {
-                if let Some(index) = entry
-                    .item_view
-                    .upgrade(cx)
-                    .and_then(|v| pane.index_for_item_view(v.as_ref()))
-                {
-                    if let Some(item_view) = pane.active_item() {
-                        pane.navigation.0.borrow_mut().mode = NavigationHistoryMode::GoingBack;
-                        item_view.deactivated(cx);
-                        pane.navigation.0.borrow_mut().mode = NavigationHistoryMode::Normal;
-                    }
-
-                    pane.active_item_index = index;
-                    drop(navigation);
-                    pane.focus_active_item(cx);
-                    cx.notify();
-                } else {
-                    return navigation.paths_by_item.get(&entry.item_view.id()).cloned();
-                }
-            }
-
-            None
-        });
-
-        if let Some(project_path) = project_path {
-            let task = workspace.load_path(project_path, cx);
-            cx.spawn(|workspace, mut cx| {
-                async move {
-                    let item = task.await?;
-                    workspace.update(&mut cx, |workspace, cx| {
-                        let pane = workspace.active_pane().clone();
-                        pane.update(cx, |pane, cx| {
-                            pane.navigation.0.borrow_mut().mode = NavigationHistoryMode::GoingBack;
-                            pane.open_item(item, workspace, cx);
-                            pane.navigation.0.borrow_mut().mode = NavigationHistoryMode::Normal;
-                        });
-                    });
-                    Ok(())
-                }
-                .log_err()
-            })
-            .detach();
-        }
+        Self::navigate_history(workspace, NavigationHistoryMode::GoingBack, cx);
     }
 
-    pub fn go_forward(&mut self, _: &GoForward, cx: &mut ViewContext<Self>) {
-        if self.navigation.0.borrow().forward_stack.is_empty() {
-            return;
-        }
+    pub fn go_forward(workspace: &mut Workspace, _: &GoForward, cx: &mut ViewContext<Workspace>) {
+        Self::navigate_history(workspace, NavigationHistoryMode::GoingForward, cx);
+    }
 
-        if let Some(item_view) = self.active_item() {
-            self.navigation.0.borrow_mut().mode = NavigationHistoryMode::GoingForward;
-            item_view.deactivated(cx);
-            self.navigation.0.borrow_mut().mode = NavigationHistoryMode::Normal;
-        }
+    fn navigate_history(
+        workspace: &mut Workspace,
+        mode: NavigationHistoryMode,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<()> {
+        let (project_path, entry) = workspace.active_pane().update(cx, |pane, cx| {
+            // Retrieve the weak item handle from the history.
+            let entry = pane.navigation.pop(mode)?;
 
-        let mut navigation = self.navigation.0.borrow_mut();
-        if let Some(entry) = navigation.forward_stack.pop() {
+            // If the item is still present in this pane, then activate it.
             if let Some(index) = entry
                 .item_view
                 .upgrade(cx)
-                .and_then(|v| self.index_for_item_view(v.as_ref()))
+                .and_then(|v| pane.index_for_item_view(v.as_ref()))
             {
-                self.active_item_index = index;
-                drop(navigation);
-                self.focus_active_item(cx);
+                if let Some(item_view) = pane.active_item() {
+                    pane.navigation.set_mode(mode);
+                    item_view.deactivated(cx);
+                    pane.navigation.set_mode(NavigationHistoryMode::Normal);
+                }
+
+                pane.active_item_index = index;
+                pane.focus_active_item(cx);
+                if let Some(data) = entry.data {
+                    pane.active_item()?.navigate(data, cx);
+                }
                 cx.notify();
+                None
             }
-        }
+            // If the item is no longer present in this pane, then retrieve its
+            // project path in order to reopen it.
+            else {
+                pane.navigation
+                    .0
+                    .borrow_mut()
+                    .paths_by_item
+                    .get(&entry.item_view.id())
+                    .cloned()
+                    .map(|project_path| (project_path, entry))
+            }
+        })?;
+
+        // If the item was no longer present, then load it again from its previous path.
+        let task = workspace.load_path(project_path, cx);
+        cx.spawn(|workspace, mut cx| {
+            async move {
+                let item = task.await?;
+                workspace.update(&mut cx, |workspace, cx| {
+                    let pane = workspace.active_pane().clone();
+                    pane.update(cx, |pane, cx| {
+                        pane.navigation.set_mode(mode);
+                        let item_view = pane.open_item(item, workspace, cx);
+                        pane.navigation.set_mode(NavigationHistoryMode::Normal);
+
+                        if let Some(data) = entry.data {
+                            item_view.navigate(data, cx);
+                        }
+
+                        cx.notify();
+                    });
+                });
+                Ok(())
+            }
+            .log_err()
+        })
+        .detach();
+
+        None
     }
 
     pub fn open_item<T>(
@@ -511,6 +516,18 @@ impl View for Pane {
 }
 
 impl Navigation {
+    fn pop(&self, mode: NavigationHistoryMode) -> Option<NavigationEntry> {
+        match mode {
+            NavigationHistoryMode::Normal => None,
+            NavigationHistoryMode::GoingBack => self.0.borrow_mut().backward_stack.pop(),
+            NavigationHistoryMode::GoingForward => self.0.borrow_mut().forward_stack.pop(),
+        }
+    }
+
+    fn set_mode(&self, mode: NavigationHistoryMode) {
+        self.0.borrow_mut().mode = mode;
+    }
+
     pub fn push<D: 'static + Any, T: ItemView>(&self, data: Option<D>, cx: &mut ViewContext<T>) {
         let mut state = self.0.borrow_mut();
         match state.mode {

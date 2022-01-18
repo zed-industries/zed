@@ -2399,6 +2399,8 @@ impl Editor {
             return;
         }
 
+        self.push_to_navigation_history(cx);
+
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
             start: 0,
@@ -2421,6 +2423,8 @@ impl Editor {
             return;
         }
 
+        self.push_to_navigation_history(cx);
+
         let cursor = self.buffer.read(cx).read(cx).len();
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
@@ -2430,6 +2434,15 @@ impl Editor {
             goal: SelectionGoal::None,
         };
         self.update_selections(vec![selection], Some(Autoscroll::Fit), cx);
+    }
+
+    fn push_to_navigation_history(&self, cx: &mut ViewContext<Self>) {
+        if let Some(navigation) = &self.navigation {
+            if let Some(last_selection) = self.selections.iter().max_by_key(|s| s.id) {
+                let cursor = last_selection.head();
+                navigation.push(Some(cursor), cx);
+            }
+        }
     }
 
     pub fn select_to_end(&mut self, _: &SelectToEnd, cx: &mut ViewContext<Self>) {

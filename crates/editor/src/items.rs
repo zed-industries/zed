@@ -1,5 +1,4 @@
-use crate::{Autoscroll, Editor, Event};
-use crate::{MultiBuffer, ToPoint as _};
+use crate::{Anchor, Autoscroll, Editor, Event, MultiBuffer, ToOffset, ToPoint as _};
 use anyhow::Result;
 use gpui::{
     elements::*, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, RenderContext,
@@ -106,6 +105,13 @@ impl ItemView for Editor {
         BufferItemHandle(self.buffer.read(cx).as_singleton().unwrap())
     }
 
+    fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) {
+        if let Some(anchor) = data.downcast_ref::<Anchor>() {
+            let offset = anchor.to_offset(&self.buffer.read(cx).read(cx));
+            self.select_ranges([offset..offset], Some(Autoscroll::Fit), cx);
+        }
+    }
+
     fn title(&self, cx: &AppContext) -> String {
         let filename = self
             .buffer()
@@ -134,9 +140,7 @@ impl ItemView for Editor {
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(navigation) = self.navigation.as_ref() {
-            navigation.push::<(), _>(None, cx);
-        }
+        self.push_to_navigation_history(cx);
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {

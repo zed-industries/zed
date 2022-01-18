@@ -33,6 +33,7 @@ use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItem
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
+    any::Any,
     future::Future,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
@@ -148,6 +149,7 @@ pub trait ItemView: View {
 
     fn added_to_pane(&mut self, _: Rc<Navigation>, _: &mut ViewContext<Self>) {}
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
+    fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) {}
     fn item_handle(&self, cx: &AppContext) -> Self::ItemHandle;
     fn title(&self, cx: &AppContext) -> String;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
@@ -211,6 +213,7 @@ pub trait ItemViewHandle {
     fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemViewHandle>>;
     fn added_to_pane(&mut self, cx: &mut ViewContext<Pane>);
     fn deactivated(&self, cx: &mut MutableAppContext);
+    fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext);
     fn id(&self) -> usize;
     fn to_any(&self) -> AnyViewHandle;
     fn is_dirty(&self, cx: &AppContext) -> bool;
@@ -366,6 +369,10 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
 
     fn deactivated(&self, cx: &mut MutableAppContext) {
         self.update(cx, |this, cx| this.deactivated(cx));
+    }
+
+    fn navigate(&self, data: Box<dyn Any>, cx: &mut MutableAppContext) {
+        self.update(cx, |this, cx| this.navigate(data, cx));
     }
 
     fn save(&self, cx: &mut MutableAppContext) -> Result<Task<Result<()>>> {
