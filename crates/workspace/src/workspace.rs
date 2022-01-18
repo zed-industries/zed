@@ -147,7 +147,6 @@ pub trait Item: Entity + Sized {
 pub trait ItemView: View {
     type ItemHandle: ItemHandle;
 
-    fn added_to_pane(&mut self, _: Rc<Navigation>, _: &mut ViewContext<Self>) {}
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) {}
     fn item_handle(&self, cx: &AppContext) -> Self::ItemHandle;
