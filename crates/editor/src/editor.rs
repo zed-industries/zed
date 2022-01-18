@@ -3297,6 +3297,17 @@ impl Editor {
         }
         self.pause_cursor_blinking(cx);
 
+        let prev_newest_selection = self.selections.iter().max_by_key(|s| s.id);
+        let curr_newest_selection = selections.iter().max_by_key(|s| s.id);
+        if let Some((prev_selection, curr_selection)) =
+            prev_newest_selection.zip(curr_newest_selection)
+        {
+            if prev_selection.head().to_offset(&buffer) != curr_selection.head().to_offset(&buffer)
+            {
+                self.push_to_navigation_history(cx);
+            }
+        }
+
         self.set_selections(
             Arc::from_iter(selections.into_iter().map(|selection| {
                 let end_bias = if selection.end > selection.start {

@@ -760,6 +760,14 @@ mod tests {
             .await;
         assert_eq!(
             active_location(&workspace, &mut cx),
+            (file3.clone(), DisplayPoint::new(0, 0))
+        );
+
+        workspace
+            .update(&mut cx, |w, cx| Pane::go_back(w, cx))
+            .await;
+        assert_eq!(
+            active_location(&workspace, &mut cx),
             (file2.clone(), DisplayPoint::new(0, 0))
         );
 
@@ -771,9 +779,25 @@ mod tests {
             (file1.clone(), DisplayPoint::new(0, 1))
         );
 
+        workspace
+            .update(&mut cx, |w, cx| Pane::go_back(w, cx))
+            .await;
+        assert_eq!(
+            active_location(&workspace, &mut cx),
+            (file1.clone(), DisplayPoint::new(0, 0))
+        );
+
         // Go back one more time and ensure we don't navigate past the first item in the history.
         workspace
             .update(&mut cx, |w, cx| Pane::go_back(w, cx))
+            .await;
+        assert_eq!(
+            active_location(&workspace, &mut cx),
+            (file1.clone(), DisplayPoint::new(0, 0))
+        );
+
+        workspace
+            .update(&mut cx, |w, cx| Pane::go_forward(w, cx))
             .await;
         assert_eq!(
             active_location(&workspace, &mut cx),
@@ -801,7 +825,7 @@ mod tests {
             .await;
         assert_eq!(
             active_location(&workspace, &mut cx),
-            (file3.clone(), DisplayPoint::new(0, 2))
+            (file3.clone(), DisplayPoint::new(0, 0))
         );
 
         // Go back to an item that has been closed and removed from disk, ensuring it gets skipped.
@@ -821,6 +845,13 @@ mod tests {
         assert_eq!(
             active_location(&workspace, &mut cx),
             (file1.clone(), DisplayPoint::new(0, 1))
+        );
+        workspace
+            .update(&mut cx, |w, cx| Pane::go_forward(w, cx))
+            .await;
+        assert_eq!(
+            active_location(&workspace, &mut cx),
+            (file3.clone(), DisplayPoint::new(0, 0))
         );
 
         fn active_location(

@@ -115,7 +115,9 @@ impl ItemView for Editor {
             };
 
             drop(buffer);
+            let navigation = self.navigation.take();
             self.select_ranges([offset..offset], Some(Autoscroll::Fit), cx);
+            self.navigation = navigation;
         }
     }
 
