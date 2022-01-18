@@ -280,9 +280,9 @@ impl Pane {
             let prev_active_item_ix = mem::replace(&mut self.active_item_index, index);
             if prev_active_item_ix != self.active_item_index {
                 self.item_views[prev_active_item_ix].1.deactivated(cx);
-                self.focus_active_item(cx);
-                cx.notify();
             }
+            self.focus_active_item(cx);
+            cx.notify();
         }
     }
 
