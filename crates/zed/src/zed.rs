@@ -701,9 +701,9 @@ mod tests {
                 "/root",
                 json!({
                     "a": {
-                        "file1": "contents 1",
-                        "file2": "contents 2",
-                        "file3": "contents 3",
+                        "file1": "contents 1\n".repeat(20),
+                        "file2": "contents 2\n".repeat(20),
+                        "file3": "contents 3\n".repeat(20),
                     },
                 }),
             )
@@ -731,7 +731,7 @@ mod tests {
             .downcast::<Editor>()
             .unwrap();
         editor1.update(&mut cx, |editor, cx| {
-            editor.select_display_ranges(&[DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)], cx);
+            editor.select_display_ranges(&[DisplayPoint::new(10, 0)..DisplayPoint::new(10, 0)], cx);
         });
         let editor2 = workspace
             .update(&mut cx, |w, cx| w.open_path(file2.clone(), cx))
@@ -748,11 +748,11 @@ mod tests {
             .downcast::<Editor>()
             .unwrap();
         editor3.update(&mut cx, |editor, cx| {
-            editor.select_display_ranges(&[DisplayPoint::new(0, 2)..DisplayPoint::new(0, 2)], cx);
+            editor.select_display_ranges(&[DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)], cx);
         });
         assert_eq!(
             active_location(&workspace, &mut cx),
-            (file3.clone(), DisplayPoint::new(0, 2))
+            (file3.clone(), DisplayPoint::new(15, 0))
         );
 
         workspace
@@ -776,7 +776,7 @@ mod tests {
             .await;
         assert_eq!(
             active_location(&workspace, &mut cx),
-            (file1.clone(), DisplayPoint::new(0, 1))
+            (file1.clone(), DisplayPoint::new(10, 0))
         );
 
         workspace
@@ -801,7 +801,7 @@ mod tests {
             .await;
         assert_eq!(
             active_location(&workspace, &mut cx),
-            (file1.clone(), DisplayPoint::new(0, 1))
+            (file1.clone(), DisplayPoint::new(10, 0))
         );
 
         workspace
@@ -844,7 +844,7 @@ mod tests {
             .await;
         assert_eq!(
             active_location(&workspace, &mut cx),
-            (file1.clone(), DisplayPoint::new(0, 1))
+            (file1.clone(), DisplayPoint::new(10, 0))
         );
         workspace
             .update(&mut cx, |w, cx| Pane::go_forward(w, cx))

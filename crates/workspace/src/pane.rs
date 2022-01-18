@@ -11,13 +11,7 @@ use gpui::{
 };
 use postage::watch;
 use project::ProjectPath;
-use std::{
-    any::Any,
-    cell::RefCell,
-    cmp, mem,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{any::Any, cell::RefCell, cmp, mem, rc::Rc};
 use util::ResultExt;
 
 action!(Split, SplitDirection);
@@ -110,7 +104,6 @@ impl Default for NavigationMode {
 struct NavigationEntry {
     item_view: Box<dyn WeakItemViewHandle>,
     data: Option<Box<dyn Any>>,
-    insertion_time: Option<Instant>,
 }
 
 impl Pane {
@@ -558,20 +551,9 @@ impl Navigation {
         let mut state = self.0.borrow_mut();
         match state.mode {
             NavigationMode::Normal => {
-                let mut insertion_time = Instant::now();
-                if let Some(prev_insertion_time) =
-                    state.backward_stack.last().and_then(|e| e.insertion_time)
-                {
-                    if insertion_time.duration_since(prev_insertion_time) <= Duration::from_secs(2)
-                    {
-                        state.backward_stack.pop();
-                        insertion_time = prev_insertion_time;
-                    }
-                }
                 state.backward_stack.push(NavigationEntry {
                     item_view: Box::new(cx.weak_handle()),
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
-                    insertion_time: Some(insertion_time),
                 });
                 state.forward_stack.clear();
             }
@@ -579,14 +561,12 @@ impl Navigation {
                 state.forward_stack.push(NavigationEntry {
                     item_view: Box::new(cx.weak_handle()),
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
-                    insertion_time: None,
                 });
             }
             NavigationMode::GoingForward => {
                 state.backward_stack.push(NavigationEntry {
                     item_view: Box::new(cx.weak_handle()),
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
-                    insertion_time: None,
                 });
             }
         }

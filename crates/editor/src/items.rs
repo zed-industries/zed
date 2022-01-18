@@ -149,7 +149,9 @@ impl ItemView for Editor {
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
-        self.push_to_navigation_history(cx);
+        if let Some(selection) = self.newest_selection_internal() {
+            self.push_to_navigation_history(selection.head(), None, cx);
+        }
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {

@@ -53,6 +53,7 @@ use workspace::{Navigation, PathOpener, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
+const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 
 action!(Cancel);
 action!(Backspace);
@@ -809,6 +810,8 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
+        let newest_selection = self.newest_selection_internal().unwrap().clone();
+
         let start;
         let end;
         let mode;
@@ -843,6 +846,8 @@ impl Editor {
             }
         }
 
+        self.push_to_navigation_history(newest_selection.head(), Some(end.to_point(&buffer)), cx);
+
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
             start,
@@ -855,7 +860,6 @@ impl Editor {
             self.update_selections::<usize>(Vec::new(), None, cx);
         } else if click_count > 1 {
             // Remove the newest selection since it was only added as part of this multi-click.
-            let newest_selection = self.newest_selection::<usize>(buffer);
             let mut selections = self.local_selections(cx);
             selections.retain(|selection| selection.id != newest_selection.id);
             self.update_selections::<usize>(selections, None, cx)
@@ -2404,8 +2408,6 @@ impl Editor {
             return;
         }
 
-        self.push_to_navigation_history(cx);
-
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
             start: 0,
@@ -2428,8 +2430,6 @@ impl Editor {
             return;
         }
 
-        self.push_to_navigation_history(cx);
-
         let cursor = self.buffer.read(cx).read(cx).len();
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
@@ -2441,15 +2441,32 @@ impl Editor {
         self.update_selections(vec![selection], Some(Autoscroll::Fit), cx);
     }
 
-    fn push_to_navigation_history(&self, cx: &mut ViewContext<Self>) {
+    fn push_to_navigation_history(
+        &self,
+        position: Anchor,
+        new_position: Option<Point>,
+        cx: &mut ViewContext<Self>,
+    ) {
         if let Some(navigation) = &self.navigation {
             let buffer = self.buffer.read(cx).read(cx);
-            if let Some(last_selection) = self.selections.iter().max_by_key(|s| s.id) {
-                let anchor = last_selection.head();
-                let offset = anchor.to_offset(&buffer);
-                drop(buffer);
-                navigation.push(Some(NavigationData { anchor, offset }), cx);
+            let offset = position.to_offset(&buffer);
+            let point = position.to_point(&buffer);
+            drop(buffer);
+
+            if let Some(new_position) = new_position {
+                let row_delta = (new_position.row as i64 - point.row as i64).abs();
+                if row_delta < MIN_NAVIGATION_HISTORY_ROW_DELTA {
+                    return;
+                }
             }
+
+            navigation.push(
+                Some(NavigationData {
+                    anchor: position,
+                    offset,
+                }),
+                cx,
+            );
         }
     }
 
@@ -3230,14 +3247,14 @@ impl Editor {
         &self,
         snapshot: &MultiBufferSnapshot,
     ) -> Selection<D> {
-        self.pending_selection(snapshot)
-            .or_else(|| {
-                self.selections
-                    .iter()
-                    .max_by_key(|s| s.id)
-                    .map(|selection| self.resolve_selection(selection, snapshot))
-            })
-            .unwrap()
+        self.resolve_selection(self.newest_selection_internal().unwrap(), snapshot)
+    }
+
+    pub fn newest_selection_internal(&self) -> Option<&Selection<Anchor>> {
+        self.pending_selection
+            .as_ref()
+            .map(|s| &s.selection)
+            .or_else(|| self.selections.iter().max_by_key(|s| s.id))
     }
 
     pub fn update_selections<T>(
@@ -3248,10 +3265,11 @@ impl Editor {
     ) where
         T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
     {
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let old_cursor_position = self.newest_selection_internal().map(|s| s.head());
         selections.sort_unstable_by_key(|s| s.start);
 
         // Merge overlapping selections.
-        let buffer = self.buffer.read(cx).snapshot(cx);
         let mut i = 1;
         while i < selections.len() {
             if selections[i - 1].end >= selections[i].start {
@@ -3292,21 +3310,20 @@ impl Editor {
             }
         }
 
+        if let Some(old_cursor_position) = old_cursor_position {
+            let new_cursor_position = selections
+                .iter()
+                .max_by_key(|s| s.id)
+                .map(|s| s.head().to_point(&buffer));
+            if new_cursor_position.is_some() {
+                self.push_to_navigation_history(old_cursor_position, new_cursor_position, cx);
+            }
+        }
+
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
         }
         self.pause_cursor_blinking(cx);
-
-        let prev_newest_selection = self.selections.iter().max_by_key(|s| s.id);
-        let curr_newest_selection = selections.iter().max_by_key(|s| s.id);
-        if let Some((prev_selection, curr_selection)) =
-            prev_newest_selection.zip(curr_newest_selection)
-        {
-            if prev_selection.head().to_offset(&buffer) != curr_selection.head().to_offset(&buffer)
-            {
-                self.push_to_navigation_history(cx);
-            }
-        }
 
         self.set_selections(
             Arc::from_iter(selections.into_iter().map(|selection| {
