@@ -1545,6 +1545,18 @@ impl MultiBufferSnapshot {
         panic!("excerpt not found");
     }
 
+    pub fn can_resolve(&self, anchor: &Anchor) -> bool {
+        if anchor.excerpt_id == ExcerptId::min() || anchor.excerpt_id == ExcerptId::max() {
+            true
+        } else if let Some((buffer_id, buffer_snapshot)) =
+            self.buffer_snapshot_for_excerpt(&anchor.excerpt_id)
+        {
+            anchor.buffer_id == buffer_id && buffer_snapshot.can_resolve(&anchor.text_anchor)
+        } else {
+            false
+        }
+    }
+
     pub fn range_contains_excerpt_boundary<T: ToOffset>(&self, range: Range<T>) -> bool {
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);

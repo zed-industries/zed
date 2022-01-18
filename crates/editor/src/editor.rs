@@ -426,6 +426,11 @@ struct ClipboardSelection {
     is_entire_line: bool,
 }
 
+pub struct NavigationData {
+    anchor: Anchor,
+    offset: usize,
+}
+
 impl Editor {
     pub fn single_line(build_settings: BuildSettings, cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
@@ -2438,9 +2443,12 @@ impl Editor {
 
     fn push_to_navigation_history(&self, cx: &mut ViewContext<Self>) {
         if let Some(navigation) = &self.navigation {
+            let buffer = self.buffer.read(cx).read(cx);
             if let Some(last_selection) = self.selections.iter().max_by_key(|s| s.id) {
-                let cursor = last_selection.head();
-                navigation.push(Some(cursor), cx);
+                let anchor = last_selection.head();
+                let offset = anchor.to_offset(&buffer);
+                drop(buffer);
+                navigation.push(Some(NavigationData { anchor, offset }), cx);
             }
         }
     }

@@ -1131,12 +1131,6 @@ impl Buffer {
         }
     }
 
-    pub fn can_resolve(&self, anchor: &Anchor) -> bool {
-        *anchor == Anchor::min()
-            || *anchor == Anchor::max()
-            || self.version.observed(anchor.timestamp)
-    }
-
     pub fn peek_undo_stack(&self) -> Option<&Transaction> {
         self.history.undo_stack.last()
     }
@@ -1646,6 +1640,12 @@ impl BufferSnapshot {
                 bias,
             }
         }
+    }
+
+    pub fn can_resolve(&self, anchor: &Anchor) -> bool {
+        *anchor == Anchor::min()
+            || *anchor == Anchor::max()
+            || self.version.observed(anchor.timestamp)
     }
 
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {

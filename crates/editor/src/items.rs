@@ -1,10 +1,10 @@
-use crate::{Anchor, Autoscroll, Editor, Event, MultiBuffer, ToOffset, ToPoint as _};
+use crate::{Autoscroll, Editor, Event, MultiBuffer, NavigationData, ToOffset, ToPoint as _};
 use anyhow::Result;
 use gpui::{
     elements::*, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, RenderContext,
     Subscription, Task, View, ViewContext, ViewHandle, WeakModelHandle,
 };
-use language::{Buffer, Diagnostic, File as _};
+use language::{Bias, Buffer, Diagnostic, File as _};
 use postage::watch;
 use project::{File, ProjectPath, Worktree};
 use std::fmt::Write;
@@ -106,8 +106,15 @@ impl ItemView for Editor {
     }
 
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) {
-        if let Some(anchor) = data.downcast_ref::<Anchor>() {
-            let offset = anchor.to_offset(&self.buffer.read(cx).read(cx));
+        if let Some(data) = data.downcast_ref::<NavigationData>() {
+            let buffer = self.buffer.read(cx).read(cx);
+            let offset = if buffer.can_resolve(&data.anchor) {
+                data.anchor.to_offset(&buffer)
+            } else {
+                buffer.clip_offset(data.offset, Bias::Left)
+            };
+
+            drop(buffer);
             self.select_ranges([offset..offset], Some(Autoscroll::Fit), cx);
         }
     }
