@@ -1138,8 +1138,8 @@ impl Editor {
         self.update_selections(selections, autoscroll, cx);
     }
 
-    #[cfg(test)]
-    fn select_display_ranges<'a, T>(&mut self, ranges: T, cx: &mut ViewContext<Self>)
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn select_display_ranges<'a, T>(&mut self, ranges: T, cx: &mut ViewContext<Self>)
     where
         T: IntoIterator<Item = &'a Range<DisplayPoint>>,
     {
