@@ -7,12 +7,12 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     keymap::Binding,
     platform::CursorStyle,
-    Entity, MutableAppContext, Quad, RenderContext, View, ViewContext,
+    Entity, MutableAppContext, Quad, RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use postage::watch;
 use project::ProjectPath;
 use std::{any::Any, cell::RefCell, cmp, mem, rc::Rc};
-use util::TryFutureExt;
+use util::ResultExt;
 
 action!(Split, SplitDirection);
 action!(ActivateItem, usize);
@@ -42,8 +42,12 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, action: &Split, cx| {
         pane.split(action.0, cx);
     });
-    cx.add_action(Pane::go_back);
-    cx.add_action(Pane::go_forward);
+    cx.add_action(|workspace: &mut Workspace, _: &GoBack, cx| {
+        Pane::go_back(workspace, cx).detach();
+    });
+    cx.add_action(|workspace: &mut Workspace, _: &GoForward, cx| {
+        Pane::go_forward(workspace, cx).detach();
+    });
 
     cx.add_bindings(vec![
         Binding::new("shift-cmd-{", ActivatePrevItem, Some("Pane")),
@@ -78,20 +82,20 @@ pub struct Navigation(RefCell<NavigationHistory>);
 
 #[derive(Default)]
 struct NavigationHistory {
-    mode: NavigationHistoryMode,
+    mode: NavigationMode,
     backward_stack: Vec<NavigationEntry>,
     forward_stack: Vec<NavigationEntry>,
     paths_by_item: HashMap<usize, ProjectPath>,
 }
 
 #[derive(Copy, Clone)]
-enum NavigationHistoryMode {
+enum NavigationMode {
     Normal,
     GoingBack,
     GoingForward,
 }
 
-impl Default for NavigationHistoryMode {
+impl Default for NavigationMode {
     fn default() -> Self {
         Self::Normal
     }
@@ -116,20 +120,31 @@ impl Pane {
         cx.emit(Event::Activate);
     }
 
-    pub fn go_back(workspace: &mut Workspace, _: &GoBack, cx: &mut ViewContext<Workspace>) {
-        Self::navigate_history(workspace, NavigationHistoryMode::GoingBack, cx);
+    pub fn go_back(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> Task<()> {
+        Self::navigate_history(
+            workspace,
+            workspace.active_pane().clone(),
+            NavigationMode::GoingBack,
+            cx,
+        )
     }
 
-    pub fn go_forward(workspace: &mut Workspace, _: &GoForward, cx: &mut ViewContext<Workspace>) {
-        Self::navigate_history(workspace, NavigationHistoryMode::GoingForward, cx);
+    pub fn go_forward(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> Task<()> {
+        Self::navigate_history(
+            workspace,
+            workspace.active_pane().clone(),
+            NavigationMode::GoingForward,
+            cx,
+        )
     }
 
     fn navigate_history(
         workspace: &mut Workspace,
-        mode: NavigationHistoryMode,
+        pane: ViewHandle<Pane>,
+        mode: NavigationMode,
         cx: &mut ViewContext<Workspace>,
-    ) -> Option<()> {
-        let (project_path, entry) = workspace.active_pane().update(cx, |pane, cx| {
+    ) -> Task<()> {
+        let to_load = pane.update(cx, |pane, cx| {
             // Retrieve the weak item handle from the history.
             let entry = pane.navigation.pop(mode)?;
 
@@ -142,7 +157,7 @@ impl Pane {
                 if let Some(item_view) = pane.active_item() {
                     pane.navigation.set_mode(mode);
                     item_view.deactivated(cx);
-                    pane.navigation.set_mode(NavigationHistoryMode::Normal);
+                    pane.navigation.set_mode(NavigationMode::Normal);
                 }
 
                 pane.active_item_index = index;
@@ -164,34 +179,37 @@ impl Pane {
                     .cloned()
                     .map(|project_path| (project_path, entry))
             }
-        })?;
+        });
 
-        // If the item was no longer present, then load it again from its previous path.
-        let task = workspace.load_path(project_path, cx);
-        cx.spawn(|workspace, mut cx| {
-            async move {
-                let item = task.await?;
-                workspace.update(&mut cx, |workspace, cx| {
-                    let pane = workspace.active_pane().clone();
-                    pane.update(cx, |pane, cx| {
-                        pane.navigation.set_mode(mode);
-                        let item_view = pane.open_item(item, workspace, cx);
-                        pane.navigation.set_mode(NavigationHistoryMode::Normal);
+        if let Some((project_path, entry)) = to_load {
+            // If the item was no longer present, then load it again from its previous path.
+            let pane = pane.downgrade();
+            let task = workspace.load_path(project_path, cx);
+            cx.spawn(|workspace, mut cx| async move {
+                let item = task.await;
+                if let Some(pane) = cx.read(|cx| pane.upgrade(cx)) {
+                    if let Some(item) = item.log_err() {
+                        workspace.update(&mut cx, |workspace, cx| {
+                            pane.update(cx, |p, _| p.navigation.set_mode(mode));
+                            let item_view = workspace.open_item_in_pane(item, &pane, cx);
+                            pane.update(cx, |p, _| p.navigation.set_mode(NavigationMode::Normal));
 
-                        if let Some(data) = entry.data {
-                            item_view.navigate(data, cx);
-                        }
-
-                        cx.notify();
-                    });
-                });
-                Ok(())
-            }
-            .log_err()
-        })
-        .detach();
-
-        None
+                            if let Some(data) = entry.data {
+                                item_view.navigate(data, cx);
+                            }
+                        });
+                    } else {
+                        workspace
+                            .update(&mut cx, |workspace, cx| {
+                                Self::navigate_history(workspace, pane, mode, cx)
+                            })
+                            .await;
+                    }
+                }
+            })
+        } else {
+            Task::ready(())
+        }
     }
 
     pub fn open_item<T>(
@@ -516,35 +534,35 @@ impl View for Pane {
 }
 
 impl Navigation {
-    fn pop(&self, mode: NavigationHistoryMode) -> Option<NavigationEntry> {
+    fn pop(&self, mode: NavigationMode) -> Option<NavigationEntry> {
         match mode {
-            NavigationHistoryMode::Normal => None,
-            NavigationHistoryMode::GoingBack => self.0.borrow_mut().backward_stack.pop(),
-            NavigationHistoryMode::GoingForward => self.0.borrow_mut().forward_stack.pop(),
+            NavigationMode::Normal => None,
+            NavigationMode::GoingBack => self.0.borrow_mut().backward_stack.pop(),
+            NavigationMode::GoingForward => self.0.borrow_mut().forward_stack.pop(),
         }
     }
 
-    fn set_mode(&self, mode: NavigationHistoryMode) {
+    fn set_mode(&self, mode: NavigationMode) {
         self.0.borrow_mut().mode = mode;
     }
 
     pub fn push<D: 'static + Any, T: ItemView>(&self, data: Option<D>, cx: &mut ViewContext<T>) {
         let mut state = self.0.borrow_mut();
         match state.mode {
-            NavigationHistoryMode::Normal => {
+            NavigationMode::Normal => {
                 state.backward_stack.push(NavigationEntry {
                     item_view: Box::new(cx.weak_handle()),
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
                 });
                 state.forward_stack.clear();
             }
-            NavigationHistoryMode::GoingBack => {
+            NavigationMode::GoingBack => {
                 state.forward_stack.push(NavigationEntry {
                     item_view: Box::new(cx.weak_handle()),
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
                 });
             }
-            NavigationHistoryMode::GoingForward => {
+            NavigationMode::GoingForward => {
                 state.backward_stack.push(NavigationEntry {
                     item_view: Box::new(cx.weak_handle()),
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
