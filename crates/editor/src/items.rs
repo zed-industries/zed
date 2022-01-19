@@ -13,7 +13,7 @@ use std::rc::Rc;
 use text::{Point, Selection};
 use util::TryFutureExt;
 use workspace::{
-    ItemHandle, ItemView, ItemViewHandle, Navigation, PathOpener, Settings, StatusItemView,
+    ItemHandle, ItemView, ItemViewHandle, NavHistory, PathOpener, Settings, StatusItemView,
     WeakItemHandle, Workspace,
 };
 
@@ -46,7 +46,7 @@ impl ItemHandle for BufferItemHandle {
         &self,
         window_id: usize,
         workspace: &Workspace,
-        navigation: Rc<Navigation>,
+        nav_history: Rc<NavHistory>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(self.0.clone(), cx));
@@ -57,7 +57,7 @@ impl ItemHandle for BufferItemHandle {
                 crate::settings_builder(weak_buffer, workspace.settings()),
                 cx,
             );
-            editor.navigation = Some(navigation);
+            editor.nav_history = Some(nav_history);
             editor
         }))
     }
@@ -115,9 +115,9 @@ impl ItemView for Editor {
             };
 
             drop(buffer);
-            let navigation = self.navigation.take();
+            let nav_history = self.nav_history.take();
             self.select_ranges([offset..offset], Some(Autoscroll::Fit), cx);
-            self.navigation = navigation;
+            self.nav_history = nav_history;
         }
     }
 
@@ -150,7 +150,7 @@ impl ItemView for Editor {
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(selection) = self.newest_selection_internal() {
-            self.push_to_navigation_history(selection.head(), None, cx);
+            self.push_to_nav_history(selection.head(), None, cx);
         }
     }
 

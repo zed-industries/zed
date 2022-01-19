@@ -137,7 +137,7 @@ pub trait Item: Entity + Sized {
     fn build_view(
         handle: ModelHandle<Self>,
         workspace: &Workspace,
-        navigation: Rc<Navigation>,
+        nav_history: Rc<NavHistory>,
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View;
 
@@ -190,7 +190,7 @@ pub trait ItemHandle: Send + Sync {
         &self,
         window_id: usize,
         workspace: &Workspace,
-        navigation: Rc<Navigation>,
+        nav_history: Rc<NavHistory>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle>;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
@@ -242,11 +242,11 @@ impl<T: Item> ItemHandle for ModelHandle<T> {
         &self,
         window_id: usize,
         workspace: &Workspace,
-        navigation: Rc<Navigation>,
+        nav_history: Rc<NavHistory>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
         Box::new(cx.add_view(window_id, |cx| {
-            T::build_view(self.clone(), workspace, navigation, cx)
+            T::build_view(self.clone(), workspace, nav_history, cx)
         }))
     }
 
@@ -276,10 +276,10 @@ impl ItemHandle for Box<dyn ItemHandle> {
         &self,
         window_id: usize,
         workspace: &Workspace,
-        navigation: Rc<Navigation>,
+        nav_history: Rc<NavHistory>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
-        ItemHandle::add_view(self.as_ref(), window_id, workspace, navigation, cx)
+        ItemHandle::add_view(self.as_ref(), window_id, workspace, nav_history, cx)
     }
 
     fn boxed_clone(&self) -> Box<dyn ItemHandle> {

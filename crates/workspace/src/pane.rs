@@ -76,14 +76,14 @@ pub struct Pane {
     item_views: Vec<(usize, Box<dyn ItemViewHandle>)>,
     active_item_index: usize,
     settings: watch::Receiver<Settings>,
-    navigation: Rc<Navigation>,
+    nav_history: Rc<NavHistory>,
 }
 
 #[derive(Default)]
-pub struct Navigation(RefCell<NavigationHistory>);
+pub struct NavHistory(RefCell<NavHistoryState>);
 
 #[derive(Default)]
-struct NavigationHistory {
+struct NavHistoryState {
     mode: NavigationMode,
     backward_stack: VecDeque<NavigationEntry>,
     forward_stack: VecDeque<NavigationEntry>,
@@ -114,7 +114,7 @@ impl Pane {
             item_views: Vec::new(),
             active_item_index: 0,
             settings,
-            navigation: Default::default(),
+            nav_history: Default::default(),
         }
     }
 
@@ -148,7 +148,7 @@ impl Pane {
     ) -> Task<()> {
         let to_load = pane.update(cx, |pane, cx| {
             // Retrieve the weak item handle from the history.
-            let entry = pane.navigation.pop(mode)?;
+            let entry = pane.nav_history.pop(mode)?;
 
             // If the item is still present in this pane, then activate it.
             if let Some(index) = entry
@@ -157,9 +157,9 @@ impl Pane {
                 .and_then(|v| pane.index_for_item_view(v.as_ref()))
             {
                 if let Some(item_view) = pane.active_item() {
-                    pane.navigation.set_mode(mode);
+                    pane.nav_history.set_mode(mode);
                     item_view.deactivated(cx);
-                    pane.navigation.set_mode(NavigationMode::Normal);
+                    pane.nav_history.set_mode(NavigationMode::Normal);
                 }
 
                 pane.active_item_index = index;
@@ -173,7 +173,7 @@ impl Pane {
             // If the item is no longer present in this pane, then retrieve its
             // project path in order to reopen it.
             else {
-                pane.navigation
+                pane.nav_history
                     .0
                     .borrow_mut()
                     .paths_by_item
@@ -192,9 +192,9 @@ impl Pane {
                 if let Some(pane) = cx.read(|cx| pane.upgrade(cx)) {
                     if let Some(item) = item.log_err() {
                         workspace.update(&mut cx, |workspace, cx| {
-                            pane.update(cx, |p, _| p.navigation.set_mode(mode));
+                            pane.update(cx, |p, _| p.nav_history.set_mode(mode));
                             let item_view = workspace.open_item_in_pane(item, &pane, cx);
-                            pane.update(cx, |p, _| p.navigation.set_mode(NavigationMode::Normal));
+                            pane.update(cx, |p, _| p.nav_history.set_mode(NavigationMode::Normal));
 
                             if let Some(data) = entry.data {
                                 item_view.navigate(data, cx);
@@ -232,7 +232,7 @@ impl Pane {
         }
 
         let item_view =
-            item_handle.add_view(cx.window_id(), workspace, self.navigation.clone(), cx);
+            item_handle.add_view(cx.window_id(), workspace, self.nav_history.clone(), cx);
         self.add_item_view(item_view.boxed_clone(), cx);
         item_view
     }
@@ -322,11 +322,11 @@ impl Pane {
                     item_view.deactivated(cx);
                 }
 
-                let mut navigation = self.navigation.0.borrow_mut();
+                let mut nav_history = self.nav_history.0.borrow_mut();
                 if let Some(path) = item_view.project_path(cx) {
-                    navigation.paths_by_item.insert(item_view.id(), path);
+                    nav_history.paths_by_item.insert(item_view.id(), path);
                 } else {
-                    navigation.paths_by_item.remove(&item_view.id());
+                    nav_history.paths_by_item.remove(&item_view.id());
                 }
 
                 item_ix += 1;
@@ -536,7 +536,7 @@ impl View for Pane {
     }
 }
 
-impl Navigation {
+impl NavHistory {
     pub fn pop_backward(&self) -> Option<NavigationEntry> {
         self.0.borrow_mut().backward_stack.pop_back()
     }

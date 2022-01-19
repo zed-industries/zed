@@ -49,7 +49,7 @@ use sum_tree::Bias;
 use text::rope::TextDimension;
 use theme::{DiagnosticStyle, EditorStyle};
 use util::post_inc;
-use workspace::{Navigation, PathOpener, Workspace};
+use workspace::{NavHistory, PathOpener, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -379,7 +379,7 @@ pub struct Editor {
     mode: EditorMode,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
-    navigation: Option<Rc<Navigation>>,
+    nav_history: Option<Rc<NavHistory>>,
 }
 
 pub struct EditorSnapshot {
@@ -465,7 +465,7 @@ impl Editor {
         let mut clone = Self::new(self.buffer.clone(), self.build_settings.clone(), cx);
         clone.scroll_position = self.scroll_position;
         clone.scroll_top_anchor = self.scroll_top_anchor.clone();
-        clone.navigation = self.navigation.clone();
+        clone.nav_history = self.nav_history.clone();
         clone
     }
 
@@ -515,7 +515,7 @@ impl Editor {
             mode: EditorMode::Full,
             placeholder_text: None,
             highlighted_rows: None,
-            navigation: None,
+            nav_history: None,
         };
         let selection = Selection {
             id: post_inc(&mut this.next_selection_id),
@@ -860,7 +860,7 @@ impl Editor {
             }
         }
 
-        self.push_to_navigation_history(newest_selection.head(), Some(end.to_point(&buffer)), cx);
+        self.push_to_nav_history(newest_selection.head(), Some(end.to_point(&buffer)), cx);
 
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
@@ -2455,13 +2455,13 @@ impl Editor {
         self.update_selections(vec![selection], Some(Autoscroll::Fit), cx);
     }
 
-    fn push_to_navigation_history(
+    fn push_to_nav_history(
         &self,
         position: Anchor,
         new_position: Option<Point>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(navigation) = &self.navigation {
+        if let Some(nav_history) = &self.nav_history {
             let buffer = self.buffer.read(cx).read(cx);
             let offset = position.to_offset(&buffer);
             let point = position.to_point(&buffer);
@@ -2474,7 +2474,7 @@ impl Editor {
                 }
             }
 
-            navigation.push(
+            nav_history.push(
                 Some(NavigationData {
                     anchor: position,
                     offset,
@@ -3330,7 +3330,7 @@ impl Editor {
                 .max_by_key(|s| s.id)
                 .map(|s| s.head().to_point(&buffer));
             if new_cursor_position.is_some() {
-                self.push_to_navigation_history(old_cursor_position, new_cursor_position, cx);
+                self.push_to_nav_history(old_cursor_position, new_cursor_position, cx);
             }
         }
 
@@ -4174,22 +4174,22 @@ mod tests {
     fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
         cx.add_window(Default::default(), |cx| {
             use workspace::ItemView;
-            let navigation = Rc::new(workspace::Navigation::default());
+            let nav_history = Rc::new(workspace::NavHistory::default());
             let settings = EditorSettings::test(&cx);
             let buffer = MultiBuffer::build_simple(&sample_text(30, 5, 'a'), cx);
             let mut editor = build_editor(buffer.clone(), settings, cx);
-            editor.navigation = Some(navigation.clone());
+            editor.nav_history = Some(nav_history.clone());
 
             // Move the cursor a small distance.
             // Nothing is added to the navigation history.
             editor.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
             editor.select_display_ranges(&[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)], cx);
-            assert!(navigation.pop_backward().is_none());
+            assert!(nav_history.pop_backward().is_none());
 
             // Move the cursor a large distance.
             // The history can jump back to the previous position.
             editor.select_display_ranges(&[DisplayPoint::new(13, 0)..DisplayPoint::new(13, 3)], cx);
-            let nav_entry = navigation.pop_backward().unwrap();
+            let nav_entry = nav_history.pop_backward().unwrap();
             editor.navigate(nav_entry.data.unwrap(), cx);
             assert_eq!(nav_entry.item_view.id(), cx.view_id());
             assert_eq!(
@@ -4205,7 +4205,7 @@ mod tests {
                 editor.selected_display_ranges(cx),
                 &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
             );
-            assert!(navigation.pop_backward().is_none());
+            assert!(nav_history.pop_backward().is_none());
 
             // Move the cursor a large distance via the mouse.
             // The history can jump back to the previous position.
@@ -4215,7 +4215,7 @@ mod tests {
                 editor.selected_display_ranges(cx),
                 &[DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)]
             );
-            let nav_entry = navigation.pop_backward().unwrap();
+            let nav_entry = nav_history.pop_backward().unwrap();
             editor.navigate(nav_entry.data.unwrap(), cx);
             assert_eq!(nav_entry.item_view.id(), cx.view_id());
             assert_eq!(
