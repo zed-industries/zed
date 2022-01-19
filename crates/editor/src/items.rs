@@ -7,7 +7,7 @@ use gpui::{
 use language::{Bias, Buffer, Diagnostic};
 use postage::watch;
 use project::worktree::File;
-use project::{Project, ProjectEntry, ProjectPath, Worktree};
+use project::{Project, ProjectEntry, ProjectPath};
 use std::rc::Rc;
 use std::{fmt::Write, path::PathBuf};
 use text::{Point, Selection};
@@ -28,13 +28,13 @@ struct WeakBufferItemHandle(WeakModelHandle<Buffer>);
 impl PathOpener for BufferOpener {
     fn open(
         &self,
-        worktree: &mut Worktree,
+        project: &mut Project,
         project_path: ProjectPath,
-        cx: &mut ModelContext<Worktree>,
+        cx: &mut ModelContext<Project>,
     ) -> Option<Task<Result<Box<dyn ItemHandle>>>> {
-        let buffer = worktree.open_buffer(project_path.path, cx);
+        let buffer = project.open_buffer(project_path, cx);
         let task = cx.spawn(|_, _| async move {
-            let buffer = buffer.await?.0;
+            let buffer = buffer.await?;
             Ok(Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)
         });
         Some(task)

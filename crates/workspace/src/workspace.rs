@@ -125,9 +125,9 @@ pub struct JoinProjectParams {
 pub trait PathOpener {
     fn open(
         &self,
-        worktree: &mut Worktree,
+        project: &mut Project,
         path: ProjectPath,
-        cx: &mut ModelContext<Worktree>,
+        cx: &mut ModelContext<Project>,
     ) -> Option<Task<Result<Box<dyn ItemHandle>>>>;
 }
 
@@ -766,18 +766,11 @@ impl Workspace {
             return Task::ready(Ok(existing_item));
         }
 
-        let worktree = match self.project.read(cx).worktree_for_id(path.worktree_id, cx) {
-            Some(worktree) => worktree,
-            None => {
-                return Task::ready(Err(anyhow!("worktree {} does not exist", path.worktree_id)));
-            }
-        };
-
         let project_path = path.clone();
         let path_openers = self.path_openers.clone();
-        worktree.update(cx, |worktree, cx| {
+        self.project.update(cx, |project, cx| {
             for opener in path_openers.iter() {
-                if let Some(task) = opener.open(worktree, project_path.clone(), cx) {
+                if let Some(task) = opener.open(project, project_path.clone(), cx) {
                     return task;
                 }
             }

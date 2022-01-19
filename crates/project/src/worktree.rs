@@ -286,43 +286,6 @@ impl Worktree {
         }
     }
 
-    pub fn handle_open_buffer(
-        &mut self,
-        envelope: TypedEnvelope<proto::OpenBuffer>,
-        rpc: Arc<Client>,
-        cx: &mut ModelContext<Self>,
-    ) -> anyhow::Result<()> {
-        let receipt = envelope.receipt();
-
-        let response = self
-            .as_local_mut()
-            .unwrap()
-            .open_remote_buffer(envelope, cx);
-
-        cx.background()
-            .spawn(
-                async move {
-                    rpc.respond(receipt, response.await?).await?;
-                    Ok(())
-                }
-                .log_err(),
-            )
-            .detach();
-
-        Ok(())
-    }
-
-    pub fn handle_close_buffer(
-        &mut self,
-        envelope: TypedEnvelope<proto::CloseBuffer>,
-        _: Arc<Client>,
-        cx: &mut ModelContext<Self>,
-    ) -> anyhow::Result<()> {
-        self.as_local_mut()
-            .unwrap()
-            .close_remote_buffer(envelope, cx)
-    }
-
     pub fn diagnostic_summaries<'a>(
         &'a self,
     ) -> impl Iterator<Item = (Arc<Path>, DiagnosticSummary)> + 'a {
@@ -1006,28 +969,17 @@ impl LocalWorktree {
 
     pub fn open_remote_buffer(
         &mut self,
-        envelope: TypedEnvelope<proto::OpenBuffer>,
+        peer_id: PeerId,
+        buffer: ModelHandle<Buffer>,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<proto::OpenBufferResponse>> {
-        cx.spawn(|this, mut cx| async move {
-            let peer_id = envelope.original_sender_id();
-            let path = Path::new(&envelope.payload.path);
-            let (buffer, _) = this
-                .update(&mut cx, |this, cx| this.open_buffer(path, cx))
-                .await?;
-            this.update(&mut cx, |this, cx| {
-                this.as_local_mut()
-                    .unwrap()
-                    .shared_buffers
-                    .entry(peer_id?)
-                    .or_default()
-                    .insert(buffer.id() as u64, buffer.clone());
-
-                Ok(proto::OpenBufferResponse {
-                    buffer: Some(buffer.update(cx.as_mut(), |buffer, _| buffer.to_proto())),
-                })
-            })
-        })
+    ) -> proto::OpenBufferResponse {
+        self.shared_buffers
+            .entry(peer_id)
+            .or_default()
+            .insert(buffer.id() as u64, buffer.clone());
+        proto::OpenBufferResponse {
+            buffer: Some(buffer.update(cx.as_mut(), |buffer, _| buffer.to_proto())),
+        }
     }
 
     pub fn close_remote_buffer(

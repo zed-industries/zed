@@ -1088,26 +1088,51 @@ impl Project {
         rpc: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
+        let receipt = envelope.receipt();
+        let peer_id = envelope.original_sender_id()?;
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
-            return worktree.update(cx, |worktree, cx| {
-                worktree.handle_open_buffer(envelope, rpc, cx)
-            });
-        } else {
-            Err(anyhow!("no such worktree"))
-        }
+        let worktree = self
+            .worktree_for_id(worktree_id, cx)
+            .ok_or_else(|| anyhow!("no such worktree"))?;
+
+        let task = self.open_buffer(
+            ProjectPath {
+                worktree_id,
+                path: PathBuf::from(envelope.payload.path).into(),
+            },
+            cx,
+        );
+        cx.spawn(|_, mut cx| {
+            async move {
+                let buffer = task.await?;
+                let response = worktree.update(&mut cx, |worktree, cx| {
+                    worktree
+                        .as_local_mut()
+                        .unwrap()
+                        .open_remote_buffer(peer_id, buffer, cx)
+                });
+                rpc.respond(receipt, response).await?;
+                Ok(())
+            }
+            .log_err()
+        })
+        .detach();
+        Ok(())
     }
 
     pub fn handle_close_buffer(
         &mut self,
         envelope: TypedEnvelope<proto::CloseBuffer>,
-        rpc: Arc<Client>,
+        _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
             worktree.update(cx, |worktree, cx| {
-                worktree.handle_close_buffer(envelope, rpc, cx)
+                worktree
+                    .as_local_mut()
+                    .unwrap()
+                    .close_remote_buffer(envelope, cx)
             })?;
         }
         Ok(())
