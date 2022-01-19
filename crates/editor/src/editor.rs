@@ -638,7 +638,10 @@ impl Editor {
 
         let first_cursor_top;
         let last_cursor_bottom;
-        if autoscroll == Autoscroll::Newest {
+        if let Some(highlighted_rows) = &self.highlighted_rows {
+            first_cursor_top = highlighted_rows.start as f32;
+            last_cursor_bottom = first_cursor_top + 1.;
+        } else if autoscroll == Autoscroll::Newest {
             let newest_selection = self.newest_selection::<Point>(&display_map.buffer_snapshot);
             first_cursor_top = newest_selection.head().to_display_point(&display_map).row() as f32;
             last_cursor_bottom = first_cursor_top + 1.;
@@ -704,22 +707,33 @@ impl Editor {
     ) -> bool {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.local_selections::<Point>(cx);
-        let mut target_left = std::f32::INFINITY;
-        let mut target_right = 0.0_f32;
-        for selection in selections {
-            let head = selection.head().to_display_point(&display_map);
-            if head.row() >= start_row && head.row() < start_row + layouts.len() as u32 {
-                let start_column = head.column().saturating_sub(3);
-                let end_column = cmp::min(display_map.line_len(head.row()), head.column() + 3);
-                target_left = target_left.min(
-                    layouts[(head.row() - start_row) as usize].x_for_index(start_column as usize),
-                );
-                target_right = target_right.max(
-                    layouts[(head.row() - start_row) as usize].x_for_index(end_column as usize)
-                        + max_glyph_width,
-                );
+
+        let mut target_left;
+        let mut target_right;
+
+        if self.highlighted_rows.is_some() {
+            target_left = 0.0_f32;
+            target_right = 0.0_f32;
+        } else {
+            target_left = std::f32::INFINITY;
+            target_right = 0.0_f32;
+            for selection in selections {
+                let head = selection.head().to_display_point(&display_map);
+                if head.row() >= start_row && head.row() < start_row + layouts.len() as u32 {
+                    let start_column = head.column().saturating_sub(3);
+                    let end_column = cmp::min(display_map.line_len(head.row()), head.column() + 3);
+                    target_left = target_left.min(
+                        layouts[(head.row() - start_row) as usize]
+                            .x_for_index(start_column as usize),
+                    );
+                    target_right = target_right.max(
+                        layouts[(head.row() - start_row) as usize].x_for_index(end_column as usize)
+                            + max_glyph_width,
+                    );
+                }
             }
         }
+
         target_right = target_right.min(scroll_width);
 
         if target_right - target_left > viewport_width {
@@ -3400,7 +3414,7 @@ impl Editor {
         });
     }
 
-    fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
+    pub fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
         self.autoscroll_request = Some(autoscroll);
         cx.notify();
     }

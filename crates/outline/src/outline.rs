@@ -1,6 +1,6 @@
 use editor::{
-    display_map::ToDisplayPoint, Anchor, AnchorRangeExt, Autoscroll, Editor, EditorSettings,
-    ToPoint,
+    display_map::ToDisplayPoint, Anchor, AnchorRangeExt, Autoscroll, DisplayPoint, Editor,
+    EditorSettings, ToPoint,
 };
 use fuzzy::StringMatch;
 use gpui::{
@@ -12,7 +12,7 @@ use gpui::{
     AppContext, Axis, Entity, MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
     WeakViewHandle,
 };
-use language::{Outline, Selection};
+use language::Outline;
 use ordered_float::OrderedFloat;
 use postage::watch;
 use std::{
@@ -45,17 +45,11 @@ struct OutlineView {
     active_editor: ViewHandle<Editor>,
     outline: Outline<Anchor>,
     selected_match_index: usize,
-    restore_state: Option<RestoreState>,
-    symbol_selection_id: Option<usize>,
+    prev_scroll_position: Option<Vector2F>,
     matches: Vec<StringMatch>,
     query_editor: ViewHandle<Editor>,
     list_state: UniformListState,
     settings: watch::Receiver<Settings>,
-}
-
-struct RestoreState {
-    scroll_position: Vector2F,
-    selections: Vec<Selection<usize>>,
 }
 
 pub enum Event {
@@ -132,20 +126,12 @@ impl OutlineView {
         cx.subscribe(&query_editor, Self::on_query_editor_event)
             .detach();
 
-        let restore_state = editor.update(cx, |editor, cx| {
-            Some(RestoreState {
-                scroll_position: editor.scroll_position(cx),
-                selections: editor.local_selections::<usize>(cx),
-            })
-        });
-
         let mut this = Self {
             handle: cx.weak_handle(),
-            active_editor: editor,
             matches: Default::default(),
             selected_match_index: 0,
-            restore_state,
-            symbol_selection_id: None,
+            prev_scroll_position: Some(editor.update(cx, |editor, cx| editor.scroll_position(cx))),
+            active_editor: editor,
             outline,
             query_editor,
             list_state: Default::default(),
@@ -207,39 +193,37 @@ impl OutlineView {
         if navigate {
             let selected_match = &self.matches[self.selected_match_index];
             let outline_item = &self.outline.items[selected_match.candidate_id];
-            self.symbol_selection_id = self.active_editor.update(cx, |active_editor, cx| {
+            self.active_editor.update(cx, |active_editor, cx| {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
                 let buffer_snapshot = &snapshot.buffer_snapshot;
                 let start = outline_item.range.start.to_point(&buffer_snapshot);
                 let end = outline_item.range.end.to_point(&buffer_snapshot);
                 let display_rows = start.to_display_point(&snapshot).row()
                     ..end.to_display_point(&snapshot).row() + 1;
-                active_editor.select_ranges([start..start], Some(Autoscroll::Center), cx);
                 active_editor.set_highlighted_rows(Some(display_rows));
-                Some(active_editor.newest_selection::<usize>(&buffer_snapshot).id)
+                active_editor.request_autoscroll(Autoscroll::Center, cx);
             });
         }
         cx.notify();
     }
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
-        self.restore_state.take();
+        self.prev_scroll_position.take();
+        self.active_editor.update(cx, |active_editor, cx| {
+            if let Some(rows) = active_editor.highlighted_rows() {
+                let snapshot = active_editor.snapshot(cx).display_snapshot;
+                let position = DisplayPoint::new(rows.start, 0).to_point(&snapshot);
+                active_editor.select_ranges([position..position], Some(Autoscroll::Center), cx);
+            }
+        });
         cx.emit(Event::Dismissed);
     }
 
     fn restore_active_editor(&mut self, cx: &mut MutableAppContext) {
-        let symbol_selection_id = self.symbol_selection_id.take();
         self.active_editor.update(cx, |editor, cx| {
             editor.set_highlighted_rows(None);
-            if let Some((symbol_selection_id, restore_state)) =
-                symbol_selection_id.zip(self.restore_state.as_ref())
-            {
-                let newest_selection =
-                    editor.newest_selection::<usize>(&editor.buffer().read(cx).read(cx));
-                if symbol_selection_id == newest_selection.id {
-                    editor.set_scroll_position(restore_state.scroll_position, cx);
-                    editor.update_selections(restore_state.selections.clone(), None, cx);
-                }
+            if let Some(scroll_position) = self.prev_scroll_position {
+                editor.set_scroll_position(scroll_position, cx);
             }
         })
     }
