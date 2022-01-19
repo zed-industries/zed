@@ -1,6 +1,6 @@
 use super::{ItemViewHandle, SplitDirection};
 use crate::{ItemHandle, ItemView, Settings, WeakItemViewHandle, Workspace};
-use collections::HashMap;
+use collections::{HashMap, VecDeque};
 use gpui::{
     action,
     elements::*,
@@ -22,6 +22,8 @@ action!(CloseActiveItem);
 action!(CloseItem, usize);
 action!(GoBack);
 action!(GoForward);
+
+const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, action: &ActivateItem, cx| {
@@ -83,8 +85,8 @@ pub struct Navigation(RefCell<NavigationHistory>);
 #[derive(Default)]
 struct NavigationHistory {
     mode: NavigationMode,
-    backward_stack: Vec<NavigationEntry>,
-    forward_stack: Vec<NavigationEntry>,
+    backward_stack: VecDeque<NavigationEntry>,
+    forward_stack: VecDeque<NavigationEntry>,
     paths_by_item: HashMap<usize, ProjectPath>,
 }
 
@@ -536,11 +538,11 @@ impl View for Pane {
 
 impl Navigation {
     pub fn pop_backward(&self) -> Option<NavigationEntry> {
-        self.0.borrow_mut().backward_stack.pop()
+        self.0.borrow_mut().backward_stack.pop_back()
     }
 
     pub fn pop_forward(&self) -> Option<NavigationEntry> {
-        self.0.borrow_mut().forward_stack.pop()
+        self.0.borrow_mut().forward_stack.pop_back()
     }
 
     fn pop(&self, mode: NavigationMode) -> Option<NavigationEntry> {
@@ -559,20 +561,29 @@ impl Navigation {
         let mut state = self.0.borrow_mut();
         match state.mode {
             NavigationMode::Normal => {
-                state.backward_stack.push(NavigationEntry {
+                if state.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
+                    state.backward_stack.pop_front();
+                }
+                state.backward_stack.push_back(NavigationEntry {
                     item_view: Box::new(cx.weak_handle()),
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
                 });
                 state.forward_stack.clear();
             }
             NavigationMode::GoingBack => {
-                state.forward_stack.push(NavigationEntry {
+                if state.forward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
+                    state.forward_stack.pop_front();
+                }
+                state.forward_stack.push_back(NavigationEntry {
                     item_view: Box::new(cx.weak_handle()),
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
                 });
             }
             NavigationMode::GoingForward => {
-                state.backward_stack.push(NavigationEntry {
+                if state.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
+                    state.backward_stack.pop_front();
+                }
+                state.backward_stack.push_back(NavigationEntry {
                     item_view: Box::new(cx.weak_handle()),
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
                 });
