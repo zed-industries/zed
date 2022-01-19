@@ -4157,6 +4157,63 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
+        cx.add_window(Default::default(), |cx| {
+            use workspace::ItemView;
+            let navigation = Rc::new(workspace::Navigation::default());
+            let settings = EditorSettings::test(&cx);
+            let buffer = MultiBuffer::build_simple(&sample_text(30, 5, 'a'), cx);
+            let mut editor = build_editor(buffer.clone(), settings, cx);
+            editor.navigation = Some(navigation.clone());
+
+            // Move the cursor a small distance.
+            // Nothing is added to the navigation history.
+            editor.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
+            editor.select_display_ranges(&[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)], cx);
+            assert!(navigation.pop_backward().is_none());
+
+            // Move the cursor a large distance.
+            // The history can jump back to the previous position.
+            editor.select_display_ranges(&[DisplayPoint::new(13, 0)..DisplayPoint::new(13, 3)], cx);
+            let nav_entry = navigation.pop_backward().unwrap();
+            editor.navigate(nav_entry.data.unwrap(), cx);
+            assert_eq!(nav_entry.item_view.id(), cx.view_id());
+            assert_eq!(
+                editor.selected_display_ranges(cx),
+                &[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)]
+            );
+
+            // Move the cursor a small distance via the mouse.
+            // Nothing is added to the navigation history.
+            editor.begin_selection(DisplayPoint::new(5, 0), false, 1, cx);
+            editor.end_selection(cx);
+            assert_eq!(
+                editor.selected_display_ranges(cx),
+                &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
+            );
+            assert!(navigation.pop_backward().is_none());
+
+            // Move the cursor a large distance via the mouse.
+            // The history can jump back to the previous position.
+            editor.begin_selection(DisplayPoint::new(15, 0), false, 1, cx);
+            editor.end_selection(cx);
+            assert_eq!(
+                editor.selected_display_ranges(cx),
+                &[DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)]
+            );
+            let nav_entry = navigation.pop_backward().unwrap();
+            editor.navigate(nav_entry.data.unwrap(), cx);
+            assert_eq!(nav_entry.item_view.id(), cx.view_id());
+            assert_eq!(
+                editor.selected_display_ranges(cx),
+                &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
+            );
+
+            editor
+        });
+    }
+
+    #[gpui::test]
     fn test_cancel(cx: &mut gpui::MutableAppContext) {
         let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
         let settings = EditorSettings::test(cx);

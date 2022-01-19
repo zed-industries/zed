@@ -101,9 +101,9 @@ impl Default for NavigationMode {
     }
 }
 
-struct NavigationEntry {
-    item_view: Box<dyn WeakItemViewHandle>,
-    data: Option<Box<dyn Any>>,
+pub struct NavigationEntry {
+    pub item_view: Box<dyn WeakItemViewHandle>,
+    pub data: Option<Box<dyn Any>>,
 }
 
 impl Pane {
@@ -535,11 +535,19 @@ impl View for Pane {
 }
 
 impl Navigation {
+    pub fn pop_backward(&self) -> Option<NavigationEntry> {
+        self.0.borrow_mut().backward_stack.pop()
+    }
+
+    pub fn pop_forward(&self) -> Option<NavigationEntry> {
+        self.0.borrow_mut().forward_stack.pop()
+    }
+
     fn pop(&self, mode: NavigationMode) -> Option<NavigationEntry> {
         match mode {
             NavigationMode::Normal => None,
-            NavigationMode::GoingBack => self.0.borrow_mut().backward_stack.pop(),
-            NavigationMode::GoingForward => self.0.borrow_mut().forward_stack.pop(),
+            NavigationMode::GoingBack => self.pop_backward(),
+            NavigationMode::GoingForward => self.pop_forward(),
         }
     }
 
