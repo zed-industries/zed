@@ -533,9 +533,8 @@ impl Editor {
         _: &workspace::OpenNew,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let buffer = cx.add_model(|cx| {
-            Buffer::new(0, "", cx).with_language(Some(language::PLAIN_TEXT.clone()), None, cx)
-        });
+        let buffer = cx
+            .add_model(|cx| Buffer::new(0, "", cx).with_language(language::PLAIN_TEXT.clone(), cx));
         workspace.open_item(BufferItemHandle(buffer), cx);
     }
 
@@ -5746,10 +5745,10 @@ mod tests {
     #[gpui::test]
     async fn test_select_larger_smaller_syntax_node(mut cx: gpui::TestAppContext) {
         let settings = cx.read(EditorSettings::test);
-        let language = Some(Arc::new(Language::new(
+        let language = Arc::new(Language::new(
             LanguageConfig::default(),
             Some(tree_sitter_rust::language()),
-        )));
+        ));
 
         let text = r#"
             use mod1::mod2::{mod3, mod4};
@@ -5760,7 +5759,7 @@ mod tests {
         "#
         .unindent();
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
@@ -5887,7 +5886,7 @@ mod tests {
     #[gpui::test]
     async fn test_autoindent_selections(mut cx: gpui::TestAppContext) {
         let settings = cx.read(EditorSettings::test);
-        let language = Some(Arc::new(
+        let language = Arc::new(
             Language::new(
                 LanguageConfig {
                     brackets: vec![
@@ -5915,11 +5914,11 @@ mod tests {
                 "#,
             )
             .unwrap(),
-        ));
+        );
 
         let text = "fn a() {}";
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, editor) = cx.add_window(|cx| build_editor(buffer, settings, cx));
         editor
@@ -5944,7 +5943,7 @@ mod tests {
     #[gpui::test]
     async fn test_autoclose_pairs(mut cx: gpui::TestAppContext) {
         let settings = cx.read(EditorSettings::test);
-        let language = Some(Arc::new(Language::new(
+        let language = Arc::new(Language::new(
             LanguageConfig {
                 brackets: vec![
                     BracketPair {
@@ -5963,7 +5962,7 @@ mod tests {
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        )));
+        ));
 
         let text = r#"
             a
@@ -5973,7 +5972,7 @@ mod tests {
         "#
         .unindent();
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
@@ -6055,13 +6054,13 @@ mod tests {
     #[gpui::test]
     async fn test_toggle_comment(mut cx: gpui::TestAppContext) {
         let settings = cx.read(EditorSettings::test);
-        let language = Some(Arc::new(Language::new(
+        let language = Arc::new(Language::new(
             LanguageConfig {
                 line_comment: Some("// ".to_string()),
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        )));
+        ));
 
         let text = "
             fn a() {
@@ -6072,7 +6071,7 @@ mod tests {
         "
         .unindent();
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
 
@@ -6323,7 +6322,7 @@ mod tests {
     #[gpui::test]
     async fn test_extra_newline_insertion(mut cx: gpui::TestAppContext) {
         let settings = cx.read(EditorSettings::test);
-        let language = Some(Arc::new(Language::new(
+        let language = Arc::new(Language::new(
             LanguageConfig {
                 brackets: vec![
                     BracketPair {
@@ -6342,7 +6341,7 @@ mod tests {
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        )));
+        ));
 
         let text = concat!(
             "{   }\n",     // Suppress rustfmt
@@ -6352,7 +6351,7 @@ mod tests {
             "{{} }\n",     //
         );
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))

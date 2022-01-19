@@ -385,13 +385,17 @@ impl Buffer {
         }
     }
 
-    pub fn with_language(
+    pub fn with_language(mut self, language: Arc<Language>, cx: &mut ModelContext<Self>) -> Self {
+        self.set_language(Some(language), cx);
+        self
+    }
+
+    pub fn with_language_server(
         mut self,
-        language: Option<Arc<Language>>,
-        language_server: Option<Arc<LanguageServer>>,
+        server: Arc<LanguageServer>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        self.set_language(language, language_server, cx);
+        self.set_language_server(Some(server), cx);
         self
     }
 
@@ -523,13 +527,16 @@ impl Buffer {
         }))
     }
 
-    pub fn set_language(
+    pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
+        self.language = language;
+        self.reparse(cx);
+    }
+
+    pub fn set_language_server(
         &mut self,
-        language: Option<Arc<Language>>,
         language_server: Option<Arc<lsp::LanguageServer>>,
         cx: &mut ModelContext<Self>,
     ) {
-        self.language = language;
         self.language_server = if let Some(server) = language_server {
             let (latest_snapshot_tx, mut latest_snapshot_rx) = watch::channel();
             Some(LanguageServerState {
@@ -611,7 +618,6 @@ impl Buffer {
             None
         };
 
-        self.reparse(cx);
         self.update_language_server();
     }
 

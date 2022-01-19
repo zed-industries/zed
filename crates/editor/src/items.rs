@@ -34,7 +34,7 @@ impl PathOpener for BufferOpener {
     ) -> Option<Task<Result<Box<dyn ItemHandle>>>> {
         let buffer = worktree.open_buffer(project_path.path, cx);
         let task = cx.spawn(|_, _| async move {
-            let buffer = buffer.await?;
+            let buffer = buffer.await?.0;
             Ok(Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)
         });
         Some(task)

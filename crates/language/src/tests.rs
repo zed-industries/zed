@@ -145,9 +145,8 @@ async fn test_apply_diff(mut cx: gpui::TestAppContext) {
 #[gpui::test]
 async fn test_reparse(mut cx: gpui::TestAppContext) {
     let text = "fn a() {}";
-    let buffer = cx.add_model(|cx| {
-        Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx)
-    });
+    let buffer =
+        cx.add_model(|cx| Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx));
 
     // Wait for the initial text to parse
     buffer
@@ -280,7 +279,7 @@ async fn test_reparse(mut cx: gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_outline(mut cx: gpui::TestAppContext) {
-    let language = Some(Arc::new(
+    let language = Arc::new(
         rust_lang()
             .with_outline_query(
                 r#"
@@ -308,7 +307,7 @@ async fn test_outline(mut cx: gpui::TestAppContext) {
                 "#,
             )
             .unwrap(),
-    ));
+    );
 
     let text = r#"
         struct Person {
@@ -337,7 +336,7 @@ async fn test_outline(mut cx: gpui::TestAppContext) {
     "#
     .unindent();
 
-    let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+    let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
     let outline = buffer
         .read_with(&cx, |buffer, _| buffer.snapshot().outline(None))
         .unwrap();
@@ -422,7 +421,7 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
             }
         "
         .unindent();
-        Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx)
+        Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx)
     });
     let buffer = buffer.read(cx);
     assert_eq!(
@@ -452,8 +451,7 @@ fn test_enclosing_bracket_ranges(cx: &mut MutableAppContext) {
 fn test_edit_with_autoindent(cx: &mut MutableAppContext) {
     cx.add_model(|cx| {
         let text = "fn a() {}";
-        let mut buffer =
-            Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx);
+        let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
 
         buffer.edit_with_autoindent([8..8], "\n\n", cx);
         assert_eq!(buffer.text(), "fn a() {\n    \n}");
@@ -479,8 +477,7 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut Muta
         "
         .unindent();
 
-        let mut buffer =
-            Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx);
+        let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
 
         // Lines 2 and 3 don't match the indentation suggestion. When editing these lines,
         // their indentation is not adjusted.
@@ -529,8 +526,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
         "
         .unindent();
 
-        let mut buffer =
-            Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang())), None, cx);
+        let mut buffer = Buffer::new(0, text, cx).with_language(Arc::new(rust_lang()), cx);
 
         buffer.edit_with_autoindent([5..5], "\nb", cx);
         assert_eq!(
@@ -575,7 +571,9 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
     .unindent();
 
     let buffer = cx.add_model(|cx| {
-        Buffer::new(0, text, cx).with_language(Some(Arc::new(rust_lang)), Some(language_server), cx)
+        Buffer::new(0, text, cx)
+            .with_language(Arc::new(rust_lang), cx)
+            .with_language_server(language_server, cx)
     });
 
     let open_notification = fake
@@ -849,7 +847,7 @@ async fn test_empty_diagnostic_ranges(mut cx: gpui::TestAppContext) {
         );
 
         let mut buffer = Buffer::new(0, text, cx);
-        buffer.set_language(Some(Arc::new(rust_lang())), None, cx);
+        buffer.set_language(Some(Arc::new(rust_lang())), cx);
         buffer
             .update_diagnostics(
                 None,

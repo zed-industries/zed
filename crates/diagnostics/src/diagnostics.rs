@@ -731,6 +731,8 @@ mod tests {
         // Create some diagnostics
         worktree.update(&mut cx, |worktree, cx| {
             worktree
+                .as_local_mut()
+                .unwrap()
                 .update_diagnostic_entries(
                     Arc::from("/test/main.rs".as_ref()),
                     None,
@@ -882,6 +884,8 @@ mod tests {
         // Diagnostics are added for another earlier path.
         worktree.update(&mut cx, |worktree, cx| {
             worktree
+                .as_local_mut()
+                .unwrap()
                 .update_diagnostic_entries(
                     Arc::from("/test/consts.rs".as_ref()),
                     None,
@@ -980,6 +984,8 @@ mod tests {
         // Diagnostics are added to the first path
         worktree.update(&mut cx, |worktree, cx| {
             worktree
+                .as_local_mut()
+                .unwrap()
                 .update_diagnostic_entries(
                     Arc::from("/test/consts.rs".as_ref()),
                     None,

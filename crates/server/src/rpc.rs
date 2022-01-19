@@ -1213,7 +1213,8 @@ mod tests {
         let buffer_b = worktree_b
             .update(&mut cx_b, |worktree, cx| worktree.open_buffer("b.txt", cx))
             .await
-            .unwrap();
+            .unwrap()
+            .0;
         let buffer_b = cx_b.add_model(|cx| MultiBuffer::singleton(buffer_b, cx));
         buffer_b.read_with(&cx_b, |buf, cx| {
             assert_eq!(buf.read(cx).text(), "b-contents")
@@ -1222,7 +1223,8 @@ mod tests {
         let buffer_a = worktree_a
             .update(&mut cx_a, |tree, cx| tree.open_buffer("b.txt", cx))
             .await
-            .unwrap();
+            .unwrap()
+            .0;
 
         let editor_b = cx_b.add_view(window_b, |cx| {
             Editor::for_buffer(buffer_b, Arc::new(|cx| EditorSettings::test(cx)), cx)
@@ -1436,11 +1438,13 @@ mod tests {
         let buffer_b = worktree_b
             .update(&mut cx_b, |tree, cx| tree.open_buffer("file1", cx))
             .await
-            .unwrap();
+            .unwrap()
+            .0;
         let buffer_c = worktree_c
             .update(&mut cx_c, |tree, cx| tree.open_buffer("file1", cx))
             .await
-            .unwrap();
+            .unwrap()
+            .0;
         buffer_b.update(&mut cx_b, |buf, cx| buf.edit([0..0], "i-am-b, ", cx));
         buffer_c.update(&mut cx_c, |buf, cx| buf.edit([0..0], "i-am-c, ", cx));
 
@@ -1448,7 +1452,8 @@ mod tests {
         let buffer_a = worktree_a
             .update(&mut cx_a, |tree, cx| tree.open_buffer("file1", cx))
             .await
-            .unwrap();
+            .unwrap()
+            .0;
 
         buffer_a
             .condition(&mut cx_a, |buf, _| buf.text() == "i-am-c, i-am-b, ")
@@ -1574,7 +1579,8 @@ mod tests {
         let buffer_b = worktree_b
             .update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.txt", cx))
             .await
-            .unwrap();
+            .unwrap()
+            .0;
         let mtime = buffer_b.read_with(&cx_b, |buf, _| buf.file().unwrap().mtime());
 
         buffer_b.update(&mut cx_b, |buf, cx| buf.edit([0..0], "world ", cx));
@@ -1669,7 +1675,8 @@ mod tests {
         let buffer_a = worktree_a
             .update(&mut cx_a, |tree, cx| tree.open_buffer("a.txt", cx))
             .await
-            .unwrap();
+            .unwrap()
+            .0;
 
         // Start opening the same buffer as client B
         let buffer_b = cx_b
@@ -1681,7 +1688,7 @@ mod tests {
         buffer_a.update(&mut cx_a, |buf, cx| buf.edit([0..0], "z", cx));
 
         let text = buffer_a.read_with(&cx_a, |buf, _| buf.text());
-        let buffer_b = buffer_b.await.unwrap();
+        let buffer_b = buffer_b.await.unwrap().0;
         buffer_b.condition(&cx_b, |buf, _| buf.text() == text).await;
     }
 
@@ -2016,7 +2023,8 @@ mod tests {
             .background()
             .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.rs", cx)))
             .await
-            .unwrap();
+            .unwrap()
+            .0;
 
         buffer_b.read_with(&cx_b, |buffer, _| {
             assert_eq!(
@@ -2128,7 +2136,8 @@ mod tests {
             .background()
             .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.rs", cx)))
             .await
-            .unwrap();
+            .unwrap()
+            .0;
 
         let format = buffer_b.update(&mut cx_b, |buffer, cx| buffer.format(cx));
         let (request_id, _) = fake_language_server

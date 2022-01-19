@@ -840,7 +840,7 @@ mod tests {
             ("mod.body".to_string(), Color::red().into()),
             ("fn.name".to_string(), Color::blue().into()),
         ]);
-        let lang = Arc::new(
+        let language = Arc::new(
             Language::new(
                 LanguageConfig {
                     name: "Test".to_string(),
@@ -857,10 +857,9 @@ mod tests {
             )
             .unwrap(),
         );
-        lang.set_theme(&theme);
+        language.set_theme(&theme);
 
-        let buffer =
-            cx.add_model(|cx| Buffer::new(0, text, cx).with_language(Some(lang), None, cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
 
@@ -928,7 +927,7 @@ mod tests {
             ("mod.body".to_string(), Color::red().into()),
             ("fn.name".to_string(), Color::blue().into()),
         ]);
-        let lang = Arc::new(
+        let language = Arc::new(
             Language::new(
                 LanguageConfig {
                     name: "Test".to_string(),
@@ -945,10 +944,9 @@ mod tests {
             )
             .unwrap(),
         );
-        lang.set_theme(&theme);
+        language.set_theme(&theme);
 
-        let buffer =
-            cx.add_model(|cx| Buffer::new(0, text, cx).with_language(Some(lang), None, cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         buffer.condition(&cx, |buf, _| !buf.is_parsing()).await;
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
 
