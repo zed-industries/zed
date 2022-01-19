@@ -41,6 +41,7 @@ use std::{
     iter::{self, FromIterator},
     mem,
     ops::{Deref, Range, RangeInclusive, Sub},
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -48,10 +49,11 @@ use sum_tree::Bias;
 use text::rope::TextDimension;
 use theme::{DiagnosticStyle, EditorStyle};
 use util::post_inc;
-use workspace::{PathOpener, Workspace};
+use workspace::{Navigation, PathOpener, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
+const MIN_NAVIGATION_HISTORY_ROW_DELTA: i64 = 10;
 
 action!(Cancel);
 action!(Backspace);
@@ -377,6 +379,7 @@ pub struct Editor {
     mode: EditorMode,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
+    navigation: Option<Rc<Navigation>>,
 }
 
 pub struct EditorSnapshot {
@@ -424,6 +427,11 @@ struct ClipboardSelection {
     is_entire_line: bool,
 }
 
+pub struct NavigationData {
+    anchor: Anchor,
+    offset: usize,
+}
+
 impl Editor {
     pub fn single_line(build_settings: BuildSettings, cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
@@ -457,6 +465,7 @@ impl Editor {
         let mut clone = Self::new(self.buffer.clone(), self.build_settings.clone(), cx);
         clone.scroll_position = self.scroll_position;
         clone.scroll_top_anchor = self.scroll_top_anchor.clone();
+        clone.navigation = self.navigation.clone();
         clone
     }
 
@@ -506,6 +515,7 @@ impl Editor {
             mode: EditorMode::Full,
             placeholder_text: None,
             highlighted_rows: None,
+            navigation: None,
         };
         let selection = Selection {
             id: post_inc(&mut this.next_selection_id),
@@ -628,7 +638,10 @@ impl Editor {
 
         let first_cursor_top;
         let last_cursor_bottom;
-        if autoscroll == Autoscroll::Newest {
+        if let Some(highlighted_rows) = &self.highlighted_rows {
+            first_cursor_top = highlighted_rows.start as f32;
+            last_cursor_bottom = first_cursor_top + 1.;
+        } else if autoscroll == Autoscroll::Newest {
             let newest_selection = self.newest_selection::<Point>(&display_map.buffer_snapshot);
             first_cursor_top = newest_selection.head().to_display_point(&display_map).row() as f32;
             last_cursor_bottom = first_cursor_top + 1.;
@@ -694,22 +707,33 @@ impl Editor {
     ) -> bool {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.local_selections::<Point>(cx);
-        let mut target_left = std::f32::INFINITY;
-        let mut target_right = 0.0_f32;
-        for selection in selections {
-            let head = selection.head().to_display_point(&display_map);
-            if head.row() >= start_row && head.row() < start_row + layouts.len() as u32 {
-                let start_column = head.column().saturating_sub(3);
-                let end_column = cmp::min(display_map.line_len(head.row()), head.column() + 3);
-                target_left = target_left.min(
-                    layouts[(head.row() - start_row) as usize].x_for_index(start_column as usize),
-                );
-                target_right = target_right.max(
-                    layouts[(head.row() - start_row) as usize].x_for_index(end_column as usize)
-                        + max_glyph_width,
-                );
+
+        let mut target_left;
+        let mut target_right;
+
+        if self.highlighted_rows.is_some() {
+            target_left = 0.0_f32;
+            target_right = 0.0_f32;
+        } else {
+            target_left = std::f32::INFINITY;
+            target_right = 0.0_f32;
+            for selection in selections {
+                let head = selection.head().to_display_point(&display_map);
+                if head.row() >= start_row && head.row() < start_row + layouts.len() as u32 {
+                    let start_column = head.column().saturating_sub(3);
+                    let end_column = cmp::min(display_map.line_len(head.row()), head.column() + 3);
+                    target_left = target_left.min(
+                        layouts[(head.row() - start_row) as usize]
+                            .x_for_index(start_column as usize),
+                    );
+                    target_right = target_right.max(
+                        layouts[(head.row() - start_row) as usize].x_for_index(end_column as usize)
+                            + max_glyph_width,
+                    );
+                }
             }
         }
+
         target_right = target_right.min(scroll_width);
 
         if target_right - target_left > viewport_width {
@@ -800,6 +824,8 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
+        let newest_selection = self.newest_selection_internal().unwrap().clone();
+
         let start;
         let end;
         let mode;
@@ -834,6 +860,8 @@ impl Editor {
             }
         }
 
+        self.push_to_navigation_history(newest_selection.head(), Some(end.to_point(&buffer)), cx);
+
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
             start,
@@ -846,7 +874,6 @@ impl Editor {
             self.update_selections::<usize>(Vec::new(), None, cx);
         } else if click_count > 1 {
             // Remove the newest selection since it was only added as part of this multi-click.
-            let newest_selection = self.newest_selection::<usize>(buffer);
             let mut selections = self.local_selections(cx);
             selections.retain(|selection| selection.id != newest_selection.id);
             self.update_selections::<usize>(selections, None, cx)
@@ -1129,8 +1156,8 @@ impl Editor {
         self.update_selections(selections, autoscroll, cx);
     }
 
-    #[cfg(test)]
-    fn select_display_ranges<'a, T>(&mut self, ranges: T, cx: &mut ViewContext<Self>)
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn select_display_ranges<'a, T>(&mut self, ranges: T, cx: &mut ViewContext<Self>)
     where
         T: IntoIterator<Item = &'a Range<DisplayPoint>>,
     {
@@ -2428,6 +2455,35 @@ impl Editor {
         self.update_selections(vec![selection], Some(Autoscroll::Fit), cx);
     }
 
+    fn push_to_navigation_history(
+        &self,
+        position: Anchor,
+        new_position: Option<Point>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(navigation) = &self.navigation {
+            let buffer = self.buffer.read(cx).read(cx);
+            let offset = position.to_offset(&buffer);
+            let point = position.to_point(&buffer);
+            drop(buffer);
+
+            if let Some(new_position) = new_position {
+                let row_delta = (new_position.row as i64 - point.row as i64).abs();
+                if row_delta < MIN_NAVIGATION_HISTORY_ROW_DELTA {
+                    return;
+                }
+            }
+
+            navigation.push(
+                Some(NavigationData {
+                    anchor: position,
+                    offset,
+                }),
+                cx,
+            );
+        }
+    }
+
     pub fn select_to_end(&mut self, _: &SelectToEnd, cx: &mut ViewContext<Self>) {
         let mut selection = self.local_selections::<usize>(cx).first().unwrap().clone();
         selection.set_head(self.buffer.read(cx).read(cx).len());
@@ -3205,14 +3261,14 @@ impl Editor {
         &self,
         snapshot: &MultiBufferSnapshot,
     ) -> Selection<D> {
-        self.pending_selection(snapshot)
-            .or_else(|| {
-                self.selections
-                    .iter()
-                    .max_by_key(|s| s.id)
-                    .map(|selection| self.resolve_selection(selection, snapshot))
-            })
-            .unwrap()
+        self.resolve_selection(self.newest_selection_internal().unwrap(), snapshot)
+    }
+
+    pub fn newest_selection_internal(&self) -> Option<&Selection<Anchor>> {
+        self.pending_selection
+            .as_ref()
+            .map(|s| &s.selection)
+            .or_else(|| self.selections.iter().max_by_key(|s| s.id))
     }
 
     pub fn update_selections<T>(
@@ -3223,10 +3279,11 @@ impl Editor {
     ) where
         T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
     {
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let old_cursor_position = self.newest_selection_internal().map(|s| s.head());
         selections.sort_unstable_by_key(|s| s.start);
 
         // Merge overlapping selections.
-        let buffer = self.buffer.read(cx).snapshot(cx);
         let mut i = 1;
         while i < selections.len() {
             if selections[i - 1].end >= selections[i].start {
@@ -3264,6 +3321,16 @@ impl Editor {
                 break;
             } else {
                 self.autoclose_stack.pop();
+            }
+        }
+
+        if let Some(old_cursor_position) = old_cursor_position {
+            let new_cursor_position = selections
+                .iter()
+                .max_by_key(|s| s.id)
+                .map(|s| s.head().to_point(&buffer));
+            if new_cursor_position.is_some() {
+                self.push_to_navigation_history(old_cursor_position, new_cursor_position, cx);
             }
         }
 
@@ -3347,7 +3414,7 @@ impl Editor {
         });
     }
 
-    fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
+    pub fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
         self.autoscroll_request = Some(autoscroll);
         cx.notify();
     }
@@ -4100,6 +4167,63 @@ mod tests {
                 view.selected_display_ranges(cx),
                 [DisplayPoint::new(2, 2)..DisplayPoint::new(3, 3)]
             );
+        });
+    }
+
+    #[gpui::test]
+    fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
+        cx.add_window(Default::default(), |cx| {
+            use workspace::ItemView;
+            let navigation = Rc::new(workspace::Navigation::default());
+            let settings = EditorSettings::test(&cx);
+            let buffer = MultiBuffer::build_simple(&sample_text(30, 5, 'a'), cx);
+            let mut editor = build_editor(buffer.clone(), settings, cx);
+            editor.navigation = Some(navigation.clone());
+
+            // Move the cursor a small distance.
+            // Nothing is added to the navigation history.
+            editor.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
+            editor.select_display_ranges(&[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)], cx);
+            assert!(navigation.pop_backward().is_none());
+
+            // Move the cursor a large distance.
+            // The history can jump back to the previous position.
+            editor.select_display_ranges(&[DisplayPoint::new(13, 0)..DisplayPoint::new(13, 3)], cx);
+            let nav_entry = navigation.pop_backward().unwrap();
+            editor.navigate(nav_entry.data.unwrap(), cx);
+            assert_eq!(nav_entry.item_view.id(), cx.view_id());
+            assert_eq!(
+                editor.selected_display_ranges(cx),
+                &[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)]
+            );
+
+            // Move the cursor a small distance via the mouse.
+            // Nothing is added to the navigation history.
+            editor.begin_selection(DisplayPoint::new(5, 0), false, 1, cx);
+            editor.end_selection(cx);
+            assert_eq!(
+                editor.selected_display_ranges(cx),
+                &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
+            );
+            assert!(navigation.pop_backward().is_none());
+
+            // Move the cursor a large distance via the mouse.
+            // The history can jump back to the previous position.
+            editor.begin_selection(DisplayPoint::new(15, 0), false, 1, cx);
+            editor.end_selection(cx);
+            assert_eq!(
+                editor.selected_display_ranges(cx),
+                &[DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)]
+            );
+            let nav_entry = navigation.pop_backward().unwrap();
+            editor.navigate(nav_entry.data.unwrap(), cx);
+            assert_eq!(nav_entry.item_view.id(), cx.view_id());
+            assert_eq!(
+                editor.selected_display_ranges(cx),
+                &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
+            );
+
+            editor
         });
     }
 

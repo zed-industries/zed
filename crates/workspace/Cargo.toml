@@ -1,7 +1,7 @@
 [package]
 name = "workspace"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 
 [lib]
 path = "src/workspace.rs"
@@ -17,6 +17,7 @@ gpui = { path = "../gpui" }
 language = { path = "../language" }
 project = { path = "../project" }
 theme = { path = "../theme" }
+util = { path = "../util" }
 anyhow = "1.0.38"
 log = "0.4"
 parking_lot = "0.11.1"

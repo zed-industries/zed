@@ -1,20 +1,20 @@
-use crate::{Autoscroll, Editor, Event};
-use crate::{MultiBuffer, ToPoint as _};
+use crate::{Autoscroll, Editor, Event, MultiBuffer, NavigationData, ToOffset, ToPoint as _};
 use anyhow::Result;
 use gpui::{
     elements::*, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, RenderContext,
     Subscription, Task, View, ViewContext, ViewHandle, WeakModelHandle,
 };
-use language::{Buffer, Diagnostic, File as _};
+use language::{Bias, Buffer, Diagnostic, File as _};
 use postage::watch;
 use project::{File, ProjectPath, Worktree};
 use std::fmt::Write;
 use std::path::Path;
+use std::rc::Rc;
 use text::{Point, Selection};
 use util::TryFutureExt;
 use workspace::{
-    ItemHandle, ItemView, ItemViewHandle, PathOpener, Settings, StatusItemView, WeakItemHandle,
-    Workspace,
+    ItemHandle, ItemView, ItemViewHandle, Navigation, PathOpener, Settings, StatusItemView,
+    WeakItemHandle, Workspace,
 };
 
 pub struct BufferOpener;
@@ -46,16 +46,19 @@ impl ItemHandle for BufferItemHandle {
         &self,
         window_id: usize,
         workspace: &Workspace,
+        navigation: Rc<Navigation>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(self.0.clone(), cx));
         let weak_buffer = buffer.downgrade();
         Box::new(cx.add_view(window_id, |cx| {
-            Editor::for_buffer(
+            let mut editor = Editor::for_buffer(
                 buffer,
                 crate::settings_builder(weak_buffer, workspace.settings()),
                 cx,
-            )
+            );
+            editor.navigation = Some(navigation);
+            editor
         }))
     }
 
@@ -102,6 +105,22 @@ impl ItemView for Editor {
         BufferItemHandle(self.buffer.read(cx).as_singleton().unwrap())
     }
 
+    fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) {
+        if let Some(data) = data.downcast_ref::<NavigationData>() {
+            let buffer = self.buffer.read(cx).read(cx);
+            let offset = if buffer.can_resolve(&data.anchor) {
+                data.anchor.to_offset(&buffer)
+            } else {
+                buffer.clip_offset(data.offset, Bias::Left)
+            };
+
+            drop(buffer);
+            let navigation = self.navigation.take();
+            self.select_ranges([offset..offset], Some(Autoscroll::Fit), cx);
+            self.navigation = navigation;
+        }
+    }
+
     fn title(&self, cx: &AppContext) -> String {
         let filename = self
             .buffer()
@@ -127,6 +146,12 @@ impl ItemView for Editor {
         Self: Sized,
     {
         Some(self.clone(cx))
+    }
+
+    fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(selection) = self.newest_selection_internal() {
+            self.push_to_navigation_history(selection.head(), None, cx);
+        }
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
