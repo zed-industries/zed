@@ -1002,6 +1002,7 @@ pub struct LocalWorktree {
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     fs: Arc<dyn Fs>,
+    languages: Vec<Arc<Language>>,
     language_servers: HashMap<String, Arc<LanguageServer>>,
 }
 
@@ -1109,6 +1110,7 @@ impl LocalWorktree {
                 client,
                 user_store,
                 fs,
+                languages: Default::default(),
                 language_servers: Default::default(),
             };
 
@@ -1153,11 +1155,19 @@ impl LocalWorktree {
         &self.language_registry
     }
 
+    pub fn languages(&self) -> &[Arc<Language>] {
+        &self.languages
+    }
+
     pub fn register_language(
         &mut self,
         language: &Arc<Language>,
         cx: &mut ModelContext<Worktree>,
     ) -> Option<Arc<LanguageServer>> {
+        if !self.languages.iter().any(|l| Arc::ptr_eq(l, language)) {
+            self.languages.push(language.clone());
+        }
+
         if let Some(server) = self.language_servers.get(language.name()) {
             return Some(server.clone());
         }
@@ -1498,26 +1508,48 @@ impl LocalWorktree {
 
     pub fn save_buffer_as(
         &self,
-        buffer: ModelHandle<Buffer>,
+        buffer_handle: ModelHandle<Buffer>,
         path: impl Into<Arc<Path>>,
-        text: Rope,
         cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<File>> {
+    ) -> Task<Result<()>> {
+        let buffer = buffer_handle.read(cx);
+        let text = buffer.as_rope().clone();
+        let version = buffer.version();
         let save = self.save(path, text, cx);
         cx.spawn(|this, mut cx| async move {
             let entry = save.await?;
-            this.update(&mut cx, |this, cx| {
+            let file = this.update(&mut cx, |this, cx| {
                 let this = this.as_local_mut().unwrap();
-                this.open_buffers.insert(buffer.id(), buffer.downgrade());
-                Ok(File {
+                this.open_buffers
+                    .insert(buffer_handle.id(), buffer_handle.downgrade());
+                File {
                     entry_id: Some(entry.id),
                     worktree: cx.handle(),
                     worktree_path: this.abs_path.clone(),
                     path: entry.path,
                     mtime: entry.mtime,
                     is_local: true,
-                })
-            })
+                }
+            });
+
+            let (language, language_server) = this.update(&mut cx, |worktree, cx| {
+                let worktree = worktree.as_local_mut().unwrap();
+                let language = worktree
+                    .language_registry()
+                    .select_language(file.full_path())
+                    .cloned();
+                let language_server = language
+                    .as_ref()
+                    .and_then(|language| worktree.register_language(language, cx));
+                (language, language_server.clone())
+            });
+
+            buffer_handle.update(&mut cx, |buffer, cx| {
+                buffer.did_save(version, file.mtime, Some(Box::new(file)), cx);
+                buffer.set_language(language, language_server, cx);
+            });
+
+            Ok(())
         })
     }
 

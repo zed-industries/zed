@@ -15,7 +15,7 @@ use language::{Buffer, DiagnosticEntry, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use postage::{prelude::Stream, watch};
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
 };
 use util::TryFutureExt as _;
@@ -468,6 +468,49 @@ impl Project {
         }
     }
 
+    pub fn save_buffer_as(
+        &self,
+        buffer: ModelHandle<Buffer>,
+        abs_path: &Path,
+        cx: &mut ModelContext<Project>,
+    ) -> Task<Result<()>> {
+        let result = self.worktree_for_abs_path(abs_path, cx);
+        cx.spawn(|_, mut cx| async move {
+            let (worktree, path) = result.await?;
+            worktree
+                .update(&mut cx, |worktree, cx| {
+                    worktree
+                        .as_local()
+                        .unwrap()
+                        .save_buffer_as(buffer.clone(), path, cx)
+                })
+                .await?;
+            Ok(())
+        })
+    }
+
+    pub fn worktree_for_abs_path(
+        &self,
+        abs_path: &Path,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<(ModelHandle<Worktree>, PathBuf)>> {
+        for tree in &self.worktrees {
+            if let Some(relative_path) = tree
+                .read(cx)
+                .as_local()
+                .and_then(|t| abs_path.strip_prefix(t.abs_path()).ok())
+            {
+                return Task::ready(Ok((tree.clone(), relative_path.into())));
+            }
+        }
+
+        let worktree = self.add_local_worktree(abs_path, cx);
+        cx.background().spawn(async move {
+            let worktree = worktree.await?;
+            Ok((worktree, PathBuf::new()))
+        })
+    }
+
     pub fn is_shared(&self) -> bool {
         match &self.client_state {
             ProjectClientState::Local { is_shared, .. } => *is_shared,
@@ -476,7 +519,7 @@ impl Project {
     }
 
     pub fn add_local_worktree(
-        &mut self,
+        &self,
         abs_path: impl AsRef<Path>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Worktree>>> {

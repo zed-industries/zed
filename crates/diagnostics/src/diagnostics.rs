@@ -15,7 +15,7 @@ use gpui::{
 use language::{Bias, Buffer, Diagnostic, DiagnosticEntry, Point, Selection, SelectionGoal};
 use postage::watch;
 use project::{Project, ProjectPath, WorktreeId};
-use std::{cmp::Ordering, mem, ops::Range, rc::Rc, sync::Arc};
+use std::{cmp::Ordering, mem, ops::Range, path::PathBuf, rc::Rc, sync::Arc};
 use util::TryFutureExt;
 use workspace::{NavHistory, Workspace};
 
@@ -570,8 +570,8 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
 
     fn save_as(
         &mut self,
-        _: ModelHandle<project::Worktree>,
-        _: &std::path::Path,
+        _: ModelHandle<Project>,
+        _: PathBuf,
         _: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         unreachable!()

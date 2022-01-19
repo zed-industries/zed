@@ -4,12 +4,12 @@ use gpui::{
     elements::*, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, RenderContext,
     Subscription, Task, View, ViewContext, ViewHandle, WeakModelHandle,
 };
-use language::{Bias, Buffer, Diagnostic, File as _};
+use language::{Bias, Buffer, Diagnostic};
 use postage::watch;
-use project::{File, ProjectEntry, ProjectPath, Worktree};
-use std::fmt::Write;
-use std::path::Path;
+use project::worktree::File;
+use project::{Project, ProjectEntry, ProjectPath, Worktree};
 use std::rc::Rc;
+use std::{fmt::Write, path::PathBuf};
 use text::{Point, Selection};
 use util::TryFutureExt;
 use workspace::{
@@ -182,8 +182,8 @@ impl ItemView for Editor {
 
     fn save_as(
         &mut self,
-        worktree: ModelHandle<Worktree>,
-        path: &Path,
+        project: ModelHandle<Project>,
+        abs_path: PathBuf,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let buffer = self
@@ -193,38 +193,8 @@ impl ItemView for Editor {
             .expect("cannot call save_as on an excerpt list")
             .clone();
 
-        buffer.update(cx, |buffer, cx| {
-            let handle = cx.handle();
-            let text = buffer.as_rope().clone();
-            let version = buffer.version();
-
-            let save_as = worktree.update(cx, |worktree, cx| {
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .save_buffer_as(handle, path, text, cx)
-            });
-
-            cx.spawn(|buffer, mut cx| async move {
-                save_as.await.map(|new_file| {
-                    let (language, language_server) = worktree.update(&mut cx, |worktree, cx| {
-                        let worktree = worktree.as_local_mut().unwrap();
-                        let language = worktree
-                            .language_registry()
-                            .select_language(new_file.full_path())
-                            .cloned();
-                        let language_server = language
-                            .as_ref()
-                            .and_then(|language| worktree.register_language(language, cx));
-                        (language, language_server.clone())
-                    });
-
-                    buffer.update(&mut cx, |buffer, cx| {
-                        buffer.did_save(version, new_file.mtime, Some(Box::new(new_file)), cx);
-                        buffer.set_language(language, language_server, cx);
-                    });
-                })
-            })
+        project.update(cx, |project, cx| {
+            project.save_buffer_as(buffer, &abs_path, cx)
         })
     }
 

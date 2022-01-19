@@ -168,8 +168,8 @@ pub trait ItemView: View {
     fn can_save_as(&self, cx: &AppContext) -> bool;
     fn save_as(
         &mut self,
-        worktree: ModelHandle<Worktree>,
-        path: &Path,
+        project: ModelHandle<Project>,
+        abs_path: PathBuf,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<()>>;
     fn should_activate_item_on_event(_: &Self::Event) -> bool {
@@ -221,8 +221,8 @@ pub trait ItemViewHandle {
     fn save(&self, cx: &mut MutableAppContext) -> Result<Task<Result<()>>>;
     fn save_as(
         &self,
-        worktree: ModelHandle<Worktree>,
-        path: &Path,
+        project: ModelHandle<Project>,
+        abs_path: PathBuf,
         cx: &mut MutableAppContext,
     ) -> Task<anyhow::Result<()>>;
 }
@@ -379,11 +379,11 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
 
     fn save_as(
         &self,
-        worktree: ModelHandle<Worktree>,
-        path: &Path,
+        project: ModelHandle<Project>,
+        abs_path: PathBuf,
         cx: &mut MutableAppContext,
     ) -> Task<anyhow::Result<()>> {
-        self.update(cx, |item, cx| item.save_as(worktree, path, cx))
+        self.update(cx, |item, cx| item.save_as(project, abs_path, cx))
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
@@ -674,44 +674,14 @@ impl Workspace {
         })
     }
 
-    fn worktree_for_abs_path(
-        &self,
-        abs_path: &Path,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<(ModelHandle<Worktree>, PathBuf)>> {
-        let abs_path: Arc<Path> = Arc::from(abs_path);
-        cx.spawn(|this, mut cx| async move {
-            let mut entry_id = None;
-            this.read_with(&cx, |this, cx| {
-                for tree in this.worktrees(cx) {
-                    if let Some(relative_path) = tree
-                        .read(cx)
-                        .as_local()
-                        .and_then(|t| abs_path.strip_prefix(t.abs_path()).ok())
-                    {
-                        entry_id = Some((tree.clone(), relative_path.into()));
-                        break;
-                    }
-                }
-            });
-
-            if let Some(entry_id) = entry_id {
-                Ok(entry_id)
-            } else {
-                let worktree = this
-                    .update(&mut cx, |this, cx| this.add_worktree(&abs_path, cx))
-                    .await?;
-                Ok((worktree, PathBuf::new()))
-            }
-        })
-    }
-
     fn project_path_for_path(
         &self,
         abs_path: &Path,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<ProjectPath>> {
-        let entry = self.worktree_for_abs_path(abs_path, cx);
+        let entry = self.project().update(cx, |project, cx| {
+            project.worktree_for_abs_path(abs_path, cx)
+        });
         cx.spawn(|_, cx| async move {
             let (worktree, path) = entry.await?;
             Ok(ProjectPath {
@@ -880,28 +850,8 @@ impl Workspace {
                     .to_path_buf();
                 cx.prompt_for_new_path(&start_abs_path, move |abs_path, cx| {
                     if let Some(abs_path) = abs_path {
-                        cx.spawn(|mut cx| async move {
-                            let result = match handle
-                                .update(&mut cx, |this, cx| {
-                                    this.worktree_for_abs_path(&abs_path, cx)
-                                })
-                                .await
-                            {
-                                Ok((worktree, path)) => {
-                                    handle
-                                        .update(&mut cx, |_, cx| {
-                                            item.save_as(worktree, &path, cx.as_mut())
-                                        })
-                                        .await
-                                }
-                                Err(error) => Err(error),
-                            };
-
-                            if let Err(error) = result {
-                                error!("failed to save item: {:?}, ", error);
-                            }
-                        })
-                        .detach()
+                        let project = handle.read(cx).project().clone();
+                        cx.update(|cx| item.save_as(project, abs_path, cx).detach_and_log_err(cx));
                     }
                 });
             }
