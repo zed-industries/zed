@@ -528,7 +528,7 @@ impl workspace::Item for ProjectDiagnostics {
         ProjectDiagnosticsEditor::new(handle, workspace.weak_handle(), workspace.settings(), cx)
     }
 
-    fn project_path(&self) -> Option<project::ProjectPath> {
+    fn project_entry(&self) -> Option<project::ProjectEntry> {
         None
     }
 }
@@ -544,7 +544,7 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         "Project Diagnostics".to_string()
     }
 
-    fn project_path(&self, _: &AppContext) -> Option<project::ProjectPath> {
+    fn project_entry(&self, _: &AppContext) -> Option<project::ProjectEntry> {
         None
     }
 

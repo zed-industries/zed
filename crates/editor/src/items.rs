@@ -6,7 +6,7 @@ use gpui::{
 };
 use language::{Bias, Buffer, Diagnostic, File as _};
 use postage::watch;
-use project::{File, ProjectPath, Worktree};
+use project::{File, ProjectEntry, ProjectPath, Worktree};
 use std::fmt::Write;
 use std::path::Path;
 use std::rc::Rc;
@@ -74,11 +74,8 @@ impl ItemHandle for BufferItemHandle {
         Box::new(WeakBufferItemHandle(self.0.downgrade()))
     }
 
-    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
-        File::from_dyn(self.0.read(cx).file()).map(|f| ProjectPath {
-            worktree_id: f.worktree_id(cx),
-            path: f.path().clone(),
-        })
+    fn project_entry(&self, cx: &AppContext) -> Option<ProjectEntry> {
+        File::from_dyn(self.0.read(cx).file()).and_then(|f| f.project_entry(cx))
     }
 
     fn id(&self) -> usize {
@@ -134,11 +131,8 @@ impl ItemView for Editor {
         }
     }
 
-    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
-        File::from_dyn(self.buffer().read(cx).file(cx)).map(|file| ProjectPath {
-            worktree_id: file.worktree_id(cx),
-            path: file.path().clone(),
-        })
+    fn project_entry(&self, cx: &AppContext) -> Option<ProjectEntry> {
+        File::from_dyn(self.buffer().read(cx).file(cx)).and_then(|file| file.project_entry(cx))
     }
 
     fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
@@ -163,7 +157,7 @@ impl ItemView for Editor {
     }
 
     fn can_save(&self, cx: &AppContext) -> bool {
-        self.project_path(cx).is_some()
+        self.project_entry(cx).is_some()
     }
 
     fn save(&mut self, cx: &mut ViewContext<Self>) -> Result<Task<Result<()>>> {
