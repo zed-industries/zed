@@ -194,7 +194,7 @@ impl ItemView for Editor {
             .clone();
 
         project.update(cx, |project, cx| {
-            project.save_buffer_as(buffer, &abs_path, cx)
+            project.save_buffer_as(buffer, abs_path, cx)
         })
     }
 

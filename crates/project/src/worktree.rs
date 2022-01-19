@@ -1156,157 +1156,10 @@ impl LocalWorktree {
     pub fn register_language(
         &mut self,
         language: &Arc<Language>,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Option<Arc<LanguageServer>> {
-        if let Some(server) = self.language_servers.get(language.name()) {
-            return Some(server.clone());
-        }
-
-        if let Some(language_server) = language
-            .start_server(self.abs_path(), cx)
-            .log_err()
-            .flatten()
-        {
-            enum DiagnosticProgress {
-                Updating,
-                Updated,
-            }
-
-            let disk_based_sources = language
-                .disk_based_diagnostic_sources()
-                .cloned()
-                .unwrap_or_default();
-            let disk_based_diagnostics_progress_token =
-                language.disk_based_diagnostics_progress_token().cloned();
-            let (diagnostics_tx, diagnostics_rx) = smol::channel::unbounded();
-            let (disk_based_diagnostics_done_tx, disk_based_diagnostics_done_rx) =
-                smol::channel::unbounded();
-            language_server
-                .on_notification::<lsp::notification::PublishDiagnostics, _>(move |params| {
-                    smol::block_on(diagnostics_tx.send(params)).ok();
-                })
-                .detach();
-            cx.spawn_weak(|this, mut cx| {
-                let has_disk_based_diagnostic_progress_token =
-                    disk_based_diagnostics_progress_token.is_some();
-                let disk_based_diagnostics_done_tx = disk_based_diagnostics_done_tx.clone();
-                async move {
-                    while let Ok(diagnostics) = diagnostics_rx.recv().await {
-                        if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
-                            handle.update(&mut cx, |this, cx| {
-                                if !has_disk_based_diagnostic_progress_token {
-                                    smol::block_on(
-                                        disk_based_diagnostics_done_tx
-                                            .send(DiagnosticProgress::Updating),
-                                    )
-                                    .ok();
-                                }
-                                this.update_diagnostics(diagnostics, &disk_based_sources, cx)
-                                    .log_err();
-                                if !has_disk_based_diagnostic_progress_token {
-                                    smol::block_on(
-                                        disk_based_diagnostics_done_tx
-                                            .send(DiagnosticProgress::Updated),
-                                    )
-                                    .ok();
-                                }
-                            })
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            })
-            .detach();
-
-            let mut pending_disk_based_diagnostics: i32 = 0;
-            language_server
-                .on_notification::<lsp::notification::Progress, _>(move |params| {
-                    let token = match params.token {
-                        lsp::NumberOrString::Number(_) => None,
-                        lsp::NumberOrString::String(token) => Some(token),
-                    };
-
-                    if token == disk_based_diagnostics_progress_token {
-                        match params.value {
-                            lsp::ProgressParamsValue::WorkDone(progress) => match progress {
-                                lsp::WorkDoneProgress::Begin(_) => {
-                                    if pending_disk_based_diagnostics == 0 {
-                                        smol::block_on(
-                                            disk_based_diagnostics_done_tx
-                                                .send(DiagnosticProgress::Updating),
-                                        )
-                                        .ok();
-                                    }
-                                    pending_disk_based_diagnostics += 1;
-                                }
-                                lsp::WorkDoneProgress::End(_) => {
-                                    pending_disk_based_diagnostics -= 1;
-                                    if pending_disk_based_diagnostics == 0 {
-                                        smol::block_on(
-                                            disk_based_diagnostics_done_tx
-                                                .send(DiagnosticProgress::Updated),
-                                        )
-                                        .ok();
-                                    }
-                                }
-                                _ => {}
-                            },
-                        }
-                    }
-                })
-                .detach();
-            let rpc = self.client.clone();
-            cx.spawn_weak(|this, mut cx| async move {
-                while let Ok(progress) = disk_based_diagnostics_done_rx.recv().await {
-                    if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
-                        match progress {
-                            DiagnosticProgress::Updating => {
-                                let message = handle.update(&mut cx, |this, cx| {
-                                    cx.emit(Event::DiskBasedDiagnosticsUpdating);
-                                    let this = this.as_local().unwrap();
-                                    this.share.as_ref().map(|share| {
-                                        proto::DiskBasedDiagnosticsUpdating {
-                                            project_id: share.project_id,
-                                            worktree_id: this.id().to_proto(),
-                                        }
-                                    })
-                                });
-
-                                if let Some(message) = message {
-                                    rpc.send(message).await.log_err();
-                                }
-                            }
-                            DiagnosticProgress::Updated => {
-                                let message = handle.update(&mut cx, |this, cx| {
-                                    cx.emit(Event::DiskBasedDiagnosticsUpdated);
-                                    let this = this.as_local().unwrap();
-                                    this.share.as_ref().map(|share| {
-                                        proto::DiskBasedDiagnosticsUpdated {
-                                            project_id: share.project_id,
-                                            worktree_id: this.id().to_proto(),
-                                        }
-                                    })
-                                });
-
-                                if let Some(message) = message {
-                                    rpc.send(message).await.log_err();
-                                }
-                            }
-                        }
-                    } else {
-                        break;
-                    }
-                }
-            })
-            .detach();
-
-            self.language_servers
-                .insert(language.name().to_string(), language_server.clone());
-            Some(language_server.clone())
-        } else {
-            None
-        }
+        language_server: &Arc<LanguageServer>,
+    ) {
+        self.language_servers
+            .insert(language.name().to_string(), language_server.clone());
     }
 
     fn get_open_buffer(
@@ -1342,7 +1195,7 @@ impl LocalWorktree {
                 .update(&mut cx, |t, cx| t.as_local().unwrap().load(&path, cx))
                 .await?;
 
-            let (diagnostics, language, language_server) = this.update(&mut cx, |this, cx| {
+            let (diagnostics, language, language_server) = this.update(&mut cx, |this, _| {
                 let this = this.as_local_mut().unwrap();
                 let diagnostics = this.diagnostics.get(&path).cloned();
                 let language = this
@@ -1351,7 +1204,7 @@ impl LocalWorktree {
                     .cloned();
                 let server = language
                     .as_ref()
-                    .and_then(|language| this.register_language(language, cx));
+                    .and_then(|language| this.language_servers.get(language.name()).cloned());
                 (diagnostics, language, server)
             });
 
@@ -1522,7 +1375,7 @@ impl LocalWorktree {
                 }
             });
 
-            let (language, language_server) = this.update(&mut cx, |worktree, cx| {
+            let (language, language_server) = this.update(&mut cx, |worktree, _| {
                 let worktree = worktree.as_local_mut().unwrap();
                 let language = worktree
                     .language_registry()
@@ -1530,7 +1383,7 @@ impl LocalWorktree {
                     .cloned();
                 let language_server = language
                     .as_ref()
-                    .and_then(|language| worktree.register_language(language, cx));
+                    .and_then(|language| worktree.language_servers.get(language.name()).cloned());
                 (language, language_server.clone())
             });
 
@@ -3277,7 +3130,7 @@ mod tests {
     use client::test::{FakeHttpClient, FakeServer};
     use fs::RealFs;
     use gpui::test::subscribe;
-    use language::{tree_sitter_rust, DiagnosticEntry, LanguageServerConfig};
+    use language::{tree_sitter_rust, DiagnosticEntry, Language, LanguageServerConfig};
     use language::{Diagnostic, LanguageConfig};
     use lsp::Url;
     use rand::prelude::*;

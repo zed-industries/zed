@@ -11,14 +11,14 @@ use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
 };
-use language::{Buffer, DiagnosticEntry, LanguageRegistry};
-use lsp::DiagnosticSeverity;
+use language::{Buffer, DiagnosticEntry, Language, LanguageRegistry};
+use lsp::{DiagnosticSeverity, LanguageServer};
 use postage::{prelude::Stream, watch};
 use std::{
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
 };
-use util::TryFutureExt as _;
+use util::{ResultExt, TryFutureExt as _};
 
 pub use fs::*;
 pub use worktree::*;
@@ -27,6 +27,7 @@ pub struct Project {
     worktrees: Vec<ModelHandle<Worktree>>,
     active_entry: Option<ProjectEntry>,
     languages: Arc<LanguageRegistry>,
+    language_servers: HashMap<(Arc<Path>, String), Arc<LanguageServer>>,
     client: Arc<client::Client>,
     user_store: ModelHandle<UserStore>,
     fs: Arc<dyn Fs>,
@@ -62,7 +63,6 @@ pub enum Event {
     ActiveEntryChanged(Option<ProjectEntry>),
     WorktreeRemoved(WorktreeId),
     DiskBasedDiagnosticsStarted,
-    DiskBasedDiagnosticsUpdated { worktree_id: WorktreeId },
     DiskBasedDiagnosticsFinished,
     DiagnosticsUpdated(ProjectPath),
 }
@@ -191,6 +191,7 @@ impl Project {
                 user_store,
                 fs,
                 pending_disk_based_diagnostics: 0,
+                language_servers: Default::default(),
             }
         })
     }
@@ -283,6 +284,7 @@ impl Project {
                     replica_id,
                 },
                 pending_disk_based_diagnostics: 0,
+                language_servers: Default::default(),
             };
             for worktree in worktrees {
                 this.add_worktree(worktree, cx);
@@ -457,12 +459,40 @@ impl Project {
     }
 
     pub fn open_buffer(
-        &self,
+        &mut self,
         path: ProjectPath,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
         if let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) {
-            worktree.update(cx, |worktree, cx| worktree.open_buffer(path.path, cx))
+            let language_server = worktree
+                .read(cx)
+                .as_local()
+                .map(|w| w.abs_path().clone())
+                .and_then(|worktree_abs_path| {
+                    let abs_path = worktree.abs_path().join(&path.path);
+                    let language = self.languages.select_language(&abs_path).cloned();
+                    if let Some(language) = language {
+                        if let Some(language_server) =
+                            self.register_language_server(worktree.abs_path(), &language, cx)
+                        {
+                            worktree.register_language(&language, &language_server);
+                        }
+                    }
+                });
+            worktree.update(cx, |worktree, cx| {
+                if let Some(worktree) = worktree.as_local_mut() {
+                    let abs_path = worktree.abs_path().join(&path.path);
+                    let language = self.languages.select_language(&abs_path).cloned();
+                    if let Some(language) = language {
+                        if let Some(language_server) =
+                            self.register_language_server(worktree.abs_path(), &language, cx)
+                        {
+                            worktree.register_language(&language, &language_server);
+                        }
+                    }
+                }
+                worktree.open_buffer(path.path, cx)
+            })
         } else {
             cx.spawn(|_, _| async move { Err(anyhow!("no such worktree")) })
         }
@@ -471,22 +501,192 @@ impl Project {
     pub fn save_buffer_as(
         &self,
         buffer: ModelHandle<Buffer>,
-        abs_path: &Path,
+        abs_path: PathBuf,
         cx: &mut ModelContext<Project>,
     ) -> Task<Result<()>> {
-        let result = self.worktree_for_abs_path(abs_path, cx);
-        cx.spawn(|_, mut cx| async move {
+        let result = self.worktree_for_abs_path(&abs_path, cx);
+        let languages = self.languages.clone();
+        cx.spawn(|this, mut cx| async move {
             let (worktree, path) = result.await?;
             worktree
                 .update(&mut cx, |worktree, cx| {
-                    worktree
-                        .as_local()
-                        .unwrap()
-                        .save_buffer_as(buffer.clone(), path, cx)
+                    let worktree = worktree.as_local_mut().unwrap();
+                    let language = languages.select_language(&abs_path);
+                    if let Some(language) = language {
+                        if let Some(language_server) = this.update(cx, |this, cx| {
+                            this.register_language_server(worktree.abs_path(), language, cx)
+                        }) {
+                            worktree.register_language(&language, &language_server);
+                        }
+                    }
+
+                    worktree.save_buffer_as(buffer.clone(), path, cx)
                 })
                 .await?;
             Ok(())
         })
+    }
+
+    fn register_language_server(
+        &mut self,
+        worktree_abs_path: Arc<Path>,
+        language: &Arc<Language>,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Arc<LanguageServer>> {
+        if let Some(server) = self
+            .language_servers
+            .get(&(worktree_abs_path.clone(), language.name().to_string()))
+        {
+            return Some(server.clone());
+        }
+
+        if let Some(language_server) = language
+            .start_server(&worktree_abs_path, cx)
+            .log_err()
+            .flatten()
+        {
+            enum DiagnosticProgress {
+                Updating,
+                Updated,
+            }
+
+            let disk_based_sources = language
+                .disk_based_diagnostic_sources()
+                .cloned()
+                .unwrap_or_default();
+            let disk_based_diagnostics_progress_token =
+                language.disk_based_diagnostics_progress_token().cloned();
+            let (diagnostics_tx, diagnostics_rx) = smol::channel::unbounded();
+            let (disk_based_diagnostics_done_tx, disk_based_diagnostics_done_rx) =
+                smol::channel::unbounded();
+            language_server
+                .on_notification::<lsp::notification::PublishDiagnostics, _>(move |params| {
+                    smol::block_on(diagnostics_tx.send(params)).ok();
+                })
+                .detach();
+            cx.spawn_weak(|this, mut cx| {
+                let has_disk_based_diagnostic_progress_token =
+                    disk_based_diagnostics_progress_token.is_some();
+                let disk_based_diagnostics_done_tx = disk_based_diagnostics_done_tx.clone();
+                async move {
+                    while let Ok(diagnostics) = diagnostics_rx.recv().await {
+                        if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
+                            handle.update(&mut cx, |this, cx| {
+                                if !has_disk_based_diagnostic_progress_token {
+                                    smol::block_on(
+                                        disk_based_diagnostics_done_tx
+                                            .send(DiagnosticProgress::Updating),
+                                    )
+                                    .ok();
+                                }
+                                this.update_diagnostics(diagnostics, &disk_based_sources, cx)
+                                    .log_err();
+                                if !has_disk_based_diagnostic_progress_token {
+                                    smol::block_on(
+                                        disk_based_diagnostics_done_tx
+                                            .send(DiagnosticProgress::Updated),
+                                    )
+                                    .ok();
+                                }
+                            })
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            })
+            .detach();
+
+            let mut pending_disk_based_diagnostics: i32 = 0;
+            language_server
+                .on_notification::<lsp::notification::Progress, _>(move |params| {
+                    let token = match params.token {
+                        lsp::NumberOrString::Number(_) => None,
+                        lsp::NumberOrString::String(token) => Some(token),
+                    };
+
+                    if token == disk_based_diagnostics_progress_token {
+                        match params.value {
+                            lsp::ProgressParamsValue::WorkDone(progress) => match progress {
+                                lsp::WorkDoneProgress::Begin(_) => {
+                                    if pending_disk_based_diagnostics == 0 {
+                                        smol::block_on(
+                                            disk_based_diagnostics_done_tx
+                                                .send(DiagnosticProgress::Updating),
+                                        )
+                                        .ok();
+                                    }
+                                    pending_disk_based_diagnostics += 1;
+                                }
+                                lsp::WorkDoneProgress::End(_) => {
+                                    pending_disk_based_diagnostics -= 1;
+                                    if pending_disk_based_diagnostics == 0 {
+                                        smol::block_on(
+                                            disk_based_diagnostics_done_tx
+                                                .send(DiagnosticProgress::Updated),
+                                        )
+                                        .ok();
+                                    }
+                                }
+                                _ => {}
+                            },
+                        }
+                    }
+                })
+                .detach();
+            let rpc = self.client.clone();
+            cx.spawn_weak(|this, mut cx| async move {
+                while let Ok(progress) = disk_based_diagnostics_done_rx.recv().await {
+                    if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
+                        match progress {
+                            DiagnosticProgress::Updating => {
+                                let message = handle.update(&mut cx, |this, cx| {
+                                    cx.emit(Event::DiskBasedDiagnosticsUpdating);
+                                    let this = this.as_local().unwrap();
+                                    this.share.as_ref().map(|share| {
+                                        proto::DiskBasedDiagnosticsUpdating {
+                                            project_id: share.project_id,
+                                            worktree_id: this.id().to_proto(),
+                                        }
+                                    })
+                                });
+
+                                if let Some(message) = message {
+                                    rpc.send(message).await.log_err();
+                                }
+                            }
+                            DiagnosticProgress::Updated => {
+                                let message = handle.update(&mut cx, |this, cx| {
+                                    cx.emit(Event::DiskBasedDiagnosticsUpdated);
+                                    let this = this.as_local().unwrap();
+                                    this.share.as_ref().map(|share| {
+                                        proto::DiskBasedDiagnosticsUpdated {
+                                            project_id: share.project_id,
+                                            worktree_id: this.id().to_proto(),
+                                        }
+                                    })
+                                });
+
+                                if let Some(message) = message {
+                                    rpc.send(message).await.log_err();
+                                }
+                            }
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            })
+            .detach();
+
+            self.language_servers.insert(
+                (worktree_abs_path.clone(), language.name().to_string()),
+                language_server.clone(),
+            );
+            Some(language_server)
+        } else {
+            None
+        }
     }
 
     pub fn worktree_for_abs_path(
