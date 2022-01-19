@@ -1002,7 +1002,6 @@ pub struct LocalWorktree {
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     fs: Arc<dyn Fs>,
-    languages: Vec<Arc<Language>>,
     language_servers: HashMap<String, Arc<LanguageServer>>,
 }
 
@@ -1110,7 +1109,6 @@ impl LocalWorktree {
                 client,
                 user_store,
                 fs,
-                languages: Default::default(),
                 language_servers: Default::default(),
             };
 
@@ -1155,19 +1153,11 @@ impl LocalWorktree {
         &self.language_registry
     }
 
-    pub fn languages(&self) -> &[Arc<Language>] {
-        &self.languages
-    }
-
     pub fn register_language(
         &mut self,
         language: &Arc<Language>,
         cx: &mut ModelContext<Worktree>,
     ) -> Option<Arc<LanguageServer>> {
-        if !self.languages.iter().any(|l| Arc::ptr_eq(l, language)) {
-            self.languages.push(language.clone());
-        }
-
         if let Some(server) = self.language_servers.get(language.name()) {
             return Some(server.clone());
         }
