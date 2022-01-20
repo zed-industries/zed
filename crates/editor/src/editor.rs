@@ -3021,7 +3021,7 @@ impl Editor {
                         .downcast::<Self>()
                         .unwrap();
                     target_editor.update(cx, |target_editor, cx| {
-                        target_editor.select_ranges([range], Some(Autoscroll::Fit), cx);
+                        target_editor.select_ranges([range], Some(Autoscroll::Center), cx);
                     });
                 }
             });
