@@ -279,7 +279,7 @@ impl StatusItemView for CursorPosition {
         active_pane_item: Option<&dyn ItemViewHandle>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(editor) = active_pane_item.and_then(|item| item.to_any().downcast::<Editor>()) {
+        if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
             self._observe_active_editor = Some(cx.observe(&editor, Self::update_position));
             self.update_position(editor, cx);
         } else {
@@ -365,7 +365,7 @@ impl StatusItemView for DiagnosticMessage {
         active_pane_item: Option<&dyn ItemViewHandle>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(editor) = active_pane_item.and_then(|item| item.to_any().downcast::<Editor>()) {
+        if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
             self._observe_active_editor = Some(cx.observe(&editor, Self::update));
             self.update(editor, cx);
         } else {

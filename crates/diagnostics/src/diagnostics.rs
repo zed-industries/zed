@@ -9,13 +9,13 @@ use editor::{
     Autoscroll, BuildSettings, Editor, ExcerptId, ExcerptProperties, MultiBuffer, ToOffset,
 };
 use gpui::{
-    action, elements::*, keymap::Binding, AppContext, Entity, ModelHandle, MutableAppContext,
-    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    action, elements::*, keymap::Binding, AnyViewHandle, AppContext, Entity, ModelHandle,
+    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{Bias, Buffer, Diagnostic, DiagnosticEntry, Point, Selection, SelectionGoal};
 use postage::watch;
 use project::{Project, ProjectPath};
-use std::{cmp::Ordering, mem, ops::Range, path::PathBuf, rc::Rc, sync::Arc};
+use std::{any::TypeId, cmp::Ordering, mem, ops::Range, path::PathBuf, rc::Rc, sync::Arc};
 use util::TryFutureExt;
 use workspace::{NavHistory, Workspace};
 
@@ -194,7 +194,6 @@ impl ProjectDiagnosticsEditor {
                     }
                     let editor = workspace
                         .open_item(buffer, cx)
-                        .to_any()
                         .downcast::<Editor>()
                         .unwrap();
                     editor.update(cx, |editor, cx| {
@@ -594,6 +593,21 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
             self.settings.clone(),
             cx,
         ))
+    }
+
+    fn act_as_type(
+        &self,
+        type_id: TypeId,
+        self_handle: &ViewHandle<Self>,
+        _: &AppContext,
+    ) -> Option<AnyViewHandle> {
+        if type_id == TypeId::of::<Self>() {
+            Some(self_handle.into())
+        } else if type_id == TypeId::of::<Editor>() {
+            Some((&self.editor).into())
+        } else {
+            None
+        }
     }
 }
 

@@ -205,7 +205,6 @@ mod tests {
             workspace
                 .active_item(cx)
                 .unwrap()
-                .to_any()
                 .downcast::<editor::Editor>()
                 .unwrap()
         });
@@ -451,7 +450,7 @@ mod tests {
         let editor = cx.read(|cx| {
             let pane = workspace.read(cx).active_pane().read(cx);
             let item = pane.active_item().unwrap();
-            item.to_any().downcast::<Editor>().unwrap()
+            item.downcast::<Editor>().unwrap()
         });
 
         cx.update(|cx| {
@@ -504,7 +503,6 @@ mod tests {
             workspace
                 .active_item(cx)
                 .unwrap()
-                .to_any()
                 .downcast::<Editor>()
                 .unwrap()
         });
@@ -573,7 +571,6 @@ mod tests {
             workspace
                 .active_item(cx)
                 .unwrap()
-                .to_any()
                 .downcast::<Editor>()
                 .unwrap()
         });
@@ -598,7 +595,6 @@ mod tests {
             workspace
                 .active_item(cx)
                 .unwrap()
-                .to_any()
                 .downcast::<Editor>()
                 .unwrap()
         });
@@ -738,7 +734,6 @@ mod tests {
             .update(&mut cx, |w, cx| w.open_path(file1.clone(), cx))
             .await
             .unwrap()
-            .to_any()
             .downcast::<Editor>()
             .unwrap();
         editor1.update(&mut cx, |editor, cx| {
@@ -748,14 +743,12 @@ mod tests {
             .update(&mut cx, |w, cx| w.open_path(file2.clone(), cx))
             .await
             .unwrap()
-            .to_any()
             .downcast::<Editor>()
             .unwrap();
         let editor3 = workspace
             .update(&mut cx, |w, cx| w.open_path(file3.clone(), cx))
             .await
             .unwrap()
-            .to_any()
             .downcast::<Editor>()
             .unwrap();
         editor3.update(&mut cx, |editor, cx| {
@@ -871,7 +864,7 @@ mod tests {
         ) -> (ProjectPath, DisplayPoint) {
             workspace.update(cx, |workspace, cx| {
                 let item = workspace.active_item(cx).unwrap();
-                let editor = item.to_any().downcast::<Editor>().unwrap();
+                let editor = item.downcast::<Editor>().unwrap();
                 let selections = editor.update(cx, |editor, cx| editor.selected_display_ranges(cx));
                 let path = workspace
                     .project()

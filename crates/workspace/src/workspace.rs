@@ -33,7 +33,7 @@ use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItem
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
-    any::Any,
+    any::{Any, TypeId},
     future::Future,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
@@ -185,6 +185,18 @@ pub trait ItemView: View {
     fn should_update_tab_on_event(_: &Self::Event) -> bool {
         false
     }
+    fn act_as_type(
+        &self,
+        type_id: TypeId,
+        self_handle: &ViewHandle<Self>,
+        _: &AppContext,
+    ) -> Option<AnyViewHandle> {
+        if TypeId::of::<Self>() == type_id {
+            Some(self_handle.into())
+        } else {
+            None
+        }
+    }
 }
 
 pub trait ItemHandle: Send + Sync {
@@ -207,7 +219,7 @@ pub trait WeakItemHandle {
     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>>;
 }
 
-pub trait ItemViewHandle {
+pub trait ItemViewHandle: 'static {
     fn item_handle(&self, cx: &AppContext) -> Box<dyn ItemHandle>;
     fn title(&self, cx: &AppContext) -> String;
     fn project_entry(&self, cx: &AppContext) -> Option<ProjectEntry>;
@@ -229,6 +241,7 @@ pub trait ItemViewHandle {
         abs_path: PathBuf,
         cx: &mut MutableAppContext,
     ) -> Task<Result<()>>;
+    fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle>;
 }
 
 pub trait WeakItemViewHandle {
@@ -326,6 +339,17 @@ impl PartialEq for Box<dyn WeakItemHandle> {
 
 impl Eq for Box<dyn WeakItemHandle> {}
 
+impl dyn ItemViewHandle {
+    pub fn downcast<T: View>(&self) -> Option<ViewHandle<T>> {
+        self.to_any().downcast()
+    }
+
+    pub fn act_as<T: View>(&self, cx: &AppContext) -> Option<ViewHandle<T>> {
+        self.act_as_type(TypeId::of::<T>(), cx)
+            .and_then(|t| t.downcast())
+    }
+}
+
 impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
     fn item_handle(&self, cx: &AppContext) -> Box<dyn ItemHandle> {
         Box::new(self.read(cx).item_handle(cx))
@@ -412,6 +436,16 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
 
     fn can_save_as(&self, cx: &AppContext) -> bool {
         self.read(cx).can_save_as(cx)
+    }
+
+    fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle> {
+        self.read(cx).act_as_type(type_id, self, cx)
+    }
+}
+
+impl Into<AnyViewHandle> for Box<dyn ItemViewHandle> {
+    fn into(self) -> AnyViewHandle {
+        self.to_any()
     }
 }
 

@@ -144,7 +144,7 @@ impl OutlineView {
     fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
         if let Some(editor) = workspace
             .active_item(cx)
-            .and_then(|item| item.to_any().downcast::<Editor>())
+            .and_then(|item| item.downcast::<Editor>())
         {
             let settings = workspace.settings();
             let buffer = editor

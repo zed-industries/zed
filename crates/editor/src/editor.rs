@@ -2992,11 +2992,17 @@ impl Editor {
         _: &GoToDefinition,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let editor = workspace
-            .active_item(cx)
-            .and_then(|item| item.to_any().downcast::<Self>())
-            .unwrap()
-            .read(cx);
+        let active_item = workspace.active_item(cx);
+        let editor = if let Some(editor) = active_item
+            .as_ref()
+            .and_then(|item| item.act_as::<Self>(cx))
+        {
+            editor
+        } else {
+            return;
+        };
+
+        let editor = editor.read(cx);
         let buffer = editor.buffer.read(cx);
         let head = editor.newest_selection::<usize>(&buffer.read(cx)).head();
         let (buffer, head) = editor.buffer.read(cx).text_anchor_for_position(head, cx);
@@ -3012,7 +3018,6 @@ impl Editor {
                         .to_offset(definition.target_buffer.read(cx));
                     let target_editor = workspace
                         .open_item(BufferItemHandle(definition.target_buffer), cx)
-                        .to_any()
                         .downcast::<Self>()
                         .unwrap();
                     target_editor.update(cx, |target_editor, cx| {

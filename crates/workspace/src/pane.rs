@@ -351,7 +351,7 @@ impl Pane {
 
     fn focus_active_item(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(active_item) = self.active_item() {
-            cx.focus(active_item.to_any());
+            cx.focus(active_item);
         }
     }
 
