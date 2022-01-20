@@ -789,6 +789,19 @@ impl MultiBuffer {
         cx.notify();
     }
 
+    pub fn text_anchor_for_position<'a, T: ToOffset>(
+        &'a self,
+        position: T,
+        cx: &AppContext,
+    ) -> (ModelHandle<Buffer>, language::Anchor) {
+        let snapshot = self.read(cx);
+        let anchor = snapshot.anchor_before(position);
+        (
+            self.buffers.borrow()[&anchor.buffer_id].buffer.clone(),
+            anchor.text_anchor,
+        )
+    }
+
     fn on_buffer_event(
         &mut self,
         _: ModelHandle<Buffer>,

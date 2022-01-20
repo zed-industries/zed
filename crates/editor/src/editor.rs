@@ -25,8 +25,8 @@ use gpui::{
 use items::BufferItemHandle;
 use itertools::Itertools as _;
 use language::{
-    BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point, Selection, SelectionGoal,
-    TransactionId,
+    AnchorRangeExt as _, BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point,
+    Selection, SelectionGoal, TransactionId,
 };
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptProperties, MultiBuffer, ToOffset, ToPoint,
@@ -107,6 +107,7 @@ action!(SelectLargerSyntaxNode);
 action!(SelectSmallerSyntaxNode);
 action!(MoveToEnclosingBracket);
 action!(ShowNextDiagnostic);
+action!(GoToDefinition);
 action!(PageUp);
 action!(PageDown);
 action!(Fold);
@@ -214,6 +215,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
         Binding::new("alt-down", SelectSmallerSyntaxNode, Some("Editor")),
         Binding::new("ctrl-shift-W", SelectSmallerSyntaxNode, Some("Editor")),
         Binding::new("f8", ShowNextDiagnostic, Some("Editor")),
+        Binding::new("alt-enter", GoToDefinition, Some("Editor")),
         Binding::new("ctrl-m", MoveToEnclosingBracket, Some("Editor")),
         Binding::new("pageup", PageUp, Some("Editor")),
         Binding::new("pagedown", PageDown, Some("Editor")),
@@ -277,6 +279,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_action(Editor::select_smaller_syntax_node);
     cx.add_action(Editor::move_to_enclosing_bracket);
     cx.add_action(Editor::show_next_diagnostic);
+    cx.add_action(Editor::go_to_definition);
     cx.add_action(Editor::page_up);
     cx.add_action(Editor::page_down);
     cx.add_action(Editor::fold);
@@ -2982,6 +2985,45 @@ impl Editor {
                 search_start = 0;
             }
         }
+    }
+
+    pub fn go_to_definition(
+        workspace: &mut Workspace,
+        _: &GoToDefinition,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let editor = workspace
+            .active_item(cx)
+            .and_then(|item| item.to_any().downcast::<Self>())
+            .unwrap()
+            .read(cx);
+        let buffer = editor.buffer.read(cx);
+        let head = editor.newest_selection::<usize>(&buffer.read(cx)).head();
+        let (buffer, head) = editor.buffer.read(cx).text_anchor_for_position(head, cx);
+        let definitions = workspace
+            .project()
+            .update(cx, |project, cx| project.definition(&buffer, head, cx));
+        cx.spawn(|workspace, mut cx| async move {
+            let definitions = definitions.await?;
+            workspace.update(&mut cx, |workspace, cx| {
+                for definition in definitions {
+                    let range = definition
+                        .target_range
+                        .to_offset(definition.target_buffer.read(cx));
+                    let target_editor = workspace
+                        .open_item(BufferItemHandle(definition.target_buffer), cx)
+                        .to_any()
+                        .downcast::<Self>()
+                        .unwrap();
+                    target_editor.update(cx, |target_editor, cx| {
+                        target_editor.select_ranges([range], Some(Autoscroll::Fit), cx);
+                    });
+                }
+            });
+
+            Ok::<(), anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Editor>) {
