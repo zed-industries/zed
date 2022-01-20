@@ -676,28 +676,22 @@ impl Project {
             .uri
             .to_file_path()
             .map_err(|_| anyhow!("URI is not a file"))?;
-        for tree in &self.worktrees {
-            let relative_path = tree.update(cx, |tree, _| {
-                path.strip_prefix(tree.as_local()?.abs_path()).ok()
-            });
-            if let Some(relative_path) = relative_path {
-                let worktree_id = tree.read(cx).id();
-                let project_path = ProjectPath {
-                    worktree_id,
-                    path: relative_path.into(),
-                };
-                tree.update(cx, |tree, cx| {
-                    tree.as_local_mut().unwrap().update_diagnostics(
-                        project_path.path.clone(),
-                        diagnostics,
-                        disk_based_sources,
-                        cx,
-                    )
-                })?;
-                cx.emit(Event::DiagnosticsUpdated(project_path));
-                break;
-            }
-        }
+        let (worktree, relative_path) = self
+            .find_worktree_for_abs_path(&path, cx)
+            .ok_or_else(|| anyhow!("no worktree found for diagnostics"))?;
+        let project_path = ProjectPath {
+            worktree_id: worktree.read(cx).id(),
+            path: relative_path.into(),
+        };
+        worktree.update(cx, |worktree, cx| {
+            worktree.as_local_mut().unwrap().update_diagnostics(
+                project_path.path.clone(),
+                diagnostics,
+                disk_based_sources,
+                cx,
+            )
+        })?;
+        cx.emit(Event::DiagnosticsUpdated(project_path));
         Ok(())
     }
 
