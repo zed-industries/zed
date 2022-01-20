@@ -215,7 +215,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
         Binding::new("alt-down", SelectSmallerSyntaxNode, Some("Editor")),
         Binding::new("ctrl-shift-W", SelectSmallerSyntaxNode, Some("Editor")),
         Binding::new("f8", ShowNextDiagnostic, Some("Editor")),
-        Binding::new("alt-enter", GoToDefinition, Some("Editor")),
+        Binding::new("f12", GoToDefinition, Some("Editor")),
         Binding::new("ctrl-m", MoveToEnclosingBracket, Some("Editor")),
         Binding::new("pageup", PageUp, Some("Editor")),
         Binding::new("pagedown", PageDown, Some("Editor")),
