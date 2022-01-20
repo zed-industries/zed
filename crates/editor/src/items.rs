@@ -160,20 +160,18 @@ impl ItemView for Editor {
         self.project_entry(cx).is_some()
     }
 
-    fn save(&mut self, cx: &mut ViewContext<Self>) -> Result<Task<Result<()>>> {
+    fn save(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         let buffer = self.buffer().clone();
-        Ok(cx.spawn(|editor, mut cx| async move {
+        cx.spawn(|editor, mut cx| async move {
             buffer
                 .update(&mut cx, |buffer, cx| buffer.format(cx).log_err())
                 .await;
             editor.update(&mut cx, |editor, cx| {
                 editor.request_autoscroll(Autoscroll::Fit, cx)
             });
-            buffer
-                .update(&mut cx, |buffer, cx| buffer.save(cx))?
-                .await?;
+            buffer.update(&mut cx, |buffer, cx| buffer.save(cx)).await?;
             Ok(())
-        }))
+        })
     }
 
     fn can_save_as(&self, _: &AppContext) -> bool {

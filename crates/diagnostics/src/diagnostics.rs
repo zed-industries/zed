@@ -560,7 +560,7 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         true
     }
 
-    fn save(&mut self, cx: &mut ViewContext<Self>) -> Result<Task<Result<()>>> {
+    fn save(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         self.excerpts.update(cx, |excerpts, cx| excerpts.save(cx))
     }
 

@@ -812,18 +812,18 @@ impl MultiBuffer {
         })
     }
 
-    pub fn save(&mut self, cx: &mut ModelContext<Self>) -> Result<Task<Result<()>>> {
+    pub fn save(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let mut save_tasks = Vec::new();
         for BufferState { buffer, .. } in self.buffers.borrow().values() {
-            save_tasks.push(buffer.update(cx, |buffer, cx| buffer.save(cx))?);
+            save_tasks.push(buffer.update(cx, |buffer, cx| buffer.save(cx)));
         }
 
-        Ok(cx.spawn(|_, _| async move {
+        cx.spawn(|_, _| async move {
             for save in save_tasks {
                 save.await?;
             }
             Ok(())
-        }))
+        })
     }
 
     pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {

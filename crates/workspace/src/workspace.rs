@@ -168,14 +168,14 @@ pub trait ItemView: View {
         false
     }
     fn can_save(&self, cx: &AppContext) -> bool;
-    fn save(&mut self, cx: &mut ViewContext<Self>) -> Result<Task<Result<()>>>;
+    fn save(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>>;
     fn can_save_as(&self, cx: &AppContext) -> bool;
     fn save_as(
         &mut self,
         project: ModelHandle<Project>,
         abs_path: PathBuf,
         cx: &mut ViewContext<Self>,
-    ) -> Task<anyhow::Result<()>>;
+    ) -> Task<Result<()>>;
     fn should_activate_item_on_event(_: &Self::Event) -> bool {
         false
     }
@@ -222,7 +222,7 @@ pub trait ItemViewHandle {
     fn has_conflict(&self, cx: &AppContext) -> bool;
     fn can_save(&self, cx: &AppContext) -> bool;
     fn can_save_as(&self, cx: &AppContext) -> bool;
-    fn save(&self, cx: &mut MutableAppContext) -> Result<Task<Result<()>>>;
+    fn save(&self, cx: &mut MutableAppContext) -> Task<Result<()>>;
     fn save_as(
         &self,
         project: ModelHandle<Project>,
@@ -377,7 +377,7 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         self.update(cx, |this, cx| this.navigate(data, cx));
     }
 
-    fn save(&self, cx: &mut MutableAppContext) -> Result<Task<Result<()>>> {
+    fn save(&self, cx: &mut MutableAppContext) -> Task<Result<()>> {
         self.update(cx, |item, cx| item.save(cx))
     }
 
@@ -822,15 +822,12 @@ impl Workspace {
                     cx.spawn(|_, mut cx| async move {
                         let answer = answer.recv().await;
                         if answer == Some(0) {
-                            cx.update(|cx| item.save(cx))?.await?;
+                            cx.update(|cx| item.save(cx)).await?;
                         }
                         Ok(())
                     })
                 } else {
-                    cx.spawn(|_, mut cx| async move {
-                        cx.update(|cx| item.save(cx))?.await?;
-                        Ok(())
-                    })
+                    item.save(cx)
                 }
             } else if item.can_save_as(cx) {
                 let worktree = self.worktrees(cx).first();

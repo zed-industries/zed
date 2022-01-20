@@ -455,7 +455,7 @@ impl Worktree {
         let worktree_id = envelope.payload.worktree_id;
         let buffer_id = envelope.payload.buffer_id;
         let save = cx.spawn(|_, mut cx| async move {
-            buffer.update(&mut cx, |buffer, cx| buffer.save(cx))?.await
+            buffer.update(&mut cx, |buffer, cx| buffer.save(cx)).await
         });
 
         cx.background()
@@ -3094,7 +3094,7 @@ mod tests {
             .unwrap();
         let save = buffer.update(&mut cx, |buffer, cx| {
             buffer.edit(Some(0..0), "a line of text.\n".repeat(10 * 1024), cx);
-            buffer.save(cx).unwrap()
+            buffer.save(cx)
         });
         save.await.unwrap();
 
@@ -3132,7 +3132,7 @@ mod tests {
             .unwrap();
         let save = buffer.update(&mut cx, |buffer, cx| {
             buffer.edit(Some(0..0), "a line of text.\n".repeat(10 * 1024), cx);
-            buffer.save(cx).unwrap()
+            buffer.save(cx)
         });
         save.await.unwrap();
 

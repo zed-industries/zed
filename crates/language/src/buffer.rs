@@ -510,21 +510,22 @@ impl Buffer {
     pub fn save(
         &mut self,
         cx: &mut ModelContext<Self>,
-    ) -> Result<Task<Result<(clock::Global, SystemTime)>>> {
-        let file = self
-            .file
-            .as_ref()
-            .ok_or_else(|| anyhow!("buffer has no file"))?;
+    ) -> Task<Result<(clock::Global, SystemTime)>> {
+        let file = if let Some(file) = self.file.as_ref() {
+            file
+        } else {
+            return Task::ready(Err(anyhow!("buffer has no file")));
+        };
         let text = self.as_rope().clone();
         let version = self.version();
         let save = file.save(self.remote_id(), text, version, cx.as_mut());
-        Ok(cx.spawn(|this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let (version, mtime) = save.await?;
             this.update(&mut cx, |this, cx| {
                 this.did_save(version.clone(), mtime, None, cx);
             });
             Ok((version, mtime))
-        }))
+        })
     }
 
     pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {

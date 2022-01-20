@@ -1474,7 +1474,7 @@ mod tests {
             .await;
 
         // Edit the buffer as the host and concurrently save as guest B.
-        let save_b = buffer_b.update(&mut cx_b, |buf, cx| buf.save(cx).unwrap());
+        let save_b = buffer_b.update(&mut cx_b, |buf, cx| buf.save(cx));
         buffer_a.update(&mut cx_a, |buf, cx| buf.edit([0..0], "hi-a, ", cx));
         save_b.await.unwrap();
         assert_eq!(
@@ -1591,7 +1591,6 @@ mod tests {
 
         buffer_b
             .update(&mut cx_b, |buf, cx| buf.save(cx))
-            .unwrap()
             .await
             .unwrap();
         worktree_b
