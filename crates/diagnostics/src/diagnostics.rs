@@ -15,7 +15,14 @@ use gpui::{
 use language::{Bias, Buffer, Diagnostic, DiagnosticEntry, Point, Selection, SelectionGoal};
 use postage::watch;
 use project::{Project, ProjectPath};
-use std::{any::TypeId, cmp::Ordering, mem, ops::Range, path::PathBuf, sync::Arc};
+use std::{
+    any::{Any, TypeId},
+    cmp::Ordering,
+    mem,
+    ops::Range,
+    path::PathBuf,
+    sync::Arc,
+};
 use util::TryFutureExt;
 use workspace::{ItemNavHistory, Workspace};
 
@@ -517,10 +524,19 @@ impl workspace::Item for ProjectDiagnostics {
     fn build_view(
         handle: ModelHandle<Self>,
         workspace: &Workspace,
-        _: ItemNavHistory,
+        nav_history: ItemNavHistory,
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View {
-        ProjectDiagnosticsEditor::new(handle, workspace.weak_handle(), workspace.settings(), cx)
+        let diagnostics = ProjectDiagnosticsEditor::new(
+            handle,
+            workspace.weak_handle(),
+            workspace.settings(),
+            cx,
+        );
+        diagnostics
+            .editor
+            .update(cx, |editor, _| editor.set_nav_history(Some(nav_history)));
+        diagnostics
     }
 
     fn project_entry(&self) -> Option<project::ProjectEntry> {
@@ -541,6 +557,11 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
 
     fn project_entry(&self, _: &AppContext) -> Option<project::ProjectEntry> {
         None
+    }
+
+    fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |editor, cx| editor.navigate(data, cx));
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
@@ -587,12 +608,21 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
     where
         Self: Sized,
     {
-        Some(ProjectDiagnosticsEditor::new(
+        let diagnostics = ProjectDiagnosticsEditor::new(
             self.model.clone(),
             self.workspace.clone(),
             self.settings.clone(),
             cx,
-        ))
+        );
+        diagnostics.editor.update(cx, |editor, cx| {
+            let nav_history = self
+                .editor
+                .read(cx)
+                .nav_history()
+                .map(|nav_history| ItemNavHistory::new(nav_history.history(), &cx.handle()));
+            editor.set_nav_history(nav_history);
+        });
+        Some(diagnostics)
     }
 
     fn act_as_type(
@@ -608,6 +638,10 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         } else {
             None
         }
+    }
+
+    fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
+        self.editor.update(cx, |editor, cx| editor.deactivated(cx));
     }
 }
 

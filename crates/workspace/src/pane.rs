@@ -551,11 +551,8 @@ impl ItemNavHistory {
         }
     }
 
-    pub fn clone<T: ItemView>(&self, item_view: &ViewHandle<T>) -> Self {
-        Self {
-            history: self.history.clone(),
-            item_view: Rc::new(item_view.downgrade()),
-        }
+    pub fn history(&self) -> Rc<RefCell<NavHistory>> {
+        self.history.clone()
     }
 
     pub fn push<D: 'static + Any>(&self, data: Option<D>) {

@@ -470,7 +470,7 @@ impl Editor {
         clone.nav_history = self
             .nav_history
             .as_ref()
-            .map(|nav_history| nav_history.clone(&cx.handle()));
+            .map(|nav_history| ItemNavHistory::new(nav_history.history(), &cx.handle()));
         clone
     }
 
@@ -2457,6 +2457,14 @@ impl Editor {
             goal: SelectionGoal::None,
         };
         self.update_selections(vec![selection], Some(Autoscroll::Fit), cx);
+    }
+
+    pub fn set_nav_history(&mut self, nav_history: Option<ItemNavHistory>) {
+        self.nav_history = nav_history;
+    }
+
+    pub fn nav_history(&self) -> Option<&ItemNavHistory> {
+        self.nav_history.as_ref()
     }
 
     fn push_to_nav_history(
