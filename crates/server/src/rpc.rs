@@ -1906,8 +1906,14 @@ mod tests {
         // Cause the language server to start.
         let _ = cx_a
             .background()
-            .spawn(worktree_a.update(&mut cx_a, |worktree, cx| {
-                worktree.open_buffer("other.rs", cx)
+            .spawn(project_a.update(&mut cx_a, |project, cx| {
+                project.open_buffer(
+                    ProjectPath {
+                        worktree_id,
+                        path: Path::new("other.rs").into(),
+                    },
+                    cx,
+                )
             }))
             .await
             .unwrap();

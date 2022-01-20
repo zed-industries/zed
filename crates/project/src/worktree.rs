@@ -64,15 +64,8 @@ pub enum Worktree {
     Remote(RemoteWorktree),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Event {
-    DiskBasedDiagnosticsUpdating,
-    DiskBasedDiagnosticsUpdated,
-    DiagnosticsUpdated(Arc<Path>),
-}
-
 impl Entity for Worktree {
-    type Event = Event;
+    type Event = ();
 }
 
 impl Worktree {
@@ -1139,8 +1132,6 @@ impl LocalWorktree {
             .insert(PathKey(worktree_path.clone()), summary.clone());
         self.diagnostics.insert(worktree_path.clone(), diagnostics);
 
-        cx.emit(Event::DiagnosticsUpdated(worktree_path.clone()));
-
         if let Some(share) = self.share.as_ref() {
             cx.foreground()
                 .spawn({
@@ -1535,30 +1526,18 @@ impl RemoteWorktree {
 
     pub fn update_diagnostic_summary(
         &mut self,
-        envelope: TypedEnvelope<proto::UpdateDiagnosticSummary>,
-        cx: &mut ModelContext<Worktree>,
+        path: Arc<Path>,
+        summary: &proto::DiagnosticSummary,
     ) {
-        if let Some(summary) = envelope.payload.summary {
-            let path: Arc<Path> = Path::new(&summary.path).into();
-            self.diagnostic_summaries.insert(
-                PathKey(path.clone()),
-                DiagnosticSummary {
-                    error_count: summary.error_count as usize,
-                    warning_count: summary.warning_count as usize,
-                    info_count: summary.info_count as usize,
-                    hint_count: summary.hint_count as usize,
-                },
-            );
-            cx.emit(Event::DiagnosticsUpdated(path));
-        }
-    }
-
-    pub fn disk_based_diagnostics_updating(&self, cx: &mut ModelContext<Worktree>) {
-        cx.emit(Event::DiskBasedDiagnosticsUpdating);
-    }
-
-    pub fn disk_based_diagnostics_updated(&self, cx: &mut ModelContext<Worktree>) {
-        cx.emit(Event::DiskBasedDiagnosticsUpdated);
+        self.diagnostic_summaries.insert(
+            PathKey(path.clone()),
+            DiagnosticSummary {
+                error_count: summary.error_count as usize,
+                warning_count: summary.warning_count as usize,
+                info_count: summary.info_count as usize,
+                hint_count: summary.hint_count as usize,
+            },
+        );
     }
 
     pub fn remove_collaborator(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Worktree>) {

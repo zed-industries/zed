@@ -680,7 +680,6 @@ mod tests {
     use editor::{display_map::BlockContext, DisplayPoint, EditorSnapshot};
     use gpui::TestAppContext;
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16};
-    use project::worktree;
     use serde_json::json;
     use std::sync::Arc;
     use unindent::Unindent as _;
@@ -727,6 +726,7 @@ mod tests {
             })
             .await
             .unwrap();
+        let worktree_id = worktree.read_with(&cx, |tree, _| tree.id());
 
         // Create some diagnostics
         worktree.update(&mut cx, |worktree, cx| {
@@ -903,7 +903,13 @@ mod tests {
                     cx,
                 )
                 .unwrap();
-            cx.emit(worktree::Event::DiskBasedDiagnosticsUpdated);
+        });
+        project.update(&mut cx, |_, cx| {
+            cx.emit(project::Event::DiagnosticsUpdated(ProjectPath {
+                worktree_id,
+                path: Arc::from("/test/consts.rs".as_ref()),
+            }));
+            cx.emit(project::Event::DiskBasedDiagnosticsUpdated { worktree_id });
         });
 
         view.next_notification(&cx).await;
@@ -1017,7 +1023,13 @@ mod tests {
                     cx,
                 )
                 .unwrap();
-            cx.emit(worktree::Event::DiskBasedDiagnosticsUpdated);
+        });
+        project.update(&mut cx, |_, cx| {
+            cx.emit(project::Event::DiagnosticsUpdated(ProjectPath {
+                worktree_id,
+                path: Arc::from("/test/consts.rs".as_ref()),
+            }));
+            cx.emit(project::Event::DiskBasedDiagnosticsUpdated { worktree_id });
         });
 
         view.next_notification(&cx).await;
