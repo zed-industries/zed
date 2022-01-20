@@ -28,6 +28,7 @@ use objc::{
     runtime::{Class, Object, Protocol, Sel, BOOL, NO, YES},
     sel, sel_impl,
 };
+use postage::oneshot;
 use smol::Timer;
 use std::{
     any::Any,
@@ -317,8 +318,7 @@ impl platform::Window for Window {
         level: platform::PromptLevel,
         msg: &str,
         answers: &[&str],
-        done_fn: Box<dyn FnOnce(usize)>,
-    ) {
+    ) -> oneshot::Receiver<usize> {
         unsafe {
             let alert: id = msg_send![class!(NSAlert), alloc];
             let alert: id = msg_send![alert, init];
@@ -333,10 +333,11 @@ impl platform::Window for Window {
                 let button: id = msg_send![alert, addButtonWithTitle: ns_string(answer)];
                 let _: () = msg_send![button, setTag: ix as NSInteger];
             }
-            let done_fn = Cell::new(Some(done_fn));
+            let (done_tx, done_rx) = oneshot::channel();
+            let done_tx = Cell::new(Some(done_tx));
             let block = ConcreteBlock::new(move |answer: NSInteger| {
-                if let Some(done_fn) = done_fn.take() {
-                    (done_fn)(answer.try_into().unwrap());
+                if let Some(mut done_tx) = done_tx.take() {
+                    let _ = postage::sink::Sink::try_send(&mut done_tx, answer.try_into().unwrap());
                 }
             });
             let block = block.copy();
@@ -345,6 +346,7 @@ impl platform::Window for Window {
                 beginSheetModalForWindow: self.0.borrow().native_window
                 completionHandler: block
             ];
+            done_rx
         }
     }
 }

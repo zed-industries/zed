@@ -11,7 +11,7 @@ use anyhow::{anyhow, Result};
 use keymap::MatchResult;
 use parking_lot::Mutex;
 use platform::Event;
-use postage::{mpsc, sink::Sink as _, stream::Stream as _};
+use postage::{mpsc, oneshot, sink::Sink as _, stream::Stream as _};
 use smol::prelude::*;
 use std::{
     any::{type_name, Any, TypeId},
@@ -498,11 +498,11 @@ impl TestAppContext {
             .as_any_mut()
             .downcast_mut::<platform::test::Window>()
             .unwrap();
-        let callback = test_window
+        let mut done_tx = test_window
             .last_prompt
             .take()
             .expect("prompt was not called");
-        (callback)(answer);
+        let _ = done_tx.try_send(answer);
     }
 }
 
@@ -922,61 +922,26 @@ impl MutableAppContext {
         self.foreground_platform.set_menus(menus);
     }
 
-    fn prompt<F>(
+    fn prompt(
         &self,
         window_id: usize,
         level: PromptLevel,
         msg: &str,
         answers: &[&str],
-        done_fn: F,
-    ) where
-        F: 'static + FnOnce(usize, &mut MutableAppContext),
-    {
-        let app = self.weak_self.as_ref().unwrap().upgrade().unwrap();
-        let foreground = self.foreground.clone();
+    ) -> oneshot::Receiver<usize> {
         let (_, window) = &self.presenters_and_platform_windows[&window_id];
-        window.prompt(
-            level,
-            msg,
-            answers,
-            Box::new(move |answer| {
-                foreground
-                    .spawn(async move { (done_fn)(answer, &mut *app.borrow_mut()) })
-                    .detach();
-            }),
-        );
+        window.prompt(level, msg, answers)
     }
 
-    pub fn prompt_for_paths<F>(&self, options: PathPromptOptions, done_fn: F)
-    where
-        F: 'static + FnOnce(Option<Vec<PathBuf>>, &mut MutableAppContext),
-    {
-        let app = self.weak_self.as_ref().unwrap().upgrade().unwrap();
-        let foreground = self.foreground.clone();
-        self.foreground_platform.prompt_for_paths(
-            options,
-            Box::new(move |paths| {
-                foreground
-                    .spawn(async move { (done_fn)(paths, &mut *app.borrow_mut()) })
-                    .detach();
-            }),
-        );
+    pub fn prompt_for_paths(
+        &self,
+        options: PathPromptOptions,
+    ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+        self.foreground_platform.prompt_for_paths(options)
     }
 
-    pub fn prompt_for_new_path<F>(&self, directory: &Path, done_fn: F)
-    where
-        F: 'static + FnOnce(Option<PathBuf>, &mut MutableAppContext),
-    {
-        let app = self.weak_self.as_ref().unwrap().upgrade().unwrap();
-        let foreground = self.foreground.clone();
-        self.foreground_platform.prompt_for_new_path(
-            directory,
-            Box::new(move |path| {
-                foreground
-                    .spawn(async move { (done_fn)(path, &mut *app.borrow_mut()) })
-                    .detach();
-            }),
-        );
+    pub fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
+        self.foreground_platform.prompt_for_new_path(directory)
     }
 
     pub fn subscribe<E, H, F>(&mut self, handle: &H, mut callback: F) -> Subscription
@@ -2234,26 +2199,24 @@ impl<'a, T: View> ViewContext<'a, T> {
         self.app.platform()
     }
 
-    pub fn prompt<F>(&self, level: PromptLevel, msg: &str, answers: &[&str], done_fn: F)
-    where
-        F: 'static + FnOnce(usize, &mut MutableAppContext),
-    {
-        self.app
-            .prompt(self.window_id, level, msg, answers, done_fn)
+    pub fn prompt(
+        &self,
+        level: PromptLevel,
+        msg: &str,
+        answers: &[&str],
+    ) -> oneshot::Receiver<usize> {
+        self.app.prompt(self.window_id, level, msg, answers)
     }
 
-    pub fn prompt_for_paths<F>(&self, options: PathPromptOptions, done_fn: F)
-    where
-        F: 'static + FnOnce(Option<Vec<PathBuf>>, &mut MutableAppContext),
-    {
-        self.app.prompt_for_paths(options, done_fn)
+    pub fn prompt_for_paths(
+        &self,
+        options: PathPromptOptions,
+    ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+        self.app.prompt_for_paths(options)
     }
 
-    pub fn prompt_for_new_path<F>(&self, directory: &Path, done_fn: F)
-    where
-        F: 'static + FnOnce(Option<PathBuf>, &mut MutableAppContext),
-    {
-        self.app.prompt_for_new_path(directory, done_fn)
+    pub fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
+        self.app.prompt_for_new_path(directory)
     }
 
     pub fn debug_elements(&self) -> crate::json::Value {

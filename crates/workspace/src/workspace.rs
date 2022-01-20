@@ -66,7 +66,11 @@ pub fn init(cx: &mut MutableAppContext) {
     });
 
     cx.add_action(Workspace::toggle_share);
-    cx.add_action(Workspace::save_active_item);
+    cx.add_action(
+        |workspace: &mut Workspace, _: &Save, cx: &mut ViewContext<Workspace>| {
+            workspace.save_active_item(cx).detach_and_log_err(cx);
+        },
+    );
     cx.add_action(Workspace::debug_elements);
     cx.add_action(Workspace::toggle_sidebar_item);
     cx.add_action(Workspace::toggle_sidebar_item_focus);
@@ -224,7 +228,7 @@ pub trait ItemViewHandle {
         project: ModelHandle<Project>,
         abs_path: PathBuf,
         cx: &mut MutableAppContext,
-    ) -> Task<anyhow::Result<()>>;
+    ) -> Task<Result<()>>;
 }
 
 pub trait WeakItemViewHandle {
@@ -804,36 +808,29 @@ impl Workspace {
             .and_then(|entry| self.project.read(cx).path_for_entry(entry, cx))
     }
 
-    pub fn save_active_item(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
+    pub fn save_active_item(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         if let Some(item) = self.active_item(cx) {
-            let handle = cx.handle();
             if item.can_save(cx) {
                 if item.has_conflict(cx.as_ref()) {
                     const CONFLICT_MESSAGE: &'static str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 
-                    cx.prompt(
+                    let mut answer = cx.prompt(
                         PromptLevel::Warning,
                         CONFLICT_MESSAGE,
                         &["Overwrite", "Cancel"],
-                        move |answer, cx| {
-                            if answer == 0 {
-                                cx.spawn(|mut cx| async move {
-                                    if let Err(error) = cx.update(|cx| item.save(cx)).unwrap().await
-                                    {
-                                        error!("failed to save item: {:?}, ", error);
-                                    }
-                                })
-                                .detach();
-                            }
-                        },
                     );
+                    cx.spawn(|_, mut cx| async move {
+                        let answer = answer.recv().await;
+                        if answer == Some(0) {
+                            cx.update(|cx| item.save(cx))?.await?;
+                        }
+                        Ok(())
+                    })
                 } else {
                     cx.spawn(|_, mut cx| async move {
-                        if let Err(error) = cx.update(|cx| item.save(cx)).unwrap().await {
-                            error!("failed to save item: {:?}, ", error);
-                        }
+                        cx.update(|cx| item.save(cx))?.await?;
+                        Ok(())
                     })
-                    .detach();
                 }
             } else if item.can_save_as(cx) {
                 let worktree = self.worktrees(cx).first();
@@ -841,13 +838,19 @@ impl Workspace {
                     .and_then(|w| w.read(cx).as_local())
                     .map_or(Path::new(""), |w| w.abs_path())
                     .to_path_buf();
-                cx.prompt_for_new_path(&start_abs_path, move |abs_path, cx| {
-                    if let Some(abs_path) = abs_path {
-                        let project = handle.read(cx).project().clone();
-                        cx.update(|cx| item.save_as(project, abs_path, cx).detach_and_log_err(cx));
+                let mut abs_path = cx.prompt_for_new_path(&start_abs_path);
+                cx.spawn(|this, mut cx| async move {
+                    if let Some(abs_path) = abs_path.recv().await.flatten() {
+                        let project = this.read_with(&cx, |this, _| this.project().clone());
+                        cx.update(|cx| item.save_as(project, abs_path, cx)).await?;
                     }
-                });
+                    Ok(())
+                })
+            } else {
+                Task::ready(Ok(()))
             }
+        } else {
+            Task::ready(Ok(()))
         }
     }
 
@@ -1397,18 +1400,17 @@ impl std::fmt::Debug for OpenParams {
 
 fn open(action: &Open, cx: &mut MutableAppContext) {
     let app_state = action.0.clone();
-    cx.prompt_for_paths(
-        PathPromptOptions {
-            files: true,
-            directories: true,
-            multiple: true,
-        },
-        move |paths, cx| {
-            if let Some(paths) = paths {
-                cx.dispatch_global_action(OpenPaths(OpenParams { paths, app_state }));
-            }
-        },
-    );
+    let mut paths = cx.prompt_for_paths(PathPromptOptions {
+        files: true,
+        directories: true,
+        multiple: true,
+    });
+    cx.spawn(|mut cx| async move {
+        if let Some(paths) = paths.recv().await.flatten() {
+            cx.update(|cx| cx.dispatch_global_action(OpenPaths(OpenParams { paths, app_state })));
+        }
+    })
+    .detach();
 }
 
 pub fn open_paths(

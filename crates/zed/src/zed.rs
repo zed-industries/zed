@@ -214,18 +214,13 @@ mod tests {
             assert!(editor.text(cx).is_empty());
         });
 
-        workspace.update(&mut cx, |workspace, cx| {
-            workspace.save_active_item(&workspace::Save, cx)
-        });
-
+        let save_task = workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(cx));
         app_state.fs.as_fake().insert_dir("/root").await.unwrap();
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name")));
-
-        editor
-            .condition(&cx, |editor, cx| editor.title(cx) == "the-new-name")
-            .await;
-        editor.update(&mut cx, |editor, cx| {
+        save_task.await.unwrap();
+        editor.read_with(&cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
+            assert_eq!(editor.title(cx), "the-new-name");
         });
     }
 
@@ -472,12 +467,13 @@ mod tests {
             .await;
         cx.read(|cx| assert!(editor.is_dirty(cx)));
 
-        cx.update(|cx| workspace.update(cx, |w, cx| w.save_active_item(&workspace::Save, cx)));
+        let save_task = workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(cx));
         cx.simulate_prompt_answer(window_id, 0);
-        editor
-            .condition(&cx, |editor, cx| !editor.is_dirty(cx))
-            .await;
-        cx.read(|cx| assert!(!editor.has_conflict(cx)));
+        save_task.await.unwrap();
+        editor.read_with(&cx, |editor, cx| {
+            assert!(!editor.is_dirty(cx));
+            assert!(!editor.has_conflict(cx));
+        });
     }
 
     #[gpui::test]
@@ -525,9 +521,7 @@ mod tests {
         });
 
         // Save the buffer. This prompts for a filename.
-        workspace.update(&mut cx, |workspace, cx| {
-            workspace.save_active_item(&workspace::Save, cx)
-        });
+        let save_task = workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(cx));
         cx.simulate_new_path_selection(|parent_dir| {
             assert_eq!(parent_dir, Path::new("/root"));
             Some(parent_dir.join("the-new-name.rs"))
@@ -537,17 +531,13 @@ mod tests {
             assert_eq!(editor.title(cx), "untitled");
         });
 
-        // When the save completes, the buffer's title is updated.
-        editor
-            .condition(&cx, |editor, cx| !editor.is_dirty(cx))
-            .await;
-        cx.read(|cx| {
+        // When the save completes, the buffer's title is updated and the language is assigned based
+        // on the path.
+        save_task.await.unwrap();
+        editor.read_with(&cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
             assert_eq!(editor.title(cx), "the-new-name.rs");
-        });
-        // The language is assigned based on the path
-        editor.read_with(&cx, |editor, cx| {
-            assert_eq!(editor.language(cx).unwrap().name(), "Rust")
+            assert_eq!(editor.language(cx).unwrap().name(), "Rust");
         });
 
         // Edit the file and save it again. This time, there is no filename prompt.
@@ -555,14 +545,13 @@ mod tests {
             editor.handle_input(&editor::Input(" there".into()), cx);
             assert_eq!(editor.is_dirty(cx.as_ref()), true);
         });
-        workspace.update(&mut cx, |workspace, cx| {
-            workspace.save_active_item(&workspace::Save, cx)
-        });
+        let save_task = workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(cx));
+        save_task.await.unwrap();
         assert!(!cx.did_prompt_for_new_path());
-        editor
-            .condition(&cx, |editor, cx| !editor.is_dirty(cx))
-            .await;
-        cx.read(|cx| assert_eq!(editor.title(cx), "the-new-name.rs"));
+        editor.read_with(&cx, |editor, cx| {
+            assert!(!editor.is_dirty(cx));
+            assert_eq!(editor.title(cx), "the-new-name.rs")
+        });
 
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.
@@ -624,17 +613,12 @@ mod tests {
         });
 
         // Save the buffer. This prompts for a filename.
-        workspace.update(&mut cx, |workspace, cx| {
-            workspace.save_active_item(&workspace::Save, cx)
-        });
+        let save_task = workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(cx));
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name.rs")));
-
-        editor
-            .condition(&cx, |editor, cx| !editor.is_dirty(cx))
-            .await;
-
-        // The language is assigned based on the path
+        save_task.await.unwrap();
+        // The buffer is not dirty anymore and the language is assigned based on the path.
         editor.read_with(&cx, |editor, cx| {
+            assert!(!editor.is_dirty(cx));
             assert_eq!(editor.language(cx).unwrap().name(), "Rust")
         });
     }

@@ -5,9 +5,10 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
+use postage::oneshot;
 use std::{
     any::Any,
-    cell::RefCell,
+    cell::{Cell, RefCell},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -23,7 +24,7 @@ pub struct Platform {
 
 #[derive(Default)]
 pub struct ForegroundPlatform {
-    last_prompt_for_new_path_args: RefCell<Option<(PathBuf, Box<dyn FnOnce(Option<PathBuf>)>)>>,
+    last_prompt_for_new_path_args: RefCell<Option<(PathBuf, oneshot::Sender<Option<PathBuf>>)>>,
 }
 
 struct Dispatcher;
@@ -35,7 +36,7 @@ pub struct Window {
     event_handlers: Vec<Box<dyn FnMut(super::Event)>>,
     resize_handlers: Vec<Box<dyn FnMut()>>,
     close_handlers: Vec<Box<dyn FnOnce()>>,
-    pub(crate) last_prompt: RefCell<Option<Box<dyn FnOnce(usize)>>>,
+    pub(crate) last_prompt: Cell<Option<oneshot::Sender<usize>>>,
 }
 
 impl ForegroundPlatform {
@@ -43,11 +44,11 @@ impl ForegroundPlatform {
         &self,
         result: impl FnOnce(PathBuf) -> Option<PathBuf>,
     ) {
-        let (dir_path, callback) = self
+        let (dir_path, mut done_tx) = self
             .last_prompt_for_new_path_args
             .take()
             .expect("prompt_for_new_path was not called");
-        callback(result(dir_path));
+        let _ = postage::sink::Sink::try_send(&mut done_tx, result(dir_path));
     }
 
     pub(crate) fn did_prompt_for_new_path(&self) -> bool {
@@ -77,12 +78,15 @@ impl super::ForegroundPlatform for ForegroundPlatform {
     fn prompt_for_paths(
         &self,
         _: super::PathPromptOptions,
-        _: Box<dyn FnOnce(Option<Vec<std::path::PathBuf>>)>,
-    ) {
+    ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
+        let (_done_tx, done_rx) = oneshot::channel();
+        done_rx
     }
 
-    fn prompt_for_new_path(&self, path: &Path, f: Box<dyn FnOnce(Option<std::path::PathBuf>)>) {
-        *self.last_prompt_for_new_path_args.borrow_mut() = Some((path.to_path_buf(), f));
+    fn prompt_for_new_path(&self, path: &Path) -> oneshot::Receiver<Option<PathBuf>> {
+        let (done_tx, done_rx) = oneshot::channel();
+        *self.last_prompt_for_new_path_args.borrow_mut() = Some((path.to_path_buf(), done_tx));
+        done_rx
     }
 }
 
@@ -170,7 +174,7 @@ impl Window {
             close_handlers: Vec::new(),
             scale_factor: 1.0,
             current_scene: None,
-            last_prompt: RefCell::new(None),
+            last_prompt: Default::default(),
         }
     }
 }
@@ -220,8 +224,10 @@ impl super::Window for Window {
         self.close_handlers.push(callback);
     }
 
-    fn prompt(&self, _: crate::PromptLevel, _: &str, _: &[&str], f: Box<dyn FnOnce(usize)>) {
-        self.last_prompt.replace(Some(f));
+    fn prompt(&self, _: crate::PromptLevel, _: &str, _: &[&str]) -> oneshot::Receiver<usize> {
+        let (done_tx, done_rx) = oneshot::channel();
+        self.last_prompt.replace(Some(done_tx));
+        done_rx
     }
 }
 
