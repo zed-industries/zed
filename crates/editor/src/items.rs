@@ -8,13 +8,14 @@ use language::{Bias, Buffer, Diagnostic};
 use postage::watch;
 use project::worktree::File;
 use project::{Project, ProjectEntry, ProjectPath};
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::{fmt::Write, path::PathBuf};
 use text::{Point, Selection};
 use util::TryFutureExt;
 use workspace::{
-    ItemHandle, ItemView, ItemViewHandle, NavHistory, PathOpener, Settings, StatusItemView,
-    WeakItemHandle, Workspace,
+    ItemHandle, ItemNavHistory, ItemView, ItemViewHandle, NavHistory, PathOpener, Settings,
+    StatusItemView, WeakItemHandle, Workspace,
 };
 
 pub struct BufferOpener;
@@ -46,7 +47,7 @@ impl ItemHandle for BufferItemHandle {
         &self,
         window_id: usize,
         workspace: &Workspace,
-        nav_history: Rc<NavHistory>,
+        nav_history: Rc<RefCell<NavHistory>>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(self.0.clone(), cx));
@@ -57,7 +58,7 @@ impl ItemHandle for BufferItemHandle {
                 crate::settings_builder(weak_buffer, workspace.settings()),
                 cx,
             );
-            editor.nav_history = Some(nav_history);
+            editor.nav_history = Some(ItemNavHistory::new(nav_history, &cx.handle()));
             editor
         }))
     }

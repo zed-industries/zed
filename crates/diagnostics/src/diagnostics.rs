@@ -15,9 +15,9 @@ use gpui::{
 use language::{Bias, Buffer, Diagnostic, DiagnosticEntry, Point, Selection, SelectionGoal};
 use postage::watch;
 use project::{Project, ProjectPath};
-use std::{any::TypeId, cmp::Ordering, mem, ops::Range, path::PathBuf, rc::Rc, sync::Arc};
+use std::{any::TypeId, cmp::Ordering, mem, ops::Range, path::PathBuf, sync::Arc};
 use util::TryFutureExt;
-use workspace::{NavHistory, Workspace};
+use workspace::{ItemNavHistory, Workspace};
 
 action!(Deploy);
 action!(OpenExcerpts);
@@ -517,7 +517,7 @@ impl workspace::Item for ProjectDiagnostics {
     fn build_view(
         handle: ModelHandle<Self>,
         workspace: &Workspace,
-        _: Rc<NavHistory>,
+        _: ItemNavHistory,
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View {
         ProjectDiagnosticsEditor::new(handle, workspace.weak_handle(), workspace.settings(), cx)

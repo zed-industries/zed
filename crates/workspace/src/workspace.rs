@@ -34,6 +34,7 @@ use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
     any::{Any, TypeId},
+    cell::RefCell,
     future::Future,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
@@ -141,7 +142,7 @@ pub trait Item: Entity + Sized {
     fn build_view(
         handle: ModelHandle<Self>,
         workspace: &Workspace,
-        nav_history: Rc<NavHistory>,
+        nav_history: ItemNavHistory,
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View;
     fn project_entry(&self) -> Option<ProjectEntry>;
@@ -205,7 +206,7 @@ pub trait ItemHandle: Send + Sync {
         &self,
         window_id: usize,
         workspace: &Workspace,
-        nav_history: Rc<NavHistory>,
+        nav_history: Rc<RefCell<NavHistory>>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle>;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
@@ -258,10 +259,11 @@ impl<T: Item> ItemHandle for ModelHandle<T> {
         &self,
         window_id: usize,
         workspace: &Workspace,
-        nav_history: Rc<NavHistory>,
+        nav_history: Rc<RefCell<NavHistory>>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
         Box::new(cx.add_view(window_id, |cx| {
+            let nav_history = ItemNavHistory::new(nav_history, &cx.handle());
             T::build_view(self.clone(), workspace, nav_history, cx)
         }))
     }
@@ -292,7 +294,7 @@ impl ItemHandle for Box<dyn ItemHandle> {
         &self,
         window_id: usize,
         workspace: &Workspace,
-        nav_history: Rc<NavHistory>,
+        nav_history: Rc<RefCell<NavHistory>>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
         ItemHandle::add_view(self.as_ref(), window_id, workspace, nav_history, cx)
