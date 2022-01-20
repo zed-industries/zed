@@ -19,7 +19,7 @@ impl DiagnosticSummary {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         cx.subscribe(project, |this, project, event, cx| match event {
-            project::Event::DiskBasedDiagnosticsUpdated { .. } => {
+            project::Event::DiskBasedDiagnosticsUpdated => {
                 this.summary = project.read(cx).diagnostic_summary(cx);
                 cx.notify();
             }

@@ -64,7 +64,7 @@ pub enum Event {
     ActiveEntryChanged(Option<ProjectEntry>),
     WorktreeRemoved(WorktreeId),
     DiskBasedDiagnosticsStarted,
-    DiskBasedDiagnosticsUpdated { worktree_id: WorktreeId },
+    DiskBasedDiagnosticsUpdated,
     DiskBasedDiagnosticsFinished,
     DiagnosticsUpdated(ProjectPath),
 }
@@ -527,14 +527,10 @@ impl Project {
             .entry((worktree_id, language.name().to_string()))
         {
             hash_map::Entry::Occupied(e) => Some(e.get().clone()),
-            hash_map::Entry::Vacant(e) => Self::start_language_server(
-                self.client.clone(),
-                language,
-                worktree_id,
-                &worktree_abs_path,
-                cx,
-            )
-            .map(|server| e.insert(server).clone()),
+            hash_map::Entry::Vacant(e) => {
+                Self::start_language_server(self.client.clone(), language, &worktree_abs_path, cx)
+                    .map(|server| e.insert(server).clone())
+            }
         };
 
         buffer.update(cx, |buffer, cx| {
@@ -547,7 +543,6 @@ impl Project {
     fn start_language_server(
         rpc: Arc<Client>,
         language: Arc<Language>,
-        worktree_id: WorktreeId,
         worktree_path: &Path,
         cx: &mut ModelContext<Self>,
     ) -> Option<Arc<LanguageServer>> {
@@ -626,12 +621,9 @@ impl Project {
                 match message {
                     LspEvent::DiagnosticsStart => {
                         let send = this.update(&mut cx, |this, cx| {
-                            this.disk_based_diagnostics_started(worktree_id, cx);
+                            this.disk_based_diagnostics_started(cx);
                             this.remote_id().map(|project_id| {
-                                rpc.send(proto::DiskBasedDiagnosticsUpdating {
-                                    project_id,
-                                    worktree_id: worktree_id.to_proto(),
-                                })
+                                rpc.send(proto::DiskBasedDiagnosticsUpdating { project_id })
                             })
                         });
                         if let Some(send) = send {
@@ -646,12 +638,9 @@ impl Project {
                     }
                     LspEvent::DiagnosticsFinish => {
                         let send = this.update(&mut cx, |this, cx| {
-                            this.disk_based_diagnostics_finished(worktree_id, cx);
+                            this.disk_based_diagnostics_finished(cx);
                             this.remote_id().map(|project_id| {
-                                rpc.send(proto::DiskBasedDiagnosticsUpdated {
-                                    project_id,
-                                    worktree_id: worktree_id.to_proto(),
-                                })
+                                rpc.send(proto::DiskBasedDiagnosticsUpdated { project_id })
                             })
                         });
                         if let Some(send) = send {
@@ -831,19 +820,15 @@ impl Project {
         })
     }
 
-    fn disk_based_diagnostics_started(&mut self, _: WorktreeId, cx: &mut ModelContext<Self>) {
+    fn disk_based_diagnostics_started(&mut self, cx: &mut ModelContext<Self>) {
         self.language_servers_with_diagnostics_running += 1;
         if self.language_servers_with_diagnostics_running == 1 {
             cx.emit(Event::DiskBasedDiagnosticsStarted);
         }
     }
 
-    fn disk_based_diagnostics_finished(
-        &mut self,
-        worktree_id: WorktreeId,
-        cx: &mut ModelContext<Self>,
-    ) {
-        cx.emit(Event::DiskBasedDiagnosticsUpdated { worktree_id });
+    fn disk_based_diagnostics_finished(&mut self, cx: &mut ModelContext<Self>) {
+        cx.emit(Event::DiskBasedDiagnosticsUpdated);
         self.language_servers_with_diagnostics_running -= 1;
         if self.language_servers_with_diagnostics_running == 0 {
             cx.emit(Event::DiskBasedDiagnosticsFinished);
@@ -1010,27 +995,21 @@ impl Project {
 
     fn handle_disk_based_diagnostics_updating(
         &mut self,
-        envelope: TypedEnvelope<proto::DiskBasedDiagnosticsUpdating>,
+        _: TypedEnvelope<proto::DiskBasedDiagnosticsUpdating>,
         _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        self.disk_based_diagnostics_started(
-            WorktreeId::from_proto(envelope.payload.worktree_id),
-            cx,
-        );
+        self.disk_based_diagnostics_started(cx);
         Ok(())
     }
 
     fn handle_disk_based_diagnostics_updated(
         &mut self,
-        envelope: TypedEnvelope<proto::DiskBasedDiagnosticsUpdated>,
+        _: TypedEnvelope<proto::DiskBasedDiagnosticsUpdated>,
         _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        self.disk_based_diagnostics_finished(
-            WorktreeId::from_proto(envelope.payload.worktree_id),
-            cx,
-        );
+        self.disk_based_diagnostics_finished(cx);
         Ok(())
     }
 
@@ -1491,7 +1470,11 @@ mod tests {
         fake_server.end_progress(&progress_token).await;
         assert_eq!(
             events.next().await.unwrap(),
-            Event::DiskBasedDiagnosticsUpdated { worktree_id }
+            Event::DiskBasedDiagnosticsUpdated
+        );
+        assert_eq!(
+            events.next().await.unwrap(),
+            Event::DiskBasedDiagnosticsFinished
         );
 
         let (buffer, _) = tree

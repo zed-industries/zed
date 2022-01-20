@@ -14,7 +14,7 @@ use gpui::{
 };
 use language::{Bias, Buffer, Diagnostic, DiagnosticEntry, Point, Selection, SelectionGoal};
 use postage::watch;
-use project::{Project, ProjectPath, WorktreeId};
+use project::{Project, ProjectPath};
 use std::{cmp::Ordering, mem, ops::Range, path::PathBuf, rc::Rc, sync::Arc};
 use util::TryFutureExt;
 use workspace::{NavHistory, Workspace};
@@ -49,7 +49,7 @@ struct ProjectDiagnosticsEditor {
     editor: ViewHandle<Editor>,
     excerpts: ModelHandle<MultiBuffer>,
     path_states: Vec<PathState>,
-    paths_to_update: HashMap<WorktreeId, BTreeSet<ProjectPath>>,
+    paths_to_update: BTreeSet<ProjectPath>,
     build_settings: BuildSettings,
     settings: watch::Receiver<workspace::Settings>,
 }
@@ -119,16 +119,12 @@ impl ProjectDiagnosticsEditor {
     ) -> Self {
         let project = model.read(cx).project.clone();
         cx.subscribe(&project, |this, _, event, cx| match event {
-            project::Event::DiskBasedDiagnosticsUpdated { worktree_id } => {
-                if let Some(paths) = this.paths_to_update.remove(&worktree_id) {
-                    this.update_excerpts(paths, cx);
-                }
+            project::Event::DiskBasedDiagnosticsFinished => {
+                let paths = mem::take(&mut this.paths_to_update);
+                this.update_excerpts(paths, cx);
             }
             project::Event::DiagnosticsUpdated(path) => {
-                this.paths_to_update
-                    .entry(path.worktree_id)
-                    .or_default()
-                    .insert(path.clone());
+                this.paths_to_update.insert(path.clone());
             }
             _ => {}
         })
@@ -909,7 +905,7 @@ mod tests {
                 worktree_id,
                 path: Arc::from("/test/consts.rs".as_ref()),
             }));
-            cx.emit(project::Event::DiskBasedDiagnosticsUpdated { worktree_id });
+            cx.emit(project::Event::DiskBasedDiagnosticsFinished);
         });
 
         view.next_notification(&cx).await;
@@ -1029,7 +1025,7 @@ mod tests {
                 worktree_id,
                 path: Arc::from("/test/consts.rs".as_ref()),
             }));
-            cx.emit(project::Event::DiskBasedDiagnosticsUpdated { worktree_id });
+            cx.emit(project::Event::DiskBasedDiagnosticsFinished);
         });
 
         view.next_notification(&cx).await;

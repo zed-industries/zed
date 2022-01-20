@@ -191,12 +191,10 @@ message DiagnosticSummary {
 
 message DiskBasedDiagnosticsUpdating {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
 }
 
 message DiskBasedDiagnosticsUpdated {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
 }
 
 message GetChannels {}
