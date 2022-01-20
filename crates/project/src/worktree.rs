@@ -1947,7 +1947,7 @@ impl fmt::Debug for Snapshot {
 #[derive(Clone, PartialEq)]
 pub struct File {
     entry_id: Option<usize>,
-    worktree: ModelHandle<Worktree>,
+    pub worktree: ModelHandle<Worktree>,
     worktree_path: Arc<Path>,
     pub path: Arc<Path>,
     pub mtime: SystemTime,

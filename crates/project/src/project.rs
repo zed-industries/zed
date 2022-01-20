@@ -11,11 +11,14 @@ use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
 };
-use language::{Buffer, DiagnosticEntry, Language, LanguageRegistry};
+use language::{
+    Bias, Buffer, DiagnosticEntry, File as _, Language, LanguageRegistry, ToOffset, ToPointUtf16,
+};
 use lsp::{DiagnosticSeverity, LanguageServer};
 use postage::{prelude::Stream, watch};
 use smol::block_on;
 use std::{
+    ops::Range,
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
 };
@@ -81,6 +84,13 @@ pub struct DiagnosticSummary {
     pub warning_count: usize,
     pub info_count: usize,
     pub hint_count: usize,
+}
+
+#[derive(Debug)]
+pub struct Definition {
+    pub source_range: Option<Range<language::Anchor>>,
+    pub target_buffer: ModelHandle<Buffer>,
+    pub target_range: Range<language::Anchor>,
 }
 
 impl DiagnosticSummary {
@@ -487,7 +497,7 @@ impl Project {
         abs_path: PathBuf,
         cx: &mut ModelContext<Project>,
     ) -> Task<Result<()>> {
-        let worktree_task = self.worktree_for_abs_path(&abs_path, cx);
+        let worktree_task = self.find_or_create_worktree_for_abs_path(&abs_path, cx);
         cx.spawn(|this, mut cx| async move {
             let (worktree, path) = worktree_task.await?;
             worktree
@@ -691,26 +701,180 @@ impl Project {
         Ok(())
     }
 
-    pub fn worktree_for_abs_path(
+    pub fn definition<T: ToOffset>(
+        &self,
+        source_buffer_handle: &ModelHandle<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Definition>>> {
+        let source_buffer_handle = source_buffer_handle.clone();
+        let buffer = source_buffer_handle.read(cx);
+        let worktree;
+        let buffer_abs_path;
+        if let Some(file) = File::from_dyn(buffer.file()) {
+            worktree = file.worktree.clone();
+            buffer_abs_path = file.abs_path();
+        } else {
+            return Task::ready(Err(anyhow!("buffer does not belong to any worktree")));
+        };
+
+        if worktree.read(cx).as_local().is_some() {
+            let point = buffer.offset_to_point_utf16(position.to_offset(buffer));
+            let buffer_abs_path = buffer_abs_path.unwrap();
+            let lang_name;
+            let lang_server;
+            if let Some(lang) = buffer.language() {
+                lang_name = lang.name().to_string();
+                if let Some(server) = self
+                    .language_servers
+                    .get(&(worktree.read(cx).id(), lang_name.clone()))
+                {
+                    lang_server = server.clone();
+                } else {
+                    return Task::ready(Err(anyhow!("buffer does not have a language server")));
+                };
+            } else {
+                return Task::ready(Err(anyhow!("buffer does not have a language")));
+            }
+
+            cx.spawn(|this, mut cx| async move {
+                let response = lang_server
+                    .request::<lsp::request::GotoDefinition>(lsp::GotoDefinitionParams {
+                        text_document_position_params: lsp::TextDocumentPositionParams {
+                            text_document: lsp::TextDocumentIdentifier::new(
+                                lsp::Url::from_file_path(&buffer_abs_path).unwrap(),
+                            ),
+                            position: lsp::Position::new(point.row, point.column),
+                        },
+                        work_done_progress_params: Default::default(),
+                        partial_result_params: Default::default(),
+                    })
+                    .await?;
+
+                let mut definitions = Vec::new();
+                if let Some(response) = response {
+                    let mut unresolved_locations = Vec::new();
+                    match response {
+                        lsp::GotoDefinitionResponse::Scalar(loc) => {
+                            unresolved_locations.push((None, loc.uri, loc.range));
+                        }
+                        lsp::GotoDefinitionResponse::Array(locs) => {
+                            unresolved_locations
+                                .extend(locs.into_iter().map(|l| (None, l.uri, l.range)));
+                        }
+                        lsp::GotoDefinitionResponse::Link(links) => {
+                            unresolved_locations.extend(links.into_iter().map(|l| {
+                                (
+                                    l.origin_selection_range,
+                                    l.target_uri,
+                                    l.target_selection_range,
+                                )
+                            }));
+                        }
+                    }
+
+                    for (source_range, target_uri, target_range) in unresolved_locations {
+                        let abs_path = target_uri
+                            .to_file_path()
+                            .map_err(|_| anyhow!("invalid target path"))?;
+
+                        let (worktree, relative_path) = if let Some(result) = this
+                            .read_with(&cx, |this, cx| {
+                                this.find_worktree_for_abs_path(&abs_path, cx)
+                            }) {
+                            result
+                        } else {
+                            let (worktree, relative_path) = this
+                                .update(&mut cx, |this, cx| {
+                                    this.create_worktree_for_abs_path(&abs_path, cx)
+                                })
+                                .await?;
+                            this.update(&mut cx, |this, cx| {
+                                this.language_servers.insert(
+                                    (worktree.read(cx).id(), lang_name.clone()),
+                                    lang_server.clone(),
+                                );
+                            });
+                            (worktree, relative_path)
+                        };
+
+                        let project_path = ProjectPath {
+                            worktree_id: worktree.read_with(&cx, |worktree, _| worktree.id()),
+                            path: relative_path.into(),
+                        };
+                        let target_buffer_handle = this
+                            .update(&mut cx, |this, cx| this.open_buffer(project_path, cx))
+                            .await?;
+                        cx.read(|cx| {
+                            let source_buffer = source_buffer_handle.read(cx);
+                            let target_buffer = target_buffer_handle.read(cx);
+                            let source_range = source_range.map(|range| {
+                                let start = source_buffer
+                                    .clip_point_utf16(range.start.to_point_utf16(), Bias::Left);
+                                let end = source_buffer
+                                    .clip_point_utf16(range.end.to_point_utf16(), Bias::Left);
+                                source_buffer.anchor_after(start)..source_buffer.anchor_before(end)
+                            });
+                            let target_start = target_buffer
+                                .clip_point_utf16(target_range.start.to_point_utf16(), Bias::Left);
+                            let target_end = target_buffer
+                                .clip_point_utf16(target_range.end.to_point_utf16(), Bias::Left);
+                            definitions.push(Definition {
+                                source_range,
+                                target_buffer: target_buffer_handle,
+                                target_range: target_buffer.anchor_after(target_start)
+                                    ..target_buffer.anchor_before(target_end),
+                            });
+                        });
+                    }
+                }
+
+                Ok(definitions)
+            })
+        } else {
+            todo!()
+        }
+    }
+
+    pub fn find_or_create_worktree_for_abs_path(
         &self,
         abs_path: &Path,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<(ModelHandle<Worktree>, PathBuf)>> {
+        if let Some((tree, relative_path)) = self.find_worktree_for_abs_path(abs_path, cx) {
+            Task::ready(Ok((tree.clone(), relative_path.into())))
+        } else {
+            self.create_worktree_for_abs_path(abs_path, cx)
+        }
+    }
+
+    fn create_worktree_for_abs_path(
+        &self,
+        abs_path: &Path,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<(ModelHandle<Worktree>, PathBuf)>> {
+        let worktree = self.add_local_worktree(abs_path, cx);
+        cx.background().spawn(async move {
+            let worktree = worktree.await?;
+            Ok((worktree, PathBuf::new()))
+        })
+    }
+
+    fn find_worktree_for_abs_path(
+        &self,
+        abs_path: &Path,
+        cx: &AppContext,
+    ) -> Option<(ModelHandle<Worktree>, PathBuf)> {
         for tree in &self.worktrees {
             if let Some(relative_path) = tree
                 .read(cx)
                 .as_local()
                 .and_then(|t| abs_path.strip_prefix(t.abs_path()).ok())
             {
-                return Task::ready(Ok((tree.clone(), relative_path.into())));
+                return Some((tree.clone(), relative_path.into()));
             }
         }
-
-        let worktree = self.add_local_worktree(abs_path, cx);
-        cx.background().spawn(async move {
-            let worktree = worktree.await?;
-            Ok((worktree, PathBuf::new()))
-        })
+        None
     }
 
     pub fn is_shared(&self) -> bool {
