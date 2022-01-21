@@ -959,14 +959,6 @@ impl Project {
         }
     }
 
-    pub fn path_for_entry(&self, entry: ProjectEntry, cx: &AppContext) -> Option<ProjectPath> {
-        let worktree = self.worktree_for_id(entry.worktree_id, cx)?.read(cx);
-        Some(ProjectPath {
-            worktree_id: entry.worktree_id,
-            path: worktree.entry_for_id(entry.entry_id)?.path.clone(),
-        })
-    }
-
     pub fn is_running_disk_based_diagnostics(&self) -> bool {
         self.language_servers_with_diagnostics_running > 0
     }

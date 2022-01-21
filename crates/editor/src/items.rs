@@ -4,13 +4,12 @@ use gpui::{
     elements::*, AppContext, Entity, ModelContext, ModelHandle, MutableAppContext, RenderContext,
     Subscription, Task, View, ViewContext, ViewHandle, WeakModelHandle,
 };
-use language::{Bias, Buffer, Diagnostic};
+use language::{Bias, Buffer, Diagnostic, File as _};
 use postage::watch;
-use project::worktree::File;
-use project::{Project, ProjectEntry, ProjectPath};
-use std::cell::RefCell;
+use project::{File, Project, ProjectPath};
+use std::path::PathBuf;
 use std::rc::Rc;
-use std::{fmt::Write, path::PathBuf};
+use std::{cell::RefCell, fmt::Write};
 use text::{Point, Selection};
 use util::TryFutureExt;
 use workspace::{
@@ -75,8 +74,11 @@ impl ItemHandle for BufferItemHandle {
         Box::new(WeakBufferItemHandle(self.0.downgrade()))
     }
 
-    fn project_entry(&self, cx: &AppContext) -> Option<ProjectEntry> {
-        File::from_dyn(self.0.read(cx).file()).and_then(|f| f.project_entry(cx))
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
+        File::from_dyn(self.0.read(cx).file()).map(|f| ProjectPath {
+            worktree_id: f.worktree_id(cx),
+            path: f.path().clone(),
+        })
     }
 
     fn id(&self) -> usize {
@@ -132,8 +134,11 @@ impl ItemView for Editor {
         }
     }
 
-    fn project_entry(&self, cx: &AppContext) -> Option<ProjectEntry> {
-        File::from_dyn(self.buffer().read(cx).file(cx)).and_then(|file| file.project_entry(cx))
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
+        File::from_dyn(self.buffer().read(cx).file(cx)).map(|file| ProjectPath {
+            worktree_id: file.worktree_id(cx),
+            path: file.path().clone(),
+        })
     }
 
     fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
@@ -158,7 +163,7 @@ impl ItemView for Editor {
     }
 
     fn can_save(&self, cx: &AppContext) -> bool {
-        self.project_entry(cx).is_some()
+        self.project_path(cx).is_some()
     }
 
     fn save(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {

@@ -539,7 +539,7 @@ impl workspace::Item for ProjectDiagnostics {
         diagnostics
     }
 
-    fn project_entry(&self) -> Option<project::ProjectEntry> {
+    fn project_path(&self) -> Option<project::ProjectPath> {
         None
     }
 }
@@ -555,7 +555,7 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         "Project Diagnostics".to_string()
     }
 
-    fn project_entry(&self, _: &AppContext) -> Option<project::ProjectEntry> {
+    fn project_path(&self, _: &AppContext) -> Option<project::ProjectPath> {
         None
     }
 

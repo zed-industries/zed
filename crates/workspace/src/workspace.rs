@@ -27,7 +27,7 @@ pub use pane::*;
 pub use pane_group::*;
 use parking_lot::Mutex;
 use postage::{prelude::Stream, watch};
-use project::{fs, Fs, Project, ProjectEntry, ProjectPath, Worktree};
+use project::{fs, Fs, Project, ProjectPath, Worktree};
 pub use settings::Settings;
 use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus};
 use status_bar::StatusBar;
@@ -145,7 +145,8 @@ pub trait Item: Entity + Sized {
         nav_history: ItemNavHistory,
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View;
-    fn project_entry(&self) -> Option<ProjectEntry>;
+
+    fn project_path(&self) -> Option<ProjectPath>;
 }
 
 pub trait ItemView: View {
@@ -155,7 +156,7 @@ pub trait ItemView: View {
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) {}
     fn item_handle(&self, cx: &AppContext) -> Self::ItemHandle;
     fn title(&self, cx: &AppContext) -> String;
-    fn project_entry(&self, cx: &AppContext) -> Option<ProjectEntry>;
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
     where
         Self: Sized,
@@ -212,7 +213,7 @@ pub trait ItemHandle: Send + Sync {
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
     fn downgrade(&self) -> Box<dyn WeakItemHandle>;
     fn to_any(&self) -> AnyModelHandle;
-    fn project_entry(&self, cx: &AppContext) -> Option<ProjectEntry>;
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
 }
 
 pub trait WeakItemHandle {
@@ -223,7 +224,7 @@ pub trait WeakItemHandle {
 pub trait ItemViewHandle: 'static {
     fn item_handle(&self, cx: &AppContext) -> Box<dyn ItemHandle>;
     fn title(&self, cx: &AppContext) -> String;
-    fn project_entry(&self, cx: &AppContext) -> Option<ProjectEntry>;
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle>;
     fn clone_on_split(&self, cx: &mut MutableAppContext) -> Option<Box<dyn ItemViewHandle>>;
     fn added_to_pane(&mut self, cx: &mut ViewContext<Pane>);
@@ -280,8 +281,8 @@ impl<T: Item> ItemHandle for ModelHandle<T> {
         self.clone().into()
     }
 
-    fn project_entry(&self, cx: &AppContext) -> Option<ProjectEntry> {
-        self.read(cx).project_entry()
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
+        self.read(cx).project_path()
     }
 }
 
@@ -312,8 +313,8 @@ impl ItemHandle for Box<dyn ItemHandle> {
         self.as_ref().to_any()
     }
 
-    fn project_entry(&self, cx: &AppContext) -> Option<ProjectEntry> {
-        self.as_ref().project_entry(cx)
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
+        self.as_ref().project_path(cx)
     }
 }
 
@@ -361,8 +362,8 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         self.read(cx).title(cx)
     }
 
-    fn project_entry(&self, cx: &AppContext) -> Option<ProjectEntry> {
-        self.read(cx).project_entry(cx)
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
+        self.read(cx).project_path(cx)
     }
 
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle> {
@@ -778,18 +779,6 @@ impl Workspace {
         })
     }
 
-    pub fn load_entry(
-        &mut self,
-        path: ProjectEntry,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<Box<dyn ItemHandle>>> {
-        if let Some(path) = self.project.read(cx).path_for_entry(path, cx) {
-            self.load_path(path, cx)
-        } else {
-            Task::ready(Err(anyhow!("entry does not exist")))
-        }
-    }
-
     pub fn load_path(
         &mut self,
         path: ProjectPath,
@@ -812,13 +801,10 @@ impl Workspace {
     }
 
     fn item_for_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
-        let project = self.project.read(cx);
-        self.items.iter().filter_map(|i| i.upgrade(cx)).find(|i| {
-            let item_path = i
-                .project_entry(cx)
-                .and_then(|entry| project.path_for_entry(entry, cx));
-            item_path.as_ref() == Some(path)
-        })
+        self.items
+            .iter()
+            .filter_map(|i| i.upgrade(cx))
+            .find(|i| i.project_path(cx).as_ref() == Some(path))
     }
 
     pub fn item_of_type<T: Item>(&self, cx: &AppContext) -> Option<ModelHandle<T>> {
@@ -832,9 +818,7 @@ impl Workspace {
     }
 
     fn active_project_path(&self, cx: &ViewContext<Self>) -> Option<ProjectPath> {
-        self.active_item(cx)
-            .and_then(|item| item.project_entry(cx))
-            .and_then(|entry| self.project.read(cx).path_for_entry(entry, cx))
+        self.active_item(cx).and_then(|item| item.project_path(cx))
     }
 
     pub fn save_active_item(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {

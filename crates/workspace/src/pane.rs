@@ -10,7 +10,7 @@ use gpui::{
     Entity, MutableAppContext, Quad, RenderContext, Task, View, ViewContext, ViewHandle,
 };
 use postage::watch;
-use project::ProjectEntry;
+use project::ProjectPath;
 use std::{any::Any, cell::RefCell, cmp, mem, rc::Rc};
 use util::ResultExt;
 
@@ -89,7 +89,7 @@ pub struct NavHistory {
     mode: NavigationMode,
     backward_stack: VecDeque<NavigationEntry>,
     forward_stack: VecDeque<NavigationEntry>,
-    project_entries_by_item: HashMap<usize, ProjectEntry>,
+    paths_by_item: HashMap<usize, ProjectPath>,
 }
 
 #[derive(Copy, Clone)]
@@ -150,10 +150,10 @@ impl Pane {
     ) -> Task<()> {
         let to_load = pane.update(cx, |pane, cx| {
             // Retrieve the weak item handle from the history.
-            let nav_entry = pane.nav_history.borrow_mut().pop(mode)?;
+            let entry = pane.nav_history.borrow_mut().pop(mode)?;
 
             // If the item is still present in this pane, then activate it.
-            if let Some(index) = nav_entry
+            if let Some(index) = entry
                 .item_view
                 .upgrade(cx)
                 .and_then(|v| pane.index_for_item_view(v.as_ref()))
@@ -168,7 +168,7 @@ impl Pane {
 
                 pane.active_item_index = index;
                 pane.focus_active_item(cx);
-                if let Some(data) = nav_entry.data {
+                if let Some(data) = entry.data {
                     pane.active_item()?.navigate(data, cx);
                 }
                 cx.notify();
@@ -179,17 +179,17 @@ impl Pane {
             else {
                 pane.nav_history
                     .borrow_mut()
-                    .project_entries_by_item
-                    .get(&nav_entry.item_view.id())
+                    .paths_by_item
+                    .get(&entry.item_view.id())
                     .cloned()
-                    .map(|project_entry| (project_entry, nav_entry))
+                    .map(|project_path| (project_path, entry))
             }
         });
 
-        if let Some((project_entry, nav_entry)) = to_load {
+        if let Some((project_path, entry)) = to_load {
             // If the item was no longer present, then load it again from its previous path.
             let pane = pane.downgrade();
-            let task = workspace.load_entry(project_entry, cx);
+            let task = workspace.load_path(project_path, cx);
             cx.spawn(|workspace, mut cx| async move {
                 let item = task.await;
                 if let Some(pane) = cx.read(|cx| pane.upgrade(cx)) {
@@ -201,7 +201,7 @@ impl Pane {
                                 p.nav_history.borrow_mut().set_mode(NavigationMode::Normal)
                             });
 
-                            if let Some(data) = nav_entry.data {
+                            if let Some(data) = entry.data {
                                 item_view.navigate(data, cx);
                             }
                         });
@@ -328,12 +328,10 @@ impl Pane {
                 }
 
                 let mut nav_history = self.nav_history.borrow_mut();
-                if let Some(entry) = item_view.project_entry(cx) {
-                    nav_history
-                        .project_entries_by_item
-                        .insert(item_view.id(), entry);
+                if let Some(path) = item_view.project_path(cx) {
+                    nav_history.paths_by_item.insert(item_view.id(), path);
                 } else {
-                    nav_history.project_entries_by_item.remove(&item_view.id());
+                    nav_history.paths_by_item.remove(&item_view.id());
                 }
 
                 item_ix += 1;

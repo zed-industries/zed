@@ -1,7 +1,7 @@
 use super::{
     fs::{self, Fs},
     ignore::IgnoreStack,
-    DiagnosticSummary, ProjectEntry,
+    DiagnosticSummary,
 };
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Result};
@@ -2201,13 +2201,6 @@ impl File {
 
     pub fn worktree_id(&self, cx: &AppContext) -> WorktreeId {
         self.worktree.read(cx).id()
-    }
-
-    pub fn project_entry(&self, cx: &AppContext) -> Option<ProjectEntry> {
-        self.entry_id.map(|entry_id| ProjectEntry {
-            worktree_id: self.worktree_id(cx),
-            entry_id,
-        })
     }
 }
 

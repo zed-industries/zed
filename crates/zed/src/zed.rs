@@ -263,11 +263,9 @@ mod tests {
             .await
             .unwrap();
         cx.read(|cx| {
-            let workspace = workspace.read(cx);
-            let pane = workspace.active_pane().read(cx);
-            let entry = pane.active_item().unwrap().project_entry(cx).unwrap();
+            let pane = workspace.read(cx).active_pane().read(cx);
             assert_eq!(
-                workspace.project().read(cx).path_for_entry(entry, cx),
+                pane.active_item().unwrap().project_path(cx),
                 Some(file1.clone())
             );
             assert_eq!(pane.item_views().count(), 1);
@@ -279,11 +277,9 @@ mod tests {
             .await
             .unwrap();
         cx.read(|cx| {
-            let workspace = workspace.read(cx);
-            let pane = workspace.active_pane().read(cx);
-            let entry = pane.active_item().unwrap().project_entry(cx).unwrap();
+            let pane = workspace.read(cx).active_pane().read(cx);
             assert_eq!(
-                workspace.project().read(cx).path_for_entry(entry, cx),
+                pane.active_item().unwrap().project_path(cx),
                 Some(file2.clone())
             );
             assert_eq!(pane.item_views().count(), 2);
@@ -297,11 +293,9 @@ mod tests {
         assert_eq!(entry_1.id(), entry_1b.id());
 
         cx.read(|cx| {
-            let workspace = workspace.read(cx);
-            let pane = workspace.active_pane().read(cx);
-            let entry = pane.active_item().unwrap().project_entry(cx).unwrap();
+            let pane = workspace.read(cx).active_pane().read(cx);
             assert_eq!(
-                workspace.project().read(cx).path_for_entry(entry, cx),
+                pane.active_item().unwrap().project_path(cx),
                 Some(file1.clone())
             );
             assert_eq!(pane.item_views().count(), 2);
@@ -316,11 +310,13 @@ mod tests {
             .await
             .unwrap();
 
-        workspace.read_with(&cx, |workspace, cx| {
-            let pane = workspace.active_pane().read(cx);
-            let entry = pane.active_item().unwrap().project_entry(cx).unwrap();
+        workspace.read_with(&cx, |w, cx| {
             assert_eq!(
-                workspace.project().read(cx).path_for_entry(entry, cx),
+                w.active_pane()
+                    .read(cx)
+                    .active_item()
+                    .unwrap()
+                    .project_path(cx.as_ref()),
                 Some(file2.clone())
             );
         });
@@ -335,22 +331,14 @@ mod tests {
         t1.await.unwrap();
         t2.await.unwrap();
         cx.read(|cx| {
-            let workspace = workspace.read(cx);
-            let pane = workspace.active_pane().read(cx);
-            let entry = pane.active_item().unwrap().project_entry(cx).unwrap();
+            let pane = workspace.read(cx).active_pane().read(cx);
             assert_eq!(
-                workspace.project().read(cx).path_for_entry(entry, cx),
+                pane.active_item().unwrap().project_path(cx),
                 Some(file3.clone())
             );
             let pane_entries = pane
                 .item_views()
-                .map(|i| {
-                    workspace
-                        .project()
-                        .read(cx)
-                        .path_for_entry(i.project_entry(cx).unwrap(), cx)
-                        .unwrap()
-                })
+                .map(|i| i.project_path(cx).unwrap())
                 .collect::<Vec<_>>();
             assert_eq!(pane_entries, &[file1, file2, file3]);
         });
@@ -654,15 +642,8 @@ mod tests {
             .await
             .unwrap();
         cx.read(|cx| {
-            let workspace = workspace.read(cx);
-            let pane1_entry = pane_1
-                .read(cx)
-                .active_item()
-                .unwrap()
-                .project_entry(cx)
-                .unwrap();
             assert_eq!(
-                workspace.project().read(cx).path_for_entry(pane1_entry, cx),
+                pane_1.read(cx).active_item().unwrap().project_path(cx),
                 Some(file1.clone())
             );
         });
@@ -677,15 +658,7 @@ mod tests {
             assert_ne!(pane_1, pane_2);
 
             let pane2_item = pane_2.read(cx).active_item().unwrap();
-            let pane2_entry = pane2_item.project_entry(cx).unwrap();
-            assert_eq!(
-                workspace
-                    .read(cx)
-                    .project()
-                    .read(cx)
-                    .path_for_entry(pane2_entry, cx),
-                Some(file1.clone())
-            );
+            assert_eq!(pane2_item.project_path(cx.as_ref()), Some(file1.clone()));
 
             cx.dispatch_action(window_id, vec![pane_2.id()], &workspace::CloseActiveItem);
             let workspace = workspace.read(cx);
@@ -863,11 +836,7 @@ mod tests {
                 let item = workspace.active_item(cx).unwrap();
                 let editor = item.downcast::<Editor>().unwrap();
                 let selections = editor.update(cx, |editor, cx| editor.selected_display_ranges(cx));
-                let path = workspace
-                    .project()
-                    .read(cx)
-                    .path_for_entry(item.project_entry(cx).unwrap(), cx);
-                (path.unwrap(), selections[0].start)
+                (item.project_path(cx).unwrap(), selections[0].start)
             })
         }
     }
