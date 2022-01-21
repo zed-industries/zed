@@ -301,7 +301,7 @@ impl Project {
                 language_servers: Default::default(),
             };
             for worktree in worktrees {
-                this.add_worktree(&worktree, false, cx);
+                this.add_worktree(&worktree, cx);
             }
             this
         }))
@@ -902,7 +902,7 @@ impl Project {
                 Worktree::open_local(client.clone(), user_store, path, weak, fs, &mut cx).await?;
 
             let (remote_project_id, is_shared) = project.update(&mut cx, |project, cx| {
-                project.add_worktree(&worktree, weak, cx);
+                project.add_worktree(&worktree, cx);
                 (project.remote_id(), project.is_shared())
             });
 
@@ -934,14 +934,20 @@ impl Project {
         cx.notify();
     }
 
-    fn add_worktree(
-        &mut self,
-        worktree: &ModelHandle<Worktree>,
-        weak: bool,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn add_worktree(&mut self, worktree: &ModelHandle<Worktree>, cx: &mut ModelContext<Self>) {
         cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
-        if weak {
+
+        let push_weak_handle = {
+            let worktree = worktree.read(cx);
+            worktree.is_local() && worktree.is_weak()
+        };
+        if push_weak_handle {
+            cx.observe_release(&worktree, |this, cx| {
+                this.worktrees
+                    .retain(|worktree| worktree.upgrade(cx).is_some());
+                cx.notify();
+            })
+            .detach();
             self.worktrees
                 .push(WorktreeHandle::Weak(worktree.downgrade()));
         } else {
@@ -1112,7 +1118,7 @@ impl Project {
                 let worktree =
                     Worktree::remote(remote_id, replica_id, worktree, client, user_store, &mut cx)
                         .await?;
-                this.update(&mut cx, |this, cx| this.add_worktree(&worktree, false, cx));
+                this.update(&mut cx, |this, cx| this.add_worktree(&worktree, cx));
                 Ok(())
             }
             .log_err()

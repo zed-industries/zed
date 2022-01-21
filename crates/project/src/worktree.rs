@@ -267,6 +267,10 @@ impl Worktree {
         }
     }
 
+    pub fn is_local(&self) -> bool {
+        matches!(self, Worktree::Local(_))
+    }
+
     pub fn snapshot(&self) -> Snapshot {
         match self {
             Worktree::Local(worktree) => worktree.snapshot(),
