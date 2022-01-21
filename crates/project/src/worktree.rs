@@ -91,11 +91,12 @@ impl Worktree {
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
         path: impl Into<Arc<Path>>,
+        weak: bool,
         fs: Arc<dyn Fs>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
         let (tree, scan_states_tx) =
-            LocalWorktree::new(client, user_store, path, fs.clone(), cx).await?;
+            LocalWorktree::new(client, user_store, path, weak, fs.clone(), cx).await?;
         tree.update(cx, |tree, cx| {
             let tree = tree.as_local_mut().unwrap();
             let abs_path = tree.snapshot.abs_path.clone();
@@ -126,6 +127,7 @@ impl Worktree {
             .map(|c| c.to_ascii_lowercase())
             .collect();
         let root_name = worktree.root_name.clone();
+        let weak = worktree.weak;
         let (entries_by_path, entries_by_id, diagnostic_summaries) = cx
             .background()
             .spawn(async move {
@@ -225,6 +227,7 @@ impl Worktree {
                     queued_operations: Default::default(),
                     user_store,
                     diagnostic_summaries,
+                    weak,
                 })
             })
         });
@@ -268,6 +271,13 @@ impl Worktree {
         match self {
             Worktree::Local(worktree) => worktree.snapshot(),
             Worktree::Remote(worktree) => worktree.snapshot(),
+        }
+    }
+
+    pub fn is_weak(&self) -> bool {
+        match self {
+            Worktree::Local(worktree) => worktree.weak,
+            Worktree::Remote(worktree) => worktree.weak,
         }
     }
 
@@ -776,6 +786,7 @@ pub struct LocalWorktree {
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     fs: Arc<dyn Fs>,
+    weak: bool,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -803,6 +814,7 @@ pub struct RemoteWorktree {
     user_store: ModelHandle<UserStore>,
     queued_operations: Vec<(u64, Operation)>,
     diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
+    weak: bool,
 }
 
 type LoadingBuffers = HashMap<
@@ -822,6 +834,7 @@ impl LocalWorktree {
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
         path: impl Into<Arc<Path>>,
+        weak: bool,
         fs: Arc<dyn Fs>,
         cx: &mut AsyncAppContext,
     ) -> Result<(ModelHandle<Worktree>, Sender<ScanState>)> {
@@ -889,6 +902,7 @@ impl LocalWorktree {
                 client,
                 user_store,
                 fs,
+                weak,
             };
 
             cx.spawn_weak(|this, mut cx| async move {
@@ -1415,10 +1429,11 @@ impl LocalWorktree {
         });
 
         let diagnostic_summaries = self.diagnostic_summaries.clone();
+        let weak = self.weak;
         let share_message = cx.background().spawn(async move {
             proto::ShareWorktree {
                 project_id,
-                worktree: Some(snapshot.to_proto(&diagnostic_summaries)),
+                worktree: Some(snapshot.to_proto(&diagnostic_summaries, weak)),
             }
         });
 
@@ -1636,6 +1651,7 @@ impl Snapshot {
     pub fn to_proto(
         &self,
         diagnostic_summaries: &TreeMap<PathKey, DiagnosticSummary>,
+        weak: bool,
     ) -> proto::Worktree {
         let root_name = self.root_name.clone();
         proto::Worktree {
@@ -1651,6 +1667,7 @@ impl Snapshot {
                 .iter()
                 .map(|(path, summary)| summary.to_proto(path.0.clone()))
                 .collect(),
+            weak,
         }
     }
 
@@ -3110,6 +3127,7 @@ mod tests {
             client,
             user_store,
             Arc::from(Path::new("/root")),
+            false,
             Arc::new(fs),
             &mut cx.to_async(),
         )
@@ -3147,6 +3165,7 @@ mod tests {
             client,
             user_store,
             dir.path(),
+            false,
             Arc::new(RealFs),
             &mut cx.to_async(),
         )
@@ -3181,6 +3200,7 @@ mod tests {
             client,
             user_store,
             file_path.clone(),
+            false,
             Arc::new(RealFs),
             &mut cx.to_async(),
         )
@@ -3229,6 +3249,7 @@ mod tests {
             client,
             user_store.clone(),
             dir.path(),
+            false,
             Arc::new(RealFs),
             &mut cx.to_async(),
         )
@@ -3265,7 +3286,7 @@ mod tests {
         let remote = Worktree::remote(
             1,
             1,
-            initial_snapshot.to_proto(&Default::default()),
+            initial_snapshot.to_proto(&Default::default(), Default::default()),
             Client::new(http_client.clone()),
             user_store,
             &mut cx.to_async(),
@@ -3379,6 +3400,7 @@ mod tests {
             client,
             user_store,
             dir.path(),
+            false,
             Arc::new(RealFs),
             &mut cx.to_async(),
         )
@@ -3431,6 +3453,7 @@ mod tests {
             client.clone(),
             user_store,
             "/the-dir".as_ref(),
+            false,
             fs,
             &mut cx.to_async(),
         )
@@ -3485,6 +3508,7 @@ mod tests {
             client,
             user_store,
             dir.path(),
+            false,
             Arc::new(RealFs),
             &mut cx.to_async(),
         )
@@ -3621,6 +3645,7 @@ mod tests {
             client,
             user_store,
             dir.path(),
+            false,
             Arc::new(RealFs),
             &mut cx.to_async(),
         )
@@ -3735,6 +3760,7 @@ mod tests {
             client.clone(),
             user_store,
             "/the-dir".as_ref(),
+            false,
             fs,
             &mut cx.to_async(),
         )

@@ -764,9 +764,9 @@ mod tests {
             )
             .await;
 
-        let worktree = project
+        let (worktree, _) = project
             .update(&mut cx, |project, cx| {
-                project.add_local_worktree("/test", cx)
+                project.find_or_create_worktree_for_abs_path("/test", false, cx)
             })
             .await
             .unwrap();

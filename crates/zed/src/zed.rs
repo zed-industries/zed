@@ -175,7 +175,7 @@ mod tests {
         assert_eq!(cx.window_ids().len(), 1);
         let workspace_1 = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
         workspace_1.read_with(&cx, |workspace, cx| {
-            assert_eq!(workspace.worktrees(cx).len(), 2)
+            assert_eq!(workspace.worktrees(cx).count(), 2)
         });
 
         cx.update(|cx| {
@@ -242,9 +242,10 @@ mod tests {
             .await;
         let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(Path::new("/root"), cx)
+        params
+            .project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree_for_abs_path(Path::new("/root"), false, cx)
             })
             .await
             .unwrap();
@@ -366,9 +367,10 @@ mod tests {
 
         let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree("/dir1".as_ref(), cx)
+        params
+            .project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree_for_abs_path(Path::new("/dir1"), false, cx)
             })
             .await
             .unwrap();
@@ -402,7 +404,6 @@ mod tests {
             let worktree_roots = workspace
                 .read(cx)
                 .worktrees(cx)
-                .iter()
                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
                 .collect::<HashSet<_>>();
             assert_eq!(
@@ -433,9 +434,10 @@ mod tests {
 
         let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(Path::new("/root"), cx)
+        params
+            .project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree_for_abs_path(Path::new("/root"), false, cx)
             })
             .await
             .unwrap();
@@ -481,21 +483,14 @@ mod tests {
         app_state.fs.as_fake().insert_dir("/root").await.unwrap();
         let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(Path::new("/root"), cx)
+        params
+            .project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree_for_abs_path(Path::new("/root"), false, cx)
             })
             .await
             .unwrap();
-        let worktree = cx.read(|cx| {
-            workspace
-                .read(cx)
-                .worktrees(cx)
-                .iter()
-                .next()
-                .unwrap()
-                .clone()
-        });
+        let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
         cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
@@ -640,9 +635,10 @@ mod tests {
 
         let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(Path::new("/root"), cx)
+        params
+            .project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree_for_abs_path(Path::new("/root"), false, cx)
             })
             .await
             .unwrap();
@@ -717,9 +713,10 @@ mod tests {
             .await;
         let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(Path::new("/root"), cx)
+        params
+            .project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree_for_abs_path(Path::new("/root"), false, cx)
             })
             .await
             .unwrap();

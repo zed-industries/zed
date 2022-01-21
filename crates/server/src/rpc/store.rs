@@ -31,6 +31,7 @@ pub struct Worktree {
     pub authorized_user_ids: Vec<UserId>,
     pub root_name: String,
     pub share: Option<WorktreeShare>,
+    pub weak: bool,
 }
 
 #[derive(Default)]
@@ -202,6 +203,7 @@ impl Store {
                 let mut worktree_root_names = project
                     .worktrees
                     .values()
+                    .filter(|worktree| !worktree.weak)
                     .map(|worktree| worktree.root_name.clone())
                     .collect::<Vec<_>>();
                 worktree_root_names.sort_unstable();

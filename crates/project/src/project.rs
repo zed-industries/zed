@@ -10,6 +10,7 @@ use futures::Future;
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
+    WeakModelHandle,
 };
 use language::{
     Bias, Buffer, DiagnosticEntry, File as _, Language, LanguageRegistry, ToOffset, ToPointUtf16,
@@ -28,7 +29,7 @@ pub use fs::*;
 pub use worktree::*;
 
 pub struct Project {
-    worktrees: Vec<ModelHandle<Worktree>>,
+    worktrees: Vec<WorktreeHandle>,
     active_entry: Option<ProjectEntry>,
     languages: Arc<LanguageRegistry>,
     language_servers: HashMap<(WorktreeId, String), Arc<LanguageServer>>,
@@ -39,6 +40,11 @@ pub struct Project {
     collaborators: HashMap<PeerId, Collaborator>,
     subscriptions: Vec<client::Subscription>,
     language_servers_with_diagnostics_running: isize,
+}
+
+enum WorktreeHandle {
+    Strong(ModelHandle<Worktree>),
+    Weak(WeakModelHandle<Worktree>),
 }
 
 enum ProjectClientState {
@@ -161,7 +167,7 @@ impl Project {
                                 if let Some(project_id) = remote_id {
                                     let mut registrations = Vec::new();
                                     this.update(&mut cx, |this, cx| {
-                                        for worktree in &this.worktrees {
+                                        for worktree in this.worktrees(cx).collect::<Vec<_>>() {
                                             registrations.push(worktree.update(
                                                 cx,
                                                 |worktree, cx| {
@@ -295,7 +301,7 @@ impl Project {
                 language_servers: Default::default(),
             };
             for worktree in worktrees {
-                this.add_worktree(worktree, cx);
+                this.add_worktree(&worktree, false, cx);
             }
             this
         }))
@@ -364,8 +370,13 @@ impl Project {
         &self.collaborators
     }
 
-    pub fn worktrees(&self) -> &[ModelHandle<Worktree>] {
-        &self.worktrees
+    pub fn worktrees<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = ModelHandle<Worktree>> {
+        self.worktrees
+            .iter()
+            .filter_map(move |worktree| worktree.upgrade(cx))
     }
 
     pub fn worktree_for_id(
@@ -373,10 +384,8 @@ impl Project {
         id: WorktreeId,
         cx: &AppContext,
     ) -> Option<ModelHandle<Worktree>> {
-        self.worktrees
-            .iter()
+        self.worktrees(cx)
             .find(|worktree| worktree.read(cx).id() == id)
-            .cloned()
     }
 
     pub fn share(&self, cx: &mut ModelContext<Self>) -> Task<anyhow::Result<()>> {
@@ -401,7 +410,7 @@ impl Project {
             rpc.request(proto::ShareProject { project_id }).await?;
             let mut tasks = Vec::new();
             this.update(&mut cx, |this, cx| {
-                for worktree in &this.worktrees {
+                for worktree in this.worktrees(cx).collect::<Vec<_>>() {
                     worktree.update(cx, |worktree, cx| {
                         let worktree = worktree.as_local_mut().unwrap();
                         tasks.push(worktree.share(cx));
@@ -438,7 +447,7 @@ impl Project {
             rpc.send(proto::UnshareProject { project_id }).await?;
             this.update(&mut cx, |this, cx| {
                 this.collaborators.clear();
-                for worktree in &this.worktrees {
+                for worktree in this.worktrees(cx).collect::<Vec<_>>() {
                     worktree.update(cx, |worktree, _| {
                         worktree.as_local_mut().unwrap().unshare();
                     });
@@ -494,7 +503,7 @@ impl Project {
         abs_path: PathBuf,
         cx: &mut ModelContext<Project>,
     ) -> Task<Result<()>> {
-        let worktree_task = self.find_or_create_worktree_for_abs_path(&abs_path, cx);
+        let worktree_task = self.find_or_create_worktree_for_abs_path(&abs_path, false, cx);
         cx.spawn(|this, mut cx| async move {
             let (worktree, path) = worktree_task.await?;
             worktree
@@ -777,7 +786,7 @@ impl Project {
                         } else {
                             let (worktree, relative_path) = this
                                 .update(&mut cx, |this, cx| {
-                                    this.create_worktree_for_abs_path(&abs_path, cx)
+                                    this.create_worktree_for_abs_path(&abs_path, true, cx)
                                 })
                                 .await?;
                             this.update(&mut cx, |this, cx| {
@@ -829,22 +838,25 @@ impl Project {
 
     pub fn find_or_create_worktree_for_abs_path(
         &self,
-        abs_path: &Path,
+        abs_path: impl AsRef<Path>,
+        weak: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<(ModelHandle<Worktree>, PathBuf)>> {
+        let abs_path = abs_path.as_ref();
         if let Some((tree, relative_path)) = self.find_worktree_for_abs_path(abs_path, cx) {
             Task::ready(Ok((tree.clone(), relative_path.into())))
         } else {
-            self.create_worktree_for_abs_path(abs_path, cx)
+            self.create_worktree_for_abs_path(abs_path, weak, cx)
         }
     }
 
     fn create_worktree_for_abs_path(
         &self,
         abs_path: &Path,
+        weak: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<(ModelHandle<Worktree>, PathBuf)>> {
-        let worktree = self.add_local_worktree(abs_path, cx);
+        let worktree = self.add_local_worktree(abs_path, weak, cx);
         cx.background().spawn(async move {
             let worktree = worktree.await?;
             Ok((worktree, PathBuf::new()))
@@ -856,7 +868,7 @@ impl Project {
         abs_path: &Path,
         cx: &AppContext,
     ) -> Option<(ModelHandle<Worktree>, PathBuf)> {
-        for tree in &self.worktrees {
+        for tree in self.worktrees(cx) {
             if let Some(relative_path) = tree
                 .read(cx)
                 .as_local()
@@ -875,9 +887,10 @@ impl Project {
         }
     }
 
-    pub fn add_local_worktree(
+    fn add_local_worktree(
         &self,
         abs_path: impl AsRef<Path>,
+        weak: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Worktree>>> {
         let fs = self.fs.clone();
@@ -886,10 +899,10 @@ impl Project {
         let path = Arc::from(abs_path.as_ref());
         cx.spawn(|project, mut cx| async move {
             let worktree =
-                Worktree::open_local(client.clone(), user_store, path, fs, &mut cx).await?;
+                Worktree::open_local(client.clone(), user_store, path, weak, fs, &mut cx).await?;
 
             let (remote_project_id, is_shared) = project.update(&mut cx, |project, cx| {
-                project.add_worktree(worktree.clone(), cx);
+                project.add_worktree(&worktree, weak, cx);
                 (project.remote_id(), project.is_shared())
             });
 
@@ -913,14 +926,28 @@ impl Project {
     }
 
     pub fn remove_worktree(&mut self, id: WorktreeId, cx: &mut ModelContext<Self>) {
-        self.worktrees
-            .retain(|worktree| worktree.read(cx).id() != id);
+        self.worktrees.retain(|worktree| {
+            worktree
+                .upgrade(cx)
+                .map_or(false, |w| w.read(cx).id() != id)
+        });
         cx.notify();
     }
 
-    fn add_worktree(&mut self, worktree: ModelHandle<Worktree>, cx: &mut ModelContext<Self>) {
+    fn add_worktree(
+        &mut self,
+        worktree: &ModelHandle<Worktree>,
+        weak: bool,
+        cx: &mut ModelContext<Self>,
+    ) {
         cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
-        self.worktrees.push(worktree);
+        if weak {
+            self.worktrees
+                .push(WorktreeHandle::Weak(worktree.downgrade()));
+        } else {
+            self.worktrees
+                .push(WorktreeHandle::Strong(worktree.clone()));
+        }
         cx.notify();
     }
 
@@ -966,7 +993,7 @@ impl Project {
         &'a self,
         cx: &'a AppContext,
     ) -> impl Iterator<Item = (ProjectPath, DiagnosticSummary)> + 'a {
-        self.worktrees.iter().flat_map(move |worktree| {
+        self.worktrees(cx).flat_map(move |worktree| {
             let worktree = worktree.read(cx);
             let worktree_id = worktree.id();
             worktree
@@ -1059,7 +1086,7 @@ impl Project {
             .remove(&peer_id)
             .ok_or_else(|| anyhow!("unknown peer {:?}", peer_id))?
             .replica_id;
-        for worktree in &self.worktrees {
+        for worktree in self.worktrees(cx).collect::<Vec<_>>() {
             worktree.update(cx, |worktree, cx| {
                 worktree.remove_collaborator(peer_id, replica_id, cx);
             })
@@ -1085,7 +1112,7 @@ impl Project {
                 let worktree =
                     Worktree::remote(remote_id, replica_id, worktree, client, user_store, &mut cx)
                         .await?;
-                this.update(&mut cx, |this, cx| this.add_worktree(worktree, cx));
+                this.update(&mut cx, |this, cx| this.add_worktree(&worktree, false, cx));
                 Ok(())
             }
             .log_err()
@@ -1293,8 +1320,7 @@ impl Project {
     ) -> impl 'a + Future<Output = Vec<PathMatch>> {
         let include_root_name = self.worktrees.len() > 1;
         let candidate_sets = self
-            .worktrees
-            .iter()
+            .worktrees(cx)
             .map(|worktree| CandidateSet {
                 snapshot: worktree.read(cx).snapshot(),
                 include_ignored,
@@ -1313,6 +1339,15 @@ impl Project {
                 background,
             )
             .await
+        }
+    }
+}
+
+impl WorktreeHandle {
+    pub fn upgrade(&self, cx: &AppContext) -> Option<ModelHandle<Worktree>> {
+        match self {
+            WorktreeHandle::Strong(handle) => Some(handle.clone()),
+            WorktreeHandle::Weak(handle) => handle.upgrade(cx),
         }
     }
 }
@@ -1489,7 +1524,7 @@ mod tests {
 
         let tree = project
             .update(&mut cx, |project, cx| {
-                project.add_local_worktree(&root_link_path, cx)
+                project.add_local_worktree(&root_link_path, false, cx)
             })
             .await
             .unwrap();
@@ -1564,7 +1599,7 @@ mod tests {
 
         let tree = project
             .update(&mut cx, |project, cx| {
-                project.add_local_worktree(dir.path(), cx)
+                project.add_local_worktree(dir.path(), false, cx)
             })
             .await
             .unwrap();
@@ -1670,7 +1705,7 @@ mod tests {
         let project = build_project(&mut cx);
         let tree = project
             .update(&mut cx, |project, cx| {
-                project.add_local_worktree(&dir.path(), cx)
+                project.add_local_worktree(&dir.path(), false, cx)
             })
             .await
             .unwrap();

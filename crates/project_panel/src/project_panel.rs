@@ -6,8 +6,8 @@ use gpui::{
     },
     keymap::{self, Binding},
     platform::CursorStyle,
-    AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, ReadModel, View,
-    ViewContext, ViewHandle, WeakViewHandle,
+    AppContext, Element, ElementBox, Entity, ModelHandle, MutableAppContext, View, ViewContext,
+    ViewHandle, WeakViewHandle,
 };
 use postage::watch;
 use project::{Project, ProjectEntry, ProjectPath, Worktree, WorktreeId};
@@ -24,7 +24,7 @@ use workspace::{
 pub struct ProjectPanel {
     project: ModelHandle<Project>,
     list: UniformListState,
-    visible_entries: Vec<Vec<usize>>,
+    visible_entries: Vec<(WorktreeId, Vec<usize>)>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<usize>>,
     selection: Option<Selection>,
     settings: watch::Receiver<Settings>,
@@ -260,7 +260,11 @@ impl ProjectPanel {
     }
 
     fn select_first(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(worktree) = self.project.read(cx).worktrees().first() {
+        let worktree = self
+            .visible_entries
+            .first()
+            .and_then(|(worktree_id, _)| self.project.read(cx).worktree_for_id(*worktree_id, cx));
+        if let Some(worktree) = worktree {
             let worktree = worktree.read(cx);
             let worktree_id = worktree.id();
             if let Some(root_entry) = worktree.root_entry() {
@@ -289,10 +293,11 @@ impl ProjectPanel {
         let project = self.project.read(cx);
         let mut offset = None;
         let mut ix = 0;
-        for (worktree_ix, visible_entries) in self.visible_entries.iter().enumerate() {
+        for (worktree_id, visible_entries) in &self.visible_entries {
             if target_ix < ix + visible_entries.len() {
-                let worktree = project.worktrees()[worktree_ix].read(cx);
-                offset = Some((worktree, visible_entries[target_ix - ix]));
+                offset = project
+                    .worktree_for_id(*worktree_id, cx)
+                    .map(|w| (w.read(cx), visible_entries[target_ix - ix]));
                 break;
             } else {
                 ix += visible_entries.len();
@@ -318,7 +323,11 @@ impl ProjectPanel {
         new_selected_entry: Option<(WorktreeId, usize)>,
         cx: &mut ViewContext<Self>,
     ) {
-        let worktrees = self.project.read(cx).worktrees();
+        let worktrees = self
+            .project
+            .read(cx)
+            .worktrees(cx)
+            .filter(|worktree| !worktree.read(cx).is_weak());
         self.visible_entries.clear();
 
         let mut entry_ix = 0;
@@ -369,7 +378,8 @@ impl ProjectPanel {
                 }
                 entry_iter.advance();
             }
-            self.visible_entries.push(visible_worktree_entries);
+            self.visible_entries
+                .push((worktree_id, visible_worktree_entries));
         }
     }
 
@@ -404,16 +414,14 @@ impl ProjectPanel {
         }
     }
 
-    fn for_each_visible_entry<C: ReadModel>(
+    fn for_each_visible_entry(
         &self,
         range: Range<usize>,
-        cx: &mut C,
-        mut callback: impl FnMut(ProjectEntry, EntryDetails, &mut C),
+        cx: &mut ViewContext<ProjectPanel>,
+        mut callback: impl FnMut(ProjectEntry, EntryDetails, &mut ViewContext<ProjectPanel>),
     ) {
-        let project = self.project.read(cx);
-        let worktrees = project.worktrees().to_vec();
         let mut ix = 0;
-        for (worktree_ix, visible_worktree_entries) in self.visible_entries.iter().enumerate() {
+        for (worktree_id, visible_worktree_entries) in &self.visible_entries {
             if ix >= range.end {
                 return;
             }
@@ -423,37 +431,38 @@ impl ProjectPanel {
             }
 
             let end_ix = range.end.min(ix + visible_worktree_entries.len());
-            let worktree = &worktrees[worktree_ix];
-            let snapshot = worktree.read(cx).snapshot();
-            let expanded_entry_ids = self
-                .expanded_dir_ids
-                .get(&snapshot.id())
-                .map(Vec::as_slice)
-                .unwrap_or(&[]);
-            let root_name = OsStr::new(snapshot.root_name());
-            let mut cursor = snapshot.entries(false);
+            if let Some(worktree) = self.project.read(cx).worktree_for_id(*worktree_id, cx) {
+                let snapshot = worktree.read(cx).snapshot();
+                let expanded_entry_ids = self
+                    .expanded_dir_ids
+                    .get(&snapshot.id())
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                let root_name = OsStr::new(snapshot.root_name());
+                let mut cursor = snapshot.entries(false);
 
-            for ix in visible_worktree_entries[range.start.saturating_sub(ix)..end_ix - ix]
-                .iter()
-                .copied()
-            {
-                cursor.advance_to_offset(ix);
-                if let Some(entry) = cursor.entry() {
-                    let filename = entry.path.file_name().unwrap_or(root_name);
-                    let details = EntryDetails {
-                        filename: filename.to_string_lossy().to_string(),
-                        depth: entry.path.components().count(),
-                        is_dir: entry.is_dir(),
-                        is_expanded: expanded_entry_ids.binary_search(&entry.id).is_ok(),
-                        is_selected: self.selection.map_or(false, |e| {
-                            e.worktree_id == snapshot.id() && e.entry_id == entry.id
-                        }),
-                    };
-                    let entry = ProjectEntry {
-                        worktree_id: snapshot.id(),
-                        entry_id: entry.id,
-                    };
-                    callback(entry, details, cx);
+                for ix in visible_worktree_entries[range.start.saturating_sub(ix)..end_ix - ix]
+                    .iter()
+                    .copied()
+                {
+                    cursor.advance_to_offset(ix);
+                    if let Some(entry) = cursor.entry() {
+                        let filename = entry.path.file_name().unwrap_or(root_name);
+                        let details = EntryDetails {
+                            filename: filename.to_string_lossy().to_string(),
+                            depth: entry.path.components().count(),
+                            is_dir: entry.is_dir(),
+                            is_expanded: expanded_entry_ids.binary_search(&entry.id).is_ok(),
+                            is_selected: self.selection.map_or(false, |e| {
+                                e.worktree_id == snapshot.id() && e.entry_id == entry.id
+                            }),
+                        };
+                        let entry = ProjectEntry {
+                            worktree_id: snapshot.id(),
+                            entry_id: entry.id,
+                        };
+                        callback(entry, details, cx);
+                    }
                 }
             }
             ix = end_ix;
@@ -545,7 +554,7 @@ impl View for ProjectPanel {
             self.list.clone(),
             self.visible_entries
                 .iter()
-                .map(|worktree_entries| worktree_entries.len())
+                .map(|(_, worktree_entries)| worktree_entries.len())
                 .sum(),
             move |range, items, cx| {
                 let theme = &settings.borrow().theme.project_panel;
@@ -633,18 +642,18 @@ mod tests {
                 cx,
             )
         });
-        let root1 = project
+        let (root1, _) = project
             .update(&mut cx, |project, cx| {
-                project.add_local_worktree("/root1", cx)
+                project.find_or_create_worktree_for_abs_path("/root1", false, cx)
             })
             .await
             .unwrap();
         root1
             .read_with(&cx, |t, _| t.as_local().unwrap().scan_complete())
             .await;
-        let root2 = project
+        let (root2, _) = project
             .update(&mut cx, |project, cx| {
-                project.add_local_worktree("/root2", cx)
+                project.find_or_create_worktree_for_abs_path("/root2", false, cx)
             })
             .await
             .unwrap();
@@ -827,7 +836,7 @@ mod tests {
         ) {
             let path = path.as_ref();
             panel.update(cx, |panel, cx| {
-                for worktree in panel.project.read(cx).worktrees() {
+                for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
                     let worktree = worktree.read(cx);
                     if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                         let entry_id = worktree.entry_for_path(relative_path).unwrap().id;

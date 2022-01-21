@@ -639,8 +639,11 @@ impl Workspace {
         &self.project
     }
 
-    pub fn worktrees<'a>(&self, cx: &'a AppContext) -> &'a [ModelHandle<Worktree>] {
-        &self.project.read(cx).worktrees()
+    pub fn worktrees<'a>(
+        &self,
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = ModelHandle<Worktree>> {
+        self.project.read(cx).worktrees(cx)
     }
 
     pub fn contains_paths(&self, paths: &[PathBuf], cx: &AppContext) -> bool {
@@ -660,7 +663,6 @@ impl Workspace {
     pub fn worktree_scans_complete(&self, cx: &AppContext) -> impl Future<Output = ()> + 'static {
         let futures = self
             .worktrees(cx)
-            .iter()
             .filter_map(|worktree| worktree.read(cx).as_local())
             .map(|worktree| worktree.scan_complete())
             .collect::<Vec<_>>();
@@ -720,7 +722,7 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<ProjectPath>> {
         let entry = self.project().update(cx, |project, cx| {
-            project.find_or_create_worktree_for_abs_path(abs_path, cx)
+            project.find_or_create_worktree_for_abs_path(abs_path, false, cx)
         });
         cx.spawn(|_, cx| async move {
             let (worktree, path) = entry.await?;
@@ -729,15 +731,6 @@ impl Workspace {
                 path: path.into(),
             })
         })
-    }
-
-    pub fn add_worktree(
-        &self,
-        path: &Path,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<ModelHandle<Worktree>>> {
-        self.project
-            .update(cx, |project, cx| project.add_local_worktree(path, cx))
     }
 
     pub fn toggle_modal<V, F>(&mut self, cx: &mut ViewContext<Self>, add_view: F)
@@ -866,7 +859,7 @@ impl Workspace {
                     item.save(cx)
                 }
             } else if item.can_save_as(cx) {
-                let worktree = self.worktrees(cx).first();
+                let worktree = self.worktrees(cx).next();
                 let start_abs_path = worktree
                     .and_then(|w| w.read(cx).as_local())
                     .map_or(Path::new(""), |w| w.abs_path())
@@ -1343,7 +1336,6 @@ impl WorkspaceHandle for ViewHandle<Workspace> {
     fn file_project_paths(&self, cx: &AppContext) -> Vec<ProjectPath> {
         self.read(cx)
             .worktrees(cx)
-            .iter()
             .flat_map(|worktree| {
                 let worktree_id = worktree.read(cx).id();
                 worktree.read(cx).files(true, 0).map(move |f| ProjectPath {

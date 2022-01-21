@@ -454,9 +454,10 @@ mod tests {
             .await;
 
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(Path::new("/root"), cx)
+        params
+            .project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree_for_abs_path(Path::new("/root"), false, cx)
             })
             .await
             .unwrap();
@@ -514,9 +515,10 @@ mod tests {
         .await;
 
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree("/dir".as_ref(), cx)
+        params
+            .project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree_for_abs_path(Path::new("/dir"), false, cx)
             })
             .await
             .unwrap();
@@ -579,9 +581,14 @@ mod tests {
             .await;
 
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(Path::new("/root/the-parent-dir/the-file"), cx)
+        params
+            .project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree_for_abs_path(
+                    Path::new("/root/the-parent-dir/the-file"),
+                    false,
+                    cx,
+                )
             })
             .await
             .unwrap();
