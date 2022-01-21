@@ -1324,9 +1324,13 @@ impl Project {
         cancel_flag: &'a AtomicBool,
         cx: &AppContext,
     ) -> impl 'a + Future<Output = Vec<PathMatch>> {
-        let include_root_name = self.worktrees.len() > 1;
-        let candidate_sets = self
+        let worktrees = self
             .worktrees(cx)
+            .filter(|worktree| !worktree.read(cx).is_weak())
+            .collect::<Vec<_>>();
+        let include_root_name = worktrees.len() > 1;
+        let candidate_sets = worktrees
+            .into_iter()
             .map(|worktree| CandidateSet {
                 snapshot: worktree.read(cx).snapshot(),
                 include_ignored,
