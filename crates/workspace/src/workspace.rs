@@ -33,7 +33,8 @@ use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItem
 use status_bar::StatusBar;
 pub use status_bar::StatusItemView;
 use std::{
-    any::Any,
+    any::{Any, TypeId},
+    cell::RefCell,
     future::Future,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
@@ -66,7 +67,11 @@ pub fn init(cx: &mut MutableAppContext) {
     });
 
     cx.add_action(Workspace::toggle_share);
-    cx.add_action(Workspace::save_active_item);
+    cx.add_action(
+        |workspace: &mut Workspace, _: &Save, cx: &mut ViewContext<Workspace>| {
+            workspace.save_active_item(cx).detach_and_log_err(cx);
+        },
+    );
     cx.add_action(Workspace::debug_elements);
     cx.add_action(Workspace::toggle_sidebar_item);
     cx.add_action(Workspace::toggle_sidebar_item_focus);
@@ -125,9 +130,9 @@ pub struct JoinProjectParams {
 pub trait PathOpener {
     fn open(
         &self,
-        worktree: &mut Worktree,
+        project: &mut Project,
         path: ProjectPath,
-        cx: &mut ModelContext<Worktree>,
+        cx: &mut ModelContext<Project>,
     ) -> Option<Task<Result<Box<dyn ItemHandle>>>>;
 }
 
@@ -137,7 +142,7 @@ pub trait Item: Entity + Sized {
     fn build_view(
         handle: ModelHandle<Self>,
         workspace: &Workspace,
-        navigation: Rc<Navigation>,
+        nav_history: ItemNavHistory,
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View;
 
@@ -165,14 +170,14 @@ pub trait ItemView: View {
         false
     }
     fn can_save(&self, cx: &AppContext) -> bool;
-    fn save(&mut self, cx: &mut ViewContext<Self>) -> Result<Task<Result<()>>>;
+    fn save(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>>;
     fn can_save_as(&self, cx: &AppContext) -> bool;
     fn save_as(
         &mut self,
-        worktree: ModelHandle<Worktree>,
-        path: &Path,
+        project: ModelHandle<Project>,
+        abs_path: PathBuf,
         cx: &mut ViewContext<Self>,
-    ) -> Task<anyhow::Result<()>>;
+    ) -> Task<Result<()>>;
     fn should_activate_item_on_event(_: &Self::Event) -> bool {
         false
     }
@@ -182,6 +187,18 @@ pub trait ItemView: View {
     fn should_update_tab_on_event(_: &Self::Event) -> bool {
         false
     }
+    fn act_as_type(
+        &self,
+        type_id: TypeId,
+        self_handle: &ViewHandle<Self>,
+        _: &AppContext,
+    ) -> Option<AnyViewHandle> {
+        if TypeId::of::<Self>() == type_id {
+            Some(self_handle.into())
+        } else {
+            None
+        }
+    }
 }
 
 pub trait ItemHandle: Send + Sync {
@@ -190,7 +207,7 @@ pub trait ItemHandle: Send + Sync {
         &self,
         window_id: usize,
         workspace: &Workspace,
-        navigation: Rc<Navigation>,
+        nav_history: Rc<RefCell<NavHistory>>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle>;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
@@ -204,7 +221,7 @@ pub trait WeakItemHandle {
     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>>;
 }
 
-pub trait ItemViewHandle {
+pub trait ItemViewHandle: 'static {
     fn item_handle(&self, cx: &AppContext) -> Box<dyn ItemHandle>;
     fn title(&self, cx: &AppContext) -> String;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
@@ -219,13 +236,14 @@ pub trait ItemViewHandle {
     fn has_conflict(&self, cx: &AppContext) -> bool;
     fn can_save(&self, cx: &AppContext) -> bool;
     fn can_save_as(&self, cx: &AppContext) -> bool;
-    fn save(&self, cx: &mut MutableAppContext) -> Result<Task<Result<()>>>;
+    fn save(&self, cx: &mut MutableAppContext) -> Task<Result<()>>;
     fn save_as(
         &self,
-        worktree: ModelHandle<Worktree>,
-        path: &Path,
+        project: ModelHandle<Project>,
+        abs_path: PathBuf,
         cx: &mut MutableAppContext,
-    ) -> Task<anyhow::Result<()>>;
+    ) -> Task<Result<()>>;
+    fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle>;
 }
 
 pub trait WeakItemViewHandle {
@@ -242,11 +260,12 @@ impl<T: Item> ItemHandle for ModelHandle<T> {
         &self,
         window_id: usize,
         workspace: &Workspace,
-        navigation: Rc<Navigation>,
+        nav_history: Rc<RefCell<NavHistory>>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
         Box::new(cx.add_view(window_id, |cx| {
-            T::build_view(self.clone(), workspace, navigation, cx)
+            let nav_history = ItemNavHistory::new(nav_history, &cx.handle());
+            T::build_view(self.clone(), workspace, nav_history, cx)
         }))
     }
 
@@ -276,10 +295,10 @@ impl ItemHandle for Box<dyn ItemHandle> {
         &self,
         window_id: usize,
         workspace: &Workspace,
-        navigation: Rc<Navigation>,
+        nav_history: Rc<RefCell<NavHistory>>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
-        ItemHandle::add_view(self.as_ref(), window_id, workspace, navigation, cx)
+        ItemHandle::add_view(self.as_ref(), window_id, workspace, nav_history, cx)
     }
 
     fn boxed_clone(&self) -> Box<dyn ItemHandle> {
@@ -322,6 +341,17 @@ impl PartialEq for Box<dyn WeakItemHandle> {
 }
 
 impl Eq for Box<dyn WeakItemHandle> {}
+
+impl dyn ItemViewHandle {
+    pub fn downcast<T: View>(&self) -> Option<ViewHandle<T>> {
+        self.to_any().downcast()
+    }
+
+    pub fn act_as<T: View>(&self, cx: &AppContext) -> Option<ViewHandle<T>> {
+        self.act_as_type(TypeId::of::<T>(), cx)
+            .and_then(|t| t.downcast())
+    }
+}
 
 impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
     fn item_handle(&self, cx: &AppContext) -> Box<dyn ItemHandle> {
@@ -374,17 +404,17 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         self.update(cx, |this, cx| this.navigate(data, cx));
     }
 
-    fn save(&self, cx: &mut MutableAppContext) -> Result<Task<Result<()>>> {
+    fn save(&self, cx: &mut MutableAppContext) -> Task<Result<()>> {
         self.update(cx, |item, cx| item.save(cx))
     }
 
     fn save_as(
         &self,
-        worktree: ModelHandle<Worktree>,
-        path: &Path,
+        project: ModelHandle<Project>,
+        abs_path: PathBuf,
         cx: &mut MutableAppContext,
     ) -> Task<anyhow::Result<()>> {
-        self.update(cx, |item, cx| item.save_as(worktree, path, cx))
+        self.update(cx, |item, cx| item.save_as(project, abs_path, cx))
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
@@ -409,6 +439,16 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
 
     fn can_save_as(&self, cx: &AppContext) -> bool {
         self.read(cx).can_save_as(cx)
+    }
+
+    fn act_as_type(&self, type_id: TypeId, cx: &AppContext) -> Option<AnyViewHandle> {
+        self.read(cx).act_as_type(type_id, self, cx)
+    }
+}
+
+impl Into<AnyViewHandle> for Box<dyn ItemViewHandle> {
+    fn into(self) -> AnyViewHandle {
+        self.to_any()
     }
 }
 
@@ -600,8 +640,11 @@ impl Workspace {
         &self.project
     }
 
-    pub fn worktrees<'a>(&self, cx: &'a AppContext) -> &'a [ModelHandle<Worktree>] {
-        &self.project.read(cx).worktrees()
+    pub fn worktrees<'a>(
+        &self,
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = ModelHandle<Worktree>> {
+        self.project.read(cx).worktrees(cx)
     }
 
     pub fn contains_paths(&self, paths: &[PathBuf], cx: &AppContext) -> bool {
@@ -621,7 +664,6 @@ impl Workspace {
     pub fn worktree_scans_complete(&self, cx: &AppContext) -> impl Future<Output = ()> + 'static {
         let futures = self
             .worktrees(cx)
-            .iter()
             .filter_map(|worktree| worktree.read(cx).as_local())
             .map(|worktree| worktree.scan_complete())
             .collect::<Vec<_>>();
@@ -675,44 +717,14 @@ impl Workspace {
         })
     }
 
-    fn worktree_for_abs_path(
-        &self,
-        abs_path: &Path,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<(ModelHandle<Worktree>, PathBuf)>> {
-        let abs_path: Arc<Path> = Arc::from(abs_path);
-        cx.spawn(|this, mut cx| async move {
-            let mut entry_id = None;
-            this.read_with(&cx, |this, cx| {
-                for tree in this.worktrees(cx) {
-                    if let Some(relative_path) = tree
-                        .read(cx)
-                        .as_local()
-                        .and_then(|t| abs_path.strip_prefix(t.abs_path()).ok())
-                    {
-                        entry_id = Some((tree.clone(), relative_path.into()));
-                        break;
-                    }
-                }
-            });
-
-            if let Some(entry_id) = entry_id {
-                Ok(entry_id)
-            } else {
-                let worktree = this
-                    .update(&mut cx, |this, cx| this.add_worktree(&abs_path, cx))
-                    .await?;
-                Ok((worktree, PathBuf::new()))
-            }
-        })
-    }
-
     fn project_path_for_path(
         &self,
         abs_path: &Path,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<ProjectPath>> {
-        let entry = self.worktree_for_abs_path(abs_path, cx);
+        let entry = self.project().update(cx, |project, cx| {
+            project.find_or_create_worktree_for_abs_path(abs_path, false, cx)
+        });
         cx.spawn(|_, cx| async move {
             let (worktree, path) = entry.await?;
             Ok(ProjectPath {
@@ -720,15 +732,6 @@ impl Workspace {
                 path: path.into(),
             })
         })
-    }
-
-    pub fn add_worktree(
-        &self,
-        path: &Path,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<ModelHandle<Worktree>>> {
-        self.project
-            .update(cx, |project, cx| project.add_local_worktree(path, cx))
     }
 
     pub fn toggle_modal<V, F>(&mut self, cx: &mut ViewContext<Self>, add_view: F)
@@ -785,18 +788,11 @@ impl Workspace {
             return Task::ready(Ok(existing_item));
         }
 
-        let worktree = match self.project.read(cx).worktree_for_id(path.worktree_id, cx) {
-            Some(worktree) => worktree,
-            None => {
-                return Task::ready(Err(anyhow!("worktree {} does not exist", path.worktree_id)));
-            }
-        };
-
         let project_path = path.clone();
         let path_openers = self.path_openers.clone();
-        worktree.update(cx, |worktree, cx| {
+        self.project.update(cx, |project, cx| {
             for opener in path_openers.iter() {
-                if let Some(task) = opener.open(worktree, project_path.clone(), cx) {
+                if let Some(task) = opener.open(project, project_path.clone(), cx) {
                     return task;
                 }
             }
@@ -825,70 +821,46 @@ impl Workspace {
         self.active_item(cx).and_then(|item| item.project_path(cx))
     }
 
-    pub fn save_active_item(&mut self, _: &Save, cx: &mut ViewContext<Self>) {
+    pub fn save_active_item(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         if let Some(item) = self.active_item(cx) {
-            let handle = cx.handle();
             if item.can_save(cx) {
                 if item.has_conflict(cx.as_ref()) {
                     const CONFLICT_MESSAGE: &'static str = "This file has changed on disk since you started editing it. Do you want to overwrite it?";
 
-                    cx.prompt(
+                    let mut answer = cx.prompt(
                         PromptLevel::Warning,
                         CONFLICT_MESSAGE,
                         &["Overwrite", "Cancel"],
-                        move |answer, cx| {
-                            if answer == 0 {
-                                cx.spawn(|mut cx| async move {
-                                    if let Err(error) = cx.update(|cx| item.save(cx)).unwrap().await
-                                    {
-                                        error!("failed to save item: {:?}, ", error);
-                                    }
-                                })
-                                .detach();
-                            }
-                        },
                     );
-                } else {
                     cx.spawn(|_, mut cx| async move {
-                        if let Err(error) = cx.update(|cx| item.save(cx)).unwrap().await {
-                            error!("failed to save item: {:?}, ", error);
+                        let answer = answer.recv().await;
+                        if answer == Some(0) {
+                            cx.update(|cx| item.save(cx)).await?;
                         }
+                        Ok(())
                     })
-                    .detach();
+                } else {
+                    item.save(cx)
                 }
             } else if item.can_save_as(cx) {
-                let worktree = self.worktrees(cx).first();
+                let worktree = self.worktrees(cx).next();
                 let start_abs_path = worktree
                     .and_then(|w| w.read(cx).as_local())
                     .map_or(Path::new(""), |w| w.abs_path())
                     .to_path_buf();
-                cx.prompt_for_new_path(&start_abs_path, move |abs_path, cx| {
-                    if let Some(abs_path) = abs_path {
-                        cx.spawn(|mut cx| async move {
-                            let result = match handle
-                                .update(&mut cx, |this, cx| {
-                                    this.worktree_for_abs_path(&abs_path, cx)
-                                })
-                                .await
-                            {
-                                Ok((worktree, path)) => {
-                                    handle
-                                        .update(&mut cx, |_, cx| {
-                                            item.save_as(worktree, &path, cx.as_mut())
-                                        })
-                                        .await
-                                }
-                                Err(error) => Err(error),
-                            };
-
-                            if let Err(error) = result {
-                                error!("failed to save item: {:?}, ", error);
-                            }
-                        })
-                        .detach()
+                let mut abs_path = cx.prompt_for_new_path(&start_abs_path);
+                cx.spawn(|this, mut cx| async move {
+                    if let Some(abs_path) = abs_path.recv().await.flatten() {
+                        let project = this.read_with(&cx, |this, _| this.project().clone());
+                        cx.update(|cx| item.save_as(project, abs_path, cx)).await?;
                     }
-                });
+                    Ok(())
+                })
+            } else {
+                Task::ready(Ok(()))
             }
+        } else {
+            Task::ready(Ok(()))
         }
     }
 
@@ -1348,7 +1320,6 @@ impl WorkspaceHandle for ViewHandle<Workspace> {
     fn file_project_paths(&self, cx: &AppContext) -> Vec<ProjectPath> {
         self.read(cx)
             .worktrees(cx)
-            .iter()
             .flat_map(|worktree| {
                 let worktree_id = worktree.read(cx).id();
                 worktree.read(cx).files(true, 0).map(move |f| ProjectPath {
@@ -1438,18 +1409,17 @@ impl std::fmt::Debug for OpenParams {
 
 fn open(action: &Open, cx: &mut MutableAppContext) {
     let app_state = action.0.clone();
-    cx.prompt_for_paths(
-        PathPromptOptions {
-            files: true,
-            directories: true,
-            multiple: true,
-        },
-        move |paths, cx| {
-            if let Some(paths) = paths {
-                cx.dispatch_global_action(OpenPaths(OpenParams { paths, app_state }));
-            }
-        },
-    );
+    let mut paths = cx.prompt_for_paths(PathPromptOptions {
+        files: true,
+        directories: true,
+        multiple: true,
+    });
+    cx.spawn(|mut cx| async move {
+        if let Some(paths) = paths.recv().await.flatten() {
+            cx.update(|cx| cx.dispatch_global_action(OpenPaths(OpenParams { paths, app_state })));
+        }
+    })
+    .detach();
 }
 
 pub fn open_paths(

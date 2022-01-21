@@ -76,14 +76,16 @@ pub struct Pane {
     item_views: Vec<(usize, Box<dyn ItemViewHandle>)>,
     active_item_index: usize,
     settings: watch::Receiver<Settings>,
-    navigation: Rc<Navigation>,
+    nav_history: Rc<RefCell<NavHistory>>,
+}
+
+pub struct ItemNavHistory {
+    history: Rc<RefCell<NavHistory>>,
+    item_view: Rc<dyn WeakItemViewHandle>,
 }
 
 #[derive(Default)]
-pub struct Navigation(RefCell<NavigationHistory>);
-
-#[derive(Default)]
-struct NavigationHistory {
+pub struct NavHistory {
     mode: NavigationMode,
     backward_stack: VecDeque<NavigationEntry>,
     forward_stack: VecDeque<NavigationEntry>,
@@ -104,7 +106,7 @@ impl Default for NavigationMode {
 }
 
 pub struct NavigationEntry {
-    pub item_view: Box<dyn WeakItemViewHandle>,
+    pub item_view: Rc<dyn WeakItemViewHandle>,
     pub data: Option<Box<dyn Any>>,
 }
 
@@ -114,7 +116,7 @@ impl Pane {
             item_views: Vec::new(),
             active_item_index: 0,
             settings,
-            navigation: Default::default(),
+            nav_history: Default::default(),
         }
     }
 
@@ -148,7 +150,7 @@ impl Pane {
     ) -> Task<()> {
         let to_load = pane.update(cx, |pane, cx| {
             // Retrieve the weak item handle from the history.
-            let entry = pane.navigation.pop(mode)?;
+            let entry = pane.nav_history.borrow_mut().pop(mode)?;
 
             // If the item is still present in this pane, then activate it.
             if let Some(index) = entry
@@ -157,9 +159,11 @@ impl Pane {
                 .and_then(|v| pane.index_for_item_view(v.as_ref()))
             {
                 if let Some(item_view) = pane.active_item() {
-                    pane.navigation.set_mode(mode);
+                    pane.nav_history.borrow_mut().set_mode(mode);
                     item_view.deactivated(cx);
-                    pane.navigation.set_mode(NavigationMode::Normal);
+                    pane.nav_history
+                        .borrow_mut()
+                        .set_mode(NavigationMode::Normal);
                 }
 
                 pane.active_item_index = index;
@@ -173,8 +177,7 @@ impl Pane {
             // If the item is no longer present in this pane, then retrieve its
             // project path in order to reopen it.
             else {
-                pane.navigation
-                    .0
+                pane.nav_history
                     .borrow_mut()
                     .paths_by_item
                     .get(&entry.item_view.id())
@@ -192,9 +195,11 @@ impl Pane {
                 if let Some(pane) = cx.read(|cx| pane.upgrade(cx)) {
                     if let Some(item) = item.log_err() {
                         workspace.update(&mut cx, |workspace, cx| {
-                            pane.update(cx, |p, _| p.navigation.set_mode(mode));
+                            pane.update(cx, |p, _| p.nav_history.borrow_mut().set_mode(mode));
                             let item_view = workspace.open_item_in_pane(item, &pane, cx);
-                            pane.update(cx, |p, _| p.navigation.set_mode(NavigationMode::Normal));
+                            pane.update(cx, |p, _| {
+                                p.nav_history.borrow_mut().set_mode(NavigationMode::Normal)
+                            });
 
                             if let Some(data) = entry.data {
                                 item_view.navigate(data, cx);
@@ -232,7 +237,7 @@ impl Pane {
         }
 
         let item_view =
-            item_handle.add_view(cx.window_id(), workspace, self.navigation.clone(), cx);
+            item_handle.add_view(cx.window_id(), workspace, self.nav_history.clone(), cx);
         self.add_item_view(item_view.boxed_clone(), cx);
         item_view
     }
@@ -322,11 +327,11 @@ impl Pane {
                     item_view.deactivated(cx);
                 }
 
-                let mut navigation = self.navigation.0.borrow_mut();
+                let mut nav_history = self.nav_history.borrow_mut();
                 if let Some(path) = item_view.project_path(cx) {
-                    navigation.paths_by_item.insert(item_view.id(), path);
+                    nav_history.paths_by_item.insert(item_view.id(), path);
                 } else {
-                    navigation.paths_by_item.remove(&item_view.id());
+                    nav_history.paths_by_item.remove(&item_view.id());
                 }
 
                 item_ix += 1;
@@ -349,7 +354,7 @@ impl Pane {
 
     fn focus_active_item(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(active_item) = self.active_item() {
-            cx.focus(active_item.to_any());
+            cx.focus(active_item);
         }
     }
 
@@ -536,16 +541,33 @@ impl View for Pane {
     }
 }
 
-impl Navigation {
-    pub fn pop_backward(&self) -> Option<NavigationEntry> {
-        self.0.borrow_mut().backward_stack.pop_back()
+impl ItemNavHistory {
+    pub fn new<T: ItemView>(history: Rc<RefCell<NavHistory>>, item_view: &ViewHandle<T>) -> Self {
+        Self {
+            history,
+            item_view: Rc::new(item_view.downgrade()),
+        }
     }
 
-    pub fn pop_forward(&self) -> Option<NavigationEntry> {
-        self.0.borrow_mut().forward_stack.pop_back()
+    pub fn history(&self) -> Rc<RefCell<NavHistory>> {
+        self.history.clone()
     }
 
-    fn pop(&self, mode: NavigationMode) -> Option<NavigationEntry> {
+    pub fn push<D: 'static + Any>(&self, data: Option<D>) {
+        self.history.borrow_mut().push(data, self.item_view.clone());
+    }
+}
+
+impl NavHistory {
+    pub fn pop_backward(&mut self) -> Option<NavigationEntry> {
+        self.backward_stack.pop_back()
+    }
+
+    pub fn pop_forward(&mut self) -> Option<NavigationEntry> {
+        self.forward_stack.pop_back()
+    }
+
+    fn pop(&mut self, mode: NavigationMode) -> Option<NavigationEntry> {
         match mode {
             NavigationMode::Normal => None,
             NavigationMode::GoingBack => self.pop_backward(),
@@ -553,38 +575,41 @@ impl Navigation {
         }
     }
 
-    fn set_mode(&self, mode: NavigationMode) {
-        self.0.borrow_mut().mode = mode;
+    fn set_mode(&mut self, mode: NavigationMode) {
+        self.mode = mode;
     }
 
-    pub fn push<D: 'static + Any, T: ItemView>(&self, data: Option<D>, cx: &mut ViewContext<T>) {
-        let mut state = self.0.borrow_mut();
-        match state.mode {
+    pub fn push<D: 'static + Any>(
+        &mut self,
+        data: Option<D>,
+        item_view: Rc<dyn WeakItemViewHandle>,
+    ) {
+        match self.mode {
             NavigationMode::Normal => {
-                if state.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
-                    state.backward_stack.pop_front();
+                if self.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
+                    self.backward_stack.pop_front();
                 }
-                state.backward_stack.push_back(NavigationEntry {
-                    item_view: Box::new(cx.weak_handle()),
+                self.backward_stack.push_back(NavigationEntry {
+                    item_view,
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
                 });
-                state.forward_stack.clear();
+                self.forward_stack.clear();
             }
             NavigationMode::GoingBack => {
-                if state.forward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
-                    state.forward_stack.pop_front();
+                if self.forward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
+                    self.forward_stack.pop_front();
                 }
-                state.forward_stack.push_back(NavigationEntry {
-                    item_view: Box::new(cx.weak_handle()),
+                self.forward_stack.push_back(NavigationEntry {
+                    item_view,
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
                 });
             }
             NavigationMode::GoingForward => {
-                if state.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
-                    state.backward_stack.pop_front();
+                if self.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
+                    self.backward_stack.pop_front();
                 }
-                state.backward_stack.push_back(NavigationEntry {
-                    item_view: Box::new(cx.weak_handle()),
+                self.backward_stack.push_back(NavigationEntry {
+                    item_view,
                     data: data.map(|data| Box::new(data) as Box<dyn Any>),
                 });
             }

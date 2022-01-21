@@ -175,7 +175,7 @@ mod tests {
         assert_eq!(cx.window_ids().len(), 1);
         let workspace_1 = cx.root_view::<Workspace>(cx.window_ids()[0]).unwrap();
         workspace_1.read_with(&cx, |workspace, cx| {
-            assert_eq!(workspace.worktrees(cx).len(), 2)
+            assert_eq!(workspace.worktrees(cx).count(), 2)
         });
 
         cx.update(|cx| {
@@ -205,7 +205,6 @@ mod tests {
             workspace
                 .active_item(cx)
                 .unwrap()
-                .to_any()
                 .downcast::<editor::Editor>()
                 .unwrap()
         });
@@ -214,18 +213,13 @@ mod tests {
             assert!(editor.text(cx).is_empty());
         });
 
-        workspace.update(&mut cx, |workspace, cx| {
-            workspace.save_active_item(&workspace::Save, cx)
-        });
-
+        let save_task = workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(cx));
         app_state.fs.as_fake().insert_dir("/root").await.unwrap();
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name")));
-
-        editor
-            .condition(&cx, |editor, cx| editor.title(cx) == "the-new-name")
-            .await;
-        editor.update(&mut cx, |editor, cx| {
+        save_task.await.unwrap();
+        editor.read_with(&cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
+            assert_eq!(editor.title(cx), "the-new-name");
         });
     }
 
@@ -248,9 +242,10 @@ mod tests {
             .await;
         let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(Path::new("/root"), cx)
+        params
+            .project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree_for_abs_path(Path::new("/root"), false, cx)
             })
             .await
             .unwrap();
@@ -360,9 +355,10 @@ mod tests {
 
         let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree("/dir1".as_ref(), cx)
+        params
+            .project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree_for_abs_path(Path::new("/dir1"), false, cx)
             })
             .await
             .unwrap();
@@ -396,7 +392,6 @@ mod tests {
             let worktree_roots = workspace
                 .read(cx)
                 .worktrees(cx)
-                .iter()
                 .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
                 .collect::<HashSet<_>>();
             assert_eq!(
@@ -427,9 +422,10 @@ mod tests {
 
         let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(Path::new("/root"), cx)
+        params
+            .project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree_for_abs_path(Path::new("/root"), false, cx)
             })
             .await
             .unwrap();
@@ -444,7 +440,7 @@ mod tests {
         let editor = cx.read(|cx| {
             let pane = workspace.read(cx).active_pane().read(cx);
             let item = pane.active_item().unwrap();
-            item.to_any().downcast::<Editor>().unwrap()
+            item.downcast::<Editor>().unwrap()
         });
 
         cx.update(|cx| {
@@ -460,12 +456,13 @@ mod tests {
             .await;
         cx.read(|cx| assert!(editor.is_dirty(cx)));
 
-        cx.update(|cx| workspace.update(cx, |w, cx| w.save_active_item(&workspace::Save, cx)));
+        let save_task = workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(cx));
         cx.simulate_prompt_answer(window_id, 0);
-        editor
-            .condition(&cx, |editor, cx| !editor.is_dirty(cx))
-            .await;
-        cx.read(|cx| assert!(!editor.has_conflict(cx)));
+        save_task.await.unwrap();
+        editor.read_with(&cx, |editor, cx| {
+            assert!(!editor.is_dirty(cx));
+            assert!(!editor.has_conflict(cx));
+        });
     }
 
     #[gpui::test]
@@ -474,21 +471,14 @@ mod tests {
         app_state.fs.as_fake().insert_dir("/root").await.unwrap();
         let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(Path::new("/root"), cx)
+        params
+            .project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree_for_abs_path(Path::new("/root"), false, cx)
             })
             .await
             .unwrap();
-        let worktree = cx.read(|cx| {
-            workspace
-                .read(cx)
-                .worktrees(cx)
-                .iter()
-                .next()
-                .unwrap()
-                .clone()
-        });
+        let worktree = cx.read(|cx| workspace.read(cx).worktrees(cx).next().unwrap());
 
         // Create a new untitled buffer
         cx.dispatch_action(window_id, vec![workspace.id()], OpenNew(app_state.clone()));
@@ -496,7 +486,6 @@ mod tests {
             workspace
                 .active_item(cx)
                 .unwrap()
-                .to_any()
                 .downcast::<Editor>()
                 .unwrap()
         });
@@ -513,9 +502,7 @@ mod tests {
         });
 
         // Save the buffer. This prompts for a filename.
-        workspace.update(&mut cx, |workspace, cx| {
-            workspace.save_active_item(&workspace::Save, cx)
-        });
+        let save_task = workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(cx));
         cx.simulate_new_path_selection(|parent_dir| {
             assert_eq!(parent_dir, Path::new("/root"));
             Some(parent_dir.join("the-new-name.rs"))
@@ -525,17 +512,13 @@ mod tests {
             assert_eq!(editor.title(cx), "untitled");
         });
 
-        // When the save completes, the buffer's title is updated.
-        editor
-            .condition(&cx, |editor, cx| !editor.is_dirty(cx))
-            .await;
-        cx.read(|cx| {
+        // When the save completes, the buffer's title is updated and the language is assigned based
+        // on the path.
+        save_task.await.unwrap();
+        editor.read_with(&cx, |editor, cx| {
             assert!(!editor.is_dirty(cx));
             assert_eq!(editor.title(cx), "the-new-name.rs");
-        });
-        // The language is assigned based on the path
-        editor.read_with(&cx, |editor, cx| {
-            assert_eq!(editor.language(cx).unwrap().name(), "Rust")
+            assert_eq!(editor.language(cx).unwrap().name(), "Rust");
         });
 
         // Edit the file and save it again. This time, there is no filename prompt.
@@ -543,14 +526,13 @@ mod tests {
             editor.handle_input(&editor::Input(" there".into()), cx);
             assert_eq!(editor.is_dirty(cx.as_ref()), true);
         });
-        workspace.update(&mut cx, |workspace, cx| {
-            workspace.save_active_item(&workspace::Save, cx)
-        });
+        let save_task = workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(cx));
+        save_task.await.unwrap();
         assert!(!cx.did_prompt_for_new_path());
-        editor
-            .condition(&cx, |editor, cx| !editor.is_dirty(cx))
-            .await;
-        cx.read(|cx| assert_eq!(editor.title(cx), "the-new-name.rs"));
+        editor.read_with(&cx, |editor, cx| {
+            assert!(!editor.is_dirty(cx));
+            assert_eq!(editor.title(cx), "the-new-name.rs")
+        });
 
         // Open the same newly-created file in another pane item. The new editor should reuse
         // the same buffer.
@@ -572,7 +554,6 @@ mod tests {
             workspace
                 .active_item(cx)
                 .unwrap()
-                .to_any()
                 .downcast::<Editor>()
                 .unwrap()
         });
@@ -597,7 +578,6 @@ mod tests {
             workspace
                 .active_item(cx)
                 .unwrap()
-                .to_any()
                 .downcast::<Editor>()
                 .unwrap()
         });
@@ -612,17 +592,12 @@ mod tests {
         });
 
         // Save the buffer. This prompts for a filename.
-        workspace.update(&mut cx, |workspace, cx| {
-            workspace.save_active_item(&workspace::Save, cx)
-        });
+        let save_task = workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(cx));
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name.rs")));
-
-        editor
-            .condition(&cx, |editor, cx| !editor.is_dirty(cx))
-            .await;
-
-        // The language is assigned based on the path
+        save_task.await.unwrap();
+        // The buffer is not dirty anymore and the language is assigned based on the path.
         editor.read_with(&cx, |editor, cx| {
+            assert!(!editor.is_dirty(cx));
             assert_eq!(editor.language(cx).unwrap().name(), "Rust")
         });
     }
@@ -648,9 +623,10 @@ mod tests {
 
         let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(Path::new("/root"), cx)
+        params
+            .project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree_for_abs_path(Path::new("/root"), false, cx)
             })
             .await
             .unwrap();
@@ -710,9 +686,10 @@ mod tests {
             .await;
         let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
-        workspace
-            .update(&mut cx, |workspace, cx| {
-                workspace.add_worktree(Path::new("/root"), cx)
+        params
+            .project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree_for_abs_path(Path::new("/root"), false, cx)
             })
             .await
             .unwrap();
@@ -727,7 +704,6 @@ mod tests {
             .update(&mut cx, |w, cx| w.open_path(file1.clone(), cx))
             .await
             .unwrap()
-            .to_any()
             .downcast::<Editor>()
             .unwrap();
         editor1.update(&mut cx, |editor, cx| {
@@ -737,14 +713,12 @@ mod tests {
             .update(&mut cx, |w, cx| w.open_path(file2.clone(), cx))
             .await
             .unwrap()
-            .to_any()
             .downcast::<Editor>()
             .unwrap();
         let editor3 = workspace
             .update(&mut cx, |w, cx| w.open_path(file3.clone(), cx))
             .await
             .unwrap()
-            .to_any()
             .downcast::<Editor>()
             .unwrap();
         editor3.update(&mut cx, |editor, cx| {
@@ -860,7 +834,7 @@ mod tests {
         ) -> (ProjectPath, DisplayPoint) {
             workspace.update(cx, |workspace, cx| {
                 let item = workspace.active_item(cx).unwrap();
-                let editor = item.to_any().downcast::<Editor>().unwrap();
+                let editor = item.downcast::<Editor>().unwrap();
                 let selections = editor.update(cx, |editor, cx| editor.selected_display_ranges(cx));
                 (item.project_path(cx).unwrap(), selections[0].start)
             })

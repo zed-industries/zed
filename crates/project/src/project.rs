@@ -5,35 +5,46 @@ pub mod worktree;
 use anyhow::{anyhow, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
-use collections::HashMap;
+use collections::{hash_map, HashMap, HashSet};
 use futures::Future;
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
+    WeakModelHandle,
 };
-use language::{Buffer, DiagnosticEntry, LanguageRegistry};
-use lsp::DiagnosticSeverity;
+use language::{
+    Bias, Buffer, DiagnosticEntry, File as _, Language, LanguageRegistry, ToOffset, ToPointUtf16,
+};
+use lsp::{DiagnosticSeverity, LanguageServer};
 use postage::{prelude::Stream, watch};
+use smol::block_on;
 use std::{
-    path::Path,
+    ops::Range,
+    path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
 };
-use util::TryFutureExt as _;
+use util::{ResultExt, TryFutureExt as _};
 
 pub use fs::*;
 pub use worktree::*;
 
 pub struct Project {
-    worktrees: Vec<ModelHandle<Worktree>>,
+    worktrees: Vec<WorktreeHandle>,
     active_entry: Option<ProjectEntry>,
     languages: Arc<LanguageRegistry>,
+    language_servers: HashMap<(WorktreeId, String), Arc<LanguageServer>>,
     client: Arc<client::Client>,
     user_store: ModelHandle<UserStore>,
     fs: Arc<dyn Fs>,
     client_state: ProjectClientState,
     collaborators: HashMap<PeerId, Collaborator>,
     subscriptions: Vec<client::Subscription>,
-    pending_disk_based_diagnostics: isize,
+    language_servers_with_diagnostics_running: isize,
+}
+
+enum WorktreeHandle {
+    Strong(ModelHandle<Worktree>),
+    Weak(WeakModelHandle<Worktree>),
 }
 
 enum ProjectClientState {
@@ -57,12 +68,12 @@ pub struct Collaborator {
     pub replica_id: ReplicaId,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     ActiveEntryChanged(Option<ProjectEntry>),
     WorktreeRemoved(WorktreeId),
     DiskBasedDiagnosticsStarted,
-    DiskBasedDiagnosticsUpdated { worktree_id: WorktreeId },
+    DiskBasedDiagnosticsUpdated,
     DiskBasedDiagnosticsFinished,
     DiagnosticsUpdated(ProjectPath),
 }
@@ -79,6 +90,12 @@ pub struct DiagnosticSummary {
     pub warning_count: usize,
     pub info_count: usize,
     pub hint_count: usize,
+}
+
+#[derive(Debug)]
+pub struct Definition {
+    pub target_buffer: ModelHandle<Buffer>,
+    pub target_range: Range<language::Anchor>,
 }
 
 impl DiagnosticSummary {
@@ -148,16 +165,13 @@ impl Project {
 
                                 if let Some(project_id) = remote_id {
                                     let mut registrations = Vec::new();
-                                    this.read_with(&cx, |this, cx| {
-                                        for worktree in &this.worktrees {
-                                            let worktree_id = worktree.id() as u64;
-                                            let worktree = worktree.read(cx).as_local().unwrap();
-                                            registrations.push(rpc.request(
-                                                proto::RegisterWorktree {
-                                                    project_id,
-                                                    worktree_id,
-                                                    root_name: worktree.root_name().to_string(),
-                                                    authorized_logins: worktree.authorized_logins(),
+                                    this.update(&mut cx, |this, cx| {
+                                        for worktree in this.worktrees(cx).collect::<Vec<_>>() {
+                                            registrations.push(worktree.update(
+                                                cx,
+                                                |worktree, cx| {
+                                                    let worktree = worktree.as_local_mut().unwrap();
+                                                    worktree.register(project_id, cx)
                                                 },
                                             ));
                                         }
@@ -190,7 +204,8 @@ impl Project {
                 client,
                 user_store,
                 fs,
-                pending_disk_based_diagnostics: 0,
+                language_servers_with_diagnostics_running: 0,
+                language_servers: Default::default(),
             }
         })
     }
@@ -222,7 +237,6 @@ impl Project {
                     worktree,
                     client.clone(),
                     user_store.clone(),
-                    languages.clone(),
                     cx,
                 )
                 .await?,
@@ -282,10 +296,11 @@ impl Project {
                     remote_id,
                     replica_id,
                 },
-                pending_disk_based_diagnostics: 0,
+                language_servers_with_diagnostics_running: 0,
+                language_servers: Default::default(),
             };
             for worktree in worktrees {
-                this.add_worktree(worktree, cx);
+                this.add_worktree(&worktree, cx);
             }
             this
         }))
@@ -354,8 +369,13 @@ impl Project {
         &self.collaborators
     }
 
-    pub fn worktrees(&self) -> &[ModelHandle<Worktree>] {
-        &self.worktrees
+    pub fn worktrees<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = ModelHandle<Worktree>> {
+        self.worktrees
+            .iter()
+            .filter_map(move |worktree| worktree.upgrade(cx))
     }
 
     pub fn worktree_for_id(
@@ -363,10 +383,8 @@ impl Project {
         id: WorktreeId,
         cx: &AppContext,
     ) -> Option<ModelHandle<Worktree>> {
-        self.worktrees
-            .iter()
+        self.worktrees(cx)
             .find(|worktree| worktree.read(cx).id() == id)
-            .cloned()
     }
 
     pub fn share(&self, cx: &mut ModelContext<Self>) -> Task<anyhow::Result<()>> {
@@ -391,10 +409,10 @@ impl Project {
             rpc.request(proto::ShareProject { project_id }).await?;
             let mut tasks = Vec::new();
             this.update(&mut cx, |this, cx| {
-                for worktree in &this.worktrees {
+                for worktree in this.worktrees(cx).collect::<Vec<_>>() {
                     worktree.update(cx, |worktree, cx| {
                         let worktree = worktree.as_local_mut().unwrap();
-                        tasks.push(worktree.share(project_id, cx));
+                        tasks.push(worktree.share(cx));
                     });
                 }
             });
@@ -428,7 +446,7 @@ impl Project {
             rpc.send(proto::UnshareProject { project_id }).await?;
             this.update(&mut cx, |this, cx| {
                 this.collaborators.clear();
-                for worktree in &this.worktrees {
+                for worktree in this.worktrees(cx).collect::<Vec<_>>() {
                     worktree.update(cx, |worktree, _| {
                         worktree.as_local_mut().unwrap().unshare();
                     });
@@ -457,15 +475,397 @@ impl Project {
     }
 
     pub fn open_buffer(
-        &self,
+        &mut self,
         path: ProjectPath,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
-        if let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) {
-            worktree.update(cx, |worktree, cx| worktree.open_buffer(path.path, cx))
+        let worktree = if let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) {
+            worktree
         } else {
-            cx.spawn(|_, _| async move { Err(anyhow!("no such worktree")) })
+            return cx.spawn(|_, _| async move { Err(anyhow!("no such worktree")) });
+        };
+        let buffer_task = worktree.update(cx, |worktree, cx| worktree.open_buffer(path.path, cx));
+        cx.spawn(|this, mut cx| async move {
+            let (buffer, buffer_is_new) = buffer_task.await?;
+            if buffer_is_new {
+                this.update(&mut cx, |this, cx| {
+                    this.assign_language_to_buffer(worktree, buffer.clone(), cx)
+                });
+            }
+            Ok(buffer)
+        })
+    }
+
+    pub fn save_buffer_as(
+        &self,
+        buffer: ModelHandle<Buffer>,
+        abs_path: PathBuf,
+        cx: &mut ModelContext<Project>,
+    ) -> Task<Result<()>> {
+        let worktree_task = self.find_or_create_worktree_for_abs_path(&abs_path, false, cx);
+        cx.spawn(|this, mut cx| async move {
+            let (worktree, path) = worktree_task.await?;
+            worktree
+                .update(&mut cx, |worktree, cx| {
+                    worktree
+                        .as_local_mut()
+                        .unwrap()
+                        .save_buffer_as(buffer.clone(), path, cx)
+                })
+                .await?;
+            this.update(&mut cx, |this, cx| {
+                this.assign_language_to_buffer(worktree, buffer, cx)
+            });
+            Ok(())
+        })
+    }
+
+    fn assign_language_to_buffer(
+        &mut self,
+        worktree: ModelHandle<Worktree>,
+        buffer: ModelHandle<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<()> {
+        // Set the buffer's language
+        let full_path = buffer.read(cx).file()?.full_path();
+        let language = self.languages.select_language(&full_path)?.clone();
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_language(Some(language.clone()), cx);
+        });
+
+        // For local worktrees, start a language server if needed.
+        let worktree = worktree.read(cx);
+        let worktree_id = worktree.id();
+        let worktree_abs_path = worktree.as_local()?.abs_path().clone();
+        let language_server = match self
+            .language_servers
+            .entry((worktree_id, language.name().to_string()))
+        {
+            hash_map::Entry::Occupied(e) => Some(e.get().clone()),
+            hash_map::Entry::Vacant(e) => {
+                Self::start_language_server(self.client.clone(), language, &worktree_abs_path, cx)
+                    .map(|server| e.insert(server).clone())
+            }
+        };
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_language_server(language_server, cx)
+        });
+
+        None
+    }
+
+    fn start_language_server(
+        rpc: Arc<Client>,
+        language: Arc<Language>,
+        worktree_path: &Path,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Arc<LanguageServer>> {
+        enum LspEvent {
+            DiagnosticsStart,
+            DiagnosticsUpdate(lsp::PublishDiagnosticsParams),
+            DiagnosticsFinish,
         }
+
+        let language_server = language
+            .start_server(worktree_path, cx)
+            .log_err()
+            .flatten()?;
+        let disk_based_sources = language
+            .disk_based_diagnostic_sources()
+            .cloned()
+            .unwrap_or_default();
+        let disk_based_diagnostics_progress_token =
+            language.disk_based_diagnostics_progress_token().cloned();
+        let has_disk_based_diagnostic_progress_token =
+            disk_based_diagnostics_progress_token.is_some();
+        let (diagnostics_tx, diagnostics_rx) = smol::channel::unbounded();
+
+        // Listen for `PublishDiagnostics` notifications.
+        language_server
+            .on_notification::<lsp::notification::PublishDiagnostics, _>({
+                let diagnostics_tx = diagnostics_tx.clone();
+                move |params| {
+                    if !has_disk_based_diagnostic_progress_token {
+                        block_on(diagnostics_tx.send(LspEvent::DiagnosticsStart)).ok();
+                    }
+                    block_on(diagnostics_tx.send(LspEvent::DiagnosticsUpdate(params))).ok();
+                    if !has_disk_based_diagnostic_progress_token {
+                        block_on(diagnostics_tx.send(LspEvent::DiagnosticsFinish)).ok();
+                    }
+                }
+            })
+            .detach();
+
+        // Listen for `Progress` notifications. Send an event when the language server
+        // transitions between running jobs and not running any jobs.
+        let mut running_jobs_for_this_server: i32 = 0;
+        language_server
+            .on_notification::<lsp::notification::Progress, _>(move |params| {
+                let token = match params.token {
+                    lsp::NumberOrString::Number(_) => None,
+                    lsp::NumberOrString::String(token) => Some(token),
+                };
+
+                if token == disk_based_diagnostics_progress_token {
+                    match params.value {
+                        lsp::ProgressParamsValue::WorkDone(progress) => match progress {
+                            lsp::WorkDoneProgress::Begin(_) => {
+                                running_jobs_for_this_server += 1;
+                                if running_jobs_for_this_server == 1 {
+                                    block_on(diagnostics_tx.send(LspEvent::DiagnosticsStart)).ok();
+                                }
+                            }
+                            lsp::WorkDoneProgress::End(_) => {
+                                running_jobs_for_this_server -= 1;
+                                if running_jobs_for_this_server == 0 {
+                                    block_on(diagnostics_tx.send(LspEvent::DiagnosticsFinish)).ok();
+                                }
+                            }
+                            _ => {}
+                        },
+                    }
+                }
+            })
+            .detach();
+
+        // Process all the LSP events.
+        cx.spawn_weak(|this, mut cx| async move {
+            while let Ok(message) = diagnostics_rx.recv().await {
+                let this = cx.read(|cx| this.upgrade(cx))?;
+                match message {
+                    LspEvent::DiagnosticsStart => {
+                        let send = this.update(&mut cx, |this, cx| {
+                            this.disk_based_diagnostics_started(cx);
+                            this.remote_id().map(|project_id| {
+                                rpc.send(proto::DiskBasedDiagnosticsUpdating { project_id })
+                            })
+                        });
+                        if let Some(send) = send {
+                            send.await.log_err();
+                        }
+                    }
+                    LspEvent::DiagnosticsUpdate(params) => {
+                        this.update(&mut cx, |this, cx| {
+                            this.update_diagnostics(params, &disk_based_sources, cx)
+                                .log_err();
+                        });
+                    }
+                    LspEvent::DiagnosticsFinish => {
+                        let send = this.update(&mut cx, |this, cx| {
+                            this.disk_based_diagnostics_finished(cx);
+                            this.remote_id().map(|project_id| {
+                                rpc.send(proto::DiskBasedDiagnosticsUpdated { project_id })
+                            })
+                        });
+                        if let Some(send) = send {
+                            send.await.log_err();
+                        }
+                    }
+                }
+            }
+            Some(())
+        })
+        .detach();
+
+        Some(language_server)
+    }
+
+    fn update_diagnostics(
+        &mut self,
+        diagnostics: lsp::PublishDiagnosticsParams,
+        disk_based_sources: &HashSet<String>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let path = diagnostics
+            .uri
+            .to_file_path()
+            .map_err(|_| anyhow!("URI is not a file"))?;
+        let (worktree, relative_path) = self
+            .find_worktree_for_abs_path(&path, cx)
+            .ok_or_else(|| anyhow!("no worktree found for diagnostics"))?;
+        let project_path = ProjectPath {
+            worktree_id: worktree.read(cx).id(),
+            path: relative_path.into(),
+        };
+        worktree.update(cx, |worktree, cx| {
+            worktree.as_local_mut().unwrap().update_diagnostics(
+                project_path.path.clone(),
+                diagnostics,
+                disk_based_sources,
+                cx,
+            )
+        })?;
+        cx.emit(Event::DiagnosticsUpdated(project_path));
+        Ok(())
+    }
+
+    pub fn definition<T: ToOffset>(
+        &self,
+        source_buffer_handle: &ModelHandle<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Definition>>> {
+        let source_buffer_handle = source_buffer_handle.clone();
+        let buffer = source_buffer_handle.read(cx);
+        let worktree;
+        let buffer_abs_path;
+        if let Some(file) = File::from_dyn(buffer.file()) {
+            worktree = file.worktree.clone();
+            buffer_abs_path = file.abs_path();
+        } else {
+            return Task::ready(Err(anyhow!("buffer does not belong to any worktree")));
+        };
+
+        if worktree.read(cx).as_local().is_some() {
+            let point = buffer.offset_to_point_utf16(position.to_offset(buffer));
+            let buffer_abs_path = buffer_abs_path.unwrap();
+            let lang_name;
+            let lang_server;
+            if let Some(lang) = buffer.language() {
+                lang_name = lang.name().to_string();
+                if let Some(server) = self
+                    .language_servers
+                    .get(&(worktree.read(cx).id(), lang_name.clone()))
+                {
+                    lang_server = server.clone();
+                } else {
+                    return Task::ready(Err(anyhow!("buffer does not have a language server")));
+                };
+            } else {
+                return Task::ready(Err(anyhow!("buffer does not have a language")));
+            }
+
+            cx.spawn(|this, mut cx| async move {
+                let response = lang_server
+                    .request::<lsp::request::GotoDefinition>(lsp::GotoDefinitionParams {
+                        text_document_position_params: lsp::TextDocumentPositionParams {
+                            text_document: lsp::TextDocumentIdentifier::new(
+                                lsp::Url::from_file_path(&buffer_abs_path).unwrap(),
+                            ),
+                            position: lsp::Position::new(point.row, point.column),
+                        },
+                        work_done_progress_params: Default::default(),
+                        partial_result_params: Default::default(),
+                    })
+                    .await?;
+
+                let mut definitions = Vec::new();
+                if let Some(response) = response {
+                    let mut unresolved_locations = Vec::new();
+                    match response {
+                        lsp::GotoDefinitionResponse::Scalar(loc) => {
+                            unresolved_locations.push((loc.uri, loc.range));
+                        }
+                        lsp::GotoDefinitionResponse::Array(locs) => {
+                            unresolved_locations.extend(locs.into_iter().map(|l| (l.uri, l.range)));
+                        }
+                        lsp::GotoDefinitionResponse::Link(links) => {
+                            unresolved_locations.extend(
+                                links
+                                    .into_iter()
+                                    .map(|l| (l.target_uri, l.target_selection_range)),
+                            );
+                        }
+                    }
+
+                    for (target_uri, target_range) in unresolved_locations {
+                        let abs_path = target_uri
+                            .to_file_path()
+                            .map_err(|_| anyhow!("invalid target path"))?;
+
+                        let (worktree, relative_path) = if let Some(result) = this
+                            .read_with(&cx, |this, cx| {
+                                this.find_worktree_for_abs_path(&abs_path, cx)
+                            }) {
+                            result
+                        } else {
+                            let (worktree, relative_path) = this
+                                .update(&mut cx, |this, cx| {
+                                    this.create_worktree_for_abs_path(&abs_path, true, cx)
+                                })
+                                .await?;
+                            this.update(&mut cx, |this, cx| {
+                                this.language_servers.insert(
+                                    (worktree.read(cx).id(), lang_name.clone()),
+                                    lang_server.clone(),
+                                );
+                            });
+                            (worktree, relative_path)
+                        };
+
+                        let project_path = ProjectPath {
+                            worktree_id: worktree.read_with(&cx, |worktree, _| worktree.id()),
+                            path: relative_path.into(),
+                        };
+                        let target_buffer_handle = this
+                            .update(&mut cx, |this, cx| this.open_buffer(project_path, cx))
+                            .await?;
+                        cx.read(|cx| {
+                            let target_buffer = target_buffer_handle.read(cx);
+                            let target_start = target_buffer
+                                .clip_point_utf16(target_range.start.to_point_utf16(), Bias::Left);
+                            let target_end = target_buffer
+                                .clip_point_utf16(target_range.end.to_point_utf16(), Bias::Left);
+                            definitions.push(Definition {
+                                target_buffer: target_buffer_handle,
+                                target_range: target_buffer.anchor_after(target_start)
+                                    ..target_buffer.anchor_before(target_end),
+                            });
+                        });
+                    }
+                }
+
+                Ok(definitions)
+            })
+        } else {
+            log::info!("go to definition is not yet implemented for guests");
+            Task::ready(Ok(Default::default()))
+        }
+    }
+
+    pub fn find_or_create_worktree_for_abs_path(
+        &self,
+        abs_path: impl AsRef<Path>,
+        weak: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<(ModelHandle<Worktree>, PathBuf)>> {
+        let abs_path = abs_path.as_ref();
+        if let Some((tree, relative_path)) = self.find_worktree_for_abs_path(abs_path, cx) {
+            Task::ready(Ok((tree.clone(), relative_path.into())))
+        } else {
+            self.create_worktree_for_abs_path(abs_path, weak, cx)
+        }
+    }
+
+    fn create_worktree_for_abs_path(
+        &self,
+        abs_path: &Path,
+        weak: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<(ModelHandle<Worktree>, PathBuf)>> {
+        let worktree = self.add_local_worktree(abs_path, weak, cx);
+        cx.background().spawn(async move {
+            let worktree = worktree.await?;
+            Ok((worktree, PathBuf::new()))
+        })
+    }
+
+    fn find_worktree_for_abs_path(
+        &self,
+        abs_path: &Path,
+        cx: &AppContext,
+    ) -> Option<(ModelHandle<Worktree>, PathBuf)> {
+        for tree in self.worktrees(cx) {
+            if let Some(relative_path) = tree
+                .read(cx)
+                .as_local()
+                .and_then(|t| abs_path.strip_prefix(t.abs_path()).ok())
+            {
+                return Some((tree.clone(), relative_path.into()));
+            }
+        }
+        None
     }
 
     pub fn is_shared(&self) -> bool {
@@ -475,42 +875,35 @@ impl Project {
         }
     }
 
-    pub fn add_local_worktree(
-        &mut self,
+    fn add_local_worktree(
+        &self,
         abs_path: impl AsRef<Path>,
+        weak: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Worktree>>> {
         let fs = self.fs.clone();
         let client = self.client.clone();
         let user_store = self.user_store.clone();
-        let languages = self.languages.clone();
         let path = Arc::from(abs_path.as_ref());
         cx.spawn(|project, mut cx| async move {
             let worktree =
-                Worktree::open_local(client.clone(), user_store, path, fs, languages, &mut cx)
-                    .await?;
+                Worktree::open_local(client.clone(), user_store, path, weak, fs, &mut cx).await?;
 
             let (remote_project_id, is_shared) = project.update(&mut cx, |project, cx| {
-                project.add_worktree(worktree.clone(), cx);
+                project.add_worktree(&worktree, cx);
                 (project.remote_id(), project.is_shared())
             });
 
             if let Some(project_id) = remote_project_id {
-                let worktree_id = worktree.id() as u64;
-                let register_message = worktree.update(&mut cx, |worktree, _| {
-                    let worktree = worktree.as_local_mut().unwrap();
-                    proto::RegisterWorktree {
-                        project_id,
-                        worktree_id,
-                        root_name: worktree.root_name().to_string(),
-                        authorized_logins: worktree.authorized_logins(),
-                    }
-                });
-                client.request(register_message).await?;
+                worktree
+                    .update(&mut cx, |worktree, cx| {
+                        worktree.as_local_mut().unwrap().register(project_id, cx)
+                    })
+                    .await?;
                 if is_shared {
                     worktree
                         .update(&mut cx, |worktree, cx| {
-                            worktree.as_local_mut().unwrap().share(project_id, cx)
+                            worktree.as_local_mut().unwrap().share(cx)
                         })
                         .await?;
                 }
@@ -520,35 +913,35 @@ impl Project {
         })
     }
 
-    fn add_worktree(&mut self, worktree: ModelHandle<Worktree>, cx: &mut ModelContext<Self>) {
+    pub fn remove_worktree(&mut self, id: WorktreeId, cx: &mut ModelContext<Self>) {
+        self.worktrees.retain(|worktree| {
+            worktree
+                .upgrade(cx)
+                .map_or(false, |w| w.read(cx).id() != id)
+        });
+        cx.notify();
+    }
+
+    fn add_worktree(&mut self, worktree: &ModelHandle<Worktree>, cx: &mut ModelContext<Self>) {
         cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&worktree, move |this, worktree, event, cx| match event {
-            worktree::Event::DiagnosticsUpdated(path) => {
-                cx.emit(Event::DiagnosticsUpdated(ProjectPath {
-                    worktree_id: worktree.read(cx).id(),
-                    path: path.clone(),
-                }));
-            }
-            worktree::Event::DiskBasedDiagnosticsUpdating => {
-                if this.pending_disk_based_diagnostics == 0 {
-                    cx.emit(Event::DiskBasedDiagnosticsStarted);
-                }
-                this.pending_disk_based_diagnostics += 1;
-            }
-            worktree::Event::DiskBasedDiagnosticsUpdated => {
-                this.pending_disk_based_diagnostics -= 1;
-                cx.emit(Event::DiskBasedDiagnosticsUpdated {
-                    worktree_id: worktree.read(cx).id(),
-                });
-                if this.pending_disk_based_diagnostics == 0 {
-                    if this.pending_disk_based_diagnostics == 0 {
-                        cx.emit(Event::DiskBasedDiagnosticsFinished);
-                    }
-                }
-            }
-        })
-        .detach();
-        self.worktrees.push(worktree);
+
+        let push_weak_handle = {
+            let worktree = worktree.read(cx);
+            worktree.is_local() && worktree.is_weak()
+        };
+        if push_weak_handle {
+            cx.observe_release(&worktree, |this, cx| {
+                this.worktrees
+                    .retain(|worktree| worktree.upgrade(cx).is_some());
+                cx.notify();
+            })
+            .detach();
+            self.worktrees
+                .push(WorktreeHandle::Weak(worktree.downgrade()));
+        } else {
+            self.worktrees
+                .push(WorktreeHandle::Strong(worktree.clone()));
+        }
         cx.notify();
     }
 
@@ -568,7 +961,7 @@ impl Project {
     }
 
     pub fn is_running_disk_based_diagnostics(&self) -> bool {
-        self.pending_disk_based_diagnostics > 0
+        self.language_servers_with_diagnostics_running > 0
     }
 
     pub fn diagnostic_summary(&self, cx: &AppContext) -> DiagnosticSummary {
@@ -586,13 +979,28 @@ impl Project {
         &'a self,
         cx: &'a AppContext,
     ) -> impl Iterator<Item = (ProjectPath, DiagnosticSummary)> + 'a {
-        self.worktrees.iter().flat_map(move |worktree| {
+        self.worktrees(cx).flat_map(move |worktree| {
             let worktree = worktree.read(cx);
             let worktree_id = worktree.id();
             worktree
                 .diagnostic_summaries()
                 .map(move |(path, summary)| (ProjectPath { worktree_id, path }, summary))
         })
+    }
+
+    fn disk_based_diagnostics_started(&mut self, cx: &mut ModelContext<Self>) {
+        self.language_servers_with_diagnostics_running += 1;
+        if self.language_servers_with_diagnostics_running == 1 {
+            cx.emit(Event::DiskBasedDiagnosticsStarted);
+        }
+    }
+
+    fn disk_based_diagnostics_finished(&mut self, cx: &mut ModelContext<Self>) {
+        cx.emit(Event::DiskBasedDiagnosticsUpdated);
+        self.language_servers_with_diagnostics_running -= 1;
+        if self.language_servers_with_diagnostics_running == 0 {
+            cx.emit(Event::DiskBasedDiagnosticsFinished);
+        }
     }
 
     pub fn active_entry(&self) -> Option<ProjectEntry> {
@@ -664,7 +1072,7 @@ impl Project {
             .remove(&peer_id)
             .ok_or_else(|| anyhow!("unknown peer {:?}", peer_id))?
             .replica_id;
-        for worktree in &self.worktrees {
+        for worktree in self.worktrees(cx).collect::<Vec<_>>() {
             worktree.update(cx, |worktree, cx| {
                 worktree.remove_collaborator(peer_id, replica_id, cx);
             })
@@ -685,14 +1093,12 @@ impl Project {
             .worktree
             .ok_or_else(|| anyhow!("invalid worktree"))?;
         let user_store = self.user_store.clone();
-        let languages = self.languages.clone();
         cx.spawn(|this, mut cx| {
             async move {
-                let worktree = Worktree::remote(
-                    remote_id, replica_id, worktree, client, user_store, languages, &mut cx,
-                )
-                .await?;
-                this.update(&mut cx, |this, cx| this.add_worktree(worktree, cx));
+                let worktree =
+                    Worktree::remote(remote_id, replica_id, worktree, client, user_store, &mut cx)
+                        .await?;
+                this.update(&mut cx, |this, cx| this.add_worktree(&worktree, cx));
                 Ok(())
             }
             .log_err()
@@ -708,9 +1114,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        self.worktrees
-            .retain(|worktree| worktree.read(cx).as_remote().unwrap().id() != worktree_id);
-        cx.notify();
+        self.remove_worktree(worktree_id, cx);
         Ok(())
     }
 
@@ -738,49 +1142,40 @@ impl Project {
     ) -> Result<()> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
-            worktree.update(cx, |worktree, cx| {
-                worktree
-                    .as_remote_mut()
-                    .unwrap()
-                    .update_diagnostic_summary(envelope, cx);
-            });
+            if let Some(summary) = envelope.payload.summary {
+                let project_path = ProjectPath {
+                    worktree_id,
+                    path: Path::new(&summary.path).into(),
+                };
+                worktree.update(cx, |worktree, _| {
+                    worktree
+                        .as_remote_mut()
+                        .unwrap()
+                        .update_diagnostic_summary(project_path.path.clone(), &summary);
+                });
+                cx.emit(Event::DiagnosticsUpdated(project_path));
+            }
         }
         Ok(())
     }
 
     fn handle_disk_based_diagnostics_updating(
         &mut self,
-        envelope: TypedEnvelope<proto::DiskBasedDiagnosticsUpdating>,
+        _: TypedEnvelope<proto::DiskBasedDiagnosticsUpdating>,
         _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
-            worktree.update(cx, |worktree, cx| {
-                worktree
-                    .as_remote()
-                    .unwrap()
-                    .disk_based_diagnostics_updating(cx);
-            });
-        }
+        self.disk_based_diagnostics_started(cx);
         Ok(())
     }
 
     fn handle_disk_based_diagnostics_updated(
         &mut self,
-        envelope: TypedEnvelope<proto::DiskBasedDiagnosticsUpdated>,
+        _: TypedEnvelope<proto::DiskBasedDiagnosticsUpdated>,
         _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
-            worktree.update(cx, |worktree, cx| {
-                worktree
-                    .as_remote()
-                    .unwrap()
-                    .disk_based_diagnostics_updated(cx);
-            });
-        }
+        self.disk_based_diagnostics_finished(cx);
         Ok(())
     }
 
@@ -835,26 +1230,51 @@ impl Project {
         rpc: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
+        let receipt = envelope.receipt();
+        let peer_id = envelope.original_sender_id()?;
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
-            return worktree.update(cx, |worktree, cx| {
-                worktree.handle_open_buffer(envelope, rpc, cx)
-            });
-        } else {
-            Err(anyhow!("no such worktree"))
-        }
+        let worktree = self
+            .worktree_for_id(worktree_id, cx)
+            .ok_or_else(|| anyhow!("no such worktree"))?;
+
+        let task = self.open_buffer(
+            ProjectPath {
+                worktree_id,
+                path: PathBuf::from(envelope.payload.path).into(),
+            },
+            cx,
+        );
+        cx.spawn(|_, mut cx| {
+            async move {
+                let buffer = task.await?;
+                let response = worktree.update(&mut cx, |worktree, cx| {
+                    worktree
+                        .as_local_mut()
+                        .unwrap()
+                        .open_remote_buffer(peer_id, buffer, cx)
+                });
+                rpc.respond(receipt, response).await?;
+                Ok(())
+            }
+            .log_err()
+        })
+        .detach();
+        Ok(())
     }
 
     pub fn handle_close_buffer(
         &mut self,
         envelope: TypedEnvelope<proto::CloseBuffer>,
-        rpc: Arc<Client>,
+        _: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<()> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
         if let Some(worktree) = self.worktree_for_id(worktree_id, cx) {
             worktree.update(cx, |worktree, cx| {
-                worktree.handle_close_buffer(envelope, rpc, cx)
+                worktree
+                    .as_local_mut()
+                    .unwrap()
+                    .close_remote_buffer(envelope, cx)
             })?;
         }
         Ok(())
@@ -884,10 +1304,13 @@ impl Project {
         cancel_flag: &'a AtomicBool,
         cx: &AppContext,
     ) -> impl 'a + Future<Output = Vec<PathMatch>> {
-        let include_root_name = self.worktrees.len() > 1;
-        let candidate_sets = self
-            .worktrees
-            .iter()
+        let worktrees = self
+            .worktrees(cx)
+            .filter(|worktree| !worktree.read(cx).is_weak())
+            .collect::<Vec<_>>();
+        let include_root_name = worktrees.len() > 1;
+        let candidate_sets = worktrees
+            .into_iter()
             .map(|worktree| CandidateSet {
                 snapshot: worktree.read(cx).snapshot(),
                 include_ignored,
@@ -906,6 +1329,15 @@ impl Project {
                 background,
             )
             .await
+        }
+    }
+}
+
+impl WorktreeHandle {
+    pub fn upgrade(&self, cx: &AppContext) -> Option<ModelHandle<Worktree>> {
+        match self {
+            WorktreeHandle::Strong(handle) => Some(handle.clone()),
+            WorktreeHandle::Weak(handle) => handle.upgrade(cx),
         }
     }
 }
@@ -997,6 +1429,25 @@ impl Entity for Project {
             }
         }
     }
+
+    fn app_will_quit(
+        &mut self,
+        _: &mut MutableAppContext,
+    ) -> Option<std::pin::Pin<Box<dyn 'static + Future<Output = ()>>>> {
+        use futures::FutureExt;
+
+        let shutdown_futures = self
+            .language_servers
+            .drain()
+            .filter_map(|(_, server)| server.shutdown())
+            .collect::<Vec<_>>();
+        Some(
+            async move {
+                futures::future::join_all(shutdown_futures).await;
+            }
+            .boxed(),
+        )
+    }
 }
 
 impl Collaborator {
@@ -1021,11 +1472,16 @@ impl Collaborator {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{Event, *};
     use client::test::FakeHttpClient;
     use fs::RealFs;
-    use gpui::TestAppContext;
-    use language::LanguageRegistry;
+    use futures::StreamExt;
+    use gpui::{test::subscribe, TestAppContext};
+    use language::{
+        tree_sitter_rust, AnchorRangeExt, Diagnostic, LanguageConfig, LanguageRegistry,
+        LanguageServerConfig, Point,
+    };
+    use lsp::Url;
     use serde_json::json;
     use std::{os::unix, path::PathBuf};
     use util::test::temp_tree;
@@ -1057,9 +1513,9 @@ mod tests {
 
         let project = build_project(&mut cx);
 
-        let tree = project
+        let (tree, _) = project
             .update(&mut cx, |project, cx| {
-                project.add_local_worktree(&root_link_path, cx)
+                project.find_or_create_worktree_for_abs_path(&root_link_path, false, cx)
             })
             .await
             .unwrap();
@@ -1094,6 +1550,139 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_language_server_diagnostics(mut cx: gpui::TestAppContext) {
+        let (language_server_config, mut fake_server) =
+            LanguageServerConfig::fake(cx.background()).await;
+        let progress_token = language_server_config
+            .disk_based_diagnostics_progress_token
+            .clone()
+            .unwrap();
+
+        let mut languages = LanguageRegistry::new();
+        languages.add(Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".to_string(),
+                path_suffixes: vec!["rs".to_string()],
+                language_server: Some(language_server_config),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        )));
+
+        let dir = temp_tree(json!({
+            "a.rs": "fn a() { A }",
+            "b.rs": "const y: i32 = 1",
+        }));
+
+        let http_client = FakeHttpClient::with_404_response();
+        let client = Client::new(http_client.clone());
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+
+        let project = cx.update(|cx| {
+            Project::local(
+                client,
+                user_store,
+                Arc::new(languages),
+                Arc::new(RealFs),
+                cx,
+            )
+        });
+
+        let (tree, _) = project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree_for_abs_path(dir.path(), false, cx)
+            })
+            .await
+            .unwrap();
+        let worktree_id = tree.read_with(&cx, |tree, _| tree.id());
+
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+
+        // Cause worktree to start the fake language server
+        let _buffer = project
+            .update(&mut cx, |project, cx| {
+                project.open_buffer(
+                    ProjectPath {
+                        worktree_id,
+                        path: Path::new("b.rs").into(),
+                    },
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let mut events = subscribe(&project, &mut cx);
+
+        fake_server.start_progress(&progress_token).await;
+        assert_eq!(
+            events.next().await.unwrap(),
+            Event::DiskBasedDiagnosticsStarted
+        );
+
+        fake_server.start_progress(&progress_token).await;
+        fake_server.end_progress(&progress_token).await;
+        fake_server.start_progress(&progress_token).await;
+
+        fake_server
+            .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+                uri: Url::from_file_path(dir.path().join("a.rs")).unwrap(),
+                version: None,
+                diagnostics: vec![lsp::Diagnostic {
+                    range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                    severity: Some(lsp::DiagnosticSeverity::ERROR),
+                    message: "undefined variable 'A'".to_string(),
+                    ..Default::default()
+                }],
+            })
+            .await;
+        assert_eq!(
+            events.next().await.unwrap(),
+            Event::DiagnosticsUpdated(ProjectPath {
+                worktree_id,
+                path: Arc::from(Path::new("a.rs"))
+            })
+        );
+
+        fake_server.end_progress(&progress_token).await;
+        fake_server.end_progress(&progress_token).await;
+        assert_eq!(
+            events.next().await.unwrap(),
+            Event::DiskBasedDiagnosticsUpdated
+        );
+        assert_eq!(
+            events.next().await.unwrap(),
+            Event::DiskBasedDiagnosticsFinished
+        );
+
+        let (buffer, _) = tree
+            .update(&mut cx, |tree, cx| tree.open_buffer("a.rs", cx))
+            .await
+            .unwrap();
+
+        buffer.read_with(&cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            let diagnostics = snapshot
+                .diagnostics_in_range::<_, Point>(0..buffer.len())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                diagnostics,
+                &[DiagnosticEntry {
+                    range: Point::new(0, 9)..Point::new(0, 10),
+                    diagnostic: Diagnostic {
+                        severity: lsp::DiagnosticSeverity::ERROR,
+                        message: "undefined variable 'A'".to_string(),
+                        group_id: 0,
+                        is_primary: true,
+                        ..Default::default()
+                    }
+                }]
+            )
+        });
+    }
+
+    #[gpui::test]
     async fn test_search_worktree_without_files(mut cx: gpui::TestAppContext) {
         let dir = temp_tree(json!({
             "root": {
@@ -1105,9 +1694,9 @@ mod tests {
         }));
 
         let project = build_project(&mut cx);
-        let tree = project
+        let (tree, _) = project
             .update(&mut cx, |project, cx| {
-                project.add_local_worktree(&dir.path(), cx)
+                project.find_or_create_worktree_for_abs_path(&dir.path(), false, cx)
             })
             .await
             .unwrap();
@@ -1123,6 +1712,126 @@ mod tests {
             .await;
 
         assert!(results.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_definition(mut cx: gpui::TestAppContext) {
+        let (language_server_config, mut fake_server) =
+            LanguageServerConfig::fake(cx.background()).await;
+
+        let mut languages = LanguageRegistry::new();
+        languages.add(Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".to_string(),
+                path_suffixes: vec!["rs".to_string()],
+                language_server: Some(language_server_config),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        )));
+
+        let dir = temp_tree(json!({
+            "a.rs": "const fn a() { A }",
+            "b.rs": "const y: i32 = crate::a()",
+        }));
+
+        let http_client = FakeHttpClient::with_404_response();
+        let client = Client::new(http_client.clone());
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+        let project = cx.update(|cx| {
+            Project::local(
+                client,
+                user_store,
+                Arc::new(languages),
+                Arc::new(RealFs),
+                cx,
+            )
+        });
+
+        let (tree, _) = project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree_for_abs_path(dir.path().join("b.rs"), false, cx)
+            })
+            .await
+            .unwrap();
+        let worktree_id = tree.read_with(&cx, |tree, _| tree.id());
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+
+        // Cause worktree to start the fake language server
+        let buffer = project
+            .update(&mut cx, |project, cx| {
+                project.open_buffer(
+                    ProjectPath {
+                        worktree_id,
+                        path: Path::new("").into(),
+                    },
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let definitions =
+            project.update(&mut cx, |project, cx| project.definition(&buffer, 22, cx));
+        let (request_id, request) = fake_server
+            .receive_request::<lsp::request::GotoDefinition>()
+            .await;
+        let request_params = request.text_document_position_params;
+        assert_eq!(
+            request_params.text_document.uri.to_file_path().unwrap(),
+            dir.path().join("b.rs")
+        );
+        assert_eq!(request_params.position, lsp::Position::new(0, 22));
+
+        fake_server
+            .respond(
+                request_id,
+                Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
+                    lsp::Url::from_file_path(dir.path().join("a.rs")).unwrap(),
+                    lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                ))),
+            )
+            .await;
+        let mut definitions = definitions.await.unwrap();
+        assert_eq!(definitions.len(), 1);
+        let definition = definitions.pop().unwrap();
+        cx.update(|cx| {
+            let target_buffer = definition.target_buffer.read(cx);
+            assert_eq!(
+                target_buffer.file().unwrap().abs_path(),
+                Some(dir.path().join("a.rs"))
+            );
+            assert_eq!(definition.target_range.to_offset(target_buffer), 9..10);
+            assert_eq!(
+                list_worktrees(&project, cx),
+                [
+                    (dir.path().join("b.rs"), false),
+                    (dir.path().join("a.rs"), true)
+                ]
+            );
+
+            drop(definition);
+        });
+        cx.read(|cx| {
+            assert_eq!(
+                list_worktrees(&project, cx),
+                [(dir.path().join("b.rs"), false)]
+            );
+        });
+
+        fn list_worktrees(project: &ModelHandle<Project>, cx: &AppContext) -> Vec<(PathBuf, bool)> {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    (
+                        worktree.as_local().unwrap().abs_path().to_path_buf(),
+                        worktree.is_weak(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        }
     }
 
     fn build_project(cx: &mut TestAppContext) -> ModelHandle<Project> {

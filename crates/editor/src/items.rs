@@ -6,15 +6,15 @@ use gpui::{
 };
 use language::{Bias, Buffer, Diagnostic, File as _};
 use postage::watch;
-use project::{File, ProjectPath, Worktree};
-use std::fmt::Write;
-use std::path::Path;
+use project::{File, Project, ProjectPath};
+use std::path::PathBuf;
 use std::rc::Rc;
+use std::{cell::RefCell, fmt::Write};
 use text::{Point, Selection};
 use util::TryFutureExt;
 use workspace::{
-    ItemHandle, ItemView, ItemViewHandle, Navigation, PathOpener, Settings, StatusItemView,
-    WeakItemHandle, Workspace,
+    ItemHandle, ItemNavHistory, ItemView, ItemViewHandle, NavHistory, PathOpener, Settings,
+    StatusItemView, WeakItemHandle, Workspace,
 };
 
 pub struct BufferOpener;
@@ -28,11 +28,11 @@ struct WeakBufferItemHandle(WeakModelHandle<Buffer>);
 impl PathOpener for BufferOpener {
     fn open(
         &self,
-        worktree: &mut Worktree,
+        project: &mut Project,
         project_path: ProjectPath,
-        cx: &mut ModelContext<Worktree>,
+        cx: &mut ModelContext<Project>,
     ) -> Option<Task<Result<Box<dyn ItemHandle>>>> {
-        let buffer = worktree.open_buffer(project_path.path, cx);
+        let buffer = project.open_buffer(project_path, cx);
         let task = cx.spawn(|_, _| async move {
             let buffer = buffer.await?;
             Ok(Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)
@@ -46,7 +46,7 @@ impl ItemHandle for BufferItemHandle {
         &self,
         window_id: usize,
         workspace: &Workspace,
-        navigation: Rc<Navigation>,
+        nav_history: Rc<RefCell<NavHistory>>,
         cx: &mut MutableAppContext,
     ) -> Box<dyn ItemViewHandle> {
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(self.0.clone(), cx));
@@ -57,7 +57,7 @@ impl ItemHandle for BufferItemHandle {
                 crate::settings_builder(weak_buffer, workspace.settings()),
                 cx,
             );
-            editor.navigation = Some(navigation);
+            editor.nav_history = Some(ItemNavHistory::new(nav_history, &cx.handle()));
             editor
         }))
     }
@@ -115,9 +115,9 @@ impl ItemView for Editor {
             };
 
             drop(buffer);
-            let navigation = self.navigation.take();
+            let nav_history = self.nav_history.take();
             self.select_ranges([offset..offset], Some(Autoscroll::Fit), cx);
-            self.navigation = navigation;
+            self.nav_history = nav_history;
         }
     }
 
@@ -150,7 +150,7 @@ impl ItemView for Editor {
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(selection) = self.newest_selection_internal() {
-            self.push_to_navigation_history(selection.head(), None, cx);
+            self.push_to_nav_history(selection.head(), None, cx);
         }
     }
 
@@ -166,20 +166,18 @@ impl ItemView for Editor {
         self.project_path(cx).is_some()
     }
 
-    fn save(&mut self, cx: &mut ViewContext<Self>) -> Result<Task<Result<()>>> {
+    fn save(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         let buffer = self.buffer().clone();
-        Ok(cx.spawn(|editor, mut cx| async move {
+        cx.spawn(|editor, mut cx| async move {
             buffer
                 .update(&mut cx, |buffer, cx| buffer.format(cx).log_err())
                 .await;
             editor.update(&mut cx, |editor, cx| {
                 editor.request_autoscroll(Autoscroll::Fit, cx)
             });
-            buffer
-                .update(&mut cx, |buffer, cx| buffer.save(cx))?
-                .await?;
+            buffer.update(&mut cx, |buffer, cx| buffer.save(cx)).await?;
             Ok(())
-        }))
+        })
     }
 
     fn can_save_as(&self, _: &AppContext) -> bool {
@@ -188,8 +186,8 @@ impl ItemView for Editor {
 
     fn save_as(
         &mut self,
-        worktree: ModelHandle<Worktree>,
-        path: &Path,
+        project: ModelHandle<Project>,
+        abs_path: PathBuf,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let buffer = self
@@ -199,38 +197,8 @@ impl ItemView for Editor {
             .expect("cannot call save_as on an excerpt list")
             .clone();
 
-        buffer.update(cx, |buffer, cx| {
-            let handle = cx.handle();
-            let text = buffer.as_rope().clone();
-            let version = buffer.version();
-
-            let save_as = worktree.update(cx, |worktree, cx| {
-                worktree
-                    .as_local_mut()
-                    .unwrap()
-                    .save_buffer_as(handle, path, text, cx)
-            });
-
-            cx.spawn(|buffer, mut cx| async move {
-                save_as.await.map(|new_file| {
-                    let (language, language_server) = worktree.update(&mut cx, |worktree, cx| {
-                        let worktree = worktree.as_local_mut().unwrap();
-                        let language = worktree
-                            .language_registry()
-                            .select_language(new_file.full_path())
-                            .cloned();
-                        let language_server = language
-                            .as_ref()
-                            .and_then(|language| worktree.register_language(language, cx));
-                        (language, language_server.clone())
-                    });
-
-                    buffer.update(&mut cx, |buffer, cx| {
-                        buffer.did_save(version, new_file.mtime, Some(Box::new(new_file)), cx);
-                        buffer.set_language(language, language_server, cx);
-                    });
-                })
-            })
+        project.update(cx, |project, cx| {
+            project.save_buffer_as(buffer, abs_path, cx)
         })
     }
 
@@ -317,7 +285,7 @@ impl StatusItemView for CursorPosition {
         active_pane_item: Option<&dyn ItemViewHandle>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(editor) = active_pane_item.and_then(|item| item.to_any().downcast::<Editor>()) {
+        if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
             self._observe_active_editor = Some(cx.observe(&editor, Self::update_position));
             self.update_position(editor, cx);
         } else {
@@ -403,7 +371,7 @@ impl StatusItemView for DiagnosticMessage {
         active_pane_item: Option<&dyn ItemViewHandle>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(editor) = active_pane_item.and_then(|item| item.to_any().downcast::<Editor>()) {
+        if let Some(editor) = active_pane_item.and_then(|item| item.downcast::<Editor>()) {
             self._observe_active_editor = Some(cx.observe(&editor, Self::update));
             self.update(editor, cx);
         } else {

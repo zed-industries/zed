@@ -9,15 +9,22 @@ use editor::{
     Autoscroll, BuildSettings, Editor, ExcerptId, ExcerptProperties, MultiBuffer, ToOffset,
 };
 use gpui::{
-    action, elements::*, keymap::Binding, AppContext, Entity, ModelHandle, MutableAppContext,
-    RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    action, elements::*, keymap::Binding, AnyViewHandle, AppContext, Entity, ModelHandle,
+    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{Bias, Buffer, Diagnostic, DiagnosticEntry, Point, Selection, SelectionGoal};
 use postage::watch;
-use project::{Project, ProjectPath, WorktreeId};
-use std::{cmp::Ordering, mem, ops::Range, rc::Rc, sync::Arc};
+use project::{Project, ProjectPath};
+use std::{
+    any::{Any, TypeId},
+    cmp::Ordering,
+    mem,
+    ops::Range,
+    path::PathBuf,
+    sync::Arc,
+};
 use util::TryFutureExt;
-use workspace::{Navigation, Workspace};
+use workspace::{ItemNavHistory, Workspace};
 
 action!(Deploy);
 action!(OpenExcerpts);
@@ -49,7 +56,7 @@ struct ProjectDiagnosticsEditor {
     editor: ViewHandle<Editor>,
     excerpts: ModelHandle<MultiBuffer>,
     path_states: Vec<PathState>,
-    paths_to_update: HashMap<WorktreeId, BTreeSet<ProjectPath>>,
+    paths_to_update: BTreeSet<ProjectPath>,
     build_settings: BuildSettings,
     settings: watch::Receiver<workspace::Settings>,
 }
@@ -119,16 +126,12 @@ impl ProjectDiagnosticsEditor {
     ) -> Self {
         let project = model.read(cx).project.clone();
         cx.subscribe(&project, |this, _, event, cx| match event {
-            project::Event::DiskBasedDiagnosticsUpdated { worktree_id } => {
-                if let Some(paths) = this.paths_to_update.remove(&worktree_id) {
-                    this.update_excerpts(paths, cx);
-                }
+            project::Event::DiskBasedDiagnosticsFinished => {
+                let paths = mem::take(&mut this.paths_to_update);
+                this.update_excerpts(paths, cx);
             }
             project::Event::DiagnosticsUpdated(path) => {
-                this.paths_to_update
-                    .entry(path.worktree_id)
-                    .or_default()
-                    .insert(path.clone());
+                this.paths_to_update.insert(path.clone());
             }
             _ => {}
         })
@@ -198,7 +201,6 @@ impl ProjectDiagnosticsEditor {
                     }
                     let editor = workspace
                         .open_item(buffer, cx)
-                        .to_any()
                         .downcast::<Editor>()
                         .unwrap();
                     editor.update(cx, |editor, cx| {
@@ -522,10 +524,19 @@ impl workspace::Item for ProjectDiagnostics {
     fn build_view(
         handle: ModelHandle<Self>,
         workspace: &Workspace,
-        _: Rc<Navigation>,
+        nav_history: ItemNavHistory,
         cx: &mut ViewContext<Self::View>,
     ) -> Self::View {
-        ProjectDiagnosticsEditor::new(handle, workspace.weak_handle(), workspace.settings(), cx)
+        let diagnostics = ProjectDiagnosticsEditor::new(
+            handle,
+            workspace.weak_handle(),
+            workspace.settings(),
+            cx,
+        );
+        diagnostics
+            .editor
+            .update(cx, |editor, _| editor.set_nav_history(Some(nav_history)));
+        diagnostics
     }
 
     fn project_path(&self) -> Option<project::ProjectPath> {
@@ -548,6 +559,11 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         None
     }
 
+    fn navigate(&mut self, data: Box<dyn Any>, cx: &mut ViewContext<Self>) {
+        self.editor
+            .update(cx, |editor, cx| editor.navigate(data, cx));
+    }
+
     fn is_dirty(&self, cx: &AppContext) -> bool {
         self.excerpts.read(cx).read(cx).is_dirty()
     }
@@ -560,7 +576,7 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         true
     }
 
-    fn save(&mut self, cx: &mut ViewContext<Self>) -> Result<Task<Result<()>>> {
+    fn save(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         self.excerpts.update(cx, |excerpts, cx| excerpts.save(cx))
     }
 
@@ -570,8 +586,8 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
 
     fn save_as(
         &mut self,
-        _: ModelHandle<project::Worktree>,
-        _: &std::path::Path,
+        _: ModelHandle<Project>,
+        _: PathBuf,
         _: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         unreachable!()
@@ -592,12 +608,40 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
     where
         Self: Sized,
     {
-        Some(ProjectDiagnosticsEditor::new(
+        let diagnostics = ProjectDiagnosticsEditor::new(
             self.model.clone(),
             self.workspace.clone(),
             self.settings.clone(),
             cx,
-        ))
+        );
+        diagnostics.editor.update(cx, |editor, cx| {
+            let nav_history = self
+                .editor
+                .read(cx)
+                .nav_history()
+                .map(|nav_history| ItemNavHistory::new(nav_history.history(), &cx.handle()));
+            editor.set_nav_history(nav_history);
+        });
+        Some(diagnostics)
+    }
+
+    fn act_as_type(
+        &self,
+        type_id: TypeId,
+        self_handle: &ViewHandle<Self>,
+        _: &AppContext,
+    ) -> Option<AnyViewHandle> {
+        if type_id == TypeId::of::<Self>() {
+            Some(self_handle.into())
+        } else if type_id == TypeId::of::<Editor>() {
+            Some((&self.editor).into())
+        } else {
+            None
+        }
+    }
+
+    fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
+        self.editor.update(cx, |editor, cx| editor.deactivated(cx));
     }
 }
 
@@ -680,7 +724,6 @@ mod tests {
     use editor::{display_map::BlockContext, DisplayPoint, EditorSnapshot};
     use gpui::TestAppContext;
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16};
-    use project::worktree;
     use serde_json::json;
     use std::sync::Arc;
     use unindent::Unindent as _;
@@ -721,16 +764,19 @@ mod tests {
             )
             .await;
 
-        let worktree = project
+        let (worktree, _) = project
             .update(&mut cx, |project, cx| {
-                project.add_local_worktree("/test", cx)
+                project.find_or_create_worktree_for_abs_path("/test", false, cx)
             })
             .await
             .unwrap();
+        let worktree_id = worktree.read_with(&cx, |tree, _| tree.id());
 
         // Create some diagnostics
         worktree.update(&mut cx, |worktree, cx| {
             worktree
+                .as_local_mut()
+                .unwrap()
                 .update_diagnostic_entries(
                     Arc::from("/test/main.rs".as_ref()),
                     None,
@@ -882,6 +928,8 @@ mod tests {
         // Diagnostics are added for another earlier path.
         worktree.update(&mut cx, |worktree, cx| {
             worktree
+                .as_local_mut()
+                .unwrap()
                 .update_diagnostic_entries(
                     Arc::from("/test/consts.rs".as_ref()),
                     None,
@@ -899,7 +947,13 @@ mod tests {
                     cx,
                 )
                 .unwrap();
-            cx.emit(worktree::Event::DiskBasedDiagnosticsUpdated);
+        });
+        project.update(&mut cx, |_, cx| {
+            cx.emit(project::Event::DiagnosticsUpdated(ProjectPath {
+                worktree_id,
+                path: Arc::from("/test/consts.rs".as_ref()),
+            }));
+            cx.emit(project::Event::DiskBasedDiagnosticsFinished);
         });
 
         view.next_notification(&cx).await;
@@ -980,6 +1034,8 @@ mod tests {
         // Diagnostics are added to the first path
         worktree.update(&mut cx, |worktree, cx| {
             worktree
+                .as_local_mut()
+                .unwrap()
                 .update_diagnostic_entries(
                     Arc::from("/test/consts.rs".as_ref()),
                     None,
@@ -1011,7 +1067,13 @@ mod tests {
                     cx,
                 )
                 .unwrap();
-            cx.emit(worktree::Event::DiskBasedDiagnosticsUpdated);
+        });
+        project.update(&mut cx, |_, cx| {
+            cx.emit(project::Event::DiagnosticsUpdated(ProjectPath {
+                worktree_id,
+                path: Arc::from("/test/consts.rs".as_ref()),
+            }));
+            cx.emit(project::Event::DiskBasedDiagnosticsFinished);
         });
 
         view.next_notification(&cx).await;

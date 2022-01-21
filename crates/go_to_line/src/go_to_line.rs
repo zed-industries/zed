@@ -80,17 +80,13 @@ impl GoToLine {
     }
 
     fn toggle(workspace: &mut Workspace, _: &Toggle, cx: &mut ViewContext<Workspace>) {
-        workspace.toggle_modal(cx, |cx, workspace| {
-            let editor = workspace
-                .active_item(cx)
-                .unwrap()
-                .to_any()
-                .downcast::<Editor>()
-                .unwrap();
-            let view = cx.add_view(|cx| GoToLine::new(editor, workspace.settings.clone(), cx));
-            cx.subscribe(&view, Self::on_event).detach();
-            view
-        });
+        if let Some(editor) = workspace.active_item(cx).unwrap().downcast::<Editor>() {
+            workspace.toggle_modal(cx, |cx, workspace| {
+                let view = cx.add_view(|cx| GoToLine::new(editor, workspace.settings.clone(), cx));
+                cx.subscribe(&view, Self::on_event).detach();
+                view
+            });
+        }
     }
 
     fn confirm(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {

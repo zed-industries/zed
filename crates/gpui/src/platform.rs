@@ -20,6 +20,7 @@ use crate::{
 use anyhow::Result;
 use async_task::Runnable;
 pub use event::Event;
+use postage::oneshot;
 use std::{
     any::Any,
     path::{Path, PathBuf},
@@ -70,13 +71,8 @@ pub(crate) trait ForegroundPlatform {
     fn prompt_for_paths(
         &self,
         options: PathPromptOptions,
-        done_fn: Box<dyn FnOnce(Option<Vec<std::path::PathBuf>>)>,
-    );
-    fn prompt_for_new_path(
-        &self,
-        directory: &Path,
-        done_fn: Box<dyn FnOnce(Option<std::path::PathBuf>)>,
-    );
+    ) -> oneshot::Receiver<Option<Vec<PathBuf>>>;
+    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>>;
 }
 
 pub trait Dispatcher: Send + Sync {
@@ -89,13 +85,7 @@ pub trait Window: WindowContext {
     fn on_event(&mut self, callback: Box<dyn FnMut(Event)>);
     fn on_resize(&mut self, callback: Box<dyn FnMut()>);
     fn on_close(&mut self, callback: Box<dyn FnOnce()>);
-    fn prompt(
-        &self,
-        level: PromptLevel,
-        msg: &str,
-        answers: &[&str],
-        done_fn: Box<dyn FnOnce(usize)>,
-    );
+    fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize>;
     fn activate(&self);
 }
 

@@ -33,6 +33,7 @@ use objc::{
     runtime::{Class, Object, Sel},
     sel, sel_impl,
 };
+use postage::oneshot;
 use ptr::null_mut;
 use std::{
     cell::{Cell, RefCell},
@@ -248,15 +249,15 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
     fn prompt_for_paths(
         &self,
         options: platform::PathPromptOptions,
-        done_fn: Box<dyn FnOnce(Option<Vec<std::path::PathBuf>>)>,
-    ) {
+    ) -> oneshot::Receiver<Option<Vec<PathBuf>>> {
         unsafe {
             let panel = NSOpenPanel::openPanel(nil);
             panel.setCanChooseDirectories_(options.directories.to_objc());
             panel.setCanChooseFiles_(options.files.to_objc());
             panel.setAllowsMultipleSelection_(options.multiple.to_objc());
             panel.setResolvesAliases_(false.to_objc());
-            let done_fn = Cell::new(Some(done_fn));
+            let (done_tx, done_rx) = oneshot::channel();
+            let done_tx = Cell::new(Some(done_tx));
             let block = ConcreteBlock::new(move |response: NSModalResponse| {
                 let result = if response == NSModalResponse::NSModalResponseOk {
                     let mut result = Vec::new();
@@ -275,27 +276,25 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
                     None
                 };
 
-                if let Some(done_fn) = done_fn.take() {
-                    (done_fn)(result);
+                if let Some(mut done_tx) = done_tx.take() {
+                    let _ = postage::sink::Sink::try_send(&mut done_tx, result);
                 }
             });
             let block = block.copy();
             let _: () = msg_send![panel, beginWithCompletionHandler: block];
+            done_rx
         }
     }
 
-    fn prompt_for_new_path(
-        &self,
-        directory: &Path,
-        done_fn: Box<dyn FnOnce(Option<std::path::PathBuf>)>,
-    ) {
+    fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Option<PathBuf>> {
         unsafe {
             let panel = NSSavePanel::savePanel(nil);
             let path = ns_string(directory.to_string_lossy().as_ref());
             let url = NSURL::fileURLWithPath_isDirectory_(nil, path, true.to_objc());
             panel.setDirectoryURL(url);
 
-            let done_fn = Cell::new(Some(done_fn));
+            let (done_tx, done_rx) = oneshot::channel();
+            let done_tx = Cell::new(Some(done_tx));
             let block = ConcreteBlock::new(move |response: NSModalResponse| {
                 let result = if response == NSModalResponse::NSModalResponseOk {
                     let url = panel.URL();
@@ -311,12 +310,13 @@ impl platform::ForegroundPlatform for MacForegroundPlatform {
                     None
                 };
 
-                if let Some(done_fn) = done_fn.take() {
-                    (done_fn)(result);
+                if let Some(mut done_tx) = done_tx.take() {
+                    let _ = postage::sink::Sink::try_send(&mut done_tx, result);
                 }
             });
             let block = block.copy();
             let _: () = msg_send![panel, beginWithCompletionHandler: block];
+            done_rx
         }
     }
 }

@@ -205,8 +205,7 @@ impl LanguageServer {
             output_done_rx: Mutex::new(Some(output_done_rx)),
         });
 
-        let root_uri =
-            lsp_types::Url::from_file_path(root_path).map_err(|_| anyhow!("invalid root path"))?;
+        let root_uri = Url::from_file_path(root_path).map_err(|_| anyhow!("invalid root path"))?;
         executor
             .spawn({
                 let this = this.clone();
@@ -220,18 +219,25 @@ impl LanguageServer {
         Ok(this)
     }
 
-    async fn init(self: Arc<Self>, root_uri: lsp_types::Url) -> Result<()> {
+    async fn init(self: Arc<Self>, root_uri: Url) -> Result<()> {
         #[allow(deprecated)]
-        let params = lsp_types::InitializeParams {
+        let params = InitializeParams {
             process_id: Default::default(),
             root_path: Default::default(),
             root_uri: Some(root_uri),
             initialization_options: Default::default(),
-            capabilities: lsp_types::ClientCapabilities {
+            capabilities: ClientCapabilities {
+                text_document: Some(TextDocumentClientCapabilities {
+                    definition: Some(GotoCapability {
+                        link_support: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
                 experimental: Some(json!({
                     "serverStatusNotification": true,
                 })),
-                window: Some(lsp_types::WindowClientCapabilities {
+                window: Some(WindowClientCapabilities {
                     work_done_progress: Some(true),
                     ..Default::default()
                 }),
@@ -244,16 +250,16 @@ impl LanguageServer {
         };
 
         let this = self.clone();
-        let request = Self::request_internal::<lsp_types::request::Initialize>(
+        let request = Self::request_internal::<request::Initialize>(
             &this.next_id,
             &this.response_handlers,
             this.outbound_tx.read().as_ref(),
             params,
         );
         request.await?;
-        Self::notify_internal::<lsp_types::notification::Initialized>(
+        Self::notify_internal::<notification::Initialized>(
             this.outbound_tx.read().as_ref(),
-            lsp_types::InitializedParams {},
+            InitializedParams {},
         )?;
         Ok(())
     }
@@ -265,14 +271,14 @@ impl LanguageServer {
             let next_id = AtomicUsize::new(self.next_id.load(SeqCst));
             let mut output_done = self.output_done_rx.lock().take().unwrap();
             Some(async move {
-                Self::request_internal::<lsp_types::request::Shutdown>(
+                Self::request_internal::<request::Shutdown>(
                     &next_id,
                     &response_handlers,
                     outbound_tx.as_ref(),
                     (),
                 )
                 .await?;
-                Self::notify_internal::<lsp_types::notification::Exit>(outbound_tx.as_ref(), ())?;
+                Self::notify_internal::<notification::Exit>(outbound_tx.as_ref(), ())?;
                 drop(outbound_tx);
                 output_done.recv().await;
                 drop(tasks);
@@ -285,7 +291,7 @@ impl LanguageServer {
 
     pub fn on_notification<T, F>(&self, mut f: F) -> Subscription
     where
-        T: lsp_types::notification::Notification,
+        T: notification::Notification,
         F: 'static + Send + Sync + FnMut(T::Params),
     {
         let prev_handler = self.notification_handlers.write().insert(
@@ -309,8 +315,8 @@ impl LanguageServer {
         }
     }
 
-    pub fn request<T: lsp_types::request::Request>(
-        self: Arc<Self>,
+    pub fn request<T: request::Request>(
+        self: &Arc<Self>,
         params: T::Params,
     ) -> impl Future<Output = Result<T::Result>>
     where
@@ -329,7 +335,7 @@ impl LanguageServer {
         }
     }
 
-    fn request_internal<T: lsp_types::request::Request>(
+    fn request_internal<T: request::Request>(
         next_id: &AtomicUsize,
         response_handlers: &Mutex<HashMap<usize, ResponseHandler>>,
         outbound_tx: Option<&channel::Sender<Vec<u8>>>,
@@ -376,7 +382,7 @@ impl LanguageServer {
         }
     }
 
-    pub fn notify<T: lsp_types::notification::Notification>(
+    pub fn notify<T: notification::Notification>(
         self: &Arc<Self>,
         params: T::Params,
     ) -> impl Future<Output = Result<()>> {
@@ -388,7 +394,7 @@ impl LanguageServer {
         }
     }
 
-    fn notify_internal<T: lsp_types::notification::Notification>(
+    fn notify_internal<T: notification::Notification>(
         outbound_tx: Option<&channel::Sender<Vec<u8>>>,
         params: T::Params,
     ) -> Result<()> {
@@ -601,8 +607,7 @@ mod tests {
                 "lib.rs": &lib_source
             }
         }));
-        let lib_file_uri =
-            lsp_types::Url::from_file_path(root_dir.path().join("src/lib.rs")).unwrap();
+        let lib_file_uri = Url::from_file_path(root_dir.path().join("src/lib.rs")).unwrap();
 
         let server = cx.read(|cx| {
             LanguageServer::new(
@@ -615,24 +620,22 @@ mod tests {
         server.next_idle_notification().await;
 
         server
-            .notify::<lsp_types::notification::DidOpenTextDocument>(
-                lsp_types::DidOpenTextDocumentParams {
-                    text_document: lsp_types::TextDocumentItem::new(
-                        lib_file_uri.clone(),
-                        "rust".to_string(),
-                        0,
-                        lib_source,
-                    ),
-                },
-            )
+            .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
+                text_document: TextDocumentItem::new(
+                    lib_file_uri.clone(),
+                    "rust".to_string(),
+                    0,
+                    lib_source,
+                ),
+            })
             .await
             .unwrap();
 
         let hover = server
-            .request::<lsp_types::request::HoverRequest>(lsp_types::HoverParams {
-                text_document_position_params: lsp_types::TextDocumentPositionParams {
-                    text_document: lsp_types::TextDocumentIdentifier::new(lib_file_uri),
-                    position: lsp_types::Position::new(1, 21),
+            .request::<request::HoverRequest>(HoverParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier::new(lib_file_uri),
+                    position: Position::new(1, 21),
                 },
                 work_done_progress_params: Default::default(),
             })
@@ -641,8 +644,8 @@ mod tests {
             .unwrap();
         assert_eq!(
             hover.contents,
-            lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
-                kind: lsp_types::MarkupKind::Markdown,
+            HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
                 value: "&str".to_string()
             })
         );
@@ -705,10 +708,9 @@ mod tests {
         );
 
         drop(server);
-        let (shutdown_request, _) = fake.receive_request::<lsp_types::request::Shutdown>().await;
+        let (shutdown_request, _) = fake.receive_request::<request::Shutdown>().await;
         fake.respond(shutdown_request, ()).await;
-        fake.receive_notification::<lsp_types::notification::Exit>()
-            .await;
+        fake.receive_notification::<notification::Exit>().await;
     }
 
     impl LanguageServer {
@@ -726,7 +728,7 @@ mod tests {
 
     pub enum ServerStatusNotification {}
 
-    impl lsp_types::notification::Notification for ServerStatusNotification {
+    impl notification::Notification for ServerStatusNotification {
         type Params = ServerStatusParams;
         const METHOD: &'static str = "experimental/serverStatus";
     }

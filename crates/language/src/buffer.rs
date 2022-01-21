@@ -385,13 +385,17 @@ impl Buffer {
         }
     }
 
-    pub fn with_language(
+    pub fn with_language(mut self, language: Arc<Language>, cx: &mut ModelContext<Self>) -> Self {
+        self.set_language(Some(language), cx);
+        self
+    }
+
+    pub fn with_language_server(
         mut self,
-        language: Option<Arc<Language>>,
-        language_server: Option<Arc<LanguageServer>>,
+        server: Arc<LanguageServer>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        self.set_language(language, language_server, cx);
+        self.set_language_server(Some(server), cx);
         self
     }
 
@@ -506,30 +510,34 @@ impl Buffer {
     pub fn save(
         &mut self,
         cx: &mut ModelContext<Self>,
-    ) -> Result<Task<Result<(clock::Global, SystemTime)>>> {
-        let file = self
-            .file
-            .as_ref()
-            .ok_or_else(|| anyhow!("buffer has no file"))?;
+    ) -> Task<Result<(clock::Global, SystemTime)>> {
+        let file = if let Some(file) = self.file.as_ref() {
+            file
+        } else {
+            return Task::ready(Err(anyhow!("buffer has no file")));
+        };
         let text = self.as_rope().clone();
         let version = self.version();
         let save = file.save(self.remote_id(), text, version, cx.as_mut());
-        Ok(cx.spawn(|this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let (version, mtime) = save.await?;
             this.update(&mut cx, |this, cx| {
                 this.did_save(version.clone(), mtime, None, cx);
             });
             Ok((version, mtime))
-        }))
+        })
     }
 
-    pub fn set_language(
+    pub fn set_language(&mut self, language: Option<Arc<Language>>, cx: &mut ModelContext<Self>) {
+        self.language = language;
+        self.reparse(cx);
+    }
+
+    pub fn set_language_server(
         &mut self,
-        language: Option<Arc<Language>>,
         language_server: Option<Arc<lsp::LanguageServer>>,
         cx: &mut ModelContext<Self>,
     ) {
-        self.language = language;
         self.language_server = if let Some(server) = language_server {
             let (latest_snapshot_tx, mut latest_snapshot_rx) = watch::channel();
             Some(LanguageServerState {
@@ -611,7 +619,6 @@ impl Buffer {
             None
         };
 
-        self.reparse(cx);
         self.update_language_server();
     }
 

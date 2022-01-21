@@ -191,12 +191,10 @@ message DiagnosticSummary {
 
 message DiskBasedDiagnosticsUpdating {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
 }
 
 message DiskBasedDiagnosticsUpdated {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
 }
 
 message GetChannels {}
@@ -274,6 +272,7 @@ message Worktree {
     string root_name = 2;
     repeated Entry entries = 3;
     repeated DiagnosticSummary diagnostic_summaries = 4;
+    bool weak = 5;
 }
 
 message Entry {

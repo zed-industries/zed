@@ -309,6 +309,7 @@ impl Server {
                                 .values()
                                 .cloned()
                                 .collect(),
+                            weak: worktree.weak,
                         })
                     })
                     .collect();
@@ -421,6 +422,7 @@ impl Server {
                 authorized_user_ids: contact_user_ids.clone(),
                 root_name: request.payload.root_name,
                 share: None,
+                weak: false,
             },
         );
 
@@ -1158,8 +1160,10 @@ mod tests {
                 cx,
             )
         });
-        let worktree_a = project_a
-            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", cx))
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_worktree_for_abs_path("/a", false, cx)
+            })
             .await
             .unwrap();
         worktree_a
@@ -1184,7 +1188,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
+        let worktree_b = project_b.update(&mut cx_b, |p, cx| p.worktrees(cx).next().unwrap());
 
         let replica_id_b = project_b.read_with(&cx_b, |project, _| {
             assert_eq!(
@@ -1213,7 +1217,8 @@ mod tests {
         let buffer_b = worktree_b
             .update(&mut cx_b, |worktree, cx| worktree.open_buffer("b.txt", cx))
             .await
-            .unwrap();
+            .unwrap()
+            .0;
         let buffer_b = cx_b.add_model(|cx| MultiBuffer::singleton(buffer_b, cx));
         buffer_b.read_with(&cx_b, |buf, cx| {
             assert_eq!(buf.read(cx).text(), "b-contents")
@@ -1222,7 +1227,8 @@ mod tests {
         let buffer_a = worktree_a
             .update(&mut cx_a, |tree, cx| tree.open_buffer("b.txt", cx))
             .await
-            .unwrap();
+            .unwrap()
+            .0;
 
         let editor_b = cx_b.add_view(window_b, |cx| {
             Editor::for_buffer(buffer_b, Arc::new(|cx| EditorSettings::test(cx)), cx)
@@ -1291,8 +1297,10 @@ mod tests {
                 cx,
             )
         });
-        let worktree_a = project_a
-            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", cx))
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_worktree_for_abs_path("/a", false, cx)
+            })
             .await
             .unwrap();
         worktree_a
@@ -1319,7 +1327,7 @@ mod tests {
         .await
         .unwrap();
 
-        let worktree_b = project_b.read_with(&cx_b, |p, _| p.worktrees()[0].clone());
+        let worktree_b = project_b.read_with(&cx_b, |p, cx| p.worktrees(cx).next().unwrap());
         worktree_b
             .update(&mut cx_b, |tree, cx| tree.open_buffer("a.txt", cx))
             .await
@@ -1351,7 +1359,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let worktree_c = project_c.read_with(&cx_b, |p, _| p.worktrees()[0].clone());
+        let worktree_c = project_c.read_with(&cx_b, |p, cx| p.worktrees(cx).next().unwrap());
         worktree_c
             .update(&mut cx_b, |tree, cx| tree.open_buffer("a.txt", cx))
             .await
@@ -1393,8 +1401,10 @@ mod tests {
                 cx,
             )
         });
-        let worktree_a = project_a
-            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", cx))
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_worktree_for_abs_path("/a", false, cx)
+            })
             .await
             .unwrap();
         worktree_a
@@ -1431,16 +1441,18 @@ mod tests {
         .unwrap();
 
         // Open and edit a buffer as both guests B and C.
-        let worktree_b = project_b.read_with(&cx_b, |p, _| p.worktrees()[0].clone());
-        let worktree_c = project_c.read_with(&cx_c, |p, _| p.worktrees()[0].clone());
+        let worktree_b = project_b.read_with(&cx_b, |p, cx| p.worktrees(cx).next().unwrap());
+        let worktree_c = project_c.read_with(&cx_c, |p, cx| p.worktrees(cx).next().unwrap());
         let buffer_b = worktree_b
             .update(&mut cx_b, |tree, cx| tree.open_buffer("file1", cx))
             .await
-            .unwrap();
+            .unwrap()
+            .0;
         let buffer_c = worktree_c
             .update(&mut cx_c, |tree, cx| tree.open_buffer("file1", cx))
             .await
-            .unwrap();
+            .unwrap()
+            .0;
         buffer_b.update(&mut cx_b, |buf, cx| buf.edit([0..0], "i-am-b, ", cx));
         buffer_c.update(&mut cx_c, |buf, cx| buf.edit([0..0], "i-am-c, ", cx));
 
@@ -1448,7 +1460,8 @@ mod tests {
         let buffer_a = worktree_a
             .update(&mut cx_a, |tree, cx| tree.open_buffer("file1", cx))
             .await
-            .unwrap();
+            .unwrap()
+            .0;
 
         buffer_a
             .condition(&mut cx_a, |buf, _| buf.text() == "i-am-c, i-am-b, ")
@@ -1469,7 +1482,7 @@ mod tests {
             .await;
 
         // Edit the buffer as the host and concurrently save as guest B.
-        let save_b = buffer_b.update(&mut cx_b, |buf, cx| buf.save(cx).unwrap());
+        let save_b = buffer_b.update(&mut cx_b, |buf, cx| buf.save(cx));
         buffer_a.update(&mut cx_a, |buf, cx| buf.edit([0..0], "hi-a, ", cx));
         save_b.await.unwrap();
         assert_eq!(
@@ -1542,8 +1555,10 @@ mod tests {
                 cx,
             )
         });
-        let worktree_a = project_a
-            .update(&mut cx_a, |p, cx| p.add_local_worktree("/dir", cx))
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_worktree_for_abs_path("/dir", false, cx)
+            })
             .await
             .unwrap();
         worktree_a
@@ -1568,13 +1583,14 @@ mod tests {
         )
         .await
         .unwrap();
-        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
+        let worktree_b = project_b.update(&mut cx_b, |p, cx| p.worktrees(cx).next().unwrap());
 
         // Open a buffer as client B
         let buffer_b = worktree_b
             .update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.txt", cx))
             .await
-            .unwrap();
+            .unwrap()
+            .0;
         let mtime = buffer_b.read_with(&cx_b, |buf, _| buf.file().unwrap().mtime());
 
         buffer_b.update(&mut cx_b, |buf, cx| buf.edit([0..0], "world ", cx));
@@ -1585,7 +1601,6 @@ mod tests {
 
         buffer_b
             .update(&mut cx_b, |buf, cx| buf.save(cx))
-            .unwrap()
             .await
             .unwrap();
         worktree_b
@@ -1637,8 +1652,10 @@ mod tests {
                 cx,
             )
         });
-        let worktree_a = project_a
-            .update(&mut cx_a, |p, cx| p.add_local_worktree("/dir", cx))
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_worktree_for_abs_path("/dir", false, cx)
+            })
             .await
             .unwrap();
         worktree_a
@@ -1663,13 +1680,14 @@ mod tests {
         )
         .await
         .unwrap();
-        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
+        let worktree_b = project_b.update(&mut cx_b, |p, cx| p.worktrees(cx).next().unwrap());
 
         // Open a buffer as client A
         let buffer_a = worktree_a
             .update(&mut cx_a, |tree, cx| tree.open_buffer("a.txt", cx))
             .await
-            .unwrap();
+            .unwrap()
+            .0;
 
         // Start opening the same buffer as client B
         let buffer_b = cx_b
@@ -1681,7 +1699,7 @@ mod tests {
         buffer_a.update(&mut cx_a, |buf, cx| buf.edit([0..0], "z", cx));
 
         let text = buffer_a.read_with(&cx_a, |buf, _| buf.text());
-        let buffer_b = buffer_b.await.unwrap();
+        let buffer_b = buffer_b.await.unwrap().0;
         buffer_b.condition(&cx_b, |buf, _| buf.text() == text).await;
     }
 
@@ -1717,8 +1735,10 @@ mod tests {
                 cx,
             )
         });
-        let worktree_a = project_a
-            .update(&mut cx_a, |p, cx| p.add_local_worktree("/dir", cx))
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_worktree_for_abs_path("/dir", false, cx)
+            })
             .await
             .unwrap();
         worktree_a
@@ -1743,7 +1763,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
+        let worktree_b = project_b.update(&mut cx_b, |p, cx| p.worktrees(cx).next().unwrap());
 
         // See that a guest has joined as client A.
         project_a
@@ -1793,8 +1813,10 @@ mod tests {
                 cx,
             )
         });
-        let worktree_a = project_a
-            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", cx))
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_worktree_for_abs_path("/a", false, cx)
+            })
             .await
             .unwrap();
         worktree_a
@@ -1880,8 +1902,10 @@ mod tests {
                 cx,
             )
         });
-        let worktree_a = project_a
-            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", cx))
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_worktree_for_abs_path("/a", false, cx)
+            })
             .await
             .unwrap();
         worktree_a
@@ -1899,8 +1923,14 @@ mod tests {
         // Cause the language server to start.
         let _ = cx_a
             .background()
-            .spawn(worktree_a.update(&mut cx_a, |worktree, cx| {
-                worktree.open_buffer("other.rs", cx)
+            .spawn(project_a.update(&mut cx_a, |project, cx| {
+                project.open_buffer(
+                    ProjectPath {
+                        worktree_id,
+                        path: Path::new("other.rs").into(),
+                    },
+                    cx,
+                )
             }))
             .await
             .unwrap();
@@ -2011,12 +2041,13 @@ mod tests {
             .await;
 
         // Open the file with the errors on client B. They should be present.
-        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
+        let worktree_b = project_b.update(&mut cx_b, |p, cx| p.worktrees(cx).next().unwrap());
         let buffer_b = cx_b
             .background()
             .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.rs", cx)))
             .await
-            .unwrap();
+            .unwrap()
+            .0;
 
         buffer_b.read_with(&cx_b, |buffer, _| {
             assert_eq!(
@@ -2095,8 +2126,10 @@ mod tests {
                 cx,
             )
         });
-        let worktree_a = project_a
-            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", cx))
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_worktree_for_abs_path("/a", false, cx)
+            })
             .await
             .unwrap();
         worktree_a
@@ -2123,12 +2156,13 @@ mod tests {
         .unwrap();
 
         // Open the file to be formatted on client B.
-        let worktree_b = project_b.update(&mut cx_b, |p, _| p.worktrees()[0].clone());
+        let worktree_b = project_b.update(&mut cx_b, |p, cx| p.worktrees(cx).next().unwrap());
         let buffer_b = cx_b
             .background()
             .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.rs", cx)))
             .await
-            .unwrap();
+            .unwrap()
+            .0;
 
         let format = buffer_b.update(&mut cx_b, |buffer, cx| buffer.format(cx));
         let (request_id, _) = fake_language_server
@@ -2602,8 +2636,10 @@ mod tests {
                 cx,
             )
         });
-        let worktree_a = project_a
-            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", cx))
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_worktree_for_abs_path("/a", false, cx)
+            })
             .await
             .unwrap();
         worktree_a

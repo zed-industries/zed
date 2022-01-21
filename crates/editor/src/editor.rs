@@ -25,8 +25,8 @@ use gpui::{
 use items::BufferItemHandle;
 use itertools::Itertools as _;
 use language::{
-    BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point, Selection, SelectionGoal,
-    TransactionId,
+    AnchorRangeExt as _, BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point,
+    Selection, SelectionGoal, TransactionId,
 };
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptProperties, MultiBuffer, ToOffset, ToPoint,
@@ -41,7 +41,6 @@ use std::{
     iter::{self, FromIterator},
     mem,
     ops::{Deref, Range, RangeInclusive, Sub},
-    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -49,7 +48,7 @@ use sum_tree::Bias;
 use text::rope::TextDimension;
 use theme::{DiagnosticStyle, EditorStyle};
 use util::post_inc;
-use workspace::{Navigation, PathOpener, Workspace};
+use workspace::{ItemNavHistory, PathOpener, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -107,6 +106,7 @@ action!(SelectLargerSyntaxNode);
 action!(SelectSmallerSyntaxNode);
 action!(MoveToEnclosingBracket);
 action!(ShowNextDiagnostic);
+action!(GoToDefinition);
 action!(PageUp);
 action!(PageDown);
 action!(Fold);
@@ -214,6 +214,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
         Binding::new("alt-down", SelectSmallerSyntaxNode, Some("Editor")),
         Binding::new("ctrl-shift-W", SelectSmallerSyntaxNode, Some("Editor")),
         Binding::new("f8", ShowNextDiagnostic, Some("Editor")),
+        Binding::new("f12", GoToDefinition, Some("Editor")),
         Binding::new("ctrl-m", MoveToEnclosingBracket, Some("Editor")),
         Binding::new("pageup", PageUp, Some("Editor")),
         Binding::new("pagedown", PageDown, Some("Editor")),
@@ -277,6 +278,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_action(Editor::select_smaller_syntax_node);
     cx.add_action(Editor::move_to_enclosing_bracket);
     cx.add_action(Editor::show_next_diagnostic);
+    cx.add_action(Editor::go_to_definition);
     cx.add_action(Editor::page_up);
     cx.add_action(Editor::page_down);
     cx.add_action(Editor::fold);
@@ -379,7 +381,7 @@ pub struct Editor {
     mode: EditorMode,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
-    navigation: Option<Rc<Navigation>>,
+    nav_history: Option<ItemNavHistory>,
 }
 
 pub struct EditorSnapshot {
@@ -465,7 +467,10 @@ impl Editor {
         let mut clone = Self::new(self.buffer.clone(), self.build_settings.clone(), cx);
         clone.scroll_position = self.scroll_position;
         clone.scroll_top_anchor = self.scroll_top_anchor.clone();
-        clone.navigation = self.navigation.clone();
+        clone.nav_history = self
+            .nav_history
+            .as_ref()
+            .map(|nav_history| ItemNavHistory::new(nav_history.history(), &cx.handle()));
         clone
     }
 
@@ -515,7 +520,7 @@ impl Editor {
             mode: EditorMode::Full,
             placeholder_text: None,
             highlighted_rows: None,
-            navigation: None,
+            nav_history: None,
         };
         let selection = Selection {
             id: post_inc(&mut this.next_selection_id),
@@ -533,9 +538,8 @@ impl Editor {
         _: &workspace::OpenNew,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let buffer = cx.add_model(|cx| {
-            Buffer::new(0, "", cx).with_language(Some(language::PLAIN_TEXT.clone()), None, cx)
-        });
+        let buffer = cx
+            .add_model(|cx| Buffer::new(0, "", cx).with_language(language::PLAIN_TEXT.clone(), cx));
         workspace.open_item(BufferItemHandle(buffer), cx);
     }
 
@@ -860,7 +864,7 @@ impl Editor {
             }
         }
 
-        self.push_to_navigation_history(newest_selection.head(), Some(end.to_point(&buffer)), cx);
+        self.push_to_nav_history(newest_selection.head(), Some(end.to_point(&buffer)), cx);
 
         let selection = Selection {
             id: post_inc(&mut self.next_selection_id),
@@ -2455,13 +2459,21 @@ impl Editor {
         self.update_selections(vec![selection], Some(Autoscroll::Fit), cx);
     }
 
-    fn push_to_navigation_history(
+    pub fn set_nav_history(&mut self, nav_history: Option<ItemNavHistory>) {
+        self.nav_history = nav_history;
+    }
+
+    pub fn nav_history(&self) -> Option<&ItemNavHistory> {
+        self.nav_history.as_ref()
+    }
+
+    fn push_to_nav_history(
         &self,
         position: Anchor,
         new_position: Option<Point>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(navigation) = &self.navigation {
+        if let Some(nav_history) = &self.nav_history {
             let buffer = self.buffer.read(cx).read(cx);
             let offset = position.to_offset(&buffer);
             let point = position.to_point(&buffer);
@@ -2474,13 +2486,10 @@ impl Editor {
                 }
             }
 
-            navigation.push(
-                Some(NavigationData {
-                    anchor: position,
-                    offset,
-                }),
-                cx,
-            );
+            nav_history.push(Some(NavigationData {
+                anchor: position,
+                offset,
+            }));
         }
     }
 
@@ -2985,6 +2994,61 @@ impl Editor {
         }
     }
 
+    pub fn go_to_definition(
+        workspace: &mut Workspace,
+        _: &GoToDefinition,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let active_item = workspace.active_item(cx);
+        let editor_handle = if let Some(editor) = active_item
+            .as_ref()
+            .and_then(|item| item.act_as::<Self>(cx))
+        {
+            editor
+        } else {
+            return;
+        };
+
+        let editor = editor_handle.read(cx);
+        let buffer = editor.buffer.read(cx);
+        let head = editor.newest_selection::<usize>(&buffer.read(cx)).head();
+        let (buffer, head) = editor.buffer.read(cx).text_anchor_for_position(head, cx);
+        let definitions = workspace
+            .project()
+            .update(cx, |project, cx| project.definition(&buffer, head, cx));
+        cx.spawn(|workspace, mut cx| async move {
+            let definitions = definitions.await?;
+            workspace.update(&mut cx, |workspace, cx| {
+                for definition in definitions {
+                    let range = definition
+                        .target_range
+                        .to_offset(definition.target_buffer.read(cx));
+                    let target_editor_handle = workspace
+                        .open_item(BufferItemHandle(definition.target_buffer), cx)
+                        .downcast::<Self>()
+                        .unwrap();
+
+                    target_editor_handle.update(cx, |target_editor, cx| {
+                        // When selecting a definition in a different buffer, disable the nav history
+                        // to avoid creating a history entry at the previous cursor location.
+                        let disabled_history = if editor_handle == target_editor_handle {
+                            None
+                        } else {
+                            target_editor.nav_history.take()
+                        };
+                        target_editor.select_ranges([range], Some(Autoscroll::Center), cx);
+                        if disabled_history.is_some() {
+                            target_editor.nav_history = disabled_history;
+                        }
+                    });
+                }
+            });
+
+            Ok::<(), anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
+    }
+
     fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Editor>) {
         if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
             let buffer = self.buffer.read(cx).snapshot(cx);
@@ -3330,7 +3394,7 @@ impl Editor {
                 .max_by_key(|s| s.id)
                 .map(|s| s.head().to_point(&buffer));
             if new_cursor_position.is_some() {
-                self.push_to_navigation_history(old_cursor_position, new_cursor_position, cx);
+                self.push_to_nav_history(old_cursor_position, new_cursor_position, cx);
             }
         }
 
@@ -3995,7 +4059,7 @@ pub fn settings_builder(
 mod tests {
     use super::*;
     use language::LanguageConfig;
-    use std::time::Instant;
+    use std::{cell::RefCell, rc::Rc, time::Instant};
     use text::Point;
     use unindent::Unindent;
     use util::test::sample_text;
@@ -4174,22 +4238,22 @@ mod tests {
     fn test_navigation_history(cx: &mut gpui::MutableAppContext) {
         cx.add_window(Default::default(), |cx| {
             use workspace::ItemView;
-            let navigation = Rc::new(workspace::Navigation::default());
+            let nav_history = Rc::new(RefCell::new(workspace::NavHistory::default()));
             let settings = EditorSettings::test(&cx);
             let buffer = MultiBuffer::build_simple(&sample_text(30, 5, 'a'), cx);
             let mut editor = build_editor(buffer.clone(), settings, cx);
-            editor.navigation = Some(navigation.clone());
+            editor.nav_history = Some(ItemNavHistory::new(nav_history.clone(), &cx.handle()));
 
             // Move the cursor a small distance.
             // Nothing is added to the navigation history.
             editor.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
             editor.select_display_ranges(&[DisplayPoint::new(3, 0)..DisplayPoint::new(3, 0)], cx);
-            assert!(navigation.pop_backward().is_none());
+            assert!(nav_history.borrow_mut().pop_backward().is_none());
 
             // Move the cursor a large distance.
             // The history can jump back to the previous position.
             editor.select_display_ranges(&[DisplayPoint::new(13, 0)..DisplayPoint::new(13, 3)], cx);
-            let nav_entry = navigation.pop_backward().unwrap();
+            let nav_entry = nav_history.borrow_mut().pop_backward().unwrap();
             editor.navigate(nav_entry.data.unwrap(), cx);
             assert_eq!(nav_entry.item_view.id(), cx.view_id());
             assert_eq!(
@@ -4205,7 +4269,7 @@ mod tests {
                 editor.selected_display_ranges(cx),
                 &[DisplayPoint::new(5, 0)..DisplayPoint::new(5, 0)]
             );
-            assert!(navigation.pop_backward().is_none());
+            assert!(nav_history.borrow_mut().pop_backward().is_none());
 
             // Move the cursor a large distance via the mouse.
             // The history can jump back to the previous position.
@@ -4215,7 +4279,7 @@ mod tests {
                 editor.selected_display_ranges(cx),
                 &[DisplayPoint::new(15, 0)..DisplayPoint::new(15, 0)]
             );
-            let nav_entry = navigation.pop_backward().unwrap();
+            let nav_entry = nav_history.borrow_mut().pop_backward().unwrap();
             editor.navigate(nav_entry.data.unwrap(), cx);
             assert_eq!(nav_entry.item_view.id(), cx.view_id());
             assert_eq!(
@@ -5746,10 +5810,10 @@ mod tests {
     #[gpui::test]
     async fn test_select_larger_smaller_syntax_node(mut cx: gpui::TestAppContext) {
         let settings = cx.read(EditorSettings::test);
-        let language = Some(Arc::new(Language::new(
+        let language = Arc::new(Language::new(
             LanguageConfig::default(),
             Some(tree_sitter_rust::language()),
-        )));
+        ));
 
         let text = r#"
             use mod1::mod2::{mod3, mod4};
@@ -5760,7 +5824,7 @@ mod tests {
         "#
         .unindent();
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
@@ -5887,7 +5951,7 @@ mod tests {
     #[gpui::test]
     async fn test_autoindent_selections(mut cx: gpui::TestAppContext) {
         let settings = cx.read(EditorSettings::test);
-        let language = Some(Arc::new(
+        let language = Arc::new(
             Language::new(
                 LanguageConfig {
                     brackets: vec![
@@ -5915,11 +5979,11 @@ mod tests {
                 "#,
             )
             .unwrap(),
-        ));
+        );
 
         let text = "fn a() {}";
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, editor) = cx.add_window(|cx| build_editor(buffer, settings, cx));
         editor
@@ -5944,7 +6008,7 @@ mod tests {
     #[gpui::test]
     async fn test_autoclose_pairs(mut cx: gpui::TestAppContext) {
         let settings = cx.read(EditorSettings::test);
-        let language = Some(Arc::new(Language::new(
+        let language = Arc::new(Language::new(
             LanguageConfig {
                 brackets: vec![
                     BracketPair {
@@ -5963,7 +6027,7 @@ mod tests {
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        )));
+        ));
 
         let text = r#"
             a
@@ -5973,7 +6037,7 @@ mod tests {
         "#
         .unindent();
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
@@ -6055,13 +6119,13 @@ mod tests {
     #[gpui::test]
     async fn test_toggle_comment(mut cx: gpui::TestAppContext) {
         let settings = cx.read(EditorSettings::test);
-        let language = Some(Arc::new(Language::new(
+        let language = Arc::new(Language::new(
             LanguageConfig {
                 line_comment: Some("// ".to_string()),
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        )));
+        ));
 
         let text = "
             fn a() {
@@ -6072,7 +6136,7 @@ mod tests {
         "
         .unindent();
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
 
@@ -6323,7 +6387,7 @@ mod tests {
     #[gpui::test]
     async fn test_extra_newline_insertion(mut cx: gpui::TestAppContext) {
         let settings = cx.read(EditorSettings::test);
-        let language = Some(Arc::new(Language::new(
+        let language = Arc::new(Language::new(
             LanguageConfig {
                 brackets: vec![
                     BracketPair {
@@ -6342,7 +6406,7 @@ mod tests {
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        )));
+        ));
 
         let text = concat!(
             "{   }\n",     // Suppress rustfmt
@@ -6352,7 +6416,7 @@ mod tests {
             "{{} }\n",     //
         );
 
-        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, None, cx));
+        let buffer = cx.add_model(|cx| Buffer::new(0, text, cx).with_language(language, cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         let (_, view) = cx.add_window(|cx| build_editor(buffer, settings, cx));
         view.condition(&cx, |view, cx| !view.buffer.read(cx).is_parsing(cx))
