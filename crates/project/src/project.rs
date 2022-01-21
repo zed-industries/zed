@@ -94,7 +94,6 @@ pub struct DiagnosticSummary {
 
 #[derive(Debug)]
 pub struct Definition {
-    pub source_range: Option<Range<language::Anchor>>,
     pub target_buffer: ModelHandle<Buffer>,
     pub target_range: Range<language::Anchor>,
 }
@@ -756,24 +755,21 @@ impl Project {
                     let mut unresolved_locations = Vec::new();
                     match response {
                         lsp::GotoDefinitionResponse::Scalar(loc) => {
-                            unresolved_locations.push((None, loc.uri, loc.range));
+                            unresolved_locations.push((loc.uri, loc.range));
                         }
                         lsp::GotoDefinitionResponse::Array(locs) => {
-                            unresolved_locations
-                                .extend(locs.into_iter().map(|l| (None, l.uri, l.range)));
+                            unresolved_locations.extend(locs.into_iter().map(|l| (l.uri, l.range)));
                         }
                         lsp::GotoDefinitionResponse::Link(links) => {
-                            unresolved_locations.extend(links.into_iter().map(|l| {
-                                (
-                                    l.origin_selection_range,
-                                    l.target_uri,
-                                    l.target_selection_range,
-                                )
-                            }));
+                            unresolved_locations.extend(
+                                links
+                                    .into_iter()
+                                    .map(|l| (l.target_uri, l.target_selection_range)),
+                            );
                         }
                     }
 
-                    for (source_range, target_uri, target_range) in unresolved_locations {
+                    for (target_uri, target_range) in unresolved_locations {
                         let abs_path = target_uri
                             .to_file_path()
                             .map_err(|_| anyhow!("invalid target path"))?;
@@ -806,21 +802,12 @@ impl Project {
                             .update(&mut cx, |this, cx| this.open_buffer(project_path, cx))
                             .await?;
                         cx.read(|cx| {
-                            let source_buffer = source_buffer_handle.read(cx);
                             let target_buffer = target_buffer_handle.read(cx);
-                            let source_range = source_range.map(|range| {
-                                let start = source_buffer
-                                    .clip_point_utf16(range.start.to_point_utf16(), Bias::Left);
-                                let end = source_buffer
-                                    .clip_point_utf16(range.end.to_point_utf16(), Bias::Left);
-                                source_buffer.anchor_after(start)..source_buffer.anchor_before(end)
-                            });
                             let target_start = target_buffer
                                 .clip_point_utf16(target_range.start.to_point_utf16(), Bias::Left);
                             let target_end = target_buffer
                                 .clip_point_utf16(target_range.end.to_point_utf16(), Bias::Left);
                             definitions.push(Definition {
-                                source_range,
                                 target_buffer: target_buffer_handle,
                                 target_range: target_buffer.anchor_after(target_start)
                                     ..target_buffer.anchor_before(target_end),
