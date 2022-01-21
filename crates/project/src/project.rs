@@ -230,17 +230,8 @@ impl Project {
 
         let mut worktrees = Vec::new();
         for worktree in response.worktrees {
-            worktrees.push(
-                Worktree::remote(
-                    remote_id,
-                    replica_id,
-                    worktree,
-                    client.clone(),
-                    user_store.clone(),
-                    cx,
-                )
-                .await?,
-            );
+            worktrees
+                .push(Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx).await?);
         }
 
         let user_ids = response
@@ -891,11 +882,9 @@ impl Project {
     ) -> Task<Result<ModelHandle<Worktree>>> {
         let fs = self.fs.clone();
         let client = self.client.clone();
-        let user_store = self.user_store.clone();
         let path = Arc::from(abs_path.as_ref());
         cx.spawn(|project, mut cx| async move {
-            let worktree =
-                Worktree::open_local(client.clone(), user_store, path, weak, fs, &mut cx).await?;
+            let worktree = Worktree::open_local(client.clone(), path, weak, fs, &mut cx).await?;
 
             let (remote_project_id, is_shared) = project.update(&mut cx, |project, cx| {
                 project.add_worktree(&worktree, cx);
@@ -1100,12 +1089,10 @@ impl Project {
             .payload
             .worktree
             .ok_or_else(|| anyhow!("invalid worktree"))?;
-        let user_store = self.user_store.clone();
         cx.spawn(|this, mut cx| {
             async move {
                 let worktree =
-                    Worktree::remote(remote_id, replica_id, worktree, client, user_store, &mut cx)
-                        .await?;
+                    Worktree::remote(remote_id, replica_id, worktree, client, &mut cx).await?;
                 this.update(&mut cx, |this, cx| this.add_worktree(&worktree, cx));
                 Ok(())
             }
