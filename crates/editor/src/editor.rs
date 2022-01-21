@@ -3000,7 +3000,7 @@ impl Editor {
         cx: &mut ViewContext<Workspace>,
     ) {
         let active_item = workspace.active_item(cx);
-        let editor = if let Some(editor) = active_item
+        let editor_handle = if let Some(editor) = active_item
             .as_ref()
             .and_then(|item| item.act_as::<Self>(cx))
         {
@@ -3009,7 +3009,7 @@ impl Editor {
             return;
         };
 
-        let editor = editor.read(cx);
+        let editor = editor_handle.read(cx);
         let buffer = editor.buffer.read(cx);
         let head = editor.newest_selection::<usize>(&buffer.read(cx)).head();
         let (buffer, head) = editor.buffer.read(cx).text_anchor_for_position(head, cx);
@@ -3023,12 +3023,23 @@ impl Editor {
                     let range = definition
                         .target_range
                         .to_offset(definition.target_buffer.read(cx));
-                    let target_editor = workspace
+                    let target_editor_handle = workspace
                         .open_item(BufferItemHandle(definition.target_buffer), cx)
                         .downcast::<Self>()
                         .unwrap();
-                    target_editor.update(cx, |target_editor, cx| {
+
+                    target_editor_handle.update(cx, |target_editor, cx| {
+                        // When selecting a definition in a different buffer, disable the nav history
+                        // to avoid creating a history entry at the previous cursor location.
+                        let disabled_history = if editor_handle == target_editor_handle {
+                            None
+                        } else {
+                            target_editor.nav_history.take()
+                        };
                         target_editor.select_ranges([range], Some(Autoscroll::Center), cx);
+                        if disabled_history.is_some() {
+                            target_editor.nav_history = disabled_history;
+                        }
                     });
                 }
             });
