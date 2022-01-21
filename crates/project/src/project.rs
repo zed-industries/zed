@@ -1498,7 +1498,8 @@ mod tests {
     use futures::StreamExt;
     use gpui::{test::subscribe, TestAppContext};
     use language::{
-        tree_sitter_rust, Diagnostic, LanguageConfig, LanguageRegistry, LanguageServerConfig, Point,
+        tree_sitter_rust, AnchorRangeExt, Diagnostic, LanguageConfig, LanguageRegistry,
+        LanguageServerConfig, Point,
     };
     use lsp::Url;
     use serde_json::json;
@@ -1532,9 +1533,9 @@ mod tests {
 
         let project = build_project(&mut cx);
 
-        let tree = project
+        let (tree, _) = project
             .update(&mut cx, |project, cx| {
-                project.add_local_worktree(&root_link_path, false, cx)
+                project.find_or_create_worktree_for_abs_path(&root_link_path, false, cx)
             })
             .await
             .unwrap();
@@ -1607,9 +1608,9 @@ mod tests {
             )
         });
 
-        let tree = project
+        let (tree, _) = project
             .update(&mut cx, |project, cx| {
-                project.add_local_worktree(dir.path(), false, cx)
+                project.find_or_create_worktree_for_abs_path(dir.path(), false, cx)
             })
             .await
             .unwrap();
@@ -1713,9 +1714,9 @@ mod tests {
         }));
 
         let project = build_project(&mut cx);
-        let tree = project
+        let (tree, _) = project
             .update(&mut cx, |project, cx| {
-                project.add_local_worktree(&dir.path(), false, cx)
+                project.find_or_create_worktree_for_abs_path(&dir.path(), false, cx)
             })
             .await
             .unwrap();
@@ -1731,6 +1732,126 @@ mod tests {
             .await;
 
         assert!(results.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_definition(mut cx: gpui::TestAppContext) {
+        let (language_server_config, mut fake_server) =
+            LanguageServerConfig::fake(cx.background()).await;
+
+        let mut languages = LanguageRegistry::new();
+        languages.add(Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".to_string(),
+                path_suffixes: vec!["rs".to_string()],
+                language_server: Some(language_server_config),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        )));
+
+        let dir = temp_tree(json!({
+            "a.rs": "const fn a() { A }",
+            "b.rs": "const y: i32 = crate::a()",
+        }));
+
+        let http_client = FakeHttpClient::with_404_response();
+        let client = Client::new(http_client.clone());
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+        let project = cx.update(|cx| {
+            Project::local(
+                client,
+                user_store,
+                Arc::new(languages),
+                Arc::new(RealFs),
+                cx,
+            )
+        });
+
+        let (tree, _) = project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_worktree_for_abs_path(dir.path().join("b.rs"), false, cx)
+            })
+            .await
+            .unwrap();
+        let worktree_id = tree.read_with(&cx, |tree, _| tree.id());
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+
+        // Cause worktree to start the fake language server
+        let buffer = project
+            .update(&mut cx, |project, cx| {
+                project.open_buffer(
+                    ProjectPath {
+                        worktree_id,
+                        path: Path::new("").into(),
+                    },
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let definitions =
+            project.update(&mut cx, |project, cx| project.definition(&buffer, 22, cx));
+        let (request_id, request) = fake_server
+            .receive_request::<lsp::request::GotoDefinition>()
+            .await;
+        let request_params = request.text_document_position_params;
+        assert_eq!(
+            request_params.text_document.uri.to_file_path().unwrap(),
+            dir.path().join("b.rs")
+        );
+        assert_eq!(request_params.position, lsp::Position::new(0, 22));
+
+        fake_server
+            .respond(
+                request_id,
+                Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
+                    lsp::Url::from_file_path(dir.path().join("a.rs")).unwrap(),
+                    lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+                ))),
+            )
+            .await;
+        let mut definitions = definitions.await.unwrap();
+        assert_eq!(definitions.len(), 1);
+        let definition = definitions.pop().unwrap();
+        cx.update(|cx| {
+            let target_buffer = definition.target_buffer.read(cx);
+            assert_eq!(
+                target_buffer.file().unwrap().abs_path(),
+                Some(dir.path().join("a.rs"))
+            );
+            assert_eq!(definition.target_range.to_offset(target_buffer), 9..10);
+            assert_eq!(
+                list_worktrees(&project, cx),
+                [
+                    (dir.path().join("b.rs"), false),
+                    (dir.path().join("a.rs"), true)
+                ]
+            );
+
+            drop(definition);
+        });
+        cx.read(|cx| {
+            assert_eq!(
+                list_worktrees(&project, cx),
+                [(dir.path().join("b.rs"), false)]
+            );
+        });
+
+        fn list_worktrees(project: &ModelHandle<Project>, cx: &AppContext) -> Vec<(PathBuf, bool)> {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .map(|worktree| {
+                    let worktree = worktree.read(cx);
+                    (
+                        worktree.as_local().unwrap().abs_path().to_path_buf(),
+                        worktree.is_weak(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        }
     }
 
     fn build_project(cx: &mut TestAppContext) -> ModelHandle<Project> {
