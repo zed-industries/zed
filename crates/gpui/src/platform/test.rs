@@ -223,6 +223,8 @@ impl super::Window for Window {
     fn prompt(&self, _: crate::PromptLevel, _: &str, _: &[&str], f: Box<dyn FnOnce(usize)>) {
         self.last_prompt.replace(Some(f));
     }
+
+    fn activate(&self) {}
 }
 
 pub fn platform() -> Platform {
