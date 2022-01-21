@@ -160,16 +160,13 @@ impl Project {
 
                                 if let Some(project_id) = remote_id {
                                     let mut registrations = Vec::new();
-                                    this.read_with(&cx, |this, cx| {
+                                    this.update(&mut cx, |this, cx| {
                                         for worktree in &this.worktrees {
-                                            let worktree_id = worktree.id() as u64;
-                                            let worktree = worktree.read(cx).as_local().unwrap();
-                                            registrations.push(rpc.request(
-                                                proto::RegisterWorktree {
-                                                    project_id,
-                                                    worktree_id,
-                                                    root_name: worktree.root_name().to_string(),
-                                                    authorized_logins: worktree.authorized_logins(),
+                                            registrations.push(worktree.update(
+                                                cx,
+                                                |worktree, cx| {
+                                                    let worktree = worktree.as_local_mut().unwrap();
+                                                    worktree.register(project_id, cx)
                                                 },
                                             ));
                                         }
@@ -407,7 +404,7 @@ impl Project {
                 for worktree in &this.worktrees {
                     worktree.update(cx, |worktree, cx| {
                         let worktree = worktree.as_local_mut().unwrap();
-                        tasks.push(worktree.share(project_id, cx));
+                        tasks.push(worktree.share(cx));
                     });
                 }
             });
@@ -897,21 +894,15 @@ impl Project {
             });
 
             if let Some(project_id) = remote_project_id {
-                let worktree_id = worktree.id() as u64;
-                let register_message = worktree.update(&mut cx, |worktree, _| {
-                    let worktree = worktree.as_local_mut().unwrap();
-                    proto::RegisterWorktree {
-                        project_id,
-                        worktree_id,
-                        root_name: worktree.root_name().to_string(),
-                        authorized_logins: worktree.authorized_logins(),
-                    }
-                });
-                client.request(register_message).await?;
+                worktree
+                    .update(&mut cx, |worktree, cx| {
+                        worktree.as_local_mut().unwrap().register(project_id, cx)
+                    })
+                    .await?;
                 if is_shared {
                     worktree
                         .update(&mut cx, |worktree, cx| {
-                            worktree.as_local_mut().unwrap().share(project_id, cx)
+                            worktree.as_local_mut().unwrap().share(cx)
                         })
                         .await?;
                 }
@@ -919,6 +910,12 @@ impl Project {
 
             Ok(worktree)
         })
+    }
+
+    pub fn remove_worktree(&mut self, id: WorktreeId, cx: &mut ModelContext<Self>) {
+        self.worktrees
+            .retain(|worktree| worktree.read(cx).id() != id);
+        cx.notify();
     }
 
     fn add_worktree(&mut self, worktree: ModelHandle<Worktree>, cx: &mut ModelContext<Self>) {
@@ -1104,9 +1101,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        self.worktrees
-            .retain(|worktree| worktree.read(cx).as_remote().unwrap().id() != worktree_id);
-        cx.notify();
+        self.remove_worktree(worktree_id, cx);
         Ok(())
     }
 

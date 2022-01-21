@@ -66,6 +66,24 @@ pub enum Worktree {
 
 impl Entity for Worktree {
     type Event = ();
+
+    fn release(&mut self, cx: &mut MutableAppContext) {
+        if let Some(worktree) = self.as_local_mut() {
+            if let Registration::Done { project_id } = worktree.registration {
+                let client = worktree.client.clone();
+                let unregister_message = proto::UnregisterWorktree {
+                    project_id,
+                    worktree_id: worktree.id().to_proto(),
+                };
+                cx.foreground()
+                    .spawn(async move {
+                        client.send(unregister_message).await?;
+                        Ok::<_, anyhow::Error>(())
+                    })
+                    .detach_and_log_err(cx);
+            }
+        }
+    }
 }
 
 impl Worktree {
@@ -747,6 +765,7 @@ pub struct LocalWorktree {
     last_scan_state_rx: watch::Receiver<ScanState>,
     _background_scanner_task: Option<Task<()>>,
     poll_task: Option<Task<()>>,
+    registration: Registration,
     share: Option<ShareState>,
     loading_buffers: LoadingBuffers,
     open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
@@ -757,6 +776,13 @@ pub struct LocalWorktree {
     client: Arc<Client>,
     user_store: ModelHandle<UserStore>,
     fs: Arc<dyn Fs>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum Registration {
+    None,
+    Pending,
+    Done { project_id: u64 },
 }
 
 struct ShareState {
@@ -851,6 +877,7 @@ impl LocalWorktree {
                 background_snapshot: Arc::new(Mutex::new(snapshot)),
                 last_scan_state_rx,
                 _background_scanner_task: None,
+                registration: Registration::None,
                 share: None,
                 poll_task: None,
                 loading_buffers: Default::default(),
@@ -1316,11 +1343,48 @@ impl LocalWorktree {
         })
     }
 
-    pub fn share(
+    pub fn register(
         &mut self,
         project_id: u64,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<anyhow::Result<()>> {
+        if self.registration != Registration::None {
+            return Task::ready(Ok(()));
+        }
+
+        self.registration = Registration::Pending;
+        let client = self.client.clone();
+        let register_message = proto::RegisterWorktree {
+            project_id,
+            worktree_id: self.id().to_proto(),
+            root_name: self.root_name().to_string(),
+            authorized_logins: self.authorized_logins(),
+        };
+        cx.spawn(|this, mut cx| async move {
+            let response = client.request(register_message).await;
+            this.update(&mut cx, |this, _| {
+                let worktree = this.as_local_mut().unwrap();
+                match response {
+                    Ok(_) => {
+                        worktree.registration = Registration::Done { project_id };
+                        Ok(())
+                    }
+                    Err(error) => {
+                        worktree.registration = Registration::None;
+                        Err(error)
+                    }
+                }
+            })
+        })
+    }
+
+    pub fn share(&mut self, cx: &mut ModelContext<Worktree>) -> Task<anyhow::Result<()>> {
+        let project_id = if let Registration::Done { project_id } = self.registration {
+            project_id
+        } else {
+            return Task::ready(Err(anyhow!("cannot share worktree before registering it")));
+        };
+
         if self.share.is_some() {
             return Task::ready(Ok(()));
         }
