@@ -86,6 +86,7 @@ pub trait Window: WindowContext {
     fn on_resize(&mut self, callback: Box<dyn FnMut()>);
     fn on_close(&mut self, callback: Box<dyn FnOnce()>);
     fn prompt(&self, level: PromptLevel, msg: &str, answers: &[&str]) -> oneshot::Receiver<usize>;
+    fn activate(&self);
 }
 
 pub trait WindowContext {

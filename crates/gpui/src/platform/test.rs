@@ -229,6 +229,8 @@ impl super::Window for Window {
         self.last_prompt.replace(Some(done_tx));
         done_rx
     }
+
+    fn activate(&self) {}
 }
 
 pub fn platform() -> Platform {

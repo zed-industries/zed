@@ -854,6 +854,12 @@ impl MutableAppContext {
         self.cx.windows.keys().cloned()
     }
 
+    pub fn activate_window(&self, window_id: usize) {
+        if let Some((_, window)) = self.presenters_and_platform_windows.get(&window_id) {
+            window.activate()
+        }
+    }
+
     pub fn root_view<T: View>(&self, window_id: usize) -> Option<ViewHandle<T>> {
         self.cx
             .windows

@@ -1432,10 +1432,11 @@ pub fn open_paths(
     // Open paths in existing workspace if possible
     let mut existing = None;
     for window_id in cx.window_ids().collect::<Vec<_>>() {
-        if let Some(workspace) = cx.root_view::<Workspace>(window_id) {
-            if workspace.update(cx, |view, cx| {
-                if view.contains_paths(abs_paths, cx.as_ref()) {
-                    existing = Some(workspace.clone());
+        if let Some(workspace_handle) = cx.root_view::<Workspace>(window_id) {
+            if workspace_handle.update(cx, |workspace, cx| {
+                if workspace.contains_paths(abs_paths, cx.as_ref()) {
+                    cx.activate_window(window_id);
+                    existing = Some(workspace_handle.clone());
                     true
                 } else {
                     false

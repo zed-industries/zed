@@ -349,6 +349,12 @@ impl platform::Window for Window {
             done_rx
         }
     }
+
+    fn activate(&self) {
+        unsafe {
+            let _: () = msg_send![self.0.borrow().native_window, makeKeyAndOrderFront: nil];
+        }
+    }
 }
 
 impl platform::WindowContext for Window {
