@@ -1166,14 +1166,13 @@ mod tests {
             })
             .await
             .unwrap();
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a
-            .update(&mut cx_a, |project, _| project.next_remote_id())
-            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
         project_a
-            .update(&mut cx_a, |project, cx| project.share(cx))
+            .update(&mut cx_a, |p, cx| p.share(cx))
             .await
             .unwrap();
 
@@ -1188,7 +1187,6 @@ mod tests {
         )
         .await
         .unwrap();
-        let worktree_b = project_b.update(&mut cx_b, |p, cx| p.worktrees(cx).next().unwrap());
 
         let replica_id_b = project_b.read_with(&cx_b, |project, _| {
             assert_eq!(
@@ -1214,25 +1212,26 @@ mod tests {
             .await;
 
         // Open the same file as client B and client A.
-        let buffer_b = worktree_b
-            .update(&mut cx_b, |worktree, cx| worktree.open_buffer("b.txt", cx))
+        let buffer_b = project_b
+            .update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "b.txt"), cx))
             .await
-            .unwrap()
-            .0;
+            .unwrap();
         let buffer_b = cx_b.add_model(|cx| MultiBuffer::singleton(buffer_b, cx));
         buffer_b.read_with(&cx_b, |buf, cx| {
             assert_eq!(buf.read(cx).text(), "b-contents")
         });
-        worktree_a.read_with(&cx_a, |tree, cx| assert!(tree.has_open_buffer("b.txt", cx)));
-        let buffer_a = worktree_a
-            .update(&mut cx_a, |tree, cx| tree.open_buffer("b.txt", cx))
+        project_a.read_with(&cx_a, |project, cx| {
+            assert!(project.has_open_buffer((worktree_id, "b.txt"), cx))
+        });
+        let buffer_a = project_a
+            .update(&mut cx_a, |p, cx| p.open_buffer((worktree_id, "b.txt"), cx))
             .await
-            .unwrap()
-            .0;
+            .unwrap();
 
         let editor_b = cx_b.add_view(window_b, |cx| {
             Editor::for_buffer(buffer_b, Arc::new(|cx| EditorSettings::test(cx)), cx)
         });
+
         // TODO
         // // Create a selection set as client B and see that selection set as client A.
         // buffer_a
@@ -1256,8 +1255,10 @@ mod tests {
 
         // Close the buffer as client A, see that the buffer is closed.
         cx_a.update(move |_| drop(buffer_a));
-        worktree_a
-            .condition(&cx_a, |tree, cx| !tree.has_open_buffer("b.txt", cx))
+        project_a
+            .condition(&cx_a, |project, cx| {
+                !project.has_open_buffer((worktree_id, "b.txt"), cx)
+            })
             .await;
 
         // Dropping the client B's project removes client B from client A's collaborators.
@@ -1306,11 +1307,10 @@ mod tests {
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a
-            .update(&mut cx_a, |project, _| project.next_remote_id())
-            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
         project_a
-            .update(&mut cx_a, |project, cx| project.share(cx))
+            .update(&mut cx_a, |p, cx| p.share(cx))
             .await
             .unwrap();
         assert!(worktree_a.read_with(&cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
@@ -1326,13 +1326,12 @@ mod tests {
         )
         .await
         .unwrap();
-
-        let worktree_b = project_b.read_with(&cx_b, |p, cx| p.worktrees(cx).next().unwrap());
-        worktree_b
-            .update(&mut cx_b, |tree, cx| tree.open_buffer("a.txt", cx))
+        project_b
+            .update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
             .unwrap();
 
+        // Unshare the project as client A
         project_a
             .update(&mut cx_a, |project, cx| project.unshare(cx))
             .await
@@ -1349,6 +1348,7 @@ mod tests {
             .await
             .unwrap();
         assert!(worktree_a.read_with(&cx_a, |tree, _| tree.as_local().unwrap().is_shared()));
+
         let project_c = Project::remote(
             project_id,
             client_b.clone(),
@@ -1359,9 +1359,8 @@ mod tests {
         )
         .await
         .unwrap();
-        let worktree_c = project_c.read_with(&cx_b, |p, cx| p.worktrees(cx).next().unwrap());
-        worktree_c
-            .update(&mut cx_b, |tree, cx| tree.open_buffer("a.txt", cx))
+        project_c
+            .update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
             .unwrap();
     }
@@ -1410,11 +1409,10 @@ mod tests {
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a
-            .update(&mut cx_a, |project, _| project.next_remote_id())
-            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
         project_a
-            .update(&mut cx_a, |project, cx| project.share(cx))
+            .update(&mut cx_a, |p, cx| p.share(cx))
             .await
             .unwrap();
 
@@ -1439,29 +1437,26 @@ mod tests {
         )
         .await
         .unwrap();
-
-        // Open and edit a buffer as both guests B and C.
         let worktree_b = project_b.read_with(&cx_b, |p, cx| p.worktrees(cx).next().unwrap());
         let worktree_c = project_c.read_with(&cx_c, |p, cx| p.worktrees(cx).next().unwrap());
-        let buffer_b = worktree_b
-            .update(&mut cx_b, |tree, cx| tree.open_buffer("file1", cx))
+
+        // Open and edit a buffer as both guests B and C.
+        let buffer_b = project_b
+            .update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
             .await
-            .unwrap()
-            .0;
-        let buffer_c = worktree_c
-            .update(&mut cx_c, |tree, cx| tree.open_buffer("file1", cx))
+            .unwrap();
+        let buffer_c = project_c
+            .update(&mut cx_c, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
             .await
-            .unwrap()
-            .0;
+            .unwrap();
         buffer_b.update(&mut cx_b, |buf, cx| buf.edit([0..0], "i-am-b, ", cx));
         buffer_c.update(&mut cx_c, |buf, cx| buf.edit([0..0], "i-am-c, ", cx));
 
         // Open and edit that buffer as the host.
-        let buffer_a = worktree_a
-            .update(&mut cx_a, |tree, cx| tree.open_buffer("file1", cx))
+        let buffer_a = project_a
+            .update(&mut cx_a, |p, cx| p.open_buffer((worktree_id, "file1"), cx))
             .await
-            .unwrap()
-            .0;
+            .unwrap();
 
         buffer_a
             .condition(&mut cx_a, |buf, _| buf.text() == "i-am-c, i-am-b, ")
@@ -1564,11 +1559,10 @@ mod tests {
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a
-            .update(&mut cx_a, |project, _| project.next_remote_id())
-            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
         project_a
-            .update(&mut cx_a, |project, cx| project.share(cx))
+            .update(&mut cx_a, |p, cx| p.share(cx))
             .await
             .unwrap();
 
@@ -1586,11 +1580,10 @@ mod tests {
         let worktree_b = project_b.update(&mut cx_b, |p, cx| p.worktrees(cx).next().unwrap());
 
         // Open a buffer as client B
-        let buffer_b = worktree_b
-            .update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.txt", cx))
+        let buffer_b = project_b
+            .update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
-            .unwrap()
-            .0;
+            .unwrap();
         let mtime = buffer_b.read_with(&cx_b, |buf, _| buf.file().unwrap().mtime());
 
         buffer_b.update(&mut cx_b, |buf, cx| buf.edit([0..0], "world ", cx));
@@ -1661,11 +1654,10 @@ mod tests {
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a
-            .update(&mut cx_a, |project, _| project.next_remote_id())
-            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
         project_a
-            .update(&mut cx_a, |project, cx| project.share(cx))
+            .update(&mut cx_a, |p, cx| p.share(cx))
             .await
             .unwrap();
 
@@ -1680,26 +1672,24 @@ mod tests {
         )
         .await
         .unwrap();
-        let worktree_b = project_b.update(&mut cx_b, |p, cx| p.worktrees(cx).next().unwrap());
 
         // Open a buffer as client A
-        let buffer_a = worktree_a
-            .update(&mut cx_a, |tree, cx| tree.open_buffer("a.txt", cx))
+        let buffer_a = project_a
+            .update(&mut cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
-            .unwrap()
-            .0;
+            .unwrap();
 
         // Start opening the same buffer as client B
         let buffer_b = cx_b
             .background()
-            .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.txt", cx)));
+            .spawn(project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx)));
         task::yield_now().await;
 
         // Edit the buffer as client A while client B is still opening it.
         buffer_a.update(&mut cx_a, |buf, cx| buf.edit([0..0], "z", cx));
 
         let text = buffer_a.read_with(&cx_a, |buf, _| buf.text());
-        let buffer_b = buffer_b.await.unwrap().0;
+        let buffer_b = buffer_b.await.unwrap();
         buffer_b.condition(&cx_b, |buf, _| buf.text() == text).await;
     }
 
@@ -1744,11 +1734,10 @@ mod tests {
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a
-            .update(&mut cx_a, |project, _| project.next_remote_id())
-            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
         project_a
-            .update(&mut cx_a, |project, cx| project.share(cx))
+            .update(&mut cx_a, |p, cx| p.share(cx))
             .await
             .unwrap();
 
@@ -1763,7 +1752,6 @@ mod tests {
         )
         .await
         .unwrap();
-        let worktree_b = project_b.update(&mut cx_b, |p, cx| p.worktrees(cx).next().unwrap());
 
         // See that a guest has joined as client A.
         project_a
@@ -1773,7 +1761,7 @@ mod tests {
         // Begin opening a buffer as client B, but leave the project before the open completes.
         let buffer_b = cx_b
             .background()
-            .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.txt", cx)));
+            .spawn(project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx)));
         cx_b.update(|_| drop(project_b));
         drop(buffer_b);
 
@@ -1911,12 +1899,10 @@ mod tests {
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a
-            .update(&mut cx_a, |project, _| project.next_remote_id())
-            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
         let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
         project_a
-            .update(&mut cx_a, |project, cx| project.share(cx))
+            .update(&mut cx_a, |p, cx| p.share(cx))
             .await
             .unwrap();
 
@@ -2041,13 +2027,11 @@ mod tests {
             .await;
 
         // Open the file with the errors on client B. They should be present.
-        let worktree_b = project_b.update(&mut cx_b, |p, cx| p.worktrees(cx).next().unwrap());
         let buffer_b = cx_b
             .background()
-            .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.rs", cx)))
+            .spawn(project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
             .await
-            .unwrap()
-            .0;
+            .unwrap();
 
         buffer_b.read_with(&cx_b, |buffer, _| {
             assert_eq!(
@@ -2135,11 +2119,10 @@ mod tests {
         worktree_a
             .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
             .await;
-        let project_id = project_a
-            .update(&mut cx_a, |project, _| project.next_remote_id())
-            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
         project_a
-            .update(&mut cx_a, |project, cx| project.share(cx))
+            .update(&mut cx_a, |p, cx| p.share(cx))
             .await
             .unwrap();
 
@@ -2156,13 +2139,11 @@ mod tests {
         .unwrap();
 
         // Open the file to be formatted on client B.
-        let worktree_b = project_b.update(&mut cx_b, |p, cx| p.worktrees(cx).next().unwrap());
         let buffer_b = cx_b
             .background()
-            .spawn(worktree_b.update(&mut cx_b, |worktree, cx| worktree.open_buffer("a.rs", cx)))
+            .spawn(project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
             .await
-            .unwrap()
-            .0;
+            .unwrap();
 
         let format = buffer_b.update(&mut cx_b, |buffer, cx| buffer.format(cx));
         let (request_id, _) = fake_language_server

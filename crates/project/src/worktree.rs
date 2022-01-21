@@ -322,14 +322,14 @@ impl Worktree {
         .map(|(path, summary)| (path.0.clone(), summary.clone()))
     }
 
-    pub fn loading_buffers<'a>(&'a mut self) -> &'a mut LoadingBuffers {
+    pub(crate) fn loading_buffers<'a>(&'a mut self) -> &'a mut LoadingBuffers {
         match self {
             Worktree::Local(worktree) => &mut worktree.loading_buffers,
             Worktree::Remote(worktree) => &mut worktree.loading_buffers,
         }
     }
 
-    pub fn open_buffer(
+    pub(crate) fn open_buffer(
         &mut self,
         path: impl AsRef<Path>,
         cx: &mut ModelContext<Self>,
@@ -391,7 +391,7 @@ impl Worktree {
     }
 
     #[cfg(feature = "test-support")]
-    pub fn has_open_buffer(&self, path: impl AsRef<Path>, cx: &AppContext) -> bool {
+    pub(crate) fn has_open_buffer(&self, path: impl AsRef<Path>, cx: &AppContext) -> bool {
         let mut open_buffers: Box<dyn Iterator<Item = _>> = match self {
             Worktree::Local(worktree) => Box::new(worktree.open_buffers.values()),
             Worktree::Remote(worktree) => {
@@ -1575,16 +1575,6 @@ impl RemoteWorktree {
                 Result::<_, anyhow::Error>::Ok(buffer)
             })
         })
-    }
-
-    pub fn close_all_buffers(&mut self, cx: &mut MutableAppContext) {
-        for (_, buffer) in self.open_buffers.drain() {
-            if let RemoteBuffer::Loaded(buffer) = buffer {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    buffer.update(cx, |buffer, cx| buffer.close(cx))
-                }
-            }
-        }
     }
 
     fn snapshot(&self) -> Snapshot {

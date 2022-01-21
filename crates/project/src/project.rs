@@ -476,9 +476,10 @@ impl Project {
 
     pub fn open_buffer(
         &mut self,
-        path: ProjectPath,
+        path: impl Into<ProjectPath>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
+        let path = path.into();
         let worktree = if let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) {
             worktree
         } else {
@@ -518,6 +519,13 @@ impl Project {
             });
             Ok(())
         })
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn has_open_buffer(&self, path: impl Into<ProjectPath>, cx: &AppContext) -> bool {
+        let path = path.into();
+        self.worktree_for_id(path.worktree_id, cx)
+            .map_or(false, |tree| tree.read(cx).has_open_buffer(path.path, cx))
     }
 
     fn assign_language_to_buffer(
@@ -1466,6 +1474,15 @@ impl Collaborator {
                 user: user.await?,
                 replica_id: message.replica_id as ReplicaId,
             })
+        }
+    }
+}
+
+impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
+    fn from((worktree_id, path): (WorktreeId, P)) -> Self {
+        Self {
+            worktree_id,
+            path: path.as_ref().into(),
         }
     }
 }
