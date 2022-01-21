@@ -764,9 +764,9 @@ mod tests {
             )
             .await;
 
-        let (worktree, _) = project
+        let worktree = project
             .update(&mut cx, |project, cx| {
-                project.find_or_create_worktree_for_abs_path("/test", false, cx)
+                project.add_local_worktree("/test", false, cx)
             })
             .await
             .unwrap();
@@ -777,9 +777,8 @@ mod tests {
             worktree
                 .as_local_mut()
                 .unwrap()
-                .update_diagnostic_entries(
+                .update_diagnostics(
                     Arc::from("/test/main.rs".as_ref()),
-                    None,
                     vec![
                         DiagnosticEntry {
                             range: PointUtf16::new(1, 8)..PointUtf16::new(1, 9),
@@ -930,9 +929,8 @@ mod tests {
             worktree
                 .as_local_mut()
                 .unwrap()
-                .update_diagnostic_entries(
+                .update_diagnostics(
                     Arc::from("/test/consts.rs".as_ref()),
-                    None,
                     vec![DiagnosticEntry {
                         range: PointUtf16::new(0, 15)..PointUtf16::new(0, 15),
                         diagnostic: Diagnostic {
@@ -1036,9 +1034,8 @@ mod tests {
             worktree
                 .as_local_mut()
                 .unwrap()
-                .update_diagnostic_entries(
+                .update_diagnostics(
                     Arc::from("/test/consts.rs".as_ref()),
-                    None,
                     vec![
                         DiagnosticEntry {
                             range: PointUtf16::new(0, 15)..PointUtf16::new(0, 15),

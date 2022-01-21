@@ -856,7 +856,7 @@ impl Buffer {
         version: Option<i32>,
         mut diagnostics: Vec<DiagnosticEntry<T>>,
         cx: &mut ModelContext<Self>,
-    ) -> Result<Operation>
+    ) -> Result<()>
     where
         T: Copy + Ord + TextDimension + Sub<Output = T> + Clip + ToPoint,
     {
@@ -944,10 +944,13 @@ impl Buffer {
 
         let set = DiagnosticSet::new(sanitized_diagnostics, content);
         self.apply_diagnostic_update(set.clone(), cx);
-        Ok(Operation::UpdateDiagnostics {
+
+        let op = Operation::UpdateDiagnostics {
             diagnostics: set.iter().cloned().collect(),
             lamport_timestamp: self.text.lamport_clock.tick(),
-        })
+        };
+        self.send_operation(op, cx);
+        Ok(())
     }
 
     fn request_autoindent(&mut self, cx: &mut ModelContext<Self>) {
