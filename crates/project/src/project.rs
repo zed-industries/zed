@@ -819,7 +819,8 @@ impl Project {
                 Ok(definitions)
             })
         } else {
-            todo!()
+            log::info!("go to definition is not yet implemented for guests");
+            Task::ready(Ok(Default::default()))
         }
     }
 
