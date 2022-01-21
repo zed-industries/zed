@@ -96,6 +96,7 @@ pub trait Window: WindowContext {
         answers: &[&str],
         done_fn: Box<dyn FnOnce(usize)>,
     );
+    fn activate(&self);
 }
 
 pub trait WindowContext {
