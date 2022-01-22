@@ -1366,19 +1366,20 @@ pub struct File {
 }
 
 impl language::File for File {
+    fn as_local(&self) -> Option<&dyn language::LocalFile> {
+        if self.is_local {
+            Some(self)
+        } else {
+            None
+        }
+    }
+
     fn mtime(&self) -> SystemTime {
         self.mtime
     }
 
     fn path(&self) -> &Arc<Path> {
         &self.path
-    }
-
-    fn abs_path(&self, cx: &AppContext) -> Option<PathBuf> {
-        self.worktree
-            .read(cx)
-            .as_local()
-            .map(|local_worktree| local_worktree.abs_path.join(&self.path))
     }
 
     fn full_path(&self, cx: &AppContext) -> PathBuf {
@@ -1448,16 +1449,6 @@ impl language::File for File {
         })
     }
 
-    fn load_local(&self, cx: &AppContext) -> Option<Task<Result<String>>> {
-        let worktree = self.worktree.read(cx).as_local()?;
-        let abs_path = worktree.absolutize(&self.path);
-        let fs = worktree.fs.clone();
-        Some(
-            cx.background()
-                .spawn(async move { fs.load(&abs_path).await }),
-        )
-    }
-
     fn format_remote(
         &self,
         buffer_id: u64,
@@ -1507,6 +1498,25 @@ impl language::File for File {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+impl language::LocalFile for File {
+    fn abs_path(&self, cx: &AppContext) -> PathBuf {
+        self.worktree
+            .read(cx)
+            .as_local()
+            .unwrap()
+            .abs_path
+            .join(&self.path)
+    }
+
+    fn load(&self, cx: &AppContext) -> Task<Result<String>> {
+        let worktree = self.worktree.read(cx).as_local().unwrap();
+        let abs_path = worktree.absolutize(&self.path);
+        let fs = worktree.fs.clone();
+        cx.background()
+            .spawn(async move { fs.load(&abs_path).await })
     }
 }
 

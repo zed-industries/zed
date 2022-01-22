@@ -938,7 +938,7 @@ impl Project {
         let buffer_abs_path;
         if let Some(file) = File::from_dyn(buffer.file()) {
             worktree = file.worktree.clone();
-            buffer_abs_path = file.abs_path(cx);
+            buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
         } else {
             return Task::ready(Err(anyhow!("buffer does not belong to any worktree")));
         };
@@ -2181,8 +2181,8 @@ mod tests {
         cx.update(|cx| {
             let target_buffer = definition.target_buffer.read(cx);
             assert_eq!(
-                target_buffer.file().unwrap().abs_path(cx),
-                Some(dir.path().join("a.rs"))
+                target_buffer.file().unwrap().as_local().unwrap().abs_path(cx),
+                dir.path().join("a.rs")
             );
             assert_eq!(definition.target_range.to_offset(target_buffer), 9..10);
             assert_eq!(

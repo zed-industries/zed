@@ -156,13 +156,12 @@ pub enum Event {
 }
 
 pub trait File {
+    fn as_local(&self) -> Option<&dyn LocalFile>;
+
     fn mtime(&self) -> SystemTime;
 
     /// Returns the path of this file relative to the worktree's root directory.
     fn path(&self) -> &Arc<Path>;
-
-    /// Returns the absolute path of this file.
-    fn abs_path(&self, cx: &AppContext) -> Option<PathBuf>;
 
     /// Returns the path of this file relative to the worktree's parent directory (this means it
     /// includes the name of the worktree's root folder).
@@ -182,8 +181,6 @@ pub trait File {
         cx: &mut MutableAppContext,
     ) -> Task<Result<(clock::Global, SystemTime)>>;
 
-    fn load_local(&self, cx: &AppContext) -> Option<Task<Result<String>>>;
-
     fn format_remote(&self, buffer_id: u64, cx: &mut MutableAppContext)
         -> Option<Task<Result<()>>>;
 
@@ -192,6 +189,13 @@ pub trait File {
     fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext);
 
     fn as_any(&self) -> &dyn Any;
+}
+
+pub trait LocalFile: File {
+    /// Returns the absolute path of this file.
+    fn abs_path(&self, cx: &AppContext) -> PathBuf;
+
+    fn load(&self, cx: &AppContext) -> Task<Result<String>>;
 }
 
 pub(crate) struct QueryCursorHandle(Option<QueryCursor>);
@@ -457,7 +461,7 @@ impl Buffer {
 
         if let Some(LanguageServerState { server, .. }) = self.language_server.as_ref() {
             let server = server.clone();
-            let abs_path = file.abs_path(cx).unwrap();
+            let abs_path = file.as_local().unwrap().abs_path(cx);
             let version = self.version();
             cx.spawn(|this, mut cx| async move {
                 let edits = server
@@ -634,7 +638,11 @@ impl Buffer {
         if let Some(new_file) = new_file {
             self.file = Some(new_file);
         }
-        if let Some(state) = &self.language_server {
+        if let Some((state, local_file)) = &self
+            .language_server
+            .as_ref()
+            .zip(self.file.as_ref().and_then(|f| f.as_local()))
+        {
             cx.background()
                 .spawn(
                     state
@@ -642,10 +650,7 @@ impl Buffer {
                         .notify::<lsp::notification::DidSaveTextDocument>(
                             lsp::DidSaveTextDocumentParams {
                                 text_document: lsp::TextDocumentIdentifier {
-                                    uri: lsp::Url::from_file_path(
-                                        self.file.as_ref().unwrap().abs_path(cx).unwrap(),
-                                    )
-                                    .unwrap(),
+                                    uri: lsp::Url::from_file_path(local_file.abs_path(cx)).unwrap(),
                                 },
                                 text: None,
                             },
@@ -685,7 +690,9 @@ impl Buffer {
                     task = Some(cx.spawn(|this, mut cx| {
                         async move {
                             let new_text = this.read_with(&cx, |this, cx| {
-                                this.file.as_ref().and_then(|file| file.load_local(cx))
+                                this.file
+                                    .as_ref()
+                                    .and_then(|file| file.as_local().map(|f| f.load(cx)))
                             });
                             if let Some(new_text) = new_text {
                                 let new_text = new_text.await?;
@@ -1235,9 +1242,8 @@ impl Buffer {
         let abs_path = self
             .file
             .as_ref()
-            .map_or(Path::new("/").to_path_buf(), |file| {
-                file.abs_path(cx).unwrap()
-            });
+            .and_then(|f| f.as_local())
+            .map_or(Path::new("/").to_path_buf(), |file| file.abs_path(cx));
 
         let version = post_inc(&mut language_server.next_version);
         let snapshot = LanguageServerSnapshot {
