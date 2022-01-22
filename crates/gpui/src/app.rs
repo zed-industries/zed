@@ -2938,6 +2938,17 @@ impl<T: View> ViewHandle<T> {
         })
     }
 
+    pub fn defer<C, F>(&self, cx: &mut C, update: F)
+    where
+        C: AsMut<MutableAppContext>,
+        F: 'static + FnOnce(&mut T, &mut ViewContext<T>),
+    {
+        let this = self.clone();
+        cx.as_mut().defer(Box::new(move |cx| {
+            this.update(cx, |view, cx| update(view, cx));
+        }));
+    }
+
     pub fn is_focused(&self, cx: &AppContext) -> bool {
         cx.focused_view_id(self.window_id)
             .map_or(false, |focused_id| focused_id == self.view_id)
