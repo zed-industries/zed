@@ -23,10 +23,7 @@ use std::{
     convert::TryInto,
     ops::Range,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicBool, Ordering::SeqCst},
-        Arc,
-    },
+    sync::{atomic::AtomicBool, Arc},
 };
 use util::{post_inc, ResultExt, TryFutureExt as _};
 
@@ -48,9 +45,7 @@ pub struct Project {
     open_buffers: HashMap<usize, OpenBuffer>,
     loading_buffers: HashMap<
         ProjectPath,
-        postage::watch::Receiver<
-            Option<Result<(ModelHandle<Buffer>, Arc<AtomicBool>), Arc<anyhow::Error>>>,
-        >,
+        postage::watch::Receiver<Option<Result<ModelHandle<Buffer>, Arc<anyhow::Error>>>>,
     >,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
 }
@@ -498,15 +493,13 @@ impl Project {
         let worktree = if let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) {
             worktree
         } else {
-            return cx
-                .foreground()
-                .spawn(async move { Err(anyhow!("no such worktree")) });
+            return Task::ready(Err(anyhow!("no such worktree")));
         };
 
         // If there is already a buffer for the given path, then return it.
         let existing_buffer = self.get_open_buffer(&path, cx);
         if let Some(existing_buffer) = existing_buffer {
-            return cx.foreground().spawn(async move { Ok(existing_buffer) });
+            return Task::ready(Ok(existing_buffer));
         }
 
         let mut loading_watch = match self.loading_buffers.entry(path.clone()) {
@@ -534,7 +527,8 @@ impl Project {
                             buffer.read(cx).remote_id() as usize,
                             OpenBuffer::Loaded(buffer.downgrade()),
                         );
-                        Ok((buffer, Arc::new(AtomicBool::new(true))))
+                        this.assign_language_to_buffer(&worktree, &buffer, cx);
+                        Ok(buffer)
                     }));
                 })
                 .detach();
@@ -542,23 +536,16 @@ impl Project {
             }
         };
 
-        cx.spawn(|this, mut cx| async move {
-            let (buffer, buffer_is_new) = loop {
+        cx.foreground().spawn(async move {
+            loop {
                 if let Some(result) = loading_watch.borrow().as_ref() {
-                    break match result {
-                        Ok((buf, is_new)) => Ok((buf.clone(), is_new.fetch_and(false, SeqCst))),
-                        Err(error) => Err(anyhow!("{}", error)),
-                    };
+                    match result {
+                        Ok(buffer) => return Ok(buffer.clone()),
+                        Err(error) => return Err(anyhow!("{}", error)),
+                    }
                 }
                 loading_watch.recv().await;
-            }?;
-
-            if buffer_is_new {
-                this.update(&mut cx, |this, cx| {
-                    this.assign_language_to_buffer(worktree, buffer.clone(), cx)
-                });
             }
-            Ok(buffer)
         })
     }
 
@@ -582,7 +569,7 @@ impl Project {
             this.update(&mut cx, |this, cx| {
                 this.open_buffers
                     .insert(buffer.id(), OpenBuffer::Loaded(buffer.downgrade()));
-                this.assign_language_to_buffer(worktree, buffer, cx)
+                this.assign_language_to_buffer(&worktree, &buffer, cx);
             });
             Ok(())
         })
@@ -632,8 +619,8 @@ impl Project {
 
     fn assign_language_to_buffer(
         &mut self,
-        worktree: ModelHandle<Worktree>,
-        buffer: ModelHandle<Buffer>,
+        worktree: &ModelHandle<Worktree>,
+        buffer: &ModelHandle<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
         // Set the buffer's language
