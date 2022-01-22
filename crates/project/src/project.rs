@@ -627,40 +627,44 @@ impl Project {
             (file.path().clone(), file.full_path())
         };
 
-        // Set the buffer's language
-        let language = self.languages.select_language(&full_path)?.clone();
-        buffer.update(cx, |buffer, cx| {
-            buffer.set_language(Some(language.clone()), cx);
-        });
-
-        // For local worktrees, start a language server if needed.
-        // Also assign the language server and any previously stored diagnostics to the buffer.
-        let worktree = worktree.read(cx);
-        if let Some(local_worktree) = worktree.as_local() {
-            let worktree_id = local_worktree.id();
-            let diagnostics = local_worktree.diagnostics_for_path(&path);
-            let worktree_abs_path = local_worktree.abs_path().clone();
-
-            let language_server = match self
-                .language_servers
-                .entry((worktree_id, language.name().to_string()))
-            {
-                hash_map::Entry::Occupied(e) => Some(e.get().clone()),
-                hash_map::Entry::Vacant(e) => Self::start_language_server(
-                    self.client.clone(),
-                    language,
-                    &worktree_abs_path,
-                    cx,
-                )
-                .map(|server| e.insert(server).clone()),
-            };
-
+        // If the buffer has a language, set it and start/assign the language server
+        if let Some(language) = self.languages.select_language(&full_path) {
             buffer.update(cx, |buffer, cx| {
-                buffer.set_language_server(language_server, cx);
-                if let Some(diagnostics) = diagnostics {
-                    buffer.update_diagnostics(None, diagnostics, cx).log_err();
-                }
+                buffer.set_language(Some(language.clone()), cx);
             });
+
+            // For local worktrees, start a language server if needed.
+            // Also assign the language server and any previously stored diagnostics to the buffer.
+            if let Some(local_worktree) = worktree.read(cx).as_local() {
+                let worktree_id = local_worktree.id();
+                let worktree_abs_path = local_worktree.abs_path().clone();
+
+                let language_server = match self
+                    .language_servers
+                    .entry((worktree_id, language.name().to_string()))
+                {
+                    hash_map::Entry::Occupied(e) => Some(e.get().clone()),
+                    hash_map::Entry::Vacant(e) => Self::start_language_server(
+                        self.client.clone(),
+                        language.clone(),
+                        &worktree_abs_path,
+                        cx,
+                    )
+                    .map(|server| e.insert(server).clone()),
+                };
+
+                buffer.update(cx, |buffer, cx| {
+                    buffer.set_language_server(language_server, cx);
+                });
+            }
+        }
+
+        if let Some(local_worktree) = worktree.read(cx).as_local() {
+            if let Some(diagnostics) = local_worktree.diagnostics_for_path(&path) {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.update_diagnostics(None, diagnostics, cx).log_err();
+                });
+            }
         }
 
         None

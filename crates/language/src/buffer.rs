@@ -869,19 +869,19 @@ impl Buffer {
         }
 
         let version = version.map(|version| version as usize);
-        let content = if let Some(version) = version {
-            let language_server = self.language_server.as_mut().unwrap();
-            language_server
-                .pending_snapshots
-                .retain(|&v, _| v >= version);
-            let snapshot = language_server
-                .pending_snapshots
-                .get(&version)
-                .ok_or_else(|| anyhow!("missing snapshot"))?;
-            &snapshot.buffer_snapshot
-        } else {
-            self.deref()
-        };
+        let content =
+            if let Some((version, language_server)) = version.zip(self.language_server.as_mut()) {
+                language_server
+                    .pending_snapshots
+                    .retain(|&v, _| v >= version);
+                let snapshot = language_server
+                    .pending_snapshots
+                    .get(&version)
+                    .ok_or_else(|| anyhow!("missing snapshot"))?;
+                &snapshot.buffer_snapshot
+            } else {
+                self.deref()
+            };
 
         diagnostics.sort_unstable_by(|a, b| {
             Ordering::Equal
