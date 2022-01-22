@@ -1504,7 +1504,6 @@ impl Project {
             .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
             .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
         let receipt = envelope.receipt();
-        let worktree_id = envelope.payload.worktree_id;
         let buffer_id = envelope.payload.buffer_id;
         let save = cx.spawn(|_, mut cx| async move {
             buffer.update(&mut cx, |buffer, cx| buffer.save(cx)).await
@@ -1519,7 +1518,6 @@ impl Project {
                         receipt,
                         proto::BufferSaved {
                             project_id,
-                            worktree_id,
                             buffer_id,
                             version: (&version).into(),
                             mtime: Some(mtime.into()),

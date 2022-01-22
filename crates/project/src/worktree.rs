@@ -38,8 +38,7 @@ use std::{
     },
     time::{Duration, SystemTime},
 };
-use sum_tree::{Bias, TreeMap};
-use sum_tree::{Edit, SeekTarget, SumTree};
+use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap};
 use util::ResultExt;
 
 lazy_static! {
@@ -398,22 +397,17 @@ impl Worktree {
         operation: Operation,
         cx: &mut ModelContext<Self>,
     ) {
-        if let Some((project_id, worktree_id, rpc)) = match self {
+        if let Some((project_id, rpc)) = match self {
             Worktree::Local(worktree) => worktree
                 .share
                 .as_ref()
-                .map(|share| (share.project_id, worktree.id(), worktree.client.clone())),
-            Worktree::Remote(worktree) => Some((
-                worktree.project_id,
-                worktree.snapshot.id(),
-                worktree.client.clone(),
-            )),
+                .map(|share| (share.project_id, worktree.client.clone())),
+            Worktree::Remote(worktree) => Some((worktree.project_id, worktree.client.clone())),
         } {
             cx.spawn(|worktree, mut cx| async move {
                 if let Err(error) = rpc
                     .request(proto::UpdateBuffer {
                         project_id,
-                        worktree_id: worktree_id.0 as u64,
                         buffer_id,
                         operations: vec![language::proto::serialize_operation(&operation)],
                     })
@@ -1408,7 +1402,6 @@ impl language::File for File {
         version: clock::Global,
         cx: &mut MutableAppContext,
     ) -> Task<Result<(clock::Global, SystemTime)>> {
-        let worktree_id = self.worktree.read(cx).id().to_proto();
         self.worktree.update(cx, |worktree, cx| match worktree {
             Worktree::Local(worktree) => {
                 let rpc = worktree.client.clone();
@@ -1419,7 +1412,6 @@ impl language::File for File {
                     if let Some(project_id) = project_id {
                         rpc.send(proto::BufferSaved {
                             project_id,
-                            worktree_id,
                             buffer_id,
                             version: (&version).into(),
                             mtime: Some(entry.mtime.into()),
@@ -1436,7 +1428,6 @@ impl language::File for File {
                     let response = rpc
                         .request(proto::SaveBuffer {
                             project_id,
-                            worktree_id,
                             buffer_id,
                         })
                         .await?;
@@ -1467,14 +1458,12 @@ impl language::File for File {
         cx: &mut MutableAppContext,
     ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree.read(cx);
-        let worktree_id = worktree.id().to_proto();
         let worktree = worktree.as_remote()?;
         let rpc = worktree.client.clone();
         let project_id = worktree.project_id;
         Some(cx.foreground().spawn(async move {
             rpc.request(proto::FormatBuffer {
                 project_id,
-                worktree_id,
                 buffer_id,
             })
             .await?;
@@ -1492,14 +1481,12 @@ impl language::File for File {
         self.worktree.update(cx, |worktree, cx| {
             if let Worktree::Remote(worktree) = worktree {
                 let project_id = worktree.project_id;
-                let worktree_id = worktree.id().to_proto();
                 let rpc = worktree.client.clone();
                 cx.background()
                     .spawn(async move {
                         if let Err(error) = rpc
                             .send(proto::CloseBuffer {
                                 project_id,
-                                worktree_id,
                                 buffer_id,
                             })
                             .await
