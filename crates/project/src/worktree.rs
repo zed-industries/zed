@@ -631,7 +631,6 @@ impl LocalWorktree {
     fn load(&self, path: &Path, cx: &mut ModelContext<Worktree>) -> Task<Result<(File, String)>> {
         let handle = cx.handle();
         let path = Arc::from(path);
-        let worktree_path = self.abs_path.clone();
         let abs_path = self.absolutize(&path);
         let background_snapshot = self.background_snapshot.clone();
         let fs = self.fs.clone();
@@ -644,7 +643,6 @@ impl LocalWorktree {
                 File {
                     entry_id: Some(entry.id),
                     worktree: handle,
-                    worktree_path,
                     path: entry.path,
                     mtime: entry.mtime,
                     is_local: true,
@@ -664,19 +662,16 @@ impl LocalWorktree {
         let text = buffer.as_rope().clone();
         let version = buffer.version();
         let save = self.save(path, text, cx);
-        cx.spawn(|this, mut cx| async move {
+        let handle = cx.handle();
+        cx.as_mut().spawn(|mut cx| async move {
             let entry = save.await?;
-            let file = this.update(&mut cx, |this, cx| {
-                let this = this.as_local_mut().unwrap();
-                File {
-                    entry_id: Some(entry.id),
-                    worktree: cx.handle(),
-                    worktree_path: this.abs_path.clone(),
-                    path: entry.path,
-                    mtime: entry.mtime,
-                    is_local: true,
-                }
-            });
+            let file = File {
+                entry_id: Some(entry.id),
+                worktree: handle,
+                path: entry.path,
+                mtime: entry.mtime,
+                is_local: true,
+            };
 
             buffer_handle.update(&mut cx, |buffer, cx| {
                 buffer.did_save(version, file.mtime, Some(Box::new(file)), cx);
@@ -811,7 +806,6 @@ impl RemoteWorktree {
         let replica_id = self.replica_id;
         let project_id = self.project_id;
         let remote_worktree_id = self.id();
-        let root_path = self.snapshot.abs_path.clone();
         let path: Arc<Path> = Arc::from(path);
         let path_string = path.to_string_lossy().to_string();
         cx.spawn_weak(move |this, mut cx| async move {
@@ -834,7 +828,6 @@ impl RemoteWorktree {
             let file = File {
                 entry_id: Some(entry.id),
                 worktree: this.clone(),
-                worktree_path: root_path,
                 path: entry.path,
                 mtime: entry.mtime,
                 is_local: false,
@@ -1354,7 +1347,6 @@ pub struct File {
     pub path: Arc<Path>,
     pub mtime: SystemTime,
     pub(crate) entry_id: Option<usize>,
-    pub(crate) worktree_path: Arc<Path>,
     pub(crate) is_local: bool,
 }
 
@@ -1367,17 +1359,17 @@ impl language::File for File {
         &self.path
     }
 
-    fn abs_path(&self) -> Option<PathBuf> {
+    fn abs_path(&self, cx: &AppContext) -> Option<PathBuf> {
         if self.is_local {
-            Some(self.worktree_path.join(&self.path))
+            Some(self.worktree.read(cx).abs_path().join(&self.path))
         } else {
             None
         }
     }
 
-    fn full_path(&self) -> PathBuf {
+    fn full_path(&self, cx: &AppContext) -> PathBuf {
         let mut full_path = PathBuf::new();
-        if let Some(worktree_name) = self.worktree_path.file_name() {
+        if let Some(worktree_name) = self.worktree.read(cx).abs_path().file_name() {
             full_path.push(worktree_name);
         }
         full_path.push(&self.path);
@@ -1386,10 +1378,10 @@ impl language::File for File {
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
-    fn file_name<'a>(&'a self) -> Option<OsString> {
+    fn file_name<'a>(&'a self, cx: &AppContext) -> Option<OsString> {
         self.path
             .file_name()
-            .or_else(|| self.worktree_path.file_name())
+            .or_else(|| self.worktree.read(cx).abs_path().file_name())
             .map(Into::into)
     }
 

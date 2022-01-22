@@ -126,7 +126,7 @@ impl ItemView for Editor {
             .buffer()
             .read(cx)
             .file(cx)
-            .and_then(|file| file.file_name());
+            .and_then(|file| file.file_name(cx));
         if let Some(name) = filename {
             name.to_string_lossy().into()
         } else {

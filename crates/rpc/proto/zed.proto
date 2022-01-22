@@ -270,6 +270,13 @@ message Worktree {
     bool weak = 5;
 }
 
+message File {
+    uint64 worktree_id = 1;
+    uint64 entry_id = 2;
+    string path = 3;
+    Timestamp mtime = 4;
+}
+
 message Entry {
     uint64 id = 1;
     bool is_dir = 2;

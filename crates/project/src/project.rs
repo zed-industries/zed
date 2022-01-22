@@ -624,7 +624,7 @@ impl Project {
     ) -> Option<()> {
         let (path, full_path) = {
             let file = buffer.read(cx).file()?;
-            (file.path().clone(), file.full_path())
+            (file.path().clone(), file.full_path(cx))
         };
 
         // If the buffer has a language, set it and start/assign the language server
@@ -938,7 +938,7 @@ impl Project {
         let buffer_abs_path;
         if let Some(file) = File::from_dyn(buffer.file()) {
             worktree = file.worktree.clone();
-            buffer_abs_path = file.abs_path();
+            buffer_abs_path = file.abs_path(cx);
         } else {
             return Task::ready(Err(anyhow!("buffer does not belong to any worktree")));
         };
@@ -1168,7 +1168,6 @@ impl Project {
     ) {
         let local = worktree_handle.read(cx).is_local();
         let snapshot = worktree_handle.read(cx).snapshot();
-        let worktree_path = snapshot.abs_path();
         let mut buffers_to_delete = Vec::new();
         for (buffer_id, buffer) in &self.open_buffers {
             if let OpenBuffer::Loaded(buffer) = buffer {
@@ -1185,7 +1184,6 @@ impl Project {
                             {
                                 File {
                                     is_local: local,
-                                    worktree_path: worktree_path.clone(),
                                     entry_id: Some(entry.id),
                                     mtime: entry.mtime,
                                     path: entry.path.clone(),
@@ -1196,7 +1194,6 @@ impl Project {
                             {
                                 File {
                                     is_local: local,
-                                    worktree_path: worktree_path.clone(),
                                     entry_id: Some(entry.id),
                                     mtime: entry.mtime,
                                     path: entry.path.clone(),
@@ -1205,7 +1202,6 @@ impl Project {
                             } else {
                                 File {
                                     is_local: local,
-                                    worktree_path: worktree_path.clone(),
                                     entry_id: None,
                                     path: old_file.path().clone(),
                                     mtime: old_file.mtime(),
@@ -2185,7 +2181,7 @@ mod tests {
         cx.update(|cx| {
             let target_buffer = definition.target_buffer.read(cx);
             assert_eq!(
-                target_buffer.file().unwrap().abs_path(),
+                target_buffer.file().unwrap().abs_path(cx),
                 Some(dir.path().join("a.rs"))
             );
             assert_eq!(definition.target_range.to_offset(target_buffer), 9..10);

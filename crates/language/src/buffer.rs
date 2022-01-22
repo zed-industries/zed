@@ -162,15 +162,15 @@ pub trait File {
     fn path(&self) -> &Arc<Path>;
 
     /// Returns the absolute path of this file.
-    fn abs_path(&self) -> Option<PathBuf>;
+    fn abs_path(&self, cx: &AppContext) -> Option<PathBuf>;
 
     /// Returns the path of this file relative to the worktree's parent directory (this means it
     /// includes the name of the worktree's root folder).
-    fn full_path(&self) -> PathBuf;
+    fn full_path(&self, cx: &AppContext) -> PathBuf;
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
-    fn file_name(&self) -> Option<OsString>;
+    fn file_name(&self, cx: &AppContext) -> Option<OsString>;
 
     fn is_deleted(&self) -> bool;
 
@@ -457,7 +457,7 @@ impl Buffer {
 
         if let Some(LanguageServerState { server, .. }) = self.language_server.as_ref() {
             let server = server.clone();
-            let abs_path = file.abs_path().unwrap();
+            let abs_path = file.abs_path(cx).unwrap();
             let version = self.version();
             cx.spawn(|this, mut cx| async move {
                 let edits = server
@@ -619,7 +619,7 @@ impl Buffer {
             None
         };
 
-        self.update_language_server();
+        self.update_language_server(cx);
     }
 
     pub fn did_save(
@@ -643,7 +643,7 @@ impl Buffer {
                             lsp::DidSaveTextDocumentParams {
                                 text_document: lsp::TextDocumentIdentifier {
                                     uri: lsp::Url::from_file_path(
-                                        self.file.as_ref().unwrap().abs_path().unwrap(),
+                                        self.file.as_ref().unwrap().abs_path(cx).unwrap(),
                                     )
                                     .unwrap(),
                                 },
@@ -1226,7 +1226,7 @@ impl Buffer {
         self.set_active_selections(Arc::from([]), cx);
     }
 
-    fn update_language_server(&mut self) {
+    fn update_language_server(&mut self, cx: &AppContext) {
         let language_server = if let Some(language_server) = self.language_server.as_mut() {
             language_server
         } else {
@@ -1236,7 +1236,7 @@ impl Buffer {
             .file
             .as_ref()
             .map_or(Path::new("/").to_path_buf(), |file| {
-                file.abs_path().unwrap()
+                file.abs_path(cx).unwrap()
             });
 
         let version = post_inc(&mut language_server.next_version);
@@ -1381,7 +1381,7 @@ impl Buffer {
         }
 
         self.reparse(cx);
-        self.update_language_server();
+        self.update_language_server(cx);
 
         cx.emit(Event::Edited);
         if !was_dirty {
