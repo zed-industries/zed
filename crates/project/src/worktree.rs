@@ -46,6 +46,57 @@ lazy_static! {
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+pub struct WorktreeId(usize);
+
+pub enum Worktree {
+    Local(LocalWorktree),
+    Remote(RemoteWorktree),
+}
+
+pub struct LocalWorktree {
+    snapshot: Snapshot,
+    config: WorktreeConfig,
+    background_snapshot: Arc<Mutex<Snapshot>>,
+    last_scan_state_rx: watch::Receiver<ScanState>,
+    _background_scanner_task: Option<Task<()>>,
+    poll_task: Option<Task<()>>,
+    registration: Registration,
+    share: Option<ShareState>,
+    diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<PointUtf16>>>,
+    diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
+    queued_operations: Vec<(u64, Operation)>,
+    client: Arc<Client>,
+    fs: Arc<dyn Fs>,
+    weak: bool,
+}
+
+pub struct RemoteWorktree {
+    pub(crate) snapshot: Snapshot,
+    project_id: u64,
+    snapshot_rx: watch::Receiver<Snapshot>,
+    client: Arc<Client>,
+    updates_tx: postage::mpsc::Sender<proto::UpdateWorktree>,
+    replica_id: ReplicaId,
+    queued_operations: Vec<(u64, Operation)>,
+    diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
+    weak: bool,
+}
+
+#[derive(Clone)]
+pub struct Snapshot {
+    id: WorktreeId,
+    scan_id: usize,
+    abs_path: Arc<Path>,
+    root_name: String,
+    root_char_bag: CharBag,
+    ignores: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
+    entries_by_path: SumTree<Entry>,
+    entries_by_id: SumTree<PathEntry>,
+    removed_entry_ids: HashMap<u64, usize>,
+    next_entry_id: Arc<AtomicUsize>,
+}
+
 #[derive(Clone, Debug)]
 enum ScanState {
     Idle,
@@ -53,12 +104,22 @@ enum ScanState {
     Err(Arc<anyhow::Error>),
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
-pub struct WorktreeId(usize);
+#[derive(Debug, Eq, PartialEq)]
+enum Registration {
+    None,
+    Pending,
+    Done { project_id: u64 },
+}
 
-pub enum Worktree {
-    Local(LocalWorktree),
-    Remote(RemoteWorktree),
+struct ShareState {
+    project_id: u64,
+    snapshots_tx: Sender<Snapshot>,
+    _maintain_remote_snapshot: Option<Task<()>>,
+}
+
+#[derive(Default, Deserialize)]
+struct WorktreeConfig {
+    collaborators: Vec<String>,
 }
 
 pub enum Event {
@@ -371,91 +432,6 @@ impl Worktree {
             .detach();
         }
     }
-}
-
-impl WorktreeId {
-    pub fn from_usize(handle_id: usize) -> Self {
-        Self(handle_id)
-    }
-
-    pub(crate) fn from_proto(id: u64) -> Self {
-        Self(id as usize)
-    }
-
-    pub fn to_proto(&self) -> u64 {
-        self.0 as u64
-    }
-
-    pub fn to_usize(&self) -> usize {
-        self.0
-    }
-}
-
-impl fmt::Display for WorktreeId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-#[derive(Clone)]
-pub struct Snapshot {
-    id: WorktreeId,
-    scan_id: usize,
-    abs_path: Arc<Path>,
-    root_name: String,
-    root_char_bag: CharBag,
-    ignores: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
-    entries_by_path: SumTree<Entry>,
-    entries_by_id: SumTree<PathEntry>,
-    removed_entry_ids: HashMap<u64, usize>,
-    next_entry_id: Arc<AtomicUsize>,
-}
-
-pub struct LocalWorktree {
-    snapshot: Snapshot,
-    config: WorktreeConfig,
-    background_snapshot: Arc<Mutex<Snapshot>>,
-    last_scan_state_rx: watch::Receiver<ScanState>,
-    _background_scanner_task: Option<Task<()>>,
-    poll_task: Option<Task<()>>,
-    registration: Registration,
-    share: Option<ShareState>,
-    diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<PointUtf16>>>,
-    diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
-    queued_operations: Vec<(u64, Operation)>,
-    client: Arc<Client>,
-    fs: Arc<dyn Fs>,
-    weak: bool,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-enum Registration {
-    None,
-    Pending,
-    Done { project_id: u64 },
-}
-
-struct ShareState {
-    project_id: u64,
-    snapshots_tx: Sender<Snapshot>,
-    _maintain_remote_snapshot: Option<Task<()>>,
-}
-
-pub struct RemoteWorktree {
-    pub(crate) snapshot: Snapshot,
-    project_id: u64,
-    snapshot_rx: watch::Receiver<Snapshot>,
-    client: Arc<Client>,
-    updates_tx: postage::mpsc::Sender<proto::UpdateWorktree>,
-    replica_id: ReplicaId,
-    queued_operations: Vec<(u64, Operation)>,
-    diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
-    weak: bool,
-}
-
-#[derive(Default, Deserialize)]
-struct WorktreeConfig {
-    collaborators: Vec<String>,
 }
 
 impl LocalWorktree {
@@ -826,49 +802,6 @@ impl LocalWorktree {
 
     pub fn is_shared(&self) -> bool {
         self.share.is_some()
-    }
-}
-
-fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
-    let contents = smol::block_on(fs.load(&abs_path))?;
-    let parent = abs_path.parent().unwrap_or(Path::new("/"));
-    let mut builder = GitignoreBuilder::new(parent);
-    for line in contents.lines() {
-        builder.add_line(Some(abs_path.into()), line)?;
-    }
-    Ok(builder.build()?)
-}
-
-impl Deref for Worktree {
-    type Target = Snapshot;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Worktree::Local(worktree) => &worktree.snapshot,
-            Worktree::Remote(worktree) => &worktree.snapshot,
-        }
-    }
-}
-
-impl Deref for LocalWorktree {
-    type Target = Snapshot;
-
-    fn deref(&self) -> &Self::Target {
-        &self.snapshot
-    }
-}
-
-impl Deref for RemoteWorktree {
-    type Target = Snapshot;
-
-    fn deref(&self) -> &Self::Target {
-        &self.snapshot
-    }
-}
-
-impl fmt::Debug for LocalWorktree {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.snapshot.fmt(f)
     }
 }
 
@@ -1337,6 +1270,73 @@ impl Snapshot {
         }
 
         ignore_stack
+    }
+}
+
+fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
+    let contents = smol::block_on(fs.load(&abs_path))?;
+    let parent = abs_path.parent().unwrap_or(Path::new("/"));
+    let mut builder = GitignoreBuilder::new(parent);
+    for line in contents.lines() {
+        builder.add_line(Some(abs_path.into()), line)?;
+    }
+    Ok(builder.build()?)
+}
+
+impl WorktreeId {
+    pub fn from_usize(handle_id: usize) -> Self {
+        Self(handle_id)
+    }
+
+    pub(crate) fn from_proto(id: u64) -> Self {
+        Self(id as usize)
+    }
+
+    pub fn to_proto(&self) -> u64 {
+        self.0 as u64
+    }
+
+    pub fn to_usize(&self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for WorktreeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Deref for Worktree {
+    type Target = Snapshot;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Worktree::Local(worktree) => &worktree.snapshot,
+            Worktree::Remote(worktree) => &worktree.snapshot,
+        }
+    }
+}
+
+impl Deref for LocalWorktree {
+    type Target = Snapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.snapshot
+    }
+}
+
+impl Deref for RemoteWorktree {
+    type Target = Snapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.snapshot
+    }
+}
+
+impl fmt::Debug for LocalWorktree {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.snapshot.fmt(f)
     }
 }
 
