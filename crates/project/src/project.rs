@@ -2428,7 +2428,7 @@ mod tests {
                 .as_remote_mut()
                 .unwrap()
                 .snapshot
-                .apply_update(update_message)
+                .apply_remote_update(update_message)
                 .unwrap();
 
             assert_eq!(

@@ -265,7 +265,7 @@ impl Worktree {
                     .spawn(async move {
                         while let Some(update) = updates_rx.recv().await {
                             let mut snapshot = snapshot_tx.borrow().clone();
-                            if let Err(error) = snapshot.apply_update(update) {
+                            if let Err(error) = snapshot.apply_remote_update(update) {
                                 log::error!("error applying worktree update: {}", error);
                             }
                             *snapshot_tx.borrow_mut() = snapshot;
@@ -1000,7 +1000,7 @@ impl Snapshot {
         }
     }
 
-    pub(crate) fn apply_update(&mut self, update: proto::UpdateWorktree) -> Result<()> {
+    pub(crate) fn apply_remote_update(&mut self, update: proto::UpdateWorktree) -> Result<()> {
         let mut entries_by_path_edits = Vec::new();
         let mut entries_by_id_edits = Vec::new();
         for entry_id in update.removed_entries {
@@ -2618,7 +2618,7 @@ mod tests {
             let update = scanner
                 .snapshot()
                 .build_update(&prev_snapshot, 0, 0, include_ignored);
-            prev_snapshot.apply_update(update).unwrap();
+            prev_snapshot.apply_remote_update(update).unwrap();
             assert_eq!(
                 prev_snapshot.to_vec(true),
                 scanner.snapshot().to_vec(include_ignored)
