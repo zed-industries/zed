@@ -1060,6 +1060,10 @@ impl MutableAppContext {
         }
     }
 
+    fn defer(&mut self, callback: Box<dyn FnOnce(&mut MutableAppContext)>) {
+        self.pending_effects.push_back(Effect::Deferred(callback))
+    }
+
     pub(crate) fn notify_model(&mut self, model_id: usize) {
         if self.pending_notifications.insert(model_id) {
             self.pending_effects
@@ -1443,6 +1447,7 @@ impl MutableAppContext {
                         Effect::ViewNotification { window_id, view_id } => {
                             self.notify_view_observers(window_id, view_id)
                         }
+                        Effect::Deferred(callback) => callback(self),
                         Effect::Release { entity_id } => self.notify_release_observers(entity_id),
                         Effect::Focus { window_id, view_id } => {
                             self.focus(window_id, view_id);
@@ -1876,6 +1881,7 @@ pub enum Effect {
         window_id: usize,
         view_id: usize,
     },
+    Deferred(Box<dyn FnOnce(&mut MutableAppContext)>),
     Release {
         entity_id: usize,
     },
@@ -1905,6 +1911,7 @@ impl Debug for Effect {
                 .field("window_id", window_id)
                 .field("view_id", view_id)
                 .finish(),
+            Effect::Deferred(_) => f.debug_struct("Effect::Deferred").finish(),
             Effect::Release { entity_id } => f
                 .debug_struct("Effect::Release")
                 .field("entity_id", entity_id)
@@ -2408,6 +2415,15 @@ impl<'a, T: View> ViewContext<'a, T> {
 
     pub fn notify(&mut self) {
         self.app.notify_view(self.window_id, self.view_id);
+    }
+
+    pub fn defer(&mut self, callback: impl 'static + FnOnce(&mut T, &mut ViewContext<T>)) {
+        let handle = self.handle();
+        self.app.defer(Box::new(move |cx| {
+            handle.update(cx, |view, cx| {
+                callback(view, cx);
+            })
+        }))
     }
 
     pub fn propagate_action(&mut self) {
