@@ -543,6 +543,10 @@ impl LocalWorktree {
         Ok((tree, scan_states_tx))
     }
 
+    pub fn abs_path(&self) -> &Arc<Path> {
+        &self.abs_path
+    }
+
     pub fn authorized_logins(&self) -> Vec<String> {
         self.config.collaborators.clone()
     }
@@ -1092,10 +1096,6 @@ impl Snapshot {
         }
     }
 
-    pub fn abs_path(&self) -> &Arc<Path> {
-        &self.abs_path
-    }
-
     pub fn root_entry(&self) -> Option<&Entry> {
         self.entry_for_path("")
     }
@@ -1360,29 +1360,26 @@ impl language::File for File {
     }
 
     fn abs_path(&self, cx: &AppContext) -> Option<PathBuf> {
-        if self.is_local {
-            Some(self.worktree.read(cx).abs_path().join(&self.path))
-        } else {
-            None
-        }
+        self.worktree
+            .read(cx)
+            .as_local()
+            .map(|local_worktree| local_worktree.abs_path.join(&self.path))
     }
 
     fn full_path(&self, cx: &AppContext) -> PathBuf {
         let mut full_path = PathBuf::new();
-        if let Some(worktree_name) = self.worktree.read(cx).abs_path().file_name() {
-            full_path.push(worktree_name);
-        }
+        full_path.push(self.worktree.read(cx).root_name());
         full_path.push(&self.path);
         full_path
     }
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
-    fn file_name<'a>(&'a self, cx: &AppContext) -> Option<OsString> {
+    fn file_name(&self, cx: &AppContext) -> OsString {
         self.path
             .file_name()
-            .or_else(|| self.worktree.read(cx).abs_path().file_name())
-            .map(Into::into)
+            .map(|name| name.into())
+            .unwrap_or_else(|| OsString::from(&self.worktree.read(cx).root_name))
     }
 
     fn is_deleted(&self) -> bool {
