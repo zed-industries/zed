@@ -568,7 +568,7 @@ impl Project {
         abs_path: PathBuf,
         cx: &mut ModelContext<Project>,
     ) -> Task<Result<()>> {
-        let worktree_task = self.find_or_create_worktree_for_abs_path(&abs_path, false, cx);
+        let worktree_task = self.find_or_create_local_worktree(&abs_path, false, cx);
         cx.spawn(|this, mut cx| async move {
             let (worktree, path) = worktree_task.await?;
             worktree
@@ -890,7 +890,7 @@ impl Project {
         cx: &mut ModelContext<Project>,
     ) -> Result<(), anyhow::Error> {
         let (worktree, relative_path) = self
-            .find_worktree_for_abs_path(&abs_path, cx)
+            .find_local_worktree(&abs_path, cx)
             .ok_or_else(|| anyhow!("no worktree found for diagnostics"))?;
         let project_path = ProjectPath {
             worktree_id: worktree.read(cx).id(),
@@ -995,15 +995,14 @@ impl Project {
                             .to_file_path()
                             .map_err(|_| anyhow!("invalid target path"))?;
 
-                        let (worktree, relative_path) = if let Some(result) = this
-                            .read_with(&cx, |this, cx| {
-                                this.find_worktree_for_abs_path(&abs_path, cx)
-                            }) {
+                        let (worktree, relative_path) = if let Some(result) =
+                            this.read_with(&cx, |this, cx| this.find_local_worktree(&abs_path, cx))
+                        {
                             result
                         } else {
-                            let (worktree, relative_path) = this
+                            let worktree = this
                                 .update(&mut cx, |this, cx| {
-                                    this.create_worktree_for_abs_path(&abs_path, true, cx)
+                                    this.create_local_worktree(&abs_path, true, cx)
                                 })
                                 .await?;
                             this.update(&mut cx, |this, cx| {
@@ -1012,7 +1011,7 @@ impl Project {
                                     lang_server.clone(),
                                 );
                             });
-                            (worktree, relative_path)
+                            (worktree, PathBuf::new())
                         };
 
                         let project_path = ProjectPath {
@@ -1045,34 +1044,23 @@ impl Project {
         }
     }
 
-    pub fn find_or_create_worktree_for_abs_path(
+    pub fn find_or_create_local_worktree(
         &self,
         abs_path: impl AsRef<Path>,
         weak: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<(ModelHandle<Worktree>, PathBuf)>> {
         let abs_path = abs_path.as_ref();
-        if let Some((tree, relative_path)) = self.find_worktree_for_abs_path(abs_path, cx) {
+        if let Some((tree, relative_path)) = self.find_local_worktree(abs_path, cx) {
             Task::ready(Ok((tree.clone(), relative_path.into())))
         } else {
-            self.create_worktree_for_abs_path(abs_path, weak, cx)
+            let worktree = self.create_local_worktree(abs_path, weak, cx);
+            cx.foreground()
+                .spawn(async move { Ok((worktree.await?, PathBuf::new())) })
         }
     }
 
-    fn create_worktree_for_abs_path(
-        &self,
-        abs_path: &Path,
-        weak: bool,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(ModelHandle<Worktree>, PathBuf)>> {
-        let worktree = self.add_local_worktree(abs_path, weak, cx);
-        cx.background().spawn(async move {
-            let worktree = worktree.await?;
-            Ok((worktree, PathBuf::new()))
-        })
-    }
-
-    fn find_worktree_for_abs_path(
+    fn find_local_worktree(
         &self,
         abs_path: &Path,
         cx: &AppContext,
@@ -1096,7 +1084,7 @@ impl Project {
         }
     }
 
-    pub fn add_local_worktree(
+    fn create_local_worktree(
         &self,
         abs_path: impl AsRef<Path>,
         weak: bool,
@@ -1909,7 +1897,7 @@ mod tests {
 
         let (tree, _) = project
             .update(&mut cx, |project, cx| {
-                project.find_or_create_worktree_for_abs_path(&root_link_path, false, cx)
+                project.find_or_create_local_worktree(&root_link_path, false, cx)
             })
             .await
             .unwrap();
@@ -1984,7 +1972,7 @@ mod tests {
 
         let (tree, _) = project
             .update(&mut cx, |project, cx| {
-                project.find_or_create_worktree_for_abs_path(dir.path(), false, cx)
+                project.find_or_create_local_worktree(dir.path(), false, cx)
             })
             .await
             .unwrap();
@@ -2090,7 +2078,7 @@ mod tests {
         let project = build_project(Arc::new(RealFs), &mut cx);
         let (tree, _) = project
             .update(&mut cx, |project, cx| {
-                project.find_or_create_worktree_for_abs_path(&dir.path(), false, cx)
+                project.find_or_create_local_worktree(&dir.path(), false, cx)
             })
             .await
             .unwrap();
@@ -2144,7 +2132,7 @@ mod tests {
 
         let (tree, _) = project
             .update(&mut cx, |project, cx| {
-                project.find_or_create_worktree_for_abs_path(dir.path().join("b.rs"), false, cx)
+                project.find_or_create_local_worktree(dir.path().join("b.rs"), false, cx)
             })
             .await
             .unwrap();
@@ -2241,9 +2229,12 @@ mod tests {
 
         let project = build_project(fs.clone(), &mut cx);
         let worktree_id = project
-            .update(&mut cx, |p, cx| p.add_local_worktree("/dir", false, cx))
+            .update(&mut cx, |p, cx| {
+                p.find_or_create_local_worktree("/dir", false, cx)
+            })
             .await
             .unwrap()
+            .0
             .read_with(&cx, |tree, _| tree.id());
 
         let buffer = project
@@ -2277,10 +2268,11 @@ mod tests {
         let project = build_project(fs.clone(), &mut cx);
         let worktree_id = project
             .update(&mut cx, |p, cx| {
-                p.add_local_worktree("/dir/file1", false, cx)
+                p.find_or_create_local_worktree("/dir/file1", false, cx)
             })
             .await
             .unwrap()
+            .0
             .read_with(&cx, |tree, _| tree.id());
 
         let buffer = project
@@ -2318,8 +2310,10 @@ mod tests {
         let project = build_project(Arc::new(RealFs), &mut cx);
         let rpc = project.read_with(&cx, |p, _| p.client.clone());
 
-        let tree = project
-            .update(&mut cx, |p, cx| p.add_local_worktree(dir.path(), false, cx))
+        let (tree, _) = project
+            .update(&mut cx, |p, cx| {
+                p.find_or_create_local_worktree(dir.path(), false, cx)
+            })
             .await
             .unwrap();
         let worktree_id = tree.read_with(&cx, |tree, _| tree.id());
@@ -2460,9 +2454,12 @@ mod tests {
 
         let project = build_project(fs.clone(), &mut cx);
         let worktree_id = project
-            .update(&mut cx, |p, cx| p.add_local_worktree("/the-dir", false, cx))
+            .update(&mut cx, |p, cx| {
+                p.find_or_create_local_worktree("/the-dir", false, cx)
+            })
             .await
             .unwrap()
+            .0
             .read_with(&cx, |tree, _| tree.id());
 
         // Spawn multiple tasks to open paths, repeating some paths.
@@ -2506,8 +2503,10 @@ mod tests {
         }));
 
         let project = build_project(Arc::new(RealFs), &mut cx);
-        let worktree = project
-            .update(&mut cx, |p, cx| p.add_local_worktree(dir.path(), false, cx))
+        let (worktree, _) = project
+            .update(&mut cx, |p, cx| {
+                p.find_or_create_local_worktree(dir.path(), false, cx)
+            })
             .await
             .unwrap();
         let worktree_id = worktree.read_with(&cx, |worktree, _| worktree.id());
@@ -2638,8 +2637,10 @@ mod tests {
         let dir = temp_tree(json!({ "the-file": initial_contents }));
 
         let project = build_project(Arc::new(RealFs), &mut cx);
-        let worktree = project
-            .update(&mut cx, |p, cx| p.add_local_worktree(dir.path(), false, cx))
+        let (worktree, _) = project
+            .update(&mut cx, |p, cx| {
+                p.find_or_create_local_worktree(dir.path(), false, cx)
+            })
             .await
             .unwrap();
         let worktree_id = worktree.read_with(&cx, |tree, _| tree.id());
@@ -2747,8 +2748,10 @@ mod tests {
         .await;
 
         let project = build_project(fs.clone(), &mut cx);
-        let worktree = project
-            .update(&mut cx, |p, cx| p.add_local_worktree("/the-dir", false, cx))
+        let (worktree, _) = project
+            .update(&mut cx, |p, cx| {
+                p.find_or_create_local_worktree("/the-dir", false, cx)
+            })
             .await
             .unwrap();
         let worktree_id = worktree.read_with(&cx, |tree, _| tree.id());
