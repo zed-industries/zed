@@ -739,13 +739,11 @@ impl LocalWorktree {
         })
     }
 
-    pub fn share(&mut self, cx: &mut ModelContext<Worktree>) -> Task<anyhow::Result<()>> {
-        let project_id = if let Registration::Done { project_id } = self.registration {
-            project_id
-        } else {
-            return Task::ready(Err(anyhow!("cannot share worktree before registering it")));
-        };
-
+    pub fn share(
+        &mut self,
+        project_id: u64,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<anyhow::Result<()>> {
         if self.share.is_some() {
             return Task::ready(Ok(()));
         }

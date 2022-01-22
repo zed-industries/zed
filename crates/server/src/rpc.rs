@@ -1160,10 +1160,8 @@ mod tests {
                 cx,
             )
         });
-        let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
-                p.find_or_create_worktree_for_abs_path("/a", false, cx)
-            })
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", false, cx))
             .await
             .unwrap();
         let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
@@ -1298,10 +1296,8 @@ mod tests {
                 cx,
             )
         });
-        let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
-                p.find_or_create_worktree_for_abs_path("/a", false, cx)
-            })
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", false, cx))
             .await
             .unwrap();
         worktree_a
@@ -1400,10 +1396,8 @@ mod tests {
                 cx,
             )
         });
-        let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
-                p.find_or_create_worktree_for_abs_path("/a", false, cx)
-            })
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", false, cx))
             .await
             .unwrap();
         worktree_a
@@ -1470,7 +1464,9 @@ mod tests {
             .condition(&mut cx_a, |buf, _| buf.text() == "i-am-c, i-am-b, i-am-a")
             .await;
         buffer_b
-            .condition(&mut cx_b, |buf, _| buf.text() == "i-am-c, i-am-b, i-am-a")
+            .condition(&mut cx_b, |buf, _| {
+                dbg!(buf.text()) == "i-am-c, i-am-b, i-am-a"
+            })
             .await;
         buffer_c
             .condition(&mut cx_c, |buf, _| buf.text() == "i-am-c, i-am-b, i-am-a")
@@ -1550,10 +1546,8 @@ mod tests {
                 cx,
             )
         });
-        let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
-                p.find_or_create_worktree_for_abs_path("/dir", false, cx)
-            })
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/dir", false, cx))
             .await
             .unwrap();
         worktree_a
@@ -1645,10 +1639,8 @@ mod tests {
                 cx,
             )
         });
-        let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
-                p.find_or_create_worktree_for_abs_path("/dir", false, cx)
-            })
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/dir", false, cx))
             .await
             .unwrap();
         worktree_a
@@ -1725,10 +1717,8 @@ mod tests {
                 cx,
             )
         });
-        let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
-                p.find_or_create_worktree_for_abs_path("/dir", false, cx)
-            })
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/dir", false, cx))
             .await
             .unwrap();
         worktree_a
@@ -1801,10 +1791,8 @@ mod tests {
                 cx,
             )
         });
-        let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
-                p.find_or_create_worktree_for_abs_path("/a", false, cx)
-            })
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", false, cx))
             .await
             .unwrap();
         worktree_a
@@ -1890,10 +1878,8 @@ mod tests {
                 cx,
             )
         });
-        let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
-                p.find_or_create_worktree_for_abs_path("/a", false, cx)
-            })
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", false, cx))
             .await
             .unwrap();
         worktree_a
@@ -2110,10 +2096,8 @@ mod tests {
                 cx,
             )
         });
-        let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
-                p.find_or_create_worktree_for_abs_path("/a", false, cx)
-            })
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", false, cx))
             .await
             .unwrap();
         worktree_a
@@ -2617,10 +2601,8 @@ mod tests {
                 cx,
             )
         });
-        let (worktree_a, _) = project_a
-            .update(&mut cx_a, |p, cx| {
-                p.find_or_create_worktree_for_abs_path("/a", false, cx)
-            })
+        let worktree_a = project_a
+            .update(&mut cx_a, |p, cx| p.add_local_worktree("/a", false, cx))
             .await
             .unwrap();
         worktree_a

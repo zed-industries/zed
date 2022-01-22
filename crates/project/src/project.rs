@@ -427,7 +427,7 @@ impl Project {
                 for worktree in this.worktrees(cx).collect::<Vec<_>>() {
                     worktree.update(cx, |worktree, cx| {
                         let worktree = worktree.as_local_mut().unwrap();
-                        tasks.push(worktree.share(cx));
+                        tasks.push(worktree.share(project_id, cx));
                     });
                 }
             });
@@ -526,12 +526,14 @@ impl Project {
 
                 cx.spawn(move |this, mut cx| async move {
                     let load_result = load_buffer.await;
-                    *tx.borrow_mut() = Some(this.update(&mut cx, |this, _| {
+                    *tx.borrow_mut() = Some(this.update(&mut cx, |this, cx| {
                         // Record the fact that the buffer is no longer loading.
                         this.loading_buffers.remove(&path);
                         let buffer = load_result.map_err(Arc::new)?;
-                        this.open_buffers
-                            .insert(buffer.id(), OpenBuffer::Loaded(buffer.downgrade()));
+                        this.open_buffers.insert(
+                            buffer.read(cx).remote_id() as usize,
+                            OpenBuffer::Loaded(buffer.downgrade()),
+                        );
                         Ok((buffer, Arc::new(AtomicBool::new(true))))
                     }));
                 })
@@ -1109,7 +1111,7 @@ impl Project {
                 if is_shared {
                     worktree
                         .update(&mut cx, |worktree, cx| {
-                            worktree.as_local_mut().unwrap().share(cx)
+                            worktree.as_local_mut().unwrap().share(project_id, cx)
                         })
                         .await?;
                 }
