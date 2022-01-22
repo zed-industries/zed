@@ -489,20 +489,20 @@ impl Project {
         path: impl Into<ProjectPath>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
-        let path = path.into();
-        let worktree = if let Some(worktree) = self.worktree_for_id(path.worktree_id, cx) {
+        let project_path = path.into();
+        let worktree = if let Some(worktree) = self.worktree_for_id(project_path.worktree_id, cx) {
             worktree
         } else {
             return Task::ready(Err(anyhow!("no such worktree")));
         };
 
         // If there is already a buffer for the given path, then return it.
-        let existing_buffer = self.get_open_buffer(&path, cx);
+        let existing_buffer = self.get_open_buffer(&project_path, cx);
         if let Some(existing_buffer) = existing_buffer {
             return Task::ready(Ok(existing_buffer));
         }
 
-        let mut loading_watch = match self.loading_buffers.entry(path.clone()) {
+        let mut loading_watch = match self.loading_buffers.entry(project_path.clone()) {
             // If the given path is already being loaded, then wait for that existing
             // task to complete and return the same buffer.
             hash_map::Entry::Occupied(e) => e.get().clone(),
@@ -512,16 +512,15 @@ impl Project {
                 let (mut tx, rx) = postage::watch::channel();
                 entry.insert(rx.clone());
 
-                let load_buffer = worktree.update(cx, |worktree, cx| match worktree {
-                    Worktree::Local(worktree) => worktree.open_buffer(&path.path, cx),
-                    Worktree::Remote(worktree) => worktree.open_buffer(&path.path, cx),
+                let load_buffer = worktree.update(cx, |worktree, cx| {
+                    worktree.load_buffer(&project_path.path, cx)
                 });
 
                 cx.spawn(move |this, mut cx| async move {
                     let load_result = load_buffer.await;
                     *tx.borrow_mut() = Some(this.update(&mut cx, |this, cx| {
                         // Record the fact that the buffer is no longer loading.
-                        this.loading_buffers.remove(&path);
+                        this.loading_buffers.remove(&project_path);
                         let buffer = load_result.map_err(Arc::new)?;
                         this.open_buffers.insert(
                             buffer.read(cx).remote_id() as usize,
@@ -623,31 +622,46 @@ impl Project {
         buffer: &ModelHandle<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
+        let (path, full_path) = {
+            let file = buffer.read(cx).file()?;
+            (file.path().clone(), file.full_path())
+        };
+
         // Set the buffer's language
-        let full_path = buffer.read(cx).file()?.full_path();
         let language = self.languages.select_language(&full_path)?.clone();
         buffer.update(cx, |buffer, cx| {
             buffer.set_language(Some(language.clone()), cx);
         });
 
         // For local worktrees, start a language server if needed.
+        // Also assign the language server and any previously stored diagnostics to the buffer.
         let worktree = worktree.read(cx);
-        let worktree_id = worktree.id();
-        let worktree_abs_path = worktree.as_local()?.abs_path().clone();
-        let language_server = match self
-            .language_servers
-            .entry((worktree_id, language.name().to_string()))
-        {
-            hash_map::Entry::Occupied(e) => Some(e.get().clone()),
-            hash_map::Entry::Vacant(e) => {
-                Self::start_language_server(self.client.clone(), language, &worktree_abs_path, cx)
-                    .map(|server| e.insert(server).clone())
-            }
-        };
+        if let Some(local_worktree) = worktree.as_local() {
+            let worktree_id = local_worktree.id();
+            let diagnostics = local_worktree.diagnostics_for_path(&path);
+            let worktree_abs_path = local_worktree.abs_path().clone();
 
-        buffer.update(cx, |buffer, cx| {
-            buffer.set_language_server(language_server, cx)
-        });
+            let language_server = match self
+                .language_servers
+                .entry((worktree_id, language.name().to_string()))
+            {
+                hash_map::Entry::Occupied(e) => Some(e.get().clone()),
+                hash_map::Entry::Vacant(e) => Self::start_language_server(
+                    self.client.clone(),
+                    language,
+                    &worktree_abs_path,
+                    cx,
+                )
+                .map(|server| e.insert(server).clone()),
+            };
+
+            buffer.update(cx, |buffer, cx| {
+                buffer.set_language_server(language_server, cx);
+                if let Some(diagnostics) = diagnostics {
+                    buffer.update_diagnostics(None, diagnostics, cx).log_err();
+                }
+            });
+        }
 
         None
     }

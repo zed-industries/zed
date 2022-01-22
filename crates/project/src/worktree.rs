@@ -347,6 +347,17 @@ impl Worktree {
         }
     }
 
+    pub fn load_buffer(
+        &mut self,
+        path: &Path,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<Buffer>>> {
+        match self {
+            Worktree::Local(worktree) => worktree.load_buffer(path, cx),
+            Worktree::Remote(worktree) => worktree.load_buffer(path, cx),
+        }
+    }
+
     pub fn diagnostic_summaries<'a>(
         &'a self,
     ) -> impl Iterator<Item = (Arc<Path>, DiagnosticSummary)> + 'a {
@@ -536,7 +547,7 @@ impl LocalWorktree {
         self.config.collaborators.clone()
     }
 
-    pub(crate) fn open_buffer(
+    pub(crate) fn load_buffer(
         &mut self,
         path: &Path,
         cx: &mut ModelContext<Worktree>,
@@ -546,19 +557,12 @@ impl LocalWorktree {
             let (file, contents) = this
                 .update(&mut cx, |t, cx| t.as_local().unwrap().load(&path, cx))
                 .await?;
-
-            let diagnostics = this.update(&mut cx, |this, _| {
-                this.as_local_mut().unwrap().diagnostics.get(&path).cloned()
-            });
-
-            Ok(cx.add_model(|cx| {
-                let mut buffer = Buffer::from_file(0, contents, Box::new(file), cx);
-                if let Some(diagnostics) = diagnostics {
-                    buffer.update_diagnostics(None, diagnostics, cx).unwrap();
-                }
-                buffer
-            }))
+            Ok(cx.add_model(|cx| Buffer::from_file(0, contents, Box::new(file), cx)))
         })
+    }
+
+    pub fn diagnostics_for_path(&self, path: &Path) -> Option<Vec<DiagnosticEntry<PointUtf16>>> {
+        self.diagnostics.get(path).cloned()
     }
 
     pub fn update_diagnostics(
@@ -798,7 +802,7 @@ impl LocalWorktree {
 }
 
 impl RemoteWorktree {
-    pub(crate) fn open_buffer(
+    pub(crate) fn load_buffer(
         &mut self,
         path: &Path,
         cx: &mut ModelContext<Worktree>,
