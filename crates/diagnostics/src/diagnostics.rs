@@ -193,7 +193,10 @@ impl ProjectDiagnosticsEditor {
                 }
             }
 
-            workspace.update(cx, |workspace, cx| {
+            // We defer the pane interaction because we ourselves are a workspace item
+            // and activating a new item causes the pane to call a method on us reentrantly,
+            // which panics if we're on the stack.
+            workspace.defer(cx, |workspace, cx| {
                 for (buffer, ranges) in new_selections_by_buffer {
                     let buffer = BufferItemHandle(buffer);
                     if !workspace.activate_pane_for_item(&buffer, cx) {
