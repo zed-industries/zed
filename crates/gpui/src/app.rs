@@ -1653,8 +1653,13 @@ impl MutableAppContext {
         Fut: 'static + Future<Output = T>,
         T: 'static,
     {
+        let future = f(self.to_async());
         let cx = self.to_async();
-        self.foreground.spawn(f(cx))
+        self.foreground.spawn(async move {
+            let result = future.await;
+            cx.0.borrow_mut().flush_effects();
+            result
+        })
     }
 
     pub fn to_async(&self) -> AsyncAppContext {

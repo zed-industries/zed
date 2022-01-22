@@ -644,7 +644,7 @@ mod tests {
         });
         let (root1, _) = project
             .update(&mut cx, |project, cx| {
-                project.find_or_create_worktree_for_abs_path("/root1", false, cx)
+                project.find_or_create_local_worktree("/root1", false, cx)
             })
             .await
             .unwrap();
@@ -653,7 +653,7 @@ mod tests {
             .await;
         let (root2, _) = project
             .update(&mut cx, |project, cx| {
-                project.find_or_create_worktree_for_abs_path("/root2", false, cx)
+                project.find_or_create_local_worktree("/root2", false, cx)
             })
             .await
             .unwrap();

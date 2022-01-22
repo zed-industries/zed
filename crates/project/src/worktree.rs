@@ -5,19 +5,16 @@ use super::{
 };
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Result};
-use client::{proto, Client, PeerId, TypedEnvelope, UserStore};
+use client::{proto, Client, TypedEnvelope};
 use clock::ReplicaId;
-use collections::{hash_map, HashMap, HashSet};
+use collections::HashMap;
 use futures::{Stream, StreamExt};
 use fuzzy::CharBag;
 use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
-    Task, UpgradeModelHandle, WeakModelHandle,
+    Task,
 };
-use language::{
-    range_from_lsp, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, File as _, Operation,
-    PointUtf16, Rope,
-};
+use language::{Buffer, DiagnosticEntry, Operation, PointUtf16, Rope};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
@@ -36,24 +33,16 @@ use std::{
     ops::Deref,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
     time::{Duration, SystemTime},
 };
-use sum_tree::{Bias, TreeMap};
-use sum_tree::{Edit, SeekTarget, SumTree};
-use util::{post_inc, ResultExt, TryFutureExt};
+use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap};
+use util::ResultExt;
 
 lazy_static! {
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
-}
-
-#[derive(Clone, Debug)]
-enum ScanState {
-    Idle,
-    Scanning,
-    Err(Arc<anyhow::Error>),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
@@ -64,8 +53,80 @@ pub enum Worktree {
     Remote(RemoteWorktree),
 }
 
+pub struct LocalWorktree {
+    snapshot: Snapshot,
+    config: WorktreeConfig,
+    background_snapshot: Arc<Mutex<Snapshot>>,
+    last_scan_state_rx: watch::Receiver<ScanState>,
+    _background_scanner_task: Option<Task<()>>,
+    poll_task: Option<Task<()>>,
+    registration: Registration,
+    share: Option<ShareState>,
+    diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<PointUtf16>>>,
+    diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
+    queued_operations: Vec<(u64, Operation)>,
+    client: Arc<Client>,
+    fs: Arc<dyn Fs>,
+    weak: bool,
+}
+
+pub struct RemoteWorktree {
+    pub(crate) snapshot: Snapshot,
+    project_id: u64,
+    snapshot_rx: watch::Receiver<Snapshot>,
+    client: Arc<Client>,
+    updates_tx: postage::mpsc::Sender<proto::UpdateWorktree>,
+    replica_id: ReplicaId,
+    queued_operations: Vec<(u64, Operation)>,
+    diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
+    weak: bool,
+}
+
+#[derive(Clone)]
+pub struct Snapshot {
+    id: WorktreeId,
+    scan_id: usize,
+    abs_path: Arc<Path>,
+    root_name: String,
+    root_char_bag: CharBag,
+    ignores: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
+    entries_by_path: SumTree<Entry>,
+    entries_by_id: SumTree<PathEntry>,
+    removed_entry_ids: HashMap<u64, usize>,
+    next_entry_id: Arc<AtomicUsize>,
+}
+
+#[derive(Clone, Debug)]
+enum ScanState {
+    Idle,
+    Scanning,
+    Err(Arc<anyhow::Error>),
+}
+
+#[derive(Debug, Eq, PartialEq)]
+enum Registration {
+    None,
+    Pending,
+    Done { project_id: u64 },
+}
+
+struct ShareState {
+    project_id: u64,
+    snapshots_tx: Sender<Snapshot>,
+    _maintain_remote_snapshot: Option<Task<()>>,
+}
+
+#[derive(Default, Deserialize)]
+struct WorktreeConfig {
+    collaborators: Vec<String>,
+}
+
+pub enum Event {
+    UpdatedEntries,
+}
+
 impl Entity for Worktree {
-    type Event = ();
+    type Event = Event;
 
     fn release(&mut self, cx: &mut MutableAppContext) {
         if let Some(worktree) = self.as_local_mut() {
@@ -87,16 +148,14 @@ impl Entity for Worktree {
 }
 
 impl Worktree {
-    pub async fn open_local(
+    pub async fn local(
         client: Arc<Client>,
-        user_store: ModelHandle<UserStore>,
         path: impl Into<Arc<Path>>,
         weak: bool,
         fs: Arc<dyn Fs>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
-        let (tree, scan_states_tx) =
-            LocalWorktree::new(client, user_store, path, weak, fs.clone(), cx).await?;
+        let (tree, scan_states_tx) = LocalWorktree::new(client, path, weak, fs.clone(), cx).await?;
         tree.update(cx, |tree, cx| {
             let tree = tree.as_local_mut().unwrap();
             let abs_path = tree.snapshot.abs_path.clone();
@@ -117,7 +176,6 @@ impl Worktree {
         replica_id: ReplicaId,
         worktree: proto::Worktree,
         client: Arc<Client>,
-        user_store: ModelHandle<UserStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<ModelHandle<Self>> {
         let remote_id = worktree.id;
@@ -222,10 +280,7 @@ impl Worktree {
                     snapshot_rx,
                     updates_tx,
                     client: client.clone(),
-                    loading_buffers: Default::default(),
-                    open_buffers: Default::default(),
                     queued_operations: Default::default(),
-                    user_store,
                     diagnostic_summaries,
                     weak,
                 })
@@ -292,22 +347,14 @@ impl Worktree {
         }
     }
 
-    pub fn remove_collaborator(
+    pub fn load_buffer(
         &mut self,
-        peer_id: PeerId,
-        replica_id: ReplicaId,
+        path: &Path,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> Task<Result<ModelHandle<Buffer>>> {
         match self {
-            Worktree::Local(worktree) => worktree.remove_collaborator(peer_id, replica_id, cx),
-            Worktree::Remote(worktree) => worktree.remove_collaborator(replica_id, cx),
-        }
-    }
-
-    pub fn user_store(&self) -> &ModelHandle<UserStore> {
-        match self {
-            Worktree::Local(worktree) => &worktree.user_store,
-            Worktree::Remote(worktree) => &worktree.user_store,
+            Worktree::Local(worktree) => worktree.load_buffer(path, cx),
+            Worktree::Remote(worktree) => worktree.load_buffer(path, cx),
         }
     }
 
@@ -320,267 +367,6 @@ impl Worktree {
         }
         .iter()
         .map(|(path, summary)| (path.0.clone(), summary.clone()))
-    }
-
-    pub fn loading_buffers<'a>(&'a mut self) -> &'a mut LoadingBuffers {
-        match self {
-            Worktree::Local(worktree) => &mut worktree.loading_buffers,
-            Worktree::Remote(worktree) => &mut worktree.loading_buffers,
-        }
-    }
-
-    pub fn open_buffer(
-        &mut self,
-        path: impl AsRef<Path>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(ModelHandle<Buffer>, bool)>> {
-        let path = path.as_ref();
-
-        // If there is already a buffer for the given path, then return it.
-        let existing_buffer = match self {
-            Worktree::Local(worktree) => worktree.get_open_buffer(path, cx),
-            Worktree::Remote(worktree) => worktree.get_open_buffer(path, cx),
-        };
-        if let Some(existing_buffer) = existing_buffer {
-            return cx.spawn(move |_, _| async move { Ok((existing_buffer, false)) });
-        }
-
-        let is_new = Arc::new(AtomicBool::new(true));
-        let path: Arc<Path> = Arc::from(path);
-        let mut loading_watch = match self.loading_buffers().entry(path.clone()) {
-            // If the given path is already being loaded, then wait for that existing
-            // task to complete and return the same buffer.
-            hash_map::Entry::Occupied(e) => e.get().clone(),
-
-            // Otherwise, record the fact that this path is now being loaded.
-            hash_map::Entry::Vacant(entry) => {
-                let (mut tx, rx) = postage::watch::channel();
-                entry.insert(rx.clone());
-
-                let load_buffer = match self {
-                    Worktree::Local(worktree) => worktree.open_buffer(&path, cx),
-                    Worktree::Remote(worktree) => worktree.open_buffer(&path, cx),
-                };
-                cx.spawn(move |this, mut cx| async move {
-                    let result = load_buffer.await;
-
-                    // After the buffer loads, record the fact that it is no longer
-                    // loading.
-                    this.update(&mut cx, |this, _| this.loading_buffers().remove(&path));
-                    *tx.borrow_mut() = Some(match result {
-                        Ok(buffer) => Ok((buffer, is_new)),
-                        Err(error) => Err(Arc::new(error)),
-                    });
-                })
-                .detach();
-                rx
-            }
-        };
-
-        cx.spawn(|_, _| async move {
-            loop {
-                if let Some(result) = loading_watch.borrow().as_ref() {
-                    return match result {
-                        Ok((buf, is_new)) => Ok((buf.clone(), is_new.fetch_and(false, SeqCst))),
-                        Err(error) => Err(anyhow!("{}", error)),
-                    };
-                }
-                loading_watch.recv().await;
-            }
-        })
-    }
-
-    #[cfg(feature = "test-support")]
-    pub fn has_open_buffer(&self, path: impl AsRef<Path>, cx: &AppContext) -> bool {
-        let mut open_buffers: Box<dyn Iterator<Item = _>> = match self {
-            Worktree::Local(worktree) => Box::new(worktree.open_buffers.values()),
-            Worktree::Remote(worktree) => {
-                Box::new(worktree.open_buffers.values().filter_map(|buf| {
-                    if let RemoteBuffer::Loaded(buf) = buf {
-                        Some(buf)
-                    } else {
-                        None
-                    }
-                }))
-            }
-        };
-
-        let path = path.as_ref();
-        open_buffers
-            .find(|buffer| {
-                if let Some(file) = buffer.upgrade(cx).and_then(|buffer| buffer.read(cx).file()) {
-                    file.path().as_ref() == path
-                } else {
-                    false
-                }
-            })
-            .is_some()
-    }
-
-    pub fn handle_update_buffer(
-        &mut self,
-        envelope: TypedEnvelope<proto::UpdateBuffer>,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
-        let payload = envelope.payload.clone();
-        let buffer_id = payload.buffer_id as usize;
-        let ops = payload
-            .operations
-            .into_iter()
-            .map(|op| language::proto::deserialize_operation(op))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        match self {
-            Worktree::Local(worktree) => {
-                let buffer = worktree
-                    .open_buffers
-                    .get(&buffer_id)
-                    .and_then(|buf| buf.upgrade(cx))
-                    .ok_or_else(|| {
-                        anyhow!("invalid buffer {} in update buffer message", buffer_id)
-                    })?;
-                buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
-            }
-            Worktree::Remote(worktree) => match worktree.open_buffers.get_mut(&buffer_id) {
-                Some(RemoteBuffer::Operations(pending_ops)) => pending_ops.extend(ops),
-                Some(RemoteBuffer::Loaded(buffer)) => {
-                    if let Some(buffer) = buffer.upgrade(cx) {
-                        buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
-                    } else {
-                        worktree
-                            .open_buffers
-                            .insert(buffer_id, RemoteBuffer::Operations(ops));
-                    }
-                }
-                None => {
-                    worktree
-                        .open_buffers
-                        .insert(buffer_id, RemoteBuffer::Operations(ops));
-                }
-            },
-        }
-
-        Ok(())
-    }
-
-    pub fn handle_save_buffer(
-        &mut self,
-        envelope: TypedEnvelope<proto::SaveBuffer>,
-        rpc: Arc<Client>,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
-        let sender_id = envelope.original_sender_id()?;
-        let this = self.as_local().unwrap();
-        let project_id = this
-            .share
-            .as_ref()
-            .ok_or_else(|| anyhow!("can't save buffer while disconnected"))?
-            .project_id;
-
-        let buffer = this
-            .shared_buffers
-            .get(&sender_id)
-            .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
-            .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
-
-        let receipt = envelope.receipt();
-        let worktree_id = envelope.payload.worktree_id;
-        let buffer_id = envelope.payload.buffer_id;
-        let save = cx.spawn(|_, mut cx| async move {
-            buffer.update(&mut cx, |buffer, cx| buffer.save(cx)).await
-        });
-
-        cx.background()
-            .spawn(
-                async move {
-                    let (version, mtime) = save.await?;
-
-                    rpc.respond(
-                        receipt,
-                        proto::BufferSaved {
-                            project_id,
-                            worktree_id,
-                            buffer_id,
-                            version: (&version).into(),
-                            mtime: Some(mtime.into()),
-                        },
-                    )
-                    .await?;
-
-                    Ok(())
-                }
-                .log_err(),
-            )
-            .detach();
-
-        Ok(())
-    }
-
-    pub fn handle_buffer_saved(
-        &mut self,
-        envelope: TypedEnvelope<proto::BufferSaved>,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
-        let payload = envelope.payload.clone();
-        let worktree = self.as_remote_mut().unwrap();
-        if let Some(buffer) = worktree
-            .open_buffers
-            .get(&(payload.buffer_id as usize))
-            .and_then(|buf| buf.upgrade(cx))
-        {
-            buffer.update(cx, |buffer, cx| {
-                let version = payload.version.try_into()?;
-                let mtime = payload
-                    .mtime
-                    .ok_or_else(|| anyhow!("missing mtime"))?
-                    .into();
-                buffer.did_save(version, mtime, None, cx);
-                Result::<_, anyhow::Error>::Ok(())
-            })?;
-        }
-        Ok(())
-    }
-
-    pub fn handle_format_buffer(
-        &mut self,
-        envelope: TypedEnvelope<proto::FormatBuffer>,
-        rpc: Arc<Client>,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
-        let sender_id = envelope.original_sender_id()?;
-        let this = self.as_local().unwrap();
-        let buffer = this
-            .shared_buffers
-            .get(&sender_id)
-            .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
-            .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
-
-        let receipt = envelope.receipt();
-        cx.spawn(|_, mut cx| async move {
-            let format = buffer.update(&mut cx, |buffer, cx| buffer.format(cx)).await;
-            // We spawn here in order to enqueue the sending of `Ack` *after* transmission of edits
-            // associated with formatting.
-            cx.spawn(|_| async move {
-                match format {
-                    Ok(()) => rpc.respond(receipt, proto::Ack {}).await?,
-                    Err(error) => {
-                        rpc.respond_with_error(
-                            receipt,
-                            proto::Error {
-                                message: error.to_string(),
-                            },
-                        )
-                        .await?
-                    }
-                }
-                Ok::<_, anyhow::Error>(())
-            })
-            .await
-            .log_err();
-        })
-        .detach();
-
-        Ok(())
     }
 
     fn poll_snapshot(&mut self, cx: &mut ModelContext<Self>) {
@@ -604,92 +390,16 @@ impl Worktree {
                     }
                 } else {
                     worktree.poll_task.take();
-                    self.update_open_buffers(cx);
+                    cx.emit(Event::UpdatedEntries);
                 }
             }
             Self::Remote(worktree) => {
                 worktree.snapshot = worktree.snapshot_rx.borrow().clone();
-                self.update_open_buffers(cx);
+                cx.emit(Event::UpdatedEntries);
             }
         };
 
         cx.notify();
-    }
-
-    fn update_open_buffers(&mut self, cx: &mut ModelContext<Self>) {
-        let open_buffers: Box<dyn Iterator<Item = _>> = match &self {
-            Self::Local(worktree) => Box::new(worktree.open_buffers.iter()),
-            Self::Remote(worktree) => {
-                Box::new(worktree.open_buffers.iter().filter_map(|(id, buf)| {
-                    if let RemoteBuffer::Loaded(buf) = buf {
-                        Some((id, buf))
-                    } else {
-                        None
-                    }
-                }))
-            }
-        };
-
-        let local = self.as_local().is_some();
-        let worktree_path = self.abs_path.clone();
-        let worktree_handle = cx.handle();
-        let mut buffers_to_delete = Vec::new();
-        for (buffer_id, buffer) in open_buffers {
-            if let Some(buffer) = buffer.upgrade(cx) {
-                buffer.update(cx, |buffer, cx| {
-                    if let Some(old_file) = File::from_dyn(buffer.file()) {
-                        let new_file = if let Some(entry) = old_file
-                            .entry_id
-                            .and_then(|entry_id| self.entry_for_id(entry_id))
-                        {
-                            File {
-                                is_local: local,
-                                worktree_path: worktree_path.clone(),
-                                entry_id: Some(entry.id),
-                                mtime: entry.mtime,
-                                path: entry.path.clone(),
-                                worktree: worktree_handle.clone(),
-                            }
-                        } else if let Some(entry) = self.entry_for_path(old_file.path().as_ref()) {
-                            File {
-                                is_local: local,
-                                worktree_path: worktree_path.clone(),
-                                entry_id: Some(entry.id),
-                                mtime: entry.mtime,
-                                path: entry.path.clone(),
-                                worktree: worktree_handle.clone(),
-                            }
-                        } else {
-                            File {
-                                is_local: local,
-                                worktree_path: worktree_path.clone(),
-                                entry_id: None,
-                                path: old_file.path().clone(),
-                                mtime: old_file.mtime(),
-                                worktree: worktree_handle.clone(),
-                            }
-                        };
-
-                        if let Some(task) = buffer.file_updated(Box::new(new_file), cx) {
-                            task.detach();
-                        }
-                    }
-                });
-            } else {
-                buffers_to_delete.push(*buffer_id);
-            }
-        }
-
-        for buffer_id in buffers_to_delete {
-            match self {
-                Self::Local(worktree) => {
-                    worktree.open_buffers.remove(&buffer_id);
-                }
-                Self::Remote(worktree) => {
-                    worktree.open_buffers.remove(&buffer_id);
-                }
-            }
-        }
     }
 
     fn send_buffer_update(
@@ -698,22 +408,17 @@ impl Worktree {
         operation: Operation,
         cx: &mut ModelContext<Self>,
     ) {
-        if let Some((project_id, worktree_id, rpc)) = match self {
+        if let Some((project_id, rpc)) = match self {
             Worktree::Local(worktree) => worktree
                 .share
                 .as_ref()
-                .map(|share| (share.project_id, worktree.id(), worktree.client.clone())),
-            Worktree::Remote(worktree) => Some((
-                worktree.project_id,
-                worktree.snapshot.id(),
-                worktree.client.clone(),
-            )),
+                .map(|share| (share.project_id, worktree.client.clone())),
+            Worktree::Remote(worktree) => Some((worktree.project_id, worktree.client.clone())),
         } {
             cx.spawn(|worktree, mut cx| async move {
                 if let Err(error) = rpc
                     .request(proto::UpdateBuffer {
                         project_id,
-                        worktree_id: worktree_id.0 as u64,
                         buffer_id,
                         operations: vec![language::proto::serialize_operation(&operation)],
                     })
@@ -734,109 +439,9 @@ impl Worktree {
     }
 }
 
-impl WorktreeId {
-    pub fn from_usize(handle_id: usize) -> Self {
-        Self(handle_id)
-    }
-
-    pub(crate) fn from_proto(id: u64) -> Self {
-        Self(id as usize)
-    }
-
-    pub fn to_proto(&self) -> u64 {
-        self.0 as u64
-    }
-
-    pub fn to_usize(&self) -> usize {
-        self.0
-    }
-}
-
-impl fmt::Display for WorktreeId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-#[derive(Clone)]
-pub struct Snapshot {
-    id: WorktreeId,
-    scan_id: usize,
-    abs_path: Arc<Path>,
-    root_name: String,
-    root_char_bag: CharBag,
-    ignores: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
-    entries_by_path: SumTree<Entry>,
-    entries_by_id: SumTree<PathEntry>,
-    removed_entry_ids: HashMap<u64, usize>,
-    next_entry_id: Arc<AtomicUsize>,
-}
-
-pub struct LocalWorktree {
-    snapshot: Snapshot,
-    config: WorktreeConfig,
-    background_snapshot: Arc<Mutex<Snapshot>>,
-    last_scan_state_rx: watch::Receiver<ScanState>,
-    _background_scanner_task: Option<Task<()>>,
-    poll_task: Option<Task<()>>,
-    registration: Registration,
-    share: Option<ShareState>,
-    loading_buffers: LoadingBuffers,
-    open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
-    shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
-    diagnostics: HashMap<Arc<Path>, Vec<DiagnosticEntry<PointUtf16>>>,
-    diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
-    queued_operations: Vec<(u64, Operation)>,
-    client: Arc<Client>,
-    user_store: ModelHandle<UserStore>,
-    fs: Arc<dyn Fs>,
-    weak: bool,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-enum Registration {
-    None,
-    Pending,
-    Done { project_id: u64 },
-}
-
-struct ShareState {
-    project_id: u64,
-    snapshots_tx: Sender<Snapshot>,
-    _maintain_remote_snapshot: Option<Task<()>>,
-}
-
-pub struct RemoteWorktree {
-    project_id: u64,
-    snapshot: Snapshot,
-    snapshot_rx: watch::Receiver<Snapshot>,
-    client: Arc<Client>,
-    updates_tx: postage::mpsc::Sender<proto::UpdateWorktree>,
-    replica_id: ReplicaId,
-    loading_buffers: LoadingBuffers,
-    open_buffers: HashMap<usize, RemoteBuffer>,
-    user_store: ModelHandle<UserStore>,
-    queued_operations: Vec<(u64, Operation)>,
-    diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
-    weak: bool,
-}
-
-type LoadingBuffers = HashMap<
-    Arc<Path>,
-    postage::watch::Receiver<
-        Option<Result<(ModelHandle<Buffer>, Arc<AtomicBool>), Arc<anyhow::Error>>>,
-    >,
->;
-
-#[derive(Default, Deserialize)]
-struct WorktreeConfig {
-    collaborators: Vec<String>,
-}
-
 impl LocalWorktree {
     async fn new(
         client: Arc<Client>,
-        user_store: ModelHandle<UserStore>,
         path: impl Into<Arc<Path>>,
         weak: bool,
         fs: Arc<dyn Fs>,
@@ -897,14 +502,10 @@ impl LocalWorktree {
                 registration: Registration::None,
                 share: None,
                 poll_task: None,
-                loading_buffers: Default::default(),
-                open_buffers: Default::default(),
-                shared_buffers: Default::default(),
                 diagnostics: Default::default(),
                 diagnostic_summaries: Default::default(),
                 queued_operations: Default::default(),
                 client,
-                user_store,
                 fs,
                 weak,
             };
@@ -946,29 +547,7 @@ impl LocalWorktree {
         self.config.collaborators.clone()
     }
 
-    fn get_open_buffer(
-        &mut self,
-        path: &Path,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Option<ModelHandle<Buffer>> {
-        let handle = cx.handle();
-        let mut result = None;
-        self.open_buffers.retain(|_buffer_id, buffer| {
-            if let Some(buffer) = buffer.upgrade(cx) {
-                if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
-                    if file.worktree == handle && file.path().as_ref() == path {
-                        result = Some(buffer);
-                    }
-                }
-                true
-            } else {
-                false
-            }
-        });
-        result
-    }
-
-    fn open_buffer(
+    pub(crate) fn load_buffer(
         &mut self,
         path: &Path,
         cx: &mut ModelContext<Worktree>,
@@ -978,200 +557,20 @@ impl LocalWorktree {
             let (file, contents) = this
                 .update(&mut cx, |t, cx| t.as_local().unwrap().load(&path, cx))
                 .await?;
-
-            let diagnostics = this.update(&mut cx, |this, _| {
-                this.as_local_mut().unwrap().diagnostics.get(&path).cloned()
-            });
-
-            let mut buffer_operations = Vec::new();
-            let buffer = cx.add_model(|cx| {
-                let mut buffer = Buffer::from_file(0, contents, Box::new(file), cx);
-                if let Some(diagnostics) = diagnostics {
-                    let op = buffer.update_diagnostics(None, diagnostics, cx).unwrap();
-                    buffer_operations.push(op);
-                }
-                buffer
-            });
-
-            this.update(&mut cx, |this, cx| {
-                for op in buffer_operations {
-                    this.send_buffer_update(buffer.read(cx).remote_id(), op, cx);
-                }
-                let this = this.as_local_mut().unwrap();
-                this.open_buffers.insert(buffer.id(), buffer.downgrade());
-            });
-
-            Ok(buffer)
+            Ok(cx.add_model(|cx| Buffer::from_file(0, contents, Box::new(file), cx)))
         })
     }
 
-    pub fn open_remote_buffer(
-        &mut self,
-        peer_id: PeerId,
-        buffer: ModelHandle<Buffer>,
-        cx: &mut ModelContext<Worktree>,
-    ) -> proto::OpenBufferResponse {
-        self.shared_buffers
-            .entry(peer_id)
-            .or_default()
-            .insert(buffer.id() as u64, buffer.clone());
-        proto::OpenBufferResponse {
-            buffer: Some(buffer.update(cx.as_mut(), |buffer, _| buffer.to_proto())),
-        }
-    }
-
-    pub fn close_remote_buffer(
-        &mut self,
-        envelope: TypedEnvelope<proto::CloseBuffer>,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Result<()> {
-        if let Some(shared_buffers) = self.shared_buffers.get_mut(&envelope.original_sender_id()?) {
-            shared_buffers.remove(&envelope.payload.buffer_id);
-            cx.notify();
-        }
-
-        Ok(())
-    }
-
-    pub fn remove_collaborator(
-        &mut self,
-        peer_id: PeerId,
-        replica_id: ReplicaId,
-        cx: &mut ModelContext<Worktree>,
-    ) {
-        self.shared_buffers.remove(&peer_id);
-        for (_, buffer) in &self.open_buffers {
-            if let Some(buffer) = buffer.upgrade(cx) {
-                buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
-            }
-        }
-        cx.notify();
+    pub fn diagnostics_for_path(&self, path: &Path) -> Option<Vec<DiagnosticEntry<PointUtf16>>> {
+        self.diagnostics.get(path).cloned()
     }
 
     pub fn update_diagnostics(
         &mut self,
         worktree_path: Arc<Path>,
-        params: lsp::PublishDiagnosticsParams,
-        disk_based_sources: &HashSet<String>,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Result<()> {
-        let mut next_group_id = 0;
-        let mut diagnostics = Vec::default();
-        let mut primary_diagnostic_group_ids = HashMap::default();
-        let mut sources_by_group_id = HashMap::default();
-        let mut supporting_diagnostic_severities = HashMap::default();
-        for diagnostic in &params.diagnostics {
-            let source = diagnostic.source.as_ref();
-            let code = diagnostic.code.as_ref().map(|code| match code {
-                lsp::NumberOrString::Number(code) => code.to_string(),
-                lsp::NumberOrString::String(code) => code.clone(),
-            });
-            let range = range_from_lsp(diagnostic.range);
-            let is_supporting = diagnostic
-                .related_information
-                .as_ref()
-                .map_or(false, |infos| {
-                    infos.iter().any(|info| {
-                        primary_diagnostic_group_ids.contains_key(&(
-                            source,
-                            code.clone(),
-                            range_from_lsp(info.location.range),
-                        ))
-                    })
-                });
-
-            if is_supporting {
-                if let Some(severity) = diagnostic.severity {
-                    supporting_diagnostic_severities
-                        .insert((source, code.clone(), range), severity);
-                }
-            } else {
-                let group_id = post_inc(&mut next_group_id);
-                let is_disk_based =
-                    source.map_or(false, |source| disk_based_sources.contains(source));
-
-                sources_by_group_id.insert(group_id, source);
-                primary_diagnostic_group_ids
-                    .insert((source, code.clone(), range.clone()), group_id);
-
-                diagnostics.push(DiagnosticEntry {
-                    range,
-                    diagnostic: Diagnostic {
-                        code: code.clone(),
-                        severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
-                        message: diagnostic.message.clone(),
-                        group_id,
-                        is_primary: true,
-                        is_valid: true,
-                        is_disk_based,
-                    },
-                });
-                if let Some(infos) = &diagnostic.related_information {
-                    for info in infos {
-                        if info.location.uri == params.uri {
-                            let range = range_from_lsp(info.location.range);
-                            diagnostics.push(DiagnosticEntry {
-                                range,
-                                diagnostic: Diagnostic {
-                                    code: code.clone(),
-                                    severity: DiagnosticSeverity::INFORMATION,
-                                    message: info.message.clone(),
-                                    group_id,
-                                    is_primary: false,
-                                    is_valid: true,
-                                    is_disk_based,
-                                },
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        for entry in &mut diagnostics {
-            let diagnostic = &mut entry.diagnostic;
-            if !diagnostic.is_primary {
-                let source = *sources_by_group_id.get(&diagnostic.group_id).unwrap();
-                if let Some(&severity) = supporting_diagnostic_severities.get(&(
-                    source,
-                    diagnostic.code.clone(),
-                    entry.range.clone(),
-                )) {
-                    diagnostic.severity = severity;
-                }
-            }
-        }
-
-        self.update_diagnostic_entries(worktree_path, params.version, diagnostics, cx)?;
-        Ok(())
-    }
-
-    pub fn update_diagnostic_entries(
-        &mut self,
-        worktree_path: Arc<Path>,
-        version: Option<i32>,
         diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
         cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
-        for buffer in self.open_buffers.values() {
-            if let Some(buffer) = buffer.upgrade(cx) {
-                if buffer
-                    .read(cx)
-                    .file()
-                    .map_or(false, |file| *file.path() == worktree_path)
-                {
-                    let (remote_id, operation) = buffer.update(cx, |buffer, cx| {
-                        (
-                            buffer.remote_id(),
-                            buffer.update_diagnostics(version, diagnostics.clone(), cx),
-                        )
-                    });
-                    self.send_buffer_update(remote_id, operation?, cx);
-                    break;
-                }
-            }
-        }
-
         let summary = DiagnosticSummary::new(&diagnostics);
         self.diagnostic_summaries
             .insert(PathKey(worktree_path.clone()), summary.clone());
@@ -1207,40 +606,6 @@ impl LocalWorktree {
         Ok(())
     }
 
-    fn send_buffer_update(
-        &mut self,
-        buffer_id: u64,
-        operation: Operation,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Option<()> {
-        let share = self.share.as_ref()?;
-        let project_id = share.project_id;
-        let worktree_id = self.id();
-        let rpc = self.client.clone();
-        cx.spawn(|worktree, mut cx| async move {
-            if let Err(error) = rpc
-                .request(proto::UpdateBuffer {
-                    project_id,
-                    worktree_id: worktree_id.0 as u64,
-                    buffer_id,
-                    operations: vec![language::proto::serialize_operation(&operation)],
-                })
-                .await
-            {
-                worktree.update(&mut cx, |worktree, _| {
-                    log::error!("error sending buffer operation: {}", error);
-                    worktree
-                        .as_local_mut()
-                        .unwrap()
-                        .queued_operations
-                        .push((buffer_id, operation));
-                });
-            }
-        })
-        .detach();
-        None
-    }
-
     pub fn scan_complete(&self) -> impl Future<Output = ()> {
         let mut scan_state_rx = self.last_scan_state_rx.clone();
         async move {
@@ -1261,22 +626,6 @@ impl LocalWorktree {
 
     pub fn snapshot(&self) -> Snapshot {
         self.snapshot.clone()
-    }
-
-    pub fn abs_path(&self) -> &Arc<Path> {
-        &self.snapshot.abs_path
-    }
-
-    pub fn contains_abs_path(&self, path: &Path) -> bool {
-        path.starts_with(&self.snapshot.abs_path)
-    }
-
-    fn absolutize(&self, path: &Path) -> PathBuf {
-        if path.file_name().is_some() {
-            self.snapshot.abs_path.join(path)
-        } else {
-            self.snapshot.abs_path.to_path_buf()
-        }
     }
 
     fn load(&self, path: &Path, cx: &mut ModelContext<Worktree>) -> Task<Result<(File, String)>> {
@@ -1319,8 +668,6 @@ impl LocalWorktree {
             let entry = save.await?;
             let file = this.update(&mut cx, |this, cx| {
                 let this = this.as_local_mut().unwrap();
-                this.open_buffers
-                    .insert(buffer_handle.id(), buffer_handle.downgrade());
                 File {
                     entry_id: Some(entry.id),
                     worktree: cx.handle(),
@@ -1396,13 +743,11 @@ impl LocalWorktree {
         })
     }
 
-    pub fn share(&mut self, cx: &mut ModelContext<Worktree>) -> Task<anyhow::Result<()>> {
-        let project_id = if let Registration::Done { project_id } = self.registration {
-            project_id
-        } else {
-            return Task::ready(Err(anyhow!("cannot share worktree before registering it")));
-        };
-
+    pub fn share(
+        &mut self,
+        project_id: u64,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<anyhow::Result<()>> {
         if self.share.is_some() {
             return Task::ready(Ok(()));
         }
@@ -1456,73 +801,8 @@ impl LocalWorktree {
     }
 }
 
-fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
-    let contents = smol::block_on(fs.load(&abs_path))?;
-    let parent = abs_path.parent().unwrap_or(Path::new("/"));
-    let mut builder = GitignoreBuilder::new(parent);
-    for line in contents.lines() {
-        builder.add_line(Some(abs_path.into()), line)?;
-    }
-    Ok(builder.build()?)
-}
-
-impl Deref for Worktree {
-    type Target = Snapshot;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            Worktree::Local(worktree) => &worktree.snapshot,
-            Worktree::Remote(worktree) => &worktree.snapshot,
-        }
-    }
-}
-
-impl Deref for LocalWorktree {
-    type Target = Snapshot;
-
-    fn deref(&self) -> &Self::Target {
-        &self.snapshot
-    }
-}
-
-impl Deref for RemoteWorktree {
-    type Target = Snapshot;
-
-    fn deref(&self) -> &Self::Target {
-        &self.snapshot
-    }
-}
-
-impl fmt::Debug for LocalWorktree {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.snapshot.fmt(f)
-    }
-}
-
 impl RemoteWorktree {
-    fn get_open_buffer(
-        &mut self,
-        path: &Path,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Option<ModelHandle<Buffer>> {
-        let handle = cx.handle();
-        let mut existing_buffer = None;
-        self.open_buffers.retain(|_buffer_id, buffer| {
-            if let Some(buffer) = buffer.upgrade(cx.as_ref()) {
-                if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
-                    if file.worktree == handle && file.path().as_ref() == path {
-                        existing_buffer = Some(buffer);
-                    }
-                }
-                true
-            } else {
-                false
-            }
-        });
-        existing_buffer
-    }
-
-    fn open_buffer(
+    pub(crate) fn load_buffer(
         &mut self,
         path: &Path,
         cx: &mut ModelContext<Worktree>,
@@ -1560,31 +840,10 @@ impl RemoteWorktree {
                 is_local: false,
             };
             let remote_buffer = response.buffer.ok_or_else(|| anyhow!("empty buffer"))?;
-            let buffer_id = remote_buffer.id as usize;
-            let buffer = cx.add_model(|cx| {
+            Ok(cx.add_model(|cx| {
                 Buffer::from_proto(replica_id, remote_buffer, Some(Box::new(file)), cx).unwrap()
-            });
-            this.update(&mut cx, move |this, cx| {
-                let this = this.as_remote_mut().unwrap();
-                if let Some(RemoteBuffer::Operations(pending_ops)) = this
-                    .open_buffers
-                    .insert(buffer_id, RemoteBuffer::Loaded(buffer.downgrade()))
-                {
-                    buffer.update(cx, |buf, cx| buf.apply_ops(pending_ops, cx))?;
-                }
-                Result::<_, anyhow::Error>::Ok(buffer)
-            })
+            }))
         })
-    }
-
-    pub fn close_all_buffers(&mut self, cx: &mut MutableAppContext) {
-        for (_, buffer) in self.open_buffers.drain() {
-            if let RemoteBuffer::Loaded(buffer) = buffer {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    buffer.update(cx, |buffer, cx| buffer.close(cx))
-                }
-            }
-        }
     }
 
     fn snapshot(&self) -> Snapshot {
@@ -1622,29 +881,6 @@ impl RemoteWorktree {
             },
         );
     }
-
-    pub fn remove_collaborator(&mut self, replica_id: ReplicaId, cx: &mut ModelContext<Worktree>) {
-        for (_, buffer) in &self.open_buffers {
-            if let Some(buffer) = buffer.upgrade(cx) {
-                buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
-            }
-        }
-        cx.notify();
-    }
-}
-
-enum RemoteBuffer {
-    Operations(Vec<Operation>),
-    Loaded(WeakModelHandle<Buffer>),
-}
-
-impl RemoteBuffer {
-    fn upgrade(&self, cx: &impl UpgradeModelHandle) -> Option<ModelHandle<Buffer>> {
-        match self {
-            Self::Operations(_) => None,
-            Self::Loaded(buffer) => buffer.upgrade(cx),
-        }
-    }
 }
 
 impl Snapshot {
@@ -1652,7 +888,7 @@ impl Snapshot {
         self.id
     }
 
-    pub fn to_proto(
+    pub(crate) fn to_proto(
         &self,
         diagnostic_summaries: &TreeMap<PathKey, DiagnosticSummary>,
         weak: bool,
@@ -1675,7 +911,7 @@ impl Snapshot {
         }
     }
 
-    pub fn build_update(
+    pub(crate) fn build_update(
         &self,
         other: &Self,
         project_id: u64,
@@ -1740,7 +976,7 @@ impl Snapshot {
         }
     }
 
-    fn apply_update(&mut self, update: proto::UpdateWorktree) -> Result<()> {
+    pub(crate) fn apply_update(&mut self, update: proto::UpdateWorktree) -> Result<()> {
         self.scan_id += 1;
         let scan_id = self.scan_id;
 
@@ -1849,6 +1085,22 @@ impl Snapshot {
             traversal,
             parent_path,
         }
+    }
+
+    pub fn contains_abs_path(&self, path: &Path) -> bool {
+        path.starts_with(&self.abs_path)
+    }
+
+    fn absolutize(&self, path: &Path) -> PathBuf {
+        if path.file_name().is_some() {
+            self.abs_path.join(path)
+        } else {
+            self.abs_path.to_path_buf()
+        }
+    }
+
+    pub fn abs_path(&self) -> &Arc<Path> {
+        &self.abs_path
     }
 
     pub fn root_entry(&self) -> Option<&Entry> {
@@ -2017,6 +1269,73 @@ impl Snapshot {
     }
 }
 
+fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
+    let contents = smol::block_on(fs.load(&abs_path))?;
+    let parent = abs_path.parent().unwrap_or(Path::new("/"));
+    let mut builder = GitignoreBuilder::new(parent);
+    for line in contents.lines() {
+        builder.add_line(Some(abs_path.into()), line)?;
+    }
+    Ok(builder.build()?)
+}
+
+impl WorktreeId {
+    pub fn from_usize(handle_id: usize) -> Self {
+        Self(handle_id)
+    }
+
+    pub(crate) fn from_proto(id: u64) -> Self {
+        Self(id as usize)
+    }
+
+    pub fn to_proto(&self) -> u64 {
+        self.0 as u64
+    }
+
+    pub fn to_usize(&self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for WorktreeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Deref for Worktree {
+    type Target = Snapshot;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Worktree::Local(worktree) => &worktree.snapshot,
+            Worktree::Remote(worktree) => &worktree.snapshot,
+        }
+    }
+}
+
+impl Deref for LocalWorktree {
+    type Target = Snapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.snapshot
+    }
+}
+
+impl Deref for RemoteWorktree {
+    type Target = Snapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.snapshot
+    }
+}
+
+impl fmt::Debug for LocalWorktree {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.snapshot.fmt(f)
+    }
+}
+
 impl fmt::Debug for Snapshot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for entry in self.entries_by_path.cursor::<()>() {
@@ -2031,12 +1350,12 @@ impl fmt::Debug for Snapshot {
 
 #[derive(Clone, PartialEq)]
 pub struct File {
-    entry_id: Option<usize>,
     pub worktree: ModelHandle<Worktree>,
-    worktree_path: Arc<Path>,
     pub path: Arc<Path>,
     pub mtime: SystemTime,
-    is_local: bool,
+    pub(crate) entry_id: Option<usize>,
+    pub(crate) worktree_path: Arc<Path>,
+    pub(crate) is_local: bool,
 }
 
 impl language::File for File {
@@ -2085,7 +1404,6 @@ impl language::File for File {
         version: clock::Global,
         cx: &mut MutableAppContext,
     ) -> Task<Result<(clock::Global, SystemTime)>> {
-        let worktree_id = self.worktree.read(cx).id().to_proto();
         self.worktree.update(cx, |worktree, cx| match worktree {
             Worktree::Local(worktree) => {
                 let rpc = worktree.client.clone();
@@ -2096,7 +1414,6 @@ impl language::File for File {
                     if let Some(project_id) = project_id {
                         rpc.send(proto::BufferSaved {
                             project_id,
-                            worktree_id,
                             buffer_id,
                             version: (&version).into(),
                             mtime: Some(entry.mtime.into()),
@@ -2113,7 +1430,6 @@ impl language::File for File {
                     let response = rpc
                         .request(proto::SaveBuffer {
                             project_id,
-                            worktree_id,
                             buffer_id,
                         })
                         .await?;
@@ -2144,14 +1460,12 @@ impl language::File for File {
         cx: &mut MutableAppContext,
     ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree.read(cx);
-        let worktree_id = worktree.id().to_proto();
         let worktree = worktree.as_remote()?;
         let rpc = worktree.client.clone();
         let project_id = worktree.project_id;
         Some(cx.foreground().spawn(async move {
             rpc.request(proto::FormatBuffer {
                 project_id,
-                worktree_id,
                 buffer_id,
             })
             .await?;
@@ -2169,14 +1483,12 @@ impl language::File for File {
         self.worktree.update(cx, |worktree, cx| {
             if let Worktree::Remote(worktree) = worktree {
                 let project_id = worktree.project_id;
-                let worktree_id = worktree.id().to_proto();
                 let rpc = worktree.client.clone();
                 cx.background()
                     .spawn(async move {
                         if let Err(error) = rpc
                             .send(proto::CloseBuffer {
                                 project_id,
-                                worktree_id,
                                 buffer_id,
                             })
                             .await
@@ -3085,24 +2397,19 @@ mod tests {
     use super::*;
     use crate::fs::FakeFs;
     use anyhow::Result;
-    use client::test::{FakeHttpClient, FakeServer};
+    use client::test::FakeHttpClient;
     use fs::RealFs;
-    use language::{Diagnostic, DiagnosticEntry};
-    use lsp::Url;
     use rand::prelude::*;
     use serde_json::json;
-    use std::{cell::RefCell, rc::Rc};
     use std::{
         env,
         fmt::Write,
         time::{SystemTime, UNIX_EPOCH},
     };
-    use text::Point;
-    use unindent::Unindent as _;
     use util::test::temp_tree;
 
     #[gpui::test]
-    async fn test_traversal(mut cx: gpui::TestAppContext) {
+    async fn test_traversal(cx: gpui::TestAppContext) {
         let fs = FakeFs::new();
         fs.insert_tree(
             "/root",
@@ -3117,12 +2424,10 @@ mod tests {
         .await;
 
         let http_client = FakeHttpClient::with_404_response();
-        let client = Client::new(http_client.clone());
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+        let client = Client::new(http_client);
 
-        let tree = Worktree::open_local(
+        let tree = Worktree::local(
             client,
-            user_store,
             Arc::from(Path::new("/root")),
             false,
             Arc::new(fs),
@@ -3149,235 +2454,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_save_file(mut cx: gpui::TestAppContext) {
-        let dir = temp_tree(json!({
-            "file1": "the old contents",
-        }));
-
-        let http_client = FakeHttpClient::with_404_response();
-        let client = Client::new(http_client.clone());
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-
-        let tree = Worktree::open_local(
-            client,
-            user_store,
-            dir.path(),
-            false,
-            Arc::new(RealFs),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-        let (buffer, _) = tree
-            .update(&mut cx, |tree, cx| tree.open_buffer("file1", cx))
-            .await
-            .unwrap();
-        let save = buffer.update(&mut cx, |buffer, cx| {
-            buffer.edit(Some(0..0), "a line of text.\n".repeat(10 * 1024), cx);
-            buffer.save(cx)
-        });
-        save.await.unwrap();
-
-        let new_text = std::fs::read_to_string(dir.path().join("file1")).unwrap();
-        assert_eq!(new_text, buffer.read_with(&cx, |buffer, _| buffer.text()));
-    }
-
-    #[gpui::test]
-    async fn test_save_in_single_file_worktree(mut cx: gpui::TestAppContext) {
-        let dir = temp_tree(json!({
-            "file1": "the old contents",
-        }));
-        let file_path = dir.path().join("file1");
-
-        let http_client = FakeHttpClient::with_404_response();
-        let client = Client::new(http_client.clone());
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-
-        let tree = Worktree::open_local(
-            client,
-            user_store,
-            file_path.clone(),
-            false,
-            Arc::new(RealFs),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-        cx.read(|cx| assert_eq!(tree.read(cx).file_count(), 1));
-
-        let (buffer, _) = tree
-            .update(&mut cx, |tree, cx| tree.open_buffer("", cx))
-            .await
-            .unwrap();
-        let save = buffer.update(&mut cx, |buffer, cx| {
-            buffer.edit(Some(0..0), "a line of text.\n".repeat(10 * 1024), cx);
-            buffer.save(cx)
-        });
-        save.await.unwrap();
-
-        let new_text = std::fs::read_to_string(file_path).unwrap();
-        assert_eq!(new_text, buffer.read_with(&cx, |buffer, _| buffer.text()));
-    }
-
-    #[gpui::test]
-    async fn test_rescan_and_remote_updates(mut cx: gpui::TestAppContext) {
-        let dir = temp_tree(json!({
-            "a": {
-                "file1": "",
-                "file2": "",
-                "file3": "",
-            },
-            "b": {
-                "c": {
-                    "file4": "",
-                    "file5": "",
-                }
-            }
-        }));
-
-        let user_id = 5;
-        let http_client = FakeHttpClient::with_404_response();
-        let mut client = Client::new(http_client.clone());
-        let server = FakeServer::for_client(user_id, &mut client, &cx).await;
-        let user_store = server.build_user_store(client.clone(), &mut cx).await;
-        let tree = Worktree::open_local(
-            client,
-            user_store.clone(),
-            dir.path(),
-            false,
-            Arc::new(RealFs),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-
-        let buffer_for_path = |path: &'static str, cx: &mut gpui::TestAppContext| {
-            let buffer = tree.update(cx, |tree, cx| tree.open_buffer(path, cx));
-            async move { buffer.await.unwrap().0 }
-        };
-        let id_for_path = |path: &'static str, cx: &gpui::TestAppContext| {
-            tree.read_with(cx, |tree, _| {
-                tree.entry_for_path(path)
-                    .expect(&format!("no entry for path {}", path))
-                    .id
-            })
-        };
-
-        let buffer2 = buffer_for_path("a/file2", &mut cx).await;
-        let buffer3 = buffer_for_path("a/file3", &mut cx).await;
-        let buffer4 = buffer_for_path("b/c/file4", &mut cx).await;
-        let buffer5 = buffer_for_path("b/c/file5", &mut cx).await;
-
-        let file2_id = id_for_path("a/file2", &cx);
-        let file3_id = id_for_path("a/file3", &cx);
-        let file4_id = id_for_path("b/c/file4", &cx);
-
-        // Wait for the initial scan.
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-
-        // Create a remote copy of this worktree.
-        let initial_snapshot = tree.read_with(&cx, |tree, _| tree.snapshot());
-        let remote = Worktree::remote(
-            1,
-            1,
-            initial_snapshot.to_proto(&Default::default(), Default::default()),
-            Client::new(http_client.clone()),
-            user_store,
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-
-        cx.read(|cx| {
-            assert!(!buffer2.read(cx).is_dirty());
-            assert!(!buffer3.read(cx).is_dirty());
-            assert!(!buffer4.read(cx).is_dirty());
-            assert!(!buffer5.read(cx).is_dirty());
-        });
-
-        // Rename and delete files and directories.
-        tree.flush_fs_events(&cx).await;
-        std::fs::rename(dir.path().join("a/file3"), dir.path().join("b/c/file3")).unwrap();
-        std::fs::remove_file(dir.path().join("b/c/file5")).unwrap();
-        std::fs::rename(dir.path().join("b/c"), dir.path().join("d")).unwrap();
-        std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
-        tree.flush_fs_events(&cx).await;
-
-        let expected_paths = vec![
-            "a",
-            "a/file1",
-            "a/file2.new",
-            "b",
-            "d",
-            "d/file3",
-            "d/file4",
-        ];
-
-        cx.read(|app| {
-            assert_eq!(
-                tree.read(app)
-                    .paths()
-                    .map(|p| p.to_str().unwrap())
-                    .collect::<Vec<_>>(),
-                expected_paths
-            );
-
-            assert_eq!(id_for_path("a/file2.new", &cx), file2_id);
-            assert_eq!(id_for_path("d/file3", &cx), file3_id);
-            assert_eq!(id_for_path("d/file4", &cx), file4_id);
-
-            assert_eq!(
-                buffer2.read(app).file().unwrap().path().as_ref(),
-                Path::new("a/file2.new")
-            );
-            assert_eq!(
-                buffer3.read(app).file().unwrap().path().as_ref(),
-                Path::new("d/file3")
-            );
-            assert_eq!(
-                buffer4.read(app).file().unwrap().path().as_ref(),
-                Path::new("d/file4")
-            );
-            assert_eq!(
-                buffer5.read(app).file().unwrap().path().as_ref(),
-                Path::new("b/c/file5")
-            );
-
-            assert!(!buffer2.read(app).file().unwrap().is_deleted());
-            assert!(!buffer3.read(app).file().unwrap().is_deleted());
-            assert!(!buffer4.read(app).file().unwrap().is_deleted());
-            assert!(buffer5.read(app).file().unwrap().is_deleted());
-        });
-
-        // Update the remote worktree. Check that it becomes consistent with the
-        // local worktree.
-        remote.update(&mut cx, |remote, cx| {
-            let update_message =
-                tree.read(cx)
-                    .snapshot()
-                    .build_update(&initial_snapshot, 1, 1, true);
-            remote
-                .as_remote_mut()
-                .unwrap()
-                .snapshot
-                .apply_update(update_message)
-                .unwrap();
-
-            assert_eq!(
-                remote
-                    .paths()
-                    .map(|p| p.to_str().unwrap())
-                    .collect::<Vec<_>>(),
-                expected_paths
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_rescan_with_gitignore(mut cx: gpui::TestAppContext) {
+    async fn test_rescan_with_gitignore(cx: gpui::TestAppContext) {
         let dir = temp_tree(json!({
             ".git": {},
             ".gitignore": "ignored-dir\n",
@@ -3391,11 +2468,9 @@ mod tests {
 
         let http_client = FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone());
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
 
-        let tree = Worktree::open_local(
+        let tree = Worktree::local(
             client,
-            user_store,
             dir.path(),
             false,
             Arc::new(RealFs),
@@ -3426,579 +2501,6 @@ mod tests {
             assert_eq!(ignored.is_ignored, true);
             assert_eq!(dot_git.is_ignored, true);
         });
-    }
-
-    #[gpui::test]
-    async fn test_buffer_deduping(mut cx: gpui::TestAppContext) {
-        let user_id = 100;
-        let http_client = FakeHttpClient::with_404_response();
-        let mut client = Client::new(http_client);
-        let server = FakeServer::for_client(user_id, &mut client, &cx).await;
-        let user_store = server.build_user_store(client.clone(), &mut cx).await;
-
-        let fs = Arc::new(FakeFs::new());
-        fs.insert_tree(
-            "/the-dir",
-            json!({
-                "a.txt": "a-contents",
-                "b.txt": "b-contents",
-            }),
-        )
-        .await;
-
-        let worktree = Worktree::open_local(
-            client.clone(),
-            user_store,
-            "/the-dir".as_ref(),
-            false,
-            fs,
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-
-        // Spawn multiple tasks to open paths, repeating some paths.
-        let (buffer_a_1, buffer_b, buffer_a_2) = worktree.update(&mut cx, |worktree, cx| {
-            (
-                worktree.open_buffer("a.txt", cx),
-                worktree.open_buffer("b.txt", cx),
-                worktree.open_buffer("a.txt", cx),
-            )
-        });
-
-        let buffer_a_1 = buffer_a_1.await.unwrap().0;
-        let buffer_a_2 = buffer_a_2.await.unwrap().0;
-        let buffer_b = buffer_b.await.unwrap().0;
-        assert_eq!(buffer_a_1.read_with(&cx, |b, _| b.text()), "a-contents");
-        assert_eq!(buffer_b.read_with(&cx, |b, _| b.text()), "b-contents");
-
-        // There is only one buffer per path.
-        let buffer_a_id = buffer_a_1.id();
-        assert_eq!(buffer_a_2.id(), buffer_a_id);
-
-        // Open the same path again while it is still open.
-        drop(buffer_a_1);
-        let buffer_a_3 = worktree
-            .update(&mut cx, |worktree, cx| worktree.open_buffer("a.txt", cx))
-            .await
-            .unwrap()
-            .0;
-
-        // There's still only one buffer per path.
-        assert_eq!(buffer_a_3.id(), buffer_a_id);
-    }
-
-    #[gpui::test]
-    async fn test_buffer_is_dirty(mut cx: gpui::TestAppContext) {
-        use std::fs;
-
-        let dir = temp_tree(json!({
-            "file1": "abc",
-            "file2": "def",
-            "file3": "ghi",
-        }));
-        let http_client = FakeHttpClient::with_404_response();
-        let client = Client::new(http_client.clone());
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-
-        let tree = Worktree::open_local(
-            client,
-            user_store,
-            dir.path(),
-            false,
-            Arc::new(RealFs),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-        tree.flush_fs_events(&cx).await;
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-
-        let (buffer1, _) = tree
-            .update(&mut cx, |tree, cx| tree.open_buffer("file1", cx))
-            .await
-            .unwrap();
-        let events = Rc::new(RefCell::new(Vec::new()));
-
-        // initially, the buffer isn't dirty.
-        buffer1.update(&mut cx, |buffer, cx| {
-            cx.subscribe(&buffer1, {
-                let events = events.clone();
-                move |_, _, event, _| events.borrow_mut().push(event.clone())
-            })
-            .detach();
-
-            assert!(!buffer.is_dirty());
-            assert!(events.borrow().is_empty());
-
-            buffer.edit(vec![1..2], "", cx);
-        });
-
-        // after the first edit, the buffer is dirty, and emits a dirtied event.
-        buffer1.update(&mut cx, |buffer, cx| {
-            assert!(buffer.text() == "ac");
-            assert!(buffer.is_dirty());
-            assert_eq!(
-                *events.borrow(),
-                &[language::Event::Edited, language::Event::Dirtied]
-            );
-            events.borrow_mut().clear();
-            buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), None, cx);
-        });
-
-        // after saving, the buffer is not dirty, and emits a saved event.
-        buffer1.update(&mut cx, |buffer, cx| {
-            assert!(!buffer.is_dirty());
-            assert_eq!(*events.borrow(), &[language::Event::Saved]);
-            events.borrow_mut().clear();
-
-            buffer.edit(vec![1..1], "B", cx);
-            buffer.edit(vec![2..2], "D", cx);
-        });
-
-        // after editing again, the buffer is dirty, and emits another dirty event.
-        buffer1.update(&mut cx, |buffer, cx| {
-            assert!(buffer.text() == "aBDc");
-            assert!(buffer.is_dirty());
-            assert_eq!(
-                *events.borrow(),
-                &[
-                    language::Event::Edited,
-                    language::Event::Dirtied,
-                    language::Event::Edited,
-                ],
-            );
-            events.borrow_mut().clear();
-
-            // TODO - currently, after restoring the buffer to its
-            // previously-saved state, the is still considered dirty.
-            buffer.edit([1..3], "", cx);
-            assert!(buffer.text() == "ac");
-            assert!(buffer.is_dirty());
-        });
-
-        assert_eq!(*events.borrow(), &[language::Event::Edited]);
-
-        // When a file is deleted, the buffer is considered dirty.
-        let events = Rc::new(RefCell::new(Vec::new()));
-        let (buffer2, _) = tree
-            .update(&mut cx, |tree, cx| tree.open_buffer("file2", cx))
-            .await
-            .unwrap();
-        buffer2.update(&mut cx, |_, cx| {
-            cx.subscribe(&buffer2, {
-                let events = events.clone();
-                move |_, _, event, _| events.borrow_mut().push(event.clone())
-            })
-            .detach();
-        });
-
-        fs::remove_file(dir.path().join("file2")).unwrap();
-        buffer2.condition(&cx, |b, _| b.is_dirty()).await;
-        assert_eq!(
-            *events.borrow(),
-            &[language::Event::Dirtied, language::Event::FileHandleChanged]
-        );
-
-        // When a file is already dirty when deleted, we don't emit a Dirtied event.
-        let events = Rc::new(RefCell::new(Vec::new()));
-        let (buffer3, _) = tree
-            .update(&mut cx, |tree, cx| tree.open_buffer("file3", cx))
-            .await
-            .unwrap();
-        buffer3.update(&mut cx, |_, cx| {
-            cx.subscribe(&buffer3, {
-                let events = events.clone();
-                move |_, _, event, _| events.borrow_mut().push(event.clone())
-            })
-            .detach();
-        });
-
-        tree.flush_fs_events(&cx).await;
-        buffer3.update(&mut cx, |buffer, cx| {
-            buffer.edit(Some(0..0), "x", cx);
-        });
-        events.borrow_mut().clear();
-        fs::remove_file(dir.path().join("file3")).unwrap();
-        buffer3
-            .condition(&cx, |_, _| !events.borrow().is_empty())
-            .await;
-        assert_eq!(*events.borrow(), &[language::Event::FileHandleChanged]);
-        cx.read(|cx| assert!(buffer3.read(cx).is_dirty()));
-    }
-
-    #[gpui::test]
-    async fn test_buffer_file_changes_on_disk(mut cx: gpui::TestAppContext) {
-        use std::fs;
-
-        let initial_contents = "aaa\nbbbbb\nc\n";
-        let dir = temp_tree(json!({ "the-file": initial_contents }));
-        let http_client = FakeHttpClient::with_404_response();
-        let client = Client::new(http_client.clone());
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-
-        let tree = Worktree::open_local(
-            client,
-            user_store,
-            dir.path(),
-            false,
-            Arc::new(RealFs),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
-            .await;
-
-        let abs_path = dir.path().join("the-file");
-        let (buffer, _) = tree
-            .update(&mut cx, |tree, cx| {
-                tree.open_buffer(Path::new("the-file"), cx)
-            })
-            .await
-            .unwrap();
-
-        // TODO
-        // Add a cursor on each row.
-        // let selection_set_id = buffer.update(&mut cx, |buffer, cx| {
-        //     assert!(!buffer.is_dirty());
-        //     buffer.add_selection_set(
-        //         &(0..3)
-        //             .map(|row| Selection {
-        //                 id: row as usize,
-        //                 start: Point::new(row, 1),
-        //                 end: Point::new(row, 1),
-        //                 reversed: false,
-        //                 goal: SelectionGoal::None,
-        //             })
-        //             .collect::<Vec<_>>(),
-        //         cx,
-        //     )
-        // });
-
-        // Change the file on disk, adding two new lines of text, and removing
-        // one line.
-        buffer.read_with(&cx, |buffer, _| {
-            assert!(!buffer.is_dirty());
-            assert!(!buffer.has_conflict());
-        });
-        let new_contents = "AAAA\naaa\nBB\nbbbbb\n";
-        fs::write(&abs_path, new_contents).unwrap();
-
-        // Because the buffer was not modified, it is reloaded from disk. Its
-        // contents are edited according to the diff between the old and new
-        // file contents.
-        buffer
-            .condition(&cx, |buffer, _| buffer.text() == new_contents)
-            .await;
-
-        buffer.update(&mut cx, |buffer, _| {
-            assert_eq!(buffer.text(), new_contents);
-            assert!(!buffer.is_dirty());
-            assert!(!buffer.has_conflict());
-
-            // TODO
-            // let cursor_positions = buffer
-            //     .selection_set(selection_set_id)
-            //     .unwrap()
-            //     .selections::<Point>(&*buffer)
-            //     .map(|selection| {
-            //         assert_eq!(selection.start, selection.end);
-            //         selection.start
-            //     })
-            //     .collect::<Vec<_>>();
-            // assert_eq!(
-            //     cursor_positions,
-            //     [Point::new(1, 1), Point::new(3, 1), Point::new(4, 0)]
-            // );
-        });
-
-        // Modify the buffer
-        buffer.update(&mut cx, |buffer, cx| {
-            buffer.edit(vec![0..0], " ", cx);
-            assert!(buffer.is_dirty());
-            assert!(!buffer.has_conflict());
-        });
-
-        // Change the file on disk again, adding blank lines to the beginning.
-        fs::write(&abs_path, "\n\n\nAAAA\naaa\nBB\nbbbbb\n").unwrap();
-
-        // Because the buffer is modified, it doesn't reload from disk, but is
-        // marked as having a conflict.
-        buffer
-            .condition(&cx, |buffer, _| buffer.has_conflict())
-            .await;
-    }
-
-    #[gpui::test]
-    async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
-        let fs = Arc::new(FakeFs::new());
-        let http_client = FakeHttpClient::with_404_response();
-        let client = Client::new(http_client.clone());
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-
-        fs.insert_tree(
-            "/the-dir",
-            json!({
-                "a.rs": "
-                    fn foo(mut v: Vec<usize>) {
-                        for x in &v {
-                            v.push(1);
-                        }
-                    }
-                "
-                .unindent(),
-            }),
-        )
-        .await;
-
-        let worktree = Worktree::open_local(
-            client.clone(),
-            user_store,
-            "/the-dir".as_ref(),
-            false,
-            fs,
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
-
-        let (buffer, _) = worktree
-            .update(&mut cx, |tree, cx| tree.open_buffer("a.rs", cx))
-            .await
-            .unwrap();
-
-        let buffer_uri = Url::from_file_path("/the-dir/a.rs").unwrap();
-        let message = lsp::PublishDiagnosticsParams {
-            uri: buffer_uri.clone(),
-            diagnostics: vec![
-                lsp::Diagnostic {
-                    range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
-                    severity: Some(DiagnosticSeverity::WARNING),
-                    message: "error 1".to_string(),
-                    related_information: Some(vec![lsp::DiagnosticRelatedInformation {
-                        location: lsp::Location {
-                            uri: buffer_uri.clone(),
-                            range: lsp::Range::new(
-                                lsp::Position::new(1, 8),
-                                lsp::Position::new(1, 9),
-                            ),
-                        },
-                        message: "error 1 hint 1".to_string(),
-                    }]),
-                    ..Default::default()
-                },
-                lsp::Diagnostic {
-                    range: lsp::Range::new(lsp::Position::new(1, 8), lsp::Position::new(1, 9)),
-                    severity: Some(DiagnosticSeverity::HINT),
-                    message: "error 1 hint 1".to_string(),
-                    related_information: Some(vec![lsp::DiagnosticRelatedInformation {
-                        location: lsp::Location {
-                            uri: buffer_uri.clone(),
-                            range: lsp::Range::new(
-                                lsp::Position::new(1, 8),
-                                lsp::Position::new(1, 9),
-                            ),
-                        },
-                        message: "original diagnostic".to_string(),
-                    }]),
-                    ..Default::default()
-                },
-                lsp::Diagnostic {
-                    range: lsp::Range::new(lsp::Position::new(2, 8), lsp::Position::new(2, 17)),
-                    severity: Some(DiagnosticSeverity::ERROR),
-                    message: "error 2".to_string(),
-                    related_information: Some(vec![
-                        lsp::DiagnosticRelatedInformation {
-                            location: lsp::Location {
-                                uri: buffer_uri.clone(),
-                                range: lsp::Range::new(
-                                    lsp::Position::new(1, 13),
-                                    lsp::Position::new(1, 15),
-                                ),
-                            },
-                            message: "error 2 hint 1".to_string(),
-                        },
-                        lsp::DiagnosticRelatedInformation {
-                            location: lsp::Location {
-                                uri: buffer_uri.clone(),
-                                range: lsp::Range::new(
-                                    lsp::Position::new(1, 13),
-                                    lsp::Position::new(1, 15),
-                                ),
-                            },
-                            message: "error 2 hint 2".to_string(),
-                        },
-                    ]),
-                    ..Default::default()
-                },
-                lsp::Diagnostic {
-                    range: lsp::Range::new(lsp::Position::new(1, 13), lsp::Position::new(1, 15)),
-                    severity: Some(DiagnosticSeverity::HINT),
-                    message: "error 2 hint 1".to_string(),
-                    related_information: Some(vec![lsp::DiagnosticRelatedInformation {
-                        location: lsp::Location {
-                            uri: buffer_uri.clone(),
-                            range: lsp::Range::new(
-                                lsp::Position::new(2, 8),
-                                lsp::Position::new(2, 17),
-                            ),
-                        },
-                        message: "original diagnostic".to_string(),
-                    }]),
-                    ..Default::default()
-                },
-                lsp::Diagnostic {
-                    range: lsp::Range::new(lsp::Position::new(1, 13), lsp::Position::new(1, 15)),
-                    severity: Some(DiagnosticSeverity::HINT),
-                    message: "error 2 hint 2".to_string(),
-                    related_information: Some(vec![lsp::DiagnosticRelatedInformation {
-                        location: lsp::Location {
-                            uri: buffer_uri.clone(),
-                            range: lsp::Range::new(
-                                lsp::Position::new(2, 8),
-                                lsp::Position::new(2, 17),
-                            ),
-                        },
-                        message: "original diagnostic".to_string(),
-                    }]),
-                    ..Default::default()
-                },
-            ],
-            version: None,
-        };
-
-        worktree
-            .update(&mut cx, |tree, cx| {
-                tree.as_local_mut().unwrap().update_diagnostics(
-                    Arc::from("a.rs".as_ref()),
-                    message,
-                    &Default::default(),
-                    cx,
-                )
-            })
-            .unwrap();
-        let buffer = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-
-        assert_eq!(
-            buffer
-                .diagnostics_in_range::<_, Point>(0..buffer.len())
-                .collect::<Vec<_>>(),
-            &[
-                DiagnosticEntry {
-                    range: Point::new(1, 8)..Point::new(1, 9),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::WARNING,
-                        message: "error 1".to_string(),
-                        group_id: 0,
-                        is_primary: true,
-                        ..Default::default()
-                    }
-                },
-                DiagnosticEntry {
-                    range: Point::new(1, 8)..Point::new(1, 9),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::HINT,
-                        message: "error 1 hint 1".to_string(),
-                        group_id: 0,
-                        is_primary: false,
-                        ..Default::default()
-                    }
-                },
-                DiagnosticEntry {
-                    range: Point::new(1, 13)..Point::new(1, 15),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::HINT,
-                        message: "error 2 hint 1".to_string(),
-                        group_id: 1,
-                        is_primary: false,
-                        ..Default::default()
-                    }
-                },
-                DiagnosticEntry {
-                    range: Point::new(1, 13)..Point::new(1, 15),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::HINT,
-                        message: "error 2 hint 2".to_string(),
-                        group_id: 1,
-                        is_primary: false,
-                        ..Default::default()
-                    }
-                },
-                DiagnosticEntry {
-                    range: Point::new(2, 8)..Point::new(2, 17),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::ERROR,
-                        message: "error 2".to_string(),
-                        group_id: 1,
-                        is_primary: true,
-                        ..Default::default()
-                    }
-                }
-            ]
-        );
-
-        assert_eq!(
-            buffer.diagnostic_group::<Point>(0).collect::<Vec<_>>(),
-            &[
-                DiagnosticEntry {
-                    range: Point::new(1, 8)..Point::new(1, 9),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::WARNING,
-                        message: "error 1".to_string(),
-                        group_id: 0,
-                        is_primary: true,
-                        ..Default::default()
-                    }
-                },
-                DiagnosticEntry {
-                    range: Point::new(1, 8)..Point::new(1, 9),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::HINT,
-                        message: "error 1 hint 1".to_string(),
-                        group_id: 0,
-                        is_primary: false,
-                        ..Default::default()
-                    }
-                },
-            ]
-        );
-        assert_eq!(
-            buffer.diagnostic_group::<Point>(1).collect::<Vec<_>>(),
-            &[
-                DiagnosticEntry {
-                    range: Point::new(1, 13)..Point::new(1, 15),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::HINT,
-                        message: "error 2 hint 1".to_string(),
-                        group_id: 1,
-                        is_primary: false,
-                        ..Default::default()
-                    }
-                },
-                DiagnosticEntry {
-                    range: Point::new(1, 13)..Point::new(1, 15),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::HINT,
-                        message: "error 2 hint 2".to_string(),
-                        group_id: 1,
-                        is_primary: false,
-                        ..Default::default()
-                    }
-                },
-                DiagnosticEntry {
-                    range: Point::new(2, 8)..Point::new(2, 17),
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::ERROR,
-                        message: "error 2".to_string(),
-                        group_id: 1,
-                        is_primary: true,
-                        ..Default::default()
-                    }
-                }
-            ]
-        );
     }
 
     #[gpui::test(iterations = 100)]

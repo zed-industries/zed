@@ -856,7 +856,7 @@ impl Buffer {
         version: Option<i32>,
         mut diagnostics: Vec<DiagnosticEntry<T>>,
         cx: &mut ModelContext<Self>,
-    ) -> Result<Operation>
+    ) -> Result<()>
     where
         T: Copy + Ord + TextDimension + Sub<Output = T> + Clip + ToPoint,
     {
@@ -869,19 +869,19 @@ impl Buffer {
         }
 
         let version = version.map(|version| version as usize);
-        let content = if let Some(version) = version {
-            let language_server = self.language_server.as_mut().unwrap();
-            language_server
-                .pending_snapshots
-                .retain(|&v, _| v >= version);
-            let snapshot = language_server
-                .pending_snapshots
-                .get(&version)
-                .ok_or_else(|| anyhow!("missing snapshot"))?;
-            &snapshot.buffer_snapshot
-        } else {
-            self.deref()
-        };
+        let content =
+            if let Some((version, language_server)) = version.zip(self.language_server.as_mut()) {
+                language_server
+                    .pending_snapshots
+                    .retain(|&v, _| v >= version);
+                let snapshot = language_server
+                    .pending_snapshots
+                    .get(&version)
+                    .ok_or_else(|| anyhow!("missing snapshot"))?;
+                &snapshot.buffer_snapshot
+            } else {
+                self.deref()
+            };
 
         diagnostics.sort_unstable_by(|a, b| {
             Ordering::Equal
@@ -944,10 +944,13 @@ impl Buffer {
 
         let set = DiagnosticSet::new(sanitized_diagnostics, content);
         self.apply_diagnostic_update(set.clone(), cx);
-        Ok(Operation::UpdateDiagnostics {
+
+        let op = Operation::UpdateDiagnostics {
             diagnostics: set.iter().cloned().collect(),
             lamport_timestamp: self.text.lamport_clock.tick(),
-        })
+        };
+        self.send_operation(op, cx);
+        Ok(())
     }
 
     fn request_autoindent(&mut self, cx: &mut ModelContext<Self>) {

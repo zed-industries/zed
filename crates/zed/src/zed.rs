@@ -245,7 +245,7 @@ mod tests {
         params
             .project
             .update(&mut cx, |project, cx| {
-                project.find_or_create_worktree_for_abs_path(Path::new("/root"), false, cx)
+                project.find_or_create_local_worktree("/root", false, cx)
             })
             .await
             .unwrap();
@@ -358,7 +358,7 @@ mod tests {
         params
             .project
             .update(&mut cx, |project, cx| {
-                project.find_or_create_worktree_for_abs_path(Path::new("/dir1"), false, cx)
+                project.find_or_create_local_worktree("/dir1", false, cx)
             })
             .await
             .unwrap();
@@ -425,7 +425,7 @@ mod tests {
         params
             .project
             .update(&mut cx, |project, cx| {
-                project.find_or_create_worktree_for_abs_path(Path::new("/root"), false, cx)
+                project.find_or_create_local_worktree("/root", false, cx)
             })
             .await
             .unwrap();
@@ -474,7 +474,7 @@ mod tests {
         params
             .project
             .update(&mut cx, |project, cx| {
-                project.find_or_create_worktree_for_abs_path(Path::new("/root"), false, cx)
+                project.find_or_create_local_worktree("/root", false, cx)
             })
             .await
             .unwrap();
@@ -626,7 +626,7 @@ mod tests {
         params
             .project
             .update(&mut cx, |project, cx| {
-                project.find_or_create_worktree_for_abs_path(Path::new("/root"), false, cx)
+                project.find_or_create_local_worktree("/root", false, cx)
             })
             .await
             .unwrap();
@@ -689,7 +689,7 @@ mod tests {
         params
             .project
             .update(&mut cx, |project, cx| {
-                project.find_or_create_worktree_for_abs_path(Path::new("/root"), false, cx)
+                project.find_or_create_local_worktree("/root", false, cx)
             })
             .await
             .unwrap();

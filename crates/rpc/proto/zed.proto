@@ -144,35 +144,30 @@ message OpenBufferResponse {
 
 message CloseBuffer {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
-    uint64 buffer_id = 3;
+    uint64 buffer_id = 2;
 }
 
 message UpdateBuffer {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
-    uint64 buffer_id = 3;
+    uint64 buffer_id = 2;
     repeated Operation operations = 4;
 }
 
 message SaveBuffer {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
-    uint64 buffer_id = 3;
+    uint64 buffer_id = 2;
 }
 
 message BufferSaved {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
-    uint64 buffer_id = 3;
-    repeated VectorClockEntry version = 4;
-    Timestamp mtime = 5;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+    Timestamp mtime = 4;
 }
 
 message FormatBuffer {
     uint64 project_id = 1;
-    uint64 worktree_id = 2;
-    uint64 buffer_id = 3;
+    uint64 buffer_id = 2;
 }
 
 message UpdateDiagnosticSummary {
