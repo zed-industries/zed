@@ -30,7 +30,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt,
     future::Future,
-    ops::Deref,
+    ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -54,9 +54,9 @@ pub enum Worktree {
 }
 
 pub struct LocalWorktree {
-    snapshot: Snapshot,
+    snapshot: LocalSnapshot,
     config: WorktreeConfig,
-    background_snapshot: Arc<Mutex<Snapshot>>,
+    background_snapshot: Arc<Mutex<LocalSnapshot>>,
     last_scan_state_rx: watch::Receiver<ScanState>,
     _background_scanner_task: Option<Task<()>>,
     poll_task: Option<Task<()>>,
@@ -85,15 +85,34 @@ pub struct RemoteWorktree {
 #[derive(Clone)]
 pub struct Snapshot {
     id: WorktreeId,
-    scan_id: usize,
-    abs_path: Arc<Path>,
     root_name: String,
     root_char_bag: CharBag,
-    ignores: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
     entries_by_path: SumTree<Entry>,
     entries_by_id: SumTree<PathEntry>,
+}
+
+#[derive(Clone)]
+pub struct LocalSnapshot {
+    abs_path: Arc<Path>,
+    scan_id: usize,
+    ignores: HashMap<Arc<Path>, (Arc<Gitignore>, usize)>,
     removed_entry_ids: HashMap<u64, usize>,
     next_entry_id: Arc<AtomicUsize>,
+    snapshot: Snapshot,
+}
+
+impl Deref for LocalSnapshot {
+    type Target = Snapshot;
+
+    fn deref(&self) -> &Self::Target {
+        &self.snapshot
+    }
+}
+
+impl DerefMut for LocalSnapshot {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.snapshot
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -112,7 +131,7 @@ enum Registration {
 
 struct ShareState {
     project_id: u64,
-    snapshots_tx: Sender<Snapshot>,
+    snapshots_tx: Sender<LocalSnapshot>,
     _maintain_remote_snapshot: Option<Task<()>>,
 }
 
@@ -158,7 +177,7 @@ impl Worktree {
         let (tree, scan_states_tx) = LocalWorktree::new(client, path, weak, fs.clone(), cx).await?;
         tree.update(cx, |tree, cx| {
             let tree = tree.as_local_mut().unwrap();
-            let abs_path = tree.snapshot.abs_path.clone();
+            let abs_path = tree.abs_path().clone();
             let background_snapshot = tree.background_snapshot.clone();
             let background = cx.background().clone();
             tree._background_scanner_task = Some(cx.background().spawn(async move {
@@ -233,15 +252,10 @@ impl Worktree {
             cx.add_model(|cx: &mut ModelContext<Worktree>| {
                 let snapshot = Snapshot {
                     id: WorktreeId(remote_id as usize),
-                    scan_id: 0,
-                    abs_path: Path::new("").into(),
                     root_name,
                     root_char_bag,
-                    ignores: Default::default(),
                     entries_by_path,
                     entries_by_id,
-                    removed_entry_ids: Default::default(),
-                    next_entry_id: Default::default(),
                 };
 
                 let (updates_tx, mut updates_rx) = postage::mpsc::channel(64);
@@ -328,7 +342,7 @@ impl Worktree {
 
     pub fn snapshot(&self) -> Snapshot {
         match self {
-            Worktree::Local(worktree) => worktree.snapshot(),
+            Worktree::Local(worktree) => worktree.snapshot().snapshot,
             Worktree::Remote(worktree) => worktree.snapshot(),
         }
     }
@@ -469,28 +483,28 @@ impl LocalWorktree {
         let (scan_states_tx, scan_states_rx) = smol::channel::unbounded();
         let (mut last_scan_state_tx, last_scan_state_rx) = watch::channel_with(ScanState::Scanning);
         let tree = cx.add_model(move |cx: &mut ModelContext<Worktree>| {
-            let mut snapshot = Snapshot {
-                id: WorktreeId::from_usize(cx.model_id()),
-                scan_id: 0,
+            let mut snapshot = LocalSnapshot {
                 abs_path,
-                root_name: root_name.clone(),
-                root_char_bag,
+                scan_id: 0,
                 ignores: Default::default(),
-                entries_by_path: Default::default(),
-                entries_by_id: Default::default(),
                 removed_entry_ids: Default::default(),
                 next_entry_id: Arc::new(next_entry_id),
+                snapshot: Snapshot {
+                    id: WorktreeId::from_usize(cx.model_id()),
+                    root_name: root_name.clone(),
+                    root_char_bag,
+                    entries_by_path: Default::default(),
+                    entries_by_id: Default::default(),
+                },
             };
             if let Some(metadata) = metadata {
-                snapshot.insert_entry(
-                    Entry::new(
-                        path.into(),
-                        &metadata,
-                        &snapshot.next_entry_id,
-                        snapshot.root_char_bag,
-                    ),
-                    fs.as_ref(),
+                let entry = Entry::new(
+                    path.into(),
+                    &metadata,
+                    &snapshot.next_entry_id,
+                    snapshot.root_char_bag,
                 );
+                snapshot.insert_entry(entry, fs.as_ref());
             }
 
             let tree = Self {
@@ -545,6 +559,18 @@ impl LocalWorktree {
 
     pub fn abs_path(&self) -> &Arc<Path> {
         &self.abs_path
+    }
+
+    pub fn contains_abs_path(&self, path: &Path) -> bool {
+        path.starts_with(&self.abs_path)
+    }
+
+    fn absolutize(&self, path: &Path) -> PathBuf {
+        if path.file_name().is_some() {
+            self.abs_path.join(path)
+        } else {
+            self.abs_path.to_path_buf()
+        }
     }
 
     pub fn authorized_logins(&self) -> Vec<String> {
@@ -628,7 +654,7 @@ impl LocalWorktree {
         }
     }
 
-    pub fn snapshot(&self) -> Snapshot {
+    pub fn snapshot(&self) -> LocalSnapshot {
         self.snapshot.clone()
     }
 
@@ -754,7 +780,8 @@ impl LocalWorktree {
         let snapshot = self.snapshot();
         let rpc = self.client.clone();
         let worktree_id = cx.model_id() as u64;
-        let (snapshots_to_send_tx, snapshots_to_send_rx) = smol::channel::unbounded::<Snapshot>();
+        let (snapshots_to_send_tx, snapshots_to_send_rx) =
+            smol::channel::unbounded::<LocalSnapshot>();
         let maintain_remote_snapshot = cx.background().spawn({
             let rpc = rpc.clone();
             let snapshot = snapshot.clone();
@@ -974,9 +1001,6 @@ impl Snapshot {
     }
 
     pub(crate) fn apply_update(&mut self, update: proto::UpdateWorktree) -> Result<()> {
-        self.scan_id += 1;
-        let scan_id = self.scan_id;
-
         let mut entries_by_path_edits = Vec::new();
         let mut entries_by_id_edits = Vec::new();
         for entry_id in update.removed_entries {
@@ -997,7 +1021,7 @@ impl Snapshot {
                 id: entry.id,
                 path: entry.path.clone(),
                 is_ignored: entry.is_ignored,
-                scan_id,
+                scan_id: 0,
             }));
             entries_by_path_edits.push(Edit::Insert(entry));
         }
@@ -1084,18 +1108,6 @@ impl Snapshot {
         }
     }
 
-    pub fn contains_abs_path(&self, path: &Path) -> bool {
-        path.starts_with(&self.abs_path)
-    }
-
-    fn absolutize(&self, path: &Path) -> PathBuf {
-        if path.file_name().is_some() {
-            self.abs_path.join(path)
-        } else {
-            self.abs_path.to_path_buf()
-        }
-    }
-
     pub fn root_entry(&self) -> Option<&Entry> {
         self.entry_for_path("")
     }
@@ -1125,7 +1137,9 @@ impl Snapshot {
     pub fn inode_for_path(&self, path: impl AsRef<Path>) -> Option<u64> {
         self.entry_for_path(path.as_ref()).map(|e| e.inode)
     }
+}
 
+impl LocalSnapshot {
     fn insert_entry(&mut self, mut entry: Entry, fs: &dyn Fs) -> Entry {
         if !entry.is_dir() && entry.path.file_name() == Some(&GITIGNORE) {
             let abs_path = self.abs_path.join(&entry.path);
@@ -1147,12 +1161,13 @@ impl Snapshot {
 
         self.reuse_entry_id(&mut entry);
         self.entries_by_path.insert_or_replace(entry.clone(), &());
+        let scan_id = self.scan_id;
         self.entries_by_id.insert_or_replace(
             PathEntry {
                 id: entry.id,
                 path: entry.path.clone(),
                 is_ignored: entry.is_ignored,
-                scan_id: self.scan_id,
+                scan_id,
             },
             &(),
         );
@@ -1308,7 +1323,7 @@ impl Deref for Worktree {
 }
 
 impl Deref for LocalWorktree {
-    type Target = Snapshot;
+    type Target = LocalSnapshot;
 
     fn deref(&self) -> &Self::Target {
         &self.snapshot
@@ -1679,14 +1694,14 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for PathKey {
 
 struct BackgroundScanner {
     fs: Arc<dyn Fs>,
-    snapshot: Arc<Mutex<Snapshot>>,
+    snapshot: Arc<Mutex<LocalSnapshot>>,
     notify: Sender<ScanState>,
     executor: Arc<executor::Background>,
 }
 
 impl BackgroundScanner {
     fn new(
-        snapshot: Arc<Mutex<Snapshot>>,
+        snapshot: Arc<Mutex<LocalSnapshot>>,
         notify: Sender<ScanState>,
         fs: Arc<dyn Fs>,
         executor: Arc<executor::Background>,
@@ -1703,7 +1718,7 @@ impl BackgroundScanner {
         self.snapshot.lock().abs_path.clone()
     }
 
-    fn snapshot(&self) -> Snapshot {
+    fn snapshot(&self) -> LocalSnapshot {
         self.snapshot.lock().clone()
     }
 
@@ -2046,7 +2061,7 @@ impl BackgroundScanner {
             .await;
     }
 
-    async fn update_ignore_status(&self, job: UpdateIgnoreStatusJob, snapshot: &Snapshot) {
+    async fn update_ignore_status(&self, job: UpdateIgnoreStatusJob, snapshot: &LocalSnapshot) {
         let mut ignore_stack = job.ignore_stack;
         if let Some((ignore, _)) = snapshot.ignores.get(&job.path) {
             ignore_stack = ignore_stack.append(job.path.clone(), ignore.clone());
@@ -2090,7 +2105,7 @@ impl BackgroundScanner {
 
 async fn refresh_entry(
     fs: &dyn Fs,
-    snapshot: &Mutex<Snapshot>,
+    snapshot: &Mutex<LocalSnapshot>,
     path: Arc<Path>,
     abs_path: &Path,
 ) -> Result<Entry> {
@@ -2158,7 +2173,7 @@ impl WorktreeHandle for ModelHandle<Worktree> {
         use smol::future::FutureExt;
 
         let filename = "fs-event-sentinel";
-        let root_path = cx.read(|cx| self.read(cx).abs_path.clone());
+        let root_path = cx.read(|cx| self.read(cx).as_local().unwrap().abs_path().clone());
         let tree = self.clone();
         async move {
             std::fs::write(root_path.join(filename), "").unwrap();
@@ -2510,17 +2525,19 @@ mod tests {
         let (notify_tx, _notify_rx) = smol::channel::unbounded();
         let fs = Arc::new(RealFs);
         let next_entry_id = Arc::new(AtomicUsize::new(0));
-        let mut initial_snapshot = Snapshot {
-            id: WorktreeId::from_usize(0),
-            scan_id: 0,
+        let mut initial_snapshot = LocalSnapshot {
             abs_path: root_dir.path().into(),
-            entries_by_path: Default::default(),
-            entries_by_id: Default::default(),
+            scan_id: 0,
             removed_entry_ids: Default::default(),
             ignores: Default::default(),
-            root_name: Default::default(),
-            root_char_bag: Default::default(),
             next_entry_id: next_entry_id.clone(),
+            snapshot: Snapshot {
+                id: WorktreeId::from_usize(0),
+                entries_by_path: Default::default(),
+                entries_by_id: Default::default(),
+                root_name: Default::default(),
+                root_char_bag: Default::default(),
+            },
         };
         initial_snapshot.insert_entry(
             Entry::new(
@@ -2756,7 +2773,7 @@ mod tests {
             .collect()
     }
 
-    impl Snapshot {
+    impl LocalSnapshot {
         fn check_invariants(&self) {
             let mut files = self.files(true, 0);
             let mut visible_files = self.files(false, 0);
