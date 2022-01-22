@@ -725,7 +725,6 @@ mod tests {
     use gpui::TestAppContext;
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16};
     use serde_json::json;
-    use std::sync::Arc;
     use unindent::Unindent as _;
     use workspace::WorkspaceParams;
 
@@ -764,21 +763,19 @@ mod tests {
             )
             .await;
 
-        let worktree = project
+        project
             .update(&mut cx, |project, cx| {
                 project.add_local_worktree("/test", false, cx)
             })
             .await
             .unwrap();
-        let worktree_id = worktree.read_with(&cx, |tree, _| tree.id());
 
         // Create some diagnostics
-        worktree.update(&mut cx, |worktree, cx| {
-            worktree
-                .as_local_mut()
-                .unwrap()
-                .update_diagnostics(
-                    Arc::from("/test/main.rs".as_ref()),
+        project.update(&mut cx, |project, cx| {
+            project
+                .update_diagnostic_entries(
+                    PathBuf::from("/test/main.rs"),
+                    None,
                     vec![
                         DiagnosticEntry {
                             range: PointUtf16::new(1, 8)..PointUtf16::new(1, 9),
@@ -925,12 +922,12 @@ mod tests {
         });
 
         // Diagnostics are added for another earlier path.
-        worktree.update(&mut cx, |worktree, cx| {
-            worktree
-                .as_local_mut()
-                .unwrap()
-                .update_diagnostics(
-                    Arc::from("/test/consts.rs".as_ref()),
+        project.update(&mut cx, |project, cx| {
+            project.disk_based_diagnostics_started(cx);
+            project
+                .update_diagnostic_entries(
+                    PathBuf::from("/test/consts.rs"),
+                    None,
                     vec![DiagnosticEntry {
                         range: PointUtf16::new(0, 15)..PointUtf16::new(0, 15),
                         diagnostic: Diagnostic {
@@ -945,13 +942,7 @@ mod tests {
                     cx,
                 )
                 .unwrap();
-        });
-        project.update(&mut cx, |_, cx| {
-            cx.emit(project::Event::DiagnosticsUpdated(ProjectPath {
-                worktree_id,
-                path: Arc::from("/test/consts.rs".as_ref()),
-            }));
-            cx.emit(project::Event::DiskBasedDiagnosticsFinished);
+            project.disk_based_diagnostics_finished(cx);
         });
 
         view.next_notification(&cx).await;
@@ -1030,12 +1021,12 @@ mod tests {
         });
 
         // Diagnostics are added to the first path
-        worktree.update(&mut cx, |worktree, cx| {
-            worktree
-                .as_local_mut()
-                .unwrap()
-                .update_diagnostics(
-                    Arc::from("/test/consts.rs".as_ref()),
+        project.update(&mut cx, |project, cx| {
+            project.disk_based_diagnostics_started(cx);
+            project
+                .update_diagnostic_entries(
+                    PathBuf::from("/test/consts.rs"),
+                    None,
                     vec![
                         DiagnosticEntry {
                             range: PointUtf16::new(0, 15)..PointUtf16::new(0, 15),
@@ -1064,13 +1055,7 @@ mod tests {
                     cx,
                 )
                 .unwrap();
-        });
-        project.update(&mut cx, |_, cx| {
-            cx.emit(project::Event::DiagnosticsUpdated(ProjectPath {
-                worktree_id,
-                path: Arc::from("/test/consts.rs".as_ref()),
-            }));
-            cx.emit(project::Event::DiskBasedDiagnosticsFinished);
+            project.disk_based_diagnostics_finished(cx);
         });
 
         view.next_notification(&cx).await;

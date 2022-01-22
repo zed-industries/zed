@@ -14,7 +14,7 @@ use gpui::{
 };
 use language::{
     range_from_lsp, Bias, Buffer, Diagnostic, DiagnosticEntry, File as _, Language,
-    LanguageRegistry, Operation, ToOffset, ToPointUtf16,
+    LanguageRegistry, Operation, PointUtf16, ToOffset, ToPointUtf16,
 };
 use lsp::{DiagnosticSeverity, LanguageServer};
 use postage::{prelude::Stream, watch};
@@ -787,17 +787,10 @@ impl Project {
         disk_based_sources: &HashSet<String>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        let path = params
+        let abs_path = params
             .uri
             .to_file_path()
             .map_err(|_| anyhow!("URI is not a file"))?;
-        let (worktree, relative_path) = self
-            .find_worktree_for_abs_path(&path, cx)
-            .ok_or_else(|| anyhow!("no worktree found for diagnostics"))?;
-        let project_path = ProjectPath {
-            worktree_id: worktree.read(cx).id(),
-            path: relative_path.into(),
-        };
         let mut next_group_id = 0;
         let mut diagnostics = Vec::default();
         let mut primary_diagnostic_group_ids = HashMap::default();
@@ -885,6 +878,25 @@ impl Project {
             }
         }
 
+        self.update_diagnostic_entries(abs_path, params.version, diagnostics, cx)?;
+        Ok(())
+    }
+
+    pub fn update_diagnostic_entries(
+        &mut self,
+        abs_path: PathBuf,
+        version: Option<i32>,
+        diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
+        cx: &mut ModelContext<Project>,
+    ) -> Result<(), anyhow::Error> {
+        let (worktree, relative_path) = self
+            .find_worktree_for_abs_path(&abs_path, cx)
+            .ok_or_else(|| anyhow!("no worktree found for diagnostics"))?;
+        let project_path = ProjectPath {
+            worktree_id: worktree.read(cx).id(),
+            path: relative_path.into(),
+        };
+
         for buffer in self.open_buffers.values() {
             if let Some(buffer) = buffer.upgrade(cx) {
                 if buffer
@@ -893,13 +905,12 @@ impl Project {
                     .map_or(false, |file| *file.path() == project_path.path)
                 {
                     buffer.update(cx, |buffer, cx| {
-                        buffer.update_diagnostics(params.version, diagnostics.clone(), cx)
+                        buffer.update_diagnostics(version, diagnostics.clone(), cx)
                     })?;
                     break;
                 }
             }
         }
-
         worktree.update(cx, |worktree, cx| {
             worktree
                 .as_local_mut()
@@ -1268,14 +1279,14 @@ impl Project {
         })
     }
 
-    fn disk_based_diagnostics_started(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn disk_based_diagnostics_started(&mut self, cx: &mut ModelContext<Self>) {
         self.language_servers_with_diagnostics_running += 1;
         if self.language_servers_with_diagnostics_running == 1 {
             cx.emit(Event::DiskBasedDiagnosticsStarted);
         }
     }
 
-    fn disk_based_diagnostics_finished(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn disk_based_diagnostics_finished(&mut self, cx: &mut ModelContext<Self>) {
         cx.emit(Event::DiskBasedDiagnosticsUpdated);
         self.language_servers_with_diagnostics_running -= 1;
         if self.language_servers_with_diagnostics_running == 0 {
