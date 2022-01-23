@@ -189,6 +189,8 @@ pub trait File {
     fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext);
 
     fn as_any(&self) -> &dyn Any;
+
+    fn to_proto(&self) -> rpc::proto::File;
 }
 
 pub trait LocalFile: File {
@@ -352,6 +354,7 @@ impl Buffer {
     pub fn to_proto(&self) -> proto::Buffer {
         proto::Buffer {
             id: self.remote_id(),
+            file: self.file.as_ref().map(|f| f.to_proto()),
             visible_text: self.text.text(),
             deleted_text: self.text.deleted_text(),
             undo_map: self

@@ -157,6 +157,7 @@ messages!(
     UnregisterWorktree,
     UnshareProject,
     UpdateBuffer,
+    UpdateBufferFile,
     UpdateContacts,
     UpdateDiagnosticSummary,
     UpdateWorktree,

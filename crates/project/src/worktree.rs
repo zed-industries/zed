@@ -840,11 +840,6 @@ impl RemoteWorktree {
         let path: Arc<Path> = Arc::from(path);
         let path_string = path.to_string_lossy().to_string();
         cx.spawn_weak(move |this, mut cx| async move {
-            let entry = this
-                .upgrade(&cx)
-                .ok_or_else(|| anyhow!("worktree was closed"))?
-                .read_with(&cx, |tree, _| tree.entry_for_path(&path).cloned())
-                .ok_or_else(|| anyhow!("file does not exist"))?;
             let response = rpc
                 .request(proto::OpenBuffer {
                     project_id,
@@ -856,17 +851,15 @@ impl RemoteWorktree {
             let this = this
                 .upgrade(&cx)
                 .ok_or_else(|| anyhow!("worktree was closed"))?;
-            let file = File {
-                entry_id: Some(entry.id),
-                worktree: this.clone(),
-                path: entry.path,
-                mtime: entry.mtime,
-                is_local: false,
-            };
-            let remote_buffer = response.buffer.ok_or_else(|| anyhow!("empty buffer"))?;
-            Ok(cx.add_model(|cx| {
-                Buffer::from_proto(replica_id, remote_buffer, Some(Box::new(file)), cx).unwrap()
-            }))
+            let mut remote_buffer = response.buffer.ok_or_else(|| anyhow!("empty buffer"))?;
+            let file = remote_buffer
+                .file
+                .take()
+                .map(|proto| cx.read(|cx| File::from_proto(proto, this.clone(), cx)))
+                .transpose()?
+                .map(|file| Box::new(file) as Box<dyn language::File>);
+
+            Ok(cx.add_model(|cx| Buffer::from_proto(replica_id, remote_buffer, file, cx).unwrap()))
         })
     }
 
@@ -1499,6 +1492,15 @@ impl language::File for File {
     fn as_any(&self) -> &dyn Any {
         self
     }
+
+    fn to_proto(&self) -> rpc::proto::File {
+        rpc::proto::File {
+            worktree_id: self.worktree.id() as u64,
+            entry_id: self.entry_id.map(|entry_id| entry_id as u64),
+            path: self.path.to_string_lossy().into(),
+            mtime: Some(self.mtime.into()),
+        }
+    }
 }
 
 impl language::LocalFile for File {
@@ -1521,6 +1523,30 @@ impl language::LocalFile for File {
 }
 
 impl File {
+    pub fn from_proto(
+        proto: rpc::proto::File,
+        worktree: ModelHandle<Worktree>,
+        cx: &AppContext,
+    ) -> Result<Self> {
+        let worktree_id = worktree
+            .read(cx)
+            .as_remote()
+            .ok_or_else(|| anyhow!("not remote"))?
+            .id();
+
+        if worktree_id.to_proto() != proto.worktree_id {
+            return Err(anyhow!("worktree id does not match file"));
+        }
+
+        Ok(Self {
+            worktree,
+            path: Path::new(&proto.path).into(),
+            mtime: proto.mtime.ok_or_else(|| anyhow!("no timestamp"))?.into(),
+            entry_id: proto.entry_id.map(|entry_id| entry_id as usize),
+            is_local: false,
+        })
+    }
+
     pub fn from_dyn(file: Option<&dyn language::File>) -> Option<&Self> {
         file.and_then(|f| f.as_any().downcast_ref())
     }
