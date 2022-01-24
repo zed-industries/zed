@@ -13,6 +13,7 @@ use gpui::{
     WeakModelHandle,
 };
 use language::{
+    proto::{deserialize_anchor, serialize_anchor},
     range_from_lsp, Bias, Buffer, Diagnostic, DiagnosticEntry, File as _, Language,
     LanguageRegistry, Operation, PointUtf16, ToOffset, ToPointUtf16,
 };
@@ -336,6 +337,7 @@ impl Project {
                 client.subscribe_to_entity(remote_id, cx, Self::handle_save_buffer),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_format_buffer),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_get_definition),
             ]);
         }
     }
@@ -951,10 +953,10 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Definition>>> {
         let source_buffer_handle = source_buffer_handle.clone();
-        let buffer = source_buffer_handle.read(cx);
+        let source_buffer = source_buffer_handle.read(cx);
         let worktree;
         let buffer_abs_path;
-        if let Some(file) = File::from_dyn(buffer.file()) {
+        if let Some(file) = File::from_dyn(source_buffer.file()) {
             worktree = file.worktree.clone();
             buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
         } else {
@@ -962,11 +964,11 @@ impl Project {
         };
 
         if worktree.read(cx).as_local().is_some() {
-            let point = buffer.offset_to_point_utf16(position.to_offset(buffer));
+            let point = source_buffer.offset_to_point_utf16(position.to_offset(source_buffer));
             let buffer_abs_path = buffer_abs_path.unwrap();
             let lang_name;
             let lang_server;
-            if let Some(lang) = buffer.language() {
+            if let Some(lang) = source_buffer.language() {
                 lang_name = lang.name().to_string();
                 if let Some(server) = self
                     .language_servers
@@ -1061,9 +1063,67 @@ impl Project {
 
                 Ok(definitions)
             })
+        } else if let Some(project_id) = self.remote_id() {
+            let client = self.client.clone();
+            let replica_id = self.replica_id();
+            let request = proto::GetDefinition {
+                project_id,
+                buffer_id: source_buffer.remote_id(),
+                position: Some(serialize_anchor(&source_buffer.anchor_before(position))),
+            };
+            cx.spawn(|this, mut cx| async move {
+                let response = client.request(request).await?;
+                this.update(&mut cx, |this, cx| {
+                    let mut definitions = Vec::new();
+                    for definition in response.definitions {
+                        let target_buffer = match definition
+                            .buffer
+                            .ok_or_else(|| anyhow!("missing buffer"))?
+                        {
+                            proto::definition::Buffer::Id(id) => this
+                                .open_buffers
+                                .get(&(id as usize))
+                                .and_then(|buffer| buffer.upgrade(cx))
+                                .ok_or_else(|| anyhow!("no buffer exists for id {}", id))?,
+                            proto::definition::Buffer::State(mut buffer) => {
+                                let file = if let Some(file) = buffer.file.take() {
+                                    let worktree_id = WorktreeId::from_proto(file.worktree_id);
+                                    let worktree =
+                                        this.worktree_for_id(worktree_id, cx).ok_or_else(|| {
+                                            anyhow!("no worktree found for id {}", file.worktree_id)
+                                        })?;
+                                    let file = File::from_proto(file, worktree.clone(), cx)?;
+                                    Some(Box::new(file) as Box<dyn language::File>)
+                                } else {
+                                    None
+                                };
+
+                                let buffer = cx.add_model(|cx| {
+                                    Buffer::from_proto(replica_id, buffer, file, cx).unwrap()
+                                });
+                                this.register_buffer(&buffer, &worktree, cx)?;
+                                buffer
+                            }
+                        };
+                        let target_start = definition
+                            .target_start
+                            .and_then(deserialize_anchor)
+                            .ok_or_else(|| anyhow!("missing target start"))?;
+                        let target_end = definition
+                            .target_end
+                            .and_then(deserialize_anchor)
+                            .ok_or_else(|| anyhow!("missing target end"))?;
+                        definitions.push(Definition {
+                            target_buffer,
+                            target_range: target_start..target_end,
+                        })
+                    }
+
+                    Ok(definitions)
+                })
+            })
         } else {
-            log::info!("go to definition is not yet implemented for guests");
-            Task::ready(Ok(Default::default()))
+            Task::ready(Err(anyhow!("project does not have a remote id")))
         }
     }
 
@@ -1624,6 +1684,62 @@ impl Project {
             .log_err();
         })
         .detach();
+        Ok(())
+    }
+
+    pub fn handle_get_definition(
+        &mut self,
+        envelope: TypedEnvelope<proto::GetDefinition>,
+        rpc: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let receipt = envelope.receipt();
+        let sender_id = envelope.original_sender_id()?;
+        let source_buffer = self
+            .shared_buffers
+            .get(&sender_id)
+            .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
+            .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
+        let position = envelope
+            .payload
+            .position
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        if !source_buffer.read(cx).can_resolve(&position) {
+            return Err(anyhow!("cannot resolve position"));
+        }
+
+        let definitions = self.definition(&source_buffer, position, cx);
+        cx.spawn(|this, mut cx| async move {
+            let definitions = definitions.await?;
+            let mut response = proto::GetDefinitionResponse {
+                definitions: Default::default(),
+            };
+            this.update(&mut cx, |this, cx| {
+                for definition in definitions {
+                    let buffer_id = definition.target_buffer.read(cx).remote_id();
+                    let shared_buffers = this.shared_buffers.entry(sender_id).or_default();
+                    let buffer = match shared_buffers.entry(buffer_id) {
+                        hash_map::Entry::Occupied(_) => proto::definition::Buffer::Id(buffer_id),
+                        hash_map::Entry::Vacant(entry) => {
+                            entry.insert(definition.target_buffer.clone());
+                            proto::definition::Buffer::State(
+                                definition.target_buffer.read(cx).to_proto(),
+                            )
+                        }
+                    };
+                    response.definitions.push(proto::Definition {
+                        target_start: Some(serialize_anchor(&definition.target_range.start)),
+                        target_end: Some(serialize_anchor(&definition.target_range.end)),
+                        buffer: Some(buffer),
+                    });
+                }
+            });
+            rpc.respond(receipt, response).await?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
+
         Ok(())
     }
 

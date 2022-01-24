@@ -74,6 +74,11 @@ pub struct LeftProject {
     pub authorized_user_ids: Vec<UserId>,
 }
 
+pub struct SharedWorktree {
+    pub authorized_user_ids: Vec<UserId>,
+    pub connection_ids: Vec<ConnectionId>,
+}
+
 impl Store {
     pub fn add_connection(&mut self, connection_id: ConnectionId, user_id: UserId) {
         self.connections.insert(
@@ -393,7 +398,7 @@ impl Store {
         connection_id: ConnectionId,
         entries: HashMap<u64, proto::Entry>,
         diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
-    ) -> Option<Vec<UserId>> {
+    ) -> Option<SharedWorktree> {
         let project = self.projects.get_mut(&project_id)?;
         let worktree = project.worktrees.get_mut(&worktree_id)?;
         if project.host_connection_id == connection_id && project.share.is_some() {
@@ -401,7 +406,10 @@ impl Store {
                 entries,
                 diagnostic_summaries,
             });
-            Some(project.authorized_user_ids())
+            Some(SharedWorktree {
+                authorized_user_ids: project.authorized_user_ids(),
+                connection_ids: project.guest_connection_ids(),
+            })
         } else {
             None
         }

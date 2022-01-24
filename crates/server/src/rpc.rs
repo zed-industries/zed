@@ -17,7 +17,7 @@ use rpc::{
     Connection, ConnectionId, Peer, TypedEnvelope,
 };
 use sha1::{Digest as _, Sha1};
-use std::{any::TypeId, future::Future, mem, path::PathBuf, sync::Arc, time::Instant};
+use std::{any::TypeId, future::Future, path::PathBuf, sync::Arc, time::Instant};
 use store::{Store, Worktree};
 use surf::StatusCode;
 use tide::log;
@@ -74,6 +74,7 @@ impl Server {
             .add_handler(Server::update_diagnostic_summary)
             .add_handler(Server::disk_based_diagnostics_updating)
             .add_handler(Server::disk_based_diagnostics_updated)
+            .add_handler(Server::get_definition)
             .add_handler(Server::open_buffer)
             .add_handler(Server::close_buffer)
             .add_handler(Server::update_buffer)
@@ -479,26 +480,40 @@ impl Server {
             .worktree
             .as_mut()
             .ok_or_else(|| anyhow!("missing worktree"))?;
-        let entries = mem::take(&mut worktree.entries)
-            .into_iter()
-            .map(|entry| (entry.id, entry))
+        let entries = worktree
+            .entries
+            .iter()
+            .map(|entry| (entry.id, entry.clone()))
+            .collect();
+        let diagnostic_summaries = worktree
+            .diagnostic_summaries
+            .iter()
+            .map(|summary| (PathBuf::from(summary.path.clone()), summary.clone()))
             .collect();
 
-        let diagnostic_summaries = mem::take(&mut worktree.diagnostic_summaries)
-            .into_iter()
-            .map(|summary| (PathBuf::from(summary.path.clone()), summary))
-            .collect();
-
-        let contact_user_ids = self.state_mut().share_worktree(
+        let shared_worktree = self.state_mut().share_worktree(
             request.payload.project_id,
             worktree.id,
             request.sender_id,
             entries,
             diagnostic_summaries,
         );
-        if let Some(contact_user_ids) = contact_user_ids {
+        if let Some(shared_worktree) = shared_worktree {
+            broadcast(
+                request.sender_id,
+                shared_worktree.connection_ids,
+                |connection_id| {
+                    self.peer.forward_send(
+                        request.sender_id,
+                        connection_id,
+                        request.payload.clone(),
+                    )
+                },
+            )
+            .await?;
             self.peer.respond(request.receipt(), proto::Ack {}).await?;
-            self.update_contacts_for_users(&contact_user_ids).await?;
+            self.update_contacts_for_users(&shared_worktree.authorized_user_ids)
+                .await?;
         } else {
             self.peer
                 .respond_with_error(
@@ -591,6 +606,24 @@ impl Server {
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
         })
         .await?;
+        Ok(())
+    }
+
+    async fn get_definition(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::GetDefinition>,
+    ) -> tide::Result<()> {
+        let receipt = request.receipt();
+        let host_connection_id = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)
+            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?
+            .host_connection_id;
+        let response = self
+            .peer
+            .forward_request(request.sender_id, host_connection_id, request.payload)
+            .await?;
+        self.peer.respond(receipt, response).await?;
         Ok(())
     }
 
@@ -1156,8 +1189,8 @@ mod tests {
         editor::{Editor, EditorSettings, Input, MultiBuffer},
         fs::{FakeFs, Fs as _},
         language::{
-            tree_sitter_rust, Diagnostic, DiagnosticEntry, Language, LanguageConfig,
-            LanguageRegistry, LanguageServerConfig, Point,
+            tree_sitter_rust, AnchorRangeExt, Diagnostic, DiagnosticEntry, Language,
+            LanguageConfig, LanguageRegistry, LanguageServerConfig, Point,
         },
         lsp,
         project::{DiagnosticSummary, Project, ProjectPath},
@@ -2316,6 +2349,163 @@ mod tests {
             buffer_b.read_with(&cx_b, |buffer, _| buffer.text()),
             "let honey = two"
         );
+    }
+
+    #[gpui::test]
+    async fn test_definition(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+        cx_a.foreground().forbid_parking();
+        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(FakeFs::new());
+        fs.insert_tree(
+            "/root-1",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "a.rs": "const ONE: usize = b::TWO + b::THREE;",
+            }),
+        )
+        .await;
+        fs.insert_tree(
+            "/root-2",
+            json!({
+                "b.rs": "const TWO: usize = 2;\nconst THREE: usize = 3;",
+            }),
+        )
+        .await;
+
+        // Set up a fake language server.
+        let (language_server_config, mut fake_language_server) =
+            LanguageServerConfig::fake(cx_a.background()).await;
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Rust".to_string(),
+                    path_suffixes: vec!["rs".to_string()],
+                    language_server: Some(language_server_config),
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )));
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground()).await;
+        let client_a = server.create_client(&mut cx_a, "user_a").await;
+        let client_b = server.create_client(&mut cx_b, "user_b").await;
+
+        // Share a project as client A
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/root-1", false, cx)
+            })
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
+        project_a
+            .update(&mut cx_a, |p, cx| p.share(cx))
+            .await
+            .unwrap();
+
+        // Join the worktree as client B.
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+
+        // Open the file to be formatted on client B.
+        let buffer_b = cx_b
+            .background()
+            .spawn(project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
+            .await
+            .unwrap();
+
+        let definitions_1 = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b, 23, cx));
+        let (request_id, _) = fake_language_server
+            .receive_request::<lsp::request::GotoDefinition>()
+            .await;
+        fake_language_server
+            .respond(
+                request_id,
+                Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
+                    lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
+                    lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                ))),
+            )
+            .await;
+        let definitions_1 = definitions_1.await.unwrap();
+        cx_b.read(|cx| {
+            assert_eq!(definitions_1.len(), 1);
+            assert_eq!(project_b.read(cx).worktrees(cx).count(), 2);
+            let target_buffer = definitions_1[0].target_buffer.read(cx);
+            assert_eq!(
+                target_buffer.text(),
+                "const TWO: usize = 2;\nconst THREE: usize = 3;"
+            );
+            assert_eq!(
+                definitions_1[0].target_range.to_point(target_buffer),
+                Point::new(0, 6)..Point::new(0, 9)
+            );
+        });
+
+        // Try getting more definitions for the same buffer, ensuring the buffer gets reused from
+        // the previous call to `definition`.
+        let definitions_2 = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b, 33, cx));
+        let (request_id, _) = fake_language_server
+            .receive_request::<lsp::request::GotoDefinition>()
+            .await;
+        fake_language_server
+            .respond(
+                request_id,
+                Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
+                    lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
+                    lsp::Range::new(lsp::Position::new(1, 6), lsp::Position::new(1, 11)),
+                ))),
+            )
+            .await;
+        let definitions_2 = definitions_2.await.unwrap();
+        cx_b.read(|cx| {
+            assert_eq!(definitions_2.len(), 1);
+            assert_eq!(project_b.read(cx).worktrees(cx).count(), 2);
+            let target_buffer = definitions_2[0].target_buffer.read(cx);
+            assert_eq!(
+                target_buffer.text(),
+                "const TWO: usize = 2;\nconst THREE: usize = 3;"
+            );
+            assert_eq!(
+                definitions_2[0].target_range.to_point(target_buffer),
+                Point::new(1, 6)..Point::new(1, 11)
+            );
+        });
+        assert_eq!(
+            definitions_1[0].target_buffer,
+            definitions_2[0].target_buffer
+        );
+
+        cx_b.update(|_| {
+            drop(definitions_1);
+            drop(definitions_2);
+        });
+        project_b
+            .condition(&cx_b, |proj, cx| proj.worktrees(cx).count() == 1)
+            .await;
     }
 
     #[gpui::test]
