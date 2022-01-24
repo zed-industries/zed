@@ -524,11 +524,7 @@ impl Project {
                         // Record the fact that the buffer is no longer loading.
                         this.loading_buffers.remove(&project_path);
                         let buffer = load_result.map_err(Arc::new)?;
-                        this.open_buffers.insert(
-                            buffer.read(cx).remote_id() as usize,
-                            OpenBuffer::Loaded(buffer.downgrade()),
-                        );
-                        this.assign_language_to_buffer(&worktree, &buffer, cx);
+                        this.register_buffer(&buffer, &worktree, cx)?;
                         Ok(buffer)
                     }));
                 })
@@ -568,9 +564,7 @@ impl Project {
                 })
                 .await?;
             this.update(&mut cx, |this, cx| {
-                this.open_buffers
-                    .insert(buffer.id(), OpenBuffer::Loaded(buffer.downgrade()));
-                this.assign_language_to_buffer(&worktree, &buffer, cx);
+                this.assign_language_to_buffer(&buffer, &worktree, cx);
             });
             Ok(())
         })
@@ -618,10 +612,32 @@ impl Project {
         result
     }
 
+    fn register_buffer(
+        &mut self,
+        buffer: &ModelHandle<Buffer>,
+        worktree: &ModelHandle<Worktree>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        match self.open_buffers.insert(
+            buffer.read(cx).remote_id() as usize,
+            OpenBuffer::Loaded(buffer.downgrade()),
+        ) {
+            Some(OpenBuffer::Operations(pending_ops)) => {
+                buffer.update(cx, |buf, cx| buf.apply_ops(pending_ops, cx))?;
+            }
+            Some(OpenBuffer::Loaded(_)) => {
+                return Err(anyhow!("registered the same buffer twice"));
+            }
+            None => {}
+        }
+        self.assign_language_to_buffer(&buffer, &worktree, cx);
+        Ok(())
+    }
+
     fn assign_language_to_buffer(
         &mut self,
-        worktree: &ModelHandle<Worktree>,
         buffer: &ModelHandle<Buffer>,
+        worktree: &ModelHandle<Worktree>,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
         let (path, full_path) = {
