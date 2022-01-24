@@ -7,7 +7,7 @@ use rpc::proto;
 use std::sync::Arc;
 use text::*;
 
-pub use proto::{Buffer, SelectionSet};
+pub use proto::{Buffer, BufferState, SelectionSet};
 
 pub fn serialize_operation(operation: &Operation) -> proto::Operation {
     proto::Operation {

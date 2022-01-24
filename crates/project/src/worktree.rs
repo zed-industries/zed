@@ -367,17 +367,6 @@ impl Worktree {
         }
     }
 
-    pub fn load_buffer(
-        &mut self,
-        path: &Path,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<ModelHandle<Buffer>>> {
-        match self {
-            Worktree::Local(worktree) => worktree.load_buffer(path, cx),
-            Worktree::Remote(worktree) => worktree.load_buffer(path, cx),
-        }
-    }
-
     pub fn diagnostic_summaries<'a>(
         &'a self,
     ) -> impl Iterator<Item = (Arc<Path>, DiagnosticSummary)> + 'a {
@@ -834,41 +823,6 @@ impl LocalWorktree {
 }
 
 impl RemoteWorktree {
-    pub(crate) fn load_buffer(
-        &mut self,
-        path: &Path,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<ModelHandle<Buffer>>> {
-        let rpc = self.client.clone();
-        let replica_id = self.replica_id;
-        let project_id = self.project_id;
-        let remote_worktree_id = self.id();
-        let path: Arc<Path> = Arc::from(path);
-        let path_string = path.to_string_lossy().to_string();
-        cx.spawn_weak(move |this, mut cx| async move {
-            let response = rpc
-                .request(proto::OpenBuffer {
-                    project_id,
-                    worktree_id: remote_worktree_id.to_proto(),
-                    path: path_string,
-                })
-                .await?;
-
-            let this = this
-                .upgrade(&cx)
-                .ok_or_else(|| anyhow!("worktree was closed"))?;
-            let mut remote_buffer = response.buffer.ok_or_else(|| anyhow!("empty buffer"))?;
-            let file = remote_buffer
-                .file
-                .take()
-                .map(|proto| cx.read(|cx| File::from_proto(proto, this.clone(), cx)))
-                .transpose()?
-                .map(|file| Box::new(file) as Box<dyn language::File>);
-
-            Ok(cx.add_model(|cx| Buffer::from_proto(replica_id, remote_buffer, file, cx).unwrap()))
-        })
-    }
-
     fn snapshot(&self) -> Snapshot {
         self.snapshot.clone()
     }

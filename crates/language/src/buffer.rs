@@ -305,7 +305,7 @@ impl Buffer {
 
     pub fn from_proto(
         replica_id: ReplicaId,
-        message: proto::Buffer,
+        message: proto::BufferState,
         file: Option<Box<dyn File>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<Self> {
@@ -359,8 +359,8 @@ impl Buffer {
         Ok(this)
     }
 
-    pub fn to_proto(&self) -> proto::Buffer {
-        proto::Buffer {
+    pub fn to_proto(&self) -> proto::BufferState {
+        proto::BufferState {
             id: self.remote_id(),
             file: self.file.as_ref().map(|f| f.to_proto()),
             visible_text: self.text.text(),

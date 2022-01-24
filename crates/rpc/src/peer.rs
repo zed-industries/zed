@@ -410,9 +410,7 @@ mod tests {
                 .unwrap(),
             proto::OpenBufferResponse {
                 buffer: Some(proto::Buffer {
-                    id: 101,
-                    visible_text: "path/one content".to_string(),
-                    ..Default::default()
+                    variant: Some(proto::buffer::Variant::Id(0))
                 }),
             }
         );
@@ -431,10 +429,8 @@ mod tests {
                 .unwrap(),
             proto::OpenBufferResponse {
                 buffer: Some(proto::Buffer {
-                    id: 102,
-                    visible_text: "path/two content".to_string(),
-                    ..Default::default()
-                }),
+                    variant: Some(proto::buffer::Variant::Id(1))
+                })
             }
         );
 
@@ -460,9 +456,7 @@ mod tests {
                             assert_eq!(message.worktree_id, 1);
                             proto::OpenBufferResponse {
                                 buffer: Some(proto::Buffer {
-                                    id: 101,
-                                    visible_text: "path/one content".to_string(),
-                                    ..Default::default()
+                                    variant: Some(proto::buffer::Variant::Id(0)),
                                 }),
                             }
                         }
@@ -470,9 +464,7 @@ mod tests {
                             assert_eq!(message.worktree_id, 2);
                             proto::OpenBufferResponse {
                                 buffer: Some(proto::Buffer {
-                                    id: 102,
-                                    visible_text: "path/two content".to_string(),
-                                    ..Default::default()
+                                    variant: Some(proto::buffer::Variant::Id(1)),
                                 }),
                             }
                         }

@@ -1168,6 +1168,7 @@ mod tests {
     use gpui::{executor, ModelHandle, TestAppContext};
     use parking_lot::Mutex;
     use postage::{mpsc, watch};
+    use rand::prelude::*;
     use rpc::PeerId;
     use serde_json::json;
     use sqlx::types::time::OffsetDateTime;
@@ -2507,10 +2508,11 @@ mod tests {
             .await;
     }
 
-    #[gpui::test(iterations = 100, seed = 1)]
+    #[gpui::test]
     async fn test_open_buffer_while_getting_definition_pointing_to_it(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
+        mut rng: StdRng,
     ) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
@@ -2589,7 +2591,18 @@ mod tests {
             .await
             .unwrap();
 
-        let definitions = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
+        let definitions;
+        let buffer_b2;
+        if rng.gen() {
+            definitions = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
+            buffer_b2 =
+                project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "b.rs"), cx));
+        } else {
+            buffer_b2 =
+                project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "b.rs"), cx));
+            definitions = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
+        }
+
         let (request_id, _) = fake_language_server
             .receive_request::<lsp::request::GotoDefinition>()
             .await;
@@ -2603,10 +2616,7 @@ mod tests {
             )
             .await;
 
-        let buffer_b2 = project_b
-            .update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "b.rs"), cx))
-            .await
-            .unwrap();
+        let buffer_b2 = buffer_b2.await.unwrap();
         let definitions = definitions.await.unwrap();
         assert_eq!(definitions.len(), 1);
         assert_eq!(definitions[0].target_buffer, buffer_b2);

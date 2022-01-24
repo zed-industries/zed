@@ -147,12 +147,9 @@ message GetDefinitionResponse {
 }
 
 message Definition {
-    oneof buffer {
-        uint64 id = 1;
-        Buffer state = 2;
-    }
-    Anchor target_start = 3;
-    Anchor target_end = 4;
+    Buffer buffer = 1;
+    Anchor target_start = 2;
+    Anchor target_end = 3;
 }
 
 message OpenBuffer {
@@ -324,6 +321,13 @@ message Entry {
 }
 
 message Buffer {
+    oneof variant {
+        uint64 id = 1;
+        BufferState state = 2;
+    }
+}
+
+message BufferState {
     uint64 id = 1;
     optional File file = 2;
     string visible_text = 3;
