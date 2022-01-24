@@ -1520,6 +1520,28 @@ impl language::LocalFile for File {
         cx.background()
             .spawn(async move { fs.load(&abs_path).await })
     }
+
+    fn buffer_reloaded(
+        &self,
+        buffer_id: u64,
+        version: &clock::Global,
+        mtime: SystemTime,
+        cx: &mut MutableAppContext,
+    ) {
+        let worktree = self.worktree.read(cx).as_local().unwrap();
+        if let Some(project_id) = worktree.share.as_ref().map(|share| share.project_id) {
+            let rpc = worktree.client.clone();
+            let message = proto::BufferReloaded {
+                project_id,
+                buffer_id,
+                version: version.into(),
+                mtime: Some(mtime.into()),
+            };
+            cx.background()
+                .spawn(async move { rpc.send(message).await })
+                .detach_and_log_err(cx);
+        }
+    }
 }
 
 impl File {

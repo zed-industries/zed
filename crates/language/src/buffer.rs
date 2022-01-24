@@ -198,6 +198,14 @@ pub trait LocalFile: File {
     fn abs_path(&self, cx: &AppContext) -> PathBuf;
 
     fn load(&self, cx: &AppContext) -> Task<Result<String>>;
+
+    fn buffer_reloaded(
+        &self,
+        buffer_id: u64,
+        version: &clock::Global,
+        mtime: SystemTime,
+        cx: &mut MutableAppContext,
+    );
 }
 
 pub(crate) struct QueryCursorHandle(Option<QueryCursor>);
@@ -664,6 +672,21 @@ impl Buffer {
         cx.emit(Event::Saved);
     }
 
+    pub fn did_reload(
+        &mut self,
+        version: clock::Global,
+        mtime: SystemTime,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.saved_mtime = mtime;
+        self.saved_version = version;
+        if let Some(file) = self.file.as_ref().and_then(|f| f.as_local()) {
+            file.buffer_reloaded(self.remote_id(), &self.saved_version, self.saved_mtime, cx);
+        }
+        cx.emit(Event::Reloaded);
+        cx.notify();
+    }
+
     pub fn file_updated(
         &mut self,
         new_file: Box<dyn File>,
@@ -708,9 +731,7 @@ impl Buffer {
                                     .await;
                                 this.update(&mut cx, |this, cx| {
                                     if this.apply_diff(diff, cx) {
-                                        this.saved_version = this.version();
-                                        this.saved_mtime = new_mtime;
-                                        cx.emit(Event::Reloaded);
+                                        this.did_reload(this.version(), new_mtime, cx);
                                     }
                                 });
                             }

@@ -299,6 +299,7 @@ impl Project {
                     ),
                     client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
                     client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer_file),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_reloaded),
                     client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
                 ],
                 client,
@@ -1688,6 +1689,37 @@ impl Project {
                     .ok_or_else(|| anyhow!("missing mtime"))?
                     .into();
                 buffer.did_save(version, mtime, None, cx);
+                Result::<_, anyhow::Error>::Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
+    pub fn handle_buffer_reloaded(
+        &mut self,
+        envelope: TypedEnvelope<proto::BufferReloaded>,
+        _: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let payload = envelope.payload.clone();
+        let buffer = self
+            .open_buffers
+            .get(&(payload.buffer_id as usize))
+            .and_then(|buf| {
+                if let OpenBuffer::Loaded(buffer) = buf {
+                    buffer.upgrade(cx)
+                } else {
+                    None
+                }
+            });
+        if let Some(buffer) = buffer {
+            buffer.update(cx, |buffer, cx| {
+                let version = payload.version.try_into()?;
+                let mtime = payload
+                    .mtime
+                    .ok_or_else(|| anyhow!("missing mtime"))?
+                    .into();
+                buffer.did_reload(version, mtime, cx);
                 Result::<_, anyhow::Error>::Ok(())
             })?;
         }

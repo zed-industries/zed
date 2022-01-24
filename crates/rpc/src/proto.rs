@@ -122,6 +122,7 @@ macro_rules! entity_messages {
 messages!(
     Ack,
     AddProjectCollaborator,
+    BufferReloaded,
     BufferSaved,
     ChannelMessageSent,
     CloseBuffer,
@@ -184,6 +185,7 @@ request_messages!(
 entity_messages!(
     project_id,
     AddProjectCollaborator,
+    BufferReloaded,
     BufferSaved,
     CloseBuffer,
     DiskBasedDiagnosticsUpdated,
