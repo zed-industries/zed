@@ -33,7 +33,6 @@ pub enum Foreground {
         dispatcher: Arc<dyn platform::Dispatcher>,
         _not_send_or_sync: PhantomData<Rc<()>>,
     },
-    Test(smol::LocalExecutor<'static>),
     Deterministic(Arc<Deterministic>),
 }
 
@@ -438,10 +437,6 @@ impl Foreground {
         }
     }
 
-    pub fn test() -> Self {
-        Self::Test(smol::LocalExecutor::new())
-    }
-
     pub fn spawn<T: 'static>(&self, future: impl Future<Output = T> + 'static) -> Task<T> {
         let future = any_local_future(future);
         let any_task = match self {
@@ -460,7 +455,6 @@ impl Foreground {
                 }
                 spawn_inner(future, dispatcher)
             }
-            Self::Test(executor) => executor.spawn(future),
         };
         Task::local(any_task)
     }
@@ -470,7 +464,6 @@ impl Foreground {
         let any_value = match self {
             Self::Deterministic(executor) => executor.run(future),
             Self::Platform { .. } => panic!("you can't call run on a platform foreground executor"),
-            Self::Test(executor) => smol::block_on(executor.run(future)),
         };
         *any_value.downcast().unwrap()
     }
