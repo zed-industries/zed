@@ -77,6 +77,8 @@ impl Server {
             .add_handler(Server::open_buffer)
             .add_handler(Server::close_buffer)
             .add_handler(Server::update_buffer)
+            .add_handler(Server::update_buffer_file)
+            .add_handler(Server::buffer_reloaded)
             .add_handler(Server::buffer_saved)
             .add_handler(Server::save_buffer)
             .add_handler(Server::format_buffer)
@@ -701,6 +703,38 @@ impl Server {
         })
         .await?;
         self.peer.respond(request.receipt(), proto::Ack {}).await?;
+        Ok(())
+    }
+
+    async fn update_buffer_file(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::UpdateBufferFile>,
+    ) -> tide::Result<()> {
+        let receiver_ids = self
+            .state()
+            .project_connection_ids(request.payload.project_id, request.sender_id)
+            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+        broadcast(request.sender_id, receiver_ids, |connection_id| {
+            self.peer
+                .forward_send(request.sender_id, connection_id, request.payload.clone())
+        })
+        .await?;
+        Ok(())
+    }
+
+    async fn buffer_reloaded(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::BufferReloaded>,
+    ) -> tide::Result<()> {
+        let receiver_ids = self
+            .state()
+            .project_connection_ids(request.payload.project_id, request.sender_id)
+            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+        broadcast(request.sender_id, receiver_ids, |connection_id| {
+            self.peer
+                .forward_send(request.sender_id, connection_id, request.payload.clone())
+        })
+        .await?;
         Ok(())
     }
 
@@ -1470,9 +1504,7 @@ mod tests {
             .condition(&mut cx_a, |buf, _| buf.text() == "i-am-c, i-am-b, i-am-a")
             .await;
         buffer_b
-            .condition(&mut cx_b, |buf, _| {
-                dbg!(buf.text()) == "i-am-c, i-am-b, i-am-a"
-            })
+            .condition(&mut cx_b, |buf, _| buf.text() == "i-am-c, i-am-b, i-am-a")
             .await;
         buffer_c
             .condition(&mut cx_c, |buf, _| buf.text() == "i-am-c, i-am-b, i-am-a")
@@ -1490,7 +1522,10 @@ mod tests {
         buffer_b.read_with(&cx_b, |buf, _| assert!(!buf.is_dirty()));
         buffer_c.condition(&cx_c, |buf, _| !buf.is_dirty()).await;
 
-        // Make changes on host's file system, see those changes on the guests.
+        // Make changes on host's file system, see those changes on guest worktrees.
+        fs.rename("/a/file1".as_ref(), "/a/file1-renamed".as_ref())
+            .await
+            .unwrap();
         fs.rename("/a/file2".as_ref(), "/a/file3".as_ref())
             .await
             .unwrap();
@@ -1498,18 +1533,29 @@ mod tests {
             .await
             .unwrap();
 
+        worktree_a
+            .condition(&cx_a, |tree, _| tree.file_count() == 4)
+            .await;
         worktree_b
             .condition(&cx_b, |tree, _| tree.file_count() == 4)
             .await;
         worktree_c
             .condition(&cx_c, |tree, _| tree.file_count() == 4)
             .await;
+        worktree_a.read_with(&cx_a, |tree, _| {
+            assert_eq!(
+                tree.paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>(),
+                &[".zed.toml", "file1-renamed", "file3", "file4"]
+            )
+        });
         worktree_b.read_with(&cx_b, |tree, _| {
             assert_eq!(
                 tree.paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
-                &[".zed.toml", "file1", "file3", "file4"]
+                &[".zed.toml", "file1-renamed", "file3", "file4"]
             )
         });
         worktree_c.read_with(&cx_c, |tree, _| {
@@ -1517,9 +1563,26 @@ mod tests {
                 tree.paths()
                     .map(|p| p.to_string_lossy())
                     .collect::<Vec<_>>(),
-                &[".zed.toml", "file1", "file3", "file4"]
+                &[".zed.toml", "file1-renamed", "file3", "file4"]
             )
         });
+
+        // Ensure buffer files are updated as well.
+        buffer_a
+            .condition(&cx_a, |buf, _| {
+                buf.file().unwrap().path().to_str() == Some("file1-renamed")
+            })
+            .await;
+        buffer_b
+            .condition(&cx_b, |buf, _| {
+                buf.file().unwrap().path().to_str() == Some("file1-renamed")
+            })
+            .await;
+        buffer_c
+            .condition(&cx_c, |buf, _| {
+                buf.file().unwrap().path().to_str() == Some("file1-renamed")
+            })
+            .await;
     }
 
     #[gpui::test]
@@ -1611,6 +1674,88 @@ mod tests {
         buffer_b.update(&mut cx_b, |buf, cx| buf.edit([0..0], "hello ", cx));
         buffer_b.read_with(&cx_b, |buf, _| {
             assert!(buf.is_dirty());
+            assert!(!buf.has_conflict());
+        });
+    }
+
+    #[gpui::test]
+    async fn test_buffer_reloading(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+        cx_a.foreground().forbid_parking();
+        let lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(FakeFs::new());
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground()).await;
+        let client_a = server.create_client(&mut cx_a, "user_a").await;
+        let client_b = server.create_client(&mut cx_b, "user_b").await;
+
+        // Share a project as client A
+        fs.insert_tree(
+            "/dir",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b", "user_c"]"#,
+                "a.txt": "a-contents",
+            }),
+        )
+        .await;
+
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/dir", false, cx)
+            })
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
+        project_a
+            .update(&mut cx_a, |p, cx| p.share(cx))
+            .await
+            .unwrap();
+
+        // Join that project as client B
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+        let _worktree_b = project_b.update(&mut cx_b, |p, cx| p.worktrees(cx).next().unwrap());
+
+        // Open a buffer as client B
+        let buffer_b = project_b
+            .update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+            .await
+            .unwrap();
+        buffer_b.read_with(&cx_b, |buf, _| {
+            assert!(!buf.is_dirty());
+            assert!(!buf.has_conflict());
+        });
+
+        fs.save(Path::new("/dir/a.txt"), &"new contents".into())
+            .await
+            .unwrap();
+        buffer_b
+            .condition(&cx_b, |buf, _| {
+                buf.text() == "new contents" && !buf.is_dirty()
+            })
+            .await;
+        buffer_b.read_with(&cx_b, |buf, _| {
             assert!(!buf.has_conflict());
         });
     }

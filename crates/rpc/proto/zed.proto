@@ -33,25 +33,27 @@ message Envelope {
         OpenBufferResponse open_buffer_response = 25;
         CloseBuffer close_buffer = 26;
         UpdateBuffer update_buffer = 27;
-        SaveBuffer save_buffer = 28;
-        BufferSaved buffer_saved = 29;
-        FormatBuffer format_buffer = 30;
+        UpdateBufferFile update_buffer_file = 28;
+        SaveBuffer save_buffer = 29;
+        BufferSaved buffer_saved = 30;
+        BufferReloaded buffer_reloaded = 31;
+        FormatBuffer format_buffer = 32;
 
-        GetChannels get_channels = 31;
-        GetChannelsResponse get_channels_response = 32;
-        JoinChannel join_channel = 33;
-        JoinChannelResponse join_channel_response = 34;
-        LeaveChannel leave_channel = 35;
-        SendChannelMessage send_channel_message = 36;
-        SendChannelMessageResponse send_channel_message_response = 37;
-        ChannelMessageSent channel_message_sent = 38;
-        GetChannelMessages get_channel_messages = 39;
-        GetChannelMessagesResponse get_channel_messages_response = 40;
+        GetChannels get_channels = 33;
+        GetChannelsResponse get_channels_response = 34;
+        JoinChannel join_channel = 35;
+        JoinChannelResponse join_channel_response = 36;
+        LeaveChannel leave_channel = 37;
+        SendChannelMessage send_channel_message = 38;
+        SendChannelMessageResponse send_channel_message_response = 39;
+        ChannelMessageSent channel_message_sent = 40;
+        GetChannelMessages get_channel_messages = 41;
+        GetChannelMessagesResponse get_channel_messages_response = 42;
 
-        UpdateContacts update_contacts = 41;
+        UpdateContacts update_contacts = 43;
 
-        GetUsers get_users = 42;
-        GetUsersResponse get_users_response = 43;
+        GetUsers get_users = 44;
+        GetUsersResponse get_users_response = 45;
     }
 }
 
@@ -88,9 +90,9 @@ message JoinProject {
 }
 
 message JoinProjectResponse {
-    uint32 replica_id = 2;
-    repeated Worktree worktrees = 3;
-    repeated Collaborator collaborators = 4;
+    uint32 replica_id = 1;
+    repeated Worktree worktrees = 2;
+    repeated Collaborator collaborators = 3;
 }
 
 message LeaveProject {
@@ -150,7 +152,13 @@ message CloseBuffer {
 message UpdateBuffer {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
-    repeated Operation operations = 4;
+    repeated Operation operations = 3;
+}
+
+message UpdateBufferFile {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    File file = 3;
 }
 
 message SaveBuffer {
@@ -159,6 +167,13 @@ message SaveBuffer {
 }
 
 message BufferSaved {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+    Timestamp mtime = 4;
+}
+
+message BufferReloaded {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     repeated VectorClockEntry version = 3;
@@ -177,11 +192,11 @@ message UpdateDiagnosticSummary {
 }
 
 message DiagnosticSummary {
-    string path = 3;
-    uint32 error_count = 4;
-    uint32 warning_count = 5;
-    uint32 info_count = 6;
-    uint32 hint_count = 7;
+    string path = 1;
+    uint32 error_count = 2;
+    uint32 warning_count = 3;
+    uint32 info_count = 4;
+    uint32 hint_count = 5;
 }
 
 message DiskBasedDiagnosticsUpdating {
@@ -270,6 +285,13 @@ message Worktree {
     bool weak = 5;
 }
 
+message File {
+    uint64 worktree_id = 1;
+    optional uint64 entry_id = 2;
+    string path = 3;
+    Timestamp mtime = 4;
+}
+
 message Entry {
     uint64 id = 1;
     bool is_dir = 2;
@@ -282,15 +304,16 @@ message Entry {
 
 message Buffer {
     uint64 id = 1;
-    string visible_text = 2;
-    string deleted_text = 3;
-    repeated BufferFragment fragments = 4;
-    repeated UndoMapEntry undo_map = 5;
-    repeated VectorClockEntry version = 6;
-    repeated SelectionSet selections = 7;
-    repeated Diagnostic diagnostics = 8;
-    uint32 lamport_timestamp = 9;
-    repeated Operation deferred_operations = 10;
+    optional File file = 2;
+    string visible_text = 3;
+    string deleted_text = 4;
+    repeated BufferFragment fragments = 5;
+    repeated UndoMapEntry undo_map = 6;
+    repeated VectorClockEntry version = 7;
+    repeated SelectionSet selections = 8;
+    repeated Diagnostic diagnostics = 9;
+    uint32 lamport_timestamp = 10;
+    repeated Operation deferred_operations = 11;
 }
 
 message BufferFragment {
@@ -299,7 +322,7 @@ message BufferFragment {
     uint32 lamport_timestamp = 3;
     uint32 insertion_offset = 4;
     uint32 len = 5;
-    bool visible =  6;
+    bool visible = 6;
     repeated VectorClockEntry deletions = 7;
     repeated VectorClockEntry max_undos = 8;
 }
@@ -383,8 +406,8 @@ message Operation {
 
     message UpdateSelections {
         uint32 replica_id = 1;
-        uint32 lamport_timestamp = 3;
-        repeated Selection selections = 4;
+        uint32 lamport_timestamp = 2;
+        repeated Selection selections = 3;
     }
 }
 

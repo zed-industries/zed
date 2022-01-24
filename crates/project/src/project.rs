@@ -298,6 +298,8 @@ impl Project {
                         Self::handle_disk_based_diagnostics_updated,
                     ),
                     client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer_file),
+                    client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_reloaded),
                     client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
                 ],
                 client,
@@ -624,7 +626,7 @@ impl Project {
     ) -> Option<()> {
         let (path, full_path) = {
             let file = buffer.read(cx).file()?;
-            (file.path().clone(), file.full_path())
+            (file.path().clone(), file.full_path(cx))
         };
 
         // If the buffer has a language, set it and start/assign the language server
@@ -938,7 +940,7 @@ impl Project {
         let buffer_abs_path;
         if let Some(file) = File::from_dyn(buffer.file()) {
             worktree = file.worktree.clone();
-            buffer_abs_path = file.abs_path();
+            buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
         } else {
             return Task::ready(Err(anyhow!("buffer does not belong to any worktree")));
         };
@@ -1136,10 +1138,12 @@ impl Project {
 
     fn add_worktree(&mut self, worktree: &ModelHandle<Worktree>, cx: &mut ModelContext<Self>) {
         cx.observe(&worktree, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&worktree, |this, worktree, _, cx| {
-            this.update_open_buffers(worktree, cx)
-        })
-        .detach();
+        if worktree.read(cx).is_local() {
+            cx.subscribe(&worktree, |this, worktree, _, cx| {
+                this.update_local_worktree_buffers(worktree, cx);
+            })
+            .detach();
+        }
 
         let push_weak_handle = {
             let worktree = worktree.read(cx);
@@ -1161,14 +1165,12 @@ impl Project {
         cx.notify();
     }
 
-    fn update_open_buffers(
+    fn update_local_worktree_buffers(
         &mut self,
         worktree_handle: ModelHandle<Worktree>,
         cx: &mut ModelContext<Self>,
     ) {
-        let local = worktree_handle.read(cx).is_local();
         let snapshot = worktree_handle.read(cx).snapshot();
-        let worktree_path = snapshot.abs_path();
         let mut buffers_to_delete = Vec::new();
         for (buffer_id, buffer) in &self.open_buffers {
             if let OpenBuffer::Loaded(buffer) = buffer {
@@ -1184,8 +1186,7 @@ impl Project {
                                 .and_then(|entry_id| snapshot.entry_for_id(entry_id))
                             {
                                 File {
-                                    is_local: local,
-                                    worktree_path: worktree_path.clone(),
+                                    is_local: true,
                                     entry_id: Some(entry.id),
                                     mtime: entry.mtime,
                                     path: entry.path.clone(),
@@ -1195,8 +1196,7 @@ impl Project {
                                 snapshot.entry_for_path(old_file.path().as_ref())
                             {
                                 File {
-                                    is_local: local,
-                                    worktree_path: worktree_path.clone(),
+                                    is_local: true,
                                     entry_id: Some(entry.id),
                                     mtime: entry.mtime,
                                     path: entry.path.clone(),
@@ -1204,8 +1204,7 @@ impl Project {
                                 }
                             } else {
                                 File {
-                                    is_local: local,
-                                    worktree_path: worktree_path.clone(),
+                                    is_local: true,
                                     entry_id: None,
                                     path: old_file.path().clone(),
                                     mtime: old_file.mtime(),
@@ -1213,9 +1212,18 @@ impl Project {
                                 }
                             };
 
-                            if let Some(task) = buffer.file_updated(Box::new(new_file), cx) {
-                                task.detach();
+                            if let Some(project_id) = self.remote_id() {
+                                let client = self.client.clone();
+                                let message = proto::UpdateBufferFile {
+                                    project_id,
+                                    buffer_id: *buffer_id as u64,
+                                    file: Some(new_file.to_proto()),
+                                };
+                                cx.foreground()
+                                    .spawn(async move { client.send(message).await })
+                                    .detach_and_log_err(cx);
                             }
+                            buffer.file_updated(Box::new(new_file), cx).detach();
                         }
                     });
                 } else {
@@ -1496,6 +1504,31 @@ impl Project {
         Ok(())
     }
 
+    pub fn handle_update_buffer_file(
+        &mut self,
+        envelope: TypedEnvelope<proto::UpdateBufferFile>,
+        _: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let payload = envelope.payload.clone();
+        let buffer_id = payload.buffer_id as usize;
+        let file = payload.file.ok_or_else(|| anyhow!("invalid file"))?;
+        let worktree = self
+            .worktree_for_id(WorktreeId::from_proto(file.worktree_id), cx)
+            .ok_or_else(|| anyhow!("no such worktree"))?;
+        let file = File::from_proto(file, worktree.clone(), cx)?;
+        let buffer = self
+            .open_buffers
+            .get_mut(&buffer_id)
+            .and_then(|b| b.upgrade(cx))
+            .ok_or_else(|| anyhow!("no such buffer"))?;
+        buffer.update(cx, |buffer, cx| {
+            buffer.file_updated(Box::new(file), cx).detach();
+        });
+
+        Ok(())
+    }
+
     pub fn handle_save_buffer(
         &mut self,
         envelope: TypedEnvelope<proto::SaveBuffer>,
@@ -1656,6 +1689,37 @@ impl Project {
                     .ok_or_else(|| anyhow!("missing mtime"))?
                     .into();
                 buffer.did_save(version, mtime, None, cx);
+                Result::<_, anyhow::Error>::Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
+    pub fn handle_buffer_reloaded(
+        &mut self,
+        envelope: TypedEnvelope<proto::BufferReloaded>,
+        _: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let payload = envelope.payload.clone();
+        let buffer = self
+            .open_buffers
+            .get(&(payload.buffer_id as usize))
+            .and_then(|buf| {
+                if let OpenBuffer::Loaded(buffer) = buf {
+                    buffer.upgrade(cx)
+                } else {
+                    None
+                }
+            });
+        if let Some(buffer) = buffer {
+            buffer.update(cx, |buffer, cx| {
+                let version = payload.version.try_into()?;
+                let mtime = payload
+                    .mtime
+                    .ok_or_else(|| anyhow!("missing mtime"))?
+                    .into();
+                buffer.did_reload(version, mtime, cx);
                 Result::<_, anyhow::Error>::Ok(())
             })?;
         }
@@ -2185,8 +2249,13 @@ mod tests {
         cx.update(|cx| {
             let target_buffer = definition.target_buffer.read(cx);
             assert_eq!(
-                target_buffer.file().unwrap().abs_path(),
-                Some(dir.path().join("a.rs"))
+                target_buffer
+                    .file()
+                    .unwrap()
+                    .as_local()
+                    .unwrap()
+                    .abs_path(cx),
+                dir.path().join("a.rs")
             );
             assert_eq!(definition.target_range.to_offset(target_buffer), 9..10);
             assert_eq!(
@@ -2432,7 +2501,7 @@ mod tests {
                 .as_remote_mut()
                 .unwrap()
                 .snapshot
-                .apply_update(update_message)
+                .apply_remote_update(update_message)
                 .unwrap();
 
             assert_eq!(

@@ -156,21 +156,20 @@ pub enum Event {
 }
 
 pub trait File {
+    fn as_local(&self) -> Option<&dyn LocalFile>;
+
     fn mtime(&self) -> SystemTime;
 
     /// Returns the path of this file relative to the worktree's root directory.
     fn path(&self) -> &Arc<Path>;
 
-    /// Returns the absolute path of this file.
-    fn abs_path(&self) -> Option<PathBuf>;
-
     /// Returns the path of this file relative to the worktree's parent directory (this means it
     /// includes the name of the worktree's root folder).
-    fn full_path(&self) -> PathBuf;
+    fn full_path(&self, cx: &AppContext) -> PathBuf;
 
     /// Returns the last component of this handle's absolute path. If this handle refers to the root
     /// of its worktree, then this method will return the name of the worktree itself.
-    fn file_name(&self) -> Option<OsString>;
+    fn file_name(&self, cx: &AppContext) -> OsString;
 
     fn is_deleted(&self) -> bool;
 
@@ -182,8 +181,6 @@ pub trait File {
         cx: &mut MutableAppContext,
     ) -> Task<Result<(clock::Global, SystemTime)>>;
 
-    fn load_local(&self, cx: &AppContext) -> Option<Task<Result<String>>>;
-
     fn format_remote(&self, buffer_id: u64, cx: &mut MutableAppContext)
         -> Option<Task<Result<()>>>;
 
@@ -192,6 +189,23 @@ pub trait File {
     fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext);
 
     fn as_any(&self) -> &dyn Any;
+
+    fn to_proto(&self) -> rpc::proto::File;
+}
+
+pub trait LocalFile: File {
+    /// Returns the absolute path of this file.
+    fn abs_path(&self, cx: &AppContext) -> PathBuf;
+
+    fn load(&self, cx: &AppContext) -> Task<Result<String>>;
+
+    fn buffer_reloaded(
+        &self,
+        buffer_id: u64,
+        version: &clock::Global,
+        mtime: SystemTime,
+        cx: &mut MutableAppContext,
+    );
 }
 
 pub(crate) struct QueryCursorHandle(Option<QueryCursor>);
@@ -348,6 +362,7 @@ impl Buffer {
     pub fn to_proto(&self) -> proto::Buffer {
         proto::Buffer {
             id: self.remote_id(),
+            file: self.file.as_ref().map(|f| f.to_proto()),
             visible_text: self.text.text(),
             deleted_text: self.text.deleted_text(),
             undo_map: self
@@ -457,7 +472,7 @@ impl Buffer {
 
         if let Some(LanguageServerState { server, .. }) = self.language_server.as_ref() {
             let server = server.clone();
-            let abs_path = file.abs_path().unwrap();
+            let abs_path = file.as_local().unwrap().abs_path(cx);
             let version = self.version();
             cx.spawn(|this, mut cx| async move {
                 let edits = server
@@ -619,7 +634,7 @@ impl Buffer {
             None
         };
 
-        self.update_language_server();
+        self.update_language_server(cx);
     }
 
     pub fn did_save(
@@ -634,7 +649,11 @@ impl Buffer {
         if let Some(new_file) = new_file {
             self.file = Some(new_file);
         }
-        if let Some(state) = &self.language_server {
+        if let Some((state, local_file)) = &self
+            .language_server
+            .as_ref()
+            .zip(self.file.as_ref().and_then(|f| f.as_local()))
+        {
             cx.background()
                 .spawn(
                     state
@@ -642,10 +661,7 @@ impl Buffer {
                         .notify::<lsp::notification::DidSaveTextDocument>(
                             lsp::DidSaveTextDocumentParams {
                                 text_document: lsp::TextDocumentIdentifier {
-                                    uri: lsp::Url::from_file_path(
-                                        self.file.as_ref().unwrap().abs_path().unwrap(),
-                                    )
-                                    .unwrap(),
+                                    uri: lsp::Url::from_file_path(local_file.abs_path(cx)).unwrap(),
                                 },
                                 text: None,
                             },
@@ -656,14 +672,33 @@ impl Buffer {
         cx.emit(Event::Saved);
     }
 
+    pub fn did_reload(
+        &mut self,
+        version: clock::Global,
+        mtime: SystemTime,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.saved_mtime = mtime;
+        self.saved_version = version;
+        if let Some(file) = self.file.as_ref().and_then(|f| f.as_local()) {
+            file.buffer_reloaded(self.remote_id(), &self.saved_version, self.saved_mtime, cx);
+        }
+        cx.emit(Event::Reloaded);
+        cx.notify();
+    }
+
     pub fn file_updated(
         &mut self,
         new_file: Box<dyn File>,
         cx: &mut ModelContext<Self>,
-    ) -> Option<Task<()>> {
-        let old_file = self.file.as_ref()?;
+    ) -> Task<()> {
+        let old_file = if let Some(file) = self.file.as_ref() {
+            file
+        } else {
+            return Task::ready(());
+        };
         let mut file_changed = false;
-        let mut task = None;
+        let mut task = Task::ready(());
 
         if new_file.path() != old_file.path() {
             file_changed = true;
@@ -682,10 +717,12 @@ impl Buffer {
                 file_changed = true;
 
                 if !self.is_dirty() {
-                    task = Some(cx.spawn(|this, mut cx| {
+                    task = cx.spawn(|this, mut cx| {
                         async move {
                             let new_text = this.read_with(&cx, |this, cx| {
-                                this.file.as_ref().and_then(|file| file.load_local(cx))
+                                this.file
+                                    .as_ref()
+                                    .and_then(|file| file.as_local().map(|f| f.load(cx)))
                             });
                             if let Some(new_text) = new_text {
                                 let new_text = new_text.await?;
@@ -694,9 +731,7 @@ impl Buffer {
                                     .await;
                                 this.update(&mut cx, |this, cx| {
                                     if this.apply_diff(diff, cx) {
-                                        this.saved_version = this.version();
-                                        this.saved_mtime = new_mtime;
-                                        cx.emit(Event::Reloaded);
+                                        this.did_reload(this.version(), new_mtime, cx);
                                     }
                                 });
                             }
@@ -704,7 +739,7 @@ impl Buffer {
                         }
                         .log_err()
                         .map(drop)
-                    }));
+                    });
                 }
             }
         }
@@ -1226,7 +1261,7 @@ impl Buffer {
         self.set_active_selections(Arc::from([]), cx);
     }
 
-    fn update_language_server(&mut self) {
+    fn update_language_server(&mut self, cx: &AppContext) {
         let language_server = if let Some(language_server) = self.language_server.as_mut() {
             language_server
         } else {
@@ -1235,9 +1270,8 @@ impl Buffer {
         let abs_path = self
             .file
             .as_ref()
-            .map_or(Path::new("/").to_path_buf(), |file| {
-                file.abs_path().unwrap()
-            });
+            .and_then(|f| f.as_local())
+            .map_or(Path::new("/").to_path_buf(), |file| file.abs_path(cx));
 
         let version = post_inc(&mut language_server.next_version);
         let snapshot = LanguageServerSnapshot {
@@ -1381,7 +1415,7 @@ impl Buffer {
         }
 
         self.reparse(cx);
-        self.update_language_server();
+        self.update_language_server(cx);
 
         cx.emit(Event::Edited);
         if !was_dirty {
