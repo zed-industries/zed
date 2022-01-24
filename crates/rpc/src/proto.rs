@@ -198,6 +198,7 @@ entity_messages!(
     UnregisterWorktree,
     UnshareProject,
     UpdateBuffer,
+    UpdateBufferFile,
     UpdateDiagnosticSummary,
     UpdateWorktree,
 );

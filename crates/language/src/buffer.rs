@@ -668,10 +668,14 @@ impl Buffer {
         &mut self,
         new_file: Box<dyn File>,
         cx: &mut ModelContext<Self>,
-    ) -> Option<Task<()>> {
-        let old_file = self.file.as_ref()?;
+    ) -> Task<()> {
+        let old_file = if let Some(file) = self.file.as_ref() {
+            file
+        } else {
+            return Task::ready(());
+        };
         let mut file_changed = false;
-        let mut task = None;
+        let mut task = Task::ready(());
 
         if new_file.path() != old_file.path() {
             file_changed = true;
@@ -690,7 +694,7 @@ impl Buffer {
                 file_changed = true;
 
                 if !self.is_dirty() {
-                    task = Some(cx.spawn(|this, mut cx| {
+                    task = cx.spawn(|this, mut cx| {
                         async move {
                             let new_text = this.read_with(&cx, |this, cx| {
                                 this.file
@@ -714,7 +718,7 @@ impl Buffer {
                         }
                         .log_err()
                         .map(drop)
-                    }));
+                    });
                 }
             }
         }
