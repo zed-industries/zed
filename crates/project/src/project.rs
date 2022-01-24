@@ -247,8 +247,10 @@ impl Project {
 
         let mut worktrees = Vec::new();
         for worktree in response.worktrees {
-            worktrees
-                .push(Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx).await?);
+            let (worktree, load_task) = cx
+                .update(|cx| Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx));
+            worktrees.push(worktree);
+            load_task.detach();
         }
 
         let user_ids = response
@@ -1464,16 +1466,9 @@ impl Project {
             .payload
             .worktree
             .ok_or_else(|| anyhow!("invalid worktree"))?;
-        cx.spawn(|this, mut cx| {
-            async move {
-                let worktree =
-                    Worktree::remote(remote_id, replica_id, worktree, client, &mut cx).await?;
-                this.update(&mut cx, |this, cx| this.add_worktree(&worktree, cx));
-                Ok(())
-            }
-            .log_err()
-        })
-        .detach();
+        let (worktree, load_task) = Worktree::remote(remote_id, replica_id, worktree, client, cx);
+        self.add_worktree(&worktree, cx);
+        load_task.detach();
         Ok(())
     }
 
@@ -2551,15 +2546,16 @@ mod tests {
 
         // Create a remote copy of this worktree.
         let initial_snapshot = tree.read_with(&cx, |tree, _| tree.snapshot());
-        let remote = Worktree::remote(
-            1,
-            1,
-            initial_snapshot.to_proto(&Default::default(), Default::default()),
-            rpc.clone(),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
+        let (remote, load_task) = cx.update(|cx| {
+            Worktree::remote(
+                1,
+                1,
+                initial_snapshot.to_proto(&Default::default(), Default::default()),
+                rpc.clone(),
+                cx,
+            )
+        });
+        load_task.await;
 
         cx.read(|cx| {
             assert!(!buffer2.read(cx).is_dirty());
