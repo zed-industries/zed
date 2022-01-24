@@ -1794,7 +1794,7 @@ mod tests {
         });
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 100)]
     async fn test_editing_while_guest_opens_buffer(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
