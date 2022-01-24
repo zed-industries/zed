@@ -34,12 +34,14 @@ impl Connection {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn in_memory() -> (Self, Self, postage::watch::Sender<Option<()>>) {
+    pub fn in_memory(
+        executor: std::sync::Arc<gpui::executor::Background>,
+    ) -> (Self, Self, postage::watch::Sender<Option<()>>) {
         let (kill_tx, mut kill_rx) = postage::watch::channel_with(None);
         postage::stream::Stream::try_recv(&mut kill_rx).unwrap();
 
-        let (a_tx, a_rx) = Self::channel(kill_rx.clone());
-        let (b_tx, b_rx) = Self::channel(kill_rx);
+        let (a_tx, a_rx) = Self::channel(kill_rx.clone(), executor.clone());
+        let (b_tx, b_rx) = Self::channel(kill_rx, executor);
         (
             Self { tx: a_tx, rx: b_rx },
             Self { tx: b_tx, rx: a_rx },
@@ -50,11 +52,12 @@ impl Connection {
     #[cfg(any(test, feature = "test-support"))]
     fn channel(
         kill_rx: postage::watch::Receiver<Option<()>>,
+        executor: std::sync::Arc<gpui::executor::Background>,
     ) -> (
         Box<dyn Send + Unpin + futures::Sink<WebSocketMessage, Error = WebSocketError>>,
         Box<dyn Send + Unpin + futures::Stream<Item = Result<WebSocketMessage, WebSocketError>>>,
     ) {
-        use futures::{future, SinkExt as _};
+        use futures::SinkExt as _;
         use io::{Error, ErrorKind};
 
         let (tx, rx) = mpsc::unbounded::<WebSocketMessage>();
@@ -62,26 +65,39 @@ impl Connection {
             .sink_map_err(|e| WebSocketError::from(Error::new(ErrorKind::Other, e)))
             .with({
                 let kill_rx = kill_rx.clone();
+                let executor = executor.clone();
                 move |msg| {
-                    if kill_rx.borrow().is_none() {
-                        future::ready(Ok(msg))
-                    } else {
-                        future::ready(Err(Error::new(ErrorKind::Other, "connection killed").into()))
-                    }
+                    let kill_rx = kill_rx.clone();
+                    let executor = executor.clone();
+                    Box::pin(async move {
+                        executor.simulate_random_delay().await;
+                        if kill_rx.borrow().is_none() {
+                            Ok(msg)
+                        } else {
+                            Err(Error::new(ErrorKind::Other, "connection killed").into())
+                        }
+                    })
                 }
             });
+        let rx = rx.then(move |msg| {
+            let executor = executor.clone();
+            Box::pin(async move {
+                executor.simulate_random_delay().await;
+                msg
+            })
+        });
         let rx = KillableReceiver { kill_rx, rx };
 
         (Box::new(tx), Box::new(rx))
     }
 }
 
-struct KillableReceiver {
-    rx: mpsc::UnboundedReceiver<WebSocketMessage>,
+struct KillableReceiver<S> {
+    rx: S,
     kill_rx: postage::watch::Receiver<Option<()>>,
 }
 
-impl Stream for KillableReceiver {
+impl<S: Unpin + Stream<Item = WebSocketMessage>> Stream for KillableReceiver<S> {
     type Item = Result<WebSocketMessage, WebSocketError>;
 
     fn poll_next(

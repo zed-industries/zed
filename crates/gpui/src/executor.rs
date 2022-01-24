@@ -5,7 +5,7 @@ use collections::HashMap;
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream as _};
 use rand::prelude::*;
-use smol::{channel, prelude::*, Executor, Timer};
+use smol::{channel, future::yield_now, prelude::*, Executor, Timer};
 use std::{
     any::Any,
     fmt::{self, Debug, Display},
@@ -526,6 +526,17 @@ impl Background {
             .collect::<Vec<_>>();
         for task in spawned {
             task.await;
+        }
+    }
+
+    pub async fn simulate_random_delay(&self) {
+        match self {
+            Self::Deterministic { executor, .. } => {
+                if executor.state.lock().rng.gen_range(0..100) < 20 {
+                    yield_now().await;
+                }
+            }
+            _ => panic!("this method can only be called on a deterministic executor"),
         }
     }
 }

@@ -3242,7 +3242,8 @@ mod tests {
                                 "server is forbidding connections"
                             )))
                         } else {
-                            let (client_conn, server_conn, kill_conn) = Connection::in_memory();
+                            let (client_conn, server_conn, kill_conn) =
+                                Connection::in_memory(cx.background());
                             connection_killers.lock().insert(user_id, kill_conn);
                             cx.background()
                                 .spawn(server.handle_connection(
