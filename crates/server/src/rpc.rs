@@ -2318,7 +2318,6 @@ mod tests {
         .await
         .unwrap();
 
-        // Open the file to be formatted on client B.
         let buffer_b = cx_b
             .background()
             .spawn(project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
@@ -2506,6 +2505,111 @@ mod tests {
         project_b
             .condition(&cx_b, |proj, cx| proj.worktrees(cx).count() == 1)
             .await;
+    }
+
+    #[gpui::test(iterations = 100, seed = 1)]
+    async fn test_open_buffer_while_getting_definition_pointing_to_it(
+        mut cx_a: TestAppContext,
+        mut cx_b: TestAppContext,
+    ) {
+        cx_a.foreground().forbid_parking();
+        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(FakeFs::new());
+        fs.insert_tree(
+            "/root",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "a.rs": "const ONE: usize = b::TWO;",
+                "b.rs": "const TWO: usize = 2",
+            }),
+        )
+        .await;
+
+        // Set up a fake language server.
+        let (language_server_config, mut fake_language_server) =
+            LanguageServerConfig::fake(cx_a.background()).await;
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Rust".to_string(),
+                    path_suffixes: vec!["rs".to_string()],
+                    language_server: Some(language_server_config),
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )));
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground()).await;
+        let client_a = server.create_client(&mut cx_a, "user_a").await;
+        let client_b = server.create_client(&mut cx_b, "user_b").await;
+
+        // Share a project as client A
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/root", false, cx)
+            })
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
+        project_a
+            .update(&mut cx_a, |p, cx| p.share(cx))
+            .await
+            .unwrap();
+
+        // Join the worktree as client B.
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+
+        let buffer_b1 = cx_b
+            .background()
+            .spawn(project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
+            .await
+            .unwrap();
+
+        let definitions = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
+        let (request_id, _) = fake_language_server
+            .receive_request::<lsp::request::GotoDefinition>()
+            .await;
+        fake_language_server
+            .respond(
+                request_id,
+                Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
+                    lsp::Url::from_file_path("/root/b.rs").unwrap(),
+                    lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                ))),
+            )
+            .await;
+
+        let buffer_b2 = project_b
+            .update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "b.rs"), cx))
+            .await
+            .unwrap();
+        let definitions = definitions.await.unwrap();
+        assert_eq!(definitions.len(), 1);
+        assert_eq!(definitions[0].target_buffer, buffer_b2);
     }
 
     #[gpui::test]
