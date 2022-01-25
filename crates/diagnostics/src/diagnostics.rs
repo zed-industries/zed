@@ -563,7 +563,7 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         let summary_spacing = theme.tab_summary_spacing;
         Flex::row()
             .with_children([
-                Svg::new("icons/no.svg")
+                Svg::new("icons/diagnostic-summary-error.svg")
                     .with_color(style.label.text.color)
                     .constrained()
                     .with_width(icon_width)
@@ -574,7 +574,7 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
                 Label::new(self.summary.error_count.to_string(), style.label.clone())
                     .aligned()
                     .boxed(),
-                Svg::new("icons/warning.svg")
+                Svg::new("icons/diagnostic-summary-warning.svg")
                     .with_color(style.label.text.color)
                     .constrained()
                     .with_width(icon_width)

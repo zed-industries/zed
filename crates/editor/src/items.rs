@@ -330,24 +330,11 @@ impl View for DiagnosticMessage {
     fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
         if let Some(diagnostic) = &self.diagnostic {
             let theme = &self.settings.borrow().theme.workspace.status_bar;
-            Flex::row()
-                .with_child(
-                    Svg::new("icons/warning.svg")
-                        .with_color(theme.diagnostic_icon_color)
-                        .constrained()
-                        .with_height(theme.diagnostic_icon_size)
-                        .contained()
-                        .with_margin_right(theme.diagnostic_icon_spacing)
-                        .boxed(),
-                )
-                .with_child(
-                    Label::new(
-                        diagnostic.message.lines().next().unwrap().to_string(),
-                        theme.diagnostic_message.clone(),
-                    )
-                    .boxed(),
-                )
-                .boxed()
+            Label::new(
+                diagnostic.message.lines().next().unwrap().to_string(),
+                theme.diagnostic_message.clone(),
+            )
+            .boxed()
         } else {
             Empty::new().boxed()
         }
