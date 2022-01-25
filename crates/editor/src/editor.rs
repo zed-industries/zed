@@ -3803,6 +3803,8 @@ impl Deref for EditorSnapshot {
 impl EditorSettings {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &AppContext) -> Self {
+        use theme::{ContainedLabel, ContainedText, DiagnosticHeader, DiagnosticPathHeader};
+
         Self {
             tab_size: 4,
             soft_wrap: SoftWrap::None,
@@ -3835,25 +3837,24 @@ impl EditorSettings {
                     selection: Default::default(),
                     guest_selections: Default::default(),
                     syntax: Default::default(),
-                    diagnostic_path_header: theme::DiagnosticPathHeader {
+                    diagnostic_path_header: DiagnosticPathHeader {
                         container: Default::default(),
-                        filename: theme::ContainedText {
+                        filename: ContainedText {
                             container: Default::default(),
                             text: text.clone(),
                         },
-                        path: theme::ContainedText {
+                        path: ContainedText {
                             container: Default::default(),
                             text: text.clone(),
                         },
                     },
-                    diagnostic_header: theme::DiagnosticHeader {
+                    diagnostic_header: DiagnosticHeader {
                         container: Default::default(),
-                        text: text.clone(),
-                        highlighted_text: theme::ContainedText {
+                        message: ContainedLabel {
                             container: Default::default(),
-                            text: text.clone(),
+                            label: text.clone().into(),
                         },
-                        code: theme::ContainedText {
+                        code: ContainedText {
                             container: Default::default(),
                             text: text.clone(),
                         },

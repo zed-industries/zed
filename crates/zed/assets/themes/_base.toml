@@ -263,17 +263,12 @@ path = { extends = "$text.2", size = 14, margin.left = 12 }
 [editor.diagnostic_header]
 background = "$state.active_line"
 border = { width = 1, top = true, bottom = true, color = "$border.0" }
-text = { extends = "$text.1", size = 14 }
 code = { extends = "$text.2", size = 14, margin.left = 10 }
 icon = { width = 10, margin.right = 8 }
 
-[editor.diagnostic_header.highlighted_text]
-extends = "$editor.diagnostic_header.text"
-color = "$text.0.color"
-background = "#ffffff1f"
-padding.left = 3
-padding.right = 3
-corner_radius = 3
+[editor.diagnostic_header.message]
+text = { extends = "$text.1", size = 14 }
+highlight_text = { extends = "$text.0", size = 14, weight = "bold" }
 
 [editor.error_diagnostic]
 text = "$status.bad"

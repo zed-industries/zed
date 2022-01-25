@@ -221,7 +221,7 @@ pub struct ContainedText {
     pub text: TextStyle,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Clone, Deserialize, Default)]
 pub struct ContainedLabel {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -275,8 +275,7 @@ pub struct DiagnosticPathHeader {
 pub struct DiagnosticHeader {
     #[serde(flatten)]
     pub container: ContainerStyle,
-    pub text: TextStyle,
-    pub highlighted_text: ContainedText,
+    pub message: ContainedLabel,
     pub code: ContainedText,
     pub icon: DiagnosticHeaderIcon,
 }
@@ -356,10 +355,9 @@ impl InputEditorStyle {
             },
             diagnostic_header: DiagnosticHeader {
                 container: Default::default(),
-                text: self.text.clone(),
-                highlighted_text: ContainedText {
+                message: ContainedLabel {
                     container: Default::default(),
-                    text: self.text.clone(),
+                    label: self.text.clone().into(),
                 },
                 code: ContainedText {
                     container: Default::default(),

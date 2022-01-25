@@ -697,34 +697,7 @@ fn diagnostic_header_renderer(
     diagnostic: Diagnostic,
     build_settings: BuildSettings,
 ) -> RenderBlock {
-    enum Run {
-        Text(Range<usize>),
-        Code(Range<usize>),
-    }
-
-    let mut prev_ix = 0;
-    let mut inside_block = false;
-    let mut runs = Vec::new();
-    for (backtick_ix, _) in diagnostic.message.match_indices('`') {
-        if backtick_ix > prev_ix {
-            if inside_block {
-                runs.push(Run::Code(prev_ix..backtick_ix));
-            } else {
-                runs.push(Run::Text(prev_ix..backtick_ix));
-            }
-        }
-
-        inside_block = !inside_block;
-        prev_ix = backtick_ix + 1;
-    }
-    if prev_ix < diagnostic.message.len() {
-        if inside_block {
-            runs.push(Run::Code(prev_ix..diagnostic.message.len()));
-        } else {
-            runs.push(Run::Text(prev_ix..diagnostic.message.len()));
-        }
-    }
-
+    let (message, highlights) = highlight_diagnostic_message(&diagnostic.message);
     Arc::new(move |cx| {
         let settings = build_settings(cx);
         let style = &settings.style.diagnostic_header;
@@ -745,28 +718,14 @@ fn diagnostic_header_renderer(
                     .with_style(style.icon.container)
                     .boxed(),
             )
-            .with_children(runs.iter().map(|run| {
-                let container_style;
-                let text_style;
-                let range;
-                match run {
-                    Run::Text(run_range) => {
-                        container_style = Default::default();
-                        text_style = style.text.clone();
-                        range = run_range.clone();
-                    }
-                    Run::Code(run_range) => {
-                        container_style = style.highlighted_text.container;
-                        text_style = style.highlighted_text.text.clone();
-                        range = run_range.clone();
-                    }
-                }
-                Label::new(diagnostic.message[range].to_string(), text_style)
+            .with_child(
+                Label::new(message.clone(), style.message.label.clone())
+                    .with_highlights(highlights.clone())
                     .contained()
-                    .with_style(container_style)
+                    .with_style(style.message.container)
                     .aligned()
-                    .boxed()
-            }))
+                    .boxed(),
+            )
             .with_children(diagnostic.code.clone().map(|code| {
                 Label::new(code, style.code.text.clone())
                     .contained()
@@ -780,6 +739,28 @@ fn diagnostic_header_renderer(
             .expanded()
             .named("diagnostic header")
     })
+}
+
+fn highlight_diagnostic_message(message: &str) -> (String, Vec<usize>) {
+    let mut message_without_backticks = String::new();
+    let mut prev_offset = 0;
+    let mut inside_block = false;
+    let mut highlights = Vec::new();
+    for (match_ix, (offset, _)) in message
+        .match_indices('`')
+        .chain([(message.len(), "")])
+        .enumerate()
+    {
+        message_without_backticks.push_str(&message[prev_offset..offset]);
+        if inside_block {
+            highlights.extend(prev_offset - match_ix..offset - match_ix);
+        }
+
+        inside_block = !inside_block;
+        prev_offset = offset + 1;
+    }
+
+    (message_without_backticks, highlights)
 }
 
 fn context_header_renderer(build_settings: BuildSettings) -> RenderBlock {
