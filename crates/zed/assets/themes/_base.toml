@@ -77,11 +77,9 @@ border = { width = 1, color = "$border.0", left = true }
 [workspace.status_bar]
 padding = { left = 6, right = 6 }
 height = 24
+item_spacing = 24
 cursor_position = "$text.2"
 diagnostic_message = "$text.2"
-diagnostic_icon_size = 18
-diagnostic_icon_spacing = 8
-diagnostic_icon_color = "$text.2.color"
 
 [panel]
 padding = { top = 12, left = 12, bottom = 12, right = 12 }

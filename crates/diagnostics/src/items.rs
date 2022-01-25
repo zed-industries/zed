@@ -1,9 +1,9 @@
+use crate::render_summary;
 use gpui::{
     elements::*, platform::CursorStyle, Entity, ModelHandle, RenderContext, View, ViewContext,
 };
 use postage::watch;
 use project::Project;
-use std::fmt::Write;
 use workspace::{Settings, StatusItemView};
 
 pub struct DiagnosticSummary {
@@ -20,7 +20,6 @@ impl DiagnosticSummary {
     ) -> Self {
         cx.subscribe(project, |this, project, event, cx| match event {
             project::Event::DiskBasedDiagnosticsUpdated => {
-                this.summary = project.read(cx).diagnostic_summary(cx);
                 cx.notify();
             }
             project::Event::DiskBasedDiagnosticsStarted => {
@@ -28,6 +27,7 @@ impl DiagnosticSummary {
                 cx.notify();
             }
             project::Event::DiskBasedDiagnosticsFinished => {
+                this.summary = project.read(cx).diagnostic_summary(cx);
                 this.in_progress = false;
                 cx.notify();
             }
@@ -55,21 +55,20 @@ impl View for DiagnosticSummary {
         enum Tag {}
 
         let theme = &self.settings.borrow().theme.project_diagnostics;
-        let mut message = String::new();
-        if self.in_progress {
-            message.push_str("Checking... ");
-        }
-        write!(
-            message,
-            "Errors: {}, Warnings: {}",
-            self.summary.error_count, self.summary.warning_count
-        )
-        .unwrap();
+
+        let in_progress = self.in_progress;
         MouseEventHandler::new::<Tag, _, _, _>(0, cx, |_, _| {
-            Label::new(message, theme.status_bar_item.text.clone())
+            if in_progress {
+                Label::new(
+                    "Checking... ".to_string(),
+                    theme.status_bar_item.text.clone(),
+                )
                 .contained()
                 .with_style(theme.status_bar_item.container)
                 .boxed()
+            } else {
+                render_summary(&self.summary, &theme.status_bar_item.text, &theme)
+            }
         })
         .with_cursor_style(CursorStyle::PointingHand)
         .on_click(|cx| cx.dispatch_action(crate::Deploy))

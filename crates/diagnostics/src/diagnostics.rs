@@ -10,8 +10,9 @@ use editor::{
     Autoscroll, BuildSettings, Editor, ExcerptId, ExcerptProperties, MultiBuffer, ToOffset,
 };
 use gpui::{
-    action, elements::*, keymap::Binding, AnyViewHandle, AppContext, Entity, ModelHandle,
-    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    action, elements::*, fonts::TextStyle, keymap::Binding, AnyViewHandle, AppContext, Entity,
+    ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
 use language::{
     Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
@@ -131,9 +132,10 @@ impl ProjectDiagnosticsEditor {
         let project = model.read(cx).project.clone();
         cx.subscribe(&project, |this, _, event, cx| match event {
             project::Event::DiskBasedDiagnosticsFinished => {
+                this.summary = this.model.read(cx).project.read(cx).diagnostic_summary(cx);
                 let paths = mem::take(&mut this.paths_to_update);
                 this.update_excerpts(paths, cx);
-                cx.emit(Event::TitleChanged)
+                cx.emit(Event::TitleChanged);
             }
             project::Event::DiagnosticsUpdated(path) => {
                 this.paths_to_update.insert(path.clone());
@@ -557,37 +559,11 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
     }
 
     fn tab_content(&self, style: &theme::Tab, _: &AppContext) -> ElementBox {
-        let theme = &self.settings.borrow().theme.project_diagnostics;
-        let icon_width = theme.tab_icon_width;
-        let icon_spacing = theme.tab_icon_spacing;
-        let summary_spacing = theme.tab_summary_spacing;
-        Flex::row()
-            .with_children([
-                Svg::new("icons/diagnostic-summary-error.svg")
-                    .with_color(style.label.text.color)
-                    .constrained()
-                    .with_width(icon_width)
-                    .aligned()
-                    .contained()
-                    .with_margin_right(icon_spacing)
-                    .named("no-icon"),
-                Label::new(self.summary.error_count.to_string(), style.label.clone())
-                    .aligned()
-                    .boxed(),
-                Svg::new("icons/diagnostic-summary-warning.svg")
-                    .with_color(style.label.text.color)
-                    .constrained()
-                    .with_width(icon_width)
-                    .aligned()
-                    .contained()
-                    .with_margin_left(summary_spacing)
-                    .with_margin_right(icon_spacing)
-                    .named("warn-icon"),
-                Label::new(self.summary.warning_count.to_string(), style.label.clone())
-                    .aligned()
-                    .boxed(),
-            ])
-            .boxed()
+        render_summary(
+            &self.summary,
+            &style.label.text,
+            &self.settings.borrow().theme.project_diagnostics,
+        )
     }
 
     fn project_path(&self, _: &AppContext) -> Option<project::ProjectPath> {
@@ -784,6 +760,55 @@ fn context_header_renderer(build_settings: BuildSettings) -> RenderBlock {
             .with_padding_left(cx.gutter_padding)
             .named("collapsed context")
     })
+}
+
+pub(crate) fn render_summary(
+    summary: &DiagnosticSummary,
+    text_style: &TextStyle,
+    theme: &theme::ProjectDiagnostics,
+) -> ElementBox {
+    let icon_width = theme.tab_icon_width;
+    let icon_spacing = theme.tab_icon_spacing;
+    let summary_spacing = theme.tab_summary_spacing;
+    Flex::row()
+        .with_children([
+            Svg::new("icons/diagnostic-summary-error.svg")
+                .with_color(text_style.color)
+                .constrained()
+                .with_width(icon_width)
+                .aligned()
+                .contained()
+                .with_margin_right(icon_spacing)
+                .named("no-icon"),
+            Label::new(
+                summary.error_count.to_string(),
+                LabelStyle {
+                    text: text_style.clone(),
+                    highlight_text: None,
+                },
+            )
+            .aligned()
+            .boxed(),
+            Svg::new("icons/diagnostic-summary-warning.svg")
+                .with_color(text_style.color)
+                .constrained()
+                .with_width(icon_width)
+                .aligned()
+                .contained()
+                .with_margin_left(summary_spacing)
+                .with_margin_right(icon_spacing)
+                .named("warn-icon"),
+            Label::new(
+                summary.warning_count.to_string(),
+                LabelStyle {
+                    text: text_style.clone(),
+                    highlight_text: None,
+                },
+            )
+            .aligned()
+            .boxed(),
+        ])
+        .boxed()
 }
 
 fn compare_diagnostics<L: language::ToOffset, R: language::ToOffset>(
