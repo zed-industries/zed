@@ -3853,6 +3853,7 @@ impl EditorSettings {
                             container: Default::default(),
                             text: text.clone(),
                         },
+                        icon: Default::default(),
                     },
                     error_diagnostic: Default::default(),
                     invalid_error_diagnostic: Default::default(),

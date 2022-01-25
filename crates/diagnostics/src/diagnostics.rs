@@ -12,7 +12,9 @@ use gpui::{
     action, elements::*, keymap::Binding, AnyViewHandle, AppContext, Entity, ModelHandle,
     MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use language::{Bias, Buffer, DiagnosticEntry, Point, Selection, SelectionGoal};
+use language::{
+    Bias, Buffer, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
+};
 use postage::watch;
 use project::{Project, ProjectPath};
 use std::{
@@ -353,6 +355,7 @@ impl ProjectDiagnosticsEditor {
                                     height: 2,
                                     render: diagnostic_header_renderer(
                                         message,
+                                        primary.severity,
                                         self.build_settings.clone(),
                                     ),
                                     disposition: BlockDisposition::Above,
@@ -661,7 +664,7 @@ fn path_header_renderer(buffer: ModelHandle<Buffer>, build_settings: BuildSettin
             path = file
                 .path()
                 .parent()
-                .map(|p| p.to_string_lossy().to_string());
+                .map(|p| p.to_string_lossy().to_string() + "/");
         }
 
         Flex::row()
@@ -690,7 +693,11 @@ fn path_header_renderer(buffer: ModelHandle<Buffer>, build_settings: BuildSettin
     })
 }
 
-fn diagnostic_header_renderer(message: String, build_settings: BuildSettings) -> RenderBlock {
+fn diagnostic_header_renderer(
+    message: String,
+    severity: DiagnosticSeverity,
+    build_settings: BuildSettings,
+) -> RenderBlock {
     enum Run {
         Text(Range<usize>),
         Code(Range<usize>),
@@ -722,8 +729,23 @@ fn diagnostic_header_renderer(message: String, build_settings: BuildSettings) ->
     Arc::new(move |cx| {
         let settings = build_settings(cx);
         let style = &settings.style.diagnostic_header;
+        let icon = if severity == DiagnosticSeverity::ERROR {
+            Svg::new("icons/diagnostic-error-10.svg")
+                .with_color(settings.style.error_diagnostic.text)
+        } else {
+            Svg::new("icons/diagnostic-warning-10.svg")
+                .with_color(settings.style.warning_diagnostic.text)
+        };
 
         Flex::row()
+            .with_child(
+                icon.constrained()
+                    .with_height(style.icon.width)
+                    .aligned()
+                    .contained()
+                    .with_style(style.icon.container)
+                    .boxed(),
+            )
             .with_children(runs.iter().map(|run| {
                 let container_style;
                 let text_style;

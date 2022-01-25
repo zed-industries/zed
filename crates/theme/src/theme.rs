@@ -277,6 +277,14 @@ pub struct DiagnosticHeader {
     pub container: ContainerStyle,
     pub text: TextStyle,
     pub highlighted_text: ContainedText,
+    pub icon: DiagnosticHeaderIcon,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct DiagnosticHeaderIcon {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub width: f32,
 }
 
 #[derive(Copy, Clone, Deserialize, Default)]
@@ -352,6 +360,7 @@ impl InputEditorStyle {
                     container: Default::default(),
                     text: self.text.clone(),
                 },
+                icon: Default::default(),
             },
             error_diagnostic: Default::default(),
             invalid_error_diagnostic: Default::default(),
