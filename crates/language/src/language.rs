@@ -39,6 +39,10 @@ pub trait ToPointUtf16 {
     fn to_point_utf16(self) -> PointUtf16;
 }
 
+pub trait DiagnosticProcessor: 'static + Send + Sync {
+    fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams);
+}
+
 #[derive(Default, Deserialize)]
 pub struct LanguageConfig {
     pub name: String,
@@ -69,6 +73,7 @@ pub struct BracketPair {
 pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
+    pub(crate) diagnostic_processor: Option<Box<dyn DiagnosticProcessor>>,
 }
 
 pub struct Grammar {
@@ -135,6 +140,7 @@ impl Language {
                     highlight_map: Default::default(),
                 })
             }),
+            diagnostic_processor: None,
         }
     }
 
@@ -176,6 +182,11 @@ impl Language {
             .ok_or_else(|| anyhow!("grammar does not exist or is already being used"))?;
         grammar.outline_query = Query::new(grammar.ts_language, source)?;
         Ok(self)
+    }
+
+    pub fn with_diagnostics_processor(mut self, processor: impl DiagnosticProcessor) -> Self {
+        self.diagnostic_processor = Some(Box::new(processor));
+        self
     }
 
     pub fn name(&self) -> &str {
@@ -223,6 +234,12 @@ impl Language {
             .language_server
             .as_ref()
             .and_then(|config| config.disk_based_diagnostics_progress_token.as_ref())
+    }
+
+    pub fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams) {
+        if let Some(processor) = self.diagnostic_processor.as_ref() {
+            processor.process_diagnostics(diagnostics);
+        }
     }
 
     pub fn brackets(&self) -> &[BracketPair] {
