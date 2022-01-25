@@ -270,6 +270,7 @@ pub struct DiagnosticPathHeader {
     pub container: ContainerStyle,
     pub filename: ContainedText,
     pub path: ContainedText,
+    pub text_scale_factor: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -278,6 +279,7 @@ pub struct DiagnosticHeader {
     pub container: ContainerStyle,
     pub message: ContainedLabel,
     pub code: ContainedText,
+    pub text_scale_factor: f32,
     pub icon_width_factor: f32,
 }
 
@@ -286,6 +288,7 @@ pub struct DiagnosticStyle {
     pub message: LabelStyle,
     #[serde(default)]
     pub header: ContainerStyle,
+    pub text_scale_factor: f32,
 }
 
 #[derive(Clone, Copy, Default, Deserialize)]
@@ -324,6 +327,7 @@ impl InputEditorStyle {
         let default_diagnostic_style = DiagnosticStyle {
             message: self.text.clone().into(),
             header: Default::default(),
+            text_scale_factor: 1.,
         };
         EditorStyle {
             text: self.text.clone(),
@@ -351,6 +355,7 @@ impl InputEditorStyle {
                     container: Default::default(),
                     text: self.text.clone(),
                 },
+                text_scale_factor: 1.,
             },
             diagnostic_header: DiagnosticHeader {
                 container: Default::default(),
@@ -363,6 +368,7 @@ impl InputEditorStyle {
                     text: self.text.clone(),
                 },
                 icon_width_factor: Default::default(),
+                text_scale_factor: 1.,
             },
             error_diagnostic: default_diagnostic_style.clone(),
             invalid_error_diagnostic: default_diagnostic_style.clone(),

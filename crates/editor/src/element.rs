@@ -649,7 +649,7 @@ impl Element for EditorElement {
 
         let snapshot = self.snapshot(cx.app);
         let style = self.settings.style.clone();
-        let line_height = dbg!(style.text.line_height(cx.font_cache));
+        let line_height = style.text.line_height(cx.font_cache);
 
         let gutter_padding;
         let gutter_width;

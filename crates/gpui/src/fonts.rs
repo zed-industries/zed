@@ -107,6 +107,11 @@ impl TextStyle {
         })
     }
 
+    pub fn with_font_size(mut self, font_size: f32) -> Self {
+        self.font_size = font_size;
+        self
+    }
+
     pub fn to_run(&self) -> RunStyle {
         RunStyle {
             font_id: self.font_id,

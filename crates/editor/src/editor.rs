@@ -3828,6 +3828,7 @@ impl EditorSettings {
                 let default_diagnostic_style = DiagnosticStyle {
                     message: text.clone().into(),
                     header: Default::default(),
+                    text_scale_factor: 1.,
                 };
                 EditorStyle {
                     text: text.clone(),
@@ -3852,6 +3853,7 @@ impl EditorSettings {
                             container: Default::default(),
                             text: text.clone(),
                         },
+                        text_scale_factor: 1.,
                     },
                     diagnostic_header: DiagnosticHeader {
                         container: Default::default(),
@@ -3863,7 +3865,8 @@ impl EditorSettings {
                             container: Default::default(),
                             text: text.clone(),
                         },
-                        icon_width_factor: Default::default(),
+                        icon_width_factor: 1.,
+                        text_scale_factor: 1.,
                     },
                     error_diagnostic: default_diagnostic_style.clone(),
                     invalid_error_diagnostic: default_diagnostic_style.clone(),
@@ -4020,14 +4023,18 @@ pub fn diagnostic_block_renderer(
 
     Arc::new(move |cx: &BlockContext| {
         let settings = build_settings(cx);
-        let style = diagnostic_style(diagnostic.severity, is_valid, &settings.style).message;
+        let style = diagnostic_style(diagnostic.severity, is_valid, &settings.style);
+        let font_size = (style.text_scale_factor * settings.style.text.font_size).round();
         Flex::column()
             .with_children(highlighted_lines.iter().map(|(line, highlights)| {
-                Label::new(line.clone(), style.clone())
-                    .with_highlights(highlights.clone())
-                    .contained()
-                    .with_margin_left(cx.anchor_x)
-                    .boxed()
+                Label::new(
+                    line.clone(),
+                    style.message.clone().with_font_size(font_size),
+                )
+                .with_highlights(highlights.clone())
+                .contained()
+                .with_margin_left(cx.anchor_x)
+                .boxed()
             }))
             .aligned()
             .left()
@@ -4074,6 +4081,7 @@ pub fn diagnostic_style(
         _ => DiagnosticStyle {
             message: style.text.clone().into(),
             header: Default::default(),
+            text_scale_factor: 1.,
         },
     }
 }

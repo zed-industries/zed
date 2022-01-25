@@ -187,7 +187,7 @@ corner_radius = 6
 
 [project_panel]
 extends = "$panel"
-padding.top = 6 # ($workspace.tab.height - $project_panel.entry.height) / 2
+padding.top = 6    # ($workspace.tab.height - $project_panel.entry.height) / 2
 
 [project_panel.entry]
 text = "$text.1"
@@ -256,12 +256,14 @@ error_color = "$status.bad"
 [editor.diagnostic_path_header]
 filename = { extends = "$text.0", size = 14 }
 path = { extends = "$text.2", size = 14, margin.left = 12 }
+text_scale_factor = 0.857
 
 [editor.diagnostic_header]
 background = "$state.active_line"
 border = { width = 1, top = true, bottom = true, color = "$border.0" }
 code = { extends = "$text.2", size = 14, margin.left = 10 }
 icon_width_factor = 1.5
+text_scale_factor = 0.857
 
 [editor.diagnostic_header.message]
 text = { extends = "$text.1", size = 14 }
@@ -269,47 +271,46 @@ highlight_text = { extends = "$text.0", size = 14, weight = "bold" }
 
 [editor.error_diagnostic]
 header.border = { width = 1, top = true, color = "$border.0" }
+text_scale_factor = 0.857
 
 [editor.error_diagnostic.message]
 text = { extends = "$editor.text", size = 14, color = "$status.bad" }
 highlight_text = { extends = "$editor.text", size = 14, color = "$status.bad", weight = "bold" }
 
 [editor.warning_diagnostic]
-header.border = { width = 1, top = true, color = "$border.0" }
-
-[editor.warning_diagnostic.message]
-text = { extends = "$editor.text", size = 14, color = "$status.warn" }
-highlight_text = { extends = "$editor.text", size = 14, color = "$status.warn", weight = "bold" }
+extends = "$editor.error_diagnostic"
+message.text.color = "$status.warn"
+message.highlight_text.color = "$status.warn"
 
 [editor.information_diagnostic]
-border = { width = 1, top = true, color = "$border.0" }
-
-[editor.information_diagnostic.message]
-text = { extends = "$editor.text", size = 14, color = "$status.info" }
-highlight_text = { extends = "$editor.text", size = 14, color = "$status.info", weight = "bold" }
+extends = "$editor.error_diagnostic"
+message.text.color = "$status.info"
+message.highlight_text.color = "$status.info"
 
 [editor.hint_diagnostic]
-border = { width = 1, top = true, color = "$border.0" }
+extends = "$editor.error_diagnostic"
+message.text.color = "$status.info"
+message.highlight_text.color = "$status.info"
 
-[editor.hint_diagnostic.message]
-text = { extends = "$editor.text", size = 14, color = "$status.info" }
-highlight_text = { extends = "$editor.text", size = 14, color = "$status.info", weight = "bold" }
+[editor.invalid_error_diagnostic]
+extends = "$editor.error_diagnostic"
+message.text.color = "$text.3.color"
+message.highlight_text.color = "$text.3.color"
 
-[editor.invalid_error_diagnostic.message]
-text = { extends = "$editor.text", size = 14, color = "$text.3.color" }
-highlight_text = { extends = "$editor.text", size = 14, color = "$text.3.color", weight = "bold" }
+[editor.invalid_warning_diagnostic]
+extends = "$editor.warning_diagnostic"
+message.text.color = "$text.3.color"
+message.highlight_text.color = "$text.3.color"
 
-[editor.invalid_warning_diagnostic.message]
-text = { extends = "$editor.text", size = 14, color = "$text.3.color" }
-highlight_text = { extends = "$editor.text", size = 14, color = "$text.3.color", weight = "bold" }
+[editor.invalid_information_diagnostic]
+extends = "$editor.information_diagnostic"
+message.text.color = "$text.3.color"
+message.highlight_text.color = "$text.3.color"
 
-[editor.invalid_information_diagnostic.message]
-text = { extends = "$editor.text", size = 14, color = "$text.3.color" }
-highlight_text = { extends = "$editor.text", size = 14, color = "$text.3.color", weight = "bold" }
-
-[editor.invalid_hint_diagnostic.message]
-text = { extends = "$editor.text", size = 14, color = "$text.3.color" }
-highlight_text = { extends = "$editor.text", size = 14, color = "$text.3.color", weight = "bold" }
+[editor.invalid_hint_diagnostic]
+extends = "$editor.hint_diagnostic"
+message.text.color = "$text.3.color"
+message.highlight_text.color = "$text.3.color"
 
 [project_diagnostics]
 background = "$surface.1"

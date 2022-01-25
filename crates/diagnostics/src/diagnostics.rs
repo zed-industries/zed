@@ -654,6 +654,7 @@ fn path_header_renderer(buffer: ModelHandle<Buffer>, build_settings: BuildSettin
     Arc::new(move |cx| {
         let settings = build_settings(cx);
         let style = settings.style.diagnostic_path_header;
+        let font_size = (style.text_scale_factor * settings.style.text.font_size).round();
 
         let mut filename = None;
         let mut path = None;
@@ -672,14 +673,14 @@ fn path_header_renderer(buffer: ModelHandle<Buffer>, build_settings: BuildSettin
             .with_child(
                 Label::new(
                     filename.unwrap_or_else(|| "untitled".to_string()),
-                    style.filename.text.clone(),
+                    style.filename.text.clone().with_font_size(font_size),
                 )
                 .contained()
                 .with_style(style.filename.container)
                 .boxed(),
             )
             .with_children(path.map(|path| {
-                Label::new(path, style.path.text.clone())
+                Label::new(path, style.path.text.clone().with_font_size(font_size))
                     .contained()
                     .with_style(style.path.container)
                     .boxed()
@@ -702,6 +703,7 @@ fn diagnostic_header_renderer(
     Arc::new(move |cx| {
         let settings = build_settings(cx);
         let style = &settings.style.diagnostic_header;
+        let font_size = (style.text_scale_factor * settings.style.text.font_size).round();
         let icon_width = cx.em_width * style.icon_width_factor;
         let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
             Svg::new("icons/diagnostic-error-10.svg")
@@ -720,16 +722,19 @@ fn diagnostic_header_renderer(
                     .boxed(),
             )
             .with_child(
-                Label::new(message.clone(), style.message.label.clone())
-                    .with_highlights(highlights.clone())
-                    .contained()
-                    .with_style(style.message.container)
-                    .with_margin_left(cx.gutter_padding)
-                    .aligned()
-                    .boxed(),
+                Label::new(
+                    message.clone(),
+                    style.message.label.clone().with_font_size(font_size),
+                )
+                .with_highlights(highlights.clone())
+                .contained()
+                .with_style(style.message.container)
+                .with_margin_left(cx.gutter_padding)
+                .aligned()
+                .boxed(),
             )
             .with_children(diagnostic.code.clone().map(|code| {
-                Label::new(code, style.code.text.clone())
+                Label::new(code, style.code.text.clone().with_font_size(font_size))
                     .contained()
                     .with_style(style.code.container)
                     .aligned()
