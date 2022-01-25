@@ -462,6 +462,7 @@ impl Project {
             rpc.send(proto::UnshareProject { project_id }).await?;
             this.update(&mut cx, |this, cx| {
                 this.collaborators.clear();
+                this.shared_buffers.clear();
                 for worktree in this.worktrees(cx).collect::<Vec<_>>() {
                     worktree.update(cx, |worktree, _| {
                         worktree.as_local_mut().unwrap().unshare();
