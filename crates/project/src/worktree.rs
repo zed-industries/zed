@@ -190,13 +190,13 @@ impl Worktree {
         Ok(tree)
     }
 
-    pub async fn remote(
+    pub fn remote(
         project_remote_id: u64,
         replica_id: ReplicaId,
         worktree: proto::Worktree,
         client: Arc<Client>,
-        cx: &mut AsyncAppContext,
-    ) -> Result<ModelHandle<Self>> {
+        cx: &mut MutableAppContext,
+    ) -> (ModelHandle<Self>, Task<()>) {
         let remote_id = worktree.id;
         let root_char_bag: CharBag = worktree
             .root_name
@@ -205,32 +205,26 @@ impl Worktree {
             .collect();
         let root_name = worktree.root_name.clone();
         let weak = worktree.weak;
-        let (entries_by_path, entries_by_id, diagnostic_summaries) = cx
-            .background()
-            .spawn(async move {
-                let mut entries_by_path_edits = Vec::new();
-                let mut entries_by_id_edits = Vec::new();
-                for entry in worktree.entries {
-                    match Entry::try_from((&root_char_bag, entry)) {
-                        Ok(entry) => {
-                            entries_by_id_edits.push(Edit::Insert(PathEntry {
-                                id: entry.id,
-                                path: entry.path.clone(),
-                                is_ignored: entry.is_ignored,
-                                scan_id: 0,
-                            }));
-                            entries_by_path_edits.push(Edit::Insert(entry));
-                        }
-                        Err(err) => log::warn!("error for remote worktree entry {:?}", err),
-                    }
-                }
+        let snapshot = Snapshot {
+            id: WorktreeId(remote_id as usize),
+            root_name,
+            root_char_bag,
+            entries_by_path: Default::default(),
+            entries_by_id: Default::default(),
+        };
 
-                let mut entries_by_path = SumTree::new();
-                let mut entries_by_id = SumTree::new();
-                entries_by_path.edit(entries_by_path_edits, &());
-                entries_by_id.edit(entries_by_id_edits, &());
-
-                let diagnostic_summaries = TreeMap::from_ordered_entries(
+        let (updates_tx, mut updates_rx) = postage::mpsc::channel(64);
+        let (mut snapshot_tx, snapshot_rx) = watch::channel_with(snapshot.clone());
+        let worktree_handle = cx.add_model(|_: &mut ModelContext<Worktree>| {
+            Worktree::Remote(RemoteWorktree {
+                project_id: project_remote_id,
+                replica_id,
+                snapshot: snapshot.clone(),
+                snapshot_rx: snapshot_rx.clone(),
+                updates_tx,
+                client: client.clone(),
+                queued_operations: Default::default(),
+                diagnostic_summaries: TreeMap::from_ordered_entries(
                     worktree.diagnostic_summaries.into_iter().map(|summary| {
                         (
                             PathKey(PathBuf::from(summary.path).into()),
@@ -242,24 +236,48 @@ impl Worktree {
                             },
                         )
                     }),
-                );
-
-                (entries_by_path, entries_by_id, diagnostic_summaries)
+                ),
+                weak,
             })
-            .await;
+        });
 
-        let worktree = cx.update(|cx| {
-            cx.add_model(|cx: &mut ModelContext<Worktree>| {
-                let snapshot = Snapshot {
-                    id: WorktreeId(remote_id as usize),
-                    root_name,
-                    root_char_bag,
-                    entries_by_path,
-                    entries_by_id,
-                };
+        let deserialize_task = cx.spawn({
+            let worktree_handle = worktree_handle.clone();
+            |cx| async move {
+                let (entries_by_path, entries_by_id) = cx
+                    .background()
+                    .spawn(async move {
+                        let mut entries_by_path_edits = Vec::new();
+                        let mut entries_by_id_edits = Vec::new();
+                        for entry in worktree.entries {
+                            match Entry::try_from((&root_char_bag, entry)) {
+                                Ok(entry) => {
+                                    entries_by_id_edits.push(Edit::Insert(PathEntry {
+                                        id: entry.id,
+                                        path: entry.path.clone(),
+                                        is_ignored: entry.is_ignored,
+                                        scan_id: 0,
+                                    }));
+                                    entries_by_path_edits.push(Edit::Insert(entry));
+                                }
+                                Err(err) => log::warn!("error for remote worktree entry {:?}", err),
+                            }
+                        }
 
-                let (updates_tx, mut updates_rx) = postage::mpsc::channel(64);
-                let (mut snapshot_tx, snapshot_rx) = watch::channel_with(snapshot.clone());
+                        let mut entries_by_path = SumTree::new();
+                        let mut entries_by_id = SumTree::new();
+                        entries_by_path.edit(entries_by_path_edits, &());
+                        entries_by_id.edit(entries_by_id_edits, &());
+
+                        (entries_by_path, entries_by_id)
+                    })
+                    .await;
+
+                {
+                    let mut snapshot = snapshot_tx.borrow_mut();
+                    snapshot.entries_by_path = entries_by_path;
+                    snapshot.entries_by_id = entries_by_id;
+                }
 
                 cx.background()
                     .spawn(async move {
@@ -275,7 +293,8 @@ impl Worktree {
 
                 {
                     let mut snapshot_rx = snapshot_rx.clone();
-                    cx.spawn_weak(|this, mut cx| async move {
+                    let this = worktree_handle.downgrade();
+                    cx.spawn(|mut cx| async move {
                         while let Some(_) = snapshot_rx.recv().await {
                             if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
                                 this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
@@ -286,22 +305,9 @@ impl Worktree {
                     })
                     .detach();
                 }
-
-                Worktree::Remote(RemoteWorktree {
-                    project_id: project_remote_id,
-                    replica_id,
-                    snapshot,
-                    snapshot_rx,
-                    updates_tx,
-                    client: client.clone(),
-                    queued_operations: Default::default(),
-                    diagnostic_summaries,
-                    weak,
-                })
-            })
+            }
         });
-
-        Ok(worktree)
+        (worktree_handle, deserialize_task)
     }
 
     pub fn as_local(&self) -> Option<&LocalWorktree> {
@@ -358,17 +364,6 @@ impl Worktree {
         match self {
             Worktree::Local(_) => 0,
             Worktree::Remote(worktree) => worktree.replica_id,
-        }
-    }
-
-    pub fn load_buffer(
-        &mut self,
-        path: &Path,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<ModelHandle<Buffer>>> {
-        match self {
-            Worktree::Local(worktree) => worktree.load_buffer(path, cx),
-            Worktree::Remote(worktree) => worktree.load_buffer(path, cx),
         }
     }
 
@@ -828,41 +823,6 @@ impl LocalWorktree {
 }
 
 impl RemoteWorktree {
-    pub(crate) fn load_buffer(
-        &mut self,
-        path: &Path,
-        cx: &mut ModelContext<Worktree>,
-    ) -> Task<Result<ModelHandle<Buffer>>> {
-        let rpc = self.client.clone();
-        let replica_id = self.replica_id;
-        let project_id = self.project_id;
-        let remote_worktree_id = self.id();
-        let path: Arc<Path> = Arc::from(path);
-        let path_string = path.to_string_lossy().to_string();
-        cx.spawn_weak(move |this, mut cx| async move {
-            let response = rpc
-                .request(proto::OpenBuffer {
-                    project_id,
-                    worktree_id: remote_worktree_id.to_proto(),
-                    path: path_string,
-                })
-                .await?;
-
-            let this = this
-                .upgrade(&cx)
-                .ok_or_else(|| anyhow!("worktree was closed"))?;
-            let mut remote_buffer = response.buffer.ok_or_else(|| anyhow!("empty buffer"))?;
-            let file = remote_buffer
-                .file
-                .take()
-                .map(|proto| cx.read(|cx| File::from_proto(proto, this.clone(), cx)))
-                .transpose()?
-                .map(|file| Box::new(file) as Box<dyn language::File>);
-
-            Ok(cx.add_model(|cx| Buffer::from_proto(replica_id, remote_buffer, file, cx).unwrap()))
-        })
-    }
-
     fn snapshot(&self) -> Snapshot {
         self.snapshot.clone()
     }
@@ -2472,7 +2432,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_traversal(cx: gpui::TestAppContext) {
-        let fs = FakeFs::new();
+        let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/root",
             json!({

@@ -8,9 +8,10 @@ version = "0.1.0"
 path = "src/gpui.rs"
 
 [features]
-test-support = ["env_logger"]
+test-support = ["env_logger", "collections/test-support"]
 
 [dependencies]
+collections = { path = "../collections" }
 gpui_macros = { path = "../gpui_macros" }
 sum_tree = { path = "../sum_tree" }
 async-task = "4.0.3"
@@ -47,6 +48,7 @@ bindgen = "0.58.1"
 cc = "1.0.67"
 
 [dev-dependencies]
+collections = { path = "../collections", features = ["test-support"] }
 env_logger = "0.8"
 png = "0.16"
 simplelog = "0.9"

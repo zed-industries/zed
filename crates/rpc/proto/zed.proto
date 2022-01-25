@@ -20,40 +20,42 @@ message Envelope {
         LeaveProject leave_project = 14;
         AddProjectCollaborator add_project_collaborator = 15;
         RemoveProjectCollaborator remove_project_collaborator = 16;
+        GetDefinition get_definition = 17;
+        GetDefinitionResponse get_definition_response = 18;
 
-        RegisterWorktree register_worktree = 17;
-        UnregisterWorktree unregister_worktree = 18;
-        ShareWorktree share_worktree = 19;
-        UpdateWorktree update_worktree = 20;
-        UpdateDiagnosticSummary update_diagnostic_summary = 21;
-        DiskBasedDiagnosticsUpdating disk_based_diagnostics_updating = 22;
-        DiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 23;
+        RegisterWorktree register_worktree = 19;
+        UnregisterWorktree unregister_worktree = 20;
+        ShareWorktree share_worktree = 21;
+        UpdateWorktree update_worktree = 22;
+        UpdateDiagnosticSummary update_diagnostic_summary = 23;
+        DiskBasedDiagnosticsUpdating disk_based_diagnostics_updating = 24;
+        DiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 25;
 
-        OpenBuffer open_buffer = 24;
-        OpenBufferResponse open_buffer_response = 25;
-        CloseBuffer close_buffer = 26;
-        UpdateBuffer update_buffer = 27;
-        UpdateBufferFile update_buffer_file = 28;
-        SaveBuffer save_buffer = 29;
-        BufferSaved buffer_saved = 30;
-        BufferReloaded buffer_reloaded = 31;
-        FormatBuffer format_buffer = 32;
+        OpenBuffer open_buffer = 26;
+        OpenBufferResponse open_buffer_response = 27;
+        CloseBuffer close_buffer = 28;
+        UpdateBuffer update_buffer = 29;
+        UpdateBufferFile update_buffer_file = 30;
+        SaveBuffer save_buffer = 31;
+        BufferSaved buffer_saved = 32;
+        BufferReloaded buffer_reloaded = 33;
+        FormatBuffer format_buffer = 34;
 
-        GetChannels get_channels = 33;
-        GetChannelsResponse get_channels_response = 34;
-        JoinChannel join_channel = 35;
-        JoinChannelResponse join_channel_response = 36;
-        LeaveChannel leave_channel = 37;
-        SendChannelMessage send_channel_message = 38;
-        SendChannelMessageResponse send_channel_message_response = 39;
-        ChannelMessageSent channel_message_sent = 40;
-        GetChannelMessages get_channel_messages = 41;
-        GetChannelMessagesResponse get_channel_messages_response = 42;
+        GetChannels get_channels = 35;
+        GetChannelsResponse get_channels_response = 36;
+        JoinChannel join_channel = 37;
+        JoinChannelResponse join_channel_response = 38;
+        LeaveChannel leave_channel = 39;
+        SendChannelMessage send_channel_message = 40;
+        SendChannelMessageResponse send_channel_message_response = 41;
+        ChannelMessageSent channel_message_sent = 42;
+        GetChannelMessages get_channel_messages = 43;
+        GetChannelMessagesResponse get_channel_messages_response = 44;
 
-        UpdateContacts update_contacts = 43;
+        UpdateContacts update_contacts = 45;
 
-        GetUsers get_users = 44;
-        GetUsersResponse get_users_response = 45;
+        GetUsers get_users = 46;
+        GetUsersResponse get_users_response = 47;
     }
 }
 
@@ -132,6 +134,22 @@ message AddProjectCollaborator {
 message RemoveProjectCollaborator {
     uint64 project_id = 1;
     uint32 peer_id = 2;
+}
+
+message GetDefinition {
+     uint64 project_id = 1;
+     uint64 buffer_id = 2;
+     Anchor position = 3;
+ }
+
+message GetDefinitionResponse {
+    repeated Definition definitions = 1;
+}
+
+message Definition {
+    Buffer buffer = 1;
+    Anchor target_start = 2;
+    Anchor target_end = 3;
 }
 
 message OpenBuffer {
@@ -303,6 +321,13 @@ message Entry {
 }
 
 message Buffer {
+    oneof variant {
+        uint64 id = 1;
+        BufferState state = 2;
+    }
+}
+
+message BufferState {
     uint64 id = 1;
     optional File file = 2;
     string visible_text = 3;

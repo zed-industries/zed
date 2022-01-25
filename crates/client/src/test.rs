@@ -94,7 +94,7 @@ impl FakeServer {
             Err(EstablishConnectionError::Unauthorized)?
         }
 
-        let (client_conn, server_conn, _) = Connection::in_memory();
+        let (client_conn, server_conn, _) = Connection::in_memory(cx.background());
         let (connection_id, io, incoming) = self.peer.add_connection(server_conn).await;
         cx.background().spawn(io).detach();
         *self.incoming.lock() = Some(incoming);

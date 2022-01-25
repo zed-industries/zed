@@ -77,8 +77,8 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                                 #namespace::TestAppContext::new(
                                     foreground_platform.clone(),
                                     cx.platform().clone(),
-                                    cx.foreground().clone(),
-                                    cx.background().clone(),
+                                    deterministic.build_foreground(#ix),
+                                    deterministic.build_background(),
                                     cx.font_cache().clone(),
                                     #first_entity_id,
                                 ),
@@ -115,7 +115,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     #num_iterations as u64,
                     #starting_seed as u64,
                     #max_retries,
-                    &mut |cx, foreground_platform, seed| cx.foreground().run(#inner_fn_name(#inner_fn_args))
+                    &mut |cx, foreground_platform, deterministic, seed| cx.foreground().run(#inner_fn_name(#inner_fn_args))
                 );
             }
         }
@@ -147,7 +147,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     #num_iterations as u64,
                     #starting_seed as u64,
                     #max_retries,
-                    &mut |cx, _, seed| #inner_fn_name(#inner_fn_args)
+                    &mut |cx, _, _, seed| #inner_fn_name(#inner_fn_args)
                 );
             }
         }

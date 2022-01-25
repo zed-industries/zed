@@ -13,8 +13,9 @@ use gpui::{
     WeakModelHandle,
 };
 use language::{
+    proto::{deserialize_anchor, serialize_anchor},
     range_from_lsp, Bias, Buffer, Diagnostic, DiagnosticEntry, File as _, Language,
-    LanguageRegistry, Operation, PointUtf16, ToOffset, ToPointUtf16,
+    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16,
 };
 use lsp::{DiagnosticSeverity, LanguageServer};
 use postage::{prelude::Stream, watch};
@@ -42,17 +43,12 @@ pub struct Project {
     collaborators: HashMap<PeerId, Collaborator>,
     subscriptions: Vec<client::Subscription>,
     language_servers_with_diagnostics_running: isize,
-    open_buffers: HashMap<usize, OpenBuffer>,
+    open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
     loading_buffers: HashMap<
         ProjectPath,
         postage::watch::Receiver<Option<Result<ModelHandle<Buffer>, Arc<anyhow::Error>>>>,
     >,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
-}
-
-enum OpenBuffer {
-    Operations(Vec<Operation>),
-    Loaded(WeakModelHandle<Buffer>),
 }
 
 enum WorktreeHandle {
@@ -246,8 +242,10 @@ impl Project {
 
         let mut worktrees = Vec::new();
         for worktree in response.worktrees {
-            worktrees
-                .push(Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx).await?);
+            let (worktree, load_task) = cx
+                .update(|cx| Worktree::remote(remote_id, replica_id, worktree, client.clone(), cx));
+            worktrees.push(worktree);
+            load_task.detach();
         }
 
         let user_ids = response
@@ -336,6 +334,7 @@ impl Project {
                 client.subscribe_to_entity(remote_id, cx, Self::handle_save_buffer),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_format_buffer),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_get_definition),
             ]);
         }
     }
@@ -458,6 +457,7 @@ impl Project {
             rpc.send(proto::UnshareProject { project_id }).await?;
             this.update(&mut cx, |this, cx| {
                 this.collaborators.clear();
+                this.shared_buffers.clear();
                 for worktree in this.worktrees(cx).collect::<Vec<_>>() {
                     worktree.update(cx, |worktree, _| {
                         worktree.as_local_mut().unwrap().unshare();
@@ -514,21 +514,18 @@ impl Project {
                 let (mut tx, rx) = postage::watch::channel();
                 entry.insert(rx.clone());
 
-                let load_buffer = worktree.update(cx, |worktree, cx| {
-                    worktree.load_buffer(&project_path.path, cx)
-                });
+                let load_buffer = if worktree.read(cx).is_local() {
+                    self.open_local_buffer(&project_path.path, &worktree, cx)
+                } else {
+                    self.open_remote_buffer(&project_path.path, &worktree, cx)
+                };
 
                 cx.spawn(move |this, mut cx| async move {
                     let load_result = load_buffer.await;
-                    *tx.borrow_mut() = Some(this.update(&mut cx, |this, cx| {
+                    *tx.borrow_mut() = Some(this.update(&mut cx, |this, _| {
                         // Record the fact that the buffer is no longer loading.
                         this.loading_buffers.remove(&project_path);
                         let buffer = load_result.map_err(Arc::new)?;
-                        this.open_buffers.insert(
-                            buffer.read(cx).remote_id() as usize,
-                            OpenBuffer::Loaded(buffer.downgrade()),
-                        );
-                        this.assign_language_to_buffer(&worktree, &buffer, cx);
                         Ok(buffer)
                     }));
                 })
@@ -550,6 +547,55 @@ impl Project {
         })
     }
 
+    fn open_local_buffer(
+        &mut self,
+        path: &Arc<Path>,
+        worktree: &ModelHandle<Worktree>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<Buffer>>> {
+        let load_buffer = worktree.update(cx, |worktree, cx| {
+            let worktree = worktree.as_local_mut().unwrap();
+            worktree.load_buffer(path, cx)
+        });
+        let worktree = worktree.downgrade();
+        cx.spawn(|this, mut cx| async move {
+            let buffer = load_buffer.await?;
+            let worktree = worktree
+                .upgrade(&cx)
+                .ok_or_else(|| anyhow!("worktree was removed"))?;
+            this.update(&mut cx, |this, cx| {
+                this.register_buffer(&buffer, Some(&worktree), cx)
+            })?;
+            Ok(buffer)
+        })
+    }
+
+    fn open_remote_buffer(
+        &mut self,
+        path: &Arc<Path>,
+        worktree: &ModelHandle<Worktree>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<Buffer>>> {
+        let rpc = self.client.clone();
+        let project_id = self.remote_id().unwrap();
+        let remote_worktree_id = worktree.read(cx).id();
+        let path = path.clone();
+        let path_string = path.to_string_lossy().to_string();
+        cx.spawn(|this, mut cx| async move {
+            let response = rpc
+                .request(proto::OpenBuffer {
+                    project_id,
+                    worktree_id: remote_worktree_id.to_proto(),
+                    path: path_string,
+                })
+                .await?;
+            let buffer = response.buffer.ok_or_else(|| anyhow!("missing buffer"))?;
+            this.update(&mut cx, |this, cx| {
+                this.deserialize_remote_buffer(buffer, cx)
+            })
+        })
+    }
+
     pub fn save_buffer_as(
         &self,
         buffer: ModelHandle<Buffer>,
@@ -568,9 +614,7 @@ impl Project {
                 })
                 .await?;
             this.update(&mut cx, |this, cx| {
-                this.open_buffers
-                    .insert(buffer.id(), OpenBuffer::Loaded(buffer.downgrade()));
-                this.assign_language_to_buffer(&worktree, &buffer, cx);
+                this.assign_language_to_buffer(&buffer, Some(&worktree), cx);
             });
             Ok(())
         })
@@ -603,25 +647,41 @@ impl Project {
         let mut result = None;
         let worktree = self.worktree_for_id(path.worktree_id, cx)?;
         self.open_buffers.retain(|_, buffer| {
-            if let OpenBuffer::Loaded(buffer) = buffer {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
-                        if file.worktree == worktree && file.path() == &path.path {
-                            result = Some(buffer);
-                        }
+            if let Some(buffer) = buffer.upgrade(cx) {
+                if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
+                    if file.worktree == worktree && file.path() == &path.path {
+                        result = Some(buffer);
                     }
-                    return true;
                 }
+                true
+            } else {
+                false
             }
-            false
         });
         result
     }
 
+    fn register_buffer(
+        &mut self,
+        buffer: &ModelHandle<Buffer>,
+        worktree: Option<&ModelHandle<Worktree>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        if self
+            .open_buffers
+            .insert(buffer.read(cx).remote_id() as usize, buffer.downgrade())
+            .is_some()
+        {
+            return Err(anyhow!("registered the same buffer twice"));
+        }
+        self.assign_language_to_buffer(&buffer, worktree, cx);
+        Ok(())
+    }
+
     fn assign_language_to_buffer(
         &mut self,
-        worktree: &ModelHandle<Worktree>,
         buffer: &ModelHandle<Buffer>,
+        worktree: Option<&ModelHandle<Worktree>>,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
         let (path, full_path) = {
@@ -637,7 +697,7 @@ impl Project {
 
             // For local worktrees, start a language server if needed.
             // Also assign the language server and any previously stored diagnostics to the buffer.
-            if let Some(local_worktree) = worktree.read(cx).as_local() {
+            if let Some(local_worktree) = worktree.and_then(|w| w.read(cx).as_local()) {
                 let worktree_id = local_worktree.id();
                 let worktree_abs_path = local_worktree.abs_path().clone();
 
@@ -661,7 +721,7 @@ impl Project {
             }
         }
 
-        if let Some(local_worktree) = worktree.read(cx).as_local() {
+        if let Some(local_worktree) = worktree.and_then(|w| w.read(cx).as_local()) {
             if let Some(diagnostics) = local_worktree.diagnostics_for_path(&path) {
                 buffer.update(cx, |buffer, cx| {
                     buffer.update_diagnostics(None, diagnostics, cx).log_err();
@@ -935,10 +995,10 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Definition>>> {
         let source_buffer_handle = source_buffer_handle.clone();
-        let buffer = source_buffer_handle.read(cx);
+        let source_buffer = source_buffer_handle.read(cx);
         let worktree;
         let buffer_abs_path;
-        if let Some(file) = File::from_dyn(buffer.file()) {
+        if let Some(file) = File::from_dyn(source_buffer.file()) {
             worktree = file.worktree.clone();
             buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
         } else {
@@ -946,11 +1006,11 @@ impl Project {
         };
 
         if worktree.read(cx).as_local().is_some() {
-            let point = buffer.offset_to_point_utf16(position.to_offset(buffer));
+            let point = source_buffer.offset_to_point_utf16(position.to_offset(source_buffer));
             let buffer_abs_path = buffer_abs_path.unwrap();
             let lang_name;
             let lang_server;
-            if let Some(lang) = buffer.language() {
+            if let Some(lang) = source_buffer.language() {
                 lang_name = lang.name().to_string();
                 if let Some(server) = self
                     .language_servers
@@ -1045,9 +1105,41 @@ impl Project {
 
                 Ok(definitions)
             })
+        } else if let Some(project_id) = self.remote_id() {
+            let client = self.client.clone();
+            let request = proto::GetDefinition {
+                project_id,
+                buffer_id: source_buffer.remote_id(),
+                position: Some(serialize_anchor(&source_buffer.anchor_before(position))),
+            };
+            cx.spawn(|this, mut cx| async move {
+                let response = client.request(request).await?;
+                this.update(&mut cx, |this, cx| {
+                    let mut definitions = Vec::new();
+                    for definition in response.definitions {
+                        let target_buffer = this.deserialize_remote_buffer(
+                            definition.buffer.ok_or_else(|| anyhow!("missing buffer"))?,
+                            cx,
+                        )?;
+                        let target_start = definition
+                            .target_start
+                            .and_then(deserialize_anchor)
+                            .ok_or_else(|| anyhow!("missing target start"))?;
+                        let target_end = definition
+                            .target_end
+                            .and_then(deserialize_anchor)
+                            .ok_or_else(|| anyhow!("missing target end"))?;
+                        definitions.push(Definition {
+                            target_buffer,
+                            target_range: target_start..target_end,
+                        })
+                    }
+
+                    Ok(definitions)
+                })
+            })
         } else {
-            log::info!("go to definition is not yet implemented for guests");
-            Task::ready(Ok(Default::default()))
+            Task::ready(Err(anyhow!("project does not have a remote id")))
         }
     }
 
@@ -1173,62 +1265,60 @@ impl Project {
         let snapshot = worktree_handle.read(cx).snapshot();
         let mut buffers_to_delete = Vec::new();
         for (buffer_id, buffer) in &self.open_buffers {
-            if let OpenBuffer::Loaded(buffer) = buffer {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    buffer.update(cx, |buffer, cx| {
-                        if let Some(old_file) = File::from_dyn(buffer.file()) {
-                            if old_file.worktree != worktree_handle {
-                                return;
-                            }
-
-                            let new_file = if let Some(entry) = old_file
-                                .entry_id
-                                .and_then(|entry_id| snapshot.entry_for_id(entry_id))
-                            {
-                                File {
-                                    is_local: true,
-                                    entry_id: Some(entry.id),
-                                    mtime: entry.mtime,
-                                    path: entry.path.clone(),
-                                    worktree: worktree_handle.clone(),
-                                }
-                            } else if let Some(entry) =
-                                snapshot.entry_for_path(old_file.path().as_ref())
-                            {
-                                File {
-                                    is_local: true,
-                                    entry_id: Some(entry.id),
-                                    mtime: entry.mtime,
-                                    path: entry.path.clone(),
-                                    worktree: worktree_handle.clone(),
-                                }
-                            } else {
-                                File {
-                                    is_local: true,
-                                    entry_id: None,
-                                    path: old_file.path().clone(),
-                                    mtime: old_file.mtime(),
-                                    worktree: worktree_handle.clone(),
-                                }
-                            };
-
-                            if let Some(project_id) = self.remote_id() {
-                                let client = self.client.clone();
-                                let message = proto::UpdateBufferFile {
-                                    project_id,
-                                    buffer_id: *buffer_id as u64,
-                                    file: Some(new_file.to_proto()),
-                                };
-                                cx.foreground()
-                                    .spawn(async move { client.send(message).await })
-                                    .detach_and_log_err(cx);
-                            }
-                            buffer.file_updated(Box::new(new_file), cx).detach();
+            if let Some(buffer) = buffer.upgrade(cx) {
+                buffer.update(cx, |buffer, cx| {
+                    if let Some(old_file) = File::from_dyn(buffer.file()) {
+                        if old_file.worktree != worktree_handle {
+                            return;
                         }
-                    });
-                } else {
-                    buffers_to_delete.push(*buffer_id);
-                }
+
+                        let new_file = if let Some(entry) = old_file
+                            .entry_id
+                            .and_then(|entry_id| snapshot.entry_for_id(entry_id))
+                        {
+                            File {
+                                is_local: true,
+                                entry_id: Some(entry.id),
+                                mtime: entry.mtime,
+                                path: entry.path.clone(),
+                                worktree: worktree_handle.clone(),
+                            }
+                        } else if let Some(entry) =
+                            snapshot.entry_for_path(old_file.path().as_ref())
+                        {
+                            File {
+                                is_local: true,
+                                entry_id: Some(entry.id),
+                                mtime: entry.mtime,
+                                path: entry.path.clone(),
+                                worktree: worktree_handle.clone(),
+                            }
+                        } else {
+                            File {
+                                is_local: true,
+                                entry_id: None,
+                                path: old_file.path().clone(),
+                                mtime: old_file.mtime(),
+                                worktree: worktree_handle.clone(),
+                            }
+                        };
+
+                        if let Some(project_id) = self.remote_id() {
+                            let client = self.client.clone();
+                            let message = proto::UpdateBufferFile {
+                                project_id,
+                                buffer_id: *buffer_id as u64,
+                                file: Some(new_file.to_proto()),
+                            };
+                            cx.foreground()
+                                .spawn(async move { client.send(message).await })
+                                .detach_and_log_err(cx);
+                        }
+                        buffer.file_updated(Box::new(new_file), cx).detach();
+                    }
+                });
+            } else {
+                buffers_to_delete.push(*buffer_id);
             }
         }
 
@@ -1366,10 +1456,8 @@ impl Project {
             .replica_id;
         self.shared_buffers.remove(&peer_id);
         for (_, buffer) in &self.open_buffers {
-            if let OpenBuffer::Loaded(buffer) = buffer {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
-                }
+            if let Some(buffer) = buffer.upgrade(cx) {
+                buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
             }
         }
         cx.notify();
@@ -1388,16 +1476,9 @@ impl Project {
             .payload
             .worktree
             .ok_or_else(|| anyhow!("invalid worktree"))?;
-        cx.spawn(|this, mut cx| {
-            async move {
-                let worktree =
-                    Worktree::remote(remote_id, replica_id, worktree, client, &mut cx).await?;
-                this.update(&mut cx, |this, cx| this.add_worktree(&worktree, cx));
-                Ok(())
-            }
-            .log_err()
-        })
-        .detach();
+        let (worktree, load_task) = Worktree::remote(remote_id, replica_id, worktree, client, cx);
+        self.add_worktree(&worktree, cx);
+        load_task.detach();
         Ok(())
     }
 
@@ -1486,19 +1567,9 @@ impl Project {
             .into_iter()
             .map(|op| language::proto::deserialize_operation(op))
             .collect::<Result<Vec<_>, _>>()?;
-        match self.open_buffers.get_mut(&buffer_id) {
-            Some(OpenBuffer::Operations(pending_ops)) => pending_ops.extend(ops),
-            Some(OpenBuffer::Loaded(buffer)) => {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
-                } else {
-                    self.open_buffers
-                        .insert(buffer_id, OpenBuffer::Operations(ops));
-                }
-            }
-            None => {
-                self.open_buffers
-                    .insert(buffer_id, OpenBuffer::Operations(ops));
+        if let Some(buffer) = self.open_buffers.get_mut(&buffer_id) {
+            if let Some(buffer) = buffer.upgrade(cx) {
+                buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
             }
         }
         Ok(())
@@ -1611,6 +1682,53 @@ impl Project {
         Ok(())
     }
 
+    pub fn handle_get_definition(
+        &mut self,
+        envelope: TypedEnvelope<proto::GetDefinition>,
+        rpc: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let receipt = envelope.receipt();
+        let sender_id = envelope.original_sender_id()?;
+        let source_buffer = self
+            .shared_buffers
+            .get(&sender_id)
+            .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
+            .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
+        let position = envelope
+            .payload
+            .position
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        if !source_buffer.read(cx).can_resolve(&position) {
+            return Err(anyhow!("cannot resolve position"));
+        }
+
+        let definitions = self.definition(&source_buffer, position, cx);
+        cx.spawn(|this, mut cx| async move {
+            let definitions = definitions.await?;
+            let mut response = proto::GetDefinitionResponse {
+                definitions: Default::default(),
+            };
+            this.update(&mut cx, |this, cx| {
+                for definition in definitions {
+                    let buffer =
+                        this.serialize_buffer_for_peer(&definition.target_buffer, sender_id, cx);
+                    response.definitions.push(proto::Definition {
+                        target_start: Some(serialize_anchor(&definition.target_range.start)),
+                        target_end: Some(serialize_anchor(&definition.target_range.end)),
+                        buffer: Some(buffer),
+                    });
+                }
+            });
+            rpc.respond(receipt, response).await?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
+
+        Ok(())
+    }
+
     pub fn handle_open_buffer(
         &mut self,
         envelope: TypedEnvelope<proto::OpenBuffer>,
@@ -1630,17 +1748,13 @@ impl Project {
         cx.spawn(|this, mut cx| {
             async move {
                 let buffer = open_buffer.await?;
-                this.update(&mut cx, |this, _| {
-                    this.shared_buffers
-                        .entry(peer_id)
-                        .or_default()
-                        .insert(buffer.id() as u64, buffer.clone());
+                let buffer = this.update(&mut cx, |this, cx| {
+                    this.serialize_buffer_for_peer(&buffer, peer_id, cx)
                 });
-                let message = buffer.read_with(&cx, |buffer, _| buffer.to_proto());
                 rpc.respond(
                     receipt,
                     proto::OpenBufferResponse {
-                        buffer: Some(message),
+                        buffer: Some(buffer),
                     },
                 )
                 .await
@@ -1649,6 +1763,60 @@ impl Project {
         })
         .detach();
         Ok(())
+    }
+
+    fn serialize_buffer_for_peer(
+        &mut self,
+        buffer: &ModelHandle<Buffer>,
+        peer_id: PeerId,
+        cx: &AppContext,
+    ) -> proto::Buffer {
+        let buffer_id = buffer.read(cx).remote_id();
+        let shared_buffers = self.shared_buffers.entry(peer_id).or_default();
+        match shared_buffers.entry(buffer_id) {
+            hash_map::Entry::Occupied(_) => proto::Buffer {
+                variant: Some(proto::buffer::Variant::Id(buffer_id)),
+            },
+            hash_map::Entry::Vacant(entry) => {
+                entry.insert(buffer.clone());
+                proto::Buffer {
+                    variant: Some(proto::buffer::Variant::State(buffer.read(cx).to_proto())),
+                }
+            }
+        }
+    }
+
+    fn deserialize_remote_buffer(
+        &mut self,
+        buffer: proto::Buffer,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<ModelHandle<Buffer>> {
+        match buffer.variant.ok_or_else(|| anyhow!("missing buffer"))? {
+            proto::buffer::Variant::Id(id) => self
+                .open_buffers
+                .get(&(id as usize))
+                .and_then(|buffer| buffer.upgrade(cx))
+                .ok_or_else(|| anyhow!("no buffer exists for id {}", id)),
+            proto::buffer::Variant::State(mut buffer) => {
+                let mut buffer_worktree = None;
+                let mut buffer_file = None;
+                if let Some(file) = buffer.file.take() {
+                    let worktree_id = WorktreeId::from_proto(file.worktree_id);
+                    let worktree = self
+                        .worktree_for_id(worktree_id, cx)
+                        .ok_or_else(|| anyhow!("no worktree found for id {}", file.worktree_id))?;
+                    buffer_file = Some(Box::new(File::from_proto(file, worktree.clone(), cx)?)
+                        as Box<dyn language::File>);
+                    buffer_worktree = Some(worktree);
+                }
+
+                let buffer = cx.add_model(|cx| {
+                    Buffer::from_proto(self.replica_id(), buffer, buffer_file, cx).unwrap()
+                });
+                self.register_buffer(&buffer, buffer_worktree.as_ref(), cx)?;
+                Ok(buffer)
+            }
+        }
     }
 
     pub fn handle_close_buffer(
@@ -1674,13 +1842,7 @@ impl Project {
         let buffer = self
             .open_buffers
             .get(&(payload.buffer_id as usize))
-            .and_then(|buf| {
-                if let OpenBuffer::Loaded(buffer) = buf {
-                    buffer.upgrade(cx)
-                } else {
-                    None
-                }
-            });
+            .and_then(|buffer| buffer.upgrade(cx));
         if let Some(buffer) = buffer {
             buffer.update(cx, |buffer, cx| {
                 let version = payload.version.try_into()?;
@@ -1705,13 +1867,7 @@ impl Project {
         let buffer = self
             .open_buffers
             .get(&(payload.buffer_id as usize))
-            .and_then(|buf| {
-                if let OpenBuffer::Loaded(buffer) = buf {
-                    buffer.upgrade(cx)
-                } else {
-                    None
-                }
-            });
+            .and_then(|buffer| buffer.upgrade(cx));
         if let Some(buffer) = buffer {
             buffer.update(cx, |buffer, cx| {
                 let version = payload.version.try_into()?;
@@ -1906,15 +2062,6 @@ impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
         Self {
             worktree_id,
             path: path.as_ref().into(),
-        }
-    }
-}
-
-impl OpenBuffer {
-    fn upgrade(&self, cx: &AppContext) -> Option<ModelHandle<Buffer>> {
-        match self {
-            OpenBuffer::Loaded(buffer) => buffer.upgrade(cx),
-            OpenBuffer::Operations(_) => None,
         }
     }
 }
@@ -2292,7 +2439,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_save_file(mut cx: gpui::TestAppContext) {
-        let fs = Arc::new(FakeFs::new());
+        let fs = Arc::new(FakeFs::new(cx.background()));
         fs.insert_tree(
             "/dir",
             json!({
@@ -2330,7 +2477,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_save_in_single_file_worktree(mut cx: gpui::TestAppContext) {
-        let fs = Arc::new(FakeFs::new());
+        let fs = Arc::new(FakeFs::new(cx.background()));
         fs.insert_tree(
             "/dir",
             json!({
@@ -2419,15 +2566,16 @@ mod tests {
 
         // Create a remote copy of this worktree.
         let initial_snapshot = tree.read_with(&cx, |tree, _| tree.snapshot());
-        let remote = Worktree::remote(
-            1,
-            1,
-            initial_snapshot.to_proto(&Default::default(), Default::default()),
-            rpc.clone(),
-            &mut cx.to_async(),
-        )
-        .await
-        .unwrap();
+        let (remote, load_task) = cx.update(|cx| {
+            Worktree::remote(
+                1,
+                1,
+                initial_snapshot.to_proto(&Default::default(), Default::default()),
+                rpc.clone(),
+                cx,
+            )
+        });
+        load_task.await;
 
         cx.read(|cx| {
             assert!(!buffer2.read(cx).is_dirty());
@@ -2516,7 +2664,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_buffer_deduping(mut cx: gpui::TestAppContext) {
-        let fs = Arc::new(FakeFs::new());
+        let fs = Arc::new(FakeFs::new(cx.background()));
         fs.insert_tree(
             "/the-dir",
             json!({
@@ -2805,7 +2953,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
-        let fs = Arc::new(FakeFs::new());
+        let fs = Arc::new(FakeFs::new(cx.background()));
         fs.insert_tree(
             "/the-dir",
             json!({

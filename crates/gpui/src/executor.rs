@@ -1,10 +1,11 @@
 use anyhow::{anyhow, Result};
 use async_task::Runnable;
 use backtrace::{Backtrace, BacktraceFmt, BytesOrWideString};
+use collections::HashMap;
 use parking_lot::Mutex;
 use postage::{barrier, prelude::Stream as _};
 use rand::prelude::*;
-use smol::{channel, prelude::*, Executor, Timer};
+use smol::{channel, future::yield_now, prelude::*, Executor, Timer};
 use std::{
     any::Any,
     fmt::{self, Debug, Display},
@@ -33,8 +34,10 @@ pub enum Foreground {
         dispatcher: Arc<dyn platform::Dispatcher>,
         _not_send_or_sync: PhantomData<Rc<()>>,
     },
-    Test(smol::LocalExecutor<'static>),
-    Deterministic(Arc<Deterministic>),
+    Deterministic {
+        cx_id: usize,
+        executor: Arc<Deterministic>,
+    },
 }
 
 pub enum Background {
@@ -70,14 +73,18 @@ unsafe impl<T: Send> Send for Task<T> {}
 struct DeterministicState {
     rng: StdRng,
     seed: u64,
-    scheduled_from_foreground: Vec<(Runnable, Backtrace)>,
-    scheduled_from_background: Vec<(Runnable, Backtrace)>,
-    spawned_from_foreground: Vec<(Runnable, Backtrace)>,
+    scheduled_from_foreground: HashMap<usize, Vec<ForegroundRunnable>>,
+    scheduled_from_background: Vec<Runnable>,
     forbid_parking: bool,
     block_on_ticks: RangeInclusive<usize>,
     now: Instant,
     pending_timers: Vec<(Instant, barrier::Sender)>,
     waiting_backtrace: Option<Backtrace>,
+}
+
+struct ForegroundRunnable {
+    runnable: Runnable,
+    main: bool,
 }
 
 pub struct Deterministic {
@@ -86,14 +93,13 @@ pub struct Deterministic {
 }
 
 impl Deterministic {
-    fn new(seed: u64) -> Self {
-        Self {
+    pub fn new(seed: u64) -> Arc<Self> {
+        Arc::new(Self {
             state: Arc::new(Mutex::new(DeterministicState {
                 rng: StdRng::seed_from_u64(seed),
                 seed,
                 scheduled_from_foreground: Default::default(),
                 scheduled_from_background: Default::default(),
-                spawned_from_foreground: Default::default(),
                 forbid_parking: false,
                 block_on_ticks: 0..=1000,
                 now: Instant::now(),
@@ -101,22 +107,37 @@ impl Deterministic {
                 waiting_backtrace: None,
             })),
             parker: Default::default(),
-        }
+        })
     }
 
-    fn spawn_from_foreground(&self, future: AnyLocalFuture) -> AnyLocalTask {
-        let backtrace = Backtrace::new_unresolved();
-        let scheduled_once = AtomicBool::new(false);
+    pub fn build_background(self: &Arc<Self>) -> Arc<Background> {
+        Arc::new(Background::Deterministic {
+            executor: self.clone(),
+        })
+    }
+
+    pub fn build_foreground(self: &Arc<Self>, id: usize) -> Rc<Foreground> {
+        Rc::new(Foreground::Deterministic {
+            cx_id: id,
+            executor: self.clone(),
+        })
+    }
+
+    fn spawn_from_foreground(
+        &self,
+        cx_id: usize,
+        future: AnyLocalFuture,
+        main: bool,
+    ) -> AnyLocalTask {
         let state = self.state.clone();
         let unparker = self.parker.lock().unparker();
         let (runnable, task) = async_task::spawn_local(future, move |runnable| {
             let mut state = state.lock();
-            let backtrace = backtrace.clone();
-            if scheduled_once.fetch_or(true, SeqCst) {
-                state.scheduled_from_foreground.push((runnable, backtrace));
-            } else {
-                state.spawned_from_foreground.push((runnable, backtrace));
-            }
+            state
+                .scheduled_from_foreground
+                .entry(cx_id)
+                .or_default()
+                .push(ForegroundRunnable { runnable, main });
             unparker.unpark();
         });
         runnable.schedule();
@@ -124,24 +145,23 @@ impl Deterministic {
     }
 
     fn spawn(&self, future: AnyFuture) -> AnyTask {
-        let backtrace = Backtrace::new_unresolved();
         let state = self.state.clone();
         let unparker = self.parker.lock().unparker();
         let (runnable, task) = async_task::spawn(future, move |runnable| {
             let mut state = state.lock();
-            state
-                .scheduled_from_background
-                .push((runnable, backtrace.clone()));
+            state.scheduled_from_background.push(runnable);
             unparker.unpark();
         });
         runnable.schedule();
         task
     }
 
-    fn run(&self, mut future: AnyLocalFuture) -> Box<dyn Any> {
+    fn run(&self, cx_id: usize, main_future: AnyLocalFuture) -> Box<dyn Any> {
         let woken = Arc::new(AtomicBool::new(false));
+        let mut main_task = self.spawn_from_foreground(cx_id, main_future, true);
+
         loop {
-            if let Some(result) = self.run_internal(woken.clone(), &mut future) {
+            if let Some(result) = self.run_internal(woken.clone(), Some(&mut main_task)) {
                 return result;
             }
 
@@ -156,14 +176,13 @@ impl Deterministic {
 
     fn run_until_parked(&self) {
         let woken = Arc::new(AtomicBool::new(false));
-        let mut future = any_local_future(std::future::pending::<()>());
-        self.run_internal(woken, &mut future);
+        self.run_internal(woken, None);
     }
 
     fn run_internal(
         &self,
         woken: Arc<AtomicBool>,
-        future: &mut AnyLocalFuture,
+        mut main_task: Option<&mut AnyLocalTask>,
     ) -> Option<Box<dyn Any>> {
         let unparker = self.parker.lock().unparker();
         let waker = waker_fn(move || {
@@ -172,48 +191,46 @@ impl Deterministic {
         });
 
         let mut cx = Context::from_waker(&waker);
-        let mut trace = Trace::default();
         loop {
             let mut state = self.state.lock();
-            let runnable_count = state.scheduled_from_foreground.len()
-                + state.scheduled_from_background.len()
-                + state.spawned_from_foreground.len();
 
-            let ix = state.rng.gen_range(0..=runnable_count);
-            if ix < state.scheduled_from_foreground.len() {
-                let (_, backtrace) = &state.scheduled_from_foreground[ix];
-                trace.record(&state, backtrace.clone());
-                let runnable = state.scheduled_from_foreground.remove(ix).0;
-                drop(state);
-                runnable.run();
-            } else if ix - state.scheduled_from_foreground.len()
-                < state.scheduled_from_background.len()
+            if state.scheduled_from_foreground.is_empty()
+                && state.scheduled_from_background.is_empty()
             {
-                let ix = ix - state.scheduled_from_foreground.len();
-                let (_, backtrace) = &state.scheduled_from_background[ix];
-                trace.record(&state, backtrace.clone());
-                let runnable = state.scheduled_from_background.remove(ix).0;
+                return None;
+            }
+
+            if !state.scheduled_from_background.is_empty() && state.rng.gen() {
+                let background_len = state.scheduled_from_background.len();
+                let ix = state.rng.gen_range(0..background_len);
+                let runnable = state.scheduled_from_background.remove(ix);
                 drop(state);
                 runnable.run();
-            } else if ix < runnable_count {
-                let (_, backtrace) = &state.spawned_from_foreground[0];
-                trace.record(&state, backtrace.clone());
-                let runnable = state.spawned_from_foreground.remove(0).0;
-                drop(state);
-                runnable.run();
-            } else {
-                drop(state);
-                if let Poll::Ready(result) = future.poll(&mut cx) {
-                    return Some(result);
+            } else if !state.scheduled_from_foreground.is_empty() {
+                let available_cx_ids = state
+                    .scheduled_from_foreground
+                    .keys()
+                    .copied()
+                    .collect::<Vec<_>>();
+                let cx_id_to_run = *available_cx_ids.iter().choose(&mut state.rng).unwrap();
+                let scheduled_from_cx = state
+                    .scheduled_from_foreground
+                    .get_mut(&cx_id_to_run)
+                    .unwrap();
+                let foreground_runnable = scheduled_from_cx.remove(0);
+                if scheduled_from_cx.is_empty() {
+                    state.scheduled_from_foreground.remove(&cx_id_to_run);
                 }
 
-                let state = self.state.lock();
+                drop(state);
 
-                if state.scheduled_from_foreground.is_empty()
-                    && state.scheduled_from_background.is_empty()
-                    && state.spawned_from_foreground.is_empty()
-                {
-                    return None;
+                foreground_runnable.runnable.run();
+                if let Some(main_task) = main_task.as_mut() {
+                    if foreground_runnable.main {
+                        if let Poll::Ready(result) = main_task.poll(&mut cx) {
+                            return Some(result);
+                        }
+                    }
                 }
             }
         }
@@ -231,15 +248,12 @@ impl Deterministic {
         };
 
         let mut cx = Context::from_waker(&waker);
-        let mut trace = Trace::default();
         for _ in 0..max_ticks {
             let mut state = self.state.lock();
             let runnable_count = state.scheduled_from_background.len();
             let ix = state.rng.gen_range(0..=runnable_count);
             if ix < state.scheduled_from_background.len() {
-                let (_, backtrace) = &state.scheduled_from_background[ix];
-                trace.record(&state, backtrace.clone());
-                let runnable = state.scheduled_from_background.remove(ix).0;
+                let runnable = state.scheduled_from_background.remove(ix);
                 drop(state);
                 runnable.run();
             } else {
@@ -282,69 +296,13 @@ impl DeterministicState {
     }
 }
 
-#[derive(Default)]
-struct Trace {
-    executed: Vec<Backtrace>,
-    scheduled: Vec<Vec<Backtrace>>,
-    spawned_from_foreground: Vec<Vec<Backtrace>>,
-}
-
-impl Trace {
-    fn record(&mut self, state: &DeterministicState, executed: Backtrace) {
-        self.scheduled.push(
-            state
-                .scheduled_from_foreground
-                .iter()
-                .map(|(_, backtrace)| backtrace.clone())
-                .collect(),
-        );
-        self.spawned_from_foreground.push(
-            state
-                .spawned_from_foreground
-                .iter()
-                .map(|(_, backtrace)| backtrace.clone())
-                .collect(),
-        );
-        self.executed.push(executed);
-    }
-
-    fn resolve(&mut self) {
-        for backtrace in &mut self.executed {
-            backtrace.resolve();
-        }
-
-        for backtraces in &mut self.scheduled {
-            for backtrace in backtraces {
-                backtrace.resolve();
-            }
-        }
-
-        for backtraces in &mut self.spawned_from_foreground {
-            for backtrace in backtraces {
-                backtrace.resolve();
-            }
-        }
-    }
-}
-
 struct CwdBacktrace<'a> {
     backtrace: &'a Backtrace,
-    first_frame_only: bool,
 }
 
 impl<'a> CwdBacktrace<'a> {
     fn new(backtrace: &'a Backtrace) -> Self {
-        Self {
-            backtrace,
-            first_frame_only: false,
-        }
-    }
-
-    fn first_frame(backtrace: &'a Backtrace) -> Self {
-        Self {
-            backtrace,
-            first_frame_only: true,
-        }
+        Self { backtrace }
     }
 }
 
@@ -363,66 +321,9 @@ impl<'a> Debug for CwdBacktrace<'a> {
                 .any(|s| s.filename().map_or(false, |f| f.starts_with(&cwd)))
             {
                 formatted_frame.backtrace_frame(frame)?;
-                if self.first_frame_only {
-                    break;
-                }
             }
         }
         fmt.finish()
-    }
-}
-
-impl Debug for Trace {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for ((backtrace, scheduled), spawned_from_foreground) in self
-            .executed
-            .iter()
-            .zip(&self.scheduled)
-            .zip(&self.spawned_from_foreground)
-        {
-            writeln!(f, "Scheduled")?;
-            for backtrace in scheduled {
-                writeln!(f, "- {:?}", CwdBacktrace::first_frame(backtrace))?;
-            }
-            if scheduled.is_empty() {
-                writeln!(f, "None")?;
-            }
-            writeln!(f, "==========")?;
-
-            writeln!(f, "Spawned from foreground")?;
-            for backtrace in spawned_from_foreground {
-                writeln!(f, "- {:?}", CwdBacktrace::first_frame(backtrace))?;
-            }
-            if spawned_from_foreground.is_empty() {
-                writeln!(f, "None")?;
-            }
-            writeln!(f, "==========")?;
-
-            writeln!(f, "Run: {:?}", CwdBacktrace::first_frame(backtrace))?;
-            writeln!(f, "+++++++++++++++++++")?;
-        }
-
-        Ok(())
-    }
-}
-
-impl Drop for Trace {
-    fn drop(&mut self) {
-        let trace_on_panic = if let Ok(trace_on_panic) = std::env::var("EXECUTOR_TRACE_ON_PANIC") {
-            trace_on_panic == "1" || trace_on_panic == "true"
-        } else {
-            false
-        };
-        let trace_always = if let Ok(trace_always) = std::env::var("EXECUTOR_TRACE_ALWAYS") {
-            trace_always == "1" || trace_always == "true"
-        } else {
-            false
-        };
-
-        if trace_always || (trace_on_panic && thread::panicking()) {
-            self.resolve();
-            dbg!(self);
-        }
     }
 }
 
@@ -438,14 +339,12 @@ impl Foreground {
         }
     }
 
-    pub fn test() -> Self {
-        Self::Test(smol::LocalExecutor::new())
-    }
-
     pub fn spawn<T: 'static>(&self, future: impl Future<Output = T> + 'static) -> Task<T> {
         let future = any_local_future(future);
         let any_task = match self {
-            Self::Deterministic(executor) => executor.spawn_from_foreground(future),
+            Self::Deterministic { cx_id, executor } => {
+                executor.spawn_from_foreground(*cx_id, future, false)
+            }
             Self::Platform { dispatcher, .. } => {
                 fn spawn_inner(
                     future: AnyLocalFuture,
@@ -460,7 +359,6 @@ impl Foreground {
                 }
                 spawn_inner(future, dispatcher)
             }
-            Self::Test(executor) => executor.spawn(future),
         };
         Task::local(any_task)
     }
@@ -468,23 +366,22 @@ impl Foreground {
     pub fn run<T: 'static>(&self, future: impl 'static + Future<Output = T>) -> T {
         let future = any_local_future(future);
         let any_value = match self {
-            Self::Deterministic(executor) => executor.run(future),
+            Self::Deterministic { cx_id, executor } => executor.run(*cx_id, future),
             Self::Platform { .. } => panic!("you can't call run on a platform foreground executor"),
-            Self::Test(executor) => smol::block_on(executor.run(future)),
         };
         *any_value.downcast().unwrap()
     }
 
     pub fn parking_forbidden(&self) -> bool {
         match self {
-            Self::Deterministic(executor) => executor.state.lock().forbid_parking,
+            Self::Deterministic { executor, .. } => executor.state.lock().forbid_parking,
             _ => panic!("this method can only be called on a deterministic executor"),
         }
     }
 
     pub fn start_waiting(&self) {
         match self {
-            Self::Deterministic(executor) => {
+            Self::Deterministic { executor, .. } => {
                 executor.state.lock().waiting_backtrace = Some(Backtrace::new_unresolved());
             }
             _ => panic!("this method can only be called on a deterministic executor"),
@@ -493,7 +390,7 @@ impl Foreground {
 
     pub fn finish_waiting(&self) {
         match self {
-            Self::Deterministic(executor) => {
+            Self::Deterministic { executor, .. } => {
                 executor.state.lock().waiting_backtrace.take();
             }
             _ => panic!("this method can only be called on a deterministic executor"),
@@ -502,7 +399,7 @@ impl Foreground {
 
     pub fn forbid_parking(&self) {
         match self {
-            Self::Deterministic(executor) => {
+            Self::Deterministic { executor, .. } => {
                 let mut state = executor.state.lock();
                 state.forbid_parking = true;
                 state.rng = StdRng::seed_from_u64(state.seed);
@@ -513,7 +410,7 @@ impl Foreground {
 
     pub async fn timer(&self, duration: Duration) {
         match self {
-            Self::Deterministic(executor) => {
+            Self::Deterministic { executor, .. } => {
                 let (tx, mut rx) = barrier::channel();
                 {
                     let mut state = executor.state.lock();
@@ -530,7 +427,7 @@ impl Foreground {
 
     pub fn advance_clock(&self, duration: Duration) {
         match self {
-            Self::Deterministic(executor) => {
+            Self::Deterministic { executor, .. } => {
                 executor.run_until_parked();
 
                 let mut state = executor.state.lock();
@@ -548,7 +445,7 @@ impl Foreground {
 
     pub fn set_block_on_ticks(&self, range: RangeInclusive<usize>) {
         match self {
-            Self::Deterministic(executor) => executor.state.lock().block_on_ticks = range,
+            Self::Deterministic { executor, .. } => executor.state.lock().block_on_ticks = range,
             _ => panic!("this method can only be called on a deterministic executor"),
         }
     }
@@ -586,7 +483,7 @@ impl Background {
         let future = any_future(future);
         let any_task = match self {
             Self::Production { executor, .. } => executor.spawn(future),
-            Self::Deterministic { executor, .. } => executor.spawn(future),
+            Self::Deterministic { executor } => executor.spawn(future),
         };
         Task::send(any_task)
     }
@@ -631,6 +528,17 @@ impl Background {
             task.await;
         }
     }
+
+    pub async fn simulate_random_delay(&self) {
+        match self {
+            Self::Deterministic { executor, .. } => {
+                if executor.state.lock().rng.gen_range(0..100) < 20 {
+                    yield_now().await;
+                }
+            }
+            _ => panic!("this method can only be called on a deterministic executor"),
+        }
+    }
 }
 
 pub struct Scope<'a> {
@@ -651,14 +559,6 @@ impl<'a> Scope<'a> {
         };
         self.futures.push(f);
     }
-}
-
-pub fn deterministic(seed: u64) -> (Rc<Foreground>, Arc<Background>) {
-    let executor = Arc::new(Deterministic::new(seed));
-    (
-        Rc::new(Foreground::Deterministic(executor.clone())),
-        Arc::new(Background::Deterministic { executor }),
-    )
 }
 
 impl<T> Task<T> {

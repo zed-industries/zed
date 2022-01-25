@@ -8,7 +8,7 @@ version = "0.1.0"
 path = "src/rpc.rs"
 
 [features]
-test-support = []
+test-support = ["gpui"]
 
 [dependencies]
 anyhow = "1.0"
@@ -25,6 +25,7 @@ rsa = "0.4"
 serde = { version = "1", features = ["derive"] }
 smol-timeout = "0.6"
 zstd = "0.9"
+gpui = { path = "../gpui", features = ["test-support"], optional = true }
 
 [build-dependencies]
 prost-build = "0.8"

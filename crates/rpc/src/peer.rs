@@ -353,12 +353,14 @@ mod tests {
         let client1 = Peer::new();
         let client2 = Peer::new();
 
-        let (client1_to_server_conn, server_to_client_1_conn, _) = Connection::in_memory();
+        let (client1_to_server_conn, server_to_client_1_conn, _) =
+            Connection::in_memory(cx.background());
         let (client1_conn_id, io_task1, client1_incoming) =
             client1.add_connection(client1_to_server_conn).await;
         let (_, io_task2, server_incoming1) = server.add_connection(server_to_client_1_conn).await;
 
-        let (client2_to_server_conn, server_to_client_2_conn, _) = Connection::in_memory();
+        let (client2_to_server_conn, server_to_client_2_conn, _) =
+            Connection::in_memory(cx.background());
         let (client2_conn_id, io_task3, client2_incoming) =
             client2.add_connection(client2_to_server_conn).await;
         let (_, io_task4, server_incoming2) = server.add_connection(server_to_client_2_conn).await;
@@ -410,9 +412,7 @@ mod tests {
                 .unwrap(),
             proto::OpenBufferResponse {
                 buffer: Some(proto::Buffer {
-                    id: 101,
-                    visible_text: "path/one content".to_string(),
-                    ..Default::default()
+                    variant: Some(proto::buffer::Variant::Id(0))
                 }),
             }
         );
@@ -431,10 +431,8 @@ mod tests {
                 .unwrap(),
             proto::OpenBufferResponse {
                 buffer: Some(proto::Buffer {
-                    id: 102,
-                    visible_text: "path/two content".to_string(),
-                    ..Default::default()
-                }),
+                    variant: Some(proto::buffer::Variant::Id(1))
+                })
             }
         );
 
@@ -460,9 +458,7 @@ mod tests {
                             assert_eq!(message.worktree_id, 1);
                             proto::OpenBufferResponse {
                                 buffer: Some(proto::Buffer {
-                                    id: 101,
-                                    visible_text: "path/one content".to_string(),
-                                    ..Default::default()
+                                    variant: Some(proto::buffer::Variant::Id(0)),
                                 }),
                             }
                         }
@@ -470,9 +466,7 @@ mod tests {
                             assert_eq!(message.worktree_id, 2);
                             proto::OpenBufferResponse {
                                 buffer: Some(proto::Buffer {
-                                    id: 102,
-                                    visible_text: "path/two content".to_string(),
-                                    ..Default::default()
+                                    variant: Some(proto::buffer::Variant::Id(1)),
                                 }),
                             }
                         }
@@ -497,7 +491,8 @@ mod tests {
         let server = Peer::new();
         let client = Peer::new();
 
-        let (client_to_server_conn, server_to_client_conn, _) = Connection::in_memory();
+        let (client_to_server_conn, server_to_client_conn, _) =
+            Connection::in_memory(cx.background());
         let (client_to_server_conn_id, io_task1, mut client_incoming) =
             client.add_connection(client_to_server_conn).await;
         let (server_to_client_conn_id, io_task2, mut server_incoming) =
@@ -597,7 +592,7 @@ mod tests {
     async fn test_disconnect(cx: TestAppContext) {
         let executor = cx.foreground();
 
-        let (client_conn, mut server_conn, _) = Connection::in_memory();
+        let (client_conn, mut server_conn, _) = Connection::in_memory(cx.background());
 
         let client = Peer::new();
         let (connection_id, io_handler, mut incoming) = client.add_connection(client_conn).await;
@@ -631,7 +626,7 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_io_error(cx: TestAppContext) {
         let executor = cx.foreground();
-        let (client_conn, mut server_conn, _) = Connection::in_memory();
+        let (client_conn, mut server_conn, _) = Connection::in_memory(cx.background());
 
         let client = Peer::new();
         let (connection_id, io_handler, mut incoming) = client.add_connection(client_conn).await;

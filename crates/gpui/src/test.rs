@@ -28,7 +28,12 @@ pub fn run_test(
     mut starting_seed: u64,
     max_retries: usize,
     test_fn: &mut (dyn RefUnwindSafe
-              + Fn(&mut MutableAppContext, Rc<platform::test::ForegroundPlatform>, u64)),
+              + Fn(
+        &mut MutableAppContext,
+        Rc<platform::test::ForegroundPlatform>,
+        Arc<executor::Deterministic>,
+        u64,
+    )),
 ) {
     let is_randomized = num_iterations > 1;
     if is_randomized {
@@ -60,16 +65,16 @@ pub fn run_test(
                     dbg!(seed);
                 }
 
-                let (foreground, background) = executor::deterministic(seed);
+                let deterministic = executor::Deterministic::new(seed);
                 let mut cx = TestAppContext::new(
                     foreground_platform.clone(),
                     platform.clone(),
-                    foreground.clone(),
-                    background.clone(),
+                    deterministic.build_foreground(usize::MAX),
+                    deterministic.build_background(),
                     font_cache.clone(),
                     0,
                 );
-                cx.update(|cx| test_fn(cx, foreground_platform.clone(), seed));
+                cx.update(|cx| test_fn(cx, foreground_platform.clone(), deterministic, seed));
 
                 atomic_seed.fetch_add(1, SeqCst);
             }

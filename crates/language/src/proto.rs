@@ -7,7 +7,7 @@ use rpc::proto;
 use std::sync::Arc;
 use text::*;
 
-pub use proto::{Buffer, SelectionSet};
+pub use proto::{Buffer, BufferState, SelectionSet};
 
 pub fn serialize_operation(operation: &Operation) -> proto::Operation {
     proto::Operation {
@@ -155,7 +155,7 @@ pub fn serialize_diagnostics<'a>(
         .collect()
 }
 
-fn serialize_anchor(anchor: &Anchor) -> proto::Anchor {
+pub fn serialize_anchor(anchor: &Anchor) -> proto::Anchor {
     proto::Anchor {
         replica_id: anchor.timestamp.replica_id as u32,
         local_timestamp: anchor.timestamp.value,
@@ -352,7 +352,7 @@ pub fn deserialize_diagnostics(
         .collect()
 }
 
-fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
+pub fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
     Some(Anchor {
         timestamp: clock::Local {
             replica_id: anchor.replica_id as ReplicaId,
