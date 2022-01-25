@@ -688,7 +688,7 @@ fn path_header_renderer(buffer: ModelHandle<Buffer>, build_settings: BuildSettin
             .left()
             .contained()
             .with_style(style.container)
-            .with_padding_left(cx.line_number_x)
+            .with_padding_left(cx.gutter_padding)
             .expanded()
             .named("path header block")
     })
@@ -702,6 +702,7 @@ fn diagnostic_header_renderer(
     Arc::new(move |cx| {
         let settings = build_settings(cx);
         let style = &settings.style.diagnostic_header;
+        let icon_width = cx.em_width * style.icon_width_factor;
         let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
             Svg::new("icons/diagnostic-error-10.svg")
                 .with_color(settings.style.error_diagnostic.message.text.color)
@@ -713,10 +714,9 @@ fn diagnostic_header_renderer(
         Flex::row()
             .with_child(
                 icon.constrained()
-                    .with_height(style.icon.width)
+                    .with_width(icon_width)
                     .aligned()
                     .contained()
-                    .with_style(style.icon.container)
                     .boxed(),
             )
             .with_child(
@@ -724,6 +724,7 @@ fn diagnostic_header_renderer(
                     .with_highlights(highlights.clone())
                     .contained()
                     .with_style(style.message.container)
+                    .with_margin_left(cx.gutter_padding)
                     .aligned()
                     .boxed(),
             )
@@ -736,7 +737,7 @@ fn diagnostic_header_renderer(
             }))
             .contained()
             .with_style(style.container)
-            .with_padding_left(cx.line_number_x)
+            .with_padding_left(cx.gutter_width - cx.gutter_padding - icon_width)
             .expanded()
             .named("diagnostic header")
     })
@@ -748,7 +749,7 @@ fn context_header_renderer(build_settings: BuildSettings) -> RenderBlock {
         let text_style = settings.style.text.clone();
         Label::new("…".to_string(), text_style)
             .contained()
-            .with_padding_left(cx.line_number_x)
+            .with_padding_left(cx.gutter_padding)
             .named("collapsed context")
     })
 }
@@ -1194,7 +1195,9 @@ mod tests {
                     .render(&BlockContext {
                         cx,
                         anchor_x: 0.,
-                        line_number_x: 0.,
+                        gutter_padding: 0.,
+                        gutter_width: 0.,
+                        em_width: 0.,
                     })
                     .name()
                     .map(|s| (row, s.to_string()))

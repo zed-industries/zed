@@ -245,6 +245,7 @@ pub struct EditorStyle {
     pub background: Color,
     pub selection: SelectionStyle,
     pub gutter_background: Color,
+    pub gutter_padding_factor: f32,
     pub active_line_background: Color,
     pub highlighted_line_background: Color,
     pub line_number: Color,
@@ -277,14 +278,7 @@ pub struct DiagnosticHeader {
     pub container: ContainerStyle,
     pub message: ContainedLabel,
     pub code: ContainedText,
-    pub icon: DiagnosticHeaderIcon,
-}
-
-#[derive(Clone, Deserialize, Default)]
-pub struct DiagnosticHeaderIcon {
-    #[serde(flatten)]
-    pub container: ContainerStyle,
-    pub width: f32,
+    pub icon_width_factor: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -340,6 +334,7 @@ impl InputEditorStyle {
                 .unwrap_or(Color::transparent_black()),
             selection: self.selection,
             gutter_background: Default::default(),
+            gutter_padding_factor: Default::default(),
             active_line_background: Default::default(),
             highlighted_line_background: Default::default(),
             line_number: Default::default(),
@@ -367,7 +362,7 @@ impl InputEditorStyle {
                     container: Default::default(),
                     text: self.text.clone(),
                 },
-                icon: Default::default(),
+                icon_width_factor: Default::default(),
             },
             error_diagnostic: default_diagnostic_style.clone(),
             invalid_error_diagnostic: default_diagnostic_style.clone(),

@@ -586,7 +586,9 @@ impl EditorElement {
         rows: Range<u32>,
         snapshot: &EditorSnapshot,
         width: f32,
-        line_number_x: f32,
+        gutter_padding: f32,
+        gutter_width: f32,
+        em_width: f32,
         text_x: f32,
         line_height: f32,
         style: &EditorStyle,
@@ -614,7 +616,9 @@ impl EditorElement {
                 let mut element = block.render(&BlockContext {
                     cx,
                     anchor_x,
-                    line_number_x,
+                    gutter_padding,
+                    gutter_width,
+                    em_width,
                 });
                 element.layout(
                     SizeConstraint {
@@ -645,12 +649,12 @@ impl Element for EditorElement {
 
         let snapshot = self.snapshot(cx.app);
         let style = self.settings.style.clone();
-        let line_height = style.text.line_height(cx.font_cache);
+        let line_height = dbg!(style.text.line_height(cx.font_cache));
 
         let gutter_padding;
         let gutter_width;
         if snapshot.mode == EditorMode::Full {
-            gutter_padding = style.text.em_width(cx.font_cache);
+            gutter_padding = style.text.em_width(cx.font_cache) * style.gutter_padding_factor;
             gutter_width = self.max_line_number_width(&snapshot, cx) + gutter_padding * 2.0;
         } else {
             gutter_padding = 0.0;
@@ -781,6 +785,8 @@ impl Element for EditorElement {
             &snapshot,
             size.x(),
             gutter_padding,
+            gutter_width,
+            em_width,
             gutter_width + text_offset.x(),
             line_height,
             &style,
