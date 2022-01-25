@@ -15,7 +15,7 @@ use gpui::{
 use language::{
     proto::{deserialize_anchor, serialize_anchor},
     range_from_lsp, Bias, Buffer, Diagnostic, DiagnosticEntry, File as _, Language,
-    LanguageRegistry, Operation, PointUtf16, ToOffset, ToPointUtf16,
+    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16,
 };
 use lsp::{DiagnosticSeverity, LanguageServer};
 use postage::{prelude::Stream, watch};
@@ -43,17 +43,12 @@ pub struct Project {
     collaborators: HashMap<PeerId, Collaborator>,
     subscriptions: Vec<client::Subscription>,
     language_servers_with_diagnostics_running: isize,
-    open_buffers: HashMap<usize, OpenBuffer>,
+    open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
     loading_buffers: HashMap<
         ProjectPath,
         postage::watch::Receiver<Option<Result<ModelHandle<Buffer>, Arc<anyhow::Error>>>>,
     >,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
-}
-
-enum OpenBuffer {
-    Operations(Vec<Operation>),
-    Loaded(WeakModelHandle<Buffer>),
 }
 
 enum WorktreeHandle {
@@ -652,17 +647,16 @@ impl Project {
         let mut result = None;
         let worktree = self.worktree_for_id(path.worktree_id, cx)?;
         self.open_buffers.retain(|_, buffer| {
-            if let OpenBuffer::Loaded(buffer) = buffer {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
-                        if file.worktree == worktree && file.path() == &path.path {
-                            result = Some(buffer);
-                        }
+            if let Some(buffer) = buffer.upgrade(cx) {
+                if let Some(file) = File::from_dyn(buffer.read(cx).file()) {
+                    if file.worktree == worktree && file.path() == &path.path {
+                        result = Some(buffer);
                     }
-                    return true;
                 }
+                true
+            } else {
+                false
             }
-            false
         });
         result
     }
@@ -673,17 +667,12 @@ impl Project {
         worktree: Option<&ModelHandle<Worktree>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        match self.open_buffers.insert(
-            buffer.read(cx).remote_id() as usize,
-            OpenBuffer::Loaded(buffer.downgrade()),
-        ) {
-            Some(OpenBuffer::Operations(pending_ops)) => {
-                // buffer.update(cx, |buf, cx| buf.apply_ops(pending_ops, cx))?;
-            }
-            Some(OpenBuffer::Loaded(_)) => {
-                return Err(anyhow!("registered the same buffer twice"));
-            }
-            None => {}
+        if self
+            .open_buffers
+            .insert(buffer.read(cx).remote_id() as usize, buffer.downgrade())
+            .is_some()
+        {
+            return Err(anyhow!("registered the same buffer twice"));
         }
         self.assign_language_to_buffer(&buffer, worktree, cx);
         Ok(())
@@ -1276,62 +1265,60 @@ impl Project {
         let snapshot = worktree_handle.read(cx).snapshot();
         let mut buffers_to_delete = Vec::new();
         for (buffer_id, buffer) in &self.open_buffers {
-            if let OpenBuffer::Loaded(buffer) = buffer {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    buffer.update(cx, |buffer, cx| {
-                        if let Some(old_file) = File::from_dyn(buffer.file()) {
-                            if old_file.worktree != worktree_handle {
-                                return;
-                            }
-
-                            let new_file = if let Some(entry) = old_file
-                                .entry_id
-                                .and_then(|entry_id| snapshot.entry_for_id(entry_id))
-                            {
-                                File {
-                                    is_local: true,
-                                    entry_id: Some(entry.id),
-                                    mtime: entry.mtime,
-                                    path: entry.path.clone(),
-                                    worktree: worktree_handle.clone(),
-                                }
-                            } else if let Some(entry) =
-                                snapshot.entry_for_path(old_file.path().as_ref())
-                            {
-                                File {
-                                    is_local: true,
-                                    entry_id: Some(entry.id),
-                                    mtime: entry.mtime,
-                                    path: entry.path.clone(),
-                                    worktree: worktree_handle.clone(),
-                                }
-                            } else {
-                                File {
-                                    is_local: true,
-                                    entry_id: None,
-                                    path: old_file.path().clone(),
-                                    mtime: old_file.mtime(),
-                                    worktree: worktree_handle.clone(),
-                                }
-                            };
-
-                            if let Some(project_id) = self.remote_id() {
-                                let client = self.client.clone();
-                                let message = proto::UpdateBufferFile {
-                                    project_id,
-                                    buffer_id: *buffer_id as u64,
-                                    file: Some(new_file.to_proto()),
-                                };
-                                cx.foreground()
-                                    .spawn(async move { client.send(message).await })
-                                    .detach_and_log_err(cx);
-                            }
-                            buffer.file_updated(Box::new(new_file), cx).detach();
+            if let Some(buffer) = buffer.upgrade(cx) {
+                buffer.update(cx, |buffer, cx| {
+                    if let Some(old_file) = File::from_dyn(buffer.file()) {
+                        if old_file.worktree != worktree_handle {
+                            return;
                         }
-                    });
-                } else {
-                    buffers_to_delete.push(*buffer_id);
-                }
+
+                        let new_file = if let Some(entry) = old_file
+                            .entry_id
+                            .and_then(|entry_id| snapshot.entry_for_id(entry_id))
+                        {
+                            File {
+                                is_local: true,
+                                entry_id: Some(entry.id),
+                                mtime: entry.mtime,
+                                path: entry.path.clone(),
+                                worktree: worktree_handle.clone(),
+                            }
+                        } else if let Some(entry) =
+                            snapshot.entry_for_path(old_file.path().as_ref())
+                        {
+                            File {
+                                is_local: true,
+                                entry_id: Some(entry.id),
+                                mtime: entry.mtime,
+                                path: entry.path.clone(),
+                                worktree: worktree_handle.clone(),
+                            }
+                        } else {
+                            File {
+                                is_local: true,
+                                entry_id: None,
+                                path: old_file.path().clone(),
+                                mtime: old_file.mtime(),
+                                worktree: worktree_handle.clone(),
+                            }
+                        };
+
+                        if let Some(project_id) = self.remote_id() {
+                            let client = self.client.clone();
+                            let message = proto::UpdateBufferFile {
+                                project_id,
+                                buffer_id: *buffer_id as u64,
+                                file: Some(new_file.to_proto()),
+                            };
+                            cx.foreground()
+                                .spawn(async move { client.send(message).await })
+                                .detach_and_log_err(cx);
+                        }
+                        buffer.file_updated(Box::new(new_file), cx).detach();
+                    }
+                });
+            } else {
+                buffers_to_delete.push(*buffer_id);
             }
         }
 
@@ -1469,10 +1456,8 @@ impl Project {
             .replica_id;
         self.shared_buffers.remove(&peer_id);
         for (_, buffer) in &self.open_buffers {
-            if let OpenBuffer::Loaded(buffer) = buffer {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
-                }
+            if let Some(buffer) = buffer.upgrade(cx) {
+                buffer.update(cx, |buffer, cx| buffer.remove_peer(replica_id, cx));
             }
         }
         cx.notify();
@@ -1582,19 +1567,9 @@ impl Project {
             .into_iter()
             .map(|op| language::proto::deserialize_operation(op))
             .collect::<Result<Vec<_>, _>>()?;
-        match self.open_buffers.get_mut(&buffer_id) {
-            Some(OpenBuffer::Operations(pending_ops)) => pending_ops.extend(ops),
-            Some(OpenBuffer::Loaded(buffer)) => {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
-                } else {
-                    self.open_buffers
-                        .insert(buffer_id, OpenBuffer::Operations(ops));
-                }
-            }
-            None => {
-                self.open_buffers
-                    .insert(buffer_id, OpenBuffer::Operations(ops));
+        if let Some(buffer) = self.open_buffers.get_mut(&buffer_id) {
+            if let Some(buffer) = buffer.upgrade(cx) {
+                buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
             }
         }
         Ok(())
@@ -1867,13 +1842,7 @@ impl Project {
         let buffer = self
             .open_buffers
             .get(&(payload.buffer_id as usize))
-            .and_then(|buf| {
-                if let OpenBuffer::Loaded(buffer) = buf {
-                    buffer.upgrade(cx)
-                } else {
-                    None
-                }
-            });
+            .and_then(|buffer| buffer.upgrade(cx));
         if let Some(buffer) = buffer {
             buffer.update(cx, |buffer, cx| {
                 let version = payload.version.try_into()?;
@@ -1898,13 +1867,7 @@ impl Project {
         let buffer = self
             .open_buffers
             .get(&(payload.buffer_id as usize))
-            .and_then(|buf| {
-                if let OpenBuffer::Loaded(buffer) = buf {
-                    buffer.upgrade(cx)
-                } else {
-                    None
-                }
-            });
+            .and_then(|buffer| buffer.upgrade(cx));
         if let Some(buffer) = buffer {
             buffer.update(cx, |buffer, cx| {
                 let version = payload.version.try_into()?;
@@ -2099,15 +2062,6 @@ impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
         Self {
             worktree_id,
             path: path.as_ref().into(),
-        }
-    }
-}
-
-impl OpenBuffer {
-    fn upgrade(&self, cx: &AppContext) -> Option<ModelHandle<Buffer>> {
-        match self {
-            OpenBuffer::Loaded(buffer) => buffer.upgrade(cx),
-            OpenBuffer::Operations(_) => None,
         }
     }
 }
