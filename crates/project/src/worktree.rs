@@ -2432,7 +2432,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_traversal(cx: gpui::TestAppContext) {
-        let fs = FakeFs::new();
+        let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/root",
             json!({

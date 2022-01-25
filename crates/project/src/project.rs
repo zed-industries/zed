@@ -2439,7 +2439,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_save_file(mut cx: gpui::TestAppContext) {
-        let fs = Arc::new(FakeFs::new());
+        let fs = Arc::new(FakeFs::new(cx.background()));
         fs.insert_tree(
             "/dir",
             json!({
@@ -2477,7 +2477,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_save_in_single_file_worktree(mut cx: gpui::TestAppContext) {
-        let fs = Arc::new(FakeFs::new());
+        let fs = Arc::new(FakeFs::new(cx.background()));
         fs.insert_tree(
             "/dir",
             json!({
@@ -2664,7 +2664,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_buffer_deduping(mut cx: gpui::TestAppContext) {
-        let fs = Arc::new(FakeFs::new());
+        let fs = Arc::new(FakeFs::new(cx.background()));
         fs.insert_tree(
             "/the-dir",
             json!({
@@ -2953,7 +2953,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
-        let fs = Arc::new(FakeFs::new());
+        let fs = Arc::new(FakeFs::new(cx.background()));
         fs.insert_tree(
             "/the-dir",
             json!({
