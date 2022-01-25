@@ -745,7 +745,7 @@ fn diagnostic_header_renderer(
             }))
             .contained()
             .with_style(style.container)
-            .with_padding_left(cx.gutter_width - cx.gutter_padding - icon_width)
+            .with_padding_left(cx.gutter_padding)
             .expanded()
             .named("diagnostic header")
     })
@@ -1254,6 +1254,7 @@ mod tests {
                         anchor_x: 0.,
                         gutter_padding: 0.,
                         gutter_width: 0.,
+                        line_height: 0.,
                         em_width: 0.,
                     })
                     .name()

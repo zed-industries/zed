@@ -252,13 +252,13 @@ guest_selections = "$selection.guests"
 error_color = "$status.bad"
 
 [editor.diagnostic_path_header]
+background = "$state.active_line"
 filename = { extends = "$text.0", size = 14 }
 path = { extends = "$text.2", size = 14, margin.left = 12 }
 text_scale_factor = 0.857
 
 [editor.diagnostic_header]
-background = "$state.active_line"
-border = { width = 1, top = true, bottom = true, color = "$border.0" }
+border = { width = 1, top = true, bottom = true, color = "#ffffff1c" }
 code = { extends = "$text.2", size = 14, margin.left = 10 }
 icon_width_factor = 1.5
 text_scale_factor = 0.857

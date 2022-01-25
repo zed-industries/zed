@@ -334,6 +334,8 @@ impl View for DiagnosticMessage {
                 diagnostic.message.lines().next().unwrap().to_string(),
                 theme.diagnostic_message.clone(),
             )
+            .contained()
+            .with_margin_left(theme.item_spacing)
             .boxed()
         } else {
             Empty::new().boxed()

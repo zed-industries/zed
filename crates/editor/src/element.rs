@@ -617,6 +617,7 @@ impl EditorElement {
                     cx,
                     anchor_x,
                     gutter_padding,
+                    line_height,
                     gutter_width,
                     em_width,
                 });

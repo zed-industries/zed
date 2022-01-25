@@ -109,10 +109,8 @@ pub struct StatusBar {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub height: f32,
+    pub item_spacing: f32,
     pub cursor_position: TextStyle,
-    pub diagnostic_icon_size: f32,
-    pub diagnostic_icon_spacing: f32,
-    pub diagnostic_icon_color: Color,
     pub diagnostic_message: TextStyle,
 }
 
