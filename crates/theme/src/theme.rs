@@ -277,6 +277,7 @@ pub struct DiagnosticHeader {
     pub container: ContainerStyle,
     pub text: TextStyle,
     pub highlighted_text: ContainedText,
+    pub code: ContainedText,
     pub icon: DiagnosticHeaderIcon,
 }
 
@@ -357,6 +358,10 @@ impl InputEditorStyle {
                 container: Default::default(),
                 text: self.text.clone(),
                 highlighted_text: ContainedText {
+                    container: Default::default(),
+                    text: self.text.clone(),
+                },
+                code: ContainedText {
                     container: Default::default(),
                     text: self.text.clone(),
                 },

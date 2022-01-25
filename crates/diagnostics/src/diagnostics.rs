@@ -13,7 +13,7 @@ use gpui::{
     MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use language::{
-    Bias, Buffer, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
+    Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
 };
 use postage::watch;
 use project::{Project, ProjectPath};
@@ -346,16 +346,16 @@ impl ProjectDiagnosticsEditor {
 
                             if is_first_excerpt_for_group {
                                 is_first_excerpt_for_group = false;
-                                let primary = &group.entries[group.primary_ix].diagnostic;
-                                let message =
+                                let mut primary =
+                                    group.entries[group.primary_ix].diagnostic.clone();
+                                primary.message =
                                     primary.message.split('\n').next().unwrap().to_string();
                                 group_state.block_count += 1;
                                 blocks_to_add.push(BlockProperties {
                                     position: header_position,
                                     height: 2,
                                     render: diagnostic_header_renderer(
-                                        message,
-                                        primary.severity,
+                                        primary,
                                         self.build_settings.clone(),
                                     ),
                                     disposition: BlockDisposition::Above,
@@ -694,8 +694,7 @@ fn path_header_renderer(buffer: ModelHandle<Buffer>, build_settings: BuildSettin
 }
 
 fn diagnostic_header_renderer(
-    message: String,
-    severity: DiagnosticSeverity,
+    diagnostic: Diagnostic,
     build_settings: BuildSettings,
 ) -> RenderBlock {
     enum Run {
@@ -706,7 +705,7 @@ fn diagnostic_header_renderer(
     let mut prev_ix = 0;
     let mut inside_block = false;
     let mut runs = Vec::new();
-    for (backtick_ix, _) in message.match_indices('`') {
+    for (backtick_ix, _) in diagnostic.message.match_indices('`') {
         if backtick_ix > prev_ix {
             if inside_block {
                 runs.push(Run::Code(prev_ix..backtick_ix));
@@ -718,18 +717,18 @@ fn diagnostic_header_renderer(
         inside_block = !inside_block;
         prev_ix = backtick_ix + 1;
     }
-    if prev_ix < message.len() {
+    if prev_ix < diagnostic.message.len() {
         if inside_block {
-            runs.push(Run::Code(prev_ix..message.len()));
+            runs.push(Run::Code(prev_ix..diagnostic.message.len()));
         } else {
-            runs.push(Run::Text(prev_ix..message.len()));
+            runs.push(Run::Text(prev_ix..diagnostic.message.len()));
         }
     }
 
     Arc::new(move |cx| {
         let settings = build_settings(cx);
         let style = &settings.style.diagnostic_header;
-        let icon = if severity == DiagnosticSeverity::ERROR {
+        let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
             Svg::new("icons/diagnostic-error-10.svg")
                 .with_color(settings.style.error_diagnostic.text)
         } else {
@@ -762,9 +761,16 @@ fn diagnostic_header_renderer(
                         range = run_range.clone();
                     }
                 }
-                Label::new(message[range].to_string(), text_style)
+                Label::new(diagnostic.message[range].to_string(), text_style)
                     .contained()
                     .with_style(container_style)
+                    .aligned()
+                    .boxed()
+            }))
+            .with_children(diagnostic.code.clone().map(|code| {
+                Label::new(code, style.code.text.clone())
+                    .contained()
+                    .with_style(style.code.container)
                     .aligned()
                     .boxed()
             }))
