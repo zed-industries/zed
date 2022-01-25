@@ -316,3 +316,6 @@ message.highlight_text.color = "$text.3.color"
 background = "$surface.1"
 empty_message = "$text.0"
 status_bar_item = { extends = "$text.2", margin.right = 10 }
+tab_icon_width = 9
+tab_icon_spacing = 3
+tab_summary_spacing = 10

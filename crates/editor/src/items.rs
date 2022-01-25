@@ -121,13 +121,9 @@ impl ItemView for Editor {
         }
     }
 
-    fn title(&self, cx: &AppContext) -> String {
-        let file = self.buffer().read(cx).file(cx);
-        if let Some(file) = file {
-            file.file_name(cx).to_string_lossy().into()
-        } else {
-            "untitled".into()
-        }
+    fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox {
+        let title = self.title(cx);
+        Label::new(title, style.label.clone()).boxed()
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
@@ -207,10 +203,7 @@ impl ItemView for Editor {
     }
 
     fn should_update_tab_on_event(event: &Event) -> bool {
-        matches!(
-            event,
-            Event::Saved | Event::Dirtied | Event::FileHandleChanged
-        )
+        matches!(event, Event::Saved | Event::Dirtied | Event::TitleChanged)
     }
 }
 

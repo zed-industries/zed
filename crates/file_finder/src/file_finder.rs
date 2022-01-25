@@ -492,7 +492,15 @@ mod tests {
             .await;
         cx.read(|cx| {
             let active_item = active_pane.read(cx).active_item().unwrap();
-            assert_eq!(active_item.title(cx), "bandana");
+            assert_eq!(
+                active_item
+                    .to_any()
+                    .downcast::<Editor>()
+                    .unwrap()
+                    .read(cx)
+                    .title(cx),
+                "bandana"
+            );
         });
     }
 
