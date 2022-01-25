@@ -5,6 +5,7 @@ use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, RenderBlock},
+    highlight_diagnostic_message,
     items::BufferItemHandle,
     Autoscroll, BuildSettings, Editor, ExcerptId, ExcerptProperties, MultiBuffer, ToOffset,
 };
@@ -703,10 +704,10 @@ fn diagnostic_header_renderer(
         let style = &settings.style.diagnostic_header;
         let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
             Svg::new("icons/diagnostic-error-10.svg")
-                .with_color(settings.style.error_diagnostic.text)
+                .with_color(settings.style.error_diagnostic.message.text.color)
         } else {
             Svg::new("icons/diagnostic-warning-10.svg")
-                .with_color(settings.style.warning_diagnostic.text)
+                .with_color(settings.style.warning_diagnostic.message.text.color)
         };
 
         Flex::row()
@@ -739,28 +740,6 @@ fn diagnostic_header_renderer(
             .expanded()
             .named("diagnostic header")
     })
-}
-
-fn highlight_diagnostic_message(message: &str) -> (String, Vec<usize>) {
-    let mut message_without_backticks = String::new();
-    let mut prev_offset = 0;
-    let mut inside_block = false;
-    let mut highlights = Vec::new();
-    for (match_ix, (offset, _)) in message
-        .match_indices('`')
-        .chain([(message.len(), "")])
-        .enumerate()
-    {
-        message_without_backticks.push_str(&message[prev_offset..offset]);
-        if inside_block {
-            highlights.extend(prev_offset - match_ix..offset - match_ix);
-        }
-
-        inside_block = !inside_block;
-        prev_offset = offset + 1;
-    }
-
-    (message_without_backticks, highlights)
 }
 
 fn context_header_renderer(build_settings: BuildSettings) -> RenderBlock {

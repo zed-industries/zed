@@ -3825,6 +3825,10 @@ impl EditorSettings {
                     font_properties,
                     underline: None,
                 };
+                let default_diagnostic_style = DiagnosticStyle {
+                    message: text.clone().into(),
+                    header: Default::default(),
+                };
                 EditorStyle {
                     text: text.clone(),
                     placeholder_text: None,
@@ -3860,14 +3864,14 @@ impl EditorSettings {
                         },
                         icon: Default::default(),
                     },
-                    error_diagnostic: Default::default(),
-                    invalid_error_diagnostic: Default::default(),
-                    warning_diagnostic: Default::default(),
-                    invalid_warning_diagnostic: Default::default(),
-                    information_diagnostic: Default::default(),
-                    invalid_information_diagnostic: Default::default(),
-                    hint_diagnostic: Default::default(),
-                    invalid_hint_diagnostic: Default::default(),
+                    error_diagnostic: default_diagnostic_style.clone(),
+                    invalid_error_diagnostic: default_diagnostic_style.clone(),
+                    warning_diagnostic: default_diagnostic_style.clone(),
+                    invalid_warning_diagnostic: default_diagnostic_style.clone(),
+                    information_diagnostic: default_diagnostic_style.clone(),
+                    invalid_information_diagnostic: default_diagnostic_style.clone(),
+                    hint_diagnostic: default_diagnostic_style.clone(),
+                    invalid_hint_diagnostic: default_diagnostic_style.clone(),
                 }
             },
         }
@@ -4008,16 +4012,48 @@ pub fn diagnostic_block_renderer(
     is_valid: bool,
     build_settings: BuildSettings,
 ) -> RenderBlock {
+    let mut highlighted_lines = Vec::new();
+    for line in diagnostic.message.lines() {
+        highlighted_lines.push(highlight_diagnostic_message(line));
+    }
+
     Arc::new(move |cx: &BlockContext| {
         let settings = build_settings(cx);
-        let mut text_style = settings.style.text.clone();
-        text_style.color = diagnostic_style(diagnostic.severity, is_valid, &settings.style).text;
-        Text::new(diagnostic.message.clone(), text_style)
-            .with_soft_wrap(false)
-            .contained()
-            .with_margin_left(cx.anchor_x)
+        let style = diagnostic_style(diagnostic.severity, is_valid, &settings.style).message;
+        Flex::column()
+            .with_children(highlighted_lines.iter().map(|(line, highlights)| {
+                Label::new(line.clone(), style.clone())
+                    .with_highlights(highlights.clone())
+                    .contained()
+                    .with_margin_left(cx.anchor_x)
+                    .boxed()
+            }))
+            .aligned()
+            .left()
             .boxed()
     })
+}
+
+pub fn highlight_diagnostic_message(message: &str) -> (String, Vec<usize>) {
+    let mut message_without_backticks = String::new();
+    let mut prev_offset = 0;
+    let mut inside_block = false;
+    let mut highlights = Vec::new();
+    for (match_ix, (offset, _)) in message
+        .match_indices('`')
+        .chain([(message.len(), "")])
+        .enumerate()
+    {
+        message_without_backticks.push_str(&message[prev_offset..offset]);
+        if inside_block {
+            highlights.extend(prev_offset - match_ix..offset - match_ix);
+        }
+
+        inside_block = !inside_block;
+        prev_offset = offset + 1;
+    }
+
+    (message_without_backticks, highlights)
 }
 
 pub fn diagnostic_style(
@@ -4026,15 +4062,18 @@ pub fn diagnostic_style(
     style: &EditorStyle,
 ) -> DiagnosticStyle {
     match (severity, valid) {
-        (DiagnosticSeverity::ERROR, true) => style.error_diagnostic,
-        (DiagnosticSeverity::ERROR, false) => style.invalid_error_diagnostic,
-        (DiagnosticSeverity::WARNING, true) => style.warning_diagnostic,
-        (DiagnosticSeverity::WARNING, false) => style.invalid_warning_diagnostic,
-        (DiagnosticSeverity::INFORMATION, true) => style.information_diagnostic,
-        (DiagnosticSeverity::INFORMATION, false) => style.invalid_information_diagnostic,
-        (DiagnosticSeverity::HINT, true) => style.hint_diagnostic,
-        (DiagnosticSeverity::HINT, false) => style.invalid_hint_diagnostic,
-        _ => Default::default(),
+        (DiagnosticSeverity::ERROR, true) => style.error_diagnostic.clone(),
+        (DiagnosticSeverity::ERROR, false) => style.invalid_error_diagnostic.clone(),
+        (DiagnosticSeverity::WARNING, true) => style.warning_diagnostic.clone(),
+        (DiagnosticSeverity::WARNING, false) => style.invalid_warning_diagnostic.clone(),
+        (DiagnosticSeverity::INFORMATION, true) => style.information_diagnostic.clone(),
+        (DiagnosticSeverity::INFORMATION, false) => style.invalid_information_diagnostic.clone(),
+        (DiagnosticSeverity::HINT, true) => style.hint_diagnostic.clone(),
+        (DiagnosticSeverity::HINT, false) => style.invalid_hint_diagnostic.clone(),
+        _ => DiagnosticStyle {
+            message: style.text.clone().into(),
+            header: Default::default(),
+        },
     }
 }
 

@@ -287,9 +287,9 @@ pub struct DiagnosticHeaderIcon {
     pub width: f32,
 }
 
-#[derive(Copy, Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default)]
 pub struct DiagnosticStyle {
-    pub text: Color,
+    pub message: LabelStyle,
     #[serde(default)]
     pub header: ContainerStyle,
 }
@@ -327,6 +327,10 @@ impl EditorStyle {
 
 impl InputEditorStyle {
     pub fn as_editor(&self) -> EditorStyle {
+        let default_diagnostic_style = DiagnosticStyle {
+            message: self.text.clone().into(),
+            header: Default::default(),
+        };
         EditorStyle {
             text: self.text.clone(),
             placeholder_text: self.placeholder_text.clone(),
@@ -365,14 +369,14 @@ impl InputEditorStyle {
                 },
                 icon: Default::default(),
             },
-            error_diagnostic: Default::default(),
-            invalid_error_diagnostic: Default::default(),
-            warning_diagnostic: Default::default(),
-            invalid_warning_diagnostic: Default::default(),
-            information_diagnostic: Default::default(),
-            invalid_information_diagnostic: Default::default(),
-            hint_diagnostic: Default::default(),
-            invalid_hint_diagnostic: Default::default(),
+            error_diagnostic: default_diagnostic_style.clone(),
+            invalid_error_diagnostic: default_diagnostic_style.clone(),
+            warning_diagnostic: default_diagnostic_style.clone(),
+            invalid_warning_diagnostic: default_diagnostic_style.clone(),
+            information_diagnostic: default_diagnostic_style.clone(),
+            invalid_information_diagnostic: default_diagnostic_style.clone(),
+            hint_diagnostic: default_diagnostic_style.clone(),
+            invalid_hint_diagnostic: default_diagnostic_style.clone(),
         }
     }
 }

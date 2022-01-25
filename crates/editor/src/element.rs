@@ -549,7 +549,12 @@ impl EditorElement {
                 .chunks(rows.clone(), Some(&style.syntax))
                 .map(|chunk| {
                     let highlight = if let Some(severity) = chunk.diagnostic {
-                        let underline = Some(super::diagnostic_style(severity, true, style).text);
+                        let underline = Some(
+                            super::diagnostic_style(severity, true, style)
+                                .message
+                                .text
+                                .color,
+                        );
                         if let Some(mut highlight) = chunk.highlight_style {
                             highlight.underline = underline;
                             Some(highlight)
