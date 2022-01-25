@@ -3814,16 +3814,17 @@ impl EditorSettings {
                 let font_id = font_cache
                     .select_font(font_family_id, &font_properties)
                     .unwrap();
+                let text = gpui::fonts::TextStyle {
+                    font_family_name,
+                    font_family_id,
+                    font_id,
+                    font_size: 14.,
+                    color: gpui::color::Color::from_u32(0xff0000ff),
+                    font_properties,
+                    underline: None,
+                };
                 EditorStyle {
-                    text: gpui::fonts::TextStyle {
-                        font_family_name,
-                        font_family_id,
-                        font_id,
-                        font_size: 14.,
-                        color: gpui::color::Color::from_u32(0xff0000ff),
-                        font_properties,
-                        underline: None,
-                    },
+                    text: text.clone(),
                     placeholder_text: None,
                     background: Default::default(),
                     gutter_background: Default::default(),
@@ -3834,7 +3835,25 @@ impl EditorSettings {
                     selection: Default::default(),
                     guest_selections: Default::default(),
                     syntax: Default::default(),
-                    diagnostic_path_header: Default::default(),
+                    diagnostic_path_header: theme::DiagnosticPathHeader {
+                        container: Default::default(),
+                        filename: theme::ContainedText {
+                            container: Default::default(),
+                            text: text.clone(),
+                        },
+                        path: theme::ContainedText {
+                            container: Default::default(),
+                            text: text.clone(),
+                        },
+                    },
+                    diagnostic_header: theme::DiagnosticHeader {
+                        container: Default::default(),
+                        text: text.clone(),
+                        highlighted_text: theme::ContainedText {
+                            container: Default::default(),
+                            text: text.clone(),
+                        },
+                    },
                     error_diagnostic: Default::default(),
                     invalid_error_diagnostic: Default::default(),
                     warning_diagnostic: Default::default(),

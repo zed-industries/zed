@@ -251,7 +251,8 @@ pub struct EditorStyle {
     pub line_number_active: Color,
     pub guest_selections: Vec<SelectionStyle>,
     pub syntax: Arc<SyntaxTheme>,
-    pub diagnostic_path_header: DiagnosticStyle,
+    pub diagnostic_path_header: DiagnosticPathHeader,
+    pub diagnostic_header: DiagnosticHeader,
     pub error_diagnostic: DiagnosticStyle,
     pub invalid_error_diagnostic: DiagnosticStyle,
     pub warning_diagnostic: DiagnosticStyle,
@@ -260,6 +261,22 @@ pub struct EditorStyle {
     pub invalid_information_diagnostic: DiagnosticStyle,
     pub hint_diagnostic: DiagnosticStyle,
     pub invalid_hint_diagnostic: DiagnosticStyle,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct DiagnosticPathHeader {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub filename: ContainedText,
+    pub path: ContainedText,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct DiagnosticHeader {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub text: TextStyle,
+    pub highlighted_text: ContainedText,
 }
 
 #[derive(Copy, Clone, Deserialize, Default)]
@@ -317,7 +334,25 @@ impl InputEditorStyle {
             line_number_active: Default::default(),
             guest_selections: Default::default(),
             syntax: Default::default(),
-            diagnostic_path_header: Default::default(),
+            diagnostic_path_header: DiagnosticPathHeader {
+                container: Default::default(),
+                filename: ContainedText {
+                    container: Default::default(),
+                    text: self.text.clone(),
+                },
+                path: ContainedText {
+                    container: Default::default(),
+                    text: self.text.clone(),
+                },
+            },
+            diagnostic_header: DiagnosticHeader {
+                container: Default::default(),
+                text: self.text.clone(),
+                highlighted_text: ContainedText {
+                    container: Default::default(),
+                    text: self.text.clone(),
+                },
+            },
             error_diagnostic: Default::default(),
             invalid_error_diagnostic: Default::default(),
             warning_diagnostic: Default::default(),

@@ -3,7 +3,7 @@ pub mod items;
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
-    diagnostic_block_renderer, diagnostic_style,
+    diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, RenderBlock},
     items::BufferItemHandle,
     Autoscroll, BuildSettings, Editor, ExcerptId, ExcerptProperties, MultiBuffer, ToOffset,
@@ -12,7 +12,7 @@ use gpui::{
     action, elements::*, keymap::Binding, AnyViewHandle, AppContext, Entity, ModelHandle,
     MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
-use language::{Bias, Buffer, Diagnostic, DiagnosticEntry, Point, Selection, SelectionGoal};
+use language::{Bias, Buffer, DiagnosticEntry, Point, Selection, SelectionGoal};
 use postage::watch;
 use project::{Project, ProjectPath};
 use std::{
@@ -345,16 +345,14 @@ impl ProjectDiagnosticsEditor {
                             if is_first_excerpt_for_group {
                                 is_first_excerpt_for_group = false;
                                 let primary = &group.entries[group.primary_ix].diagnostic;
-                                let mut header = primary.clone();
-                                header.message =
+                                let message =
                                     primary.message.split('\n').next().unwrap().to_string();
                                 group_state.block_count += 1;
                                 blocks_to_add.push(BlockProperties {
                                     position: header_position,
                                     height: 2,
                                     render: diagnostic_header_renderer(
-                                        header,
-                                        true,
+                                        message,
                                         self.build_settings.clone(),
                                     ),
                                     disposition: BlockDisposition::Above,
@@ -651,41 +649,105 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
 fn path_header_renderer(buffer: ModelHandle<Buffer>, build_settings: BuildSettings) -> RenderBlock {
     Arc::new(move |cx| {
         let settings = build_settings(cx);
-        let file_path = if let Some(file) = buffer.read(&**cx).file() {
-            file.path().to_string_lossy().to_string()
-        } else {
-            "untitled".to_string()
-        };
-        let mut text_style = settings.style.text.clone();
         let style = settings.style.diagnostic_path_header;
-        text_style.color = style.text;
-        Label::new(file_path, text_style)
+
+        let mut filename = None;
+        let mut path = None;
+        if let Some(file) = buffer.read(&**cx).file() {
+            filename = file
+                .path()
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string());
+            path = file
+                .path()
+                .parent()
+                .map(|p| p.to_string_lossy().to_string());
+        }
+
+        Flex::row()
+            .with_child(
+                Label::new(
+                    filename.unwrap_or_else(|| "untitled".to_string()),
+                    style.filename.text.clone(),
+                )
+                .contained()
+                .with_style(style.filename.container)
+                .boxed(),
+            )
+            .with_children(path.map(|path| {
+                Label::new(path, style.path.text.clone())
+                    .contained()
+                    .with_style(style.path.container)
+                    .boxed()
+            }))
             .aligned()
             .left()
             .contained()
-            .with_style(style.header)
+            .with_style(style.container)
             .with_padding_left(cx.line_number_x)
             .expanded()
             .named("path header block")
     })
 }
 
-fn diagnostic_header_renderer(
-    diagnostic: Diagnostic,
-    is_valid: bool,
-    build_settings: BuildSettings,
-) -> RenderBlock {
+fn diagnostic_header_renderer(message: String, build_settings: BuildSettings) -> RenderBlock {
+    enum Run {
+        Text(Range<usize>),
+        Code(Range<usize>),
+    }
+
+    let mut prev_ix = 0;
+    let mut inside_block = false;
+    let mut runs = Vec::new();
+    for (backtick_ix, _) in message.match_indices('`') {
+        if backtick_ix > prev_ix {
+            if inside_block {
+                runs.push(Run::Code(prev_ix..backtick_ix));
+            } else {
+                runs.push(Run::Text(prev_ix..backtick_ix));
+            }
+        }
+
+        inside_block = !inside_block;
+        prev_ix = backtick_ix + 1;
+    }
+    if prev_ix < message.len() {
+        if inside_block {
+            runs.push(Run::Code(prev_ix..message.len()));
+        } else {
+            runs.push(Run::Text(prev_ix..message.len()));
+        }
+    }
+
     Arc::new(move |cx| {
         let settings = build_settings(cx);
-        let mut text_style = settings.style.text.clone();
-        let diagnostic_style = diagnostic_style(diagnostic.severity, is_valid, &settings.style);
-        text_style.color = diagnostic_style.text;
-        Text::new(diagnostic.message.clone(), text_style)
-            .with_soft_wrap(false)
-            .aligned()
-            .left()
+        let style = &settings.style.diagnostic_header;
+
+        Flex::row()
+            .with_children(runs.iter().map(|run| {
+                let container_style;
+                let text_style;
+                let range;
+                match run {
+                    Run::Text(run_range) => {
+                        container_style = Default::default();
+                        text_style = style.text.clone();
+                        range = run_range.clone();
+                    }
+                    Run::Code(run_range) => {
+                        container_style = style.highlighted_text.container;
+                        text_style = style.highlighted_text.text.clone();
+                        range = run_range.clone();
+                    }
+                }
+                Label::new(message[range].to_string(), text_style)
+                    .contained()
+                    .with_style(container_style)
+                    .aligned()
+                    .boxed()
+            }))
             .contained()
-            .with_style(diagnostic_style.header)
+            .with_style(style.container)
             .with_padding_left(cx.line_number_x)
             .expanded()
             .named("diagnostic header")

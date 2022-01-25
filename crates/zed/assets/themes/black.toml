@@ -1,12 +1,12 @@
 extends = "_base"
 
 [surface]
-0 = "#222324"
-1 = "#141516"
+0 = "#222222"
+1 = "#0f0b0c"
 2 = "#131415"
 
 [border]
-0 = "#0F1011"
+0 = "#000000B2"
 
 [text]
 0 = { extends = "$text.base", color = "#ffffff" }
@@ -36,7 +36,7 @@ warn = "#faca50"
 bad = "#b7372e"
 
 [state]
-active_line = "#00000033"
+active_line = "#161313"
 highlighted_line = "#faca5033"
 hover = "#00000033"
 
@@ -50,7 +50,6 @@ comment = "#6a9955"
 property = "#4e94ce"
 variant = "#4fc1ff"
 constant = "#9cdcfe"
-
 title = { color = "#9cdcfe", weight = "bold" }
 emphasis = "#4ec9b0"
 "emphasis.strong" = { color = "#4ec9b0", weight = "bold" }

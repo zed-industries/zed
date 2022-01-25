@@ -187,7 +187,7 @@ corner_radius = 6
 
 [project_panel]
 extends = "$panel"
-padding.top = 6    # ($workspace.tab.height - $project_panel.entry.height) / 2
+padding.top = 6 # ($workspace.tab.height - $project_panel.entry.height) / 2
 
 [project_panel.entry]
 text = "$text.1"
@@ -257,9 +257,21 @@ invalid_information_diagnostic = { text = "$text.3.color" }
 invalid_hint_diagnostic = { text = "$text.3.color" }
 
 [editor.diagnostic_path_header]
-text = "$text.0.color"
-header.background = "#ffffff08"
-header.border = { width = 1, top = true, color = "$border.0" }
+filename = { extends = "$text.0", size = 14 }
+path = { extends = "$text.1", size = 14, margin.left = 4 }
+
+[editor.diagnostic_header]
+background = "$state.active_line"
+border = { width = 1, top = true, bottom = true, color = "$border.0" }
+text = { extends = "$text.1", size = 14 }
+
+[editor.diagnostic_header.highlighted_text]
+extends = "$editor.diagnostic_header.text"
+color = "$text.0.color"
+background = "#ffffff1f"
+padding.left = 3
+padding.right = 3
+corner_radius = 3
 
 [editor.error_diagnostic]
 text = "$status.bad"
