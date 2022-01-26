@@ -14,7 +14,7 @@ struct RustDiagnosticProcessor;
 impl DiagnosticProcessor for RustDiagnosticProcessor {
     fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
         lazy_static! {
-            static ref REGEX: Regex = Regex::new("(?m)`([^`]+)\n`").unwrap();
+            static ref REGEX: Regex = Regex::new("(?m)`([^`]+)\n`$").unwrap();
         }
 
         for diagnostic in &mut params.diagnostics {
@@ -67,5 +67,53 @@ fn load_query(path: &str) -> Cow<'static, str> {
     match LanguageDir::get(path).unwrap().data {
         Cow::Borrowed(s) => Cow::Borrowed(str::from_utf8(s).unwrap()),
         Cow::Owned(s) => Cow::Owned(String::from_utf8(s).unwrap()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use language::DiagnosticProcessor;
+
+    use super::RustDiagnosticProcessor;
+
+    #[test]
+    fn test_process_rust_diagnostics() {
+        let mut params = lsp::PublishDiagnosticsParams {
+            uri: lsp::Url::from_file_path("/a").unwrap(),
+            version: None,
+            diagnostics: vec![
+                // no newlines
+                lsp::Diagnostic {
+                    message: "use of moved value `a`".to_string(),
+                    ..Default::default()
+                },
+                // newline at the end of a code span
+                lsp::Diagnostic {
+                    message: "consider importing this struct: `use b::c;\n`".to_string(),
+                    ..Default::default()
+                },
+                // code span starting right after a newline
+                lsp::Diagnostic {
+                    message: "cannot borrow `self.d` as mutable\n`self` is a `&` reference"
+                        .to_string(),
+                    ..Default::default()
+                },
+            ],
+        };
+        RustDiagnosticProcessor.process_diagnostics(&mut params);
+
+        assert_eq!(params.diagnostics[0].message, "use of moved value `a`");
+
+        // remove trailing newline from code span
+        assert_eq!(
+            params.diagnostics[1].message,
+            "consider importing this struct: `use b::c;`"
+        );
+
+        // do not remove newline before the start of code span
+        assert_eq!(
+            params.diagnostics[2].message,
+            "cannot borrow `self.d` as mutable\n`self` is a `&` reference"
+        );
     }
 }
