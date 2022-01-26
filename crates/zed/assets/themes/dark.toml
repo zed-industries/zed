@@ -7,7 +7,7 @@ extends = "_base"
 
 [border]
 0 = "#1B222B"
-1 = "#FFFFFF16"
+1 = "#FFFFFF4A"
 
 [text]
 0 = { extends = "$text.base", color = "#FFFFFF" }

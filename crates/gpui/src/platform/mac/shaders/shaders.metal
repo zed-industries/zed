@@ -66,13 +66,19 @@ float4 quad_sdf(QuadFragmentInput input) {
         border_width = vertical_border;
     }
 
-    float4 color = input.background_color * float4(1., 1., 1., saturate(0.5 - distance));
-    if (border_width != 0.) {
+    float4 color;
+    if (border_width == 0.) {
+        color = input.background_color;
+    } else {
         float inset_distance = distance + border_width;
-        color = mix(input.border_color, color, saturate(0.5 - inset_distance));
+        float4 border_color = float4(
+            mix(input.background_color.rgb, input.border_color.rgb, input.border_color.a),
+            saturate(input.background_color.a + input.border_color.a)
+        );
+        color = mix(border_color, input.background_color, saturate(0.5 - inset_distance));
     }
 
-    return color;
+    return color * float4(1., 1., 1., saturate(0.5 - distance));
 }
 
 vertex QuadFragmentInput quad_vertex(
