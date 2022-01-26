@@ -26,6 +26,7 @@ pub struct Renderer {
     sprite_pipeline_state: metal::RenderPipelineState,
     image_pipeline_state: metal::RenderPipelineState,
     path_atlas_pipeline_state: metal::RenderPipelineState,
+    underline_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     instances: metal::Buffer,
 }
@@ -109,6 +110,14 @@ impl Renderer {
             "path_atlas_fragment",
             MTLPixelFormat::R16Float,
         );
+        let underline_pipeline_state = build_pipeline_state(
+            &device,
+            &library,
+            "underline",
+            "underline_vertex",
+            "underline_fragment",
+            pixel_format,
+        );
         Self {
             sprite_cache,
             image_cache,
@@ -118,6 +127,7 @@ impl Renderer {
             sprite_pipeline_state,
             image_pipeline_state,
             path_atlas_pipeline_state,
+            underline_pipeline_state,
             unit_vertices,
             instances,
         }
@@ -339,7 +349,7 @@ impl Renderer {
                 drawable_size,
                 command_encoder,
             );
-            self.render_quads(
+            self.render_underlines(
                 layer.underlines(),
                 scale_factor,
                 offset,
@@ -818,6 +828,73 @@ impl Renderer {
             0,
             6,
             sprite_count as u64,
+        );
+        *offset = next_offset;
+    }
+
+    fn render_underlines(
+        &mut self,
+        underlines: &[Quad],
+        scale_factor: f32,
+        offset: &mut usize,
+        drawable_size: Vector2F,
+        command_encoder: &metal::RenderCommandEncoderRef,
+    ) {
+        if underlines.is_empty() {
+            return;
+        }
+        align_offset(offset);
+        let next_offset = *offset + underlines.len() * mem::size_of::<shaders::GPUIUnderline>();
+        assert!(
+            next_offset <= INSTANCE_BUFFER_SIZE,
+            "instance buffer exhausted"
+        );
+
+        command_encoder.set_render_pipeline_state(&self.underline_pipeline_state);
+        command_encoder.set_vertex_buffer(
+            shaders::GPUIUnderlineInputIndex_GPUIUnderlineInputIndexVertices as u64,
+            Some(&self.unit_vertices),
+            0,
+        );
+        command_encoder.set_vertex_buffer(
+            shaders::GPUIUnderlineInputIndex_GPUIUnderlineInputIndexUnderlines as u64,
+            Some(&self.instances),
+            *offset as u64,
+        );
+        command_encoder.set_vertex_bytes(
+            shaders::GPUIUnderlineInputIndex_GPUIUnderlineInputIndexUniforms as u64,
+            mem::size_of::<shaders::GPUIUniforms>() as u64,
+            [shaders::GPUIUniforms {
+                viewport_size: drawable_size.to_float2(),
+            }]
+            .as_ptr() as *const c_void,
+        );
+
+        let buffer_contents = unsafe {
+            (self.instances.contents() as *mut u8).offset(*offset as isize)
+                as *mut shaders::GPUIUnderline
+        };
+        for (ix, quad) in underlines.iter().enumerate() {
+            let bounds = quad.bounds * scale_factor;
+            let shader_quad = shaders::GPUIUnderline {
+                origin: bounds.origin().round().to_float2(),
+                size: bounds.size().round().to_float2(),
+                thickness: 1. * scale_factor,
+                color: quad
+                    .background
+                    .unwrap_or(Color::transparent_black())
+                    .to_uchar4(),
+            };
+            unsafe {
+                *(buffer_contents.offset(ix as isize)) = shader_quad;
+            }
+        }
+
+        command_encoder.draw_primitives_instanced(
+            metal::MTLPrimitiveType::Triangle,
+            0,
+            6,
+            underlines.len() as u64,
         );
         *offset = next_offset;
     }

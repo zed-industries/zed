@@ -290,7 +290,7 @@ impl Line {
 
                 if let Some((underline_origin, underline_color)) = finished_underline {
                     cx.scene.push_underline(scene::Quad {
-                        bounds: RectF::from_points(underline_origin, glyph_origin + vec2f(0., 1.)),
+                        bounds: RectF::from_points(underline_origin, glyph_origin + vec2f(0., 3.)),
                         background: Some(underline_color),
                         border: Default::default(),
                         corner_radius: 0.,
@@ -311,7 +311,7 @@ impl Line {
             let line_end = origin + baseline_offset + vec2f(self.layout.width, 0.);
 
             cx.scene.push_underline(scene::Quad {
-                bounds: RectF::from_points(underline_start, line_end + vec2f(0., 1.)),
+                bounds: RectF::from_points(underline_start, line_end + vec2f(0., 3.)),
                 background: Some(underline_color),
                 border: Default::default(),
                 corner_radius: 0.,
