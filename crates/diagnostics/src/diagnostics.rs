@@ -692,7 +692,7 @@ fn path_header_renderer(buffer: ModelHandle<Buffer>, build_settings: BuildSettin
             .left()
             .contained()
             .with_style(style.container)
-            .with_padding_left(cx.gutter_padding)
+            .with_padding_left(cx.gutter_padding + cx.scroll_x * cx.em_width)
             .expanded()
             .named("path header block")
     })
@@ -745,7 +745,7 @@ fn diagnostic_header_renderer(
             }))
             .contained()
             .with_style(style.container)
-            .with_padding_left(cx.gutter_padding)
+            .with_padding_left(cx.gutter_padding + cx.scroll_x * cx.em_width)
             .expanded()
             .named("diagnostic header")
     })
@@ -757,7 +757,7 @@ fn context_header_renderer(build_settings: BuildSettings) -> RenderBlock {
         let text_style = settings.style.text.clone();
         Label::new("…".to_string(), text_style)
             .contained()
-            .with_padding_left(cx.gutter_padding)
+            .with_padding_left(cx.gutter_padding + cx.scroll_x * cx.em_width)
             .named("collapsed context")
     })
 }
@@ -1252,6 +1252,7 @@ mod tests {
                     .render(&BlockContext {
                         cx,
                         anchor_x: 0.,
+                        scroll_x: 0.,
                         gutter_padding: 0.,
                         gutter_width: 0.,
                         line_height: 0.,
