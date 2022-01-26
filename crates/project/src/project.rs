@@ -2513,7 +2513,7 @@ mod tests {
         assert_eq!(new_text, buffer.read_with(&cx, |buffer, _| buffer.text()));
     }
 
-    #[gpui::test]
+    #[gpui::test(retries = 5)]
     async fn test_rescan_and_remote_updates(mut cx: gpui::TestAppContext) {
         let dir = temp_tree(json!({
             "a": {
