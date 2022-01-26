@@ -379,6 +379,7 @@ pub struct Editor {
     blink_epoch: usize,
     blinking_paused: bool,
     mode: EditorMode,
+    vertical_scroll_margin: f32,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
     nav_history: Option<ItemNavHistory>,
@@ -518,6 +519,7 @@ impl Editor {
             blink_epoch: 0,
             blinking_paused: false,
             mode: EditorMode::Full,
+            vertical_scroll_margin: 3.0,
             placeholder_text: None,
             highlighted_rows: None,
             nav_history: None,
@@ -588,6 +590,11 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.placeholder_text = Some(placeholder_text.into());
+        cx.notify();
+    }
+
+    pub fn set_vertical_scroll_margin(&mut self, margin_rows: usize, cx: &mut ViewContext<Self>) {
+        self.vertical_scroll_margin = margin_rows as f32;
         cx.notify();
     }
 
@@ -690,7 +697,7 @@ impl Editor {
 
         match autoscroll {
             Autoscroll::Fit | Autoscroll::Newest => {
-                let margin = margin.min(3.0);
+                let margin = margin.min(self.vertical_scroll_margin);
                 let target_top = (first_cursor_top - margin).max(0.0);
                 let target_bottom = last_cursor_bottom + margin;
                 let start_row = scroll_position.y();
