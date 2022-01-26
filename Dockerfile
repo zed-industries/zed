@@ -1,6 +1,6 @@
 # syntax = docker/dockerfile:1.2
 
-FROM rust:1.56-bullseye as builder
+FROM rust:1.58-bullseye as builder
 WORKDIR app
 RUN curl -fsSL https://deb.nodesource.com/setup_16.x | bash -
 RUN apt-get install -y nodejs
