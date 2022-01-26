@@ -13,6 +13,7 @@ editor = { path = "../editor" }
 language = { path = "../language" }
 gpui = { path = "../gpui" }
 project = { path = "../project" }
+theme = { path = "../theme" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
 postage = { version = "0.4", features = ["futures-traits"] }

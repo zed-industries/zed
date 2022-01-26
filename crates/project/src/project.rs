@@ -822,7 +822,8 @@ impl Project {
                             send.await.log_err();
                         }
                     }
-                    LspEvent::DiagnosticsUpdate(params) => {
+                    LspEvent::DiagnosticsUpdate(mut params) => {
+                        language.process_diagnostics(&mut params);
                         this.update(&mut cx, |this, cx| {
                             this.update_diagnostics(params, &disk_based_sources, cx)
                                 .log_err();

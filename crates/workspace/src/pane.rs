@@ -70,14 +70,17 @@ pub enum Event {
     Split(SplitDirection),
 }
 
-const MAX_TAB_TITLE_LEN: usize = 24;
-
 pub struct Pane {
     item_views: Vec<(usize, Box<dyn ItemViewHandle>)>,
     active_item_index: usize,
     settings: watch::Receiver<Settings>,
     nav_history: Rc<RefCell<NavHistory>>,
 }
+
+// #[derive(Debug, Eq, PartialEq)]
+// pub struct State {
+//     pub tabs: Vec<TabState>,
+// }
 
 pub struct ItemNavHistory {
     history: Rc<RefCell<NavHistory>>,
@@ -373,15 +376,12 @@ impl Pane {
                 let is_active = ix == self.active_item_index;
 
                 row.add_child({
-                    let mut title = item_view.title(cx);
-                    if title.len() > MAX_TAB_TITLE_LEN {
-                        let mut truncated_len = MAX_TAB_TITLE_LEN;
-                        while !title.is_char_boundary(truncated_len) {
-                            truncated_len -= 1;
-                        }
-                        title.truncate(truncated_len);
-                        title.push('…');
-                    }
+                    let tab_style = if is_active {
+                        theme.workspace.active_tab.clone()
+                    } else {
+                        theme.workspace.tab.clone()
+                    };
+                    let title = item_view.tab_content(&tab_style, cx);
 
                     let mut style = if is_active {
                         theme.workspace.active_tab.clone()
@@ -430,29 +430,16 @@ impl Pane {
                                     .boxed(),
                                 )
                                 .with_child(
-                                    Container::new(
-                                        Align::new(
-                                            Label::new(
-                                                title,
-                                                if is_active {
-                                                    theme.workspace.active_tab.label.clone()
-                                                } else {
-                                                    theme.workspace.tab.label.clone()
-                                                },
-                                            )
-                                            .boxed(),
-                                        )
-                                        .boxed(),
-                                    )
-                                    .with_style(ContainerStyle {
-                                        margin: Margin {
-                                            left: style.spacing,
-                                            right: style.spacing,
+                                    Container::new(Align::new(title).boxed())
+                                        .with_style(ContainerStyle {
+                                            margin: Margin {
+                                                left: style.spacing,
+                                                right: style.spacing,
+                                                ..Default::default()
+                                            },
                                             ..Default::default()
-                                        },
-                                        ..Default::default()
-                                    })
-                                    .boxed(),
+                                        })
+                                        .boxed(),
                                 )
                                 .with_child(
                                     Align::new(

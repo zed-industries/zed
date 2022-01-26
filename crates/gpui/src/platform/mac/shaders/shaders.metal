@@ -66,21 +66,13 @@ float4 quad_sdf(QuadFragmentInput input) {
         border_width = vertical_border;
     }
 
-    float4 color;
-    if (border_width == 0.) {
-        color = input.background_color;
-    } else {
-        float4 border_color = float4(mix(float3(input.background_color), float3(input.border_color), input.border_color.a), 1.);
+    float4 color = input.background_color * float4(1., 1., 1., saturate(0.5 - distance));
+    if (border_width != 0.) {
         float inset_distance = distance + border_width;
-        color = mix(
-            border_color,
-            input.background_color,
-            saturate(0.5 - inset_distance)
-        );
+        color = mix(input.border_color, color, saturate(0.5 - inset_distance));
     }
 
-    float4 coverage = float4(1., 1., 1., saturate(0.5 - distance));
-    return coverage * color;
+    return color;
 }
 
 vertex QuadFragmentInput quad_vertex(
@@ -303,4 +295,56 @@ fragment float4 path_atlas_fragment(
     float distance = f / length(gradient);
     float alpha = saturate(0.5 - distance);
     return float4(alpha, 0., 0., 1.);
+}
+
+struct UnderlineFragmentInput {
+    float4 position [[position]];
+    float2 origin;
+    float2 size;
+    float thickness;
+    float4 color;
+    bool squiggly;
+};
+
+vertex UnderlineFragmentInput underline_vertex(
+    uint unit_vertex_id [[vertex_id]],
+    uint underline_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(GPUIUnderlineInputIndexVertices)]],
+    constant GPUIUnderline *underlines [[buffer(GPUIUnderlineInputIndexUnderlines)]],
+    constant GPUIUniforms *uniforms [[buffer(GPUIUnderlineInputIndexUniforms)]]
+) {
+    float2 unit_vertex = unit_vertices[unit_vertex_id];
+    GPUIUnderline underline = underlines[underline_id];
+    float2 position = unit_vertex * underline.size + underline.origin;
+    float4 device_position = to_device_position(position, uniforms->viewport_size);
+
+    return UnderlineFragmentInput {
+        device_position,
+        underline.origin,
+        underline.size,
+        underline.thickness,
+        coloru_to_colorf(underline.color),
+        underline.squiggly != 0,
+    };
+}
+
+fragment float4 underline_fragment(
+    UnderlineFragmentInput input [[stage_in]]
+) {
+    if (input.squiggly) {
+        float half_thickness = input.thickness * 0.5;
+        float2 st = ((input.position.xy - input.origin) / input.size.y) - float2(0., 0.5);
+        float frequency = (M_PI_F * (3. * input.thickness)) / 8.;
+        float amplitude = 1. / (2. * input.thickness);
+        float sine = sin(st.x * frequency) * amplitude;
+        float dSine = cos(st.x * frequency) * amplitude * frequency;
+        float distance = (st.y - sine) / sqrt(1. + dSine * dSine);
+        float distance_in_pixels = distance * input.size.y;
+        float distance_from_top_border = distance_in_pixels - half_thickness;
+        float distance_from_bottom_border = distance_in_pixels + half_thickness;
+        float alpha = saturate(0.5 - max(-distance_from_bottom_border, distance_from_top_border));
+        return input.color * float4(1., 1., 1., alpha);
+    } else {
+        return input.color;
+    }
 }

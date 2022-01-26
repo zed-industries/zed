@@ -104,3 +104,19 @@ typedef struct
     vector_uchar4 border_color;
     float corner_radius;
 } GPUIImage;
+
+typedef enum
+{
+    GPUIUnderlineInputIndexVertices = 0,
+    GPUIUnderlineInputIndexUnderlines = 1,
+    GPUIUnderlineInputIndexUniforms = 2,
+} GPUIUnderlineInputIndex;
+
+typedef struct
+{
+    vector_float2 origin;
+    vector_float2 size;
+    float thickness;
+    vector_uchar4 color;
+    uint8_t squiggly;
+} GPUIUnderline;

@@ -73,6 +73,7 @@ num_cpus = "1.13.0"
 parking_lot = "0.11.1"
 postage = { version = "0.4.1", features = ["futures-traits"] }
 rand = "0.8.3"
+regex = "1.5"
 rsa = "0.4"
 rust-embed = { version = "6.2", features = ["include-exclude"] }
 serde = { version = "1", features = ["derive"] }

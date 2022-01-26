@@ -121,13 +121,9 @@ impl ItemView for Editor {
         }
     }
 
-    fn title(&self, cx: &AppContext) -> String {
-        let file = self.buffer().read(cx).file(cx);
-        if let Some(file) = file {
-            file.file_name(cx).to_string_lossy().into()
-        } else {
-            "untitled".into()
-        }
+    fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox {
+        let title = self.title(cx);
+        Label::new(title, style.label.clone()).boxed()
     }
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
@@ -207,10 +203,7 @@ impl ItemView for Editor {
     }
 
     fn should_update_tab_on_event(event: &Event) -> bool {
-        matches!(
-            event,
-            Event::Saved | Event::Dirtied | Event::FileHandleChanged
-        )
+        matches!(event, Event::Saved | Event::Dirtied | Event::TitleChanged)
     }
 }
 
@@ -337,24 +330,13 @@ impl View for DiagnosticMessage {
     fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
         if let Some(diagnostic) = &self.diagnostic {
             let theme = &self.settings.borrow().theme.workspace.status_bar;
-            Flex::row()
-                .with_child(
-                    Svg::new("icons/warning.svg")
-                        .with_color(theme.diagnostic_icon_color)
-                        .constrained()
-                        .with_height(theme.diagnostic_icon_size)
-                        .contained()
-                        .with_margin_right(theme.diagnostic_icon_spacing)
-                        .boxed(),
-                )
-                .with_child(
-                    Label::new(
-                        diagnostic.message.lines().next().unwrap().to_string(),
-                        theme.diagnostic_message.clone(),
-                    )
-                    .boxed(),
-                )
-                .boxed()
+            Label::new(
+                diagnostic.message.lines().next().unwrap().to_string(),
+                theme.diagnostic_message.clone(),
+            )
+            .contained()
+            .with_margin_left(theme.item_spacing)
+            .boxed()
         } else {
             Empty::new().boxed()
         }

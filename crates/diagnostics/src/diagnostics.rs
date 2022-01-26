@@ -3,18 +3,22 @@ pub mod items;
 use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
-    diagnostic_block_renderer, diagnostic_style,
+    diagnostic_block_renderer,
     display_map::{BlockDisposition, BlockId, BlockProperties, RenderBlock},
+    highlight_diagnostic_message,
     items::BufferItemHandle,
     Autoscroll, BuildSettings, Editor, ExcerptId, ExcerptProperties, MultiBuffer, ToOffset,
 };
 use gpui::{
-    action, elements::*, keymap::Binding, AnyViewHandle, AppContext, Entity, ModelHandle,
-    MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    action, elements::*, fonts::TextStyle, keymap::Binding, AnyViewHandle, AppContext, Entity,
+    ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
+    WeakViewHandle,
 };
-use language::{Bias, Buffer, Diagnostic, DiagnosticEntry, Point, Selection, SelectionGoal};
+use language::{
+    Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
+};
 use postage::watch;
-use project::{Project, ProjectPath};
+use project::{DiagnosticSummary, Project, ProjectPath};
 use std::{
     any::{Any, TypeId},
     cmp::Ordering,
@@ -54,6 +58,7 @@ struct ProjectDiagnosticsEditor {
     model: ModelHandle<ProjectDiagnostics>,
     workspace: WeakViewHandle<Workspace>,
     editor: ViewHandle<Editor>,
+    summary: DiagnosticSummary,
     excerpts: ModelHandle<MultiBuffer>,
     path_states: Vec<PathState>,
     paths_to_update: BTreeSet<ProjectPath>,
@@ -127,8 +132,10 @@ impl ProjectDiagnosticsEditor {
         let project = model.read(cx).project.clone();
         cx.subscribe(&project, |this, _, event, cx| match event {
             project::Event::DiskBasedDiagnosticsFinished => {
+                this.summary = this.model.read(cx).project.read(cx).diagnostic_summary(cx);
                 let paths = mem::take(&mut this.paths_to_update);
                 this.update_excerpts(paths, cx);
+                cx.emit(Event::TitleChanged);
             }
             project::Event::DiagnosticsUpdated(path) => {
                 this.paths_to_update.insert(path.clone());
@@ -144,13 +151,11 @@ impl ProjectDiagnosticsEditor {
         cx.subscribe(&editor, |_, _, event, cx| cx.emit(*event))
             .detach();
 
-        let paths_to_update = project
-            .read(cx)
-            .diagnostic_summaries(cx)
-            .map(|e| e.0)
-            .collect();
+        let project = project.read(cx);
+        let paths_to_update = project.diagnostic_summaries(cx).map(|e| e.0).collect();
         let this = Self {
             model,
+            summary: project.diagnostic_summary(cx),
             workspace,
             excerpts,
             editor,
@@ -344,17 +349,16 @@ impl ProjectDiagnosticsEditor {
 
                             if is_first_excerpt_for_group {
                                 is_first_excerpt_for_group = false;
-                                let primary = &group.entries[group.primary_ix].diagnostic;
-                                let mut header = primary.clone();
-                                header.message =
+                                let mut primary =
+                                    group.entries[group.primary_ix].diagnostic.clone();
+                                primary.message =
                                     primary.message.split('\n').next().unwrap().to_string();
                                 group_state.block_count += 1;
                                 blocks_to_add.push(BlockProperties {
                                     position: header_position,
                                     height: 2,
                                     render: diagnostic_header_renderer(
-                                        header,
-                                        true,
+                                        primary,
                                         self.build_settings.clone(),
                                     ),
                                     disposition: BlockDisposition::Above,
@@ -554,8 +558,12 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         self.model.clone()
     }
 
-    fn title(&self, _: &AppContext) -> String {
-        "Project Diagnostics".to_string()
+    fn tab_content(&self, style: &theme::Tab, _: &AppContext) -> ElementBox {
+        render_summary(
+            &self.summary,
+            &style.label.text,
+            &self.settings.borrow().theme.project_diagnostics,
+        )
     }
 
     fn project_path(&self, _: &AppContext) -> Option<project::ProjectPath> {
@@ -601,10 +609,7 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
     }
 
     fn should_update_tab_on_event(event: &Event) -> bool {
-        matches!(
-            event,
-            Event::Saved | Event::Dirtied | Event::FileHandleChanged
-        )
+        matches!(event, Event::Saved | Event::Dirtied | Event::TitleChanged)
     }
 
     fn clone_on_split(&self, cx: &mut ViewContext<Self>) -> Option<Self>
@@ -651,20 +656,43 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
 fn path_header_renderer(buffer: ModelHandle<Buffer>, build_settings: BuildSettings) -> RenderBlock {
     Arc::new(move |cx| {
         let settings = build_settings(cx);
-        let file_path = if let Some(file) = buffer.read(&**cx).file() {
-            file.path().to_string_lossy().to_string()
-        } else {
-            "untitled".to_string()
-        };
-        let mut text_style = settings.style.text.clone();
         let style = settings.style.diagnostic_path_header;
-        text_style.color = style.text;
-        Label::new(file_path, text_style)
+        let font_size = (style.text_scale_factor * settings.style.text.font_size).round();
+
+        let mut filename = None;
+        let mut path = None;
+        if let Some(file) = buffer.read(&**cx).file() {
+            filename = file
+                .path()
+                .file_name()
+                .map(|f| f.to_string_lossy().to_string());
+            path = file
+                .path()
+                .parent()
+                .map(|p| p.to_string_lossy().to_string() + "/");
+        }
+
+        Flex::row()
+            .with_child(
+                Label::new(
+                    filename.unwrap_or_else(|| "untitled".to_string()),
+                    style.filename.text.clone().with_font_size(font_size),
+                )
+                .contained()
+                .with_style(style.filename.container)
+                .boxed(),
+            )
+            .with_children(path.map(|path| {
+                Label::new(path, style.path.text.clone().with_font_size(font_size))
+                    .contained()
+                    .with_style(style.path.container)
+                    .boxed()
+            }))
             .aligned()
             .left()
             .contained()
-            .with_style(style.header)
-            .with_padding_left(cx.line_number_x)
+            .with_style(style.container)
+            .with_padding_left(cx.gutter_padding + cx.scroll_x * cx.em_width)
             .expanded()
             .named("path header block")
     })
@@ -672,21 +700,52 @@ fn path_header_renderer(buffer: ModelHandle<Buffer>, build_settings: BuildSettin
 
 fn diagnostic_header_renderer(
     diagnostic: Diagnostic,
-    is_valid: bool,
     build_settings: BuildSettings,
 ) -> RenderBlock {
+    let (message, highlights) = highlight_diagnostic_message(&diagnostic.message);
     Arc::new(move |cx| {
         let settings = build_settings(cx);
-        let mut text_style = settings.style.text.clone();
-        let diagnostic_style = diagnostic_style(diagnostic.severity, is_valid, &settings.style);
-        text_style.color = diagnostic_style.text;
-        Text::new(diagnostic.message.clone(), text_style)
-            .with_soft_wrap(false)
-            .aligned()
-            .left()
+        let style = &settings.style.diagnostic_header;
+        let font_size = (style.text_scale_factor * settings.style.text.font_size).round();
+        let icon_width = cx.em_width * style.icon_width_factor;
+        let icon = if diagnostic.severity == DiagnosticSeverity::ERROR {
+            Svg::new("icons/diagnostic-error-10.svg")
+                .with_color(settings.style.error_diagnostic.message.text.color)
+        } else {
+            Svg::new("icons/diagnostic-warning-10.svg")
+                .with_color(settings.style.warning_diagnostic.message.text.color)
+        };
+
+        Flex::row()
+            .with_child(
+                icon.constrained()
+                    .with_width(icon_width)
+                    .aligned()
+                    .contained()
+                    .boxed(),
+            )
+            .with_child(
+                Label::new(
+                    message.clone(),
+                    style.message.label.clone().with_font_size(font_size),
+                )
+                .with_highlights(highlights.clone())
+                .contained()
+                .with_style(style.message.container)
+                .with_margin_left(cx.gutter_padding)
+                .aligned()
+                .boxed(),
+            )
+            .with_children(diagnostic.code.clone().map(|code| {
+                Label::new(code, style.code.text.clone().with_font_size(font_size))
+                    .contained()
+                    .with_style(style.code.container)
+                    .aligned()
+                    .boxed()
+            }))
             .contained()
-            .with_style(diagnostic_style.header)
-            .with_padding_left(cx.line_number_x)
+            .with_style(style.container)
+            .with_padding_left(cx.gutter_padding + cx.scroll_x * cx.em_width)
             .expanded()
             .named("diagnostic header")
     })
@@ -698,9 +757,58 @@ fn context_header_renderer(build_settings: BuildSettings) -> RenderBlock {
         let text_style = settings.style.text.clone();
         Label::new("…".to_string(), text_style)
             .contained()
-            .with_padding_left(cx.line_number_x)
+            .with_padding_left(cx.gutter_padding + cx.scroll_x * cx.em_width)
             .named("collapsed context")
     })
+}
+
+pub(crate) fn render_summary(
+    summary: &DiagnosticSummary,
+    text_style: &TextStyle,
+    theme: &theme::ProjectDiagnostics,
+) -> ElementBox {
+    let icon_width = theme.tab_icon_width;
+    let icon_spacing = theme.tab_icon_spacing;
+    let summary_spacing = theme.tab_summary_spacing;
+    Flex::row()
+        .with_children([
+            Svg::new("icons/diagnostic-summary-error.svg")
+                .with_color(text_style.color)
+                .constrained()
+                .with_width(icon_width)
+                .aligned()
+                .contained()
+                .with_margin_right(icon_spacing)
+                .named("no-icon"),
+            Label::new(
+                summary.error_count.to_string(),
+                LabelStyle {
+                    text: text_style.clone(),
+                    highlight_text: None,
+                },
+            )
+            .aligned()
+            .boxed(),
+            Svg::new("icons/diagnostic-summary-warning.svg")
+                .with_color(text_style.color)
+                .constrained()
+                .with_width(icon_width)
+                .aligned()
+                .contained()
+                .with_margin_left(summary_spacing)
+                .with_margin_right(icon_spacing)
+                .named("warn-icon"),
+            Label::new(
+                summary.warning_count.to_string(),
+                LabelStyle {
+                    text: text_style.clone(),
+                    highlight_text: None,
+                },
+            )
+            .aligned()
+            .boxed(),
+        ])
+        .boxed()
 }
 
 fn compare_diagnostics<L: language::ToOffset, R: language::ToOffset>(
@@ -1144,7 +1252,11 @@ mod tests {
                     .render(&BlockContext {
                         cx,
                         anchor_x: 0.,
-                        line_number_x: 0.,
+                        scroll_x: 0.,
+                        gutter_padding: 0.,
+                        gutter_width: 0.,
+                        line_height: 0.,
+                        em_width: 0.,
                     })
                     .name()
                     .map(|s| (row, s.to_string()))

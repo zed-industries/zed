@@ -551,6 +551,19 @@ impl Editor {
         &self.buffer
     }
 
+    pub fn title(&self, cx: &AppContext) -> String {
+        let filename = self
+            .buffer()
+            .read(cx)
+            .file(cx)
+            .map(|file| file.file_name(cx));
+        if let Some(name) = filename {
+            name.to_string_lossy().into()
+        } else {
+            "untitled".into()
+        }
+    }
+
     pub fn snapshot(&mut self, cx: &mut MutableAppContext) -> EditorSnapshot {
         EditorSnapshot {
             mode: self.mode,
@@ -3762,8 +3775,8 @@ impl Editor {
             language::Event::Edited => cx.emit(Event::Edited),
             language::Event::Dirtied => cx.emit(Event::Dirtied),
             language::Event::Saved => cx.emit(Event::Saved),
-            language::Event::FileHandleChanged => cx.emit(Event::FileHandleChanged),
-            language::Event::Reloaded => cx.emit(Event::FileHandleChanged),
+            language::Event::FileHandleChanged => cx.emit(Event::TitleChanged),
+            language::Event::Reloaded => cx.emit(Event::TitleChanged),
             language::Event::Closed => cx.emit(Event::Closed),
             _ => {}
         }
@@ -3803,6 +3816,8 @@ impl Deref for EditorSnapshot {
 impl EditorSettings {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &AppContext) -> Self {
+        use theme::{ContainedLabel, ContainedText, DiagnosticHeader, DiagnosticPathHeader};
+
         Self {
             tab_size: 4,
             soft_wrap: SoftWrap::None,
@@ -3814,19 +3829,26 @@ impl EditorSettings {
                 let font_id = font_cache
                     .select_font(font_family_id, &font_properties)
                     .unwrap();
+                let text = gpui::fonts::TextStyle {
+                    font_family_name,
+                    font_family_id,
+                    font_id,
+                    font_size: 14.,
+                    color: gpui::color::Color::from_u32(0xff0000ff),
+                    font_properties,
+                    underline: None,
+                };
+                let default_diagnostic_style = DiagnosticStyle {
+                    message: text.clone().into(),
+                    header: Default::default(),
+                    text_scale_factor: 1.,
+                };
                 EditorStyle {
-                    text: gpui::fonts::TextStyle {
-                        font_family_name,
-                        font_family_id,
-                        font_id,
-                        font_size: 14.,
-                        color: gpui::color::Color::from_u32(0xff0000ff),
-                        font_properties,
-                        underline: None,
-                    },
+                    text: text.clone(),
                     placeholder_text: None,
                     background: Default::default(),
                     gutter_background: Default::default(),
+                    gutter_padding_factor: 2.,
                     active_line_background: Default::default(),
                     highlighted_line_background: Default::default(),
                     line_number: Default::default(),
@@ -3834,15 +3856,39 @@ impl EditorSettings {
                     selection: Default::default(),
                     guest_selections: Default::default(),
                     syntax: Default::default(),
-                    diagnostic_path_header: Default::default(),
-                    error_diagnostic: Default::default(),
-                    invalid_error_diagnostic: Default::default(),
-                    warning_diagnostic: Default::default(),
-                    invalid_warning_diagnostic: Default::default(),
-                    information_diagnostic: Default::default(),
-                    invalid_information_diagnostic: Default::default(),
-                    hint_diagnostic: Default::default(),
-                    invalid_hint_diagnostic: Default::default(),
+                    diagnostic_path_header: DiagnosticPathHeader {
+                        container: Default::default(),
+                        filename: ContainedText {
+                            container: Default::default(),
+                            text: text.clone(),
+                        },
+                        path: ContainedText {
+                            container: Default::default(),
+                            text: text.clone(),
+                        },
+                        text_scale_factor: 1.,
+                    },
+                    diagnostic_header: DiagnosticHeader {
+                        container: Default::default(),
+                        message: ContainedLabel {
+                            container: Default::default(),
+                            label: text.clone().into(),
+                        },
+                        code: ContainedText {
+                            container: Default::default(),
+                            text: text.clone(),
+                        },
+                        icon_width_factor: 1.,
+                        text_scale_factor: 1.,
+                    },
+                    error_diagnostic: default_diagnostic_style.clone(),
+                    invalid_error_diagnostic: default_diagnostic_style.clone(),
+                    warning_diagnostic: default_diagnostic_style.clone(),
+                    invalid_warning_diagnostic: default_diagnostic_style.clone(),
+                    information_diagnostic: default_diagnostic_style.clone(),
+                    invalid_information_diagnostic: default_diagnostic_style.clone(),
+                    hint_diagnostic: default_diagnostic_style.clone(),
+                    invalid_hint_diagnostic: default_diagnostic_style.clone(),
                 }
             },
         }
@@ -3870,7 +3916,7 @@ pub enum Event {
     Blurred,
     Dirtied,
     Saved,
-    FileHandleChanged,
+    TitleChanged,
     Closed,
 }
 
@@ -3983,16 +4029,52 @@ pub fn diagnostic_block_renderer(
     is_valid: bool,
     build_settings: BuildSettings,
 ) -> RenderBlock {
+    let mut highlighted_lines = Vec::new();
+    for line in diagnostic.message.lines() {
+        highlighted_lines.push(highlight_diagnostic_message(line));
+    }
+
     Arc::new(move |cx: &BlockContext| {
         let settings = build_settings(cx);
-        let mut text_style = settings.style.text.clone();
-        text_style.color = diagnostic_style(diagnostic.severity, is_valid, &settings.style).text;
-        Text::new(diagnostic.message.clone(), text_style)
-            .with_soft_wrap(false)
-            .contained()
-            .with_margin_left(cx.anchor_x)
+        let style = diagnostic_style(diagnostic.severity, is_valid, &settings.style);
+        let font_size = (style.text_scale_factor * settings.style.text.font_size).round();
+        Flex::column()
+            .with_children(highlighted_lines.iter().map(|(line, highlights)| {
+                Label::new(
+                    line.clone(),
+                    style.message.clone().with_font_size(font_size),
+                )
+                .with_highlights(highlights.clone())
+                .contained()
+                .with_margin_left(cx.anchor_x)
+                .boxed()
+            }))
+            .aligned()
+            .left()
             .boxed()
     })
+}
+
+pub fn highlight_diagnostic_message(message: &str) -> (String, Vec<usize>) {
+    let mut message_without_backticks = String::new();
+    let mut prev_offset = 0;
+    let mut inside_block = false;
+    let mut highlights = Vec::new();
+    for (match_ix, (offset, _)) in message
+        .match_indices('`')
+        .chain([(message.len(), "")])
+        .enumerate()
+    {
+        message_without_backticks.push_str(&message[prev_offset..offset]);
+        if inside_block {
+            highlights.extend(prev_offset - match_ix..offset - match_ix);
+        }
+
+        inside_block = !inside_block;
+        prev_offset = offset + 1;
+    }
+
+    (message_without_backticks, highlights)
 }
 
 pub fn diagnostic_style(
@@ -4001,15 +4083,19 @@ pub fn diagnostic_style(
     style: &EditorStyle,
 ) -> DiagnosticStyle {
     match (severity, valid) {
-        (DiagnosticSeverity::ERROR, true) => style.error_diagnostic,
-        (DiagnosticSeverity::ERROR, false) => style.invalid_error_diagnostic,
-        (DiagnosticSeverity::WARNING, true) => style.warning_diagnostic,
-        (DiagnosticSeverity::WARNING, false) => style.invalid_warning_diagnostic,
-        (DiagnosticSeverity::INFORMATION, true) => style.information_diagnostic,
-        (DiagnosticSeverity::INFORMATION, false) => style.invalid_information_diagnostic,
-        (DiagnosticSeverity::HINT, true) => style.hint_diagnostic,
-        (DiagnosticSeverity::HINT, false) => style.invalid_hint_diagnostic,
-        _ => Default::default(),
+        (DiagnosticSeverity::ERROR, true) => style.error_diagnostic.clone(),
+        (DiagnosticSeverity::ERROR, false) => style.invalid_error_diagnostic.clone(),
+        (DiagnosticSeverity::WARNING, true) => style.warning_diagnostic.clone(),
+        (DiagnosticSeverity::WARNING, false) => style.invalid_warning_diagnostic.clone(),
+        (DiagnosticSeverity::INFORMATION, true) => style.information_diagnostic.clone(),
+        (DiagnosticSeverity::INFORMATION, false) => style.invalid_information_diagnostic.clone(),
+        (DiagnosticSeverity::HINT, true) => style.hint_diagnostic.clone(),
+        (DiagnosticSeverity::HINT, false) => style.invalid_hint_diagnostic.clone(),
+        _ => DiagnosticStyle {
+            message: style.text.clone().into(),
+            header: Default::default(),
+            text_scale_factor: 1.,
+        },
     }
 }
 

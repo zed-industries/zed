@@ -8,7 +8,7 @@ use collections::{BTreeMap, HashMap};
 use gpui::{
     color::Color,
     elements::layout_highlighted_chunks,
-    fonts::HighlightStyle,
+    fonts::{HighlightStyle, Underline},
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -17,7 +17,7 @@ use gpui::{
     json::{self, ToJson},
     keymap::Keystroke,
     text_layout::{self, RunStyle, TextLayoutCache},
-    AppContext, Axis, Border, Element, ElementBox, Event, EventContext, FontCache, LayoutContext,
+    AppContext, Axis, Border, Element, ElementBox, Event, EventContext, LayoutContext,
     MutableAppContext, PaintContext, Quad, Scene, SizeConstraint, ViewContext, WeakViewHandle,
 };
 use json::json;
@@ -140,18 +140,14 @@ impl EditorElement {
                 ))
             }
 
-            let font_cache = cx.font_cache.clone();
-            let text_layout_cache = cx.text_layout_cache.clone();
             let snapshot = self.snapshot(cx.app);
             let (position, overshoot) = paint.point_for_position(&snapshot, layout, position);
 
             cx.dispatch_action(Select(SelectPhase::Update {
                 position,
                 overshoot,
-                scroll_position: (snapshot.scroll_position() + scroll_delta).clamp(
-                    Vector2F::zero(),
-                    layout.scroll_max(&font_cache, &text_layout_cache),
-                ),
+                scroll_position: (snapshot.scroll_position() + scroll_delta)
+                    .clamp(Vector2F::zero(), layout.scroll_max),
             }));
             true
         } else {
@@ -192,8 +188,6 @@ impl EditorElement {
         }
 
         let snapshot = self.snapshot(cx.app);
-        let font_cache = &cx.font_cache;
-        let layout_cache = &cx.text_layout_cache;
         let max_glyph_width = layout.em_width;
         if !precise {
             delta *= vec2f(max_glyph_width, layout.line_height);
@@ -202,10 +196,7 @@ impl EditorElement {
         let scroll_position = snapshot.scroll_position();
         let x = (scroll_position.x() * max_glyph_width - delta.x()) / max_glyph_width;
         let y = (scroll_position.y() * layout.line_height - delta.y()) / layout.line_height;
-        let scroll_position = vec2f(x, y).clamp(
-            Vector2F::zero(),
-            layout.scroll_max(font_cache, layout_cache),
-        );
+        let scroll_position = vec2f(x, y).clamp(Vector2F::zero(), layout.scroll_max);
 
         cx.dispatch_action(Scroll(scroll_position));
 
@@ -459,7 +450,7 @@ impl EditorElement {
             .width()
     }
 
-    fn layout_rows(
+    fn layout_line_numbers(
         &self,
         rows: Range<u32>,
         active_rows: &BTreeMap<u32, bool>,
@@ -549,7 +540,12 @@ impl EditorElement {
                 .chunks(rows.clone(), Some(&style.syntax))
                 .map(|chunk| {
                     let highlight = if let Some(severity) = chunk.diagnostic {
-                        let underline = Some(super::diagnostic_style(severity, true, style).text);
+                        let diagnostic_style = super::diagnostic_style(severity, true, style);
+                        let underline = Some(Underline {
+                            color: diagnostic_style.message.text.color,
+                            thickness: 1.0.into(),
+                            squiggly: true,
+                        });
                         if let Some(mut highlight) = chunk.highlight_style {
                             highlight.underline = underline;
                             Some(highlight)
@@ -581,7 +577,9 @@ impl EditorElement {
         rows: Range<u32>,
         snapshot: &EditorSnapshot,
         width: f32,
-        line_number_x: f32,
+        gutter_padding: f32,
+        gutter_width: f32,
+        em_width: f32,
         text_x: f32,
         line_height: f32,
         style: &EditorStyle,
@@ -609,7 +607,11 @@ impl EditorElement {
                 let mut element = block.render(&BlockContext {
                     cx,
                     anchor_x,
-                    line_number_x,
+                    gutter_padding,
+                    line_height,
+                    scroll_x: snapshot.scroll_position.x(),
+                    gutter_width,
+                    em_width,
                 });
                 element.layout(
                     SizeConstraint {
@@ -645,7 +647,7 @@ impl Element for EditorElement {
         let gutter_padding;
         let gutter_width;
         if snapshot.mode == EditorMode::Full {
-            gutter_padding = style.text.em_width(cx.font_cache);
+            gutter_padding = style.text.em_width(cx.font_cache) * style.gutter_padding_factor;
             gutter_width = self.max_line_number_width(&snapshot, cx) + gutter_padding * 2.0;
         } else {
             gutter_padding = 0.0;
@@ -761,7 +763,8 @@ impl Element for EditorElement {
             }
         });
 
-        let line_number_layouts = self.layout_rows(start_row..end_row, &active_rows, &snapshot, cx);
+        let line_number_layouts =
+            self.layout_line_numbers(start_row..end_row, &active_rows, &snapshot, cx);
 
         let mut max_visible_line_width = 0.0;
         let line_layouts = self.layout_lines(start_row..end_row, &mut snapshot, cx);
@@ -771,52 +774,32 @@ impl Element for EditorElement {
             }
         }
 
-        let blocks = self.layout_blocks(
-            start_row..end_row,
+        let style = self.settings.style.clone();
+        let longest_line_width = layout_line(
+            snapshot.longest_row(),
             &snapshot,
-            size.x(),
-            gutter_padding,
-            gutter_width + text_offset.x(),
-            line_height,
             &style,
-            &line_layouts,
-            cx,
+            cx.text_layout_cache,
+        )
+        .width();
+        let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.x();
+        let em_width = style.text.em_width(cx.font_cache);
+        let max_row = snapshot.max_point().row();
+        let scroll_max = vec2f(
+            ((scroll_width - text_size.x()) / em_width).max(0.0),
+            max_row.saturating_sub(1) as f32,
         );
 
-        let mut layout = LayoutState {
-            size,
-            gutter_size,
-            gutter_padding,
-            text_size,
-            overscroll,
-            text_offset,
-            snapshot,
-            style: self.settings.style.clone(),
-            active_rows,
-            highlighted_rows,
-            line_layouts,
-            line_number_layouts,
-            blocks,
-            line_height,
-            em_width,
-            em_advance,
-            selections,
-            max_visible_line_width,
-        };
-
-        let scroll_max = layout.scroll_max(cx.font_cache, cx.text_layout_cache).x();
-        let scroll_width = layout.scroll_width(cx.text_layout_cache);
-        let max_glyph_width = style.text.em_width(&cx.font_cache);
         self.update_view(cx.app, |view, cx| {
-            let clamped = view.clamp_scroll_left(scroll_max);
+            let clamped = view.clamp_scroll_left(scroll_max.x());
             let autoscrolled;
             if autoscroll_horizontally {
                 autoscrolled = view.autoscroll_horizontally(
                     start_row,
-                    layout.text_size.x(),
+                    text_size.x(),
                     scroll_width,
-                    max_glyph_width,
-                    &layout.line_layouts,
+                    em_width,
+                    &line_layouts,
                     cx,
                 );
             } else {
@@ -824,11 +807,45 @@ impl Element for EditorElement {
             }
 
             if clamped || autoscrolled {
-                layout.snapshot = view.snapshot(cx);
+                snapshot = view.snapshot(cx);
             }
         });
 
-        (size, Some(layout))
+        let blocks = self.layout_blocks(
+            start_row..end_row,
+            &snapshot,
+            size.x().max(scroll_width + gutter_width),
+            gutter_padding,
+            gutter_width,
+            em_width,
+            gutter_width + text_offset.x(),
+            line_height,
+            &style,
+            &line_layouts,
+            cx,
+        );
+
+        (
+            size,
+            Some(LayoutState {
+                size,
+                scroll_max,
+                gutter_size,
+                gutter_padding,
+                text_size,
+                text_offset,
+                snapshot,
+                active_rows,
+                highlighted_rows,
+                line_layouts,
+                line_number_layouts,
+                blocks,
+                line_height,
+                em_width,
+                em_advance,
+                selections,
+            }),
+        )
     }
 
     fn paint(
@@ -918,10 +935,10 @@ impl Element for EditorElement {
 
 pub struct LayoutState {
     size: Vector2F,
+    scroll_max: Vector2F,
     gutter_size: Vector2F,
     gutter_padding: f32,
     text_size: Vector2F,
-    style: EditorStyle,
     snapshot: EditorSnapshot,
     active_rows: BTreeMap<u32, bool>,
     highlighted_rows: Option<Range<u32>>,
@@ -932,30 +949,7 @@ pub struct LayoutState {
     em_width: f32,
     em_advance: f32,
     selections: HashMap<ReplicaId, Vec<text::Selection<DisplayPoint>>>,
-    overscroll: Vector2F,
     text_offset: Vector2F,
-    max_visible_line_width: f32,
-}
-
-impl LayoutState {
-    fn scroll_width(&self, layout_cache: &TextLayoutCache) -> f32 {
-        let row = self.snapshot.longest_row();
-        let longest_line_width =
-            layout_line(row, &self.snapshot, &self.style, layout_cache).width();
-        longest_line_width.max(self.max_visible_line_width) + self.overscroll.x()
-    }
-
-    fn scroll_max(&self, font_cache: &FontCache, layout_cache: &TextLayoutCache) -> Vector2F {
-        let text_width = self.text_size.x();
-        let scroll_width = self.scroll_width(layout_cache);
-        let em_width = self.style.text.em_width(font_cache);
-        let max_row = self.snapshot.max_point().row();
-
-        vec2f(
-            ((scroll_width - text_width) / em_width).max(0.0),
-            max_row.saturating_sub(1) as f32,
-        )
-    }
 }
 
 fn layout_line(
@@ -1187,7 +1181,7 @@ mod tests {
             let snapshot = editor.snapshot(cx);
             let mut presenter = cx.build_presenter(window_id, 30.);
             let mut layout_cx = presenter.build_layout_context(false, cx);
-            element.layout_rows(0..6, &Default::default(), &snapshot, &mut layout_cx)
+            element.layout_line_numbers(0..6, &Default::default(), &snapshot, &mut layout_cx)
         });
         assert_eq!(layouts.len(), 6);
     }

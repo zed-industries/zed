@@ -109,10 +109,8 @@ pub struct StatusBar {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub height: f32,
+    pub item_spacing: f32,
     pub cursor_position: TextStyle,
-    pub diagnostic_icon_size: f32,
-    pub diagnostic_icon_spacing: f32,
-    pub diagnostic_icon_color: Color,
     pub diagnostic_message: TextStyle,
 }
 
@@ -221,7 +219,7 @@ pub struct ContainedText {
     pub text: TextStyle,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Clone, Deserialize, Default)]
 pub struct ContainedLabel {
     #[serde(flatten)]
     pub container: ContainerStyle,
@@ -235,6 +233,9 @@ pub struct ProjectDiagnostics {
     pub container: ContainerStyle,
     pub empty_message: TextStyle,
     pub status_bar_item: ContainedText,
+    pub tab_icon_width: f32,
+    pub tab_icon_spacing: f32,
+    pub tab_summary_spacing: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -245,13 +246,15 @@ pub struct EditorStyle {
     pub background: Color,
     pub selection: SelectionStyle,
     pub gutter_background: Color,
+    pub gutter_padding_factor: f32,
     pub active_line_background: Color,
     pub highlighted_line_background: Color,
     pub line_number: Color,
     pub line_number_active: Color,
     pub guest_selections: Vec<SelectionStyle>,
     pub syntax: Arc<SyntaxTheme>,
-    pub diagnostic_path_header: DiagnosticStyle,
+    pub diagnostic_path_header: DiagnosticPathHeader,
+    pub diagnostic_header: DiagnosticHeader,
     pub error_diagnostic: DiagnosticStyle,
     pub invalid_error_diagnostic: DiagnosticStyle,
     pub warning_diagnostic: DiagnosticStyle,
@@ -262,11 +265,31 @@ pub struct EditorStyle {
     pub invalid_hint_diagnostic: DiagnosticStyle,
 }
 
-#[derive(Copy, Clone, Deserialize, Default)]
+#[derive(Clone, Deserialize, Default)]
+pub struct DiagnosticPathHeader {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub filename: ContainedText,
+    pub path: ContainedText,
+    pub text_scale_factor: f32,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct DiagnosticHeader {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub message: ContainedLabel,
+    pub code: ContainedText,
+    pub text_scale_factor: f32,
+    pub icon_width_factor: f32,
+}
+
+#[derive(Clone, Deserialize, Default)]
 pub struct DiagnosticStyle {
-    pub text: Color,
+    pub message: LabelStyle,
     #[serde(default)]
     pub header: ContainerStyle,
+    pub text_scale_factor: f32,
 }
 
 #[derive(Clone, Copy, Default, Deserialize)]
@@ -302,6 +325,11 @@ impl EditorStyle {
 
 impl InputEditorStyle {
     pub fn as_editor(&self) -> EditorStyle {
+        let default_diagnostic_style = DiagnosticStyle {
+            message: self.text.clone().into(),
+            header: Default::default(),
+            text_scale_factor: 1.,
+        };
         EditorStyle {
             text: self.text.clone(),
             placeholder_text: self.placeholder_text.clone(),
@@ -311,21 +339,46 @@ impl InputEditorStyle {
                 .unwrap_or(Color::transparent_black()),
             selection: self.selection,
             gutter_background: Default::default(),
+            gutter_padding_factor: Default::default(),
             active_line_background: Default::default(),
             highlighted_line_background: Default::default(),
             line_number: Default::default(),
             line_number_active: Default::default(),
             guest_selections: Default::default(),
             syntax: Default::default(),
-            diagnostic_path_header: Default::default(),
-            error_diagnostic: Default::default(),
-            invalid_error_diagnostic: Default::default(),
-            warning_diagnostic: Default::default(),
-            invalid_warning_diagnostic: Default::default(),
-            information_diagnostic: Default::default(),
-            invalid_information_diagnostic: Default::default(),
-            hint_diagnostic: Default::default(),
-            invalid_hint_diagnostic: Default::default(),
+            diagnostic_path_header: DiagnosticPathHeader {
+                container: Default::default(),
+                filename: ContainedText {
+                    container: Default::default(),
+                    text: self.text.clone(),
+                },
+                path: ContainedText {
+                    container: Default::default(),
+                    text: self.text.clone(),
+                },
+                text_scale_factor: 1.,
+            },
+            diagnostic_header: DiagnosticHeader {
+                container: Default::default(),
+                message: ContainedLabel {
+                    container: Default::default(),
+                    label: self.text.clone().into(),
+                },
+                code: ContainedText {
+                    container: Default::default(),
+                    text: self.text.clone(),
+                },
+                icon_width_factor: Default::default(),
+                text_scale_factor: 1.,
+            },
+            error_diagnostic: default_diagnostic_style.clone(),
+            invalid_error_diagnostic: default_diagnostic_style.clone(),
+            warning_diagnostic: default_diagnostic_style.clone(),
+            invalid_warning_diagnostic: default_diagnostic_style.clone(),
+            information_diagnostic: default_diagnostic_style.clone(),
+            invalid_information_diagnostic: default_diagnostic_style.clone(),
+            hint_diagnostic: default_diagnostic_style.clone(),
+            invalid_hint_diagnostic: default_diagnostic_style.clone(),
         }
     }
 }

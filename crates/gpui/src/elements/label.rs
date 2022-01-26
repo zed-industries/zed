@@ -33,6 +33,13 @@ impl From<TextStyle> for LabelStyle {
     }
 }
 
+impl LabelStyle {
+    pub fn with_font_size(mut self, font_size: f32) -> Self {
+        self.text.font_size = font_size;
+        self
+    }
+}
+
 impl Label {
     pub fn new(text: String, style: impl Into<LabelStyle>) -> Self {
         Self {

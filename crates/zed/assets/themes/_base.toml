@@ -77,11 +77,9 @@ border = { width = 1, color = "$border.0", left = true }
 [workspace.status_bar]
 padding = { left = 6, right = 6 }
 height = 24
+item_spacing = 24
 cursor_position = "$text.2"
 diagnostic_message = "$text.2"
-diagnostic_icon_size = 18
-diagnostic_icon_spacing = 8
-diagnostic_icon_color = "$text.2.color"
 
 [panel]
 padding = { top = 12, left = 12, bottom = 12, right = 12 }
@@ -244,6 +242,7 @@ text = "$text.0"
 text = "$text.1"
 background = "$surface.1"
 gutter_background = "$surface.1"
+gutter_padding_factor = 2.5
 active_line_background = "$state.active_line"
 highlighted_line_background = "$state.highlighted_line"
 line_number = "$text.2.color"
@@ -251,33 +250,70 @@ line_number_active = "$text.0.color"
 selection = "$selection.host"
 guest_selections = "$selection.guests"
 error_color = "$status.bad"
-invalid_error_diagnostic = { text = "$text.3.color" }
-invalid_warning_diagnostic = { text = "$text.3.color" }
-invalid_information_diagnostic = { text = "$text.3.color" }
-invalid_hint_diagnostic = { text = "$text.3.color" }
 
 [editor.diagnostic_path_header]
-text = "$text.0.color"
-header.background = "#ffffff08"
-header.border = { width = 1, top = true, color = "$border.0" }
+background = "$state.active_line"
+filename = { extends = "$text.0", size = 14 }
+path = { extends = "$text.2", size = 14, margin.left = 12 }
+text_scale_factor = 0.857
+
+[editor.diagnostic_header]
+border = { width = 1, top = true, bottom = true, color = "$border.1" }
+code = { extends = "$text.2", size = 14, margin.left = 10 }
+icon_width_factor = 1.5
+text_scale_factor = 0.857
+
+[editor.diagnostic_header.message]
+text = { extends = "$text.1", size = 14 }
+highlight_text = { extends = "$text.0", size = 14, weight = "bold" }
 
 [editor.error_diagnostic]
-text = "$status.bad"
 header.border = { width = 1, top = true, color = "$border.0" }
+text_scale_factor = 0.857
+
+[editor.error_diagnostic.message]
+text = { extends = "$editor.text", size = 14, color = "$status.bad" }
+highlight_text = { extends = "$editor.text", size = 14, color = "$status.bad", weight = "bold" }
 
 [editor.warning_diagnostic]
-text = "$status.warn"
-header.border = { width = 1, top = true, color = "$border.0" }
+extends = "$editor.error_diagnostic"
+message.text.color = "$status.warn"
+message.highlight_text.color = "$status.warn"
 
 [editor.information_diagnostic]
-text = "$status.info"
-border = { width = 1, top = true, color = "$border.0" }
+extends = "$editor.error_diagnostic"
+message.text.color = "$status.info"
+message.highlight_text.color = "$status.info"
 
 [editor.hint_diagnostic]
-text = "$status.info"
-border = { width = 1, top = true, color = "$border.0" }
+extends = "$editor.error_diagnostic"
+message.text.color = "$status.info"
+message.highlight_text.color = "$status.info"
+
+[editor.invalid_error_diagnostic]
+extends = "$editor.error_diagnostic"
+message.text.color = "$text.3.color"
+message.highlight_text.color = "$text.3.color"
+
+[editor.invalid_warning_diagnostic]
+extends = "$editor.warning_diagnostic"
+message.text.color = "$text.3.color"
+message.highlight_text.color = "$text.3.color"
+
+[editor.invalid_information_diagnostic]
+extends = "$editor.information_diagnostic"
+message.text.color = "$text.3.color"
+message.highlight_text.color = "$text.3.color"
+
+[editor.invalid_hint_diagnostic]
+extends = "$editor.hint_diagnostic"
+message.text.color = "$text.3.color"
+message.highlight_text.color = "$text.3.color"
 
 [project_diagnostics]
 background = "$surface.1"
 empty_message = "$text.0"
 status_bar_item = { extends = "$text.2", margin.right = 10 }
+tab_icon_width = 13
+tab_icon_spacing = 4
+tab_summary_spacing = 10

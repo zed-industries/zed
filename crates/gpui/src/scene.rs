@@ -25,7 +25,7 @@ struct StackingContext {
 pub struct Layer {
     clip_bounds: Option<RectF>,
     quads: Vec<Quad>,
-    underlines: Vec<Quad>,
+    underlines: Vec<Underline>,
     images: Vec<Image>,
     shadows: Vec<Shadow>,
     glyphs: Vec<Glyph>,
@@ -74,6 +74,15 @@ pub struct Border {
     pub right: bool,
     pub bottom: bool,
     pub left: bool,
+}
+
+#[derive(Clone, Copy, Default, Debug)]
+pub struct Underline {
+    pub origin: Vector2F,
+    pub width: f32,
+    pub thickness: f32,
+    pub color: Color,
+    pub squiggly: bool,
 }
 
 impl<'de> Deserialize<'de> for Border {
@@ -183,7 +192,7 @@ impl Scene {
         self.active_layer().push_image(image)
     }
 
-    pub fn push_underline(&mut self, underline: Quad) {
+    pub fn push_underline(&mut self, underline: Underline) {
         self.active_layer().push_underline(underline)
     }
 
@@ -277,11 +286,11 @@ impl Layer {
         self.quads.as_slice()
     }
 
-    fn push_underline(&mut self, underline: Quad) {
+    fn push_underline(&mut self, underline: Underline) {
         self.underlines.push(underline);
     }
 
-    pub fn underlines(&self) -> &[Quad] {
+    pub fn underlines(&self) -> &[Underline] {
         self.underlines.as_slice()
     }
 

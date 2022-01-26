@@ -10,6 +10,7 @@ pub use font_kit::{
     metrics::Metrics,
     properties::{Properties, Stretch, Style, Weight},
 };
+use ordered_float::OrderedFloat;
 use serde::{de, Deserialize};
 use serde_json::Value;
 use std::{cell::RefCell, sync::Arc};
@@ -27,14 +28,21 @@ pub struct TextStyle {
     pub font_id: FontId,
     pub font_size: f32,
     pub font_properties: Properties,
-    pub underline: Option<Color>,
+    pub underline: Option<Underline>,
 }
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct HighlightStyle {
     pub color: Color,
     pub font_properties: Properties,
-    pub underline: Option<Color>,
+    pub underline: Option<Underline>,
+}
+
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Underline {
+    pub color: Color,
+    pub thickness: OrderedFloat<f32>,
+    pub squiggly: bool,
 }
 
 #[allow(non_camel_case_types)]
@@ -81,7 +89,14 @@ struct HighlightStyleJson {
 #[serde(untagged)]
 enum UnderlineStyleJson {
     Underlined(bool),
-    UnderlinedWithColor(Color),
+    UnderlinedWithProperties {
+        #[serde(default)]
+        color: Option<Color>,
+        #[serde(default)]
+        thickness: Option<f32>,
+        #[serde(default)]
+        squiggly: bool,
+    },
 }
 
 impl TextStyle {
@@ -89,7 +104,7 @@ impl TextStyle {
         font_family_name: impl Into<Arc<str>>,
         font_size: f32,
         font_properties: Properties,
-        underline: Option<Color>,
+        underline: Option<Underline>,
         color: Color,
         font_cache: &FontCache,
     ) -> anyhow::Result<Self> {
@@ -105,6 +120,11 @@ impl TextStyle {
             font_properties,
             underline,
         })
+    }
+
+    pub fn with_font_size(mut self, font_size: f32) -> Self {
+        self.font_size = font_size;
+        self
     }
 
     pub fn to_run(&self) -> RunStyle {
@@ -271,11 +291,23 @@ impl<'de> Deserialize<'de> for HighlightStyle {
     }
 }
 
-fn underline_from_json(json: UnderlineStyleJson, text_color: Color) -> Option<Color> {
+fn underline_from_json(json: UnderlineStyleJson, text_color: Color) -> Option<Underline> {
     match json {
         UnderlineStyleJson::Underlined(false) => None,
-        UnderlineStyleJson::Underlined(true) => Some(text_color),
-        UnderlineStyleJson::UnderlinedWithColor(color) => Some(color),
+        UnderlineStyleJson::Underlined(true) => Some(Underline {
+            color: text_color,
+            thickness: 1.0.into(),
+            squiggly: false,
+        }),
+        UnderlineStyleJson::UnderlinedWithProperties {
+            color,
+            thickness,
+            squiggly,
+        } => Some(Underline {
+            color: color.unwrap_or(text_color),
+            thickness: thickness.unwrap_or(1.).into(),
+            squiggly,
+        }),
     }
 }
 
