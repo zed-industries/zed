@@ -855,32 +855,34 @@ impl Element for EditorElement {
         layout: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        if let Some(layout) = layout {
-            cx.scene.push_layer(Some(bounds));
+        let layout = layout.as_mut()?;
+        cx.scene.push_layer(Some(bounds));
 
-            let gutter_bounds = RectF::new(bounds.origin(), layout.gutter_size);
-            let text_bounds = RectF::new(
-                bounds.origin() + vec2f(layout.gutter_size.x(), 0.0),
-                layout.text_size,
-            );
+        let gutter_bounds = RectF::new(bounds.origin(), layout.gutter_size);
+        let text_bounds = RectF::new(
+            bounds.origin() + vec2f(layout.gutter_size.x(), 0.0),
+            layout.text_size,
+        );
 
-            self.paint_background(gutter_bounds, text_bounds, layout, cx);
-            if layout.gutter_size.x() > 0. {
-                self.paint_gutter(gutter_bounds, visible_bounds, layout, cx);
-            }
-            self.paint_text(text_bounds, visible_bounds, layout, cx);
-            self.paint_blocks(bounds, visible_bounds, layout, cx);
-
-            cx.scene.pop_layer();
-
-            Some(PaintState {
-                bounds,
-                gutter_bounds,
-                text_bounds,
-            })
-        } else {
-            None
+        self.paint_background(gutter_bounds, text_bounds, layout, cx);
+        if layout.gutter_size.x() > 0. {
+            self.paint_gutter(gutter_bounds, visible_bounds, layout, cx);
         }
+        self.paint_text(text_bounds, visible_bounds, layout, cx);
+
+        if !layout.blocks.is_empty() {
+            cx.scene.push_layer(Some(bounds));
+            self.paint_blocks(bounds, visible_bounds, layout, cx);
+            cx.scene.pop_layer();
+        }
+
+        cx.scene.pop_layer();
+
+        Some(PaintState {
+            bounds,
+            gutter_bounds,
+            text_bounds,
+        })
     }
 
     fn dispatch_event(

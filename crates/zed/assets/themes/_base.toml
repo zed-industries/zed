@@ -258,6 +258,7 @@ path = { extends = "$text.2", size = 14, margin.left = 12 }
 text_scale_factor = 0.857
 
 [editor.diagnostic_header]
+background = "$editor.background"
 border = { width = 1, top = true, bottom = true, color = "$border.1" }
 code = { extends = "$text.2", size = 14, margin.left = 10 }
 icon_width_factor = 1.5
