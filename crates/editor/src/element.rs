@@ -141,17 +141,14 @@ impl EditorElement {
             }
 
             let font_cache = cx.font_cache.clone();
-            let text_layout_cache = cx.text_layout_cache.clone();
             let snapshot = self.snapshot(cx.app);
             let (position, overshoot) = paint.point_for_position(&snapshot, layout, position);
 
             cx.dispatch_action(Select(SelectPhase::Update {
                 position,
                 overshoot,
-                scroll_position: (snapshot.scroll_position() + scroll_delta).clamp(
-                    Vector2F::zero(),
-                    layout.scroll_max(&font_cache, &text_layout_cache),
-                ),
+                scroll_position: (snapshot.scroll_position() + scroll_delta)
+                    .clamp(Vector2F::zero(), layout.scroll_max(&font_cache)),
             }));
             true
         } else {
@@ -193,7 +190,6 @@ impl EditorElement {
 
         let snapshot = self.snapshot(cx.app);
         let font_cache = &cx.font_cache;
-        let layout_cache = &cx.text_layout_cache;
         let max_glyph_width = layout.em_width;
         if !precise {
             delta *= vec2f(max_glyph_width, layout.line_height);
@@ -202,10 +198,7 @@ impl EditorElement {
         let scroll_position = snapshot.scroll_position();
         let x = (scroll_position.x() * max_glyph_width - delta.x()) / max_glyph_width;
         let y = (scroll_position.y() * layout.line_height - delta.y()) / layout.line_height;
-        let scroll_position = vec2f(x, y).clamp(
-            Vector2F::zero(),
-            layout.scroll_max(font_cache, layout_cache),
-        );
+        let scroll_position = vec2f(x, y).clamp(Vector2F::zero(), layout.scroll_max(font_cache));
 
         cx.dispatch_action(Scroll(scroll_position));
 
@@ -781,10 +774,21 @@ impl Element for EditorElement {
             }
         }
 
+        let style = self.settings.style.clone();
+        let longest_line_width = layout_line(
+            snapshot.longest_row(),
+            &snapshot,
+            &style,
+            cx.text_layout_cache,
+        )
+        .width();
+        let scroll_width = longest_line_width.max(max_visible_line_width) + overscroll.x();
+        let max_glyph_width = style.text.em_width(&cx.font_cache);
+
         let blocks = self.layout_blocks(
             start_row..end_row,
             &snapshot,
-            size.x(),
+            size.x().max(scroll_width + gutter_width),
             gutter_padding,
             gutter_width,
             em_width,
@@ -797,13 +801,13 @@ impl Element for EditorElement {
 
         let mut layout = LayoutState {
             size,
+            scroll_width,
             gutter_size,
             gutter_padding,
             text_size,
-            overscroll,
             text_offset,
             snapshot,
-            style: self.settings.style.clone(),
+            style,
             active_rows,
             highlighted_rows,
             line_layouts,
@@ -813,12 +817,9 @@ impl Element for EditorElement {
             em_width,
             em_advance,
             selections,
-            max_visible_line_width,
         };
 
-        let scroll_max = layout.scroll_max(cx.font_cache, cx.text_layout_cache).x();
-        let scroll_width = layout.scroll_width(cx.text_layout_cache);
-        let max_glyph_width = style.text.em_width(&cx.font_cache);
+        let scroll_max = layout.scroll_max(cx.font_cache).x();
         self.update_view(cx.app, |view, cx| {
             let clamped = view.clamp_scroll_left(scroll_max);
             let autoscrolled;
@@ -930,6 +931,7 @@ impl Element for EditorElement {
 
 pub struct LayoutState {
     size: Vector2F,
+    scroll_width: f32,
     gutter_size: Vector2F,
     gutter_padding: f32,
     text_size: Vector2F,
@@ -944,27 +946,17 @@ pub struct LayoutState {
     em_width: f32,
     em_advance: f32,
     selections: HashMap<ReplicaId, Vec<text::Selection<DisplayPoint>>>,
-    overscroll: Vector2F,
     text_offset: Vector2F,
-    max_visible_line_width: f32,
 }
 
 impl LayoutState {
-    fn scroll_width(&self, layout_cache: &TextLayoutCache) -> f32 {
-        let row = self.snapshot.longest_row();
-        let longest_line_width =
-            layout_line(row, &self.snapshot, &self.style, layout_cache).width();
-        longest_line_width.max(self.max_visible_line_width) + self.overscroll.x()
-    }
-
-    fn scroll_max(&self, font_cache: &FontCache, layout_cache: &TextLayoutCache) -> Vector2F {
+    fn scroll_max(&self, font_cache: &FontCache) -> Vector2F {
         let text_width = self.text_size.x();
-        let scroll_width = self.scroll_width(layout_cache);
         let em_width = self.style.text.em_width(font_cache);
         let max_row = self.snapshot.max_point().row();
 
         vec2f(
-            ((scroll_width - text_width) / em_width).max(0.0),
+            ((self.scroll_width - text_width) / em_width).max(0.0),
             max_row.saturating_sub(1) as f32,
         )
     }
