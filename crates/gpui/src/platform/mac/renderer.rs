@@ -6,7 +6,7 @@ use crate::{
         vector::{vec2f, vec2i, Vector2F},
     },
     platform,
-    scene::{Glyph, Icon, Image, Layer, Quad, Scene, Shadow},
+    scene::{Glyph, Icon, Image, Layer, Quad, Scene, Shadow, Underline},
 };
 use cocoa::foundation::NSUInteger;
 use metal::{MTLPixelFormat, MTLResourceOptions, NSRange};
@@ -334,6 +334,13 @@ impl Renderer {
                 drawable_size,
                 command_encoder,
             );
+            self.render_underlines(
+                layer.underlines(),
+                scale_factor,
+                offset,
+                drawable_size,
+                command_encoder,
+            );
             self.render_sprites(
                 layer.glyphs(),
                 layer.icons(),
@@ -344,13 +351,6 @@ impl Renderer {
             );
             self.render_images(
                 layer.images(),
-                scale_factor,
-                offset,
-                drawable_size,
-                command_encoder,
-            );
-            self.render_underlines(
-                layer.underlines(),
                 scale_factor,
                 offset,
                 drawable_size,
@@ -834,7 +834,7 @@ impl Renderer {
 
     fn render_underlines(
         &mut self,
-        underlines: &[Quad],
+        underlines: &[Underline],
         scale_factor: f32,
         offset: &mut usize,
         drawable_size: Vector2F,
@@ -874,19 +874,22 @@ impl Renderer {
             (self.instances.contents() as *mut u8).offset(*offset as isize)
                 as *mut shaders::GPUIUnderline
         };
-        for (ix, quad) in underlines.iter().enumerate() {
-            let bounds = quad.bounds * scale_factor;
-            let shader_quad = shaders::GPUIUnderline {
-                origin: bounds.origin().round().to_float2(),
-                size: bounds.size().round().to_float2(),
-                thickness: 1. * scale_factor,
-                color: quad
-                    .background
-                    .unwrap_or(Color::transparent_black())
-                    .to_uchar4(),
+        for (ix, underline) in underlines.iter().enumerate() {
+            let origin = underline.origin * scale_factor;
+            let mut height = underline.thickness;
+            if underline.squiggly {
+                height *= 3.;
+            }
+            let size = vec2f(underline.width, height) * scale_factor;
+            let shader_underline = shaders::GPUIUnderline {
+                origin: origin.round().to_float2(),
+                size: size.round().to_float2(),
+                thickness: underline.thickness * scale_factor,
+                color: underline.color.to_uchar4(),
+                squiggly: underline.squiggly as u8,
             };
             unsafe {
-                *(buffer_contents.offset(ix as isize)) = shader_quad;
+                *(buffer_contents.offset(ix as isize)) = shader_underline;
             }
         }
 

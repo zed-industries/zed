@@ -311,6 +311,7 @@ struct UnderlineFragmentInput {
     float2 size;
     float thickness;
     float4 color;
+    bool squiggly;
 };
 
 vertex UnderlineFragmentInput underline_vertex(
@@ -331,22 +332,27 @@ vertex UnderlineFragmentInput underline_vertex(
         underline.size,
         underline.thickness,
         coloru_to_colorf(underline.color),
+        underline.squiggly != 0,
     };
 }
 
 fragment float4 underline_fragment(
     UnderlineFragmentInput input [[stage_in]]
 ) {
-    float half_thickness = input.thickness * 0.5;
-    float2 st = ((input.position.xy - input.origin) / input.size.y) - float2(0., 0.5);
-    float frequency = M_PI_F * 0.75;
-    float amplitude = 0.3;
-    float sine = sin(st.x * frequency) * amplitude;
-    float dSine = cos(st.x * frequency) * amplitude * frequency;
-    float distance = (st.y - sine) / sqrt(1. + dSine * dSine);
-    float distance_in_pixels = distance * input.size.y;
-    float distance_from_top_border = distance_in_pixels - half_thickness;
-    float distance_from_bottom_border = distance_in_pixels + half_thickness;
-    float alpha = saturate(0.5 - max(-distance_from_bottom_border, distance_from_top_border));
-    return input.color * float4(1., 1., 1., alpha);
+    if (input.squiggly) {
+        float half_thickness = input.thickness * 0.5;
+        float2 st = ((input.position.xy - input.origin) / input.size.y) - float2(0., 0.5);
+        float frequency = (M_PI_F * (3. * input.thickness)) / 8.;
+        float amplitude = 1. / (2. * input.thickness);
+        float sine = sin(st.x * frequency) * amplitude;
+        float dSine = cos(st.x * frequency) * amplitude * frequency;
+        float distance = (st.y - sine) / sqrt(1. + dSine * dSine);
+        float distance_in_pixels = distance * input.size.y;
+        float distance_from_top_border = distance_in_pixels - half_thickness;
+        float distance_from_bottom_border = distance_in_pixels + half_thickness;
+        float alpha = saturate(0.5 - max(-distance_from_bottom_border, distance_from_top_border));
+        return input.color * float4(1., 1., 1., alpha);
+    } else {
+        return input.color;
+    }
 }

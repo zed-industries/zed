@@ -8,7 +8,7 @@ use collections::{BTreeMap, HashMap};
 use gpui::{
     color::Color,
     elements::layout_highlighted_chunks,
-    fonts::HighlightStyle,
+    fonts::{HighlightStyle, Underline},
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -540,12 +540,12 @@ impl EditorElement {
                 .chunks(rows.clone(), Some(&style.syntax))
                 .map(|chunk| {
                     let highlight = if let Some(severity) = chunk.diagnostic {
-                        let underline = Some(
-                            super::diagnostic_style(severity, true, style)
-                                .message
-                                .text
-                                .color,
-                        );
+                        let diagnostic_style = super::diagnostic_style(severity, true, style);
+                        let underline = Some(Underline {
+                            color: diagnostic_style.message.text.color,
+                            thickness: 1.0.into(),
+                            squiggly: true,
+                        });
                         if let Some(mut highlight) = chunk.highlight_style {
                             highlight.underline = underline;
                             Some(highlight)

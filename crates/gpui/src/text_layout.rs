@@ -1,6 +1,6 @@
 use crate::{
     color::Color,
-    fonts::{FontId, GlyphId},
+    fonts::{FontId, GlyphId, Underline},
     geometry::{
         rect::RectF,
         vector::{vec2f, Vector2F},
@@ -28,7 +28,7 @@ pub struct TextLayoutCache {
 pub struct RunStyle {
     pub color: Color,
     pub font_id: FontId,
-    pub underline: Option<Color>,
+    pub underline: Option<Underline>,
 }
 
 impl TextLayoutCache {
@@ -167,7 +167,7 @@ impl<'a> Hash for CacheKeyRef<'a> {
 #[derive(Default, Debug)]
 pub struct Line {
     layout: Arc<LineLayout>,
-    style_runs: SmallVec<[(u32, Color, Option<Color>); 32]>,
+    style_runs: SmallVec<[(u32, Color, Option<Underline>); 32]>,
 }
 
 #[derive(Default, Debug)]
@@ -265,14 +265,14 @@ impl Line {
 
                 let mut finished_underline = None;
                 if glyph.index >= run_end {
-                    if let Some((run_len, run_color, run_underline_color)) = style_runs.next() {
-                        if let Some((_, underline_color)) = underline {
-                            if *run_underline_color != Some(underline_color) {
+                    if let Some((run_len, run_color, run_underline)) = style_runs.next() {
+                        if let Some((_, underline_style)) = underline {
+                            if *run_underline != Some(underline_style) {
                                 finished_underline = underline.take();
                             }
                         }
-                        if let Some(run_underline_color) = run_underline_color {
-                            underline.get_or_insert((glyph_origin, *run_underline_color));
+                        if let Some(run_underline) = run_underline {
+                            underline.get_or_insert((glyph_origin, *run_underline));
                         }
 
                         run_end += *run_len as usize;
@@ -288,12 +288,13 @@ impl Line {
                     continue;
                 }
 
-                if let Some((underline_origin, underline_color)) = finished_underline {
-                    cx.scene.push_underline(scene::Quad {
-                        bounds: RectF::from_points(underline_origin, glyph_origin + vec2f(0., 3.)),
-                        background: Some(underline_color),
-                        border: Default::default(),
-                        corner_radius: 0.,
+                if let Some((underline_origin, underline_style)) = finished_underline {
+                    cx.scene.push_underline(scene::Underline {
+                        origin: underline_origin,
+                        width: glyph_origin.x() - underline_origin.x(),
+                        thickness: underline_style.thickness.into(),
+                        color: underline_style.color,
+                        squiggly: underline_style.squiggly,
                     });
                 }
 
@@ -307,14 +308,14 @@ impl Line {
             }
         }
 
-        if let Some((underline_start, underline_color)) = underline.take() {
-            let line_end = origin + baseline_offset + vec2f(self.layout.width, 0.);
-
-            cx.scene.push_underline(scene::Quad {
-                bounds: RectF::from_points(underline_start, line_end + vec2f(0., 3.)),
-                background: Some(underline_color),
-                border: Default::default(),
-                corner_radius: 0.,
+        if let Some((underline_start, underline_style)) = underline.take() {
+            let line_end_x = origin.x() + self.layout.width;
+            cx.scene.push_underline(scene::Underline {
+                origin: underline_start,
+                width: line_end_x - underline_start.x(),
+                color: underline_style.color,
+                thickness: underline_style.thickness.into(),
+                squiggly: underline_style.squiggly,
             });
         }
     }

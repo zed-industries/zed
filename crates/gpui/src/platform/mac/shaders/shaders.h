@@ -118,4 +118,5 @@ typedef struct
     vector_float2 size;
     float thickness;
     vector_uchar4 color;
+    uint8_t squiggly;
 } GPUIUnderline;
