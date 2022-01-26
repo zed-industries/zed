@@ -1,6 +1,6 @@
 [package]
 authors = ["Nathan Sobo <nathansobo@gmail.com>"]
-edition = "2018"
+edition = "2021"
 name = "gpui"
 version = "0.1.0"
 

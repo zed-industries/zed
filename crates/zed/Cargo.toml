@@ -1,7 +1,7 @@
 [package]
 authors = ["Nathan Sobo <nathansobo@gmail.com>"]
 description = "The fast, collaborative code editor."
-edition = "2018"
+edition = "2021"
 name = "zed"
 version = "0.13.0"
 

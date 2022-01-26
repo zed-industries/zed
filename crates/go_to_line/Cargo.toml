@@ -1,7 +1,7 @@
 [package]
 name = "go_to_line"
 version = "0.1.0"
-edition = "2018"
+edition = "2021"
 
 [lib]
 path = "src/go_to_line.rs"

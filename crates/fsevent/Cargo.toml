@@ -2,7 +2,7 @@
 name = "fsevent"
 version = "2.0.2"
 license = "MIT"
-edition = "2018"
+edition = "2021"
 
 [lib]
 path = "src/fsevent.rs"

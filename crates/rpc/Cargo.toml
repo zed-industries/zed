@@ -1,6 +1,6 @@
 [package]
 description = "Shared logic for communication between the Zed app and the zed.dev server"
-edition = "2018"
+edition = "2021"
 name = "rpc"
 version = "0.1.0"
 
@@ -8,7 +8,7 @@ version = "0.1.0"
 path = "src/rpc.rs"
 
 [features]
-test-support = ["gpui"]
+test-support = ["gpui/test-support"]
 
 [dependencies]
 anyhow = "1.0"
@@ -25,7 +25,7 @@ rsa = "0.4"
 serde = { version = "1", features = ["derive"] }
 smol-timeout = "0.6"
 zstd = "0.9"
-gpui = { path = "../gpui", features = ["test-support"], optional = true }
+gpui = { path = "../gpui", optional = true }
 
 [build-dependencies]
 prost-build = "0.8"
