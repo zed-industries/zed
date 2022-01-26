@@ -272,7 +272,13 @@ impl Line {
                             }
                         }
                         if let Some(run_underline) = run_underline {
-                            underline.get_or_insert((glyph_origin, *run_underline));
+                            underline.get_or_insert((
+                                vec2f(
+                                    glyph_origin.x(),
+                                    origin.y() + baseline_offset.y() + 0.618 * self.layout.descent,
+                                ),
+                                *run_underline,
+                            ));
                         }
 
                         run_end += *run_len as usize;
