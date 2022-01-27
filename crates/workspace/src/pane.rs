@@ -312,7 +312,9 @@ impl Pane {
     pub fn activate_item(&mut self, index: usize, cx: &mut ViewContext<Self>) {
         if index < self.item_views.len() {
             let prev_active_item_ix = mem::replace(&mut self.active_item_index, index);
-            if prev_active_item_ix != self.active_item_index {
+            if prev_active_item_ix != self.active_item_index
+                && prev_active_item_ix < self.item_views.len()
+            {
                 self.item_views[prev_active_item_ix].1.deactivated(cx);
             }
             self.update_active_toolbar(cx);
