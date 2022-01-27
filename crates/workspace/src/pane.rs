@@ -516,7 +516,7 @@ impl View for Pane {
         if let Some(active_item) = self.active_item() {
             Flex::column()
                 .with_child(self.render_tabs(cx))
-                .with_child(ChildView::new(active_item.id()).flexible(1., true).boxed())
+                .with_child(ChildView::new(active_item).flexible(1., true).boxed())
                 .named("pane")
         } else {
             Empty::new().named("pane")

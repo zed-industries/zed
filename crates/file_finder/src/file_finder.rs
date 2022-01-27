@@ -76,7 +76,7 @@ impl View for FileFinder {
                 Container::new(
                     Flex::new(Axis::Vertical)
                         .with_child(
-                            Container::new(ChildView::new(self.query_editor.id()).boxed())
+                            Container::new(ChildView::new(&self.query_editor).boxed())
                                 .with_style(settings.theme.selector.input_editor.container)
                                 .boxed(),
                         )

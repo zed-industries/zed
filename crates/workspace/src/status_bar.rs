@@ -1,7 +1,7 @@
 use crate::{ItemViewHandle, Pane, Settings};
 use gpui::{
-    elements::*, ElementBox, Entity, MutableAppContext, RenderContext, Subscription, View,
-    ViewContext, ViewHandle,
+    elements::*, AnyViewHandle, ElementBox, Entity, MutableAppContext, RenderContext, Subscription,
+    View, ViewContext, ViewHandle,
 };
 use postage::watch;
 
@@ -14,7 +14,7 @@ pub trait StatusItemView: View {
 }
 
 trait StatusItemViewHandle {
-    fn id(&self) -> usize;
+    fn to_any(&self) -> AnyViewHandle;
     fn set_active_pane_item(
         &self,
         active_pane_item: Option<&dyn ItemViewHandle>,
@@ -45,13 +45,13 @@ impl View for StatusBar {
             .with_children(
                 self.left_items
                     .iter()
-                    .map(|i| ChildView::new(i.id()).aligned().boxed()),
+                    .map(|i| ChildView::new(i.as_ref()).aligned().boxed()),
             )
             .with_child(Empty::new().flexible(1., true).boxed())
             .with_children(
                 self.right_items
                     .iter()
-                    .map(|i| ChildView::new(i.id()).aligned().boxed()),
+                    .map(|i| ChildView::new(i.as_ref()).aligned().boxed()),
             )
             .contained()
             .with_style(theme.container)
@@ -111,8 +111,8 @@ impl StatusBar {
 }
 
 impl<T: StatusItemView> StatusItemViewHandle for ViewHandle<T> {
-    fn id(&self) -> usize {
-        self.id()
+    fn to_any(&self) -> AnyViewHandle {
+        self.into()
     }
 
     fn set_active_pane_item(
@@ -123,5 +123,11 @@ impl<T: StatusItemView> StatusItemViewHandle for ViewHandle<T> {
         self.update(cx, |this, cx| {
             this.set_active_pane_item(active_pane_item, cx)
         });
+    }
+}
+
+impl Into<AnyViewHandle> for &dyn StatusItemViewHandle {
+    fn into(self) -> AnyViewHandle {
+        self.to_any()
     }
 }
