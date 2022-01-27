@@ -185,7 +185,7 @@ corner_radius = 6
 
 [project_panel]
 extends = "$panel"
-padding.top = 6    # ($workspace.tab.height - $project_panel.entry.height) / 2
+padding.top = 6 # ($workspace.tab.height - $project_panel.entry.height) / 2
 
 [project_panel.entry]
 text = "$text.1"
@@ -313,7 +313,7 @@ message.highlight_text.color = "$text.3.color"
 
 [project_diagnostics]
 background = "$surface.1"
-empty_message = "$text.0"
+empty_message = { extends = "$text.0", size = 18 }
 status_bar_item = { extends = "$text.2", margin.right = 10 }
 tab_icon_width = 13
 tab_icon_spacing = 4

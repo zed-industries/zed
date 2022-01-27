@@ -103,7 +103,7 @@ impl View for ProjectDiagnosticsEditor {
         if self.path_states.is_empty() {
             let theme = &self.settings.borrow().theme.project_diagnostics;
             Label::new(
-                "No problems detected in the project".to_string(),
+                "No problems in workspace".to_string(),
                 theme.empty_message.clone(),
             )
             .aligned()
@@ -770,48 +770,52 @@ pub(crate) fn render_summary(
     text_style: &TextStyle,
     theme: &theme::ProjectDiagnostics,
 ) -> ElementBox {
-    let icon_width = theme.tab_icon_width;
-    let icon_spacing = theme.tab_icon_spacing;
-    let summary_spacing = theme.tab_summary_spacing;
-    Flex::row()
-        .with_children([
-            Svg::new("icons/diagnostic-summary-error.svg")
-                .with_color(text_style.color)
-                .constrained()
-                .with_width(icon_width)
+    if summary.error_count == 0 && summary.warning_count == 0 {
+        Label::new("No problems".to_string(), text_style.clone()).boxed()
+    } else {
+        let icon_width = theme.tab_icon_width;
+        let icon_spacing = theme.tab_icon_spacing;
+        let summary_spacing = theme.tab_summary_spacing;
+        Flex::row()
+            .with_children([
+                Svg::new("icons/diagnostic-summary-error.svg")
+                    .with_color(text_style.color)
+                    .constrained()
+                    .with_width(icon_width)
+                    .aligned()
+                    .contained()
+                    .with_margin_right(icon_spacing)
+                    .named("no-icon"),
+                Label::new(
+                    summary.error_count.to_string(),
+                    LabelStyle {
+                        text: text_style.clone(),
+                        highlight_text: None,
+                    },
+                )
                 .aligned()
-                .contained()
-                .with_margin_right(icon_spacing)
-                .named("no-icon"),
-            Label::new(
-                summary.error_count.to_string(),
-                LabelStyle {
-                    text: text_style.clone(),
-                    highlight_text: None,
-                },
-            )
-            .aligned()
-            .boxed(),
-            Svg::new("icons/diagnostic-summary-warning.svg")
-                .with_color(text_style.color)
-                .constrained()
-                .with_width(icon_width)
+                .boxed(),
+                Svg::new("icons/diagnostic-summary-warning.svg")
+                    .with_color(text_style.color)
+                    .constrained()
+                    .with_width(icon_width)
+                    .aligned()
+                    .contained()
+                    .with_margin_left(summary_spacing)
+                    .with_margin_right(icon_spacing)
+                    .named("warn-icon"),
+                Label::new(
+                    summary.warning_count.to_string(),
+                    LabelStyle {
+                        text: text_style.clone(),
+                        highlight_text: None,
+                    },
+                )
                 .aligned()
-                .contained()
-                .with_margin_left(summary_spacing)
-                .with_margin_right(icon_spacing)
-                .named("warn-icon"),
-            Label::new(
-                summary.warning_count.to_string(),
-                LabelStyle {
-                    text: text_style.clone(),
-                    highlight_text: None,
-                },
-            )
-            .aligned()
-            .boxed(),
-        ])
-        .boxed()
+                .boxed(),
+            ])
+            .boxed()
+    }
 }
 
 fn compare_diagnostics<L: language::ToOffset, R: language::ToOffset>(
