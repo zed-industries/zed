@@ -501,6 +501,41 @@ fn test_history() {
 }
 
 #[test]
+fn test_avoid_grouping_next_transaction() {
+    let now = Instant::now();
+    let mut buffer = Buffer::new(0, 0, History::new("123456".into()));
+
+    buffer.start_transaction_at(now);
+    buffer.edit(vec![2..4], "cd");
+    buffer.end_transaction_at(now);
+    assert_eq!(buffer.text(), "12cd56");
+
+    buffer.avoid_grouping_next_transaction();
+    buffer.start_transaction_at(now);
+    buffer.edit(vec![4..5], "e");
+    buffer.end_transaction_at(now).unwrap();
+    assert_eq!(buffer.text(), "12cde6");
+
+    buffer.start_transaction_at(now);
+    buffer.edit(vec![0..1], "a");
+    buffer.edit(vec![1..1], "b");
+    buffer.end_transaction_at(now).unwrap();
+    assert_eq!(buffer.text(), "ab2cde6");
+
+    buffer.undo();
+    assert_eq!(buffer.text(), "12cd56");
+
+    buffer.undo();
+    assert_eq!(buffer.text(), "123456");
+
+    buffer.redo();
+    assert_eq!(buffer.text(), "12cd56");
+
+    buffer.redo();
+    assert_eq!(buffer.text(), "ab2cde6");
+}
+
+#[test]
 fn test_concurrent_edits() {
     let text = "abcdef";
 

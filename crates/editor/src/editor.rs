@@ -3952,6 +3952,7 @@ impl View for Editor {
         self.focused = true;
         self.blink_cursors(self.blink_epoch, cx);
         self.buffer.update(cx, |buffer, cx| {
+            buffer.avoid_grouping_next_transaction(cx);
             buffer.set_active_selections(&self.selections, cx)
         });
     }
