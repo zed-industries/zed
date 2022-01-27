@@ -912,7 +912,7 @@ impl Project {
                 });
                 if let Some(infos) = &diagnostic.related_information {
                     for info in infos {
-                        if info.location.uri == params.uri {
+                        if info.location.uri == params.uri && !info.message.is_empty() {
                             let range = range_from_lsp(info.location.range);
                             diagnostics.push(DiagnosticEntry {
                                 range,
