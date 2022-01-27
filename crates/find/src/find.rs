@@ -1,3 +1,4 @@
+use aho_corasick::AhoCorasick;
 use editor::{Editor, EditorSettings};
 use gpui::{
     action, elements::*, keymap::Binding, Entity, MutableAppContext, RenderContext, View,
@@ -8,14 +9,15 @@ use std::sync::Arc;
 use workspace::{ItemViewHandle, Settings, Toolbar, Workspace};
 
 action!(Deploy);
+action!(Cancel);
 
 pub fn init(cx: &mut MutableAppContext) {
-    cx.add_bindings([Binding::new(
-        "cmd-f",
-        Deploy,
-        Some("Editor && mode == full"),
-    )]);
+    cx.add_bindings([
+        Binding::new("cmd-f", Deploy, Some("Editor && mode == full")),
+        Binding::new("escape", Cancel, Some("FindBar")),
+    ]);
     cx.add_action(FindBar::deploy);
+    cx.add_action(FindBar::cancel);
 }
 
 struct FindBar {
@@ -31,6 +33,10 @@ impl Entity for FindBar {
 impl View for FindBar {
     fn ui_name() -> &'static str {
         "FindBar"
+    }
+
+    fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+        cx.focus(&self.query_editor);
     }
 
     fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
@@ -94,5 +100,33 @@ impl FindBar {
         workspace
             .active_pane()
             .update(cx, |pane, cx| pane.hide_toolbar(cx));
+    }
+
+    fn on_query_editor_event(
+        &mut self,
+        _: ViewHandle<Editor>,
+        _: &editor::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(editor) = &self.active_editor {
+            let search = self.query_editor.read(cx).text(cx);
+            if search.is_empty() {
+                return;
+            }
+            let search = AhoCorasick::new_auto_configured(&[search]);
+            editor.update(cx, |editor, cx| {
+                let buffer = editor.buffer().read(cx).snapshot(cx);
+                let mut ranges = search
+                    .stream_find_iter(buffer.bytes_in_range(0..buffer.len()))
+                    .map(|mat| {
+                        let mat = mat.unwrap();
+                        mat.start()..mat.end()
+                    })
+                    .peekable();
+                if ranges.peek().is_some() {
+                    editor.select_ranges(ranges, None, cx);
+                }
+            });
+        }
     }
 }
