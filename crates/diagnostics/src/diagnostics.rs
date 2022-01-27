@@ -132,10 +132,8 @@ impl ProjectDiagnosticsEditor {
         let project = model.read(cx).project.clone();
         cx.subscribe(&project, |this, _, event, cx| match event {
             project::Event::DiskBasedDiagnosticsFinished => {
-                this.summary = this.model.read(cx).project.read(cx).diagnostic_summary(cx);
-                let paths = mem::take(&mut this.paths_to_update);
-                this.update_excerpts(paths, cx);
-                cx.emit(Event::TitleChanged);
+                this.update_excerpts(cx);
+                this.update_title(cx);
             }
             project::Event::DiagnosticsUpdated(path) => {
                 this.paths_to_update.insert(path.clone());
@@ -156,7 +154,7 @@ impl ProjectDiagnosticsEditor {
 
         let project = project.read(cx);
         let paths_to_update = project.diagnostic_summaries(cx).map(|e| e.0).collect();
-        let this = Self {
+        let mut this = Self {
             model,
             summary: project.diagnostic_summary(cx),
             workspace,
@@ -165,9 +163,9 @@ impl ProjectDiagnosticsEditor {
             build_settings,
             settings,
             path_states: Default::default(),
-            paths_to_update: Default::default(),
+            paths_to_update,
         };
-        this.update_excerpts(paths_to_update, cx);
+        this.update_excerpts(cx);
         this
     }
 
@@ -222,7 +220,8 @@ impl ProjectDiagnosticsEditor {
         }
     }
 
-    fn update_excerpts(&self, paths: BTreeSet<ProjectPath>, cx: &mut ViewContext<Self>) {
+    fn update_excerpts(&mut self, cx: &mut ViewContext<Self>) {
+        let paths = mem::take(&mut self.paths_to_update);
         let project = self.model.read(cx).project.clone();
         cx.spawn(|this, mut cx| {
             async move {
@@ -280,12 +279,7 @@ impl ProjectDiagnosticsEditor {
         let mut first_excerpt_id = None;
         let excerpts_snapshot = self.excerpts.update(cx, |excerpts, excerpts_cx| {
             let mut old_groups = path_state.diagnostic_groups.iter().enumerate().peekable();
-            let mut new_groups = snapshot
-                .diagnostic_groups()
-                .into_iter()
-                .filter(|group| group.entries[group.primary_ix].diagnostic.is_disk_based)
-                .peekable();
-
+            let mut new_groups = snapshot.diagnostic_groups().into_iter().peekable();
             loop {
                 let mut to_insert = None;
                 let mut to_remove = None;
@@ -525,6 +519,11 @@ impl ProjectDiagnosticsEditor {
             }
         }
         cx.notify();
+    }
+
+    fn update_title(&mut self, cx: &mut ViewContext<Self>) {
+        self.summary = self.model.read(cx).project.read(cx).diagnostic_summary(cx);
+        cx.emit(Event::TitleChanged);
     }
 }
 
