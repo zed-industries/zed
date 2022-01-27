@@ -3527,7 +3527,11 @@ impl Editor {
             .buffer
             .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
         {
-            self.selection_history.get_mut(&tx_id).unwrap().1 = Some(self.selections.clone());
+            if let Some((_, end_selections)) = self.selection_history.get_mut(&tx_id) {
+                *end_selections = Some(self.selections.clone());
+            } else {
+                log::error!("unexpectedly ended a transaction that wasn't started by this editor");
+            }
         }
     }
 
@@ -3952,6 +3956,7 @@ impl View for Editor {
         self.focused = true;
         self.blink_cursors(self.blink_epoch, cx);
         self.buffer.update(cx, |buffer, cx| {
+            buffer.avoid_grouping_next_transaction(cx);
             buffer.set_active_selections(&self.selections, cx)
         });
     }

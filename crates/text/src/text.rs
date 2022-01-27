@@ -72,6 +72,7 @@ pub struct Transaction {
     ranges: Vec<Range<FullOffset>>,
     first_edit_at: Instant,
     last_edit_at: Instant,
+    suppress_grouping: bool,
 }
 
 impl Transaction {
@@ -164,6 +165,7 @@ impl History {
                 ranges: Vec::new(),
                 first_edit_at: now,
                 last_edit_at: now,
+                suppress_grouping: false,
             });
             Some(id)
         } else {
@@ -194,7 +196,9 @@ impl History {
 
         if let Some(mut transaction) = transactions.next_back() {
             while let Some(prev_transaction) = transactions.next_back() {
-                if transaction.first_edit_at - prev_transaction.last_edit_at <= self.group_interval
+                if !prev_transaction.suppress_grouping
+                    && transaction.first_edit_at - prev_transaction.last_edit_at
+                        <= self.group_interval
                     && transaction.start == prev_transaction.end
                 {
                     transaction = prev_transaction;
@@ -221,6 +225,12 @@ impl History {
 
         self.undo_stack.truncate(new_len);
         self.undo_stack.last().map(|t| t.id)
+    }
+
+    fn avoid_grouping_next_transaction(&mut self) {
+        if let Some(transaction) = self.undo_stack.last_mut() {
+            transaction.suppress_grouping = true;
+        }
     }
 
     fn push_undo(&mut self, edit_id: clock::Local) {
@@ -1155,6 +1165,10 @@ impl Buffer {
         } else {
             None
         }
+    }
+
+    pub fn avoid_grouping_next_transaction(&mut self) {
+        self.history.avoid_grouping_next_transaction()
     }
 
     pub fn base_text(&self) -> &Arc<str> {

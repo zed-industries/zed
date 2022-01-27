@@ -457,6 +457,12 @@ impl MultiBuffer {
         }
     }
 
+    pub fn avoid_grouping_next_transaction(&mut self, cx: &mut ModelContext<Self>) {
+        for BufferState { buffer, .. } in self.buffers.borrow().values() {
+            buffer.update(cx, |buffer, _| buffer.avoid_grouping_next_transaction());
+        }
+    }
+
     pub fn set_active_selections(
         &mut self,
         selections: &[Selection<Anchor>],

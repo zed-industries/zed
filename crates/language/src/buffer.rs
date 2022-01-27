@@ -1234,6 +1234,10 @@ impl Buffer {
         }
     }
 
+    pub fn avoid_grouping_next_transaction(&mut self) {
+        self.text.avoid_grouping_next_transaction();
+    }
+
     pub fn set_active_selections(
         &mut self,
         selections: Arc<[Selection<Anchor>]>,
