@@ -81,14 +81,27 @@ pub struct Pane {
     active_item_index: usize,
     settings: watch::Receiver<Settings>,
     nav_history: Rc<RefCell<NavHistory>>,
-    toolbars: HashMap<TypeId, AnyViewHandle>,
-    active_toolbar: Option<AnyViewHandle>,
+    toolbars: HashMap<TypeId, Box<dyn ToolbarHandle>>,
+    active_toolbar_type: Option<TypeId>,
+    active_toolbar_visible: bool,
 }
 
-// #[derive(Debug, Eq, PartialEq)]
-// pub struct State {
-//     pub tabs: Vec<TabState>,
-// }
+pub trait Toolbar: View {
+    fn active_item_changed(
+        &mut self,
+        item: Option<Box<dyn ItemViewHandle>>,
+        cx: &mut ViewContext<Self>,
+    ) -> bool;
+}
+
+trait ToolbarHandle {
+    fn active_item_changed(
+        &self,
+        item: Option<Box<dyn ItemViewHandle>>,
+        cx: &mut MutableAppContext,
+    ) -> bool;
+    fn to_any(&self) -> AnyViewHandle;
+}
 
 pub struct ItemNavHistory {
     history: Rc<RefCell<NavHistory>>,
@@ -129,7 +142,8 @@ impl Pane {
             settings,
             nav_history: Default::default(),
             toolbars: Default::default(),
-            active_toolbar: Default::default(),
+            active_toolbar_type: Default::default(),
+            active_toolbar_visible: false,
         }
     }
 
@@ -301,6 +315,7 @@ impl Pane {
             if prev_active_item_ix != self.active_item_index {
                 self.item_views[prev_active_item_ix].1.deactivated(cx);
             }
+            self.update_active_toolbar(cx);
             self.focus_active_item(cx);
             cx.notify();
         }
@@ -354,15 +369,18 @@ impl Pane {
                 true
             }
         });
-        self.active_item_index = cmp::min(
-            self.active_item_index,
-            self.item_views.len().saturating_sub(1),
+        self.activate_item(
+            cmp::min(
+                self.active_item_index,
+                self.item_views.len().saturating_sub(1),
+            ),
+            cx,
         );
 
         if self.item_views.is_empty() {
+            self.update_active_toolbar(cx);
             cx.emit(Event::Remove);
         }
-        cx.notify();
     }
 
     fn focus_active_item(&mut self, cx: &mut ViewContext<Self>) {
@@ -378,14 +396,44 @@ impl Pane {
     pub fn show_toolbar<F, V>(&mut self, cx: &mut ViewContext<Self>, build_toolbar: F)
     where
         F: FnOnce(&mut ViewContext<V>) -> V,
-        V: View,
+        V: Toolbar,
     {
-        let handle = self
-            .toolbars
-            .entry(TypeId::of::<V>())
-            .or_insert_with(|| cx.add_view(build_toolbar).into());
-        self.active_toolbar = Some(handle.clone());
+        let type_id = TypeId::of::<V>();
+        let active_item = self.active_item();
+        self.toolbars
+            .entry(type_id)
+            .or_insert_with(|| Box::new(cx.add_view(build_toolbar)));
+        self.active_toolbar_type = Some(type_id);
+        self.active_toolbar_visible = self.toolbars[&type_id].active_item_changed(active_item, cx);
         cx.notify();
+    }
+
+    pub fn hide_toolbar(&mut self, cx: &mut ViewContext<Self>) {
+        self.active_toolbar_type = None;
+        self.active_toolbar_visible = false;
+        self.focus_active_item(cx);
+        cx.notify();
+    }
+
+    pub fn active_toolbar(&self) -> Option<AnyViewHandle> {
+        let type_id = self.active_toolbar_type?;
+        let toolbar = self.toolbars.get(&type_id)?;
+        if self.active_toolbar_visible {
+            Some(toolbar.to_any())
+        } else {
+            None
+        }
+    }
+
+    fn update_active_toolbar(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(type_id) = self.active_toolbar_type {
+            if let Some(toolbar) = self.toolbars.get(&type_id) {
+                self.active_toolbar_visible = toolbar.active_item_changed(
+                    Some(self.item_views[self.active_item_index].1.clone()),
+                    cx,
+                );
+            }
+        }
     }
 
     fn render_tabs(&self, cx: &mut RenderContext<Self>) -> ElementBox {
@@ -540,7 +588,7 @@ impl View for Pane {
             Flex::column()
                 .with_child(self.render_tabs(cx))
                 .with_children(
-                    self.active_toolbar
+                    self.active_toolbar()
                         .as_ref()
                         .map(|view| ChildView::new(view).boxed()),
                 )
@@ -553,6 +601,20 @@ impl View for Pane {
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
         self.focus_active_item(cx);
+    }
+}
+
+impl<T: Toolbar> ToolbarHandle for ViewHandle<T> {
+    fn active_item_changed(
+        &self,
+        item: Option<Box<dyn ItemViewHandle>>,
+        cx: &mut MutableAppContext,
+    ) -> bool {
+        self.update(cx, |this, cx| this.active_item_changed(item, cx))
+    }
+
+    fn to_any(&self) -> AnyViewHandle {
+        self.into()
     }
 }
 
