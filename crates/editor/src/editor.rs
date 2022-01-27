@@ -3493,9 +3493,11 @@ impl Editor {
 
     fn set_selections(&mut self, selections: Arc<[Selection<Anchor>]>, cx: &mut ViewContext<Self>) {
         self.selections = selections;
-        self.buffer.update(cx, |buffer, cx| {
-            buffer.set_active_selections(&self.selections, cx)
-        });
+        if self.focused {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.set_active_selections(&self.selections, cx)
+            });
+        }
     }
 
     pub fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
@@ -3721,6 +3723,10 @@ impl Editor {
     }
 
     fn pause_cursor_blinking(&mut self, cx: &mut ViewContext<Self>) {
+        if !self.focused {
+            return;
+        }
+
         self.show_local_cursors = true;
         cx.notify();
 
