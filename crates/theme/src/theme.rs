@@ -24,6 +24,7 @@ pub struct Theme {
     pub project_panel: ProjectPanel,
     pub selector: Selector,
     pub editor: EditorStyle,
+    pub find: Find,
     pub project_diagnostics: ProjectDiagnostics,
 }
 
@@ -85,6 +86,11 @@ pub struct Tab {
     pub icon_close_active: Color,
     pub icon_dirty: Color,
     pub icon_conflict: Color,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Find {
+    pub match_background: Color,
 }
 
 #[derive(Deserialize, Default)]

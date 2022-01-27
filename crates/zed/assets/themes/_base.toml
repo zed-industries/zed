@@ -185,7 +185,7 @@ corner_radius = 6
 
 [project_panel]
 extends = "$panel"
-padding.top = 6 # ($workspace.tab.height - $project_panel.entry.height) / 2
+padding.top = 6    # ($workspace.tab.height - $project_panel.entry.height) / 2
 
 [project_panel.entry]
 text = "$text.1"
@@ -318,3 +318,6 @@ status_bar_item = { extends = "$text.2", margin.right = 10 }
 tab_icon_width = 13
 tab_icon_spacing = 4
 tab_summary_spacing = 10
+
+[find]
+match_background = "$state.highlighted_line"

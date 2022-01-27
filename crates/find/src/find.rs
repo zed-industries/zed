@@ -110,22 +110,23 @@ impl FindBar {
     ) {
         if let Some(editor) = &self.active_editor {
             let search = self.query_editor.read(cx).text(cx);
-            if search.is_empty() {
-                return;
-            }
-            let search = AhoCorasick::new_auto_configured(&[search]);
+            let theme = &self.settings.borrow().theme.find;
             editor.update(cx, |editor, cx| {
+                if search.is_empty() {
+                    editor.clear_highlighted_ranges::<Self>(cx);
+                    return;
+                }
+
+                let search = AhoCorasick::new_auto_configured(&[search]);
                 let buffer = editor.buffer().read(cx).snapshot(cx);
-                let mut ranges = search
+                let ranges = search
                     .stream_find_iter(buffer.bytes_in_range(0..buffer.len()))
                     .map(|mat| {
                         let mat = mat.unwrap();
-                        mat.start()..mat.end()
+                        buffer.anchor_after(mat.start())..buffer.anchor_before(mat.end())
                     })
-                    .peekable();
-                if ranges.peek().is_some() {
-                    editor.select_ranges(ranges, None, cx);
-                }
+                    .collect();
+                editor.highlight_ranges::<Self>(ranges, theme.match_background, cx);
             });
         }
     }
