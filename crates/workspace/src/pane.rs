@@ -7,11 +7,17 @@ use gpui::{
     geometry::{rect::RectF, vector::vec2f},
     keymap::Binding,
     platform::CursorStyle,
-    Entity, MutableAppContext, Quad, RenderContext, Task, View, ViewContext, ViewHandle,
+    AnyViewHandle, Entity, MutableAppContext, Quad, RenderContext, Task, View, ViewContext,
+    ViewHandle,
 };
 use postage::watch;
 use project::ProjectPath;
-use std::{any::Any, cell::RefCell, cmp, mem, rc::Rc};
+use std::{
+    any::{Any, TypeId},
+    cell::RefCell,
+    cmp, mem,
+    rc::Rc,
+};
 use util::ResultExt;
 
 action!(Split, SplitDirection);
@@ -75,6 +81,8 @@ pub struct Pane {
     active_item_index: usize,
     settings: watch::Receiver<Settings>,
     nav_history: Rc<RefCell<NavHistory>>,
+    toolbars: HashMap<TypeId, AnyViewHandle>,
+    active_toolbar: Option<AnyViewHandle>,
 }
 
 // #[derive(Debug, Eq, PartialEq)]
@@ -120,6 +128,8 @@ impl Pane {
             active_item_index: 0,
             settings,
             nav_history: Default::default(),
+            toolbars: Default::default(),
+            active_toolbar: Default::default(),
         }
     }
 
@@ -365,6 +375,19 @@ impl Pane {
         cx.emit(Event::Split(direction));
     }
 
+    pub fn show_toolbar<F, V>(&mut self, cx: &mut ViewContext<Self>, build_toolbar: F)
+    where
+        F: FnOnce(&mut ViewContext<V>) -> V,
+        V: View,
+    {
+        let handle = self
+            .toolbars
+            .entry(TypeId::of::<V>())
+            .or_insert_with(|| cx.add_view(build_toolbar).into());
+        self.active_toolbar = Some(handle.clone());
+        cx.notify();
+    }
+
     fn render_tabs(&self, cx: &mut RenderContext<Self>) -> ElementBox {
         let settings = self.settings.borrow();
         let theme = &settings.theme;
@@ -516,6 +539,11 @@ impl View for Pane {
         if let Some(active_item) = self.active_item() {
             Flex::column()
                 .with_child(self.render_tabs(cx))
+                .with_children(
+                    self.active_toolbar
+                        .as_ref()
+                        .map(|view| ChildView::new(view).boxed()),
+                )
                 .with_child(ChildView::new(active_item).flexible(1., true).boxed())
                 .named("pane")
         } else {

@@ -62,6 +62,7 @@ fn main() {
         outline::init(cx);
         project_panel::init(cx);
         diagnostics::init(cx);
+        find::init(cx);
         cx.spawn({
             let client = client.clone();
             |cx| async move {

@@ -1,0 +1,12 @@
+[package]
+name = "find"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/find.rs"
+
+[dependencies]
+editor = { path = "../editor" }
+gpui = { path = "../gpui" }
+workspace = { path = "../workspace" }
