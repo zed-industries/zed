@@ -9,12 +9,13 @@ mod test;
 
 use aho_corasick::AhoCorasick;
 use clock::ReplicaId;
-use collections::{HashMap, HashSet};
+use collections::{BTreeMap, HashMap, HashSet};
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
 use gpui::{
     action,
+    color::Color,
     elements::*,
     fonts::TextStyle,
     geometry::vector::{vec2f, Vector2F},
@@ -37,7 +38,8 @@ use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
 use std::{
-    cmp,
+    any::TypeId,
+    cmp::{self, Ordering},
     iter::{self, FromIterator},
     mem,
     ops::{Deref, Range, RangeInclusive, Sub},
@@ -382,6 +384,7 @@ pub struct Editor {
     vertical_scroll_margin: f32,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
+    highlighted_ranges: BTreeMap<TypeId, (Color, Vec<Range<Anchor>>)>,
     nav_history: Option<ItemNavHistory>,
 }
 
@@ -522,6 +525,7 @@ impl Editor {
             vertical_scroll_margin: 3.0,
             placeholder_text: None,
             highlighted_rows: None,
+            highlighted_ranges: Default::default(),
             nav_history: None,
         };
         let selection = Selection {
@@ -3721,6 +3725,58 @@ impl Editor {
         self.highlighted_rows.clone()
     }
 
+    pub fn highlight_ranges<T: 'static>(
+        &mut self,
+        ranges: Vec<Range<Anchor>>,
+        color: Color,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.highlighted_ranges
+            .insert(TypeId::of::<T>(), (color, ranges));
+        cx.notify();
+    }
+
+    pub fn clear_highlighted_ranges<T: 'static>(&mut self, cx: &mut ViewContext<Self>) {
+        self.highlighted_ranges.remove(&TypeId::of::<T>());
+        cx.notify();
+    }
+
+    pub fn highlighted_ranges_in_range(
+        &self,
+        search_range: Range<Anchor>,
+        display_snapshot: &DisplaySnapshot,
+    ) -> Vec<(Color, Range<DisplayPoint>)> {
+        let mut results = Vec::new();
+        let buffer = &display_snapshot.buffer_snapshot;
+        for (color, ranges) in self.highlighted_ranges.values() {
+            let start_ix = match ranges.binary_search_by(|probe| {
+                let cmp = probe.end.cmp(&search_range.start, &buffer).unwrap();
+                if cmp.is_gt() {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            }) {
+                Ok(i) | Err(i) => i,
+            };
+            for range in &ranges[start_ix..] {
+                if range.start.cmp(&search_range.end, &buffer).unwrap().is_ge() {
+                    break;
+                }
+                let start = range
+                    .start
+                    .to_point(buffer)
+                    .to_display_point(display_snapshot);
+                let end = range
+                    .end
+                    .to_point(buffer)
+                    .to_display_point(display_snapshot);
+                results.push((*color, start..end))
+            }
+        }
+        results
+    }
+
     fn next_blink_epoch(&mut self) -> usize {
         self.blink_epoch += 1;
         self.blink_epoch
@@ -6551,6 +6607,83 @@ mod tests {
                     "{{} \n",  //
                     "}\n",     //
                 )
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_highlighted_ranges(cx: &mut gpui::MutableAppContext) {
+        let buffer = MultiBuffer::build_simple(&sample_text(16, 8, 'a'), cx);
+        let settings = EditorSettings::test(&cx);
+        let (_, editor) = cx.add_window(Default::default(), |cx| {
+            build_editor(buffer.clone(), settings, cx)
+        });
+
+        editor.update(cx, |editor, cx| {
+            struct Type1;
+            struct Type2;
+
+            let buffer = buffer.read(cx).snapshot(cx);
+
+            let anchor_range = |range: Range<Point>| {
+                buffer.anchor_after(range.start)..buffer.anchor_after(range.end)
+            };
+
+            editor.highlight_ranges::<Type1>(
+                vec![
+                    anchor_range(Point::new(2, 1)..Point::new(2, 3)),
+                    anchor_range(Point::new(4, 2)..Point::new(4, 4)),
+                    anchor_range(Point::new(6, 3)..Point::new(6, 5)),
+                    anchor_range(Point::new(8, 4)..Point::new(8, 6)),
+                ],
+                Color::red(),
+                cx,
+            );
+            editor.highlight_ranges::<Type2>(
+                vec![
+                    anchor_range(Point::new(3, 2)..Point::new(3, 5)),
+                    anchor_range(Point::new(5, 3)..Point::new(5, 6)),
+                    anchor_range(Point::new(7, 4)..Point::new(7, 7)),
+                    anchor_range(Point::new(9, 5)..Point::new(9, 8)),
+                ],
+                Color::green(),
+                cx,
+            );
+
+            let snapshot = editor.snapshot(cx);
+            assert_eq!(
+                editor.highlighted_ranges_in_range(
+                    anchor_range(Point::new(3, 4)..Point::new(7, 4)),
+                    &snapshot,
+                ),
+                &[
+                    (
+                        Color::red(),
+                        DisplayPoint::new(4, 2)..DisplayPoint::new(4, 4),
+                    ),
+                    (
+                        Color::red(),
+                        DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
+                    ),
+                    (
+                        Color::green(),
+                        DisplayPoint::new(3, 2)..DisplayPoint::new(3, 5)
+                    ),
+                    (
+                        Color::green(),
+                        DisplayPoint::new(5, 3)..DisplayPoint::new(5, 6)
+                    ),
+                ]
+            );
+            assert_eq!(
+                editor.highlighted_ranges_in_range(
+                    anchor_range(Point::new(5, 6)..Point::new(6, 4)),
+                    &snapshot,
+                ),
+                &[(
+                    Color::red(),
+                    DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
+                ),]
             );
         });
     }
