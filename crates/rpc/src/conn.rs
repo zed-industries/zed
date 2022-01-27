@@ -1,5 +1,5 @@
 use async_tungstenite::tungstenite::{Error as WebSocketError, Message as WebSocketMessage};
-use futures::{channel::mpsc, SinkExt as _, Stream, StreamExt as _};
+use futures::{SinkExt as _, Stream, StreamExt as _};
 use std::{io, task::Poll};
 
 pub struct Connection {
@@ -57,7 +57,7 @@ impl Connection {
         Box<dyn Send + Unpin + futures::Sink<WebSocketMessage, Error = WebSocketError>>,
         Box<dyn Send + Unpin + futures::Stream<Item = Result<WebSocketMessage, WebSocketError>>>,
     ) {
-        use futures::SinkExt as _;
+        use futures::channel::mpsc;
         use io::{Error, ErrorKind};
 
         let (tx, rx) = mpsc::unbounded::<WebSocketMessage>();
