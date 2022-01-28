@@ -589,7 +589,7 @@ mod tests {
     use util::test::temp_tree;
 
     #[gpui::test]
-    async fn test_basic(cx: TestAppContext) {
+    async fn test_rust_analyzer(cx: TestAppContext) {
         let lib_source = r#"
             fn fun() {
                 let hello = "world";
@@ -645,7 +645,7 @@ mod tests {
         assert_eq!(
             hover.contents,
             HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
+                kind: MarkupKind::PlainText,
                 value: "&str".to_string()
             })
         );
