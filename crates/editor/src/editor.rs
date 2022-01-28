@@ -861,7 +861,7 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
-        let newest_selection = self.newest_selection_internal().unwrap().clone();
+        let newest_selection = self.newest_anchor_selection().unwrap().clone();
 
         let start;
         let end;
@@ -3358,10 +3358,10 @@ impl Editor {
         &self,
         snapshot: &MultiBufferSnapshot,
     ) -> Selection<D> {
-        self.resolve_selection(self.newest_selection_internal().unwrap(), snapshot)
+        self.resolve_selection(self.newest_anchor_selection().unwrap(), snapshot)
     }
 
-    pub fn newest_selection_internal(&self) -> Option<&Selection<Anchor>> {
+    pub fn newest_anchor_selection(&self) -> Option<&Selection<Anchor>> {
         self.pending_selection
             .as_ref()
             .map(|s| &s.selection)
@@ -3377,7 +3377,7 @@ impl Editor {
         T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
     {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let old_cursor_position = self.newest_selection_internal().map(|s| s.head());
+        let old_cursor_position = self.newest_anchor_selection().map(|s| s.head());
         selections.sort_unstable_by_key(|s| s.start);
 
         // Merge overlapping selections.
@@ -3511,6 +3511,7 @@ impl Editor {
                 buffer.set_active_selections(&self.selections, cx)
             });
         }
+        cx.emit(Event::SelectionsChanged);
     }
 
     pub fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
@@ -3751,7 +3752,7 @@ impl Editor {
     }
 
     #[cfg(feature = "test-support")]
-    pub fn highlighted_ranges(
+    pub fn all_highlighted_ranges(
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> Vec<(Range<DisplayPoint>, Color)> {
@@ -3760,6 +3761,12 @@ impl Editor {
         let start = buffer.anchor_before(0);
         let end = buffer.anchor_after(buffer.len());
         self.highlighted_ranges_in_range(start..end, &snapshot)
+    }
+
+    pub fn highlighted_ranges_for_type<T: 'static>(&self) -> Option<(Color, &[Range<Anchor>])> {
+        self.highlighted_ranges
+            .get(&TypeId::of::<T>())
+            .map(|(color, ranges)| (*color, ranges.as_slice()))
     }
 
     pub fn highlighted_ranges_in_range(
@@ -4011,6 +4018,7 @@ pub enum Event {
     Dirtied,
     Saved,
     TitleChanged,
+    SelectionsChanged,
     Closed,
 }
 

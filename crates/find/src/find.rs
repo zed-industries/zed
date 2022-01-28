@@ -9,12 +9,19 @@ use gpui::{
 use postage::watch;
 use regex::RegexBuilder;
 use smol::future::yield_now;
-use std::{ops::Range, sync::Arc};
+use std::{cmp::Ordering, ops::Range, sync::Arc};
 use workspace::{ItemViewHandle, Settings, Toolbar, Workspace};
 
 action!(Deploy);
 action!(Cancel);
 action!(ToggleMode, SearchMode);
+action!(GoToMatch, Direction);
+
+#[derive(Clone, Copy)]
+pub enum Direction {
+    Prev,
+    Next,
+}
 
 #[derive(Clone, Copy)]
 pub enum SearchMode {
@@ -31,12 +38,14 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(FindBar::deploy);
     cx.add_action(FindBar::cancel);
     cx.add_action(FindBar::toggle_mode);
+    cx.add_action(FindBar::go_to_match);
 }
 
 struct FindBar {
     settings: watch::Receiver<Settings>,
     query_editor: ViewHandle<Editor>,
     active_editor: Option<ViewHandle<Editor>>,
+    active_match_index: Option<usize>,
     active_editor_subscription: Option<Subscription>,
     highlighted_editors: HashSet<WeakViewHandle<Editor>>,
     pending_search: Option<Task<()>>,
@@ -82,6 +91,12 @@ impl View for FindBar {
                     .with_child(self.render_mode_button(".*", SearchMode::Regex, theme, cx))
                     .contained()
                     .with_style(theme.mode_button_group)
+                    .boxed(),
+            )
+            .with_child(
+                Flex::row()
+                    .with_child(self.render_nav_button("<", Direction::Prev, theme, cx))
+                    .with_child(self.render_nav_button(">", Direction::Next, theme, cx))
                     .boxed(),
             )
             .contained()
@@ -138,6 +153,7 @@ impl FindBar {
             query_editor,
             active_editor: None,
             active_editor_subscription: None,
+            active_match_index: None,
             highlighted_editors: Default::default(),
             case_sensitive_mode: false,
             whole_word_mode: false,
@@ -166,7 +182,7 @@ impl FindBar {
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         let is_active = self.is_mode_enabled(mode);
-        MouseEventHandler::new::<Self, _, _, _>(mode as usize, cx, |state, _| {
+        MouseEventHandler::new::<Self, _, _, _>((cx.view_id(), mode as usize), cx, |state, _| {
             let style = match (is_active, state.hovered) {
                 (false, false) => &theme.mode_button,
                 (false, true) => &theme.hovered_mode_button,
@@ -179,6 +195,32 @@ impl FindBar {
                 .boxed()
         })
         .on_click(move |cx| cx.dispatch_action(ToggleMode(mode)))
+        .boxed()
+    }
+
+    fn render_nav_button(
+        &self,
+        icon: &str,
+        direction: Direction,
+        theme: &theme::Find,
+        cx: &mut RenderContext<Self>,
+    ) -> ElementBox {
+        MouseEventHandler::new::<Self, _, _, _>(
+            (cx.view_id(), 10 + direction as usize),
+            cx,
+            |state, _| {
+                let style = if state.hovered {
+                    &theme.hovered_mode_button
+                } else {
+                    &theme.mode_button
+                };
+                Label::new(icon.to_string(), style.text.clone())
+                    .contained()
+                    .with_style(style.container)
+                    .boxed()
+            },
+        )
+        .on_click(move |cx| cx.dispatch_action(GoToMatch(direction)))
         .boxed()
     }
 
@@ -217,6 +259,32 @@ impl FindBar {
         cx.notify();
     }
 
+    fn go_to_match(&mut self, GoToMatch(direction): &GoToMatch, cx: &mut ViewContext<Self>) {
+        if let Some(mut index) = self.active_match_index {
+            if let Some(editor) = self.active_editor.as_ref() {
+                editor.update(cx, |editor, cx| {
+                    if let Some((_, ranges)) = editor.highlighted_ranges_for_type::<Self>() {
+                        match direction {
+                            Direction::Prev => {
+                                if index == 0 {
+                                    index = ranges.len() - 1;
+                                } else {
+                                    index -= 1;
+                                }
+                            }
+                            Direction::Next => {
+                                index += 1;
+                                if index >= ranges.len() {
+                                    index = 0;
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        }
+    }
+
     fn on_query_editor_event(
         &mut self,
         _: ViewHandle<Editor>,
@@ -244,12 +312,14 @@ impl FindBar {
 
     fn on_active_editor_event(
         &mut self,
-        _: ViewHandle<Editor>,
+        editor: ViewHandle<Editor>,
         event: &editor::Event,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
             editor::Event::Edited => self.update_matches(cx),
+            editor::Event::SelectionsChanged => self.update_match_index(cx),
+
             _ => {}
         }
     }
@@ -279,15 +349,16 @@ impl FindBar {
                         Ok(ranges) => {
                             if let Some(editor) = cx.read(|cx| editor.upgrade(cx)) {
                                 this.update(&mut cx, |this, cx| {
-                                    let theme = &this.settings.borrow().theme.find;
                                     this.highlighted_editors.insert(editor.downgrade());
                                     editor.update(cx, |editor, cx| {
+                                        let theme = &this.settings.borrow().theme.find;
                                         editor.highlight_ranges::<Self>(
                                             ranges,
                                             theme.match_background,
                                             cx,
                                         )
                                     });
+                                    this.update_match_index(cx);
                                 });
                             }
                         }
@@ -300,6 +371,29 @@ impl FindBar {
                     }
                 }));
             }
+        }
+    }
+
+    fn update_match_index(&mut self, cx: &mut ViewContext<Self>) {
+        self.active_match_index = self.active_match_index(cx);
+    }
+
+    fn active_match_index(&mut self, cx: &mut ViewContext<Self>) -> Option<usize> {
+        let editor = self.active_editor.as_ref()?;
+        let editor = editor.read(cx);
+        let position = editor.newest_anchor_selection()?.head();
+        let ranges = editor.highlighted_ranges_for_type::<Self>()?.1;
+        let buffer = editor.buffer().read(cx).read(cx);
+        match ranges.binary_search_by(|probe| {
+            if probe.end.cmp(&position, &*buffer).unwrap().is_lt() {
+                Ordering::Less
+            } else if probe.start.cmp(&position, &*buffer).unwrap().is_gt() {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            }
+        }) {
+            Ok(i) | Err(i) => Some(i),
         }
     }
 }
@@ -445,14 +539,15 @@ mod tests {
             find_bar
         });
 
-        // default: case-insensitive substring search.
+        // Search for a string that appears with different casing.
+        // By default, search is case-insensitive.
         find_bar.update(&mut cx, |find_bar, cx| {
             find_bar.set_query("us", cx);
         });
         editor.next_notification(&cx).await;
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
-                editor.highlighted_ranges(cx),
+                editor.all_highlighted_ranges(cx),
                 &[
                     (
                         DisplayPoint::new(2, 17)..DisplayPoint::new(2, 19),
@@ -466,28 +561,30 @@ mod tests {
             );
         });
 
-        // switch to case sensitive search
+        // Switch to a case sensitive search.
         find_bar.update(&mut cx, |find_bar, cx| {
             find_bar.toggle_mode(&ToggleMode(SearchMode::CaseSensitive), cx);
         });
         editor.next_notification(&cx).await;
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
-                editor.highlighted_ranges(cx),
+                editor.all_highlighted_ranges(cx),
                 &[(
                     DisplayPoint::new(2, 43)..DisplayPoint::new(2, 45),
                     Color::red(),
-                ),]
+                )]
             );
         });
 
+        // Search for a string that appears both as a whole word and
+        // within other words. By default, all results are found.
         find_bar.update(&mut cx, |find_bar, cx| {
             find_bar.set_query("or", cx);
         });
         editor.next_notification(&cx).await;
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
-                editor.highlighted_ranges(cx),
+                editor.all_highlighted_ranges(cx),
                 &[
                     (
                         DisplayPoint::new(0, 24)..DisplayPoint::new(0, 26),
@@ -521,14 +618,14 @@ mod tests {
             );
         });
 
-        // switch to whole word search
+        // Switch to a whole word search.
         find_bar.update(&mut cx, |find_bar, cx| {
             find_bar.toggle_mode(&ToggleMode(SearchMode::WholeWord), cx);
         });
         editor.next_notification(&cx).await;
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
-                editor.highlighted_ranges(cx),
+                editor.all_highlighted_ranges(cx),
                 &[
                     (
                         DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43),
@@ -544,6 +641,10 @@ mod tests {
                     ),
                 ]
             );
+        });
+
+        find_bar.update(&mut cx, |find_bar, cx| {
+            find_bar.go_to_match(&GoToMatch(Direction::Next), cx);
         });
     }
 }
