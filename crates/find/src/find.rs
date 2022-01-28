@@ -115,7 +115,8 @@ impl Toolbar for FindBar {
 impl FindBar {
     fn new(settings: watch::Receiver<Settings>, cx: &mut ViewContext<Self>) -> Self {
         let query_editor = cx.add_view(|cx| {
-            Editor::single_line(
+            Editor::auto_height(
+                2,
                 {
                     let settings = settings.clone();
                     Arc::new(move |_| {
@@ -349,16 +350,49 @@ async fn regex_search(
 
     let mut ranges = Vec::new();
 
-    let regex = RegexBuilder::new(&query)
-        .case_insensitive(!case_sensitive)
-        .multi_line(true)
-        .build()?;
-    for (ix, mat) in regex.find_iter(&buffer.text()).enumerate() {
-        if (ix + 1) % YIELD_INTERVAL == 0 {
-            yield_now().await;
-        }
+    if query.contains("\n") || query.contains("\\n") {
+        let regex = RegexBuilder::new(&query)
+            .case_insensitive(!case_sensitive)
+            .multi_line(true)
+            .build()?;
+        for (ix, mat) in regex.find_iter(&buffer.text()).enumerate() {
+            if (ix + 1) % YIELD_INTERVAL == 0 {
+                yield_now().await;
+            }
 
-        ranges.push(buffer.anchor_after(mat.start())..buffer.anchor_before(mat.end()));
+            ranges.push(buffer.anchor_after(mat.start())..buffer.anchor_before(mat.end()));
+        }
+    } else {
+        let regex = RegexBuilder::new(&query)
+            .case_insensitive(!case_sensitive)
+            .build()?;
+
+        let mut line = String::new();
+        let mut line_offset = 0;
+        for (chunk_ix, chunk) in buffer
+            .chunks(0..buffer.len(), None)
+            .map(|c| c.text)
+            .chain(["\n"])
+            .enumerate()
+        {
+            if (chunk_ix + 1) % YIELD_INTERVAL == 0 {
+                yield_now().await;
+            }
+
+            for (newline_ix, text) in chunk.split('\n').enumerate() {
+                if newline_ix > 0 {
+                    for mat in regex.find_iter(&line) {
+                        let start = line_offset + mat.start();
+                        let end = line_offset + mat.end();
+                        ranges.push(buffer.anchor_after(start)..buffer.anchor_before(end));
+                    }
+
+                    line_offset += line.len() + 1;
+                    line.clear();
+                }
+                line.push_str(text);
+            }
+        }
     }
 
     Ok(ranges)
