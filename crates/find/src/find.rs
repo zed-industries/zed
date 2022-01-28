@@ -1,10 +1,11 @@
 use aho_corasick::AhoCorasickBuilder;
 use editor::{char_kind, Editor, EditorSettings};
 use gpui::{
-    action, elements::*, keymap::Binding, Entity, MutableAppContext, RenderContext, View,
+    action, elements::*, keymap::Binding, Entity, MutableAppContext, RenderContext, Task, View,
     ViewContext, ViewHandle,
 };
 use postage::watch;
+use smol::future::yield_now;
 use std::sync::Arc;
 use workspace::{ItemViewHandle, Settings, Toolbar, Workspace};
 
@@ -33,6 +34,7 @@ struct FindBar {
     settings: watch::Receiver<Settings>,
     query_editor: ViewHandle<Editor>,
     active_editor: Option<ViewHandle<Editor>>,
+    pending_search: Option<Task<()>>,
     case_sensitive_mode: bool,
     whole_word_mode: bool,
     regex_mode: bool,
@@ -116,6 +118,7 @@ impl FindBar {
             whole_word_mode: false,
             regex_mode: false,
             settings,
+            pending_search: None,
         }
     }
 
@@ -184,26 +187,38 @@ impl FindBar {
         _: &editor::Event,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(editor) = &self.active_editor {
-            let search = self.query_editor.read(cx).text(cx);
-            let theme = &self.settings.borrow().theme.find;
-            editor.update(cx, |editor, cx| {
-                if search.is_empty() {
-                    editor.clear_highlighted_ranges::<Self>(cx);
-                    return;
-                }
+        self.update_matches(cx);
+    }
 
-                let search = AhoCorasickBuilder::new()
-                    .auto_configure(&[&search])
-                    .ascii_case_insensitive(!self.case_sensitive_mode)
-                    .build(&[&search]);
-                let buffer = editor.buffer().read(cx).snapshot(cx);
-                let ranges = search
-                    .stream_find_iter(buffer.bytes_in_range(0..buffer.len()))
-                    .filter_map(|mat| {
+    fn update_matches(&mut self, cx: &mut ViewContext<Self>) {
+        let search = self.query_editor.read(cx).text(cx);
+        self.pending_search.take();
+        if let Some(editor) = self.active_editor.as_ref() {
+            if search.is_empty() {
+                editor.update(cx, |editor, cx| editor.clear_highlighted_ranges::<Self>(cx));
+            } else {
+                let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
+                let case_sensitive_mode = self.case_sensitive_mode;
+                let whole_word_mode = self.whole_word_mode;
+                let ranges = cx.background().spawn(async move {
+                    const YIELD_INTERVAL: usize = 20000;
+
+                    let search = AhoCorasickBuilder::new()
+                        .auto_configure(&[&search])
+                        .ascii_case_insensitive(!case_sensitive_mode)
+                        .build(&[&search]);
+                    let mut ranges = Vec::new();
+                    for (ix, mat) in search
+                        .stream_find_iter(buffer.bytes_in_range(0..buffer.len()))
+                        .enumerate()
+                    {
+                        if (ix + 1) % YIELD_INTERVAL == 0 {
+                            yield_now().await;
+                        }
+
                         let mat = mat.unwrap();
 
-                        if self.whole_word_mode {
+                        if whole_word_mode {
                             let prev_kind =
                                 buffer.reversed_chars_at(mat.start()).next().map(char_kind);
                             let start_kind =
@@ -211,21 +226,34 @@ impl FindBar {
                             let end_kind =
                                 char_kind(buffer.reversed_chars_at(mat.end()).next().unwrap());
                             let next_kind = buffer.chars_at(mat.end()).next().map(char_kind);
-                            if Some(start_kind) != prev_kind && Some(end_kind) != next_kind {
-                                Some(
-                                    buffer.anchor_after(mat.start())
-                                        ..buffer.anchor_before(mat.end()),
-                                )
-                            } else {
-                                None
+                            if Some(start_kind) == prev_kind || Some(end_kind) == next_kind {
+                                continue;
                             }
-                        } else {
-                            Some(buffer.anchor_after(mat.start())..buffer.anchor_before(mat.end()))
                         }
-                    })
-                    .collect();
-                editor.highlight_ranges::<Self>(ranges, theme.match_background, cx);
-            });
+
+                        ranges.push(
+                            buffer.anchor_after(mat.start())..buffer.anchor_before(mat.end()),
+                        );
+                    }
+
+                    ranges
+                });
+
+                let editor = editor.downgrade();
+                self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
+                    let ranges = ranges.await;
+                    if let Some((this, editor)) =
+                        cx.read(|cx| this.upgrade(cx).zip(editor.upgrade(cx)))
+                    {
+                        this.update(&mut cx, |this, cx| {
+                            let theme = &this.settings.borrow().theme.find;
+                            editor.update(cx, |editor, cx| {
+                                editor.highlight_ranges::<Self>(ranges, theme.match_background, cx)
+                            });
+                        });
+                    }
+                }));
+            }
         }
     }
 }

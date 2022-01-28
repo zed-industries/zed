@@ -13,3 +13,4 @@ gpui = { path = "../gpui" }
 theme = { path = "../theme" }
 workspace = { path = "../workspace" }
 postage = { version = "0.4.1", features = ["futures-traits"] }
+smol = { version = "1.2" }
