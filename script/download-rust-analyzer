@@ -2,7 +2,7 @@
 
 set -e
 
-export RUST_ANALYZER_URL="https://github.com/rust-analyzer/rust-analyzer/releases/download/2021-10-18/"
+export RUST_ANALYZER_URL="https://github.com/rust-analyzer/rust-analyzer/releases/download/2022-01-24/"
 
 function download {
     local filename="rust-analyzer-$1"
