@@ -76,6 +76,7 @@ struct BufferState {
 
 #[derive(Clone, Default)]
 pub struct MultiBufferSnapshot {
+    singleton: bool,
     excerpts: SumTree<Excerpt>,
     parse_count: usize,
     diagnostics_update_count: usize,
@@ -163,6 +164,7 @@ impl MultiBuffer {
             },
             cx,
         );
+        this.snapshot.borrow_mut().singleton = true;
         this
     }
 
@@ -1079,11 +1081,9 @@ impl MultiBufferSnapshot {
                 .eq(needle.bytes())
     }
 
-    fn as_singleton(&self) -> Option<&BufferSnapshot> {
-        let mut excerpts = self.excerpts.iter();
-        let buffer = excerpts.next().map(|excerpt| &excerpt.buffer);
-        if excerpts.next().is_none() {
-            buffer
+    fn as_singleton(&self) -> Option<&Excerpt> {
+        if self.singleton {
+            self.excerpts.iter().next()
         } else {
             None
         }
@@ -1098,6 +1098,10 @@ impl MultiBufferSnapshot {
     }
 
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
+        if let Some(excerpt) = self.as_singleton() {
+            return excerpt.buffer.clip_offset(offset, bias);
+        }
+
         let mut cursor = self.excerpts.cursor::<usize>();
         cursor.seek(&offset, Bias::Right, &());
         let overshoot = if let Some(excerpt) = cursor.item() {
@@ -1113,6 +1117,10 @@ impl MultiBufferSnapshot {
     }
 
     pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
+        if let Some(excerpt) = self.as_singleton() {
+            return excerpt.buffer.clip_point(point, bias);
+        }
+
         let mut cursor = self.excerpts.cursor::<Point>();
         cursor.seek(&point, Bias::Right, &());
         let overshoot = if let Some(excerpt) = cursor.item() {
@@ -1128,6 +1136,10 @@ impl MultiBufferSnapshot {
     }
 
     pub fn clip_point_utf16(&self, point: PointUtf16, bias: Bias) -> PointUtf16 {
+        if let Some(excerpt) = self.as_singleton() {
+            return excerpt.buffer.clip_point_utf16(point, bias);
+        }
+
         let mut cursor = self.excerpts.cursor::<PointUtf16>();
         cursor.seek(&point, Bias::Right, &());
         let overshoot = if let Some(excerpt) = cursor.item() {
@@ -1193,6 +1205,10 @@ impl MultiBufferSnapshot {
     }
 
     pub fn offset_to_point(&self, offset: usize) -> Point {
+        if let Some(excerpt) = self.as_singleton() {
+            return excerpt.buffer.offset_to_point(offset);
+        }
+
         let mut cursor = self.excerpts.cursor::<(usize, Point)>();
         cursor.seek(&offset, Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
@@ -1210,6 +1226,10 @@ impl MultiBufferSnapshot {
     }
 
     pub fn point_to_offset(&self, point: Point) -> usize {
+        if let Some(excerpt) = self.as_singleton() {
+            return excerpt.buffer.point_to_offset(point);
+        }
+
         let mut cursor = self.excerpts.cursor::<(Point, usize)>();
         cursor.seek(&point, Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
@@ -1227,6 +1247,10 @@ impl MultiBufferSnapshot {
     }
 
     pub fn point_utf16_to_offset(&self, point: PointUtf16) -> usize {
+        if let Some(excerpt) = self.as_singleton() {
+            return excerpt.buffer.point_utf16_to_offset(point);
+        }
+
         let mut cursor = self.excerpts.cursor::<(PointUtf16, usize)>();
         cursor.seek(&point, Bias::Right, &());
         if let Some(excerpt) = cursor.item() {
@@ -1520,6 +1544,14 @@ impl MultiBufferSnapshot {
 
     pub fn anchor_at<T: ToOffset>(&self, position: T, mut bias: Bias) -> Anchor {
         let offset = position.to_offset(self);
+        if let Some(excerpt) = self.as_singleton() {
+            return Anchor {
+                buffer_id: excerpt.buffer_id,
+                excerpt_id: excerpt.id.clone(),
+                text_anchor: excerpt.buffer.anchor_at(offset, bias),
+            };
+        }
+
         let mut cursor = self.excerpts.cursor::<(usize, Option<&ExcerptId>)>();
         cursor.seek(&offset, Bias::Right, &());
         if cursor.item().is_none() && offset == cursor.start().0 && bias == Bias::Left {
@@ -1675,7 +1707,7 @@ impl MultiBufferSnapshot {
     {
         self.as_singleton()
             .into_iter()
-            .flat_map(move |buffer| buffer.diagnostic_group(group_id))
+            .flat_map(move |excerpt| excerpt.buffer.diagnostic_group(group_id))
     }
 
     pub fn diagnostics_in_range<'a, T, O>(
@@ -1686,8 +1718,10 @@ impl MultiBufferSnapshot {
         T: 'a + ToOffset,
         O: 'a + text::FromAnchor,
     {
-        self.as_singleton().into_iter().flat_map(move |buffer| {
-            buffer.diagnostics_in_range(range.start.to_offset(self)..range.end.to_offset(self))
+        self.as_singleton().into_iter().flat_map(move |excerpt| {
+            excerpt
+                .buffer
+                .diagnostics_in_range(range.start.to_offset(self)..range.end.to_offset(self))
         })
     }
 
@@ -1730,17 +1764,16 @@ impl MultiBufferSnapshot {
     }
 
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
-        let buffer = self.as_singleton()?;
-        let outline = buffer.outline(theme)?;
-        let excerpt_id = &self.excerpts.iter().next().unwrap().id;
+        let excerpt = self.as_singleton()?;
+        let outline = excerpt.buffer.outline(theme)?;
         Some(Outline::new(
             outline
                 .items
                 .into_iter()
                 .map(|item| OutlineItem {
                     depth: item.depth,
-                    range: self.anchor_in_excerpt(excerpt_id.clone(), item.range.start)
-                        ..self.anchor_in_excerpt(excerpt_id.clone(), item.range.end),
+                    range: self.anchor_in_excerpt(excerpt.id.clone(), item.range.start)
+                        ..self.anchor_in_excerpt(excerpt.id.clone(), item.range.end),
                     text: item.text,
                     highlight_ranges: item.highlight_ranges,
                     name_ranges: item.name_ranges,
