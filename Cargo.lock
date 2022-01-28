@@ -1732,6 +1732,7 @@ dependencies = [
  "regex",
  "smol",
  "theme",
+ "unindent",
  "workspace",
 ]
 

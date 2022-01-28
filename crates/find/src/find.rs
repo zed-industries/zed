@@ -148,6 +148,16 @@ impl FindBar {
         }
     }
 
+    #[cfg(test)]
+    fn set_query(&mut self, query: &str, cx: &mut ViewContext<Self>) {
+        self.query_editor.update(cx, |query_editor, cx| {
+            query_editor.buffer().update(cx, |query_buffer, cx| {
+                let len = query_buffer.read(cx).len();
+                query_buffer.edit([0..len], query, cx);
+            });
+        });
+    }
+
     fn render_mode_button(
         &self,
         icon: &str,
@@ -396,4 +406,144 @@ async fn regex_search(
     }
 
     Ok(ranges)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use editor::{DisplayPoint, Editor, EditorSettings, MultiBuffer};
+    use gpui::{color::Color, TestAppContext};
+    use std::sync::Arc;
+    use unindent::Unindent as _;
+
+    #[gpui::test]
+    async fn test_find_simple(mut cx: TestAppContext) {
+        let fonts = cx.font_cache();
+        let mut theme = gpui::fonts::with_font_cache(fonts.clone(), || theme::Theme::default());
+        theme.find.match_background = Color::red();
+        let settings = Settings::new("Courier", &fonts, Arc::new(theme)).unwrap();
+
+        let buffer = cx.update(|cx| {
+            MultiBuffer::build_simple(
+                &r#"
+                A regular expression (shortened as regex or regexp;[1] also referred to as
+                rational expression[2][3]) is a sequence of characters that specifies a search
+                pattern in text. Usually such patterns are used by string-searching algorithms
+                for "find" or "find and replace" operations on strings, or for input validation.
+                "#
+                .unindent(),
+                cx,
+            )
+        });
+        let editor = cx.add_view(Default::default(), |cx| {
+            Editor::new(buffer.clone(), Arc::new(EditorSettings::test), cx)
+        });
+
+        let find_bar = cx.add_view(Default::default(), |cx| {
+            let mut find_bar = FindBar::new(watch::channel_with(settings).1, cx);
+            find_bar.active_item_changed(Some(Box::new(editor.clone())), cx);
+            find_bar
+        });
+
+        // default: case-insensitive substring search.
+        find_bar.update(&mut cx, |find_bar, cx| {
+            find_bar.set_query("us", cx);
+        });
+        editor.next_notification(&cx).await;
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.highlighted_ranges(cx),
+                &[
+                    (
+                        DisplayPoint::new(2, 17)..DisplayPoint::new(2, 19),
+                        Color::red(),
+                    ),
+                    (
+                        DisplayPoint::new(2, 43)..DisplayPoint::new(2, 45),
+                        Color::red(),
+                    ),
+                ]
+            );
+        });
+
+        // switch to case sensitive search
+        find_bar.update(&mut cx, |find_bar, cx| {
+            find_bar.toggle_mode(&ToggleMode(SearchMode::CaseSensitive), cx);
+        });
+        editor.next_notification(&cx).await;
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.highlighted_ranges(cx),
+                &[(
+                    DisplayPoint::new(2, 43)..DisplayPoint::new(2, 45),
+                    Color::red(),
+                ),]
+            );
+        });
+
+        find_bar.update(&mut cx, |find_bar, cx| {
+            find_bar.set_query("or", cx);
+        });
+        editor.next_notification(&cx).await;
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.highlighted_ranges(cx),
+                &[
+                    (
+                        DisplayPoint::new(0, 24)..DisplayPoint::new(0, 26),
+                        Color::red(),
+                    ),
+                    (
+                        DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43),
+                        Color::red(),
+                    ),
+                    (
+                        DisplayPoint::new(2, 71)..DisplayPoint::new(2, 73),
+                        Color::red(),
+                    ),
+                    (
+                        DisplayPoint::new(3, 1)..DisplayPoint::new(3, 3),
+                        Color::red(),
+                    ),
+                    (
+                        DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13),
+                        Color::red(),
+                    ),
+                    (
+                        DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58),
+                        Color::red(),
+                    ),
+                    (
+                        DisplayPoint::new(3, 60)..DisplayPoint::new(3, 62),
+                        Color::red(),
+                    ),
+                ]
+            );
+        });
+
+        // switch to whole word search
+        find_bar.update(&mut cx, |find_bar, cx| {
+            find_bar.toggle_mode(&ToggleMode(SearchMode::WholeWord), cx);
+        });
+        editor.next_notification(&cx).await;
+        editor.update(&mut cx, |editor, cx| {
+            assert_eq!(
+                editor.highlighted_ranges(cx),
+                &[
+                    (
+                        DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43),
+                        Color::red(),
+                    ),
+                    (
+                        DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13),
+                        Color::red(),
+                    ),
+                    (
+                        DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58),
+                        Color::red(),
+                    ),
+                ]
+            );
+        });
+    }
 }

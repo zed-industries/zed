@@ -3750,11 +3750,23 @@ impl Editor {
         cx.notify();
     }
 
+    #[cfg(feature = "test-support")]
+    pub fn highlighted_ranges(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<(Range<DisplayPoint>, Color)> {
+        let snapshot = self.snapshot(cx);
+        let buffer = &snapshot.buffer_snapshot;
+        let start = buffer.anchor_before(0);
+        let end = buffer.anchor_after(buffer.len());
+        self.highlighted_ranges_in_range(start..end, &snapshot)
+    }
+
     pub fn highlighted_ranges_in_range(
         &self,
         search_range: Range<Anchor>,
         display_snapshot: &DisplaySnapshot,
-    ) -> Vec<(Color, Range<DisplayPoint>)> {
+    ) -> Vec<(Range<DisplayPoint>, Color)> {
         let mut results = Vec::new();
         let buffer = &display_snapshot.buffer_snapshot;
         for (color, ranges) in self.highlighted_ranges.values() {
@@ -3780,7 +3792,7 @@ impl Editor {
                     .end
                     .to_point(buffer)
                     .to_display_point(display_snapshot);
-                results.push((*color, start..end))
+                results.push((start..end, *color))
             }
         }
         results
@@ -6679,20 +6691,20 @@ mod tests {
                 ),
                 &[
                     (
-                        Color::red(),
                         DisplayPoint::new(4, 2)..DisplayPoint::new(4, 4),
-                    ),
-                    (
                         Color::red(),
+                    ),
+                    (
                         DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
+                        Color::red(),
                     ),
                     (
+                        DisplayPoint::new(3, 2)..DisplayPoint::new(3, 5),
                         Color::green(),
-                        DisplayPoint::new(3, 2)..DisplayPoint::new(3, 5)
                     ),
                     (
+                        DisplayPoint::new(5, 3)..DisplayPoint::new(5, 6),
                         Color::green(),
-                        DisplayPoint::new(5, 3)..DisplayPoint::new(5, 6)
                     ),
                 ]
             );
@@ -6702,9 +6714,9 @@ mod tests {
                     &snapshot,
                 ),
                 &[(
-                    Color::red(),
                     DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
-                ),]
+                    Color::red(),
+                )]
             );
         });
     }

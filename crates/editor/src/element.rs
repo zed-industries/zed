@@ -316,7 +316,7 @@ impl EditorElement {
 
         cx.scene.push_layer(Some(bounds));
 
-        for (color, range) in &layout.highlighted_ranges {
+        for (range, color) in &layout.highlighted_ranges {
             self.paint_highlighted_range(
                 range.clone(),
                 start_row,
@@ -997,7 +997,7 @@ pub struct LayoutState {
     line_height: f32,
     em_width: f32,
     em_advance: f32,
-    highlighted_ranges: Vec<(Color, Range<DisplayPoint>)>,
+    highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     selections: HashMap<ReplicaId, Vec<text::Selection<DisplayPoint>>>,
     text_offset: Vector2F,
 }
