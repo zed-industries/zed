@@ -29,10 +29,11 @@ use language::{
     AnchorRangeExt as _, BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point,
     Selection, SelectionGoal, TransactionId,
 };
+use multi_buffer::MultiBufferChunks;
 pub use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, ExcerptProperties, MultiBuffer, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, ExcerptId, ExcerptProperties, MultiBuffer, MultiBufferSnapshot,
+    ToOffset, ToPoint,
 };
-use multi_buffer::{MultiBufferChunks, MultiBufferSnapshot};
 use postage::watch;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;

@@ -13,5 +13,7 @@ gpui = { path = "../gpui" }
 theme = { path = "../theme" }
 workspace = { path = "../workspace" }
 aho-corasick = "0.7"
+anyhow = "1.0"
 postage = { version = "0.4.1", features = ["futures-traits"] }
+regex = "1.5"
 smol = { version = "1.2" }

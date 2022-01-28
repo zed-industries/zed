@@ -93,6 +93,7 @@ pub struct Find {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub editor: FindEditor,
+    pub invalid_editor: ContainerStyle,
     pub mode_button_group: ContainerStyle,
     pub mode_button: ContainedText,
     pub active_mode_button: ContainedText,

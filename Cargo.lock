@@ -1724,10 +1724,12 @@ name = "find"
 version = "0.1.0"
 dependencies = [
  "aho-corasick",
+ "anyhow",
  "collections",
  "editor",
  "gpui",
  "postage",
+ "regex",
  "smol",
  "theme",
  "workspace",

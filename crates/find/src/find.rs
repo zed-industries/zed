@@ -1,13 +1,15 @@
 use aho_corasick::AhoCorasickBuilder;
+use anyhow::Result;
 use collections::HashSet;
-use editor::{char_kind, Editor, EditorSettings};
+use editor::{char_kind, Anchor, Editor, EditorSettings, MultiBufferSnapshot};
 use gpui::{
     action, elements::*, keymap::Binding, Entity, MutableAppContext, RenderContext, Subscription,
     Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use postage::watch;
+use regex::RegexBuilder;
 use smol::future::yield_now;
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 use workspace::{ItemViewHandle, Settings, Toolbar, Workspace};
 
 action!(Deploy);
@@ -41,6 +43,7 @@ struct FindBar {
     case_sensitive_mode: bool,
     whole_word_mode: bool,
     regex_mode: bool,
+    query_contains_error: bool,
 }
 
 impl Entity for FindBar {
@@ -58,11 +61,16 @@ impl View for FindBar {
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme.find;
+        let editor_container = if self.query_contains_error {
+            theme.invalid_editor
+        } else {
+            theme.editor.input.container
+        };
         Flex::row()
             .with_child(
                 ChildView::new(&self.query_editor)
                     .contained()
-                    .with_style(theme.editor.input.container)
+                    .with_style(editor_container)
                     .constrained()
                     .with_max_width(theme.editor.max_width)
                     .boxed(),
@@ -135,6 +143,7 @@ impl FindBar {
             regex_mode: false,
             settings,
             pending_search: None,
+            query_contains_error: false,
         }
     }
 
@@ -214,7 +223,9 @@ impl FindBar {
                         }
                     }
                 }
+                self.query_contains_error = false;
                 self.update_matches(cx);
+                cx.notify();
             }
             _ => {}
         }
@@ -233,70 +244,122 @@ impl FindBar {
     }
 
     fn update_matches(&mut self, cx: &mut ViewContext<Self>) {
-        let search = self.query_editor.read(cx).text(cx);
+        let query = self.query_editor.read(cx).text(cx);
         self.pending_search.take();
         if let Some(editor) = self.active_editor.as_ref() {
-            if search.is_empty() {
+            if query.is_empty() {
                 editor.update(cx, |editor, cx| editor.clear_highlighted_ranges::<Self>(cx));
             } else {
                 let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
-                let case_sensitive_mode = self.case_sensitive_mode;
-                let whole_word_mode = self.whole_word_mode;
-                let ranges = cx.background().spawn(async move {
-                    const YIELD_INTERVAL: usize = 20000;
-
-                    let search = AhoCorasickBuilder::new()
-                        .auto_configure(&[&search])
-                        .ascii_case_insensitive(!case_sensitive_mode)
-                        .build(&[&search]);
-                    let mut ranges = Vec::new();
-                    for (ix, mat) in search
-                        .stream_find_iter(buffer.bytes_in_range(0..buffer.len()))
-                        .enumerate()
-                    {
-                        if (ix + 1) % YIELD_INTERVAL == 0 {
-                            yield_now().await;
-                        }
-
-                        let mat = mat.unwrap();
-
-                        if whole_word_mode {
-                            let prev_kind =
-                                buffer.reversed_chars_at(mat.start()).next().map(char_kind);
-                            let start_kind =
-                                char_kind(buffer.chars_at(mat.start()).next().unwrap());
-                            let end_kind =
-                                char_kind(buffer.reversed_chars_at(mat.end()).next().unwrap());
-                            let next_kind = buffer.chars_at(mat.end()).next().map(char_kind);
-                            if Some(start_kind) == prev_kind || Some(end_kind) == next_kind {
-                                continue;
-                            }
-                        }
-
-                        ranges.push(
-                            buffer.anchor_after(mat.start())..buffer.anchor_before(mat.end()),
-                        );
-                    }
-
-                    ranges
-                });
+                let case_sensitive = self.case_sensitive_mode;
+                let whole_word = self.whole_word_mode;
+                let ranges = if self.regex_mode {
+                    cx.background()
+                        .spawn(regex_search(buffer, query, case_sensitive, whole_word))
+                } else {
+                    cx.background().spawn(async move {
+                        Ok(search(buffer, query, case_sensitive, whole_word).await)
+                    })
+                };
 
                 let editor = editor.downgrade();
-                self.pending_search = Some(cx.spawn_weak(|this, mut cx| async move {
-                    let ranges = ranges.await;
-                    if let Some((this, editor)) =
-                        cx.read(|cx| this.upgrade(cx).zip(editor.upgrade(cx)))
-                    {
-                        this.update(&mut cx, |this, cx| {
-                            let theme = &this.settings.borrow().theme.find;
-                            this.highlighted_editors.insert(editor.downgrade());
-                            editor.update(cx, |editor, cx| {
-                                editor.highlight_ranges::<Self>(ranges, theme.match_background, cx)
+                self.pending_search = Some(cx.spawn(|this, mut cx| async move {
+                    match ranges.await {
+                        Ok(ranges) => {
+                            if let Some(editor) = cx.read(|cx| editor.upgrade(cx)) {
+                                this.update(&mut cx, |this, cx| {
+                                    let theme = &this.settings.borrow().theme.find;
+                                    this.highlighted_editors.insert(editor.downgrade());
+                                    editor.update(cx, |editor, cx| {
+                                        editor.highlight_ranges::<Self>(
+                                            ranges,
+                                            theme.match_background,
+                                            cx,
+                                        )
+                                    });
+                                });
+                            }
+                        }
+                        Err(_) => {
+                            this.update(&mut cx, |this, cx| {
+                                this.query_contains_error = true;
+                                cx.notify();
                             });
-                        });
+                        }
                     }
                 }));
             }
         }
     }
+}
+
+const YIELD_INTERVAL: usize = 20000;
+
+async fn search(
+    buffer: MultiBufferSnapshot,
+    query: String,
+    case_sensitive: bool,
+    whole_word: bool,
+) -> Vec<Range<Anchor>> {
+    let mut ranges = Vec::new();
+
+    let search = AhoCorasickBuilder::new()
+        .auto_configure(&[&query])
+        .ascii_case_insensitive(!case_sensitive)
+        .build(&[&query]);
+    for (ix, mat) in search
+        .stream_find_iter(buffer.bytes_in_range(0..buffer.len()))
+        .enumerate()
+    {
+        if (ix + 1) % YIELD_INTERVAL == 0 {
+            yield_now().await;
+        }
+
+        let mat = mat.unwrap();
+
+        if whole_word {
+            let prev_kind = buffer.reversed_chars_at(mat.start()).next().map(char_kind);
+            let start_kind = char_kind(buffer.chars_at(mat.start()).next().unwrap());
+            let end_kind = char_kind(buffer.reversed_chars_at(mat.end()).next().unwrap());
+            let next_kind = buffer.chars_at(mat.end()).next().map(char_kind);
+            if Some(start_kind) == prev_kind || Some(end_kind) == next_kind {
+                continue;
+            }
+        }
+
+        ranges.push(buffer.anchor_after(mat.start())..buffer.anchor_before(mat.end()));
+    }
+
+    ranges
+}
+
+async fn regex_search(
+    buffer: MultiBufferSnapshot,
+    mut query: String,
+    case_sensitive: bool,
+    whole_word: bool,
+) -> Result<Vec<Range<Anchor>>> {
+    if whole_word {
+        let mut word_query = String::new();
+        word_query.push_str("\\b");
+        word_query.push_str(&query);
+        word_query.push_str("\\b");
+        query = word_query;
+    }
+
+    let mut ranges = Vec::new();
+
+    let regex = RegexBuilder::new(&query)
+        .case_insensitive(!case_sensitive)
+        .multi_line(true)
+        .build()?;
+    for (ix, mat) in regex.find_iter(&buffer.text()).enumerate() {
+        if (ix + 1) % YIELD_INTERVAL == 0 {
+            yield_now().await;
+        }
+
+        ranges.push(buffer.anchor_after(mat.start())..buffer.anchor_before(mat.end()));
+    }
+
+    Ok(ranges)
 }

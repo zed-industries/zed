@@ -323,6 +323,7 @@ impl EditorElement {
                 end_row,
                 *color,
                 0.,
+                0.15 * layout.line_height,
                 layout,
                 content_origin,
                 scroll_top,
@@ -344,6 +345,7 @@ impl EditorElement {
                     end_row,
                     style.selection,
                     corner_radius,
+                    corner_radius * 2.,
                     layout,
                     content_origin,
                     scroll_top,
@@ -400,6 +402,7 @@ impl EditorElement {
         end_row: u32,
         color: Color,
         corner_radius: f32,
+        line_end_overshoot: f32,
         layout: &LayoutState,
         content_origin: Vector2F,
         scroll_top: f32,
@@ -414,7 +417,7 @@ impl EditorElement {
                 cmp::max(range.start.row(), start_row)..cmp::min(range.end.row() + 1, end_row)
             };
 
-            let selection = HighlightedRange {
+            let highlighted_range = HighlightedRange {
                 color,
                 line_height: layout.line_height,
                 corner_radius,
@@ -437,7 +440,7 @@ impl EditorElement {
                                     + line_layout.x_for_index(range.end.column() as usize)
                                     - scroll_left
                             } else {
-                                content_origin.x() + line_layout.width() + corner_radius * 2.0
+                                content_origin.x() + line_layout.width() + line_end_overshoot
                                     - scroll_left
                             },
                         }
@@ -445,7 +448,7 @@ impl EditorElement {
                     .collect(),
             };
 
-            selection.paint(bounds, cx.scene);
+            highlighted_range.paint(bounds, cx.scene);
         }
     }
 
