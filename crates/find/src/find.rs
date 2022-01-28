@@ -1,8 +1,9 @@
 use aho_corasick::AhoCorasickBuilder;
+use collections::HashSet;
 use editor::{char_kind, Editor, EditorSettings};
 use gpui::{
-    action, elements::*, keymap::Binding, Entity, MutableAppContext, RenderContext, Task, View,
-    ViewContext, ViewHandle,
+    action, elements::*, keymap::Binding, Entity, MutableAppContext, RenderContext, Subscription,
+    Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use postage::watch;
 use smol::future::yield_now;
@@ -34,6 +35,8 @@ struct FindBar {
     settings: watch::Receiver<Settings>,
     query_editor: ViewHandle<Editor>,
     active_editor: Option<ViewHandle<Editor>>,
+    active_editor_subscription: Option<Subscription>,
+    highlighted_editors: HashSet<WeakViewHandle<Editor>>,
     pending_search: Option<Task<()>>,
     case_sensitive_mode: bool,
     whole_word_mode: bool,
@@ -85,8 +88,19 @@ impl Toolbar for FindBar {
         item: Option<Box<dyn ItemViewHandle>>,
         cx: &mut ViewContext<Self>,
     ) -> bool {
-        self.active_editor = item.and_then(|item| item.act_as::<Editor>(cx));
-        self.active_editor.is_some()
+        self.active_editor_subscription.take();
+        self.active_editor.take();
+        self.pending_search.take();
+
+        if let Some(editor) = item.and_then(|item| item.act_as::<Editor>(cx)) {
+            self.active_editor_subscription =
+                Some(cx.subscribe(&editor, Self::on_active_editor_event));
+            self.active_editor = Some(editor);
+            self.update_matches(cx);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -114,6 +128,8 @@ impl FindBar {
         Self {
             query_editor,
             active_editor: None,
+            active_editor_subscription: None,
+            highlighted_editors: Default::default(),
             case_sensitive_mode: false,
             whole_word_mode: false,
             regex_mode: false,
@@ -171,23 +187,49 @@ impl FindBar {
     }
 
     fn toggle_mode(&mut self, ToggleMode(mode): &ToggleMode, cx: &mut ViewContext<Self>) {
-        eprintln!("TOGGLE MODE");
         let value = match mode {
             SearchMode::WholeWord => &mut self.whole_word_mode,
             SearchMode::CaseSensitive => &mut self.case_sensitive_mode,
             SearchMode::Regex => &mut self.regex_mode,
         };
         *value = !*value;
+        self.update_matches(cx);
         cx.notify();
     }
 
     fn on_query_editor_event(
         &mut self,
         _: ViewHandle<Editor>,
-        _: &editor::Event,
+        event: &editor::Event,
         cx: &mut ViewContext<Self>,
     ) {
-        self.update_matches(cx);
+        match event {
+            editor::Event::Edited => {
+                for editor in self.highlighted_editors.drain() {
+                    if let Some(editor) = editor.upgrade(cx) {
+                        if Some(&editor) != self.active_editor.as_ref() {
+                            editor.update(cx, |editor, cx| {
+                                editor.clear_highlighted_ranges::<Self>(cx)
+                            });
+                        }
+                    }
+                }
+                self.update_matches(cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn on_active_editor_event(
+        &mut self,
+        _: ViewHandle<Editor>,
+        event: &editor::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            editor::Event::Edited => self.update_matches(cx),
+            _ => {}
+        }
     }
 
     fn update_matches(&mut self, cx: &mut ViewContext<Self>) {
@@ -247,6 +289,7 @@ impl FindBar {
                     {
                         this.update(&mut cx, |this, cx| {
                             let theme = &this.settings.borrow().theme.find;
+                            this.highlighted_editors.insert(editor.downgrade());
                             editor.update(cx, |editor, cx| {
                                 editor.highlight_ranges::<Self>(ranges, theme.match_background, cx)
                             });

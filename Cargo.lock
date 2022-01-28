@@ -1724,6 +1724,7 @@ name = "find"
 version = "0.1.0"
 dependencies = [
  "aho-corasick",
+ "collections",
  "editor",
  "gpui",
  "postage",

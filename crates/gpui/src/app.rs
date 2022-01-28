@@ -3246,6 +3246,7 @@ impl Drop for AnyModelHandle {
         self.ref_counts.lock().dec_model(self.model_id);
     }
 }
+
 pub struct WeakViewHandle<T> {
     window_id: usize,
     view_id: usize,
@@ -3285,6 +3286,21 @@ impl<T> Clone for WeakViewHandle<T> {
             view_id: self.view_id,
             view_type: PhantomData,
         }
+    }
+}
+
+impl<T> PartialEq for WeakViewHandle<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.window_id == other.window_id && self.view_id == other.view_id
+    }
+}
+
+impl<T> Eq for WeakViewHandle<T> {}
+
+impl<T> Hash for WeakViewHandle<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.window_id.hash(state);
+        self.view_id.hash(state);
     }
 }
 

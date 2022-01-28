@@ -7,10 +7,11 @@ edition = "2021"
 path = "src/find.rs"
 
 [dependencies]
-aho-corasick = "0.7"
+collections = { path = "../collections" }
 editor = { path = "../editor" }
 gpui = { path = "../gpui" }
 theme = { path = "../theme" }
 workspace = { path = "../workspace" }
+aho-corasick = "0.7"
 postage = { version = "0.4.1", features = ["futures-traits"] }
 smol = { version = "1.2" }
