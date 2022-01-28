@@ -1,5 +1,5 @@
 use aho_corasick::AhoCorasickBuilder;
-use editor::{Editor, EditorSettings};
+use editor::{char_kind, Editor, EditorSettings};
 use gpui::{
     action, elements::*, keymap::Binding, Entity, MutableAppContext, RenderContext, View,
     ViewContext, ViewHandle,
@@ -200,9 +200,28 @@ impl FindBar {
                 let buffer = editor.buffer().read(cx).snapshot(cx);
                 let ranges = search
                     .stream_find_iter(buffer.bytes_in_range(0..buffer.len()))
-                    .map(|mat| {
+                    .filter_map(|mat| {
                         let mat = mat.unwrap();
-                        buffer.anchor_after(mat.start())..buffer.anchor_before(mat.end())
+
+                        if self.whole_word_mode {
+                            let prev_kind =
+                                buffer.reversed_chars_at(mat.start()).next().map(char_kind);
+                            let start_kind =
+                                char_kind(buffer.chars_at(mat.start()).next().unwrap());
+                            let end_kind =
+                                char_kind(buffer.reversed_chars_at(mat.end()).next().unwrap());
+                            let next_kind = buffer.chars_at(mat.end()).next().map(char_kind);
+                            if Some(start_kind) != prev_kind && Some(end_kind) != next_kind {
+                                Some(
+                                    buffer.anchor_after(mat.start())
+                                        ..buffer.anchor_before(mat.end()),
+                                )
+                            } else {
+                                None
+                            }
+                        } else {
+                            Some(buffer.anchor_after(mat.start())..buffer.anchor_before(mat.end()))
+                        }
                     })
                     .collect();
                 editor.highlight_ranges::<Self>(ranges, theme.match_background, cx);

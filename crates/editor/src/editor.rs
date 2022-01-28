@@ -438,6 +438,14 @@ pub struct NavigationData {
     offset: usize,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
+pub enum CharKind {
+    Newline,
+    Punctuation,
+    Whitespace,
+    Word,
+}
+
 impl Editor {
     pub fn single_line(build_settings: BuildSettings, cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
@@ -4213,6 +4221,18 @@ pub fn settings_builder(
             style: theme,
         }
     })
+}
+
+pub fn char_kind(c: char) -> CharKind {
+    if c == '\n' {
+        CharKind::Newline
+    } else if c.is_whitespace() {
+        CharKind::Whitespace
+    } else if c.is_alphanumeric() || c == '_' {
+        CharKind::Word
+    } else {
+        CharKind::Punctuation
+    }
 }
 
 #[cfg(test)]
