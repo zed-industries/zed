@@ -1727,6 +1727,7 @@ dependencies = [
  "editor",
  "gpui",
  "postage",
+ "theme",
  "workspace",
 ]
 

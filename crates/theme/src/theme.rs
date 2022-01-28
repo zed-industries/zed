@@ -90,6 +90,12 @@ pub struct Tab {
 
 #[derive(Clone, Deserialize, Default)]
 pub struct Find {
+    pub query: InputEditorStyle,
+    pub mode_button_group: ContainerStyle,
+    pub mode_button: ContainedText,
+    pub active_mode_button: ContainedText,
+    pub hovered_mode_button: ContainedText,
+    pub active_hovered_mode_button: ContainedText,
     pub match_background: Color,
 }
 
