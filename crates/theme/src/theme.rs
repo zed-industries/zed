@@ -90,13 +90,22 @@ pub struct Tab {
 
 #[derive(Clone, Deserialize, Default)]
 pub struct Find {
-    pub query: InputEditorStyle,
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub editor: FindEditor,
     pub mode_button_group: ContainerStyle,
     pub mode_button: ContainedText,
     pub active_mode_button: ContainedText,
     pub hovered_mode_button: ContainedText,
     pub active_hovered_mode_button: ContainedText,
     pub match_background: Color,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct FindEditor {
+    #[serde(flatten)]
+    pub input: InputEditorStyle,
+    pub max_width: f32,
 }
 
 #[derive(Deserialize, Default)]

@@ -321,6 +321,7 @@ tab_summary_spacing = 10
 
 [find]
 match_background = "$state.highlighted_line"
+background = "$surface.1"
 
 [find.mode_button]
 extends = "$text.1"
@@ -341,10 +342,12 @@ background = "$surface.2"
 extends = "$find.mode_button"
 background = "$surface.2"
 
-[find.query]
-background = "$surface.1"
+[find.editor]
+max_width = 400
+background = "$surface.0"
 corner_radius = 6
 padding = { left = 16, right = 16, top = 7, bottom = 7 }
+margin = { top = 5, bottom = 5, left = 5, right = 5 }
 text = "$text.0"
 placeholder_text = "$text.2"
 selection = "$selection.host"
