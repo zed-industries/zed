@@ -1366,7 +1366,11 @@ impl MultiBufferSnapshot {
         if let Some(excerpt) = cursor.item() {
             if excerpt.id == anchor.excerpt_id && excerpt.buffer_id == anchor.buffer_id {
                 let excerpt_buffer_start = excerpt.range.start.summary::<D>(&excerpt.buffer);
-                let buffer_position = anchor.text_anchor.summary::<D>(&excerpt.buffer);
+                let excerpt_buffer_end = excerpt.range.end.summary::<D>(&excerpt.buffer);
+                let buffer_position = cmp::min(
+                    excerpt_buffer_end,
+                    anchor.text_anchor.summary::<D>(&excerpt.buffer),
+                );
                 if buffer_position > excerpt_buffer_start {
                     position.add_assign(&(buffer_position - excerpt_buffer_start));
                 }
@@ -1404,11 +1408,13 @@ impl MultiBufferSnapshot {
             if let Some(excerpt) = cursor.item() {
                 if excerpt.id == *excerpt_id && excerpt.buffer_id == buffer_id {
                     let excerpt_buffer_start = excerpt.range.start.summary::<D>(&excerpt.buffer);
+                    let excerpt_buffer_end = excerpt.range.end.summary::<D>(&excerpt.buffer);
                     summaries.extend(
                         excerpt
                             .buffer
                             .summaries_for_anchors::<D, _>(excerpt_anchors)
                             .map(move |summary| {
+                                let summary = cmp::min(excerpt_buffer_end.clone(), summary);
                                 let mut position = position.clone();
                                 let excerpt_buffer_start = excerpt_buffer_start.clone();
                                 if summary > excerpt_buffer_start {
@@ -3048,6 +3054,7 @@ mod tests {
                 .iter()
                 .zip(snapshot.summaries_for_anchors::<usize, _>(&anchors))
             {
+                assert!(resolved_offset <= snapshot.len());
                 assert_eq!(
                     snapshot.summary_for_anchor::<usize>(anchor),
                     resolved_offset
