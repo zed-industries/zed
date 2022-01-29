@@ -1,7 +1,7 @@
 use aho_corasick::AhoCorasickBuilder;
 use anyhow::Result;
 use collections::HashSet;
-use editor::{char_kind, Anchor, Editor, EditorSettings, MultiBufferSnapshot};
+use editor::{char_kind, Anchor, Autoscroll, Editor, EditorSettings, MultiBufferSnapshot};
 use gpui::{
     action, elements::*, keymap::Binding, Entity, MutableAppContext, RenderContext, Subscription,
     Task, View, ViewContext, ViewHandle, WeakViewHandle,
@@ -9,7 +9,11 @@ use gpui::{
 use postage::watch;
 use regex::RegexBuilder;
 use smol::future::yield_now;
-use std::{cmp::Ordering, ops::Range, sync::Arc};
+use std::{
+    cmp::{self, Ordering},
+    ops::Range,
+    sync::Arc,
+};
 use workspace::{ItemViewHandle, Settings, Toolbar, Workspace};
 
 action!(Deploy);
@@ -99,6 +103,20 @@ impl View for FindBar {
                     .with_child(self.render_nav_button(">", Direction::Next, theme, cx))
                     .boxed(),
             )
+            .with_children(self.active_editor.as_ref().and_then(|editor| {
+                let (_, highlighted_ranges) =
+                    editor.read(cx).highlighted_ranges_for_type::<Self>()?;
+                let match_ix = cmp::min(self.active_match_index? + 1, highlighted_ranges.len());
+                Some(
+                    Label::new(
+                        format!("{} of {}", match_ix, highlighted_ranges.len()),
+                        theme.match_index.text.clone(),
+                    )
+                    .contained()
+                    .with_style(theme.match_index.container)
+                    .boxed(),
+                )
+            }))
             .contained()
             .with_style(theme.container)
             .boxed()
@@ -273,12 +291,16 @@ impl FindBar {
                                 }
                             }
                             Direction::Next => {
-                                index += 1;
-                                if index >= ranges.len() {
+                                if index == ranges.len() - 1 {
                                     index = 0;
+                                } else {
+                                    index += 1;
                                 }
                             }
                         }
+
+                        let range_to_select = ranges[index].clone();
+                        editor.select_ranges([range_to_select], Some(Autoscroll::Fit), cx);
                     }
                 });
             }
@@ -312,14 +334,13 @@ impl FindBar {
 
     fn on_active_editor_event(
         &mut self,
-        editor: ViewHandle<Editor>,
+        _: ViewHandle<Editor>,
         event: &editor::Event,
         cx: &mut ViewContext<Self>,
     ) {
         match event {
             editor::Event::Edited => self.update_matches(cx),
             editor::Event::SelectionsChanged => self.update_match_index(cx),
-
             _ => {}
         }
     }
@@ -329,6 +350,7 @@ impl FindBar {
         self.pending_search.take();
         if let Some(editor) = self.active_editor.as_ref() {
             if query.is_empty() {
+                self.active_match_index.take();
                 editor.update(cx, |editor, cx| editor.clear_highlighted_ranges::<Self>(cx));
             } else {
                 let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
@@ -376,6 +398,7 @@ impl FindBar {
 
     fn update_match_index(&mut self, cx: &mut ViewContext<Self>) {
         self.active_match_index = self.active_match_index(cx);
+        cx.notify();
     }
 
     fn active_match_index(&mut self, cx: &mut ViewContext<Self>) -> Option<usize> {

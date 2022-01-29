@@ -342,6 +342,9 @@ background = "$surface.2"
 extends = "$find.mode_button"
 background = "$surface.2"
 
+[find.match_index]
+extends = "$text.1"
+
 [find.editor]
 max_width = 400
 background = "$surface.0"
