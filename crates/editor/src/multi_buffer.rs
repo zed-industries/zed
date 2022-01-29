@@ -1468,7 +1468,7 @@ impl MultiBufferSnapshot {
                 // If the old excerpt still exists at this location, then leave
                 // the anchor unchanged.
                 else if next_excerpt.map_or(false, |excerpt| {
-                    excerpt.id == *old_excerpt_id && excerpt.buffer_id == anchor.buffer_id
+                    excerpt.id == *old_excerpt_id && excerpt.contains(&anchor)
                 }) {
                     kept_position = true;
                 }
@@ -1487,20 +1487,38 @@ impl MultiBufferSnapshot {
                 // then report that the anchor has lost its position.
                 if !kept_position {
                     anchor = if let Some(excerpt) = next_excerpt {
+                        let mut text_anchor = excerpt
+                            .range
+                            .start
+                            .bias(anchor.text_anchor.bias, &excerpt.buffer);
+                        if text_anchor
+                            .cmp(&excerpt.range.end, &excerpt.buffer)
+                            .unwrap()
+                            .is_gt()
+                        {
+                            text_anchor = excerpt.range.end.clone();
+                        }
                         Anchor {
                             buffer_id: excerpt.buffer_id,
                             excerpt_id: excerpt.id.clone(),
-                            text_anchor: excerpt
-                                .buffer
-                                .anchor_at(&excerpt.range.start, anchor.text_anchor.bias),
+                            text_anchor,
                         }
                     } else if let Some(excerpt) = prev_excerpt {
+                        let mut text_anchor = excerpt
+                            .range
+                            .end
+                            .bias(anchor.text_anchor.bias, &excerpt.buffer);
+                        if text_anchor
+                            .cmp(&excerpt.range.start, &excerpt.buffer)
+                            .unwrap()
+                            .is_lt()
+                        {
+                            text_anchor = excerpt.range.start.clone();
+                        }
                         Anchor {
                             buffer_id: excerpt.buffer_id,
                             excerpt_id: excerpt.id.clone(),
-                            text_anchor: excerpt
-                                .buffer
-                                .anchor_at(&excerpt.range.end, anchor.text_anchor.bias),
+                            text_anchor,
                         }
                     } else if anchor.text_anchor.bias == Bias::Left {
                         Anchor::min()
@@ -2763,11 +2781,27 @@ mod tests {
                 }
                 40..=44 if !anchors.is_empty() => {
                     let multibuffer = multibuffer.read(cx).read(cx);
+
                     anchors = multibuffer
                         .refresh_anchors(&anchors)
                         .into_iter()
                         .map(|a| a.1)
                         .collect();
+
+                    // Ensure anchors point to a valid excerpt after refreshing them.
+                    let mut cursor = multibuffer.excerpts.cursor::<Option<&ExcerptId>>();
+                    for anchor in &anchors {
+                        if anchor.excerpt_id == ExcerptId::min()
+                            || anchor.excerpt_id == ExcerptId::max()
+                        {
+                            continue;
+                        }
+
+                        cursor.seek_forward(&Some(&anchor.excerpt_id), Bias::Left, &());
+                        let excerpt = cursor.item().unwrap();
+                        assert_eq!(excerpt.id, anchor.excerpt_id);
+                        assert!(excerpt.contains(anchor));
+                    }
                 }
                 _ => {
                     let buffer_handle = if buffers.is_empty() || rng.gen_bool(0.4) {
