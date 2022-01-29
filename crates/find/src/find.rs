@@ -21,7 +21,7 @@ action!(Cancel);
 action!(ToggleMode, SearchMode);
 action!(GoToMatch, Direction);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
     Prev,
     Next,
@@ -281,25 +281,39 @@ impl FindBar {
         if let Some(mut index) = self.active_match_index {
             if let Some(editor) = self.active_editor.as_ref() {
                 editor.update(cx, |editor, cx| {
-                    if let Some((_, ranges)) = editor.highlighted_ranges_for_type::<Self>() {
-                        match direction {
-                            Direction::Prev => {
+                    let newest_selection = editor.newest_anchor_selection().cloned();
+                    if let Some(((_, ranges), newest_selection)) = editor
+                        .highlighted_ranges_for_type::<Self>()
+                        .zip(newest_selection)
+                    {
+                        let position = newest_selection.head();
+                        let buffer = editor.buffer().read(cx).read(cx);
+                        if ranges[index].start.cmp(&position, &buffer).unwrap().is_le()
+                            && ranges[index].end.cmp(&position, &buffer).unwrap().is_ge()
+                        {
+                            if *direction == Direction::Prev {
                                 if index == 0 {
                                     index = ranges.len() - 1;
                                 } else {
                                     index -= 1;
                                 }
-                            }
-                            Direction::Next => {
+                            } else {
                                 if index == ranges.len() - 1 {
-                                    index = 0;
+                                    index = 0
                                 } else {
                                     index += 1;
                                 }
                             }
+                        } else if *direction == Direction::Prev {
+                            if index == 0 {
+                                index = ranges.len() - 1;
+                            } else {
+                                index -= 1;
+                            }
                         }
 
                         let range_to_select = ranges[index].clone();
+                        drop(buffer);
                         editor.select_ranges([range_to_select], Some(Autoscroll::Fit), cx);
                     }
                 });
@@ -668,6 +682,94 @@ mod tests {
 
         find_bar.update(&mut cx, |find_bar, cx| {
             find_bar.go_to_match(&GoToMatch(Direction::Next), cx);
+            assert_eq!(
+                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
+            );
+        });
+        find_bar.read_with(&cx, |find_bar, _| {
+            assert_eq!(find_bar.active_match_index, Some(0));
+        });
+
+        find_bar.update(&mut cx, |find_bar, cx| {
+            find_bar.go_to_match(&GoToMatch(Direction::Next), cx);
+            assert_eq!(
+                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
+            );
+        });
+        find_bar.read_with(&cx, |find_bar, _| {
+            assert_eq!(find_bar.active_match_index, Some(1));
+        });
+
+        find_bar.update(&mut cx, |find_bar, cx| {
+            find_bar.go_to_match(&GoToMatch(Direction::Next), cx);
+            assert_eq!(
+                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
+            );
+        });
+        find_bar.read_with(&cx, |find_bar, _| {
+            assert_eq!(find_bar.active_match_index, Some(2));
+        });
+
+        find_bar.update(&mut cx, |find_bar, cx| {
+            find_bar.go_to_match(&GoToMatch(Direction::Next), cx);
+            assert_eq!(
+                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
+            );
+        });
+        find_bar.read_with(&cx, |find_bar, _| {
+            assert_eq!(find_bar.active_match_index, Some(0));
+        });
+
+        find_bar.update(&mut cx, |find_bar, cx| {
+            find_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
+            assert_eq!(
+                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                [DisplayPoint::new(3, 56)..DisplayPoint::new(3, 58)]
+            );
+        });
+        find_bar.read_with(&cx, |find_bar, _| {
+            assert_eq!(find_bar.active_match_index, Some(2));
+        });
+
+        find_bar.update(&mut cx, |find_bar, cx| {
+            find_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
+            assert_eq!(
+                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                [DisplayPoint::new(3, 11)..DisplayPoint::new(3, 13)]
+            );
+        });
+        find_bar.read_with(&cx, |find_bar, _| {
+            assert_eq!(find_bar.active_match_index, Some(1));
+        });
+
+        find_bar.update(&mut cx, |find_bar, cx| {
+            find_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
+            assert_eq!(
+                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
+            );
+        });
+        find_bar.read_with(&cx, |find_bar, _| {
+            assert_eq!(find_bar.active_match_index, Some(0));
+        });
+
+        editor.update(&mut cx, |editor, cx| {
+            editor.select_display_ranges(&[DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0)], cx);
+        });
+        find_bar.update(&mut cx, |find_bar, cx| {
+            assert_eq!(find_bar.active_match_index, Some(1));
+            find_bar.go_to_match(&GoToMatch(Direction::Prev), cx);
+            assert_eq!(
+                editor.update(cx, |editor, cx| editor.selected_display_ranges(cx)),
+                [DisplayPoint::new(0, 41)..DisplayPoint::new(0, 43)]
+            );
+        });
+        find_bar.read_with(&cx, |find_bar, _| {
+            assert_eq!(find_bar.active_match_index, Some(0));
         });
     }
 }
