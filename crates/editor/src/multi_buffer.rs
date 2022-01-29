@@ -2788,7 +2788,8 @@ mod tests {
                         .map(|a| a.1)
                         .collect();
 
-                    // Ensure anchors point to a valid excerpt after refreshing them.
+                    // Ensure the newly-refreshed anchors point to a valid excerpt and don't
+                    // overshoot its boundaries.
                     let mut cursor = multibuffer.excerpts.cursor::<Option<&ExcerptId>>();
                     for anchor in &anchors {
                         if anchor.excerpt_id == ExcerptId::min()
