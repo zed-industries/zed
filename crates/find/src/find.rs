@@ -107,14 +107,16 @@ impl View for FindBar {
                 let (_, highlighted_ranges) =
                     editor.read(cx).highlighted_ranges_for_type::<Self>()?;
                 let match_ix = cmp::min(self.active_match_index? + 1, highlighted_ranges.len());
+                let message = if highlighted_ranges.is_empty() {
+                    "No matches".to_string()
+                } else {
+                    format!("{} of {}", match_ix, highlighted_ranges.len())
+                };
                 Some(
-                    Label::new(
-                        format!("{} of {}", match_ix, highlighted_ranges.len()),
-                        theme.match_index.text.clone(),
-                    )
-                    .contained()
-                    .with_style(theme.match_index.container)
-                    .boxed(),
+                    Label::new(message, theme.match_index.text.clone())
+                        .contained()
+                        .with_style(theme.match_index.container)
+                        .boxed(),
                 )
             }))
             .contained()
