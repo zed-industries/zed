@@ -432,7 +432,7 @@ impl FindBar {
                 Ordering::Equal
             }
         }) {
-            Ok(i) | Err(i) => Some(cmp::min(i, ranges.len() - 1)),
+            Ok(i) | Err(i) => Some(cmp::min(i, ranges.len().saturating_sub(1))),
         }
     }
 }
