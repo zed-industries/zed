@@ -19,7 +19,7 @@ use std::{
 };
 use workspace::{ItemViewHandle, Settings, Toolbar, Workspace};
 
-action!(Deploy);
+action!(Deploy, bool);
 action!(Cancel);
 action!(ToggleMode, SearchMode);
 action!(GoToMatch, Direction);
@@ -39,7 +39,8 @@ pub enum SearchMode {
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([
-        Binding::new("cmd-f", Deploy, Some("Editor && mode == full")),
+        Binding::new("cmd-f", Deploy(true), Some("Editor && mode == full")),
+        Binding::new("cmd-e", Deploy(false), Some("Editor && mode == full")),
         Binding::new("escape", Cancel, Some("FindBar")),
         Binding::new("enter", GoToMatch(Direction::Next), Some("FindBar")),
         Binding::new("shift-enter", GoToMatch(Direction::Prev), Some("FindBar")),
@@ -74,6 +75,9 @@ impl View for FindBar {
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
+        self.query_editor.update(cx, |query_editor, cx| {
+            query_editor.select_all(&editor::SelectAll, cx);
+        });
         cx.focus(&self.query_editor);
     }
 
@@ -195,7 +199,6 @@ impl FindBar {
                 let len = query_buffer.read(cx).len();
                 query_buffer.edit([0..len], query, cx);
             });
-            query_editor.select_ranges([0..query.len()], None, cx);
         });
     }
 
@@ -249,7 +252,7 @@ impl FindBar {
         .boxed()
     }
 
-    fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
+    fn deploy(workspace: &mut Workspace, Deploy(focus): &Deploy, cx: &mut ViewContext<Workspace>) {
         let settings = workspace.settings();
         workspace.active_pane().update(cx, |pane, cx| {
             pane.show_toolbar(cx, |cx| FindBar::new(settings, cx));
@@ -257,8 +260,6 @@ impl FindBar {
                 .active_toolbar()
                 .and_then(|toolbar| toolbar.downcast::<Self>())
             {
-                cx.focus(&find_bar);
-
                 if let Some(editor) = pane
                     .active_item()
                     .and_then(|editor| editor.act_as::<Editor>(cx))
@@ -270,7 +271,7 @@ impl FindBar {
                         .read(cx)
                         .newest_selection::<usize>(&display_map.buffer_snapshot);
 
-                    let text: String;
+                    let mut text: String;
                     if selection.start == selection.end {
                         let point = selection.start.to_display_point(&display_map);
                         let range = editor::movement::surrounding_word(&display_map, point);
@@ -278,7 +279,7 @@ impl FindBar {
                             ..range.end.to_offset(&display_map, Bias::Right);
                         text = display_map.buffer_snapshot.text_for_range(range).collect();
                         if text.trim().is_empty() {
-                            return;
+                            text = String::new();
                         }
                     } else {
                         text = display_map
@@ -287,7 +288,13 @@ impl FindBar {
                             .collect();
                     }
 
-                    find_bar.update(cx, |find_bar, cx| find_bar.set_query(&text, cx));
+                    if !text.is_empty() {
+                        find_bar.update(cx, |find_bar, cx| find_bar.set_query(&text, cx));
+                    }
+                }
+
+                if *focus {
+                    cx.focus(&find_bar);
                 }
             }
         });
