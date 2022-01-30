@@ -1091,6 +1091,11 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        if self.mode != EditorMode::Full {
+            cx.propagate_action();
+            return;
+        }
+
         if self.active_diagnostics.is_some() {
             self.dismiss_diagnostics(cx);
         } else if let Some(PendingSelection { selection, .. }) = self.pending_selection.take() {
