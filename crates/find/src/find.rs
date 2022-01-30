@@ -78,9 +78,6 @@ impl View for FindBar {
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {
-        self.query_editor.update(cx, |query_editor, cx| {
-            query_editor.select_all(&editor::SelectAll, cx);
-        });
         cx.focus(&self.query_editor);
     }
 
@@ -258,15 +255,18 @@ impl FindBar {
     fn deploy(workspace: &mut Workspace, Deploy(focus): &Deploy, cx: &mut ViewContext<Workspace>) {
         let settings = workspace.settings();
         workspace.active_pane().update(cx, |pane, cx| {
+            let findbar_was_visible = pane
+                .active_toolbar()
+                .map_or(false, |toolbar| toolbar.downcast::<Self>().is_some());
+
             pane.show_toolbar(cx, |cx| FindBar::new(settings, cx));
+
             if let Some(find_bar) = pane
                 .active_toolbar()
                 .and_then(|toolbar| toolbar.downcast::<Self>())
             {
-                if let Some(editor) = pane
-                    .active_item()
-                    .and_then(|editor| editor.act_as::<Editor>(cx))
-                {
+                if !findbar_was_visible {
+                    let editor = pane.active_item().unwrap().act_as::<Editor>(cx).unwrap();
                     let display_map = editor
                         .update(cx, |editor, cx| editor.snapshot(cx))
                         .display_snapshot;
@@ -297,6 +297,12 @@ impl FindBar {
                 }
 
                 if *focus {
+                    if !findbar_was_visible {
+                        let query_editor = find_bar.read(cx).query_editor.clone();
+                        query_editor.update(cx, |query_editor, cx| {
+                            query_editor.select_all(&editor::SelectAll, cx);
+                        });
+                    }
                     cx.focus(&find_bar);
                 }
             }
