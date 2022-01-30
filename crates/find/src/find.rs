@@ -38,6 +38,8 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([
         Binding::new("cmd-f", Deploy, Some("Editor && mode == full")),
         Binding::new("escape", Cancel, Some("FindBar")),
+        Binding::new("enter", GoToMatch(Direction::Next), Some("FindBar")),
+        Binding::new("shift-enter", GoToMatch(Direction::Prev), Some("FindBar")),
     ]);
     cx.add_action(FindBar::deploy);
     cx.add_action(FindBar::cancel);
