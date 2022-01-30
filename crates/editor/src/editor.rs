@@ -47,7 +47,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use sum_tree::Bias;
+pub use sum_tree::Bias;
 use text::rope::TextDimension;
 use theme::{DiagnosticStyle, EditorStyle};
 use util::post_inc;

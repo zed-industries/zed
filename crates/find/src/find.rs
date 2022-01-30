@@ -1,7 +1,10 @@
 use aho_corasick::AhoCorasickBuilder;
 use anyhow::Result;
 use collections::HashSet;
-use editor::{char_kind, Anchor, Autoscroll, Editor, EditorSettings, MultiBufferSnapshot};
+use editor::{
+    char_kind, display_map::ToDisplayPoint, Anchor, Autoscroll, Bias, Editor, EditorSettings,
+    MultiBufferSnapshot,
+};
 use gpui::{
     action, elements::*, keymap::Binding, Entity, MutableAppContext, RenderContext, Subscription,
     Task, View, ViewContext, ViewHandle, WeakViewHandle,
@@ -186,13 +189,13 @@ impl FindBar {
         }
     }
 
-    #[cfg(test)]
     fn set_query(&mut self, query: &str, cx: &mut ViewContext<Self>) {
         self.query_editor.update(cx, |query_editor, cx| {
             query_editor.buffer().update(cx, |query_buffer, cx| {
                 let len = query_buffer.read(cx).len();
                 query_buffer.edit([0..len], query, cx);
             });
+            query_editor.select_ranges([0..query.len()], None, cx);
         });
     }
 
@@ -250,8 +253,42 @@ impl FindBar {
         let settings = workspace.settings();
         workspace.active_pane().update(cx, |pane, cx| {
             pane.show_toolbar(cx, |cx| FindBar::new(settings, cx));
-            if let Some(toolbar) = pane.active_toolbar() {
-                cx.focus(toolbar);
+            if let Some(find_bar) = pane
+                .active_toolbar()
+                .and_then(|toolbar| toolbar.downcast::<Self>())
+            {
+                cx.focus(&find_bar);
+
+                if let Some(editor) = pane
+                    .active_item()
+                    .and_then(|editor| editor.act_as::<Editor>(cx))
+                {
+                    let display_map = editor
+                        .update(cx, |editor, cx| editor.snapshot(cx))
+                        .display_snapshot;
+                    let selection = editor
+                        .read(cx)
+                        .newest_selection::<usize>(&display_map.buffer_snapshot);
+
+                    let text: String;
+                    if selection.start == selection.end {
+                        let point = selection.start.to_display_point(&display_map);
+                        let range = editor::movement::surrounding_word(&display_map, point);
+                        let range = range.start.to_offset(&display_map, Bias::Left)
+                            ..range.end.to_offset(&display_map, Bias::Right);
+                        text = display_map.buffer_snapshot.text_for_range(range).collect();
+                        if text.trim().is_empty() {
+                            return;
+                        }
+                    } else {
+                        text = display_map
+                            .buffer_snapshot
+                            .text_for_range(selection.start..selection.end)
+                            .collect();
+                    }
+
+                    find_bar.update(cx, |find_bar, cx| find_bar.set_query(&text, cx));
+                }
             }
         });
     }
