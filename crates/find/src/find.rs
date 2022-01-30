@@ -21,6 +21,7 @@ use workspace::{ItemViewHandle, Settings, Toolbar, Workspace};
 
 action!(Deploy, bool);
 action!(Cancel);
+action!(FocusEditor);
 action!(ToggleMode, SearchMode);
 action!(GoToMatch, Direction);
 
@@ -42,11 +43,13 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("cmd-f", Deploy(true), Some("Editor && mode == full")),
         Binding::new("cmd-e", Deploy(false), Some("Editor && mode == full")),
         Binding::new("escape", Cancel, Some("FindBar")),
+        Binding::new("cmd-f", FocusEditor, Some("FindBar")),
         Binding::new("enter", GoToMatch(Direction::Next), Some("FindBar")),
         Binding::new("shift-enter", GoToMatch(Direction::Prev), Some("FindBar")),
     ]);
     cx.add_action(FindBar::deploy);
     cx.add_action(FindBar::cancel);
+    cx.add_action(FindBar::focus_editor);
     cx.add_action(FindBar::toggle_mode);
     cx.add_action(FindBar::go_to_match);
 }
@@ -304,6 +307,12 @@ impl FindBar {
         workspace
             .active_pane()
             .update(cx, |pane, cx| pane.hide_toolbar(cx));
+    }
+
+    fn focus_editor(&mut self, _: &FocusEditor, cx: &mut ViewContext<Self>) {
+        if let Some(active_editor) = self.active_editor.as_ref() {
+            cx.focus(active_editor);
+        }
     }
 
     fn is_mode_enabled(&self, mode: SearchMode) -> bool {
