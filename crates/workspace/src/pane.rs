@@ -385,6 +385,8 @@ impl Pane {
             self.update_active_toolbar(cx);
             cx.emit(Event::Remove);
         }
+
+        cx.notify();
     }
 
     fn focus_active_item(&mut self, cx: &mut ViewContext<Self>) {
