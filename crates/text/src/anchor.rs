@@ -42,6 +42,14 @@ impl Anchor {
             .then_with(|| self.bias.cmp(&other.bias)))
     }
 
+    pub fn bias(&self, bias: Bias, buffer: &BufferSnapshot) -> Anchor {
+        if bias == Bias::Left {
+            self.bias_left(buffer)
+        } else {
+            self.bias_right(buffer)
+        }
+    }
+
     pub fn bias_left(&self, buffer: &BufferSnapshot) -> Anchor {
         if self.bias == Bias::Left {
             self.clone()
