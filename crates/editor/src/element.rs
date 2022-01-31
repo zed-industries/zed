@@ -981,10 +981,16 @@ impl Element for EditorElement {
         &mut self,
         event: &Event,
         _: RectF,
-        layout: &mut Self::LayoutState,
-        paint: &mut Self::PaintState,
+        layout: &mut LayoutState,
+        paint: &mut PaintState,
         cx: &mut EventContext,
     ) -> bool {
+        if let Some((_, completion_list)) = &mut layout.completions {
+            if completion_list.dispatch_event(event, cx) {
+                return true;
+            }
+        }
+
         match event {
             Event::LeftMouseDown {
                 position,
