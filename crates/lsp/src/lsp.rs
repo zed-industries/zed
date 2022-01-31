@@ -232,6 +232,15 @@ impl LanguageServer {
                         link_support: Some(true),
                         ..Default::default()
                     }),
+                    completion: Some(CompletionClientCapabilities {
+                        completion_item: Some(CompletionItemCapability {
+                            resolve_support: Some(CompletionItemCapabilityResolveSupport {
+                                properties: vec!["additionalTextEdits".to_string()],
+                            }),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
                     ..Default::default()
                 }),
                 experimental: Some(json!({
