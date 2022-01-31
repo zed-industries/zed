@@ -92,6 +92,7 @@ pub trait Toolbar: View {
         item: Option<Box<dyn ItemViewHandle>>,
         cx: &mut ViewContext<Self>,
     ) -> bool;
+    fn on_dismiss(&mut self, cx: &mut ViewContext<Self>);
 }
 
 trait ToolbarHandle {
@@ -100,6 +101,7 @@ trait ToolbarHandle {
         item: Option<Box<dyn ItemViewHandle>>,
         cx: &mut MutableAppContext,
     ) -> bool;
+    fn on_dismiss(&self, cx: &mut MutableAppContext);
     fn to_any(&self) -> AnyViewHandle;
 }
 
@@ -401,20 +403,31 @@ impl Pane {
         V: Toolbar,
     {
         let type_id = TypeId::of::<V>();
-        let active_item = self.active_item();
-        self.toolbars
-            .entry(type_id)
-            .or_insert_with(|| Box::new(cx.add_view(build_toolbar)));
-        self.active_toolbar_type = Some(type_id);
-        self.active_toolbar_visible = self.toolbars[&type_id].active_item_changed(active_item, cx);
-        cx.notify();
+        if self.active_toolbar_type != Some(type_id) {
+            self.dismiss_toolbar(cx);
+
+            let active_item = self.active_item();
+            self.toolbars
+                .entry(type_id)
+                .or_insert_with(|| Box::new(cx.add_view(build_toolbar)));
+
+            self.active_toolbar_type = Some(type_id);
+            self.active_toolbar_visible =
+                self.toolbars[&type_id].active_item_changed(active_item, cx);
+            cx.notify();
+        }
     }
 
-    pub fn hide_toolbar(&mut self, cx: &mut ViewContext<Self>) {
-        self.active_toolbar_type = None;
-        self.active_toolbar_visible = false;
-        self.focus_active_item(cx);
-        cx.notify();
+    pub fn dismiss_toolbar(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(active_toolbar_type) = self.active_toolbar_type.take() {
+            self.toolbars
+                .get_mut(&active_toolbar_type)
+                .unwrap()
+                .on_dismiss(cx);
+            self.active_toolbar_visible = false;
+            self.focus_active_item(cx);
+            cx.notify();
+        }
     }
 
     pub fn toolbar<T: Toolbar>(&self) -> Option<ViewHandle<T>> {
@@ -437,7 +450,9 @@ impl Pane {
         if let Some(type_id) = self.active_toolbar_type {
             if let Some(toolbar) = self.toolbars.get(&type_id) {
                 self.active_toolbar_visible = toolbar.active_item_changed(
-                    Some(self.item_views[self.active_item_index].1.clone()),
+                    self.item_views
+                        .get(self.active_item_index)
+                        .map(|i| i.1.clone()),
                     cx,
                 );
             }
@@ -619,6 +634,10 @@ impl<T: Toolbar> ToolbarHandle for ViewHandle<T> {
         cx: &mut MutableAppContext,
     ) -> bool {
         self.update(cx, |this, cx| this.active_item_changed(item, cx))
+    }
+
+    fn on_dismiss(&self, cx: &mut MutableAppContext) {
+        self.update(cx, |this, cx| this.on_dismiss(cx));
     }
 
     fn to_any(&self) -> AnyViewHandle {

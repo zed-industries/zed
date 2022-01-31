@@ -20,7 +20,7 @@ use std::{
 use workspace::{ItemViewHandle, Pane, Settings, Toolbar, Workspace};
 
 action!(Deploy, bool);
-action!(Cancel);
+action!(Dismiss);
 action!(FocusEditor);
 action!(ToggleMode, SearchMode);
 action!(GoToMatch, Direction);
@@ -42,7 +42,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([
         Binding::new("cmd-f", Deploy(true), Some("Editor && mode == full")),
         Binding::new("cmd-e", Deploy(false), Some("Editor && mode == full")),
-        Binding::new("escape", Cancel, Some("FindBar")),
+        Binding::new("escape", Dismiss, Some("FindBar")),
         Binding::new("cmd-f", FocusEditor, Some("FindBar")),
         Binding::new("enter", GoToMatch(Direction::Next), Some("FindBar")),
         Binding::new("shift-enter", GoToMatch(Direction::Prev), Some("FindBar")),
@@ -50,7 +50,7 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("cmd-shift-G", GoToMatch(Direction::Prev), Some("Pane")),
     ]);
     cx.add_action(FindBar::deploy);
-    cx.add_action(FindBar::cancel);
+    cx.add_action(FindBar::dismiss);
     cx.add_action(FindBar::focus_editor);
     cx.add_action(FindBar::toggle_mode);
     cx.add_action(FindBar::go_to_match);
@@ -156,6 +156,14 @@ impl Toolbar for FindBar {
         } else {
             false
         }
+    }
+
+    fn on_dismiss(&mut self, cx: &mut ViewContext<Self>) {
+        self.active_editor.take();
+        self.active_editor_subscription.take();
+        self.active_match_index.take();
+        self.pending_search.take();
+        self.clear_matches(cx);
     }
 }
 
@@ -312,10 +320,10 @@ impl FindBar {
         });
     }
 
-    fn cancel(workspace: &mut Workspace, _: &Cancel, cx: &mut ViewContext<Workspace>) {
+    fn dismiss(workspace: &mut Workspace, _: &Dismiss, cx: &mut ViewContext<Workspace>) {
         workspace
             .active_pane()
-            .update(cx, |pane, cx| pane.hide_toolbar(cx));
+            .update(cx, |pane, cx| pane.dismiss_toolbar(cx));
     }
 
     fn focus_editor(&mut self, _: &FocusEditor, cx: &mut ViewContext<Self>) {
@@ -403,16 +411,8 @@ impl FindBar {
     ) {
         match event {
             editor::Event::Edited => {
-                for editor in self.highlighted_editors.drain() {
-                    if let Some(editor) = editor.upgrade(cx) {
-                        if Some(&editor) != self.active_editor.as_ref() {
-                            editor.update(cx, |editor, cx| {
-                                editor.clear_highlighted_ranges::<Self>(cx)
-                            });
-                        }
-                    }
-                }
                 self.query_contains_error = false;
+                self.clear_matches(cx);
                 self.update_matches(cx);
                 cx.notify();
             }
@@ -430,6 +430,16 @@ impl FindBar {
             editor::Event::Edited => self.update_matches(cx),
             editor::Event::SelectionsChanged => self.update_match_index(cx),
             _ => {}
+        }
+    }
+
+    fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
+        for editor in self.highlighted_editors.drain() {
+            if let Some(editor) = editor.upgrade(cx) {
+                if Some(&editor) != self.active_editor.as_ref() {
+                    editor.update(cx, |editor, cx| editor.clear_highlighted_ranges::<Self>(cx));
+                }
+            }
         }
     }
 
