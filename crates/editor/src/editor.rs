@@ -117,6 +117,7 @@ action!(Unfold);
 action!(FoldSelectedRanges);
 action!(Scroll, Vector2F);
 action!(Select, SelectPhase);
+action!(ShowAutocomplete);
 
 pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpener>>) {
     path_openers.push(Box::new(items::BufferOpener));
@@ -224,6 +225,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
         Binding::new("alt-cmd-[", Fold, Some("Editor")),
         Binding::new("alt-cmd-]", Unfold, Some("Editor")),
         Binding::new("alt-cmd-f", FoldSelectedRanges, Some("Editor")),
+        Binding::new("ctrl-shift-A", ShowAutocomplete, Some("Editor")),
     ]);
 
     cx.add_action(Editor::open_new);
@@ -287,6 +289,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_action(Editor::fold);
     cx.add_action(Editor::unfold);
     cx.add_action(Editor::fold_selected_ranges);
+    cx.add_action(Editor::show_autocomplete);
 }
 
 trait SelectionExt {
@@ -1493,6 +1496,15 @@ impl Editor {
         } else {
             false
         }
+    }
+
+    fn show_autocomplete(&mut self, _: &ShowAutocomplete, cx: &mut ViewContext<Self>) {
+        let position = self
+            .newest_selection::<usize>(&self.buffer.read(cx).read(cx))
+            .head();
+        self.buffer
+            .update(cx, |buffer, cx| buffer.completions(position, cx))
+            .detach_and_log_err(cx);
     }
 
     pub fn clear(&mut self, cx: &mut ViewContext<Self>) {

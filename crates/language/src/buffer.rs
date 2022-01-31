@@ -12,6 +12,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use futures::FutureExt as _;
+use fuzzy::StringMatchCandidate;
 use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
 use lsp::LanguageServer;
@@ -112,6 +113,12 @@ pub struct Diagnostic {
     pub is_valid: bool,
     pub is_primary: bool,
     pub is_disk_based: bool,
+}
+
+pub struct Completion {
+    old_range: Range<Anchor>,
+    new_text: String,
+    lsp_completion: lsp::CompletionItem,
 }
 
 struct LanguageServerState {
@@ -1609,6 +1616,96 @@ impl Buffer {
             true
         } else {
             false
+        }
+    }
+
+    pub fn completions<T>(
+        &self,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Completion>>>
+    where
+        T: ToOffset,
+    {
+        let file = if let Some(file) = self.file.as_ref() {
+            file
+        } else {
+            return Task::ready(Ok(Default::default()));
+        };
+
+        if let Some(file) = file.as_local() {
+            let server = if let Some(lang) = self.language_server.as_ref() {
+                lang.server.clone()
+            } else {
+                return Task::ready(Ok(Default::default()));
+            };
+            let abs_path = file.abs_path(cx);
+            let position = self.offset_to_point_utf16(position.to_offset(self));
+
+            cx.spawn(|this, mut cx| async move {
+                let t0 = Instant::now();
+                let completions = server
+                    .request::<lsp::request::Completion>(lsp::CompletionParams {
+                        text_document_position: lsp::TextDocumentPositionParams::new(
+                            lsp::TextDocumentIdentifier::new(
+                                lsp::Url::from_file_path(abs_path).unwrap(),
+                            ),
+                            position.to_lsp_position(),
+                        ),
+                        context: Default::default(),
+                        work_done_progress_params: Default::default(),
+                        partial_result_params: Default::default(),
+                    })
+                    .await?;
+                dbg!("completions", t0.elapsed());
+                // fuzzy::match_strings(candidates, query, smart_case, max_results, cancel_flag, background)
+
+                let mut completions = if let Some(completions) = completions {
+                    match completions {
+                        lsp::CompletionResponse::Array(completions) => completions,
+                        lsp::CompletionResponse::List(list) => list.items,
+                    }
+                } else {
+                    Default::default()
+                };
+
+                this.update(&mut cx, |this, cx| {
+                    this.edit([0..0], "use std::sync::Arc;\n", cx)
+                });
+
+                let mut futures = Vec::new();
+                for completion in completions {
+                    futures.push(server.request::<lsp::request::ResolveCompletionItem>(completion));
+                }
+
+                let completions = futures::future::try_join_all(futures).await?;
+                dbg!("resolution", t0.elapsed(), completions);
+                // let candidates = completions
+                //     .iter()
+                //     .enumerate()
+                //     .map(|(id, completion)| {
+                //         let text = completion
+                //             .filter_text
+                //             .clone()
+                //             .unwrap_or_else(|| completion.label.clone());
+                //         StringMatchCandidate::new(id, text)
+                //     })
+                //     .collect::<Vec<_>>();
+                // let matches = fuzzy::match_strings(
+                //     &candidates,
+                //     "Arc",
+                //     false,
+                //     100,
+                //     &Default::default(),
+                //     cx.background(),
+                // )
+                // .await;
+                // dbg!(matches);
+
+                Ok(Default::default())
+            })
+        } else {
+            Task::ready(Ok(Default::default()))
         }
     }
 }

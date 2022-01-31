@@ -5,6 +5,7 @@ use anyhow::Result;
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
+pub use language::Completion;
 use language::{
     Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Outline,
     OutlineItem, Selection, ToOffset as _, ToPoint as _, TransactionId,
@@ -845,6 +846,18 @@ impl MultiBuffer {
             }
             Ok(())
         })
+    }
+
+    pub fn completions<T>(
+        &self,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Completion>>>
+    where
+        T: ToOffset,
+    {
+        let (buffer, text_anchor) = self.text_anchor_for_position(position, cx);
+        buffer.update(cx, |buffer, cx| buffer.completions(text_anchor, cx))
     }
 
     pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
