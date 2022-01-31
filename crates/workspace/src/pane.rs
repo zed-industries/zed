@@ -417,6 +417,12 @@ impl Pane {
         cx.notify();
     }
 
+    pub fn toolbar<T: Toolbar>(&self) -> Option<ViewHandle<T>> {
+        self.toolbars
+            .get(&TypeId::of::<T>())
+            .and_then(|toolbar| toolbar.to_any().downcast())
+    }
+
     pub fn active_toolbar(&self) -> Option<AnyViewHandle> {
         let type_id = self.active_toolbar_type?;
         let toolbar = self.toolbars.get(&type_id)?;

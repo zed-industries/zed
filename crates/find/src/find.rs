@@ -17,7 +17,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use workspace::{ItemViewHandle, Settings, Toolbar, Workspace};
+use workspace::{ItemViewHandle, Pane, Settings, Toolbar, Workspace};
 
 action!(Deploy, bool);
 action!(Cancel);
@@ -46,12 +46,15 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("cmd-f", FocusEditor, Some("FindBar")),
         Binding::new("enter", GoToMatch(Direction::Next), Some("FindBar")),
         Binding::new("shift-enter", GoToMatch(Direction::Prev), Some("FindBar")),
+        Binding::new("cmd-g", GoToMatch(Direction::Next), Some("Pane")),
+        Binding::new("cmd-shift-G", GoToMatch(Direction::Prev), Some("Pane")),
     ]);
     cx.add_action(FindBar::deploy);
     cx.add_action(FindBar::cancel);
     cx.add_action(FindBar::focus_editor);
     cx.add_action(FindBar::toggle_mode);
     cx.add_action(FindBar::go_to_match);
+    cx.add_action(FindBar::go_to_match_on_pane);
 }
 
 struct FindBar {
@@ -383,6 +386,12 @@ impl FindBar {
                     }
                 });
             }
+        }
+    }
+
+    fn go_to_match_on_pane(pane: &mut Pane, action: &GoToMatch, cx: &mut ViewContext<Pane>) {
+        if let Some(find_bar) = pane.toolbar::<FindBar>() {
+            find_bar.update(cx, |find_bar, cx| find_bar.go_to_match(action, cx));
         }
     }
 
