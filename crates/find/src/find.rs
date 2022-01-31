@@ -6,8 +6,8 @@ use editor::{
     MultiBufferSnapshot,
 };
 use gpui::{
-    action, elements::*, keymap::Binding, Entity, MutableAppContext, RenderContext, Subscription,
-    Task, View, ViewContext, ViewHandle, WeakViewHandle,
+    action, elements::*, keymap::Binding, platform::CursorStyle, Entity, MutableAppContext,
+    RenderContext, Subscription, Task, View, ViewContext, ViewHandle, WeakViewHandle,
 };
 use postage::watch;
 use regex::RegexBuilder;
@@ -85,34 +85,30 @@ impl View for FindBar {
     }
 
     fn render(&mut self, cx: &mut RenderContext<Self>) -> ElementBox {
-        let theme = &self.settings.borrow().theme.find;
+        let theme = &self.settings.borrow().theme;
         let editor_container = if self.query_contains_error {
-            theme.invalid_editor
+            theme.find.invalid_editor
         } else {
-            theme.editor.input.container
+            theme.find.editor.input.container
         };
         Flex::row()
             .with_child(
                 ChildView::new(&self.query_editor)
                     .contained()
                     .with_style(editor_container)
+                    .aligned()
                     .constrained()
-                    .with_max_width(theme.editor.max_width)
+                    .with_max_width(theme.find.editor.max_width)
                     .boxed(),
             )
             .with_child(
                 Flex::row()
-                    .with_child(self.render_mode_button("Aa", SearchMode::CaseSensitive, theme, cx))
-                    .with_child(self.render_mode_button("|ab|", SearchMode::WholeWord, theme, cx))
-                    .with_child(self.render_mode_button(".*", SearchMode::Regex, theme, cx))
+                    .with_child(self.render_mode_button("Case", SearchMode::CaseSensitive, cx))
+                    .with_child(self.render_mode_button("Word", SearchMode::WholeWord, cx))
+                    .with_child(self.render_mode_button("Regex", SearchMode::Regex, cx))
                     .contained()
-                    .with_style(theme.mode_button_group)
-                    .boxed(),
-            )
-            .with_child(
-                Flex::row()
-                    .with_child(self.render_nav_button("<", Direction::Prev, theme, cx))
-                    .with_child(self.render_nav_button(">", Direction::Next, theme, cx))
+                    .with_style(theme.find.mode_button_group)
+                    .aligned()
                     .boxed(),
             )
             .with_children(self.active_editor.as_ref().and_then(|editor| {
@@ -122,18 +118,28 @@ impl View for FindBar {
                 let message = if highlighted_ranges.is_empty() {
                     "No matches".to_string()
                 } else {
-                    format!("{} of {}", match_ix, highlighted_ranges.len())
+                    format!("{}/{}", match_ix, highlighted_ranges.len())
                 };
                 Some(
-                    Label::new(message, theme.match_index.text.clone())
+                    Label::new(message, theme.find.match_index.text.clone())
                         .contained()
-                        .with_style(theme.match_index.container)
+                        .with_style(theme.find.match_index.container)
+                        .aligned()
                         .boxed(),
                 )
             }))
+            .with_child(
+                Flex::row()
+                    .with_child(self.render_nav_button("<", Direction::Prev, cx))
+                    .with_child(self.render_nav_button(">", Direction::Next, cx))
+                    .aligned()
+                    .boxed(),
+            )
             .contained()
-            .with_style(theme.container)
-            .boxed()
+            .with_style(theme.find.container)
+            .constrained()
+            .with_height(theme.workspace.toolbar.height)
+            .named("find bar")
     }
 }
 
@@ -217,9 +223,9 @@ impl FindBar {
         &self,
         icon: &str,
         mode: SearchMode,
-        theme: &theme::Find,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
+        let theme = &self.settings.borrow().theme.find;
         let is_active = self.is_mode_enabled(mode);
         MouseEventHandler::new::<Self, _, _, _>((cx.view_id(), mode as usize), cx, |state, _| {
             let style = match (is_active, state.hovered) {
@@ -234,6 +240,7 @@ impl FindBar {
                 .boxed()
         })
         .on_click(move |cx| cx.dispatch_action(ToggleMode(mode)))
+        .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
     }
 
@@ -241,9 +248,9 @@ impl FindBar {
         &self,
         icon: &str,
         direction: Direction,
-        theme: &theme::Find,
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
+        let theme = &self.settings.borrow().theme.find;
         MouseEventHandler::new::<Self, _, _, _>(
             (cx.view_id(), 10 + direction as usize),
             cx,
@@ -260,6 +267,7 @@ impl FindBar {
             },
         )
         .on_click(move |cx| cx.dispatch_action(GoToMatch(direction)))
+        .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
     }
 

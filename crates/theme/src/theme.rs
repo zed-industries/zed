@@ -38,6 +38,7 @@ pub struct Workspace {
     pub left_sidebar: Sidebar,
     pub right_sidebar: Sidebar,
     pub status_bar: StatusBar,
+    pub toolbar: Toolbar,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -86,6 +87,11 @@ pub struct Tab {
     pub icon_close_active: Color,
     pub icon_dirty: Color,
     pub icon_conflict: Color,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Toolbar {
+    pub height: f32,
 }
 
 #[derive(Clone, Deserialize, Default)]
