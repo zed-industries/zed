@@ -114,12 +114,12 @@ impl View for FindBar {
             .with_children(self.active_editor.as_ref().and_then(|editor| {
                 let (_, highlighted_ranges) =
                     editor.read(cx).highlighted_ranges_for_type::<Self>()?;
-                let match_ix = cmp::min(self.active_match_index? + 1, highlighted_ranges.len());
-                let message = if highlighted_ranges.is_empty() {
-                    "No matches".to_string()
+                let message = if let Some(match_ix) = self.active_match_index {
+                    format!("{}/{}", match_ix + 1, highlighted_ranges.len())
                 } else {
-                    format!("{}/{}", match_ix, highlighted_ranges.len())
+                    "No matches".to_string()
                 };
+
                 Some(
                     Label::new(message, theme.find.match_index.text.clone())
                         .contained()

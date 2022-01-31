@@ -330,6 +330,7 @@ background = "$surface.1"
 extends = "$text.1"
 padding = { left = 6, right = 6, top = 1, bottom = 1 }
 corner_radius = 6
+background = "$surface.1"
 border = { width = 1, color = "$border.0" }
 margin.left = 1
 margin.right = 1
