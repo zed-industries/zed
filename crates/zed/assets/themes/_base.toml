@@ -319,6 +319,10 @@ background = "$surface.2"
 border = { width = 1, color = "$border.1" }
 item.padding = 2
 
+[editor.autocomplete.selected_item]
+extends = "$editor.autocomplete.item"
+background = "$state.hover"
+
 [project_diagnostics]
 background = "$surface.1"
 empty_message = { extends = "$text.0", size = 18 }

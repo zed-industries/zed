@@ -426,6 +426,7 @@ struct BracketPairState {
 
 struct CompletionState {
     completions: Arc<[Completion]>,
+    selected_item: usize,
     list: UniformListState,
 }
 
@@ -1520,6 +1521,7 @@ impl Editor {
                 this.update(&mut cx, |this, cx| {
                     this.completion_state = Some(CompletionState {
                         completions: completions.into(),
+                        selected_item: 0,
                         list: Default::default(),
                     });
                     cx.notify();
@@ -1540,16 +1542,23 @@ impl Editor {
             let build_settings = self.build_settings.clone();
             let settings = build_settings(cx);
             let completions = state.completions.clone();
+            let selected_item = state.selected_item;
             UniformList::new(
                 state.list.clone(),
                 state.completions.len(),
                 move |range, items, cx| {
                     let settings = build_settings(cx);
-                    for completion in &completions[range] {
+                    let start_ix = range.start;
+                    for (ix, completion) in completions[range].iter().enumerate() {
+                        let item_style = if start_ix + ix == selected_item {
+                            settings.style.autocomplete.selected_item
+                        } else {
+                            settings.style.autocomplete.item
+                        };
                         items.push(
                             Label::new(completion.label().to_string(), settings.style.text.clone())
                                 .contained()
-                                .with_style(settings.style.autocomplete.item)
+                                .with_style(item_style)
                                 .boxed(),
                         );
                     }
@@ -2256,6 +2265,17 @@ impl Editor {
     }
 
     pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
+        if let Some(completion_state) = &mut self.completion_state {
+            if completion_state.selected_item > 0 {
+                completion_state.selected_item -= 1;
+                completion_state
+                    .list
+                    .scroll_to(ScrollTarget::Show(completion_state.selected_item));
+            }
+            cx.notify();
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
             return;
@@ -2294,6 +2314,17 @@ impl Editor {
     }
 
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
+        if let Some(completion_state) = &mut self.completion_state {
+            if completion_state.selected_item + 1 < completion_state.completions.len() {
+                completion_state.selected_item += 1;
+                completion_state
+                    .list
+                    .scroll_to(ScrollTarget::Show(completion_state.selected_item));
+            }
+            cx.notify();
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
             return;

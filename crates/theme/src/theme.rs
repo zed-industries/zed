@@ -327,6 +327,7 @@ pub struct AutocompleteStyle {
     #[serde(flatten)]
     pub container: ContainerStyle,
     pub item: ContainerStyle,
+    pub selected_item: ContainerStyle,
 }
 
 #[derive(Clone, Copy, Default, Deserialize)]
