@@ -289,7 +289,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_action(Editor::fold);
     cx.add_action(Editor::unfold);
     cx.add_action(Editor::fold_selected_ranges);
-    cx.add_action(Editor::show_autocomplete);
+    cx.add_action(Editor::show_completions);
 }
 
 trait SelectionExt {
@@ -1505,7 +1505,7 @@ impl Editor {
         }
     }
 
-    fn show_autocomplete(&mut self, _: &ShowAutocomplete, cx: &mut ViewContext<Self>) {
+    fn show_completions(&mut self, _: &ShowAutocomplete, cx: &mut ViewContext<Self>) {
         let position = self
             .newest_selection::<usize>(&self.buffer.read(cx).read(cx))
             .head();
@@ -1531,6 +1531,10 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
+    pub fn has_completions(&self) -> bool {
+        self.completion_state.is_some()
+    }
+
     pub fn render_completions(&self) -> Option<ElementBox> {
         self.completion_state.as_ref().map(|state| {
             let build_settings = self.build_settings.clone();
@@ -1542,7 +1546,8 @@ impl Editor {
                     let settings = build_settings(cx);
                     for completion in &completions[range] {
                         items.push(
-                            Label::new(completion.label().to_string(), settings.style.text.clone()).boxed(),
+                            Label::new(completion.label().to_string(), settings.style.text.clone())
+                                .boxed(),
                         );
                     }
                 },
