@@ -39,6 +39,10 @@ pub trait ToPointUtf16 {
     fn to_point_utf16(self) -> PointUtf16;
 }
 
+pub trait ToLspPosition {
+    fn to_lsp_position(self) -> lsp::Position;
+}
+
 pub trait DiagnosticProcessor: 'static + Send + Sync {
     fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams);
 }
@@ -283,6 +287,12 @@ impl LanguageServerConfig {
 impl ToPointUtf16 for lsp::Position {
     fn to_point_utf16(self) -> PointUtf16 {
         PointUtf16::new(self.line, self.character)
+    }
+}
+
+impl ToLspPosition for PointUtf16 {
+    fn to_lsp_position(self) -> lsp::Position {
+        lsp::Position::new(self.row, self.column)
     }
 }
 

@@ -7,7 +7,7 @@ pub use crate::{
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
     outline::OutlineItem,
-    range_from_lsp, Outline,
+    range_from_lsp, Outline, ToLspPosition,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
@@ -589,14 +589,8 @@ impl Buffer {
                                                     .collect();
                                                 lsp::TextDocumentContentChangeEvent {
                                                     range: Some(lsp::Range::new(
-                                                        lsp::Position::new(
-                                                            edit_start.row,
-                                                            edit_start.column,
-                                                        ),
-                                                        lsp::Position::new(
-                                                            edit_end.row,
-                                                            edit_end.column,
-                                                        ),
+                                                        edit_start.to_lsp_position(),
+                                                        edit_end.to_lsp_position(),
                                                     )),
                                                     range_length: None,
                                                     text: new_text,

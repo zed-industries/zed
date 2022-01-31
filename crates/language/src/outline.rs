@@ -45,16 +45,8 @@ impl<T> Outline<T> {
                 .map(|range| &item.text[range.start as usize..range.end as usize])
                 .collect::<String>();
 
-            path_candidates.push(StringMatchCandidate {
-                id,
-                char_bag: path_text.as_str().into(),
-                string: path_text.clone(),
-            });
-            candidates.push(StringMatchCandidate {
-                id,
-                char_bag: candidate_text.as_str().into(),
-                string: candidate_text,
-            });
+            path_candidates.push(StringMatchCandidate::new(id, path_text.clone()));
+            candidates.push(StringMatchCandidate::new(id, candidate_text));
         }
 
         Self {
