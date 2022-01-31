@@ -114,10 +114,10 @@ pub struct Diagnostic {
     pub is_disk_based: bool,
 }
 
-pub struct Completion {
-    old_range: Range<Anchor>,
-    new_text: String,
-    lsp_completion: lsp::CompletionItem,
+pub struct Completion<T> {
+    pub old_range: Range<T>,
+    pub new_text: String,
+    pub lsp_completion: lsp::CompletionItem,
 }
 
 struct LanguageServerState {
@@ -1622,7 +1622,7 @@ impl Buffer {
         &self,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<Completion>>>
+    ) -> Task<Result<Vec<Completion<Anchor>>>>
     where
         T: ToOffset,
     {
@@ -2424,7 +2424,7 @@ impl Default for Diagnostic {
     }
 }
 
-impl Completion {
+impl<T> Completion<T> {
     pub fn label(&self) -> &str {
         &self.lsp_completion.label
     }

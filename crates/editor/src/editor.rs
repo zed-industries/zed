@@ -117,7 +117,8 @@ action!(Unfold);
 action!(FoldSelectedRanges);
 action!(Scroll, Vector2F);
 action!(Select, SelectPhase);
-action!(ShowAutocomplete);
+action!(ShowCompletions);
+action!(ConfirmCompletion);
 
 pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpener>>) {
     path_openers.push(Box::new(items::BufferOpener));
@@ -133,6 +134,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
             Input("\n".into()),
             Some("Editor && mode == auto_height"),
         ),
+        Binding::new("enter", ConfirmCompletion, Some("Editor && completing")),
         Binding::new("tab", Tab, Some("Editor")),
         Binding::new("shift-tab", Outdent, Some("Editor")),
         Binding::new("ctrl-shift-K", DeleteLine, Some("Editor")),
@@ -225,7 +227,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
         Binding::new("alt-cmd-[", Fold, Some("Editor")),
         Binding::new("alt-cmd-]", Unfold, Some("Editor")),
         Binding::new("alt-cmd-f", FoldSelectedRanges, Some("Editor")),
-        Binding::new("ctrl-space", ShowAutocomplete, Some("Editor")),
+        Binding::new("ctrl-space", ShowCompletions, Some("Editor")),
     ]);
 
     cx.add_action(Editor::open_new);
@@ -290,6 +292,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_action(Editor::unfold);
     cx.add_action(Editor::fold_selected_ranges);
     cx.add_action(Editor::show_completions);
+    cx.add_action(Editor::confirm_completion);
 }
 
 trait SelectionExt {
@@ -425,7 +428,7 @@ struct BracketPairState {
 }
 
 struct CompletionState {
-    completions: Arc<[Completion]>,
+    completions: Arc<[Completion<Anchor>]>,
     selected_item: usize,
     list: UniformListState,
 }
@@ -1102,6 +1105,11 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        if self.completion_state.take().is_some() {
+            cx.notify();
+            return;
+        }
+
         if self.mode != EditorMode::Full {
             cx.propagate_action();
             return;
@@ -1506,7 +1514,7 @@ impl Editor {
         }
     }
 
-    fn show_completions(&mut self, _: &ShowAutocomplete, cx: &mut ViewContext<Self>) {
+    fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
         let position = self
             .newest_selection::<usize>(&self.buffer.read(cx).read(cx))
             .head();
@@ -1531,6 +1539,23 @@ impl Editor {
             Ok::<_, anyhow::Error>(())
         })
         .detach_and_log_err(cx);
+    }
+
+    fn confirm_completion(&mut self, _: &ConfirmCompletion, cx: &mut ViewContext<Self>) {
+        if let Some(completion_state) = self.completion_state.take() {
+            if let Some(completion) = completion_state
+                .completions
+                .get(completion_state.selected_item)
+            {
+                self.buffer.update(cx, |buffer, cx| {
+                    buffer.edit_with_autoindent(
+                        [completion.old_range.clone()],
+                        completion.new_text.clone(),
+                        cx,
+                    );
+                })
+            }
+        }
     }
 
     pub fn has_completions(&self) -> bool {
@@ -4180,6 +4205,9 @@ impl View for Editor {
             EditorMode::Full => "full",
         };
         cx.map.insert("mode".into(), mode.into());
+        if self.completion_state.is_some() {
+            cx.set.insert("completing".into());
+        }
         cx
     }
 }

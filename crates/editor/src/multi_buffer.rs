@@ -852,12 +852,34 @@ impl MultiBuffer {
         &self,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<Completion>>>
+    ) -> Task<Result<Vec<Completion<Anchor>>>>
     where
         T: ToOffset,
     {
-        let (buffer, text_anchor) = self.text_anchor_for_position(position, cx);
-        buffer.update(cx, |buffer, cx| buffer.completions(text_anchor, cx))
+        let snapshot = self.snapshot(cx);
+        let anchor = snapshot.anchor_before(position);
+        let buffer = self.buffers.borrow()[&anchor.buffer_id].buffer.clone();
+        let completions =
+            buffer.update(cx, |buffer, cx| buffer.completions(anchor.text_anchor, cx));
+        cx.foreground().spawn(async move {
+            completions.await.map(|completions| {
+                completions
+                    .into_iter()
+                    .map(|completion| Completion {
+                        old_range: snapshot.anchor_in_excerpt(
+                            anchor.excerpt_id.clone(),
+                            completion.old_range.start,
+                        )
+                            ..snapshot.anchor_in_excerpt(
+                                anchor.excerpt_id.clone(),
+                                completion.old_range.end,
+                            ),
+                        new_text: completion.new_text,
+                        lsp_completion: completion.lsp_completion,
+                    })
+                    .collect()
+            })
+        })
     }
 
     pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
