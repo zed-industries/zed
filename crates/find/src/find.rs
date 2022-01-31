@@ -512,17 +512,21 @@ impl FindBar {
         let editor = editor.read(cx);
         let position = editor.newest_anchor_selection()?.head();
         let ranges = editor.highlighted_ranges_for_type::<Self>()?.1;
-        let buffer = editor.buffer().read(cx).read(cx);
-        match ranges.binary_search_by(|probe| {
-            if probe.end.cmp(&position, &*buffer).unwrap().is_lt() {
-                Ordering::Less
-            } else if probe.start.cmp(&position, &*buffer).unwrap().is_gt() {
-                Ordering::Greater
-            } else {
-                Ordering::Equal
+        if ranges.is_empty() {
+            None
+        } else {
+            let buffer = editor.buffer().read(cx).read(cx);
+            match ranges.binary_search_by(|probe| {
+                if probe.end.cmp(&position, &*buffer).unwrap().is_lt() {
+                    Ordering::Less
+                } else if probe.start.cmp(&position, &*buffer).unwrap().is_gt() {
+                    Ordering::Greater
+                } else {
+                    Ordering::Equal
+                }
+            }) {
+                Ok(i) | Err(i) => Some(cmp::min(i, ranges.len() - 1)),
             }
-        }) {
-            Ok(i) | Err(i) => Some(cmp::min(i, ranges.len().saturating_sub(1))),
         }
     }
 }
