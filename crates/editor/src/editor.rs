@@ -225,7 +225,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
         Binding::new("alt-cmd-[", Fold, Some("Editor")),
         Binding::new("alt-cmd-]", Unfold, Some("Editor")),
         Binding::new("alt-cmd-f", FoldSelectedRanges, Some("Editor")),
-        Binding::new("ctrl-shift-A", ShowAutocomplete, Some("Editor")),
+        Binding::new("ctrl-space", ShowAutocomplete, Some("Editor")),
     ]);
 
     cx.add_action(Editor::open_new);

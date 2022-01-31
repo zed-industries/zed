@@ -34,9 +34,11 @@ impl Event {
                     const ESCAPE_KEY: u16 = 0x1b;
                     const TAB_KEY: u16 = 0x09;
                     const SHIFT_TAB_KEY: u16 = 0x19;
+                    const SPACE_KEY: u16 = b' ' as u16;
 
                     #[allow(non_upper_case_globals)]
                     match first_char as u16 {
+                        SPACE_KEY => "space",
                         BACKSPACE_KEY => "backspace",
                         ENTER_KEY => "enter",
                         ESCAPE_KEY => "escape",
