@@ -1720,6 +1720,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "find"
+version = "0.1.0"
+dependencies = [
+ "aho-corasick",
+ "anyhow",
+ "collections",
+ "editor",
+ "gpui",
+ "postage",
+ "regex",
+ "smol",
+ "theme",
+ "unindent",
+ "workspace",
+]
+
+[[package]]
 name = "fixedbitset"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5725,6 +5742,7 @@ dependencies = [
  "editor",
  "env_logger",
  "file_finder",
+ "find",
  "fsevent",
  "futures",
  "fuzzy",

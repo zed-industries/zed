@@ -599,7 +599,7 @@ impl Workspace {
         Workspace {
             modal: None,
             weak_self: cx.weak_handle(),
-            center: PaneGroup::new(pane.id()),
+            center: PaneGroup::new(pane.clone()),
             panes: vec![pane.clone()],
             active_pane: pane.clone(),
             status_bar,
@@ -1048,15 +1048,13 @@ impl Workspace {
                 new_pane.update(cx, |new_pane, cx| new_pane.add_item_view(clone, cx));
             }
         }
-        self.center
-            .split(pane.id(), new_pane.id(), direction)
-            .unwrap();
+        self.center.split(&pane, &new_pane, direction).unwrap();
         cx.notify();
         new_pane
     }
 
     fn remove_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {
-        if self.center.remove(pane.id()).unwrap() {
+        if self.center.remove(&pane).unwrap() {
             self.panes.retain(|p| p != &pane);
             self.activate_pane(self.panes.last().unwrap().clone(), cx);
         }
@@ -1287,7 +1285,7 @@ impl View for Workspace {
                                     Flexible::new(1., true, self.center.render(&settings.theme))
                                         .boxed(),
                                 )
-                                .with_child(ChildView::new(self.status_bar.id()).boxed())
+                                .with_child(ChildView::new(&self.status_bar).boxed())
                                 .flexible(1., true)
                                 .boxed(),
                         );
@@ -1298,7 +1296,7 @@ impl View for Workspace {
                         content.add_child(self.right_sidebar.render(&settings, cx));
                         content.boxed()
                     })
-                    .with_children(self.modal.as_ref().map(|m| ChildView::new(m.id()).boxed()))
+                    .with_children(self.modal.as_ref().map(|m| ChildView::new(m).boxed()))
                     .flexible(1.0, true)
                     .boxed(),
             )

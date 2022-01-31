@@ -1,5 +1,5 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
-use crate::ToPoint;
+use crate::{char_kind, CharKind, ToPoint};
 use anyhow::Result;
 use std::{cmp, ops::Range};
 
@@ -213,26 +213,6 @@ pub fn surrounding_word(map: &DisplaySnapshot, point: DisplayPoint) -> Range<Dis
 
     start.to_point(&map.buffer_snapshot).to_display_point(map)
         ..end.to_point(&map.buffer_snapshot).to_display_point(map)
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
-enum CharKind {
-    Newline,
-    Punctuation,
-    Whitespace,
-    Word,
-}
-
-fn char_kind(c: char) -> CharKind {
-    if c == '\n' {
-        CharKind::Newline
-    } else if c.is_whitespace() {
-        CharKind::Whitespace
-    } else if c.is_alphanumeric() || c == '_' {
-        CharKind::Word
-    } else {
-        CharKind::Punctuation
-    }
 }
 
 #[cfg(test)]

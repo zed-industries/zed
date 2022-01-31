@@ -217,7 +217,7 @@ impl ChatPanel {
         let theme = &self.settings.borrow().theme;
         Flex::column()
             .with_child(
-                Container::new(ChildView::new(self.channel_select.id()).boxed())
+                Container::new(ChildView::new(&self.channel_select).boxed())
                     .with_style(theme.chat_panel.channel_select.container)
                     .boxed(),
             )
@@ -282,7 +282,7 @@ impl ChatPanel {
 
     fn render_input_box(&self) -> ElementBox {
         let theme = &self.settings.borrow().theme;
-        Container::new(ChildView::new(self.input_editor.id()).boxed())
+        Container::new(ChildView::new(&self.input_editor).boxed())
             .with_style(theme.chat_panel.input_editor.container)
             .boxed()
     }

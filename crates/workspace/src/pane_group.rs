@@ -1,6 +1,8 @@
 use anyhow::{anyhow, Result};
-use gpui::{elements::*, Axis};
+use gpui::{elements::*, Axis, ViewHandle};
 use theme::Theme;
+
+use crate::Pane;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaneGroup {
@@ -8,36 +10,36 @@ pub struct PaneGroup {
 }
 
 impl PaneGroup {
-    pub fn new(pane_id: usize) -> Self {
+    pub fn new(pane: ViewHandle<Pane>) -> Self {
         Self {
-            root: Member::Pane(pane_id),
+            root: Member::Pane(pane),
         }
     }
 
     pub fn split(
         &mut self,
-        old_pane_id: usize,
-        new_pane_id: usize,
+        old_pane: &ViewHandle<Pane>,
+        new_pane: &ViewHandle<Pane>,
         direction: SplitDirection,
     ) -> Result<()> {
         match &mut self.root {
-            Member::Pane(pane_id) => {
-                if *pane_id == old_pane_id {
-                    self.root = Member::new_axis(old_pane_id, new_pane_id, direction);
+            Member::Pane(pane) => {
+                if pane == old_pane {
+                    self.root = Member::new_axis(old_pane.clone(), new_pane.clone(), direction);
                     Ok(())
                 } else {
                     Err(anyhow!("Pane not found"))
                 }
             }
-            Member::Axis(axis) => axis.split(old_pane_id, new_pane_id, direction),
+            Member::Axis(axis) => axis.split(old_pane, new_pane, direction),
         }
     }
 
-    pub fn remove(&mut self, pane_id: usize) -> Result<bool> {
+    pub fn remove(&mut self, pane: &ViewHandle<Pane>) -> Result<bool> {
         match &mut self.root {
             Member::Pane(_) => Ok(false),
             Member::Axis(axis) => {
-                if let Some(last_pane) = axis.remove(pane_id)? {
+                if let Some(last_pane) = axis.remove(pane)? {
                     self.root = last_pane;
                 }
                 Ok(true)
@@ -53,11 +55,15 @@ impl PaneGroup {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Member {
     Axis(PaneAxis),
-    Pane(usize),
+    Pane(ViewHandle<Pane>),
 }
 
 impl Member {
-    fn new_axis(old_pane_id: usize, new_pane_id: usize, direction: SplitDirection) -> Self {
+    fn new_axis(
+        old_pane: ViewHandle<Pane>,
+        new_pane: ViewHandle<Pane>,
+        direction: SplitDirection,
+    ) -> Self {
         use Axis::*;
         use SplitDirection::*;
 
@@ -67,16 +73,16 @@ impl Member {
         };
 
         let members = match direction {
-            Up | Left => vec![Member::Pane(new_pane_id), Member::Pane(old_pane_id)],
-            Down | Right => vec![Member::Pane(old_pane_id), Member::Pane(new_pane_id)],
+            Up | Left => vec![Member::Pane(new_pane), Member::Pane(old_pane)],
+            Down | Right => vec![Member::Pane(old_pane), Member::Pane(new_pane)],
         };
 
         Member::Axis(PaneAxis { axis, members })
     }
 
-    pub fn render<'a>(&self, theme: &Theme) -> ElementBox {
+    pub fn render(&self, theme: &Theme) -> ElementBox {
         match self {
-            Member::Pane(view_id) => ChildView::new(*view_id).boxed(),
+            Member::Pane(pane) => ChildView::new(pane).boxed(),
             Member::Axis(axis) => axis.render(theme),
         }
     }
@@ -91,8 +97,8 @@ struct PaneAxis {
 impl PaneAxis {
     fn split(
         &mut self,
-        old_pane_id: usize,
-        new_pane_id: usize,
+        old_pane: &ViewHandle<Pane>,
+        new_pane: &ViewHandle<Pane>,
         direction: SplitDirection,
     ) -> Result<()> {
         use SplitDirection::*;
@@ -100,23 +106,24 @@ impl PaneAxis {
         for (idx, member) in self.members.iter_mut().enumerate() {
             match member {
                 Member::Axis(axis) => {
-                    if axis.split(old_pane_id, new_pane_id, direction).is_ok() {
+                    if axis.split(old_pane, new_pane, direction).is_ok() {
                         return Ok(());
                     }
                 }
-                Member::Pane(pane_id) => {
-                    if *pane_id == old_pane_id {
+                Member::Pane(pane) => {
+                    if pane == old_pane {
                         if direction.matches_axis(self.axis) {
                             match direction {
                                 Up | Left => {
-                                    self.members.insert(idx, Member::Pane(new_pane_id));
+                                    self.members.insert(idx, Member::Pane(new_pane.clone()));
                                 }
                                 Down | Right => {
-                                    self.members.insert(idx + 1, Member::Pane(new_pane_id));
+                                    self.members.insert(idx + 1, Member::Pane(new_pane.clone()));
                                 }
                             }
                         } else {
-                            *member = Member::new_axis(old_pane_id, new_pane_id, direction);
+                            *member =
+                                Member::new_axis(old_pane.clone(), new_pane.clone(), direction);
                         }
                         return Ok(());
                     }
@@ -126,13 +133,13 @@ impl PaneAxis {
         Err(anyhow!("Pane not found"))
     }
 
-    fn remove(&mut self, pane_id_to_remove: usize) -> Result<Option<Member>> {
+    fn remove(&mut self, pane_to_remove: &ViewHandle<Pane>) -> Result<Option<Member>> {
         let mut found_pane = false;
         let mut remove_member = None;
         for (idx, member) in self.members.iter_mut().enumerate() {
             match member {
                 Member::Axis(axis) => {
-                    if let Ok(last_pane) = axis.remove(pane_id_to_remove) {
+                    if let Ok(last_pane) = axis.remove(pane_to_remove) {
                         if let Some(last_pane) = last_pane {
                             *member = last_pane;
                         }
@@ -140,8 +147,8 @@ impl PaneAxis {
                         break;
                     }
                 }
-                Member::Pane(pane_id) => {
-                    if *pane_id == pane_id_to_remove {
+                Member::Pane(pane) => {
+                    if pane == pane_to_remove {
                         found_pane = true;
                         remove_member = Some(idx);
                         break;

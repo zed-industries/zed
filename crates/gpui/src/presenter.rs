@@ -6,8 +6,8 @@ use crate::{
     json::{self, ToJson},
     platform::Event,
     text_layout::TextLayoutCache,
-    Action, AnyAction, AssetCache, ElementBox, Entity, FontSystem, ModelHandle, ReadModel,
-    ReadView, Scene, View, ViewHandle,
+    Action, AnyAction, AnyViewHandle, AssetCache, ElementBox, Entity, FontSystem, ModelHandle,
+    ReadModel, ReadView, Scene, View, ViewHandle,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
@@ -462,8 +462,10 @@ pub struct ChildView {
 }
 
 impl ChildView {
-    pub fn new(view_id: usize) -> Self {
-        Self { view_id }
+    pub fn new(view: impl Into<AnyViewHandle>) -> Self {
+        Self {
+            view_id: view.into().id(),
+        }
     }
 }
 

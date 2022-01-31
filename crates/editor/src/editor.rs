@@ -9,12 +9,13 @@ mod test;
 
 use aho_corasick::AhoCorasick;
 use clock::ReplicaId;
-use collections::{HashMap, HashSet};
+use collections::{BTreeMap, HashMap, HashSet};
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
 use gpui::{
     action,
+    color::Color,
     elements::*,
     fonts::TextStyle,
     geometry::vector::{vec2f, Vector2F},
@@ -28,23 +29,25 @@ use language::{
     AnchorRangeExt as _, BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point,
     Selection, SelectionGoal, TransactionId,
 };
+use multi_buffer::MultiBufferChunks;
 pub use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, ExcerptProperties, MultiBuffer, ToOffset, ToPoint,
+    Anchor, AnchorRangeExt, ExcerptId, ExcerptProperties, MultiBuffer, MultiBufferSnapshot,
+    ToOffset, ToPoint,
 };
-use multi_buffer::{MultiBufferChunks, MultiBufferSnapshot};
 use postage::watch;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
 use std::{
-    cmp,
+    any::TypeId,
+    cmp::{self, Ordering},
     iter::{self, FromIterator},
     mem,
     ops::{Deref, Range, RangeInclusive, Sub},
     sync::Arc,
     time::{Duration, Instant},
 };
-use sum_tree::Bias;
+pub use sum_tree::Bias;
 use text::rope::TextDimension;
 use theme::{DiagnosticStyle, EditorStyle};
 use util::post_inc;
@@ -382,6 +385,7 @@ pub struct Editor {
     vertical_scroll_margin: f32,
     placeholder_text: Option<Arc<str>>,
     highlighted_rows: Option<Range<u32>>,
+    highlighted_ranges: BTreeMap<TypeId, (Color, Vec<Range<Anchor>>)>,
     nav_history: Option<ItemNavHistory>,
 }
 
@@ -433,6 +437,14 @@ struct ClipboardSelection {
 pub struct NavigationData {
     anchor: Anchor,
     offset: usize,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
+pub enum CharKind {
+    Newline,
+    Punctuation,
+    Whitespace,
+    Word,
 }
 
 impl Editor {
@@ -522,6 +534,7 @@ impl Editor {
             vertical_scroll_margin: 3.0,
             placeholder_text: None,
             highlighted_rows: None,
+            highlighted_ranges: Default::default(),
             nav_history: None,
         };
         let selection = Selection {
@@ -848,7 +861,7 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
-        let newest_selection = self.newest_selection_internal().unwrap().clone();
+        let newest_selection = self.newest_anchor_selection().unwrap().clone();
 
         let start;
         let end;
@@ -1078,6 +1091,11 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        if self.mode != EditorMode::Full {
+            cx.propagate_action();
+            return;
+        }
+
         if self.active_diagnostics.is_some() {
             self.dismiss_diagnostics(cx);
         } else if let Some(PendingSelection { selection, .. }) = self.pending_selection.take() {
@@ -3345,10 +3363,10 @@ impl Editor {
         &self,
         snapshot: &MultiBufferSnapshot,
     ) -> Selection<D> {
-        self.resolve_selection(self.newest_selection_internal().unwrap(), snapshot)
+        self.resolve_selection(self.newest_anchor_selection().unwrap(), snapshot)
     }
 
-    pub fn newest_selection_internal(&self) -> Option<&Selection<Anchor>> {
+    pub fn newest_anchor_selection(&self) -> Option<&Selection<Anchor>> {
         self.pending_selection
             .as_ref()
             .map(|s| &s.selection)
@@ -3364,7 +3382,7 @@ impl Editor {
         T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
     {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let old_cursor_position = self.newest_selection_internal().map(|s| s.head());
+        let old_cursor_position = self.newest_anchor_selection().map(|s| s.head());
         selections.sort_unstable_by_key(|s| s.start);
 
         // Merge overlapping selections.
@@ -3498,6 +3516,7 @@ impl Editor {
                 buffer.set_active_selections(&self.selections, cx)
             });
         }
+        cx.emit(Event::SelectionsChanged);
     }
 
     pub fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut ViewContext<Self>) {
@@ -3721,6 +3740,76 @@ impl Editor {
         self.highlighted_rows.clone()
     }
 
+    pub fn highlight_ranges<T: 'static>(
+        &mut self,
+        ranges: Vec<Range<Anchor>>,
+        color: Color,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.highlighted_ranges
+            .insert(TypeId::of::<T>(), (color, ranges));
+        cx.notify();
+    }
+
+    pub fn clear_highlighted_ranges<T: 'static>(&mut self, cx: &mut ViewContext<Self>) {
+        self.highlighted_ranges.remove(&TypeId::of::<T>());
+        cx.notify();
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn all_highlighted_ranges(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Vec<(Range<DisplayPoint>, Color)> {
+        let snapshot = self.snapshot(cx);
+        let buffer = &snapshot.buffer_snapshot;
+        let start = buffer.anchor_before(0);
+        let end = buffer.anchor_after(buffer.len());
+        self.highlighted_ranges_in_range(start..end, &snapshot)
+    }
+
+    pub fn highlighted_ranges_for_type<T: 'static>(&self) -> Option<(Color, &[Range<Anchor>])> {
+        self.highlighted_ranges
+            .get(&TypeId::of::<T>())
+            .map(|(color, ranges)| (*color, ranges.as_slice()))
+    }
+
+    pub fn highlighted_ranges_in_range(
+        &self,
+        search_range: Range<Anchor>,
+        display_snapshot: &DisplaySnapshot,
+    ) -> Vec<(Range<DisplayPoint>, Color)> {
+        let mut results = Vec::new();
+        let buffer = &display_snapshot.buffer_snapshot;
+        for (color, ranges) in self.highlighted_ranges.values() {
+            let start_ix = match ranges.binary_search_by(|probe| {
+                let cmp = probe.end.cmp(&search_range.start, &buffer).unwrap();
+                if cmp.is_gt() {
+                    Ordering::Greater
+                } else {
+                    Ordering::Less
+                }
+            }) {
+                Ok(i) | Err(i) => i,
+            };
+            for range in &ranges[start_ix..] {
+                if range.start.cmp(&search_range.end, &buffer).unwrap().is_ge() {
+                    break;
+                }
+                let start = range
+                    .start
+                    .to_point(buffer)
+                    .to_display_point(display_snapshot);
+                let end = range
+                    .end
+                    .to_point(buffer)
+                    .to_display_point(display_snapshot);
+                results.push((start..end, *color))
+            }
+        }
+        results
+    }
+
     fn next_blink_epoch(&mut self) -> usize {
         self.blink_epoch += 1;
         self.blink_epoch
@@ -3934,6 +4023,7 @@ pub enum Event {
     Dirtied,
     Saved,
     TitleChanged,
+    SelectionsChanged,
     Closed,
 }
 
@@ -4157,6 +4247,18 @@ pub fn settings_builder(
             style: theme,
         }
     })
+}
+
+pub fn char_kind(c: char) -> CharKind {
+    if c == '\n' {
+        CharKind::Newline
+    } else if c.is_whitespace() {
+        CharKind::Whitespace
+    } else if c.is_alphanumeric() || c == '_' {
+        CharKind::Word
+    } else {
+        CharKind::Punctuation
+    }
 }
 
 #[cfg(test)]
@@ -6551,6 +6653,83 @@ mod tests {
                     "{{} \n",  //
                     "}\n",     //
                 )
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_highlighted_ranges(cx: &mut gpui::MutableAppContext) {
+        let buffer = MultiBuffer::build_simple(&sample_text(16, 8, 'a'), cx);
+        let settings = EditorSettings::test(&cx);
+        let (_, editor) = cx.add_window(Default::default(), |cx| {
+            build_editor(buffer.clone(), settings, cx)
+        });
+
+        editor.update(cx, |editor, cx| {
+            struct Type1;
+            struct Type2;
+
+            let buffer = buffer.read(cx).snapshot(cx);
+
+            let anchor_range = |range: Range<Point>| {
+                buffer.anchor_after(range.start)..buffer.anchor_after(range.end)
+            };
+
+            editor.highlight_ranges::<Type1>(
+                vec![
+                    anchor_range(Point::new(2, 1)..Point::new(2, 3)),
+                    anchor_range(Point::new(4, 2)..Point::new(4, 4)),
+                    anchor_range(Point::new(6, 3)..Point::new(6, 5)),
+                    anchor_range(Point::new(8, 4)..Point::new(8, 6)),
+                ],
+                Color::red(),
+                cx,
+            );
+            editor.highlight_ranges::<Type2>(
+                vec![
+                    anchor_range(Point::new(3, 2)..Point::new(3, 5)),
+                    anchor_range(Point::new(5, 3)..Point::new(5, 6)),
+                    anchor_range(Point::new(7, 4)..Point::new(7, 7)),
+                    anchor_range(Point::new(9, 5)..Point::new(9, 8)),
+                ],
+                Color::green(),
+                cx,
+            );
+
+            let snapshot = editor.snapshot(cx);
+            assert_eq!(
+                editor.highlighted_ranges_in_range(
+                    anchor_range(Point::new(3, 4)..Point::new(7, 4)),
+                    &snapshot,
+                ),
+                &[
+                    (
+                        DisplayPoint::new(4, 2)..DisplayPoint::new(4, 4),
+                        Color::red(),
+                    ),
+                    (
+                        DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
+                        Color::red(),
+                    ),
+                    (
+                        DisplayPoint::new(3, 2)..DisplayPoint::new(3, 5),
+                        Color::green(),
+                    ),
+                    (
+                        DisplayPoint::new(5, 3)..DisplayPoint::new(5, 6),
+                        Color::green(),
+                    ),
+                ]
+            );
+            assert_eq!(
+                editor.highlighted_ranges_in_range(
+                    anchor_range(Point::new(5, 6)..Point::new(6, 4)),
+                    &snapshot,
+                ),
+                &[(
+                    DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
+                    Color::red(),
+                )]
             );
         });
     }

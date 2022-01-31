@@ -24,6 +24,7 @@ pub struct Theme {
     pub project_panel: ProjectPanel,
     pub selector: Selector,
     pub editor: EditorStyle,
+    pub find: Find,
     pub project_diagnostics: ProjectDiagnostics,
 }
 
@@ -37,6 +38,7 @@ pub struct Workspace {
     pub left_sidebar: Sidebar,
     pub right_sidebar: Sidebar,
     pub status_bar: StatusBar,
+    pub toolbar: Toolbar,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -85,6 +87,33 @@ pub struct Tab {
     pub icon_close_active: Color,
     pub icon_dirty: Color,
     pub icon_conflict: Color,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Toolbar {
+    pub height: f32,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct Find {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub editor: FindEditor,
+    pub invalid_editor: ContainerStyle,
+    pub mode_button_group: ContainerStyle,
+    pub mode_button: ContainedText,
+    pub active_mode_button: ContainedText,
+    pub hovered_mode_button: ContainedText,
+    pub active_hovered_mode_button: ContainedText,
+    pub match_background: Color,
+    pub match_index: ContainedText,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct FindEditor {
+    #[serde(flatten)]
+    pub input: InputEditorStyle,
+    pub max_width: f32,
 }
 
 #[derive(Deserialize, Default)]

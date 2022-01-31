@@ -312,64 +312,47 @@ impl EditorElement {
         let end_row = ((scroll_top + bounds.height()) / layout.line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
         let max_glyph_width = layout.em_width;
         let scroll_left = scroll_position.x() * max_glyph_width;
+        let content_origin = bounds.origin() + layout.text_offset;
 
         cx.scene.push_layer(Some(bounds));
 
-        // Draw selections
-        let corner_radius = 2.5;
+        for (range, color) in &layout.highlighted_ranges {
+            self.paint_highlighted_range(
+                range.clone(),
+                start_row,
+                end_row,
+                *color,
+                0.,
+                0.15 * layout.line_height,
+                layout,
+                content_origin,
+                scroll_top,
+                scroll_left,
+                bounds,
+                cx,
+            );
+        }
+
         let mut cursors = SmallVec::<[Cursor; 32]>::new();
-
-        let content_origin = bounds.origin() + layout.text_offset;
-
         for (replica_id, selections) in &layout.selections {
             let style = style.replica_selection_style(*replica_id);
+            let corner_radius = 0.15 * layout.line_height;
 
             for selection in selections {
-                if selection.start != selection.end {
-                    let row_range = if selection.end.column() == 0 {
-                        cmp::max(selection.start.row(), start_row)
-                            ..cmp::min(selection.end.row(), end_row)
-                    } else {
-                        cmp::max(selection.start.row(), start_row)
-                            ..cmp::min(selection.end.row() + 1, end_row)
-                    };
-
-                    let selection = Selection {
-                        color: style.selection,
-                        line_height: layout.line_height,
-                        start_y: content_origin.y() + row_range.start as f32 * layout.line_height
-                            - scroll_top,
-                        lines: row_range
-                            .into_iter()
-                            .map(|row| {
-                                let line_layout = &layout.line_layouts[(row - start_row) as usize];
-                                SelectionLine {
-                                    start_x: if row == selection.start.row() {
-                                        content_origin.x()
-                                            + line_layout
-                                                .x_for_index(selection.start.column() as usize)
-                                            - scroll_left
-                                    } else {
-                                        content_origin.x() - scroll_left
-                                    },
-                                    end_x: if row == selection.end.row() {
-                                        content_origin.x()
-                                            + line_layout
-                                                .x_for_index(selection.end.column() as usize)
-                                            - scroll_left
-                                    } else {
-                                        content_origin.x()
-                                            + line_layout.width()
-                                            + corner_radius * 2.0
-                                            - scroll_left
-                                    },
-                                }
-                            })
-                            .collect(),
-                    };
-
-                    selection.paint(bounds, cx.scene);
-                }
+                self.paint_highlighted_range(
+                    selection.start..selection.end,
+                    start_row,
+                    end_row,
+                    style.selection,
+                    corner_radius,
+                    corner_radius * 2.,
+                    layout,
+                    content_origin,
+                    scroll_top,
+                    scroll_left,
+                    bounds,
+                    cx,
+                );
 
                 if view.show_local_cursors() || *replica_id != local_replica_id {
                     let cursor_position = selection.head();
@@ -410,6 +393,63 @@ impl EditorElement {
         cx.scene.pop_layer();
 
         cx.scene.pop_layer();
+    }
+
+    fn paint_highlighted_range(
+        &self,
+        range: Range<DisplayPoint>,
+        start_row: u32,
+        end_row: u32,
+        color: Color,
+        corner_radius: f32,
+        line_end_overshoot: f32,
+        layout: &LayoutState,
+        content_origin: Vector2F,
+        scroll_top: f32,
+        scroll_left: f32,
+        bounds: RectF,
+        cx: &mut PaintContext,
+    ) {
+        if range.start != range.end {
+            let row_range = if range.end.column() == 0 {
+                cmp::max(range.start.row(), start_row)..cmp::min(range.end.row(), end_row)
+            } else {
+                cmp::max(range.start.row(), start_row)..cmp::min(range.end.row() + 1, end_row)
+            };
+
+            let highlighted_range = HighlightedRange {
+                color,
+                line_height: layout.line_height,
+                corner_radius,
+                start_y: content_origin.y() + row_range.start as f32 * layout.line_height
+                    - scroll_top,
+                lines: row_range
+                    .into_iter()
+                    .map(|row| {
+                        let line_layout = &layout.line_layouts[(row - start_row) as usize];
+                        HighlightedRangeLine {
+                            start_x: if row == range.start.row() {
+                                content_origin.x()
+                                    + line_layout.x_for_index(range.start.column() as usize)
+                                    - scroll_left
+                            } else {
+                                content_origin.x() - scroll_left
+                            },
+                            end_x: if row == range.end.row() {
+                                content_origin.x()
+                                    + line_layout.x_for_index(range.end.column() as usize)
+                                    - scroll_left
+                            } else {
+                                content_origin.x() + line_layout.width() + line_end_overshoot
+                                    - scroll_left
+                            },
+                        }
+                    })
+                    .collect(),
+            };
+
+            highlighted_range.paint(bounds, cx.scene);
+        }
     }
 
     fn paint_blocks(
@@ -715,9 +755,15 @@ impl Element for EditorElement {
         let mut selections = HashMap::default();
         let mut active_rows = BTreeMap::new();
         let mut highlighted_rows = None;
+        let mut highlighted_ranges = Vec::new();
         self.update_view(cx.app, |view, cx| {
-            highlighted_rows = view.highlighted_rows();
             let display_map = view.display_map.update(cx, |map, cx| map.snapshot(cx));
+
+            highlighted_rows = view.highlighted_rows();
+            highlighted_ranges = view.highlighted_ranges_in_range(
+                start_anchor.clone()..end_anchor.clone(),
+                &display_map,
+            );
 
             let local_selections = view
                 .local_selections_in_range(start_anchor.clone()..end_anchor.clone(), &display_map);
@@ -837,6 +883,7 @@ impl Element for EditorElement {
                 snapshot,
                 active_rows,
                 highlighted_rows,
+                highlighted_ranges,
                 line_layouts,
                 line_number_layouts,
                 blocks,
@@ -950,6 +997,7 @@ pub struct LayoutState {
     line_height: f32,
     em_width: f32,
     em_advance: f32,
+    highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     selections: HashMap<ReplicaId, Vec<text::Selection<DisplayPoint>>>,
     text_offset: Vector2F,
 }
@@ -1036,20 +1084,21 @@ impl Cursor {
 }
 
 #[derive(Debug)]
-struct Selection {
+struct HighlightedRange {
     start_y: f32,
     line_height: f32,
-    lines: Vec<SelectionLine>,
+    lines: Vec<HighlightedRangeLine>,
     color: Color,
+    corner_radius: f32,
 }
 
 #[derive(Debug)]
-struct SelectionLine {
+struct HighlightedRangeLine {
     start_x: f32,
     end_x: f32,
 }
 
-impl Selection {
+impl HighlightedRange {
     fn paint(&self, bounds: RectF, scene: &mut Scene) {
         if self.lines.len() >= 2 && self.lines[0].start_x > self.lines[1].end_x {
             self.paint_lines(self.start_y, &self.lines[0..1], bounds, scene);
@@ -1064,26 +1113,31 @@ impl Selection {
         }
     }
 
-    fn paint_lines(&self, start_y: f32, lines: &[SelectionLine], bounds: RectF, scene: &mut Scene) {
+    fn paint_lines(
+        &self,
+        start_y: f32,
+        lines: &[HighlightedRangeLine],
+        bounds: RectF,
+        scene: &mut Scene,
+    ) {
         if lines.is_empty() {
             return;
         }
 
         let mut path = PathBuilder::new();
-        let corner_radius = 0.15 * self.line_height;
         let first_line = lines.first().unwrap();
         let last_line = lines.last().unwrap();
 
         let first_top_left = vec2f(first_line.start_x, start_y);
         let first_top_right = vec2f(first_line.end_x, start_y);
 
-        let curve_height = vec2f(0., corner_radius);
+        let curve_height = vec2f(0., self.corner_radius);
         let curve_width = |start_x: f32, end_x: f32| {
             let max = (end_x - start_x) / 2.;
-            let width = if max < corner_radius {
+            let width = if max < self.corner_radius {
                 max
             } else {
-                corner_radius
+                self.corner_radius
             };
 
             vec2f(width, 0.)
@@ -1107,26 +1161,38 @@ impl Selection {
                     Ordering::Less => {
                         let curve_width = curve_width(next_top_right.x(), bottom_right.x());
                         path.line_to(bottom_right - curve_height);
-                        path.curve_to(bottom_right - curve_width, bottom_right);
+                        if self.corner_radius > 0. {
+                            path.curve_to(bottom_right - curve_width, bottom_right);
+                        }
                         path.line_to(next_top_right + curve_width);
-                        path.curve_to(next_top_right + curve_height, next_top_right);
+                        if self.corner_radius > 0. {
+                            path.curve_to(next_top_right + curve_height, next_top_right);
+                        }
                     }
                     Ordering::Greater => {
                         let curve_width = curve_width(bottom_right.x(), next_top_right.x());
                         path.line_to(bottom_right - curve_height);
-                        path.curve_to(bottom_right + curve_width, bottom_right);
+                        if self.corner_radius > 0. {
+                            path.curve_to(bottom_right + curve_width, bottom_right);
+                        }
                         path.line_to(next_top_right - curve_width);
-                        path.curve_to(next_top_right + curve_height, next_top_right);
+                        if self.corner_radius > 0. {
+                            path.curve_to(next_top_right + curve_height, next_top_right);
+                        }
                     }
                 }
             } else {
                 let curve_width = curve_width(line.start_x, line.end_x);
                 path.line_to(bottom_right - curve_height);
-                path.curve_to(bottom_right - curve_width, bottom_right);
+                if self.corner_radius > 0. {
+                    path.curve_to(bottom_right - curve_width, bottom_right);
+                }
 
                 let bottom_left = vec2f(line.start_x, bottom_right.y());
                 path.line_to(bottom_left + curve_width);
-                path.curve_to(bottom_left - curve_height, bottom_left);
+                if self.corner_radius > 0. {
+                    path.curve_to(bottom_left - curve_height, bottom_left);
+                }
             }
         }
 
@@ -1134,14 +1200,20 @@ impl Selection {
             let curve_width = curve_width(last_line.start_x, first_line.start_x);
             let second_top_left = vec2f(last_line.start_x, start_y + self.line_height);
             path.line_to(second_top_left + curve_height);
-            path.curve_to(second_top_left + curve_width, second_top_left);
+            if self.corner_radius > 0. {
+                path.curve_to(second_top_left + curve_width, second_top_left);
+            }
             let first_bottom_left = vec2f(first_line.start_x, second_top_left.y());
             path.line_to(first_bottom_left - curve_width);
-            path.curve_to(first_bottom_left - curve_height, first_bottom_left);
+            if self.corner_radius > 0. {
+                path.curve_to(first_bottom_left - curve_height, first_bottom_left);
+            }
         }
 
         path.line_to(first_top_left + curve_height);
-        path.curve_to(first_top_left + top_curve_width, first_top_left);
+        if self.corner_radius > 0. {
+            path.curve_to(first_top_left + top_curve_width, first_top_left);
+        }
         path.line_to(first_top_right - top_curve_width);
 
         scene.push_path(path.build(self.color, Some(bounds)));
