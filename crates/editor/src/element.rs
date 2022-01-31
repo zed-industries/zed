@@ -886,7 +886,7 @@ impl Element for EditorElement {
                     .to_display_point(&snapshot);
 
                 if (start_row..end_row).contains(&newest_selection_head.row()) {
-                    let list = view.render_completions().unwrap();
+                    let list = view.render_completions(cx).unwrap();
                     completions = Some((newest_selection_head, list));
                 }
             }

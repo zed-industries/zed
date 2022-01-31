@@ -292,6 +292,7 @@ pub struct EditorStyle {
     pub invalid_information_diagnostic: DiagnosticStyle,
     pub hint_diagnostic: DiagnosticStyle,
     pub invalid_hint_diagnostic: DiagnosticStyle,
+    pub autocomplete: AutocompleteStyle,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -319,6 +320,13 @@ pub struct DiagnosticStyle {
     #[serde(default)]
     pub header: ContainerStyle,
     pub text_scale_factor: f32,
+}
+
+#[derive(Clone, Deserialize, Default)]
+pub struct AutocompleteStyle {
+    #[serde(flatten)]
+    pub container: ContainerStyle,
+    pub item: ContainerStyle,
 }
 
 #[derive(Clone, Copy, Default, Deserialize)]
@@ -408,6 +416,7 @@ impl InputEditorStyle {
             invalid_information_diagnostic: default_diagnostic_style.clone(),
             hint_diagnostic: default_diagnostic_style.clone(),
             invalid_hint_diagnostic: default_diagnostic_style.clone(),
+            autocomplete: Default::default(),
         }
     }
 }

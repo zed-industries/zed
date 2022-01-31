@@ -1535,9 +1535,10 @@ impl Editor {
         self.completion_state.is_some()
     }
 
-    pub fn render_completions(&self) -> Option<ElementBox> {
+    pub fn render_completions(&self, cx: &AppContext) -> Option<ElementBox> {
         self.completion_state.as_ref().map(|state| {
             let build_settings = self.build_settings.clone();
+            let settings = build_settings(cx);
             let completions = state.completions.clone();
             UniformList::new(
                 state.list.clone(),
@@ -1547,11 +1548,23 @@ impl Editor {
                     for completion in &completions[range] {
                         items.push(
                             Label::new(completion.label().to_string(), settings.style.text.clone())
+                                .contained()
+                                .with_style(settings.style.autocomplete.item)
                                 .boxed(),
                         );
                     }
                 },
             )
+            .with_width_from_item(
+                state
+                    .completions
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(_, completion)| completion.label().chars().count())
+                    .map(|(ix, _)| ix),
+            )
+            .contained()
+            .with_style(settings.style.autocomplete.container)
             .boxed()
         })
     }
@@ -4056,6 +4069,7 @@ impl EditorSettings {
                     invalid_information_diagnostic: default_diagnostic_style.clone(),
                     hint_diagnostic: default_diagnostic_style.clone(),
                     invalid_hint_diagnostic: default_diagnostic_style.clone(),
+                    autocomplete: Default::default(),
                 }
             },
         }
