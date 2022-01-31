@@ -836,6 +836,7 @@ impl Element for EditorElement {
             max_row.saturating_sub(1) as f32,
         );
 
+        let mut completions = None;
         self.update_view(cx.app, |view, cx| {
             let clamped = view.clamp_scroll_left(scroll_max.x());
             let autoscrolled;
@@ -855,6 +856,8 @@ impl Element for EditorElement {
             if clamped || autoscrolled {
                 snapshot = view.snapshot(cx);
             }
+
+            completions = view.render_completions();
         });
 
         let blocks = self.layout_blocks(
@@ -891,6 +894,7 @@ impl Element for EditorElement {
                 em_width,
                 em_advance,
                 selections,
+                completions,
             }),
         )
     }
@@ -1000,6 +1004,7 @@ pub struct LayoutState {
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     selections: HashMap<ReplicaId, Vec<text::Selection<DisplayPoint>>>,
     text_offset: Vector2F,
+    completions: Option<ElementBox>,
 }
 
 fn layout_line(

@@ -2424,6 +2424,12 @@ impl Default for Diagnostic {
     }
 }
 
+impl Completion {
+    pub fn label(&self) -> &str {
+        &self.lsp_completion.label
+    }
+}
+
 pub fn contiguous_ranges(
     values: impl Iterator<Item = u32>,
     max_len: usize,

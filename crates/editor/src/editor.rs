@@ -26,8 +26,8 @@ use gpui::{
 use items::BufferItemHandle;
 use itertools::Itertools as _;
 use language::{
-    AnchorRangeExt as _, BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point,
-    Selection, SelectionGoal, TransactionId,
+    AnchorRangeExt as _, BracketPair, Buffer, Completion, Diagnostic, DiagnosticSeverity, Language,
+    Point, Selection, SelectionGoal, TransactionId,
 };
 use multi_buffer::MultiBufferChunks;
 pub use multi_buffer::{
@@ -390,6 +390,7 @@ pub struct Editor {
     highlighted_rows: Option<Range<u32>>,
     highlighted_ranges: BTreeMap<TypeId, (Color, Vec<Range<Anchor>>)>,
     nav_history: Option<ItemNavHistory>,
+    completion_state: Option<CompletionState>,
 }
 
 pub struct EditorSnapshot {
@@ -421,6 +422,11 @@ struct SelectNextState {
 struct BracketPairState {
     ranges: Vec<Range<Anchor>>,
     pair: BracketPair,
+}
+
+struct CompletionState {
+    completions: Arc<[Completion]>,
+    list: UniformListState,
 }
 
 #[derive(Debug)]
@@ -539,6 +545,7 @@ impl Editor {
             highlighted_rows: None,
             highlighted_ranges: Default::default(),
             nav_history: None,
+            completion_state: None,
         };
         let selection = Selection {
             id: post_inc(&mut this.next_selection_id),
@@ -1502,9 +1509,46 @@ impl Editor {
         let position = self
             .newest_selection::<usize>(&self.buffer.read(cx).read(cx))
             .head();
-        self.buffer
-            .update(cx, |buffer, cx| buffer.completions(position, cx))
-            .detach_and_log_err(cx);
+
+        let completions = self
+            .buffer
+            .update(cx, |buffer, cx| buffer.completions(position, cx));
+
+        cx.spawn_weak(|this, mut cx| async move {
+            let completions = completions.await?;
+            if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
+                this.update(&mut cx, |this, cx| {
+                    this.completion_state = Some(CompletionState {
+                        completions: completions.into(),
+                        list: Default::default(),
+                    });
+                    cx.notify();
+                });
+            }
+
+            Ok::<_, anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    pub fn render_completions(&self) -> Option<ElementBox> {
+        self.completion_state.as_ref().map(|state| {
+            let build_settings = self.build_settings.clone();
+            let completions = state.completions.clone();
+            UniformList::new(
+                state.list.clone(),
+                state.completions.len(),
+                move |range, items, cx| {
+                    let settings = build_settings(cx);
+                    for completion in &completions[range] {
+                        items.push(
+                            Label::new(completion.label().to_string(), settings.style.text.clone()).boxed(),
+                        );
+                    }
+                },
+            )
+            .boxed()
+        })
     }
 
     pub fn clear(&mut self, cx: &mut ViewContext<Self>) {
