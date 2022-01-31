@@ -689,8 +689,8 @@ impl EditorElement {
 }
 
 impl Element for EditorElement {
-    type LayoutState = Option<LayoutState>;
-    type PaintState = Option<PaintState>;
+    type LayoutState = LayoutState;
+    type PaintState = PaintState;
 
     fn layout(
         &mut self,
@@ -918,7 +918,7 @@ impl Element for EditorElement {
 
         (
             size,
-            Some(LayoutState {
+            LayoutState {
                 size,
                 scroll_max,
                 gutter_size,
@@ -937,7 +937,7 @@ impl Element for EditorElement {
                 em_advance,
                 selections,
                 completions,
-            }),
+            },
         )
     }
 
@@ -948,7 +948,6 @@ impl Element for EditorElement {
         layout: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        let layout = layout.as_mut()?;
         cx.scene.push_layer(Some(bounds));
 
         let gutter_bounds = RectF::new(bounds.origin(), layout.gutter_size);
@@ -971,11 +970,11 @@ impl Element for EditorElement {
 
         cx.scene.pop_layer();
 
-        Some(PaintState {
+        PaintState {
             bounds,
             gutter_bounds,
             text_bounds,
-        })
+        }
     }
 
     fn dispatch_event(
@@ -986,31 +985,27 @@ impl Element for EditorElement {
         paint: &mut Self::PaintState,
         cx: &mut EventContext,
     ) -> bool {
-        if let (Some(layout), Some(paint)) = (layout, paint) {
-            match event {
-                Event::LeftMouseDown {
-                    position,
-                    alt,
-                    shift,
-                    click_count,
-                    ..
-                } => self.mouse_down(*position, *alt, *shift, *click_count, layout, paint, cx),
-                Event::LeftMouseUp { position } => self.mouse_up(*position, cx),
-                Event::LeftMouseDragged { position } => {
-                    self.mouse_dragged(*position, layout, paint, cx)
-                }
-                Event::ScrollWheel {
-                    position,
-                    delta,
-                    precise,
-                } => self.scroll(*position, *delta, *precise, layout, paint, cx),
-                Event::KeyDown {
-                    chars, keystroke, ..
-                } => self.key_down(chars, keystroke, cx),
-                _ => false,
+        match event {
+            Event::LeftMouseDown {
+                position,
+                alt,
+                shift,
+                click_count,
+                ..
+            } => self.mouse_down(*position, *alt, *shift, *click_count, layout, paint, cx),
+            Event::LeftMouseUp { position } => self.mouse_up(*position, cx),
+            Event::LeftMouseDragged { position } => {
+                self.mouse_dragged(*position, layout, paint, cx)
             }
-        } else {
-            false
+            Event::ScrollWheel {
+                position,
+                delta,
+                precise,
+            } => self.scroll(*position, *delta, *precise, layout, paint, cx),
+            Event::KeyDown {
+                chars, keystroke, ..
+            } => self.key_down(chars, keystroke, cx),
+            _ => false,
         }
     }
 
