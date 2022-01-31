@@ -353,7 +353,6 @@ background = "$surface.2"
 [find.match_index]
 extends = "$text.1"
 padding = 6
-margin.left = 24
 
 [find.editor]
 max_width = 400

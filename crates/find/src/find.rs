@@ -111,6 +111,13 @@ impl View for FindBar {
                     .aligned()
                     .boxed(),
             )
+            .with_child(
+                Flex::row()
+                    .with_child(self.render_nav_button("<", Direction::Prev, cx))
+                    .with_child(self.render_nav_button(">", Direction::Next, cx))
+                    .aligned()
+                    .boxed(),
+            )
             .with_children(self.active_editor.as_ref().and_then(|editor| {
                 let (_, highlighted_ranges) =
                     editor.read(cx).highlighted_ranges_for_type::<Self>()?;
@@ -128,13 +135,6 @@ impl View for FindBar {
                         .boxed(),
                 )
             }))
-            .with_child(
-                Flex::row()
-                    .with_child(self.render_nav_button("<", Direction::Prev, cx))
-                    .with_child(self.render_nav_button(">", Direction::Next, cx))
-                    .aligned()
-                    .boxed(),
-            )
             .contained()
             .with_style(theme.find.container)
             .constrained()
