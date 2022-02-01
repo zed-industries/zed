@@ -236,6 +236,7 @@ impl LanguageServer {
                     }),
                     completion: Some(CompletionClientCapabilities {
                         completion_item: Some(CompletionItemCapability {
+                            snippet_support: Some(true),
                             resolve_support: Some(CompletionItemCapabilityResolveSupport {
                                 properties: vec!["additionalTextEdits".to_string()],
                             }),
