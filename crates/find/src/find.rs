@@ -296,7 +296,7 @@ impl FindBar {
                     let mut text: String;
                     if selection.start == selection.end {
                         let point = selection.start.to_display_point(&display_map);
-                        let (range, _) = editor::movement::surrounding_word(&display_map, point);
+                        let range = editor::movement::surrounding_word(&display_map, point);
                         let range = range.start.to_offset(&display_map, Bias::Left)
                             ..range.end.to_offset(&display_map, Bias::Right);
                         text = display_map.buffer_snapshot.text_for_range(range).collect();

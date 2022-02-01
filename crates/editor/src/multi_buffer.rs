@@ -50,6 +50,14 @@ struct History {
     group_interval: Duration,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug)]
+pub enum CharKind {
+    Newline,
+    Punctuation,
+    Whitespace,
+    Word,
+}
+
 struct Transaction {
     id: usize,
     buffer_transactions: HashSet<(usize, text::TransactionId)>,
@@ -1153,6 +1161,35 @@ impl MultiBufferSnapshot {
                 .copied()
                 .take(needle.len())
                 .eq(needle.bytes())
+    }
+
+    pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
+        let mut start = start.to_offset(self);
+        let mut end = start;
+        let mut next_chars = self.chars_at(start).peekable();
+        let mut prev_chars = self.reversed_chars_at(start).peekable();
+        let word_kind = cmp::max(
+            prev_chars.peek().copied().map(char_kind),
+            next_chars.peek().copied().map(char_kind),
+        );
+
+        for ch in prev_chars {
+            if Some(char_kind(ch)) == word_kind {
+                start -= ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+
+        for ch in next_chars {
+            if Some(char_kind(ch)) == word_kind {
+                end += ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+
+        (start..end, word_kind)
     }
 
     fn as_singleton(&self) -> Option<&Excerpt> {
@@ -2415,6 +2452,18 @@ impl ToPoint for usize {
 impl ToPoint for Point {
     fn to_point<'a>(&self, _: &MultiBufferSnapshot) -> Point {
         *self
+    }
+}
+
+pub fn char_kind(c: char) -> CharKind {
+    if c == '\n' {
+        CharKind::Newline
+    } else if c.is_whitespace() {
+        CharKind::Whitespace
+    } else if c.is_alphanumeric() || c == '_' {
+        CharKind::Word
+    } else {
+        CharKind::Punctuation
     }
 }
 

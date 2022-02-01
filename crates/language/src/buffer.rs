@@ -114,6 +114,7 @@ pub struct Diagnostic {
     pub is_disk_based: bool,
 }
 
+#[derive(Debug)]
 pub struct Completion<T> {
     pub old_range: Range<T>,
     pub new_text: String,
@@ -230,7 +231,7 @@ impl File for FakeFile {
     }
 
     fn path(&self) -> &Arc<Path> {
-        &self.path        
+        &self.path
     }
 
     fn full_path(&self, _: &AppContext) -> PathBuf {
@@ -255,8 +256,11 @@ impl File for FakeFile {
         cx.spawn(|_| async move { Ok((Default::default(), SystemTime::UNIX_EPOCH)) })
     }
 
-    fn format_remote(&self, buffer_id: u64, cx: &mut MutableAppContext)
-        -> Option<Task<Result<()>>> {
+    fn format_remote(
+        &self,
+        buffer_id: u64,
+        cx: &mut MutableAppContext,
+    ) -> Option<Task<Result<()>>> {
         None
     }
 
@@ -1759,7 +1763,7 @@ impl Buffer {
                         };
 
                         let old_range = this.anchor_before(old_range.start)..this.anchor_after(old_range.end);
-    
+
                         Some(Completion {
                             old_range,
                             new_text,
@@ -2510,6 +2514,26 @@ impl Default for Diagnostic {
 impl<T> Completion<T> {
     pub fn label(&self) -> &str {
         &self.lsp_completion.label
+    }
+
+    pub fn filter_range(&self) -> Range<usize> {
+        if let Some(filter_text) = self.lsp_completion.filter_text.as_deref() {
+            if let Some(start) = self.label().find(filter_text) {
+                start..start + filter_text.len()
+            } else {
+                0..self.label().len()
+            }
+        } else {
+            0..self.label().len()
+        }
+    }
+
+    pub fn sort_key(&self) -> (usize, &str) {
+        let kind_key = match self.lsp_completion.kind {
+            Some(lsp::CompletionItemKind::VARIABLE) => 0,
+            _ => 1,
+        };
+        (kind_key, &self.label()[self.filter_range()])
     }
 }
 

@@ -19,6 +19,7 @@ test-support = [
 text = { path = "../text" }
 clock = { path = "../clock" }
 collections = { path = "../collections" }
+fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
 project = { path = "../project" }
@@ -31,6 +32,7 @@ anyhow = "1.0"
 itertools = "0.10"
 lazy_static = "1.4"
 log = "0.4"
+ordered-float = "2.1.1"
 parking_lot = "0.11"
 postage = { version = "0.4", features = ["futures-traits"] }
 rand = { version = "0.8.3", optional = true }

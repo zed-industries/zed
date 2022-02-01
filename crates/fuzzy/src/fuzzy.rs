@@ -181,6 +181,10 @@ pub async fn match_strings(
     cancel_flag: &AtomicBool,
     background: Arc<executor::Background>,
 ) -> Vec<StringMatch> {
+    if candidates.is_empty() {
+        return Default::default();
+    }
+
     let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
     let query = query.chars().collect::<Vec<_>>();
 

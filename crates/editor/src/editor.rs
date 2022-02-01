@@ -13,6 +13,7 @@ use collections::{BTreeMap, HashMap, HashSet};
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
+use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     action,
     color::Color,
@@ -31,16 +32,17 @@ use language::{
 };
 use multi_buffer::MultiBufferChunks;
 pub use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, ExcerptProperties, MultiBuffer, MultiBufferSnapshot,
-    ToOffset, ToPoint,
+    char_kind, Anchor, AnchorRangeExt, CharKind, ExcerptId, ExcerptProperties, MultiBuffer,
+    MultiBufferSnapshot, ToOffset, ToPoint,
 };
+use ordered_float::OrderedFloat;
 use postage::watch;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
 use std::{
     any::TypeId,
-    cmp::{self, Ordering},
+    cmp::{self, Ordering, Reverse},
     iter::{self, FromIterator},
     mem,
     ops::{Deref, Range, RangeInclusive, Sub},
@@ -50,7 +52,7 @@ use std::{
 pub use sum_tree::Bias;
 use text::rope::TextDimension;
 use theme::{DiagnosticStyle, EditorStyle};
-use util::post_inc;
+use util::{post_inc, ResultExt};
 use workspace::{ItemNavHistory, PathOpener, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -430,6 +432,7 @@ struct BracketPairState {
 struct CompletionState {
     initial_position: Anchor,
     completions: Arc<[Completion<Anchor>]>,
+    matches: Arc<[StringMatch]>,
     selected_item: usize,
     list: UniformListState,
 }
@@ -451,14 +454,6 @@ struct ClipboardSelection {
 pub struct NavigationData {
     anchor: Anchor,
     offset: usize,
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug)]
-pub enum CharKind {
-    Newline,
-    Punctuation,
-    Whitespace,
-    Word,
 }
 
 impl Editor {
@@ -888,7 +883,7 @@ impl Editor {
                 mode = SelectMode::Character;
             }
             2 => {
-                let (range, _) = movement::surrounding_word(&display_map, position);
+                let range = movement::surrounding_word(&display_map, position);
                 start = buffer.anchor_before(range.start.to_point(&display_map));
                 end = buffer.anchor_before(range.end.to_point(&display_map));
                 mode = SelectMode::Word(start.clone()..end.clone());
@@ -991,7 +986,7 @@ impl Editor {
                     if movement::is_inside_word(&display_map, position)
                         || original_display_range.contains(&position)
                     {
-                        let (word_range, _) = movement::surrounding_word(&display_map, position);
+                        let word_range = movement::surrounding_word(&display_map, position);
                         if word_range.start < original_display_range.start {
                             head = word_range.start.to_point(&display_map);
                         } else {
@@ -1538,26 +1533,89 @@ impl Editor {
             return;
         };
 
+        let query = {
+            let buffer = self.buffer.read(cx).read(cx);
+            let offset = position.to_offset(&buffer);
+            let (word_range, kind) = buffer.surrounding_word(offset);
+            if offset > word_range.start && kind == Some(CharKind::Word) {
+                Some(
+                    buffer
+                        .text_for_range(word_range.start..offset)
+                        .collect::<String>(),
+                )
+            } else {
+                None
+            }
+        };
+
         let completions = self
             .buffer
             .update(cx, |buffer, cx| buffer.completions(position.clone(), cx));
 
         cx.spawn_weak(|this, mut cx| async move {
             let completions = completions.await?;
-            if !completions.is_empty() {
-                if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
-                    this.update(&mut cx, |this, cx| {
-                        if this.focused {
-                            this.completion_state = Some(CompletionState {
-                                initial_position: position,
-                                completions: completions.into(),
-                                selected_item: 0,
-                                list: Default::default(),
-                            });
-                            cx.notify();
-                        }
-                    });
+            let candidates = completions
+                .iter()
+                .enumerate()
+                .map(|(id, completion)| {
+                    StringMatchCandidate::new(
+                        id,
+                        completion.label()[completion.filter_range()].into(),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let mut matches = if let Some(query) = query.as_ref() {
+                fuzzy::match_strings(
+                    &candidates,
+                    query,
+                    false,
+                    100,
+                    &Default::default(),
+                    cx.background(),
+                )
+                .await
+            } else {
+                candidates
+                    .into_iter()
+                    .enumerate()
+                    .map(|(candidate_id, candidate)| StringMatch {
+                        candidate_id,
+                        score: Default::default(),
+                        positions: Default::default(),
+                        string: candidate.string,
+                    })
+                    .collect()
+            };
+            matches.sort_unstable_by_key(|mat| {
+                (
+                    Reverse(OrderedFloat(mat.score)),
+                    completions[mat.candidate_id].sort_key(),
+                )
+            });
+
+            for mat in &mut matches {
+                let filter_start = completions[mat.candidate_id].filter_range().start;
+                for position in &mut mat.positions {
+                    *position += filter_start;
                 }
+            }
+
+            if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
+                this.update(&mut cx, |this, cx| {
+                    if matches.is_empty() {
+                        this.completion_state.take();
+                    } else if this.focused {
+                        this.completion_state = Some(CompletionState {
+                            initial_position: position,
+                            completions: completions.into(),
+                            matches: matches.into(),
+                            selected_item: 0,
+                            list: Default::default(),
+                        });
+                    }
+
+                    cx.notify();
+                });
             }
             Ok::<_, anyhow::Error>(())
         })
@@ -1590,21 +1648,33 @@ impl Editor {
             let build_settings = self.build_settings.clone();
             let settings = build_settings(cx);
             let completions = state.completions.clone();
+            let matches = state.matches.clone();
             let selected_item = state.selected_item;
             UniformList::new(
                 state.list.clone(),
-                state.completions.len(),
+                matches.len(),
                 move |range, items, cx| {
                     let settings = build_settings(cx);
                     let start_ix = range.start;
-                    for (ix, completion) in completions[range].iter().enumerate() {
+                    let label_style = LabelStyle {
+                        text: settings.style.text.clone(),
+                        highlight_text: settings
+                            .style
+                            .text
+                            .clone()
+                            .highlight(settings.style.autocomplete.match_highlight, cx.font_cache())
+                            .log_err(),
+                    };
+                    for (ix, mat) in matches[range].iter().enumerate() {
                         let item_style = if start_ix + ix == selected_item {
                             settings.style.autocomplete.selected_item
                         } else {
                             settings.style.autocomplete.item
                         };
+                        let completion = &completions[mat.candidate_id];
                         items.push(
-                            Label::new(completion.label().to_string(), settings.style.text.clone())
+                            Label::new(completion.label().to_string(), label_style.clone())
+                                .with_highlights(mat.positions.clone())
                                 .contained()
                                 .with_style(item_style)
                                 .boxed(),
@@ -1614,10 +1684,12 @@ impl Editor {
             )
             .with_width_from_item(
                 state
-                    .completions
+                    .matches
                     .iter()
                     .enumerate()
-                    .max_by_key(|(_, completion)| completion.label().chars().count())
+                    .max_by_key(|(_, mat)| {
+                        state.completions[mat.candidate_id].label().chars().count()
+                    })
                     .map(|(ix, _)| ix),
             )
             .contained()
@@ -2914,7 +2986,7 @@ impl Editor {
         } else if selections.len() == 1 {
             let selection = selections.last_mut().unwrap();
             if selection.start == selection.end {
-                let (word_range, _) = movement::surrounding_word(
+                let word_range = movement::surrounding_word(
                     &display_map,
                     selection.start.to_display_point(&display_map),
                 );
@@ -3534,8 +3606,7 @@ impl Editor {
     ) where
         T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
     {
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let buffer = &display_map.buffer_snapshot;
+        let buffer = self.buffer.read(cx).snapshot(cx);
         let old_cursor_position = self.newest_anchor_selection().map(|s| s.head());
         selections.sort_unstable_by_key(|s| s.start);
 
@@ -3580,29 +3651,14 @@ impl Editor {
             }
         }
 
-        let new_cursor_position = selections
-            .iter()
-            .max_by_key(|s| s.id)
-            .map(|s| s.head().to_point(&buffer));
+        let new_cursor_position = selections.iter().max_by_key(|s| s.id).map(|s| s.head());
         if let Some(old_cursor_position) = old_cursor_position {
-            if new_cursor_position.is_some() {
-                self.push_to_nav_history(old_cursor_position, new_cursor_position, cx);
-            }
-        }
-
-        if let Some((completion_state, cursor_position)) =
-            self.completion_state.as_ref().zip(new_cursor_position)
-        {
-            let cursor_position = cursor_position.to_display_point(&display_map);
-            let initial_position = completion_state
-                .initial_position
-                .to_display_point(&display_map);
-
-            let (word_range, kind) = movement::surrounding_word(&display_map, initial_position);
-            if kind != Some(CharKind::Word) || !word_range.to_inclusive().contains(&cursor_position)
-            {
-                self.completion_state.take();
-                cx.notify();
+            if let Some(new_cursor_position) = new_cursor_position {
+                self.push_to_nav_history(
+                    old_cursor_position,
+                    Some(new_cursor_position.to_point(&buffer)),
+                    cx,
+                );
             }
         }
 
@@ -3628,6 +3684,21 @@ impl Editor {
             })),
             cx,
         );
+
+        if let Some((completion_state, cursor_position)) =
+            self.completion_state.as_ref().zip(new_cursor_position)
+        {
+            let cursor_position = cursor_position.to_offset(&buffer);
+            let (word_range, kind) =
+                buffer.surrounding_word(completion_state.initial_position.clone());
+            if kind == Some(CharKind::Word) && word_range.to_inclusive().contains(&cursor_position)
+            {
+                self.show_completions(&ShowCompletions, cx);
+            } else {
+                self.completion_state.take();
+                cx.notify();
+            }
+        }
     }
 
     /// Compute new ranges for any selections that were located in excerpts that have
@@ -4422,18 +4493,6 @@ pub fn settings_builder(
             style: theme,
         }
     })
-}
-
-pub fn char_kind(c: char) -> CharKind {
-    if c == '\n' {
-        CharKind::Newline
-    } else if c.is_whitespace() {
-        CharKind::Whitespace
-    } else if c.is_alphanumeric() || c == '_' {
-        CharKind::Word
-    } else {
-        CharKind::Punctuation
-    }
 }
 
 #[cfg(test)]
