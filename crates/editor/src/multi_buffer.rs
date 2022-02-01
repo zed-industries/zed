@@ -882,6 +882,45 @@ impl MultiBuffer {
         })
     }
 
+    pub fn is_completion_trigger<T>(&self, position: T, text: &str, cx: &AppContext) -> bool
+    where
+        T: ToOffset,
+    {
+        let mut chars = text.chars();
+        let char = if let Some(char) = chars.next() {
+            char
+        } else {
+            return false;
+        };
+        if chars.next().is_some() {
+            return false;
+        }
+
+        if char.is_alphanumeric() || char == '_' {
+            return true;
+        }
+
+        let snapshot = self.snapshot(cx);
+        let anchor = snapshot.anchor_before(position);
+        let buffer = self.buffers.borrow()[&anchor.buffer_id].buffer.clone();
+        if let Some(language_server) = buffer.read(cx).language_server() {
+            language_server
+                .capabilities()
+                .completion_provider
+                .as_ref()
+                .map_or(false, |provider| {
+                    provider
+                        .trigger_characters
+                        .as_ref()
+                        .map_or(false, |characters| {
+                            characters.iter().any(|string| string == text)
+                        })
+                })
+        } else {
+            false
+        }
+    }
+
     pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
         self.buffers
             .borrow()

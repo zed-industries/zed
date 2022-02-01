@@ -1552,6 +1552,7 @@ dependencies = [
  "language",
  "lazy_static",
  "log",
+ "lsp",
  "parking_lot",
  "postage",
  "project",

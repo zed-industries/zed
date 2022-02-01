@@ -214,6 +214,85 @@ pub trait LocalFile: File {
     );
 }
 
+#[cfg(feature = "test-support")]
+pub struct FakeFile {
+    pub path: Arc<Path>,
+}
+
+#[cfg(feature = "test-support")]
+impl File for FakeFile {
+    fn as_local(&self) -> Option<&dyn LocalFile> {
+        Some(self)
+    }
+
+    fn mtime(&self) -> SystemTime {
+        SystemTime::UNIX_EPOCH
+    }
+
+    fn path(&self) -> &Arc<Path> {
+        &self.path        
+    }
+
+    fn full_path(&self, _: &AppContext) -> PathBuf {
+        self.path.to_path_buf()
+    }
+
+    fn file_name(&self, _: &AppContext) -> OsString {
+        self.path.file_name().unwrap().to_os_string()
+    }
+
+    fn is_deleted(&self) -> bool {
+        false
+    }
+
+    fn save(
+        &self,
+        _: u64,
+        _: Rope,
+        _: clock::Global,
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<(clock::Global, SystemTime)>> {
+        cx.spawn(|_| async move { Ok((Default::default(), SystemTime::UNIX_EPOCH)) })
+    }
+
+    fn format_remote(&self, buffer_id: u64, cx: &mut MutableAppContext)
+        -> Option<Task<Result<()>>> {
+        None
+    }
+
+    fn buffer_updated(&self, _: u64, operation: Operation, cx: &mut MutableAppContext) {}
+
+    fn buffer_removed(&self, _: u64, cx: &mut MutableAppContext) {}
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn to_proto(&self) -> rpc::proto::File {
+        unimplemented!()
+    }
+}
+
+#[cfg(feature = "test-support")]
+impl LocalFile for FakeFile {
+    fn abs_path(&self, _: &AppContext) -> PathBuf {
+        self.path.to_path_buf()
+    }
+
+    fn load(&self, cx: &AppContext) -> Task<Result<String>> {
+        cx.background().spawn(async move { Ok(Default::default()) })
+    }
+
+    fn buffer_reloaded(
+        &self,
+        buffer_id: u64,
+        version: &clock::Global,
+        mtime: SystemTime,
+        cx: &mut MutableAppContext,
+    ) {
+    }
+}
+
 pub(crate) struct QueryCursorHandle(Option<QueryCursor>);
 
 #[derive(Clone)]
@@ -757,6 +836,10 @@ impl Buffer {
 
     pub fn language(&self) -> Option<&Arc<Language>> {
         self.language.as_ref()
+    }
+
+    pub fn language_server(&self) -> Option<&Arc<LanguageServer>> {
+        self.language_server.as_ref().map(|state| &state.server)
     }
 
     pub fn parse_count(&self) -> usize {

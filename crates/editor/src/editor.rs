@@ -1253,6 +1253,7 @@ impl Editor {
             self.insert(text, cx);
             self.autoclose_pairs(cx);
             self.end_transaction(cx);
+            self.trigger_completion_on_input(text, cx);
         }
     }
 
@@ -1386,6 +1387,20 @@ impl Editor {
         let selections = self.local_selections::<usize>(cx);
         self.update_selections(selections, Some(Autoscroll::Fit), cx);
         self.end_transaction(cx);
+    }
+
+    fn trigger_completion_on_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
+        if self.completion_state.is_none() {
+            if let Some(selection) = self.newest_anchor_selection() {
+                if self
+                    .buffer
+                    .read(cx)
+                    .is_completion_trigger(selection.head(), text, cx)
+                {
+                    self.show_completions(&ShowCompletions, cx);
+                }
+            }
+        }
     }
 
     fn autoclose_pairs(&mut self, cx: &mut ViewContext<Self>) {
@@ -4398,8 +4413,8 @@ pub fn char_kind(c: char) -> CharKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use language::LanguageConfig;
-    use std::{cell::RefCell, rc::Rc, time::Instant};
+    use language::{FakeFile, LanguageConfig};
+    use std::{cell::RefCell, path::Path, rc::Rc, time::Instant};
     use text::Point;
     use unindent::Unindent;
     use util::test::sample_text;
@@ -6450,6 +6465,95 @@ mod tests {
 
                 /*
                 *
+                "
+                .unindent()
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_completion(mut cx: gpui::TestAppContext) {
+        let settings = cx.read(EditorSettings::test);
+        let (language_server, mut fake) = lsp::LanguageServer::fake_with_capabilities(
+            lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            cx.background(),
+        )
+        .await;
+
+        let text = "
+            one
+            two
+            three
+        "
+        .unindent();
+        let buffer = cx.add_model(|cx| {
+            Buffer::from_file(
+                0,
+                text,
+                Box::new(FakeFile {
+                    path: Arc::from(Path::new("/the/file")),
+                }),
+                cx,
+            )
+            .with_language_server(language_server, cx)
+        });
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+
+        let (_, editor) = cx.add_window(|cx| build_editor(buffer, settings, cx));
+
+        editor.update(&mut cx, |editor, cx| {
+            editor.select_ranges([3..3], None, cx);
+            editor.handle_input(&Input(".".to_string()), cx);
+        });
+
+        let (id, params) = fake.receive_request::<lsp::request::Completion>().await;
+        assert_eq!(
+            params.text_document_position.text_document.uri,
+            lsp::Url::from_file_path("/the/file").unwrap()
+        );
+        assert_eq!(
+            params.text_document_position.position,
+            lsp::Position::new(0, 4)
+        );
+
+        fake.respond(
+            id,
+            Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 4)),
+                        new_text: "first_completion".to_string(),
+                    })),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 4)),
+                        new_text: "second_completion".to_string(),
+                    })),
+                    ..Default::default()
+                },
+            ])),
+        )
+        .await;
+
+        editor.next_notification(&cx).await;
+
+        editor.update(&mut cx, |editor, cx| {
+            editor.move_down(&MoveDown, cx);
+            editor.confirm_completion(&ConfirmCompletion, cx);
+            assert_eq!(
+                editor.text(cx),
+                "
+                    one.second_completion
+                    two
+                    three
                 "
                 .unindent()
             );
