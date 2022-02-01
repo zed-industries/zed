@@ -856,13 +856,13 @@ impl MultiBuffer {
     where
         T: ToOffset,
     {
-        let snapshot = self.snapshot(cx);
-        let anchor = snapshot.anchor_before(position);
+        let anchor = self.read(cx).anchor_before(position);
         let buffer = self.buffers.borrow()[&anchor.buffer_id].buffer.clone();
         let completions =
             buffer.update(cx, |buffer, cx| buffer.completions(anchor.text_anchor, cx));
-        cx.foreground().spawn(async move {
+        cx.spawn(|this, cx| async move {
             completions.await.map(|completions| {
+                let snapshot = this.read_with(&cx, |buffer, cx| buffer.snapshot(cx));
                 completions
                     .into_iter()
                     .map(|completion| Completion {
