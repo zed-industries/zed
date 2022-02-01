@@ -256,17 +256,13 @@ impl File for FakeFile {
         cx.spawn(|_| async move { Ok((Default::default(), SystemTime::UNIX_EPOCH)) })
     }
 
-    fn format_remote(
-        &self,
-        buffer_id: u64,
-        cx: &mut MutableAppContext,
-    ) -> Option<Task<Result<()>>> {
+    fn format_remote(&self, _: u64, _: &mut MutableAppContext) -> Option<Task<Result<()>>> {
         None
     }
 
-    fn buffer_updated(&self, _: u64, operation: Operation, cx: &mut MutableAppContext) {}
+    fn buffer_updated(&self, _: u64, _: Operation, _: &mut MutableAppContext) {}
 
-    fn buffer_removed(&self, _: u64, cx: &mut MutableAppContext) {}
+    fn buffer_removed(&self, _: u64, _: &mut MutableAppContext) {}
 
     fn as_any(&self) -> &dyn Any {
         self
@@ -287,13 +283,7 @@ impl LocalFile for FakeFile {
         cx.background().spawn(async move { Ok(Default::default()) })
     }
 
-    fn buffer_reloaded(
-        &self,
-        buffer_id: u64,
-        version: &clock::Global,
-        mtime: SystemTime,
-        cx: &mut MutableAppContext,
-    ) {
+    fn buffer_reloaded(&self, _: u64, _: &clock::Global, _: SystemTime, _: &mut MutableAppContext) {
     }
 }
 
