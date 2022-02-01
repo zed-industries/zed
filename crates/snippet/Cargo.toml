@@ -1,0 +1,13 @@
+[package]
+name = "snippet"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/snippet.rs"
+
+[dependencies]
+anyhow = "1.0"
+smallvec = { version = "1.6", features = ["union"] }
+tree-sitter = "0.20"
+tree-sitter-snippet = { path = "./grammar" }
