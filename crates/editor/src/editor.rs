@@ -428,6 +428,7 @@ struct BracketPairState {
 }
 
 struct CompletionState {
+    initial_position: Anchor,
     completions: Arc<[Completion<Anchor>]>,
     selected_item: usize,
     list: UniformListState,
@@ -452,7 +453,7 @@ pub struct NavigationData {
     offset: usize,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug)]
 pub enum CharKind {
     Newline,
     Punctuation,
@@ -887,7 +888,7 @@ impl Editor {
                 mode = SelectMode::Character;
             }
             2 => {
-                let range = movement::surrounding_word(&display_map, position);
+                let (range, _) = movement::surrounding_word(&display_map, position);
                 start = buffer.anchor_before(range.start.to_point(&display_map));
                 end = buffer.anchor_before(range.end.to_point(&display_map));
                 mode = SelectMode::Word(start.clone()..end.clone());
@@ -990,7 +991,7 @@ impl Editor {
                     if movement::is_inside_word(&display_map, position)
                         || original_display_range.contains(&position)
                     {
-                        let word_range = movement::surrounding_word(&display_map, position);
+                        let (word_range, _) = movement::surrounding_word(&display_map, position);
                         if word_range.start < original_display_range.start {
                             head = word_range.start.to_point(&display_map);
                         } else {
@@ -1397,6 +1398,9 @@ impl Editor {
                 .is_completion_trigger(selection.head(), text, cx)
             {
                 self.show_completions(&ShowCompletions, cx);
+            } else {
+                self.completion_state.take();
+                cx.notify();
             }
         }
     }
@@ -1528,25 +1532,30 @@ impl Editor {
     }
 
     fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
-        let position = self
-            .newest_selection::<usize>(&self.buffer.read(cx).read(cx))
-            .head();
+        let position = if let Some(selection) = self.newest_anchor_selection() {
+            selection.head()
+        } else {
+            return;
+        };
 
         let completions = self
             .buffer
-            .update(cx, |buffer, cx| buffer.completions(position, cx));
+            .update(cx, |buffer, cx| buffer.completions(position.clone(), cx));
 
         cx.spawn_weak(|this, mut cx| async move {
             let completions = completions.await?;
             if !completions.is_empty() {
                 if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
                     this.update(&mut cx, |this, cx| {
-                        this.completion_state = Some(CompletionState {
-                            completions: completions.into(),
-                            selected_item: 0,
-                            list: Default::default(),
-                        });
-                        cx.notify();
+                        if this.focused {
+                            this.completion_state = Some(CompletionState {
+                                initial_position: position,
+                                completions: completions.into(),
+                                selected_item: 0,
+                                list: Default::default(),
+                            });
+                            cx.notify();
+                        }
                     });
                 }
             }
@@ -2905,7 +2914,7 @@ impl Editor {
         } else if selections.len() == 1 {
             let selection = selections.last_mut().unwrap();
             if selection.start == selection.end {
-                let word_range = movement::surrounding_word(
+                let (word_range, _) = movement::surrounding_word(
                     &display_map,
                     selection.start.to_display_point(&display_map),
                 );
@@ -3525,7 +3534,8 @@ impl Editor {
     ) where
         T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
     {
-        let buffer = self.buffer.read(cx).snapshot(cx);
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer = &display_map.buffer_snapshot;
         let old_cursor_position = self.newest_anchor_selection().map(|s| s.head());
         selections.sort_unstable_by_key(|s| s.start);
 
@@ -3570,13 +3580,29 @@ impl Editor {
             }
         }
 
+        let new_cursor_position = selections
+            .iter()
+            .max_by_key(|s| s.id)
+            .map(|s| s.head().to_point(&buffer));
         if let Some(old_cursor_position) = old_cursor_position {
-            let new_cursor_position = selections
-                .iter()
-                .max_by_key(|s| s.id)
-                .map(|s| s.head().to_point(&buffer));
             if new_cursor_position.is_some() {
                 self.push_to_nav_history(old_cursor_position, new_cursor_position, cx);
+            }
+        }
+
+        if let Some((completion_state, cursor_position)) =
+            self.completion_state.as_ref().zip(new_cursor_position)
+        {
+            let cursor_position = cursor_position.to_display_point(&display_map);
+            let initial_position = completion_state
+                .initial_position
+                .to_display_point(&display_map);
+
+            let (word_range, kind) = movement::surrounding_word(&display_map, initial_position);
+            if kind != Some(CharKind::Word) || !word_range.to_inclusive().contains(&cursor_position)
+            {
+                self.completion_state.take();
+                cx.notify();
             }
         }
 
@@ -4207,6 +4233,7 @@ impl View for Editor {
         self.show_local_cursors = false;
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
+        self.completion_state.take();
         cx.emit(Event::Blurred);
         cx.notify();
     }

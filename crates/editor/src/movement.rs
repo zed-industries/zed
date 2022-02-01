@@ -183,7 +183,10 @@ pub fn is_inside_word(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
     prev_char_kind.zip(next_char_kind) == Some((CharKind::Word, CharKind::Word))
 }
 
-pub fn surrounding_word(map: &DisplaySnapshot, point: DisplayPoint) -> Range<DisplayPoint> {
+pub fn surrounding_word(
+    map: &DisplaySnapshot,
+    point: DisplayPoint,
+) -> (Range<DisplayPoint>, Option<CharKind>) {
     let mut start = map.clip_point(point, Bias::Left).to_offset(map, Bias::Left);
     let mut end = start;
 
@@ -211,8 +214,11 @@ pub fn surrounding_word(map: &DisplaySnapshot, point: DisplayPoint) -> Range<Dis
         }
     }
 
-    start.to_point(&map.buffer_snapshot).to_display_point(map)
-        ..end.to_point(&map.buffer_snapshot).to_display_point(map)
+    (
+        start.to_point(&map.buffer_snapshot).to_display_point(map)
+            ..end.to_point(&map.buffer_snapshot).to_display_point(map),
+        word_kind,
+    )
 }
 
 #[cfg(test)]
@@ -406,59 +412,101 @@ mod tests {
 
         assert_eq!(
             surrounding_word(&snapshot, DisplayPoint::new(0, 0)),
-            DisplayPoint::new(0, 0)..DisplayPoint::new(0, 5)
+            (
+                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 5),
+                Some(CharKind::Word)
+            )
         );
         assert_eq!(
             surrounding_word(&snapshot, DisplayPoint::new(0, 2)),
-            DisplayPoint::new(0, 0)..DisplayPoint::new(0, 5)
+            (
+                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 5),
+                Some(CharKind::Word)
+            )
         );
         assert_eq!(
             surrounding_word(&snapshot, DisplayPoint::new(0, 5)),
-            DisplayPoint::new(0, 0)..DisplayPoint::new(0, 5)
+            (
+                DisplayPoint::new(0, 0)..DisplayPoint::new(0, 5),
+                Some(CharKind::Word)
+            )
         );
         assert_eq!(
             surrounding_word(&snapshot, DisplayPoint::new(0, 6)),
-            DisplayPoint::new(0, 6)..DisplayPoint::new(0, 11)
+            (
+                DisplayPoint::new(0, 6)..DisplayPoint::new(0, 11),
+                Some(CharKind::Word)
+            )
         );
         assert_eq!(
             surrounding_word(&snapshot, DisplayPoint::new(0, 7)),
-            DisplayPoint::new(0, 6)..DisplayPoint::new(0, 11)
+            (
+                DisplayPoint::new(0, 6)..DisplayPoint::new(0, 11),
+                Some(CharKind::Word)
+            )
         );
         assert_eq!(
             surrounding_word(&snapshot, DisplayPoint::new(0, 11)),
-            DisplayPoint::new(0, 6)..DisplayPoint::new(0, 11)
+            (
+                DisplayPoint::new(0, 6)..DisplayPoint::new(0, 11),
+                Some(CharKind::Word)
+            )
         );
         assert_eq!(
             surrounding_word(&snapshot, DisplayPoint::new(0, 13)),
-            DisplayPoint::new(0, 11)..DisplayPoint::new(0, 14)
+            (
+                DisplayPoint::new(0, 11)..DisplayPoint::new(0, 14),
+                Some(CharKind::Whitespace)
+            )
         );
         assert_eq!(
             surrounding_word(&snapshot, DisplayPoint::new(0, 14)),
-            DisplayPoint::new(0, 14)..DisplayPoint::new(0, 19)
+            (
+                DisplayPoint::new(0, 14)..DisplayPoint::new(0, 19),
+                Some(CharKind::Word)
+            )
         );
         assert_eq!(
             surrounding_word(&snapshot, DisplayPoint::new(0, 17)),
-            DisplayPoint::new(0, 14)..DisplayPoint::new(0, 19)
+            (
+                DisplayPoint::new(0, 14)..DisplayPoint::new(0, 19),
+                Some(CharKind::Word)
+            )
         );
         assert_eq!(
             surrounding_word(&snapshot, DisplayPoint::new(0, 19)),
-            DisplayPoint::new(0, 14)..DisplayPoint::new(0, 19)
+            (
+                DisplayPoint::new(0, 14)..DisplayPoint::new(0, 19),
+                Some(CharKind::Word)
+            )
         );
         assert_eq!(
             surrounding_word(&snapshot, DisplayPoint::new(1, 0)),
-            DisplayPoint::new(1, 0)..DisplayPoint::new(1, 4)
+            (
+                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 4),
+                Some(CharKind::Whitespace)
+            )
         );
         assert_eq!(
             surrounding_word(&snapshot, DisplayPoint::new(1, 1)),
-            DisplayPoint::new(1, 0)..DisplayPoint::new(1, 4)
+            (
+                DisplayPoint::new(1, 0)..DisplayPoint::new(1, 4),
+                Some(CharKind::Whitespace)
+            )
         );
         assert_eq!(
             surrounding_word(&snapshot, DisplayPoint::new(1, 6)),
-            DisplayPoint::new(1, 4)..DisplayPoint::new(1, 7)
+            (
+                DisplayPoint::new(1, 4)..DisplayPoint::new(1, 7),
+                Some(CharKind::Word)
+            )
         );
         assert_eq!(
             surrounding_word(&snapshot, DisplayPoint::new(1, 7)),
-            DisplayPoint::new(1, 4)..DisplayPoint::new(1, 7)
+            (
+                DisplayPoint::new(1, 4)..DisplayPoint::new(1, 7),
+                Some(CharKind::Word)
+            )
         );
     }
 }
