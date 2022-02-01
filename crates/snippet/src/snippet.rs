@@ -1,31 +1,21 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use smallvec::SmallVec;
 use std::{collections::BTreeMap, ops::Range};
-use tree_sitter::{Parser, TreeCursor};
 
 #[derive(Default)]
 pub struct Snippet {
     pub text: String,
-    pub tabstops: Vec<SmallVec<[Range<usize>; 2]>>,
+    pub tabstops: Vec<TabStop>,
 }
+
+type TabStop = SmallVec<[Range<usize>; 2]>;
 
 impl Snippet {
     pub fn parse(source: &str) -> Result<Self> {
-        let mut parser = Parser::new();
-        parser
-            .set_language(tree_sitter_snippet::language())
-            .unwrap();
-
-        let tree = parser.parse(source, None).unwrap();
-        if tree.root_node().has_error() {
-            return Err(anyhow!("invalid snippet"));
-        }
-
         let mut text = String::new();
         let mut tabstops = BTreeMap::new();
-        let mut cursor = tree.root_node().walk();
-        parse_snippet_node(&mut cursor, &mut text, &mut tabstops, source)?;
-
+        parse_snippet(source, false, &mut text, &mut tabstops)
+            .context("failed to parse snippet")?;
         Ok(Snippet {
             text,
             tabstops: tabstops.into_values().collect(),
@@ -33,53 +23,79 @@ impl Snippet {
     }
 }
 
-fn parse_snippet_node(
-    cursor: &mut TreeCursor,
+fn parse_snippet<'a>(
+    mut source: &'a str,
+    nested: bool,
     text: &mut String,
-    tabstops: &mut BTreeMap<usize, SmallVec<[Range<usize>; 2]>>,
-    source: &str,
-) -> Result<()> {
-    cursor.goto_first_child();
+    tabstops: &mut BTreeMap<usize, TabStop>,
+) -> Result<&'a str> {
     loop {
-        let node = cursor.node();
-        match node.kind() {
-            "text" => text.push_str(&source[node.byte_range()]),
-            "tabstop" => {
-                if let Some(int_node) = node.named_child(0) {
-                    let index = source[int_node.byte_range()].parse::<usize>()?;
-                    tabstops
-                        .entry(index)
-                        .or_insert(SmallVec::new())
-                        .push(text.len()..text.len());
+        match source.chars().next() {
+            None => return Ok(""),
+            Some('$') => {
+                source = parse_tabstop(&source[1..], text, tabstops)?;
+            }
+            Some('}') => {
+                if nested {
+                    return Ok(source);
+                } else {
+                    text.push('}');
+                    source = &source[1..];
                 }
             }
-            "placeholder" => {
-                cursor.goto_first_child();
-                cursor.goto_next_sibling();
-                let int_node = cursor.node();
-                let index = source[int_node.byte_range()].parse::<usize>()?;
-
-                cursor.goto_next_sibling();
-                cursor.goto_next_sibling();
-                let range_start = text.len();
-
-                parse_snippet_node(cursor, text, tabstops, source)?;
-                tabstops
-                    .entry(index)
-                    .or_insert(SmallVec::new())
-                    .push(range_start..text.len());
-
-                cursor.goto_parent();
+            Some(_) => {
+                let chunk_end = source.find(&['}', '$']).unwrap_or(source.len());
+                let (chunk, rest) = source.split_at(chunk_end);
+                text.push_str(chunk);
+                source = rest;
             }
-            _ => {}
-        }
-
-        if !cursor.goto_next_sibling() {
-            break;
         }
     }
-    cursor.goto_parent();
-    Ok(())
+}
+
+fn parse_tabstop<'a>(
+    mut source: &'a str,
+    text: &mut String,
+    tabstops: &mut BTreeMap<usize, TabStop>,
+) -> Result<&'a str> {
+    let tabstop_start = text.len();
+    let tabstop_index;
+    if source.chars().next() == Some('{') {
+        let (index, rest) = parse_int(&source[1..])?;
+        tabstop_index = index;
+        source = rest;
+
+        if source.chars().next() == Some(':') {
+            source = parse_snippet(&source[1..], true, text, tabstops)?;
+        }
+
+        if source.chars().next() == Some('}') {
+            source = &source[1..];
+        } else {
+            return Err(anyhow!("expected a closing brace"));
+        }
+    } else {
+        let (index, rest) = parse_int(&source)?;
+        tabstop_index = index;
+        source = rest;
+    }
+
+    tabstops
+        .entry(tabstop_index)
+        .or_default()
+        .push(tabstop_start..text.len());
+    Ok(source)
+}
+
+fn parse_int(source: &str) -> Result<(usize, &str)> {
+    let len = source
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(source.len());
+    if len == 0 {
+        return Err(anyhow!("expected an integer"));
+    }
+    let (prefix, suffix) = source.split_at(len);
+    Ok((prefix.parse()?, suffix))
 }
 
 #[cfg(test)]
@@ -98,19 +114,31 @@ mod tests {
                 .collect::<Vec<_>>(),
             &[vec![3..3]]
         );
-    }
 
-    #[test]
-    fn test_parse_snippet_with_placeholders() {
-        let snippet = Snippet::parse("one${1:two}three").unwrap();
-        assert_eq!(snippet.text, "onetwothree");
+        // Multi-digit numbers
+        let snippet = Snippet::parse("one$123 $99").unwrap();
+        assert_eq!(snippet.text, "one ");
         assert_eq!(
             snippet
                 .tabstops
                 .iter()
                 .map(SmallVec::as_slice)
                 .collect::<Vec<_>>(),
-            &[vec![3..6]]
+            &[vec![4..4], vec![3..3]]
+        );
+    }
+
+    #[test]
+    fn test_parse_snippet_with_placeholders() {
+        let snippet = Snippet::parse("one${1:two}three${2:four}").unwrap();
+        assert_eq!(snippet.text, "onetwothreefour");
+        assert_eq!(
+            snippet
+                .tabstops
+                .iter()
+                .map(SmallVec::as_slice)
+                .collect::<Vec<_>>(),
+            &[vec![3..6], vec![11..15]]
         );
     }
 

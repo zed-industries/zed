@@ -9,5 +9,3 @@ path = "src/snippet.rs"
 [dependencies]
 anyhow = "1.0"
 smallvec = { version = "1.6", features = ["union"] }
-tree-sitter = "0.20"
-tree-sitter-snippet = { path = "./grammar" }
