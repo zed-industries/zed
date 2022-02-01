@@ -1777,13 +1777,11 @@ impl Buffer {
         }
     }
 
-    pub fn apply_completion(
+    pub fn apply_additional_edits_for_completion(
         &mut self,
         completion: Completion<Anchor>,
         cx: &mut ModelContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        self.edit_with_autoindent([completion.old_range], completion.new_text.clone(), cx);
-
         self.file.as_ref()?.as_local()?;
         let server = self.language_server.as_ref()?.server.clone();
         Some(cx.spawn(|this, mut cx| async move {

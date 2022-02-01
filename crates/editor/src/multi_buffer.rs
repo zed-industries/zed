@@ -929,7 +929,7 @@ impl MultiBuffer {
         }
     }
 
-    pub fn apply_completion(
+    pub fn apply_additional_edits_for_completion(
         &self,
         completion: Completion<Anchor>,
         cx: &mut ModelContext<Self>,
@@ -941,7 +941,7 @@ impl MultiBuffer {
             .buffer
             .clone();
         buffer.update(cx, |buffer, cx| {
-            buffer.apply_completion(
+            buffer.apply_additional_edits_for_completion(
                 Completion {
                     old_range: completion.old_range.start.text_anchor
                         ..completion.old_range.end.text_anchor,

@@ -1562,6 +1562,7 @@ dependencies = [
  "serde",
  "smallvec",
  "smol",
+ "snippet",
  "sum_tree",
  "text",
  "theme",

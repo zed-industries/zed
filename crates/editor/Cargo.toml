@@ -22,7 +22,9 @@ collections = { path = "../collections" }
 fuzzy = { path = "../fuzzy" }
 gpui = { path = "../gpui" }
 language = { path = "../language" }
+lsp = { path = "../lsp" }
 project = { path = "../project" }
+snippet = { path = "../snippet" }
 sum_tree = { path = "../sum_tree" }
 theme = { path = "../theme" }
 util = { path = "../util" }

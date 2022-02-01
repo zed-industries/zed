@@ -42,6 +42,7 @@ use postage::watch;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
+use snippet::Snippet;
 use std::{
     any::TypeId,
     cmp::{self, Ordering, Reverse},
@@ -1656,10 +1657,22 @@ impl Editor {
             .matches
             .get(completion_state.selected_item)?;
         let completion = completion_state.completions.get(mat.candidate_id)?;
+
+        if completion.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET) {
+            self.insert_snippet(completion.old_range.clone(), &completion.new_text, cx)
+                .log_err();
+        } else {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.edit_with_autoindent(
+                    [completion.old_range.clone()],
+                    &completion.new_text,
+                    cx,
+                );
+            });
+        }
+
         self.buffer.update(cx, |buffer, cx| {
-            let mut completion = completion.clone();
-            // completion.
-            buffer.apply_completion(completion, cx)
+            buffer.apply_additional_edits_for_completion(completion.clone(), cx)
         })
     }
 
@@ -1720,6 +1733,42 @@ impl Editor {
             .with_style(settings.style.autocomplete.container)
             .boxed()
         })
+    }
+
+    pub fn insert_snippet<S>(
+        &mut self,
+        range: Range<S>,
+        text: &str,
+        cx: &mut ViewContext<Self>,
+    ) -> Result<()>
+    where
+        S: Clone + ToOffset,
+    {
+        let snippet = Snippet::parse(text)?;
+        let tabstops = self.buffer.update(cx, |buffer, cx| {
+            buffer.edit_with_autoindent([range.clone()], snippet.text, cx);
+            let snapshot = buffer.read(cx);
+            let start = range.start.to_offset(&snapshot);
+            snippet
+                .tabstops
+                .iter()
+                .map(|ranges| {
+                    ranges
+                        .into_iter()
+                        .map(|range| {
+                            snapshot.anchor_before(start + range.start)
+                                ..snapshot.anchor_after(start + range.end)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        });
+
+        if let Some(tabstop) = tabstops.first() {
+            self.select_ranges(tabstop.iter().cloned(), Some(Autoscroll::Fit), cx);
+        }
+
+        Ok(())
     }
 
     pub fn clear(&mut self, cx: &mut ViewContext<Self>) {
@@ -6578,6 +6627,23 @@ mod tests {
                 "
                 .unindent()
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_snippets(mut cx: gpui::TestAppContext) {
+        let settings = cx.read(EditorSettings::test);
+
+        let text = "a. b";
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+        let (_, editor) = cx.add_window(|cx| build_editor(buffer, settings, cx));
+
+        editor.update(&mut cx, |editor, cx| {
+            editor
+                .insert_snippet(2..2, "f(${1:one}, ${2:two})$0", cx)
+                .unwrap();
+            assert_eq!(editor.text(cx), "a.f(one, two) b");
+            assert_eq!(editor.selected_ranges::<usize>(cx), &[4..7]);
         });
     }
 
