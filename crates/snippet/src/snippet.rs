@@ -16,9 +16,13 @@ impl Snippet {
         let mut tabstops = BTreeMap::new();
         parse_snippet(source, false, &mut text, &mut tabstops)
             .context("failed to parse snippet")?;
+
+        let last_tabstop = tabstops
+            .remove(&0)
+            .unwrap_or_else(|| SmallVec::from_iter([text.len()..text.len()]));
         Ok(Snippet {
             text,
-            tabstops: tabstops.into_values().collect(),
+            tabstops: tabstops.into_values().chain(Some(last_tabstop)).collect(),
         })
     }
 }
@@ -103,58 +107,50 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_snippet_with_tabstops() {
-        let snippet = Snippet::parse("one$1two").unwrap();
-        assert_eq!(snippet.text, "onetwo");
-        assert_eq!(
-            snippet
-                .tabstops
-                .iter()
-                .map(SmallVec::as_slice)
-                .collect::<Vec<_>>(),
-            &[vec![3..3]]
-        );
-
-        // Multi-digit numbers
-        let snippet = Snippet::parse("one$123 $99").unwrap();
-        assert_eq!(snippet.text, "one ");
-        assert_eq!(
-            snippet
-                .tabstops
-                .iter()
-                .map(SmallVec::as_slice)
-                .collect::<Vec<_>>(),
-            &[vec![4..4], vec![3..3]]
-        );
+    fn test_snippet_without_tabstops() {
+        let snippet = Snippet::parse("one-two-three").unwrap();
+        assert_eq!(snippet.text, "one-two-three");
+        assert_eq!(tabstops(&snippet), &[vec![13..13]]);
     }
 
     #[test]
-    fn test_parse_snippet_with_placeholders() {
+    fn test_snippet_with_tabstops() {
+        let snippet = Snippet::parse("one$1two").unwrap();
+        assert_eq!(snippet.text, "onetwo");
+        assert_eq!(tabstops(&snippet), &[vec![3..3], vec![6..6]]);
+
+        // Multi-digit numbers
+        let snippet = Snippet::parse("one$123-$99-two").unwrap();
+        assert_eq!(snippet.text, "one--two");
+        assert_eq!(tabstops(&snippet), &[vec![4..4], vec![3..3], vec![8..8]]);
+    }
+
+    #[test]
+    fn test_snippet_with_explicit_final_tabstop() {
+        let snippet = Snippet::parse(r#"<div class="$1">$0</div>"#).unwrap();
+        assert_eq!(snippet.text, r#"<div class=""></div>"#);
+        assert_eq!(tabstops(&snippet), &[vec![12..12], vec![14..14]]);
+    }
+
+    #[test]
+    fn test_snippet_with_placeholders() {
         let snippet = Snippet::parse("one${1:two}three${2:four}").unwrap();
         assert_eq!(snippet.text, "onetwothreefour");
         assert_eq!(
-            snippet
-                .tabstops
-                .iter()
-                .map(SmallVec::as_slice)
-                .collect::<Vec<_>>(),
-            &[vec![3..6], vec![11..15]]
+            tabstops(&snippet),
+            &[vec![3..6], vec![11..15], vec![15..15]]
         );
     }
 
     #[test]
-    fn test_parse_snippet_with_nested_placeholders() {
+    fn test_snippet_with_nested_placeholders() {
         let snippet = Snippet::parse(
-            "for (${1:var ${2:i} = 0; ${2:i} < ${3:${4:array}.length}; ${2:i}++}) {$5}",
+            "for (${1:var ${2:i} = 0; ${2:i} < ${3:${4:array}.length}; ${2:i}++}) {$0}",
         )
         .unwrap();
         assert_eq!(snippet.text, "for (var i = 0; i < array.length; i++) {}");
         assert_eq!(
-            snippet
-                .tabstops
-                .iter()
-                .map(SmallVec::as_slice)
-                .collect::<Vec<_>>(),
+            tabstops(&snippet),
             &[
                 vec![5..37],
                 vec![9..10, 16..17, 34..35],
@@ -163,5 +159,9 @@ mod tests {
                 vec![40..40],
             ]
         );
+    }
+
+    fn tabstops(snippet: &Snippet) -> Vec<Vec<Range<usize>>> {
+        snippet.tabstops.iter().map(|t| t.to_vec()).collect()
     }
 }
