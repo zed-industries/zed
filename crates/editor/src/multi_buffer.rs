@@ -1,7 +1,7 @@
 mod anchor;
 
 pub use anchor::{Anchor, AnchorRangeExt};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
@@ -927,6 +927,34 @@ impl MultiBuffer {
         } else {
             false
         }
+    }
+
+    pub fn apply_completion(
+        &self,
+        completion: Completion<Anchor>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let buffer = if let Some(buffer) = self
+            .buffers
+            .borrow()
+            .get(&completion.old_range.start.buffer_id)
+        {
+            buffer.buffer.clone()
+        } else {
+            return Task::ready(Err(anyhow!("completion cannot be applied to any buffer")));
+        };
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.apply_completion(
+                Completion {
+                    old_range: completion.old_range.start.text_anchor
+                        ..completion.old_range.end.text_anchor,
+                    new_text: completion.new_text,
+                    lsp_completion: completion.lsp_completion,
+                },
+                cx,
+            )
+        })
     }
 
     pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {

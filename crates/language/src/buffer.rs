@@ -114,7 +114,7 @@ pub struct Diagnostic {
     pub is_disk_based: bool,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Completion<T> {
     pub old_range: Range<T>,
     pub new_text: String,
@@ -164,6 +164,10 @@ pub enum Event {
 
 pub trait File {
     fn as_local(&self) -> Option<&dyn LocalFile>;
+
+    fn is_local(&self) -> bool {
+        self.as_local().is_some()
+    }
 
     fn mtime(&self) -> SystemTime;
 
@@ -567,21 +571,7 @@ impl Buffer {
                 if let Some(edits) = edits {
                     this.update(&mut cx, |this, cx| {
                         if this.version == version {
-                            for edit in &edits {
-                                let range = range_from_lsp(edit.range);
-                                if this.clip_point_utf16(range.start, Bias::Left) != range.start
-                                    || this.clip_point_utf16(range.end, Bias::Left) != range.end
-                                {
-                                    return Err(anyhow!(
-                                        "invalid formatting edits received from language server"
-                                    ));
-                                }
-                            }
-
-                            for edit in edits.into_iter().rev() {
-                                this.edit([range_from_lsp(edit.range)], edit.new_text, cx);
-                            }
-                            Ok(())
+                            this.apply_lsp_edits(edits, cx)
                         } else {
                             Err(anyhow!("buffer edited since starting to format"))
                         }
@@ -1390,13 +1380,6 @@ impl Buffer {
         self.edit_internal(ranges_iter, new_text, true, cx)
     }
 
-    /*
-    impl Buffer
-        pub fn edit
-        pub fn edit_internal
-        pub fn edit_with_autoindent
-    */
-
     pub fn edit_internal<I, S, T>(
         &mut self,
         ranges_iter: I,
@@ -1483,6 +1466,29 @@ impl Buffer {
 
         self.end_transaction(cx);
         self.send_operation(Operation::Buffer(text::Operation::Edit(edit)), cx);
+    }
+
+    fn apply_lsp_edits(
+        &mut self,
+        edits: Vec<lsp::TextEdit>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        for edit in &edits {
+            let range = range_from_lsp(edit.range);
+            if self.clip_point_utf16(range.start, Bias::Left) != range.start
+                || self.clip_point_utf16(range.end, Bias::Left) != range.end
+            {
+                return Err(anyhow!(
+                    "invalid formatting edits received from language server"
+                ));
+            }
+        }
+
+        for edit in edits.into_iter().rev() {
+            self.edit([range_from_lsp(edit.range)], edit.new_text, cx);
+        }
+
+        Ok(())
     }
 
     fn did_edit(
@@ -1752,18 +1758,57 @@ impl Buffer {
                             },
                         };
 
-                        let old_range = this.anchor_before(old_range.start)..this.anchor_after(old_range.end);
-
-                        Some(Completion {
-                            old_range,
-                            new_text,
-                            lsp_completion,
-                        })
+                        let clipped_start = this.clip_point_utf16(old_range.start, Bias::Left);
+                        let clipped_end = this.clip_point_utf16(old_range.end, Bias::Left) ;
+                        if clipped_start == old_range.start && clipped_end == old_range.end {
+                            Some(Completion {
+                                old_range: this.anchor_before(old_range.start)..this.anchor_after(old_range.end),
+                                new_text,
+                                lsp_completion,
+                            })
+                        } else {
+                            None
+                        }
                     }).collect())
                 })
             })
         } else {
             Task::ready(Ok(Default::default()))
+        }
+    }
+
+    pub fn apply_completion(
+        &mut self,
+        completion: Completion<Anchor>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        self.edit_with_autoindent([completion.old_range], completion.new_text.clone(), cx);
+
+        let file = if let Some(file) = self.file.as_ref() {
+            file
+        } else {
+            return Task::ready(Ok(Default::default()));
+        };
+        if file.is_local() {
+            let server = if let Some(lang) = self.language_server.as_ref() {
+                lang.server.clone()
+            } else {
+                return Task::ready(Ok(Default::default()));
+            };
+
+            cx.spawn(|this, mut cx| async move {
+                let resolved_completion = server
+                    .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
+                    .await?;
+                if let Some(additional_edits) = resolved_completion.additional_text_edits {
+                    this.update(&mut cx, |this, cx| {
+                        this.apply_lsp_edits(additional_edits, cx)
+                    })?;
+                }
+                Ok::<_, anyhow::Error>(())
+            })
+        } else {
+            return Task::ready(Ok(Default::default()));
         }
     }
 }

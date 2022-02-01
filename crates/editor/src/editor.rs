@@ -8,6 +8,7 @@ mod multi_buffer;
 mod test;
 
 use aho_corasick::AhoCorasick;
+use anyhow::Result;
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap, HashSet};
 pub use display_map::DisplayPoint;
@@ -295,7 +296,9 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_action(Editor::unfold);
     cx.add_action(Editor::fold_selected_ranges);
     cx.add_action(Editor::show_completions);
-    cx.add_action(Editor::confirm_completion);
+    cx.add_action(|editor: &mut Editor, _: &ConfirmCompletion, cx| {
+        editor.confirm_completion(cx).detach_and_log_err(cx);
+    });
 }
 
 trait SelectionExt {
@@ -1645,21 +1648,20 @@ impl Editor {
         self.completion_state.take()
     }
 
-    fn confirm_completion(&mut self, _: &ConfirmCompletion, cx: &mut ViewContext<Self>) {
+    fn confirm_completion(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
         if let Some(completion_state) = self.hide_completions(cx) {
             if let Some(completion) = completion_state
-                .completions
+                .matches
                 .get(completion_state.selected_item)
+                .and_then(|mat| completion_state.completions.get(mat.candidate_id))
             {
-                self.buffer.update(cx, |buffer, cx| {
-                    buffer.edit_with_autoindent(
-                        [completion.old_range.clone()],
-                        completion.new_text.clone(),
-                        cx,
-                    );
-                })
+                return self.buffer.update(cx, |buffer, cx| {
+                    buffer.apply_completion(completion.clone(), cx)
+                });
             }
         }
+
+        Task::ready(Ok(()))
     }
 
     pub fn has_completions(&self) -> bool {
@@ -6654,9 +6656,9 @@ mod tests {
 
         editor.next_notification(&cx).await;
 
-        editor.update(&mut cx, |editor, cx| {
+        let apply_additional_edits = editor.update(&mut cx, |editor, cx| {
             editor.move_down(&MoveDown, cx);
-            editor.confirm_completion(&ConfirmCompletion, cx);
+            let apply_additional_edits = editor.confirm_completion(cx);
             assert_eq!(
                 editor.text(cx),
                 "
@@ -6666,7 +6668,34 @@ mod tests {
                 "
                 .unindent()
             );
+            apply_additional_edits
         });
+        let (id, _) = fake
+            .receive_request::<lsp::request::ResolveCompletionItem>()
+            .await;
+        fake.respond(
+            id,
+            lsp::CompletionItem {
+                additional_text_edits: Some(vec![lsp::TextEdit::new(
+                    lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 5)),
+                    "\nadditional edit".to_string(),
+                )]),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        apply_additional_edits.await.unwrap();
+        assert_eq!(
+            editor.read_with(&cx, |editor, cx| editor.text(cx)),
+            "
+                    one.second_completion
+                    two
+                    three
+                    additional edit
+                "
+            .unindent()
+        );
     }
 
     #[gpui::test]
