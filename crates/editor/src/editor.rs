@@ -1538,17 +1538,18 @@ impl Editor {
 
         cx.spawn_weak(|this, mut cx| async move {
             let completions = completions.await?;
-            if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
-                this.update(&mut cx, |this, cx| {
-                    this.completion_state = Some(CompletionState {
-                        completions: completions.into(),
-                        selected_item: 0,
-                        list: Default::default(),
+            if !completions.is_empty() {
+                if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
+                    this.update(&mut cx, |this, cx| {
+                        this.completion_state = Some(CompletionState {
+                            completions: completions.into(),
+                            selected_item: 0,
+                            list: Default::default(),
+                        });
+                        cx.notify();
                     });
-                    cx.notify();
-                });
+                }
             }
-
             Ok::<_, anyhow::Error>(())
         })
         .detach_and_log_err(cx);
