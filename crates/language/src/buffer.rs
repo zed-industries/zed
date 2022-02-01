@@ -1758,7 +1758,7 @@ impl Buffer {
                             },
                         };
 
-                        let old_range = this.anchor_after(old_range.start)..this.anchor_before(old_range.end);
+                        let old_range = this.anchor_before(old_range.start)..this.anchor_after(old_range.end);
     
                         Some(Completion {
                             old_range,
