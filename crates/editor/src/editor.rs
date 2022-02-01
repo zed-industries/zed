@@ -1390,15 +1390,13 @@ impl Editor {
     }
 
     fn trigger_completion_on_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
-        if self.completion_state.is_none() {
-            if let Some(selection) = self.newest_anchor_selection() {
-                if self
-                    .buffer
-                    .read(cx)
-                    .is_completion_trigger(selection.head(), text, cx)
-                {
-                    self.show_completions(&ShowCompletions, cx);
-                }
+        if let Some(selection) = self.newest_anchor_selection() {
+            if self
+                .buffer
+                .read(cx)
+                .is_completion_trigger(selection.head(), text, cx)
+            {
+                self.show_completions(&ShowCompletions, cx);
             }
         }
     }
