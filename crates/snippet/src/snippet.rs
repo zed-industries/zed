@@ -12,7 +12,7 @@ type TabStop = SmallVec<[Range<usize>; 2]>;
 
 impl Snippet {
     pub fn parse(source: &str) -> Result<Self> {
-        let mut text = String::new();
+        let mut text = String::with_capacity(source.len());
         let mut tabstops = BTreeMap::new();
         parse_snippet(source, false, &mut text, &mut tabstops)
             .context("failed to parse snippet")?;

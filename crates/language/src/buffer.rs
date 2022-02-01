@@ -1781,35 +1781,22 @@ impl Buffer {
         &mut self,
         completion: Completion<Anchor>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
+    ) -> Option<Task<Result<()>>> {
         self.edit_with_autoindent([completion.old_range], completion.new_text.clone(), cx);
 
-        let file = if let Some(file) = self.file.as_ref() {
-            file
-        } else {
-            return Task::ready(Ok(Default::default()));
-        };
-        if file.is_local() {
-            let server = if let Some(lang) = self.language_server.as_ref() {
-                lang.server.clone()
-            } else {
-                return Task::ready(Ok(Default::default()));
-            };
-
-            cx.spawn(|this, mut cx| async move {
-                let resolved_completion = server
-                    .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
-                    .await?;
-                if let Some(additional_edits) = resolved_completion.additional_text_edits {
-                    this.update(&mut cx, |this, cx| {
-                        this.apply_lsp_edits(additional_edits, cx)
-                    })?;
-                }
-                Ok::<_, anyhow::Error>(())
-            })
-        } else {
-            return Task::ready(Ok(Default::default()));
-        }
+        self.file.as_ref()?.as_local()?;
+        let server = self.language_server.as_ref()?.server.clone();
+        Some(cx.spawn(|this, mut cx| async move {
+            let resolved_completion = server
+                .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
+                .await?;
+            if let Some(additional_edits) = resolved_completion.additional_text_edits {
+                this.update(&mut cx, |this, cx| {
+                    this.apply_lsp_edits(additional_edits, cx)
+                })?;
+            }
+            Ok::<_, anyhow::Error>(())
+        }))
     }
 }
 

@@ -297,7 +297,9 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_action(Editor::fold_selected_ranges);
     cx.add_action(Editor::show_completions);
     cx.add_action(|editor: &mut Editor, _: &ConfirmCompletion, cx| {
-        editor.confirm_completion(cx).detach_and_log_err(cx);
+        if let Some(task) = editor.confirm_completion(cx) {
+            task.detach_and_log_err(cx);
+        }
     });
 }
 
@@ -1648,20 +1650,17 @@ impl Editor {
         self.completion_state.take()
     }
 
-    fn confirm_completion(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        if let Some(completion_state) = self.hide_completions(cx) {
-            if let Some(completion) = completion_state
-                .matches
-                .get(completion_state.selected_item)
-                .and_then(|mat| completion_state.completions.get(mat.candidate_id))
-            {
-                return self.buffer.update(cx, |buffer, cx| {
-                    buffer.apply_completion(completion.clone(), cx)
-                });
-            }
-        }
-
-        Task::ready(Ok(()))
+    fn confirm_completion(&mut self, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+        let completion_state = self.hide_completions(cx)?;
+        let mat = completion_state
+            .matches
+            .get(completion_state.selected_item)?;
+        let completion = completion_state.completions.get(mat.candidate_id)?;
+        self.buffer.update(cx, |buffer, cx| {
+            let mut completion = completion.clone();
+            // completion.
+            buffer.apply_completion(completion, cx)
+        })
     }
 
     pub fn has_completions(&self) -> bool {
@@ -6658,7 +6657,7 @@ mod tests {
 
         let apply_additional_edits = editor.update(&mut cx, |editor, cx| {
             editor.move_down(&MoveDown, cx);
-            let apply_additional_edits = editor.confirm_completion(cx);
+            let apply_additional_edits = editor.confirm_completion(cx).unwrap();
             assert_eq!(
                 editor.text(cx),
                 "

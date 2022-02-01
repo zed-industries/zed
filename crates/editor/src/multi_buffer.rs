@@ -1,7 +1,7 @@
 mod anchor;
 
 pub use anchor::{Anchor, AnchorRangeExt};
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
@@ -933,17 +933,13 @@ impl MultiBuffer {
         &self,
         completion: Completion<Anchor>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
-        let buffer = if let Some(buffer) = self
+    ) -> Option<Task<Result<()>>> {
+        let buffer = self
             .buffers
             .borrow()
-            .get(&completion.old_range.start.buffer_id)
-        {
-            buffer.buffer.clone()
-        } else {
-            return Task::ready(Err(anyhow!("completion cannot be applied to any buffer")));
-        };
-
+            .get(&completion.old_range.start.buffer_id)?
+            .buffer
+            .clone();
         buffer.update(cx, |buffer, cx| {
             buffer.apply_completion(
                 Completion {
