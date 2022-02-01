@@ -106,7 +106,7 @@ impl Anchor {
 }
 
 impl ToOffset for Anchor {
-    fn to_offset<'a>(&self, snapshot: &MultiBufferSnapshot) -> usize {
+    fn to_offset(&self, snapshot: &MultiBufferSnapshot) -> usize {
         self.summary(snapshot)
     }
 }

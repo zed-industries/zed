@@ -18,11 +18,12 @@ use gpui::{
     action,
     color::Color,
     elements::*,
+    executor,
     fonts::TextStyle,
     geometry::vector::{vec2f, Vector2F},
     keymap::Binding,
     text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
-    MutableAppContext, RenderContext, View, ViewContext, WeakModelHandle, WeakViewHandle,
+    MutableAppContext, RenderContext, Task, View, ViewContext, WeakModelHandle, WeakViewHandle,
 };
 use items::BufferItemHandle;
 use itertools::Itertools as _;
@@ -52,7 +53,7 @@ use std::{
 pub use sum_tree::Bias;
 use text::rope::TextDimension;
 use theme::{DiagnosticStyle, EditorStyle};
-use util::{post_inc, ResultExt};
+use util::{post_inc, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, PathOpener, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -396,6 +397,7 @@ pub struct Editor {
     highlighted_ranges: BTreeMap<TypeId, (Color, Vec<Range<Anchor>>)>,
     nav_history: Option<ItemNavHistory>,
     completion_state: Option<CompletionState>,
+    completions_task: Option<Task<Option<()>>>,
 }
 
 pub struct EditorSnapshot {
@@ -432,9 +434,52 @@ struct BracketPairState {
 struct CompletionState {
     initial_position: Anchor,
     completions: Arc<[Completion<Anchor>]>,
+    match_candidates: Vec<StringMatchCandidate>,
     matches: Arc<[StringMatch]>,
     selected_item: usize,
     list: UniformListState,
+}
+
+impl CompletionState {
+    pub async fn filter(&mut self, query: Option<&str>, executor: Arc<executor::Background>) {
+        let mut matches = if let Some(query) = query {
+            fuzzy::match_strings(
+                &self.match_candidates,
+                query,
+                false,
+                100,
+                &Default::default(),
+                executor,
+            )
+            .await
+        } else {
+            self.match_candidates
+                .iter()
+                .enumerate()
+                .map(|(candidate_id, candidate)| StringMatch {
+                    candidate_id,
+                    score: Default::default(),
+                    positions: Default::default(),
+                    string: candidate.string.clone(),
+                })
+                .collect()
+        };
+        matches.sort_unstable_by_key(|mat| {
+            (
+                Reverse(OrderedFloat(mat.score)),
+                self.completions[mat.candidate_id].sort_key(),
+            )
+        });
+
+        for mat in &mut matches {
+            let filter_start = self.completions[mat.candidate_id].filter_range().start;
+            for position in &mut mat.positions {
+                *position += filter_start;
+            }
+        }
+
+        self.matches = matches.into();
+    }
 }
 
 #[derive(Debug)]
@@ -546,6 +591,7 @@ impl Editor {
             highlighted_ranges: Default::default(),
             nav_history: None,
             completion_state: None,
+            completions_task: None,
         };
         let selection = Selection {
             id: post_inc(&mut this.next_selection_id),
@@ -1101,8 +1147,7 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        if self.completion_state.take().is_some() {
-            cx.notify();
+        if self.hide_completions(cx).is_some() {
             return;
         }
 
@@ -1394,8 +1439,7 @@ impl Editor {
             {
                 self.show_completions(&ShowCompletions, cx);
             } else {
-                self.completion_state.take();
-                cx.notify();
+                self.hide_completions(cx);
             }
         }
     }
@@ -1526,6 +1570,20 @@ impl Editor {
         }
     }
 
+    fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
+        let offset = position.to_offset(buffer);
+        let (word_range, kind) = buffer.surrounding_word(offset);
+        if offset > word_range.start && kind == Some(CharKind::Word) {
+            Some(
+                buffer
+                    .text_for_range(word_range.start..offset)
+                    .collect::<String>(),
+            )
+        } else {
+            None
+        }
+    }
+
     fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
         let position = if let Some(selection) = self.newest_anchor_selection() {
             selection.head()
@@ -1533,97 +1591,62 @@ impl Editor {
             return;
         };
 
-        let query = {
-            let buffer = self.buffer.read(cx).read(cx);
-            let offset = position.to_offset(&buffer);
-            let (word_range, kind) = buffer.surrounding_word(offset);
-            if offset > word_range.start && kind == Some(CharKind::Word) {
-                Some(
-                    buffer
-                        .text_for_range(word_range.start..offset)
-                        .collect::<String>(),
-                )
-            } else {
-                None
-            }
-        };
-
+        let query = Self::completion_query(&self.buffer.read(cx).read(cx), position.clone());
         let completions = self
             .buffer
             .update(cx, |buffer, cx| buffer.completions(position.clone(), cx));
 
-        cx.spawn_weak(|this, mut cx| async move {
-            let completions = completions.await?;
-            let candidates = completions
-                .iter()
-                .enumerate()
-                .map(|(id, completion)| {
-                    StringMatchCandidate::new(
-                        id,
-                        completion.label()[completion.filter_range()].into(),
-                    )
-                })
-                .collect::<Vec<_>>();
-            let mut matches = if let Some(query) = query.as_ref() {
-                fuzzy::match_strings(
-                    &candidates,
-                    query,
-                    false,
-                    100,
-                    &Default::default(),
-                    cx.background(),
-                )
-                .await
-            } else {
-                candidates
-                    .into_iter()
-                    .enumerate()
-                    .map(|(candidate_id, candidate)| StringMatch {
-                        candidate_id,
-                        score: Default::default(),
-                        positions: Default::default(),
-                        string: candidate.string,
-                    })
-                    .collect()
-            };
-            matches.sort_unstable_by_key(|mat| {
-                (
-                    Reverse(OrderedFloat(mat.score)),
-                    completions[mat.candidate_id].sort_key(),
-                )
-            });
+        self.completions_task = Some(cx.spawn_weak(|this, mut cx| {
+            async move {
+                let completions = completions.await?;
 
-            for mat in &mut matches {
-                let filter_start = completions[mat.candidate_id].filter_range().start;
-                for position in &mut mat.positions {
-                    *position += filter_start;
+                let mut completion_state = CompletionState {
+                    initial_position: position,
+                    match_candidates: completions
+                        .iter()
+                        .enumerate()
+                        .map(|(id, completion)| {
+                            StringMatchCandidate::new(
+                                id,
+                                completion.label()[completion.filter_range()].into(),
+                            )
+                        })
+                        .collect(),
+                    completions: completions.into(),
+                    matches: Vec::new().into(),
+                    selected_item: 0,
+                    list: Default::default(),
+                };
+
+                completion_state
+                    .filter(query.as_deref(), cx.background())
+                    .await;
+
+                if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
+                    this.update(&mut cx, |this, cx| {
+                        if completion_state.matches.is_empty() {
+                            this.hide_completions(cx);
+                        } else if this.focused {
+                            this.completion_state = Some(completion_state);
+                        }
+
+                        cx.notify();
+                    });
                 }
+                Ok::<_, anyhow::Error>(())
             }
+            .log_err()
+        }));
+    }
 
-            if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
-                this.update(&mut cx, |this, cx| {
-                    if matches.is_empty() {
-                        this.completion_state.take();
-                    } else if this.focused {
-                        this.completion_state = Some(CompletionState {
-                            initial_position: position,
-                            completions: completions.into(),
-                            matches: matches.into(),
-                            selected_item: 0,
-                            list: Default::default(),
-                        });
-                    }
-
-                    cx.notify();
-                });
-            }
-            Ok::<_, anyhow::Error>(())
-        })
-        .detach_and_log_err(cx);
+    fn hide_completions(&mut self, cx: &mut ViewContext<Self>) -> Option<CompletionState> {
+        cx.notify();
+        self.completions_task.take();
+        self.completion_state.take()
     }
 
     fn confirm_completion(&mut self, _: &ConfirmCompletion, cx: &mut ViewContext<Self>) {
-        if let Some(completion_state) = self.completion_state.take() {
+        if let Some(completion_state) = self.hide_completions(cx) {
             if let Some(completion) = completion_state
                 .completions
                 .get(completion_state.selected_item)
@@ -3686,17 +3709,18 @@ impl Editor {
         );
 
         if let Some((completion_state, cursor_position)) =
-            self.completion_state.as_ref().zip(new_cursor_position)
+            self.completion_state.as_mut().zip(new_cursor_position)
         {
             let cursor_position = cursor_position.to_offset(&buffer);
             let (word_range, kind) =
                 buffer.surrounding_word(completion_state.initial_position.clone());
             if kind == Some(CharKind::Word) && word_range.to_inclusive().contains(&cursor_position)
             {
+                let query = Self::completion_query(&buffer, cursor_position);
+                smol::block_on(completion_state.filter(query.as_deref(), cx.background().clone()));
                 self.show_completions(&ShowCompletions, cx);
             } else {
-                self.completion_state.take();
-                cx.notify();
+                self.hide_completions(cx);
             }
         }
     }
@@ -4304,7 +4328,7 @@ impl View for Editor {
         self.show_local_cursors = false;
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
-        self.completion_state.take();
+        self.hide_completions(cx);
         cx.emit(Event::Blurred);
         cx.notify();
     }
