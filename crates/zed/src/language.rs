@@ -34,10 +34,29 @@ impl LspPostProcessor for RustPostProcessor {
 
     fn label_for_completion(&self, completion: &lsp::CompletionItem) -> Option<String> {
         let detail = completion.detail.as_ref()?;
-        if detail.starts_with("fn(") {
-            Some(completion.label.replace("(…)", &detail[2..]))
-        } else {
-            None
+        match completion.kind {
+            Some(
+                lsp::CompletionItemKind::CONSTANT
+                | lsp::CompletionItemKind::FIELD
+                | lsp::CompletionItemKind::VARIABLE,
+            ) => {
+                let mut label = completion.label.clone();
+                label.push_str(": ");
+                label.push_str(detail);
+                Some(label)
+            }
+            Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD) => {
+                lazy_static! {
+                    static ref REGEX: Regex = Regex::new("\\(…?\\)").unwrap();
+                }
+
+                if detail.starts_with("fn(") {
+                    Some(REGEX.replace(&completion.label, &detail[2..]).to_string())
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
     }
 }
