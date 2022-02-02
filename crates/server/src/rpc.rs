@@ -83,6 +83,7 @@ impl Server {
             .add_handler(Server::buffer_saved)
             .add_handler(Server::save_buffer)
             .add_handler(Server::format_buffer)
+            .add_handler(Server::get_completions)
             .add_handler(Server::get_channels)
             .add_handler(Server::get_users)
             .add_handler(Server::join_channel)
@@ -701,6 +702,30 @@ impl Server {
     async fn format_buffer(
         self: Arc<Server>,
         request: TypedEnvelope<proto::FormatBuffer>,
+    ) -> tide::Result<()> {
+        let host;
+        {
+            let state = self.state();
+            let project = state
+                .read_project(request.payload.project_id, request.sender_id)
+                .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+            host = project.host_connection_id;
+        }
+
+        let sender = request.sender_id;
+        let receipt = request.receipt();
+        let response = self
+            .peer
+            .forward_request(sender, host, request.payload.clone())
+            .await?;
+        self.peer.respond(receipt, response).await?;
+
+        Ok(())
+    }
+
+    async fn get_completions(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::GetCompletions>,
     ) -> tide::Result<()> {
         let host;
         {

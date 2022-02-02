@@ -334,6 +334,7 @@ impl Project {
                 client.subscribe_to_entity(remote_id, cx, Self::handle_save_buffer),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_format_buffer),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_get_completions),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_get_definition),
             ]);
         }
@@ -1680,6 +1681,66 @@ impl Project {
             .log_err();
         })
         .detach();
+        Ok(())
+    }
+
+    fn handle_get_completions(
+        &mut self,
+        envelope: TypedEnvelope<proto::GetCompletions>,
+        rpc: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let receipt = envelope.receipt();
+        let sender_id = envelope.original_sender_id()?;
+        let buffer = self
+            .shared_buffers
+            .get(&sender_id)
+            .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
+            .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
+        let position = envelope
+            .payload
+            .position
+            .and_then(language::proto::deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        cx.spawn(|_, mut cx| async move {
+            match buffer
+                .update(&mut cx, |buffer, cx| buffer.completions(position, cx))
+                .await
+            {
+                Ok(completions) => {
+                    rpc.respond(
+                        receipt,
+                        proto::GetCompletionsResponse {
+                            completions: completions
+                                .into_iter()
+                                .map(|completion| proto::Completion {
+                                    old_start: Some(language::proto::serialize_anchor(
+                                        &completion.old_range.start,
+                                    )),
+                                    old_end: Some(language::proto::serialize_anchor(
+                                        &completion.old_range.end,
+                                    )),
+                                    new_text: completion.new_text,
+                                    lsp_completion: serde_json::to_vec(&completion.lsp_completion)
+                                        .unwrap(),
+                                })
+                                .collect(),
+                        },
+                    )
+                    .await
+                }
+                Err(error) => {
+                    rpc.respond_with_error(
+                        receipt,
+                        proto::Error {
+                            message: error.to_string(),
+                        },
+                    )
+                    .await
+                }
+            }
+        })
+        .detach_and_log_err(cx);
         Ok(())
     }
 

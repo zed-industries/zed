@@ -1670,7 +1670,7 @@ impl Editor {
             .get(completion_state.selected_item)?;
         let completion = completion_state.completions.get(mat.candidate_id)?;
 
-        if completion.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET) {
+        if completion.is_snippet() {
             self.insert_snippet(completion.old_range.clone(), &completion.new_text, cx)
                 .log_err();
         } else {

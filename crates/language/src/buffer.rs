@@ -195,6 +195,13 @@ pub trait File {
     fn format_remote(&self, buffer_id: u64, cx: &mut MutableAppContext)
         -> Option<Task<Result<()>>>;
 
+    fn completions(
+        &self,
+        buffer_id: u64,
+        position: Anchor,
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<Vec<Completion<Anchor>>>>;
+
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext);
 
     fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext);
@@ -262,6 +269,15 @@ impl File for FakeFile {
 
     fn format_remote(&self, _: u64, _: &mut MutableAppContext) -> Option<Task<Result<()>>> {
         None
+    }
+
+    fn completions(
+        &self,
+        _: u64,
+        _: Anchor,
+        _: &mut MutableAppContext,
+    ) -> Task<Result<Vec<Completion<Anchor>>>> {
+        Task::ready(Ok(Default::default()))
     }
 
     fn buffer_updated(&self, _: u64, _: Operation, _: &mut MutableAppContext) {}
@@ -1773,7 +1789,7 @@ impl Buffer {
                 })
             })
         } else {
-            Task::ready(Ok(Default::default()))
+            file.completions(self.remote_id(), self.anchor_before(position), cx.as_mut())
         }
     }
 
@@ -2554,6 +2570,10 @@ impl<T> Completion<T> {
             _ => 1,
         };
         (kind_key, &self.label()[self.filter_range()])
+    }
+
+    pub fn is_snippet(&self) -> bool {
+        self.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
     }
 }
 

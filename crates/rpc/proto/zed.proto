@@ -40,22 +40,24 @@ message Envelope {
         BufferSaved buffer_saved = 32;
         BufferReloaded buffer_reloaded = 33;
         FormatBuffer format_buffer = 34;
+        GetCompletions get_completions = 35;
+        GetCompletionsResponse get_completions_response = 36;
 
-        GetChannels get_channels = 35;
-        GetChannelsResponse get_channels_response = 36;
-        JoinChannel join_channel = 37;
-        JoinChannelResponse join_channel_response = 38;
-        LeaveChannel leave_channel = 39;
-        SendChannelMessage send_channel_message = 40;
-        SendChannelMessageResponse send_channel_message_response = 41;
-        ChannelMessageSent channel_message_sent = 42;
-        GetChannelMessages get_channel_messages = 43;
-        GetChannelMessagesResponse get_channel_messages_response = 44;
+        GetChannels get_channels = 37;
+        GetChannelsResponse get_channels_response = 38;
+        JoinChannel join_channel = 39;
+        JoinChannelResponse join_channel_response = 40;
+        LeaveChannel leave_channel = 41;
+        SendChannelMessage send_channel_message = 42;
+        SendChannelMessageResponse send_channel_message_response = 43;
+        ChannelMessageSent channel_message_sent = 44;
+        GetChannelMessages get_channel_messages = 45;
+        GetChannelMessagesResponse get_channel_messages_response = 46;
 
-        UpdateContacts update_contacts = 45;
+        UpdateContacts update_contacts = 47;
 
-        GetUsers get_users = 46;
-        GetUsersResponse get_users_response = 47;
+        GetUsers get_users = 48;
+        GetUsersResponse get_users_response = 49;
     }
 }
 
@@ -201,6 +203,23 @@ message BufferReloaded {
 message FormatBuffer {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
+}
+
+message GetCompletions {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+}
+
+message GetCompletionsResponse {
+    repeated Completion completions = 1;
+}
+
+message Completion {
+    Anchor old_start = 1;
+    Anchor old_end = 2;
+    string new_text = 3;
+    bytes lsp_completion = 4;
 }
 
 message UpdateDiagnosticSummary {

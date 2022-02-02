@@ -14,7 +14,7 @@ use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
 };
-use language::{Buffer, DiagnosticEntry, Operation, PointUtf16, Rope};
+use language::{Anchor, Buffer, Completion, DiagnosticEntry, Operation, PointUtf16, Rope};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
@@ -1419,6 +1419,52 @@ impl language::File for File {
             .await?;
             Ok(())
         }))
+    }
+
+    fn completions(
+        &self,
+        buffer_id: u64,
+        position: Anchor,
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<Vec<Completion<Anchor>>>> {
+        let worktree = self.worktree.read(cx);
+        let worktree = if let Some(worktree) = worktree.as_remote() {
+            worktree
+        } else {
+            return Task::ready(Err(anyhow!(
+                "remote completions requested on a local worktree"
+            )));
+        };
+        let rpc = worktree.client.clone();
+        let project_id = worktree.project_id;
+        cx.foreground().spawn(async move {
+            let response = rpc
+                .request(proto::GetCompletions {
+                    project_id,
+                    buffer_id,
+                    position: Some(language::proto::serialize_anchor(&position)),
+                })
+                .await?;
+            response
+                .completions
+                .into_iter()
+                .map(|completion| {
+                    let old_start = completion
+                        .old_start
+                        .and_then(language::proto::deserialize_anchor)
+                        .ok_or_else(|| anyhow!("invalid old start"))?;
+                    let old_end = completion
+                        .old_end
+                        .and_then(language::proto::deserialize_anchor)
+                        .ok_or_else(|| anyhow!("invalid old end"))?;
+                    Ok(Completion {
+                        old_range: old_start..old_end,
+                        new_text: completion.new_text,
+                        lsp_completion: serde_json::from_slice(&completion.lsp_completion)?,
+                    })
+                })
+                .collect()
+        })
     }
 
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext) {
