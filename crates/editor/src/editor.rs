@@ -867,6 +867,8 @@ impl Editor {
     }
 
     fn select(&mut self, Select(phase): &Select, cx: &mut ViewContext<Self>) {
+        self.hide_completions(cx);
+
         match phase {
             SelectPhase::Begin {
                 position,
