@@ -1675,11 +1675,14 @@ impl Editor {
                 .log_err();
         } else {
             self.buffer.update(cx, |buffer, cx| {
-                buffer.edit_with_autoindent(
-                    [completion.old_range.clone()],
-                    &completion.new_text,
-                    cx,
-                );
+                let snapshot = buffer.read(cx);
+                let old_range = completion.old_range.to_offset(&snapshot);
+                if old_range.len() != completion.new_text.len()
+                    || !snapshot.contains_str_at(old_range.start, &completion.new_text)
+                {
+                    drop(snapshot);
+                    buffer.edit_with_autoindent([old_range], &completion.new_text, cx);
+                }
             });
         }
 

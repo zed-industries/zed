@@ -1888,7 +1888,9 @@ impl Buffer {
                     .await?;
                 if let Some(additional_edits) = resolved_completion.additional_text_edits {
                     this.update(&mut cx, |this, cx| {
-                        this.avoid_grouping_next_transaction();
+                        if !push_to_history {
+                            this.avoid_grouping_next_transaction();
+                        }
                         this.start_transaction();
                         let edit_ids = this.apply_lsp_edits(additional_edits, cx);
                         if let Some(transaction_id) = this.end_transaction(cx) {
