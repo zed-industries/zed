@@ -313,9 +313,9 @@ impl MultiBuffer {
                 .map(|range| range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot));
             return buffer.update(cx, |buffer, cx| {
                 if autoindent {
-                    buffer.edit_with_autoindent(ranges, new_text, cx)
+                    buffer.edit_with_autoindent(ranges, new_text, cx);
                 } else {
-                    buffer.edit(ranges, new_text, cx)
+                    buffer.edit(ranges, new_text, cx);
                 }
             });
         }
@@ -922,14 +922,18 @@ impl MultiBuffer {
         &self,
         completion: Completion<Anchor>,
         cx: &mut ModelContext<Self>,
-    ) -> Option<Task<Result<()>>> {
-        let buffer = self
+    ) -> Task<Result<()>> {
+        let buffer = if let Some(buffer_state) = self
             .buffers
             .borrow()
-            .get(&completion.old_range.start.buffer_id)?
-            .buffer
-            .clone();
-        buffer.update(cx, |buffer, cx| {
+            .get(&completion.old_range.start.buffer_id)
+        {
+            buffer_state.buffer.clone()
+        } else {
+            return Task::ready(Ok(()));
+        };
+
+        let apply_edits = buffer.update(cx, |buffer, cx| {
             buffer.apply_additional_edits_for_completion(
                 Completion {
                     old_range: completion.old_range.start.text_anchor
@@ -937,8 +941,13 @@ impl MultiBuffer {
                     new_text: completion.new_text,
                     lsp_completion: completion.lsp_completion,
                 },
+                true,
                 cx,
             )
+        });
+        cx.foreground().spawn(async move {
+            apply_edits.await?;
+            Ok(())
         })
     }
 

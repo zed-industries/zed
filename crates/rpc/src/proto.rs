@@ -122,6 +122,8 @@ macro_rules! entity_messages {
 messages!(
     Ack,
     AddProjectCollaborator,
+    ApplyCompletionAdditionalEdits,
+    ApplyCompletionAdditionalEditsResponse,
     BufferReloaded,
     BufferSaved,
     ChannelMessageSent,
@@ -169,6 +171,10 @@ messages!(
 );
 
 request_messages!(
+    (
+        ApplyCompletionAdditionalEdits,
+        ApplyCompletionAdditionalEditsResponse
+    ),
     (FormatBuffer, Ack),
     (GetChannelMessages, GetChannelMessagesResponse),
     (GetChannels, GetChannelsResponse),
@@ -191,6 +197,7 @@ request_messages!(
 entity_messages!(
     project_id,
     AddProjectCollaborator,
+    ApplyCompletionAdditionalEdits,
     BufferReloaded,
     BufferSaved,
     CloseBuffer,

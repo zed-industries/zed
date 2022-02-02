@@ -2635,6 +2635,7 @@ dependencies = [
  "rand 0.8.3",
  "rpc",
  "serde",
+ "serde_json",
  "similar",
  "smallvec",
  "smol",

@@ -233,6 +233,20 @@ impl History {
         }
     }
 
+    fn push_transaction(&mut self, edit_ids: impl IntoIterator<Item = clock::Local>, now: Instant) {
+        assert_eq!(self.transaction_depth, 0);
+        let mut edit_ids = edit_ids.into_iter().peekable();
+
+        if let Some(first_edit_id) = edit_ids.peek() {
+            let version = self.ops[first_edit_id].version.clone();
+            self.start_transaction(version, now);
+            for edit_id in edit_ids {
+                self.push_undo(edit_id);
+            }
+            self.end_transaction(now);
+        }
+    }
+
     fn push_undo(&mut self, edit_id: clock::Local) {
         assert_ne!(self.transaction_depth, 0);
         let last_transaction = self.undo_stack.last_mut().unwrap();
@@ -257,6 +271,17 @@ impl History {
             self.redo_stack.last()
         } else {
             None
+        }
+    }
+
+    fn forget(&mut self, transaction_id: TransactionId) {
+        assert_eq!(self.transaction_depth, 0);
+        if let Some(transaction_ix) = self.undo_stack.iter().rposition(|t| t.id == transaction_id) {
+            self.undo_stack.remove(transaction_ix);
+        } else if let Some(transaction_ix) =
+            self.redo_stack.iter().rposition(|t| t.id == transaction_id)
+        {
+            self.undo_stack.remove(transaction_ix);
         }
     }
 
@@ -377,14 +402,14 @@ pub struct InsertionTimestamp {
 }
 
 impl InsertionTimestamp {
-    fn local(&self) -> clock::Local {
+    pub fn local(&self) -> clock::Local {
         clock::Local {
             replica_id: self.replica_id,
             value: self.local,
         }
     }
 
-    fn lamport(&self) -> clock::Lamport {
+    pub fn lamport(&self) -> clock::Lamport {
         clock::Lamport {
             replica_id: self.replica_id,
             value: self.lamport,
@@ -1188,6 +1213,7 @@ impl Buffer {
 
     pub fn undo(&mut self) -> Option<(TransactionId, Operation)> {
         if let Some(transaction) = self.history.pop_undo().cloned() {
+            dbg!(&transaction);
             let transaction_id = transaction.id;
             let op = self.undo_or_redo(transaction).unwrap();
             Some((transaction_id, op))
@@ -1203,6 +1229,10 @@ impl Buffer {
         } else {
             None
         }
+    }
+
+    pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
+        self.history.forget(transaction_id);
     }
 
     pub fn redo(&mut self) -> Option<(TransactionId, Operation)> {
@@ -1243,6 +1273,14 @@ impl Buffer {
             undo,
             lamport_timestamp: self.lamport_clock.tick(),
         })
+    }
+
+    pub fn push_transaction(
+        &mut self,
+        edit_ids: impl IntoIterator<Item = clock::Local>,
+        now: Instant,
+    ) {
+        self.history.push_transaction(edit_ids, now);
     }
 
     pub fn subscribe(&mut self) -> Subscription {

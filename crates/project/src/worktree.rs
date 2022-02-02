@@ -1448,22 +1448,44 @@ impl language::File for File {
             response
                 .completions
                 .into_iter()
-                .map(|completion| {
-                    let old_start = completion
-                        .old_start
-                        .and_then(language::proto::deserialize_anchor)
-                        .ok_or_else(|| anyhow!("invalid old start"))?;
-                    let old_end = completion
-                        .old_end
-                        .and_then(language::proto::deserialize_anchor)
-                        .ok_or_else(|| anyhow!("invalid old end"))?;
-                    Ok(Completion {
-                        old_range: old_start..old_end,
-                        new_text: completion.new_text,
-                        lsp_completion: serde_json::from_slice(&completion.lsp_completion)?,
-                    })
-                })
+                .map(language::proto::deserialize_completion)
                 .collect()
+        })
+    }
+
+    fn apply_additional_edits_for_completion(
+        &self,
+        buffer_id: u64,
+        completion: Completion<Anchor>,
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<Vec<clock::Local>>> {
+        let worktree = self.worktree.read(cx);
+        let worktree = if let Some(worktree) = worktree.as_remote() {
+            worktree
+        } else {
+            return Task::ready(Err(anyhow!(
+                "remote additional edits application requested on a local worktree"
+            )));
+        };
+        let rpc = worktree.client.clone();
+        let project_id = worktree.project_id;
+        cx.foreground().spawn(async move {
+            let response = rpc
+                .request(proto::ApplyCompletionAdditionalEdits {
+                    project_id,
+                    buffer_id,
+                    completion: Some(language::proto::serialize_completion(&completion)),
+                })
+                .await?;
+
+            Ok(response
+                .additional_edits
+                .into_iter()
+                .map(|edit| clock::Local {
+                    replica_id: edit.replica_id as ReplicaId,
+                    value: edit.local_timestamp,
+                })
+                .collect())
         })
     }
 

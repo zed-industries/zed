@@ -1683,9 +1683,9 @@ impl Editor {
             });
         }
 
-        self.buffer.update(cx, |buffer, cx| {
+        Some(self.buffer.update(cx, |buffer, cx| {
             buffer.apply_additional_edits_for_completion(completion.clone(), cx)
-        })
+        }))
     }
 
     pub fn has_completions(&self) -> bool {

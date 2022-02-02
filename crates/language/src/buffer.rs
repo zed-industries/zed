@@ -206,6 +206,13 @@ pub trait File {
         cx: &mut MutableAppContext,
     ) -> Task<Result<Vec<Completion<Anchor>>>>;
 
+    fn apply_additional_edits_for_completion(
+        &self,
+        buffer_id: u64,
+        completion: Completion<Anchor>,
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<Vec<clock::Local>>>;
+
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext);
 
     fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext);
@@ -281,6 +288,15 @@ impl File for FakeFile {
         _: Anchor,
         _: &mut MutableAppContext,
     ) -> Task<Result<Vec<Completion<Anchor>>>> {
+        Task::ready(Ok(Default::default()))
+    }
+
+    fn apply_additional_edits_for_completion(
+        &self,
+        _: u64,
+        _: Completion<Anchor>,
+        _: &mut MutableAppContext,
+    ) -> Task<Result<Vec<clock::Local>>> {
         Task::ready(Ok(Default::default()))
     }
 
@@ -595,7 +611,8 @@ impl Buffer {
                 if let Some(edits) = edits {
                     this.update(&mut cx, |this, cx| {
                         if this.version == version {
-                            this.apply_lsp_edits(edits, cx)
+                            this.apply_lsp_edits(edits, cx)?;
+                            Ok(())
                         } else {
                             Err(anyhow!("buffer edited since starting to format"))
                         }
@@ -1295,7 +1312,9 @@ impl Buffer {
                 let range = offset..(offset + len);
                 match tag {
                     ChangeTag::Equal => offset += len,
-                    ChangeTag::Delete => self.edit(Some(range), "", cx),
+                    ChangeTag::Delete => {
+                        self.edit(Some(range), "", cx);
+                    }
                     ChangeTag::Insert => {
                         self.edit(Some(offset..offset), &diff.new_text[range], cx);
                         offset += len;
@@ -1409,7 +1428,12 @@ impl Buffer {
             .blocking_send(Some(snapshot));
     }
 
-    pub fn edit<I, S, T>(&mut self, ranges_iter: I, new_text: T, cx: &mut ModelContext<Self>)
+    pub fn edit<I, S, T>(
+        &mut self,
+        ranges_iter: I,
+        new_text: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<clock::Local>
     where
         I: IntoIterator<Item = Range<S>>,
         S: ToOffset,
@@ -1423,7 +1447,8 @@ impl Buffer {
         ranges_iter: I,
         new_text: T,
         cx: &mut ModelContext<Self>,
-    ) where
+    ) -> Option<clock::Local>
+    where
         I: IntoIterator<Item = Range<S>>,
         S: ToOffset,
         T: Into<String>,
@@ -1437,7 +1462,8 @@ impl Buffer {
         new_text: T,
         autoindent: bool,
         cx: &mut ModelContext<Self>,
-    ) where
+    ) -> Option<clock::Local>
+    where
         I: IntoIterator<Item = Range<S>>,
         S: ToOffset,
         T: Into<String>,
@@ -1461,7 +1487,7 @@ impl Buffer {
             }
         }
         if ranges.is_empty() {
-            return;
+            return None;
         }
 
         self.start_transaction();
@@ -1488,6 +1514,7 @@ impl Buffer {
         let new_text_len = new_text.len();
 
         let edit = self.text.edit(ranges.iter().cloned(), new_text);
+        let edit_id = edit.timestamp.local();
 
         if let Some((before_edit, edited)) = autoindent_request {
             let mut inserted = None;
@@ -1517,13 +1544,14 @@ impl Buffer {
 
         self.end_transaction(cx);
         self.send_operation(Operation::Buffer(text::Operation::Edit(edit)), cx);
+        Some(edit_id)
     }
 
     fn apply_lsp_edits(
         &mut self,
         edits: Vec<lsp::TextEdit>,
         cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
+    ) -> Result<Vec<clock::Local>> {
         for edit in &edits {
             let range = range_from_lsp(edit.range);
             if self.clip_point_utf16(range.start, Bias::Left) != range.start
@@ -1535,11 +1563,14 @@ impl Buffer {
             }
         }
 
-        for edit in edits.into_iter().rev() {
-            self.edit([range_from_lsp(edit.range)], edit.new_text, cx);
-        }
-
-        Ok(())
+        self.start_transaction();
+        let edit_ids = edits
+            .into_iter()
+            .rev()
+            .filter_map(|edit| self.edit([range_from_lsp(edit.range)], edit.new_text, cx))
+            .collect();
+        self.end_transaction(cx);
+        Ok(edit_ids)
     }
 
     fn did_edit(
@@ -1835,21 +1866,59 @@ impl Buffer {
     pub fn apply_additional_edits_for_completion(
         &mut self,
         completion: Completion<Anchor>,
+        push_to_history: bool,
         cx: &mut ModelContext<Self>,
-    ) -> Option<Task<Result<()>>> {
-        self.file.as_ref()?.as_local()?;
-        let server = self.language_server.as_ref()?.server.clone();
-        Some(cx.spawn(|this, mut cx| async move {
-            let resolved_completion = server
-                .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
-                .await?;
-            if let Some(additional_edits) = resolved_completion.additional_text_edits {
-                this.update(&mut cx, |this, cx| {
-                    this.apply_lsp_edits(additional_edits, cx)
-                })?;
-            }
-            Ok::<_, anyhow::Error>(())
-        }))
+    ) -> Task<Result<Vec<clock::Local>>> {
+        let file = if let Some(file) = self.file.as_ref() {
+            file
+        } else {
+            return Task::ready(Ok(Default::default()));
+        };
+
+        if file.is_local() {
+            let server = if let Some(lang) = self.language_server.as_ref() {
+                lang.server.clone()
+            } else {
+                return Task::ready(Ok(Default::default()));
+            };
+
+            cx.spawn(|this, mut cx| async move {
+                let resolved_completion = server
+                    .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
+                    .await?;
+                if let Some(additional_edits) = resolved_completion.additional_text_edits {
+                    this.update(&mut cx, |this, cx| {
+                        this.avoid_grouping_next_transaction();
+                        this.start_transaction();
+                        let edit_ids = this.apply_lsp_edits(additional_edits, cx);
+                        if let Some(transaction_id) = this.end_transaction(cx) {
+                            if !push_to_history {
+                                this.text.forget_transaction(transaction_id);
+                            }
+                        }
+                        edit_ids
+                    })
+                } else {
+                    Ok(Default::default())
+                }
+            })
+        } else {
+            let apply_edits = file.apply_additional_edits_for_completion(
+                self.remote_id(),
+                completion,
+                cx.as_mut(),
+            );
+            cx.spawn(|this, mut cx| async move {
+                let edit_ids = apply_edits.await?;
+                if push_to_history {
+                    this.update(&mut cx, |this, _| {
+                        this.text
+                            .push_transaction(edit_ids.iter().copied(), Instant::now());
+                    });
+                }
+                Ok(edit_ids)
+            })
+        }
     }
 
     pub fn completion_triggers(&self) -> &[String] {

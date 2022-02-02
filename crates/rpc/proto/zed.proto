@@ -42,22 +42,24 @@ message Envelope {
         FormatBuffer format_buffer = 34;
         GetCompletions get_completions = 35;
         GetCompletionsResponse get_completions_response = 36;
+        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 37;
+        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 38;
 
-        GetChannels get_channels = 37;
-        GetChannelsResponse get_channels_response = 38;
-        JoinChannel join_channel = 39;
-        JoinChannelResponse join_channel_response = 40;
-        LeaveChannel leave_channel = 41;
-        SendChannelMessage send_channel_message = 42;
-        SendChannelMessageResponse send_channel_message_response = 43;
-        ChannelMessageSent channel_message_sent = 44;
-        GetChannelMessages get_channel_messages = 45;
-        GetChannelMessagesResponse get_channel_messages_response = 46;
+        GetChannels get_channels = 39;
+        GetChannelsResponse get_channels_response = 40;
+        JoinChannel join_channel = 41;
+        JoinChannelResponse join_channel_response = 42;
+        LeaveChannel leave_channel = 43;
+        SendChannelMessage send_channel_message = 44;
+        SendChannelMessageResponse send_channel_message_response = 45;
+        ChannelMessageSent channel_message_sent = 46;
+        GetChannelMessages get_channel_messages = 47;
+        GetChannelMessagesResponse get_channel_messages_response = 48;
 
-        UpdateContacts update_contacts = 47;
+        UpdateContacts update_contacts = 49;
 
-        GetUsers get_users = 48;
-        GetUsersResponse get_users_response = 49;
+        GetUsers get_users = 50;
+        GetUsersResponse get_users_response = 51;
     }
 }
 
@@ -213,6 +215,21 @@ message GetCompletions {
 
 message GetCompletionsResponse {
     repeated Completion completions = 1;
+}
+
+message ApplyCompletionAdditionalEdits {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Completion completion = 3;
+}
+
+message ApplyCompletionAdditionalEditsResponse {
+    repeated AdditionalEdit additional_edits = 1;
+}
+
+message AdditionalEdit {
+    uint32 replica_id = 1;
+    uint32 local_timestamp = 2;
 }
 
 message Completion {
