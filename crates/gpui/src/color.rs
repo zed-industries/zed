@@ -12,7 +12,7 @@ use serde::{
 };
 use serde_json::json;
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct Color(ColorU);
 

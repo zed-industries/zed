@@ -7279,20 +7279,16 @@ mod tests {
             );
 
             let snapshot = editor.snapshot(cx);
+            let mut highlighted_ranges = editor.highlighted_ranges_in_range(
+                anchor_range(Point::new(3, 4)..Point::new(7, 4)),
+                &snapshot,
+            );
+            // Enforce a consistent ordering based on color without relying on the ordering of the
+            // highlight's `TypeId` which is non-deterministic.
+            highlighted_ranges.sort_unstable_by_key(|(_, color)| *color);
             assert_eq!(
-                editor.highlighted_ranges_in_range(
-                    anchor_range(Point::new(3, 4)..Point::new(7, 4)),
-                    &snapshot,
-                ),
+                highlighted_ranges,
                 &[
-                    (
-                        DisplayPoint::new(4, 2)..DisplayPoint::new(4, 4),
-                        Color::red(),
-                    ),
-                    (
-                        DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
-                        Color::red(),
-                    ),
                     (
                         DisplayPoint::new(3, 2)..DisplayPoint::new(3, 5),
                         Color::green(),
@@ -7300,6 +7296,14 @@ mod tests {
                     (
                         DisplayPoint::new(5, 3)..DisplayPoint::new(5, 6),
                         Color::green(),
+                    ),
+                    (
+                        DisplayPoint::new(4, 2)..DisplayPoint::new(4, 4),
+                        Color::red(),
+                    ),
+                    (
+                        DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
+                        Color::red(),
                     ),
                 ]
             );
