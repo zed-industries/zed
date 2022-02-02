@@ -385,7 +385,7 @@ pub struct Editor {
     select_next_state: Option<SelectNextState>,
     selection_history:
         HashMap<TransactionId, (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)>,
-    autoclose_stack: Vec<BracketPairState>,
+    action_region_stack: Vec<ActionRegionState>,
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     scroll_position: Vector2F,
@@ -432,9 +432,27 @@ struct SelectNextState {
 }
 
 #[derive(Debug)]
-struct BracketPairState {
-    ranges: Vec<Range<Anchor>>,
-    pair: BracketPair,
+enum ActionRegionState {
+    BracketPair {
+        ranges: Vec<Range<Anchor>>,
+        pair: BracketPair,
+    },
+    Snippet {
+        ranges: Vec<Vec<Range<Anchor>>>,
+        active_index: usize,
+    },
+}
+
+impl ActionRegionState {
+    fn ranges(&self) -> &[Range<Anchor>] {
+        match self {
+            ActionRegionState::BracketPair { ranges, .. } => ranges.as_slice(),
+            ActionRegionState::Snippet {
+                ranges,
+                active_index,
+            } => ranges[*active_index].as_slice(),
+        }
+    }
 }
 
 struct CompletionState {
@@ -579,7 +597,7 @@ impl Editor {
             add_selections_state: None,
             select_next_state: None,
             selection_history: Default::default(),
-            autoclose_stack: Default::default(),
+            action_region_stack: Vec::new(),
             select_larger_syntax_node_stack: Vec::new(),
             active_diagnostics: None,
             build_settings,
@@ -1510,7 +1528,7 @@ impl Editor {
 
                 if pair.end.len() == 1 {
                     let mut delta = 0;
-                    bracket_pair_state = Some(BracketPairState {
+                    bracket_pair_state = Some(ActionRegionState::BracketPair {
                         ranges: selections
                             .iter()
                             .map(move |selection| {
@@ -1529,27 +1547,33 @@ impl Editor {
             self.update_selections(new_selections, None, cx);
         }
         if let Some(bracket_pair_state) = bracket_pair_state {
-            self.autoclose_stack.push(bracket_pair_state);
+            self.action_region_stack.push(bracket_pair_state);
         }
     }
 
     fn skip_autoclose_end(&mut self, text: &str, cx: &mut ViewContext<Self>) -> bool {
         let old_selections = self.local_selections::<usize>(cx);
-        let autoclose_pair = if let Some(autoclose_pair) = self.autoclose_stack.last() {
-            autoclose_pair
+        let mut autoclose_ranges = None;
+        if let Some(region_state) = self.action_region_stack.last() {
+            if let ActionRegionState::BracketPair { ranges, pair } = region_state {
+                if pair.end == text {
+                    autoclose_ranges = Some(ranges.as_slice());
+                }
+            }
+        }
+
+        let autoclose_ranges = if let Some(ranges) = autoclose_ranges {
+            ranges
         } else {
             return false;
         };
-        if text != autoclose_pair.pair.end {
-            return false;
-        }
 
-        debug_assert_eq!(old_selections.len(), autoclose_pair.ranges.len());
+        debug_assert_eq!(old_selections.len(), autoclose_ranges.len());
 
         let buffer = self.buffer.read(cx).snapshot(cx);
         if old_selections
             .iter()
-            .zip(autoclose_pair.ranges.iter().map(|r| r.to_offset(&buffer)))
+            .zip(autoclose_ranges.iter().map(|r| r.to_offset(&buffer)))
             .all(|(selection, autoclose_range)| {
                 let autoclose_range_end = autoclose_range.end.to_offset(&buffer);
                 selection.is_empty() && selection.start == autoclose_range_end
@@ -1568,7 +1592,7 @@ impl Editor {
                     }
                 })
                 .collect();
-            self.autoclose_stack.pop();
+            self.action_region_stack.pop();
             self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
             true
         } else {
@@ -1766,9 +1790,77 @@ impl Editor {
 
         if let Some(tabstop) = tabstops.first() {
             self.select_ranges(tabstop.iter().cloned(), Some(Autoscroll::Fit), cx);
+            self.action_region_stack.push(ActionRegionState::Snippet {
+                active_index: 0,
+                ranges: tabstops,
+            });
         }
 
         Ok(())
+    }
+
+    pub fn move_to_next_snippet_tabstop(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        self.move_to_snippet_tabstop(Bias::Right, cx)
+    }
+
+    pub fn move_to_prev_snippet_tabstop(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        self.move_to_snippet_tabstop(Bias::Left, cx)
+    }
+
+    pub fn move_to_snippet_tabstop(&mut self, bias: Bias, cx: &mut ViewContext<Self>) -> bool {
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        let old_selections = self.local_selections::<usize>(cx);
+        if let Some(region_state) = self.action_region_stack.last_mut() {
+            if let ActionRegionState::Snippet {
+                ranges,
+                active_index,
+            } = region_state
+            {
+                match bias {
+                    Bias::Left => {
+                        if *active_index > 0 {
+                            *active_index -= 1;
+                        } else {
+                            return false;
+                        }
+                    }
+                    Bias::Right => {
+                        if *active_index + 1 < ranges.len() {
+                            *active_index += 1;
+                        } else {
+                            return false;
+                        }
+                    }
+                }
+                if let Some(current_ranges) = ranges.get(*active_index) {
+                    let new_selections = old_selections
+                        .into_iter()
+                        .zip(current_ranges.iter())
+                        .map(|(selection, new_range)| {
+                            let new_range = new_range.to_offset(&buffer);
+                            Selection {
+                                id: selection.id,
+                                start: new_range.start,
+                                end: new_range.end,
+                                reversed: false,
+                                goal: SelectionGoal::None,
+                            }
+                        })
+                        .collect();
+
+                    // Remove the snippet state when moving to the last tabstop.
+                    if *active_index + 1 == ranges.len() {
+                        self.action_region_stack.pop();
+                    }
+
+                    self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
+                    return true;
+                }
+                self.action_region_stack.pop();
+            }
+        }
+
+        false
     }
 
     pub fn clear(&mut self, cx: &mut ViewContext<Self>) {
@@ -1817,6 +1909,10 @@ impl Editor {
     }
 
     pub fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
+        if self.move_to_next_snippet_tabstop(cx) {
+            return;
+        }
+
         self.start_transaction(cx);
         let tab_size = (self.build_settings)(cx).tab_size;
         let mut selections = self.local_selections::<Point>(cx);
@@ -1889,6 +1985,10 @@ impl Editor {
     }
 
     pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
+        if self.move_to_prev_snippet_tabstop(cx) {
+            return;
+        }
+
         self.start_transaction(cx);
         let tab_size = (self.build_settings)(cx).tab_size;
         let selections = self.local_selections::<Point>(cx);
@@ -3703,24 +3803,24 @@ impl Editor {
         self.add_selections_state = None;
         self.select_next_state = None;
         self.select_larger_syntax_node_stack.clear();
-        while let Some(autoclose_pair) = self.autoclose_stack.last() {
-            let all_selections_inside_autoclose_ranges =
-                if selections.len() == autoclose_pair.ranges.len() {
-                    selections
-                        .iter()
-                        .zip(autoclose_pair.ranges.iter().map(|r| r.to_point(&buffer)))
-                        .all(|(selection, autoclose_range)| {
-                            let head = selection.head().to_point(&buffer);
-                            autoclose_range.start <= head && autoclose_range.end >= head
-                        })
-                } else {
-                    false
-                };
+        while let Some(region_state) = self.action_region_stack.last() {
+            let region_ranges = region_state.ranges();
+            let all_selections_inside_action_ranges = if selections.len() == region_ranges.len() {
+                selections
+                    .iter()
+                    .zip(region_ranges.iter().map(|r| r.to_point(&buffer)))
+                    .all(|(selection, action_range)| {
+                        let head = selection.head().to_point(&buffer);
+                        action_range.start <= head && action_range.end >= head
+                    })
+            } else {
+                false
+            };
 
-            if all_selections_inside_autoclose_ranges {
+            if all_selections_inside_action_ranges {
                 break;
             } else {
-                self.autoclose_stack.pop();
+                self.action_region_stack.pop();
             }
         }
 
@@ -6644,6 +6744,22 @@ mod tests {
                 .unwrap();
             assert_eq!(editor.text(cx), "a.f(one, two) b");
             assert_eq!(editor.selected_ranges::<usize>(cx), &[4..7]);
+
+            // Can't move earlier than the first tab stop
+            assert!(!editor.move_to_prev_snippet_tabstop(cx));
+
+            assert!(editor.move_to_next_snippet_tabstop(cx));
+            assert_eq!(editor.selected_ranges::<usize>(cx), &[9..12]);
+
+            assert!(editor.move_to_prev_snippet_tabstop(cx));
+            assert_eq!(editor.selected_ranges::<usize>(cx), &[4..7]);
+
+            assert!(editor.move_to_next_snippet_tabstop(cx));
+            assert!(editor.move_to_next_snippet_tabstop(cx));
+            assert_eq!(editor.selected_ranges::<usize>(cx), &[13..13]);
+
+            // As soon as the last tab stop is reached, snippet state is gone
+            assert!(!editor.move_to_prev_snippet_tabstop(cx));
         });
     }
 
