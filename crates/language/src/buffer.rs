@@ -1910,6 +1910,8 @@ impl Buffer {
             );
             cx.spawn(|this, mut cx| async move {
                 let edit_ids = apply_edits.await?;
+                this.update(&mut cx, |this, _| this.text.wait_for_edits(&edit_ids))
+                    .await;
                 if push_to_history {
                     this.update(&mut cx, |this, _| {
                         this.text
