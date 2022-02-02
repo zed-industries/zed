@@ -1810,6 +1810,14 @@ impl Editor {
     pub fn move_to_snippet_tabstop(&mut self, bias: Bias, cx: &mut ViewContext<Self>) -> bool {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let old_selections = self.local_selections::<usize>(cx);
+
+        for (ix, region_state) in self.action_region_stack.iter().enumerate().rev() {
+            if let ActionRegionState::Snippet { .. } = region_state {
+                self.action_region_stack.truncate(ix + 1);
+                break;
+            }
+        }
+
         if let Some(region_state) = self.action_region_stack.last_mut() {
             if let ActionRegionState::Snippet {
                 ranges,
