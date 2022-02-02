@@ -43,8 +43,11 @@ pub trait ToLspPosition {
     fn to_lsp_position(self) -> lsp::Position;
 }
 
-pub trait DiagnosticProcessor: 'static + Send + Sync {
+pub trait LspPostProcessor: 'static + Send + Sync {
     fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams);
+    fn label_for_completion(&self, _completion: &lsp::CompletionItem) -> Option<String> {
+        None
+    }
 }
 
 #[derive(Default, Deserialize)]
@@ -77,7 +80,7 @@ pub struct BracketPair {
 pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
-    pub(crate) diagnostic_processor: Option<Box<dyn DiagnosticProcessor>>,
+    pub(crate) lsp_post_processor: Option<Box<dyn LspPostProcessor>>,
 }
 
 pub struct Grammar {
@@ -144,7 +147,7 @@ impl Language {
                     highlight_map: Default::default(),
                 })
             }),
-            diagnostic_processor: None,
+            lsp_post_processor: None,
         }
     }
 
@@ -188,8 +191,8 @@ impl Language {
         Ok(self)
     }
 
-    pub fn with_diagnostics_processor(mut self, processor: impl DiagnosticProcessor) -> Self {
-        self.diagnostic_processor = Some(Box::new(processor));
+    pub fn with_lsp_post_processor(mut self, processor: impl LspPostProcessor) -> Self {
+        self.lsp_post_processor = Some(Box::new(processor));
         self
     }
 
@@ -241,9 +244,15 @@ impl Language {
     }
 
     pub fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams) {
-        if let Some(processor) = self.diagnostic_processor.as_ref() {
+        if let Some(processor) = self.lsp_post_processor.as_ref() {
             processor.process_diagnostics(diagnostics);
         }
+    }
+
+    pub fn label_for_completion(&self, completion: &lsp::CompletionItem) -> Option<String> {
+        self.lsp_post_processor
+            .as_ref()
+            .and_then(|p| p.label_for_completion(completion))
     }
 
     pub fn brackets(&self) -> &[BracketPair] {

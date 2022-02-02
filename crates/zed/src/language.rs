@@ -9,9 +9,9 @@ use std::{str, sync::Arc};
 #[folder = "languages"]
 struct LanguageDir;
 
-struct RustDiagnosticProcessor;
+struct RustPostProcessor;
 
-impl DiagnosticProcessor for RustDiagnosticProcessor {
+impl LspPostProcessor for RustPostProcessor {
     fn process_diagnostics(&self, params: &mut lsp::PublishDiagnosticsParams) {
         lazy_static! {
             static ref REGEX: Regex = Regex::new("(?m)`([^`]+)\n`$").unwrap();
@@ -29,6 +29,15 @@ impl DiagnosticProcessor for RustDiagnosticProcessor {
                     *message = sanitized;
                 }
             }
+        }
+    }
+
+    fn label_for_completion(&self, completion: &lsp::CompletionItem) -> Option<String> {
+        let detail = completion.detail.as_ref()?;
+        if detail.starts_with("fn(") {
+            Some(completion.label.replace("(…)", &detail[2..]))
+        } else {
+            None
         }
     }
 }
@@ -52,7 +61,7 @@ fn rust() -> Language {
         .unwrap()
         .with_outline_query(load_query("rust/outline.scm").as_ref())
         .unwrap()
-        .with_diagnostics_processor(RustDiagnosticProcessor)
+        .with_lsp_post_processor(RustPostProcessor)
 }
 
 fn markdown() -> Language {
@@ -72,9 +81,9 @@ fn load_query(path: &str) -> Cow<'static, str> {
 
 #[cfg(test)]
 mod tests {
-    use language::DiagnosticProcessor;
+    use language::LspPostProcessor;
 
-    use super::RustDiagnosticProcessor;
+    use super::RustPostProcessor;
 
     #[test]
     fn test_process_rust_diagnostics() {
@@ -100,7 +109,7 @@ mod tests {
                 },
             ],
         };
-        RustDiagnosticProcessor.process_diagnostics(&mut params);
+        RustPostProcessor.process_diagnostics(&mut params);
 
         assert_eq!(params.diagnostics[0].message, "use of moved value `a`");
 

@@ -14,7 +14,9 @@ use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
 };
-use language::{Anchor, Buffer, Completion, DiagnosticEntry, Operation, PointUtf16, Rope};
+use language::{
+    Anchor, Buffer, Completion, DiagnosticEntry, Language, Operation, PointUtf16, Rope,
+};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
@@ -1425,6 +1427,7 @@ impl language::File for File {
         &self,
         buffer_id: u64,
         position: Anchor,
+        language: Option<Arc<Language>>,
         cx: &mut MutableAppContext,
     ) -> Task<Result<Vec<Completion<Anchor>>>> {
         let worktree = self.worktree.read(cx);
@@ -1448,7 +1451,9 @@ impl language::File for File {
             response
                 .completions
                 .into_iter()
-                .map(language::proto::deserialize_completion)
+                .map(|completion| {
+                    language::proto::deserialize_completion(completion, language.as_ref())
+                })
                 .collect()
         })
     }

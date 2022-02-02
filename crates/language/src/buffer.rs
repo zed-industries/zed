@@ -119,6 +119,7 @@ pub struct Diagnostic {
 pub struct Completion<T> {
     pub old_range: Range<T>,
     pub new_text: String,
+    pub label: Option<String>,
     pub lsp_completion: lsp::CompletionItem,
 }
 
@@ -203,6 +204,7 @@ pub trait File {
         &self,
         buffer_id: u64,
         position: Anchor,
+        language: Option<Arc<Language>>,
         cx: &mut MutableAppContext,
     ) -> Task<Result<Vec<Completion<Anchor>>>>;
 
@@ -286,6 +288,7 @@ impl File for FakeFile {
         &self,
         _: u64,
         _: Anchor,
+        _: Option<Arc<Language>>,
         _: &mut MutableAppContext,
     ) -> Task<Result<Vec<Completion<Anchor>>>> {
         Task::ready(Ok(Default::default()))
@@ -1800,10 +1803,11 @@ impl Buffer {
         } else {
             return Task::ready(Ok(Default::default()));
         };
+        let language = self.language.clone();
 
         if let Some(file) = file.as_local() {
-            let server = if let Some(lang) = self.language_server.as_ref() {
-                lang.server.clone()
+            let server = if let Some(language_server) = self.language_server.as_ref() {
+                language_server.server.clone()
             } else {
                 return Task::ready(Ok(Default::default()));
             };
@@ -1850,6 +1854,7 @@ impl Buffer {
                             Some(Completion {
                                 old_range: this.anchor_before(old_range.start)..this.anchor_after(old_range.end),
                                 new_text,
+                                label: language.as_ref().and_then(|l| l.label_for_completion(&lsp_completion)),
                                 lsp_completion,
                             })
                         } else {
@@ -1859,7 +1864,12 @@ impl Buffer {
                 })
             })
         } else {
-            file.completions(self.remote_id(), self.anchor_before(position), cx.as_mut())
+            file.completions(
+                self.remote_id(),
+                self.anchor_before(position),
+                language,
+                cx.as_mut(),
+            )
         }
     }
 
@@ -2668,7 +2678,7 @@ impl Default for Diagnostic {
 
 impl<T> Completion<T> {
     pub fn label(&self) -> &str {
-        &self.lsp_completion.label
+        self.label.as_deref().unwrap_or(&self.lsp_completion.label)
     }
 
     pub fn filter_range(&self) -> Range<usize> {

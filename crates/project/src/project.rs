@@ -1752,11 +1752,13 @@ impl Project {
             .get(&sender_id)
             .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
             .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
+        let language = buffer.read(cx).language();
         let completion = language::proto::deserialize_completion(
             envelope
                 .payload
                 .completion
                 .ok_or_else(|| anyhow!("invalid position"))?,
+            language,
         )?;
         cx.spawn(|_, mut cx| async move {
             match buffer

@@ -883,6 +883,7 @@ impl MultiBuffer {
                                 completion.old_range.end,
                             ),
                         new_text: completion.new_text,
+                        label: completion.label,
                         lsp_completion: completion.lsp_completion,
                     })
                     .collect()
@@ -939,6 +940,7 @@ impl MultiBuffer {
                     old_range: completion.old_range.start.text_anchor
                         ..completion.old_range.end.text_anchor,
                     new_text: completion.new_text,
+                    label: completion.label,
                     lsp_completion: completion.lsp_completion,
                 },
                 true,

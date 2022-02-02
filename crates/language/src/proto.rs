@@ -1,4 +1,4 @@
-use crate::{diagnostic_set::DiagnosticEntry, Completion, Diagnostic, Operation};
+use crate::{diagnostic_set::DiagnosticEntry, Completion, Diagnostic, Language, Operation};
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::HashSet;
@@ -387,7 +387,10 @@ pub fn serialize_completion(completion: &Completion<Anchor>) -> proto::Completio
     }
 }
 
-pub fn deserialize_completion(completion: proto::Completion) -> Result<Completion<Anchor>> {
+pub fn deserialize_completion(
+    completion: proto::Completion,
+    language: Option<&Arc<Language>>,
+) -> Result<Completion<Anchor>> {
     let old_start = completion
         .old_start
         .and_then(deserialize_anchor)
@@ -396,9 +399,11 @@ pub fn deserialize_completion(completion: proto::Completion) -> Result<Completio
         .old_end
         .and_then(deserialize_anchor)
         .ok_or_else(|| anyhow!("invalid old end"))?;
+    let lsp_completion = serde_json::from_slice(&completion.lsp_completion)?;
     Ok(Completion {
         old_range: old_start..old_end,
         new_text: completion.new_text,
-        lsp_completion: serde_json::from_slice(&completion.lsp_completion)?,
+        label: language.and_then(|l| l.label_for_completion(&lsp_completion)),
+        lsp_completion,
     })
 }
