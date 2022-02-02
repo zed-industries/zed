@@ -58,6 +58,13 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 lamport_timestamp: lamport_timestamp.value,
                 diagnostics: serialize_diagnostics(diagnostics.iter()),
             }),
+            Operation::UpdateCompletionTriggers { triggers } => {
+                proto::operation::Variant::UpdateCompletionTriggers(
+                    proto::operation::UpdateCompletionTriggers {
+                        triggers: triggers.clone(),
+                    },
+                )
+            }
         }),
     }
 }
@@ -238,6 +245,11 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                     value: message.lamport_timestamp,
                 },
             },
+            proto::operation::Variant::UpdateCompletionTriggers(message) => {
+                Operation::UpdateCompletionTriggers {
+                    triggers: message.triggers,
+                }
+            }
         },
     )
 }

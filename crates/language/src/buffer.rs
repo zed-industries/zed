@@ -74,6 +74,7 @@ pub struct Buffer {
     selections_update_count: usize,
     diagnostics_update_count: usize,
     language_server: Option<LanguageServerState>,
+    completion_triggers: Vec<String>,
     deferred_ops: OperationQueue<Operation>,
     #[cfg(test)]
     pub(crate) operations: Vec<Operation>,
@@ -126,7 +127,7 @@ struct LanguageServerState {
     latest_snapshot: watch::Sender<Option<LanguageServerSnapshot>>,
     pending_snapshots: BTreeMap<usize, LanguageServerSnapshot>,
     next_version: usize,
-    _maintain_server: Task<Option<()>>,
+    _maintain_server: Task<()>,
 }
 
 #[derive(Clone)]
@@ -147,6 +148,9 @@ pub enum Operation {
         replica_id: ReplicaId,
         selections: Arc<[Selection<Anchor>]>,
         lamport_timestamp: clock::Lamport,
+    },
+    UpdateCompletionTriggers {
+        triggers: Vec<String>,
     },
 }
 
@@ -448,6 +452,8 @@ impl Buffer {
             cx,
         );
 
+        this.completion_triggers = message.completion_triggers;
+
         let deferred_ops = message
             .deferred_operations
             .into_iter()
@@ -496,6 +502,7 @@ impl Buffer {
                         .map(|op| proto::serialize_operation(&Operation::Buffer(op.clone()))),
                 )
                 .collect(),
+            completion_triggers: self.completion_triggers.clone(),
         }
     }
 
@@ -538,6 +545,7 @@ impl Buffer {
             diagnostics: Default::default(),
             diagnostics_update_count: 0,
             language_server: None,
+            completion_triggers: Default::default(),
             deferred_ops: OperationQueue::new(),
             #[cfg(test)]
             operations: Default::default(),
@@ -639,75 +647,102 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         self.language_server = if let Some(server) = language_server {
-            let (latest_snapshot_tx, mut latest_snapshot_rx) = watch::channel();
+            let (latest_snapshot_tx, mut latest_snapshot_rx) =
+                watch::channel::<Option<LanguageServerSnapshot>>();
+
+            let maintain_changes = cx.background().spawn({
+                let server = server.clone();
+                async move {
+                    let mut prev_snapshot: Option<LanguageServerSnapshot> = None;
+                    while let Some(snapshot) = latest_snapshot_rx.recv().await {
+                        if let Some(snapshot) = snapshot {
+                            let uri = lsp::Url::from_file_path(&snapshot.path).unwrap();
+                            if let Some(prev_snapshot) = prev_snapshot {
+                                let changes = lsp::DidChangeTextDocumentParams {
+                                    text_document: lsp::VersionedTextDocumentIdentifier::new(
+                                        uri,
+                                        snapshot.version as i32,
+                                    ),
+                                    content_changes: snapshot
+                                        .buffer_snapshot
+                                        .edits_since::<(PointUtf16, usize)>(
+                                            prev_snapshot.buffer_snapshot.version(),
+                                        )
+                                        .map(|edit| {
+                                            let edit_start = edit.new.start.0;
+                                            let edit_end =
+                                                edit_start + (edit.old.end.0 - edit.old.start.0);
+                                            let new_text = snapshot
+                                                .buffer_snapshot
+                                                .text_for_range(edit.new.start.1..edit.new.end.1)
+                                                .collect();
+                                            lsp::TextDocumentContentChangeEvent {
+                                                range: Some(lsp::Range::new(
+                                                    edit_start.to_lsp_position(),
+                                                    edit_end.to_lsp_position(),
+                                                )),
+                                                range_length: None,
+                                                text: new_text,
+                                            }
+                                        })
+                                        .collect(),
+                                };
+                                server
+                                    .notify::<lsp::notification::DidChangeTextDocument>(changes)
+                                    .await?;
+                            } else {
+                                server
+                                    .notify::<lsp::notification::DidOpenTextDocument>(
+                                        lsp::DidOpenTextDocumentParams {
+                                            text_document: lsp::TextDocumentItem::new(
+                                                uri,
+                                                Default::default(),
+                                                snapshot.version as i32,
+                                                snapshot.buffer_snapshot.text().to_string(),
+                                            ),
+                                        },
+                                    )
+                                    .await?;
+                            }
+
+                            prev_snapshot = Some(snapshot);
+                        }
+                    }
+                    Ok(())
+                }
+            });
+
             Some(LanguageServerState {
                 latest_snapshot: latest_snapshot_tx,
                 pending_snapshots: Default::default(),
                 next_version: 0,
                 server: server.clone(),
-                _maintain_server: cx.background().spawn(
-                    async move {
-                        let mut prev_snapshot: Option<LanguageServerSnapshot> = None;
-                        while let Some(snapshot) = latest_snapshot_rx.recv().await {
-                            if let Some(snapshot) = snapshot {
-                                let uri = lsp::Url::from_file_path(&snapshot.path).unwrap();
-                                if let Some(prev_snapshot) = prev_snapshot {
-                                    let changes = lsp::DidChangeTextDocumentParams {
-                                        text_document: lsp::VersionedTextDocumentIdentifier::new(
-                                            uri,
-                                            snapshot.version as i32,
-                                        ),
-                                        content_changes: snapshot
-                                            .buffer_snapshot
-                                            .edits_since::<(PointUtf16, usize)>(
-                                                prev_snapshot.buffer_snapshot.version(),
-                                            )
-                                            .map(|edit| {
-                                                let edit_start = edit.new.start.0;
-                                                let edit_end = edit_start
-                                                    + (edit.old.end.0 - edit.old.start.0);
-                                                let new_text = snapshot
-                                                    .buffer_snapshot
-                                                    .text_for_range(
-                                                        edit.new.start.1..edit.new.end.1,
-                                                    )
-                                                    .collect();
-                                                lsp::TextDocumentContentChangeEvent {
-                                                    range: Some(lsp::Range::new(
-                                                        edit_start.to_lsp_position(),
-                                                        edit_end.to_lsp_position(),
-                                                    )),
-                                                    range_length: None,
-                                                    text: new_text,
-                                                }
-                                            })
-                                            .collect(),
-                                    };
-                                    server
-                                        .notify::<lsp::notification::DidChangeTextDocument>(changes)
-                                        .await?;
-                                } else {
-                                    server
-                                        .notify::<lsp::notification::DidOpenTextDocument>(
-                                            lsp::DidOpenTextDocumentParams {
-                                                text_document: lsp::TextDocumentItem::new(
-                                                    uri,
-                                                    Default::default(),
-                                                    snapshot.version as i32,
-                                                    snapshot.buffer_snapshot.text().to_string(),
-                                                ),
-                                            },
-                                        )
-                                        .await?;
-                                }
-
-                                prev_snapshot = Some(snapshot);
+                _maintain_server: cx.spawn_weak(|this, mut cx| async move {
+                    let mut capabilities = server.capabilities();
+                    loop {
+                        if let Some(capabilities) = capabilities.recv().await.flatten() {
+                            if let Some(this) = this.upgrade(&cx) {
+                                let triggers = capabilities
+                                    .completion_provider
+                                    .and_then(|c| c.trigger_characters)
+                                    .unwrap_or_default();
+                                this.update(&mut cx, |this, cx| {
+                                    this.completion_triggers = triggers.clone();
+                                    this.send_operation(
+                                        Operation::UpdateCompletionTriggers { triggers },
+                                        cx,
+                                    );
+                                });
+                            } else {
+                                return;
                             }
+
+                            break;
                         }
-                        Ok(())
                     }
-                    .log_err(),
-                ),
+
+                    maintain_changes.log_err().await;
+                }),
             })
         } else {
             None
@@ -1591,6 +1626,7 @@ impl Buffer {
             Operation::UpdateSelections { selections, .. } => selections
                 .iter()
                 .all(|s| self.can_resolve(&s.start) && self.can_resolve(&s.end)),
+            Operation::UpdateCompletionTriggers { .. } => true,
         }
     }
 
@@ -1629,6 +1665,9 @@ impl Buffer {
                 );
                 self.text.lamport_clock.observe(lamport_timestamp);
                 self.selections_update_count += 1;
+            }
+            Operation::UpdateCompletionTriggers { triggers } => {
+                self.completion_triggers = triggers;
             }
         }
     }
@@ -1811,6 +1850,10 @@ impl Buffer {
             }
             Ok::<_, anyhow::Error>(())
         }))
+    }
+
+    pub fn completion_triggers(&self) -> &[String] {
+        &self.completion_triggers
     }
 }
 
@@ -2529,6 +2572,9 @@ impl operation_queue::Operation for Operation {
             | Operation::UpdateSelections {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
+            Operation::UpdateCompletionTriggers { .. } => {
+                unreachable!("updating completion triggers should never be deferred")
+            }
         }
     }
 }

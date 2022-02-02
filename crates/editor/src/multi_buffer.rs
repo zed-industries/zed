@@ -911,22 +911,11 @@ impl MultiBuffer {
         let snapshot = self.snapshot(cx);
         let anchor = snapshot.anchor_before(position);
         let buffer = self.buffers.borrow()[&anchor.buffer_id].buffer.clone();
-        if let Some(language_server) = buffer.read(cx).language_server() {
-            language_server
-                .capabilities()
-                .completion_provider
-                .as_ref()
-                .map_or(false, |provider| {
-                    provider
-                        .trigger_characters
-                        .as_ref()
-                        .map_or(false, |characters| {
-                            characters.iter().any(|string| string == text)
-                        })
-                })
-        } else {
-            false
-        }
+        buffer
+            .read(cx)
+            .completion_triggers()
+            .iter()
+            .any(|string| string == text)
     }
 
     pub fn apply_additional_edits_for_completion(

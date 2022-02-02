@@ -358,6 +358,7 @@ message BufferState {
     repeated Diagnostic diagnostics = 9;
     uint32 lamport_timestamp = 10;
     repeated Operation deferred_operations = 11;
+    repeated string completion_triggers = 12;
 }
 
 message BufferFragment {
@@ -428,6 +429,7 @@ message Operation {
         Undo undo = 2;
         UpdateSelections update_selections = 3;
         UpdateDiagnostics update_diagnostics = 4;
+        UpdateCompletionTriggers update_completion_triggers = 5;
     }
 
     message Edit {
@@ -452,6 +454,10 @@ message Operation {
         uint32 replica_id = 1;
         uint32 lamport_timestamp = 2;
         repeated Selection selections = 3;
+    }
+
+    message UpdateCompletionTriggers {
+        repeated string triggers = 1;
     }
 }
 

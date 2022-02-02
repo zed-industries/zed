@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufWriter, AsyncRead, AsyncWrite};
 use gpui::{executor, Task};
-use parking_lot::{Mutex, RwLock, RwLockReadGuard};
-use postage::{barrier, oneshot, prelude::Stream, sink::Sink};
+use parking_lot::{Mutex, RwLock};
+use postage::{barrier, oneshot, prelude::Stream, sink::Sink, watch};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, value::RawValue, Value};
 use smol::{
@@ -34,7 +34,7 @@ type ResponseHandler = Box<dyn Send + FnOnce(Result<&str, Error>)>;
 pub struct LanguageServer {
     next_id: AtomicUsize,
     outbound_tx: RwLock<Option<channel::Sender<Vec<u8>>>>,
-    capabilities: RwLock<lsp_types::ServerCapabilities>,
+    capabilities: watch::Receiver<Option<ServerCapabilities>>,
     notification_handlers: Arc<RwLock<HashMap<&'static str, NotificationHandler>>>,
     response_handlers: Arc<Mutex<HashMap<usize, ResponseHandler>>>,
     executor: Arc<executor::Background>,
@@ -195,10 +195,11 @@ impl LanguageServer {
         );
 
         let (initialized_tx, initialized_rx) = barrier::channel();
+        let (mut capabilities_tx, capabilities_rx) = watch::channel();
         let this = Arc::new(Self {
             notification_handlers,
             response_handlers,
-            capabilities: Default::default(),
+            capabilities: capabilities_rx,
             next_id: Default::default(),
             outbound_tx: RwLock::new(Some(outbound_tx)),
             executor: executor.clone(),
@@ -212,7 +213,10 @@ impl LanguageServer {
             .spawn({
                 let this = this.clone();
                 async move {
-                    this.init(root_uri).log_err().await;
+                    if let Some(capabilities) = this.init(root_uri).log_err().await {
+                        *capabilities_tx.borrow_mut() = Some(capabilities);
+                    }
+
                     drop(initialized_tx);
                 }
             })
@@ -221,7 +225,7 @@ impl LanguageServer {
         Ok(this)
     }
 
-    async fn init(self: Arc<Self>, root_uri: Url) -> Result<()> {
+    async fn init(self: Arc<Self>, root_uri: Url) -> Result<ServerCapabilities> {
         #[allow(deprecated)]
         let params = InitializeParams {
             process_id: Default::default(),
@@ -269,12 +273,11 @@ impl LanguageServer {
             params,
         );
         let response = request.await?;
-        *this.capabilities.write() = response.capabilities;
         Self::notify_internal::<notification::Initialized>(
             this.outbound_tx.read().as_ref(),
             InitializedParams {},
         )?;
-        Ok(())
+        Ok(response.capabilities)
     }
 
     pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Result<()>>> {
@@ -328,8 +331,8 @@ impl LanguageServer {
         }
     }
 
-    pub fn capabilities(&self) -> RwLockReadGuard<ServerCapabilities> {
-        self.capabilities.read()
+    pub fn capabilities(&self) -> watch::Receiver<Option<ServerCapabilities>> {
+        self.capabilities.clone()
     }
 
     pub fn request<T: request::Request>(
