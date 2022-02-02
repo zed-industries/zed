@@ -48,7 +48,7 @@ use std::{
     cmp::{self, Ordering, Reverse},
     iter::{self, FromIterator},
     mem,
-    ops::{Deref, Range, RangeInclusive, Sub},
+    ops::{Deref, DerefMut, Range, RangeInclusive, Sub},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -312,6 +312,10 @@ trait SelectionExt {
         -> Range<u32>;
 }
 
+trait InvalidationRegion {
+    fn ranges(&self) -> &[Range<Anchor>];
+}
+
 #[derive(Clone, Debug)]
 pub enum SelectPhase {
     Begin {
@@ -385,7 +389,8 @@ pub struct Editor {
     select_next_state: Option<SelectNextState>,
     selection_history:
         HashMap<TransactionId, (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)>,
-    action_region_stack: Vec<ActionRegionState>,
+    autoclose_stack: InvalidationStack<BracketPairState>,
+    snippet_stack: InvalidationStack<SnippetState>,
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     scroll_position: Vector2F,
@@ -431,29 +436,17 @@ struct SelectNextState {
     done: bool,
 }
 
-#[derive(Debug)]
-enum ActionRegionState {
-    BracketPair {
-        ranges: Vec<Range<Anchor>>,
-        pair: BracketPair,
-    },
-    Snippet {
-        ranges: Vec<Vec<Range<Anchor>>>,
-        active_index: usize,
-    },
+struct BracketPairState {
+    ranges: Vec<Range<Anchor>>,
+    pair: BracketPair,
 }
 
-impl ActionRegionState {
-    fn ranges(&self) -> &[Range<Anchor>] {
-        match self {
-            ActionRegionState::BracketPair { ranges, .. } => ranges.as_slice(),
-            ActionRegionState::Snippet {
-                ranges,
-                active_index,
-            } => ranges[*active_index].as_slice(),
-        }
-    }
+struct SnippetState {
+    ranges: Vec<Vec<Range<Anchor>>>,
+    active_index: usize,
 }
+
+struct InvalidationStack<T>(Vec<T>);
 
 struct CompletionState {
     initial_position: Anchor,
@@ -597,7 +590,8 @@ impl Editor {
             add_selections_state: None,
             select_next_state: None,
             selection_history: Default::default(),
-            action_region_stack: Vec::new(),
+            autoclose_stack: Default::default(),
+            snippet_stack: Default::default(),
             select_larger_syntax_node_stack: Vec::new(),
             active_diagnostics: None,
             build_settings,
@@ -1528,7 +1522,7 @@ impl Editor {
 
                 if pair.end.len() == 1 {
                     let mut delta = 0;
-                    bracket_pair_state = Some(ActionRegionState::BracketPair {
+                    bracket_pair_state = Some(BracketPairState {
                         ranges: selections
                             .iter()
                             .map(move |selection| {
@@ -1547,33 +1541,27 @@ impl Editor {
             self.update_selections(new_selections, None, cx);
         }
         if let Some(bracket_pair_state) = bracket_pair_state {
-            self.action_region_stack.push(bracket_pair_state);
+            self.autoclose_stack.push(bracket_pair_state);
         }
     }
 
     fn skip_autoclose_end(&mut self, text: &str, cx: &mut ViewContext<Self>) -> bool {
         let old_selections = self.local_selections::<usize>(cx);
-        let mut autoclose_ranges = None;
-        if let Some(region_state) = self.action_region_stack.last() {
-            if let ActionRegionState::BracketPair { ranges, pair } = region_state {
-                if pair.end == text {
-                    autoclose_ranges = Some(ranges.as_slice());
-                }
-            }
-        }
-
-        let autoclose_ranges = if let Some(ranges) = autoclose_ranges {
-            ranges
+        let autoclose_pair = if let Some(autoclose_pair) = self.autoclose_stack.last() {
+            autoclose_pair
         } else {
             return false;
         };
+        if text != autoclose_pair.pair.end {
+            return false;
+        }
 
-        debug_assert_eq!(old_selections.len(), autoclose_ranges.len());
+        debug_assert_eq!(old_selections.len(), autoclose_pair.ranges.len());
 
         let buffer = self.buffer.read(cx).snapshot(cx);
         if old_selections
             .iter()
-            .zip(autoclose_ranges.iter().map(|r| r.to_offset(&buffer)))
+            .zip(autoclose_pair.ranges.iter().map(|r| r.to_offset(&buffer)))
             .all(|(selection, autoclose_range)| {
                 let autoclose_range_end = autoclose_range.end.to_offset(&buffer);
                 selection.is_empty() && selection.start == autoclose_range_end
@@ -1592,7 +1580,7 @@ impl Editor {
                     }
                 })
                 .collect();
-            self.action_region_stack.pop();
+            self.autoclose_stack.pop();
             self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
             true
         } else {
@@ -1790,7 +1778,7 @@ impl Editor {
 
         if let Some(tabstop) = tabstops.first() {
             self.select_ranges(tabstop.iter().cloned(), Some(Autoscroll::Fit), cx);
-            self.action_region_stack.push(ActionRegionState::Snippet {
+            self.snippet_stack.push(SnippetState {
                 active_index: 0,
                 ranges: tabstops,
             });
@@ -1811,61 +1799,48 @@ impl Editor {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let old_selections = self.local_selections::<usize>(cx);
 
-        for (ix, region_state) in self.action_region_stack.iter().enumerate().rev() {
-            if let ActionRegionState::Snippet { .. } = region_state {
-                self.action_region_stack.truncate(ix + 1);
-                break;
-            }
-        }
-
-        if let Some(region_state) = self.action_region_stack.last_mut() {
-            if let ActionRegionState::Snippet {
-                ranges,
-                active_index,
-            } = region_state
-            {
-                match bias {
-                    Bias::Left => {
-                        if *active_index > 0 {
-                            *active_index -= 1;
-                        } else {
-                            return false;
-                        }
-                    }
-                    Bias::Right => {
-                        if *active_index + 1 < ranges.len() {
-                            *active_index += 1;
-                        } else {
-                            return false;
-                        }
+        if let Some(snippet) = self.snippet_stack.last_mut() {
+            match bias {
+                Bias::Left => {
+                    if snippet.active_index > 0 {
+                        snippet.active_index -= 1;
+                    } else {
+                        return false;
                     }
                 }
-                if let Some(current_ranges) = ranges.get(*active_index) {
-                    let new_selections = old_selections
-                        .into_iter()
-                        .zip(current_ranges.iter())
-                        .map(|(selection, new_range)| {
-                            let new_range = new_range.to_offset(&buffer);
-                            Selection {
-                                id: selection.id,
-                                start: new_range.start,
-                                end: new_range.end,
-                                reversed: false,
-                                goal: SelectionGoal::None,
-                            }
-                        })
-                        .collect();
-
-                    // Remove the snippet state when moving to the last tabstop.
-                    if *active_index + 1 == ranges.len() {
-                        self.action_region_stack.pop();
+                Bias::Right => {
+                    if snippet.active_index + 1 < snippet.ranges.len() {
+                        snippet.active_index += 1;
+                    } else {
+                        return false;
                     }
-
-                    self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
-                    return true;
                 }
-                self.action_region_stack.pop();
             }
+            if let Some(current_ranges) = snippet.ranges.get(snippet.active_index) {
+                let new_selections = old_selections
+                    .into_iter()
+                    .zip(current_ranges.iter())
+                    .map(|(selection, new_range)| {
+                        let new_range = new_range.to_offset(&buffer);
+                        Selection {
+                            id: selection.id,
+                            start: new_range.start,
+                            end: new_range.end,
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        }
+                    })
+                    .collect();
+
+                // Remove the snippet state when moving to the last tabstop.
+                if snippet.active_index + 1 == snippet.ranges.len() {
+                    self.snippet_stack.pop();
+                }
+
+                self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
+                return true;
+            }
+            self.snippet_stack.pop();
         }
 
         false
@@ -3811,26 +3786,8 @@ impl Editor {
         self.add_selections_state = None;
         self.select_next_state = None;
         self.select_larger_syntax_node_stack.clear();
-        while let Some(region_state) = self.action_region_stack.last() {
-            let region_ranges = region_state.ranges();
-            let all_selections_inside_action_ranges = if selections.len() == region_ranges.len() {
-                selections
-                    .iter()
-                    .zip(region_ranges.iter().map(|r| r.to_point(&buffer)))
-                    .all(|(selection, action_range)| {
-                        let head = selection.head().to_point(&buffer);
-                        action_range.start <= head && action_range.end >= head
-                    })
-            } else {
-                false
-            };
-
-            if all_selections_inside_action_ranges {
-                break;
-            } else {
-                self.action_region_stack.pop();
-            }
-        }
+        self.autoclose_stack.invalidate(&selections, &buffer);
+        self.snippet_stack.invalidate(&selections, &buffer);
 
         let new_cursor_position = selections.iter().max_by_key(|s| s.id).map(|s| s.head());
         if let Some(old_cursor_position) = old_cursor_position {
@@ -4557,6 +4514,66 @@ impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
         let buffer_start = map.prev_line_boundary(start).0;
         let buffer_end = map.next_line_boundary(end).0;
         buffer_start.row..buffer_end.row + 1
+    }
+}
+
+impl<T: InvalidationRegion> InvalidationStack<T> {
+    fn invalidate<S>(&mut self, selections: &[Selection<S>], buffer: &MultiBufferSnapshot)
+    where
+        S: Clone + ToOffset,
+    {
+        while let Some(region) = self.last() {
+            let all_selections_inside_invalidation_ranges =
+                if selections.len() == region.ranges().len() {
+                    selections
+                        .iter()
+                        .zip(region.ranges().iter().map(|r| r.to_offset(&buffer)))
+                        .all(|(selection, invalidation_range)| {
+                            let head = selection.head().to_offset(&buffer);
+                            invalidation_range.start <= head && invalidation_range.end >= head
+                        })
+                } else {
+                    false
+                };
+
+            if all_selections_inside_invalidation_ranges {
+                break;
+            } else {
+                self.pop();
+            }
+        }
+    }
+}
+
+impl<T> Default for InvalidationStack<T> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+impl<T> Deref for InvalidationStack<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for InvalidationStack<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl InvalidationRegion for BracketPairState {
+    fn ranges(&self) -> &[Range<Anchor>] {
+        &self.ranges
+    }
+}
+
+impl InvalidationRegion for SnippetState {
+    fn ranges(&self) -> &[Range<Anchor>] {
+        &self.ranges[self.active_index]
     }
 }
 
