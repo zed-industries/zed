@@ -316,9 +316,14 @@ message.highlight_text.color = "$text.3.color"
 
 [editor.autocomplete]
 background = "$surface.2"
-border = { width = 1, color = "$border.1" }
-item.padding = 2
+border = { width = 2, color = "$border.1" }
+corner_radius = 6
+padding = 6
 match_highlight = { color = "$editor.syntax.keyword.color", weight = "$editor.syntax.keyword.weight" }
+
+[editor.autocomplete.item]
+padding = { left = 6, right = 6, top = 2, bottom = 2 }
+corner_radius = 6
 
 [editor.autocomplete.selected_item]
 extends = "$editor.autocomplete.item"
