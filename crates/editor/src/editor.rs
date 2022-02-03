@@ -2603,7 +2603,7 @@ impl Editor {
 
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
         if let Some(completion_state) = &mut self.completion_state {
-            if completion_state.selected_item + 1 < completion_state.completions.len() {
+            if completion_state.selected_item + 1 < completion_state.matches.len() {
                 completion_state.selected_item += 1;
                 completion_state
                     .list
