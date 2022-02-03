@@ -1687,20 +1687,56 @@ impl Editor {
             .get(completion_ix.unwrap_or(completion_state.selected_item))?;
         let completion = completion_state.completions.get(mat.candidate_id)?;
 
-        self.start_transaction(cx);
+        let snippet;
+        let text;
         if completion.is_snippet() {
-            self.insert_snippet(completion.old_range.clone(), &completion.new_text, cx)
-                .log_err();
+            snippet = Some(Snippet::parse(&completion.new_text).log_err()?);
+            text = snippet.as_ref().unwrap().text.clone();
+        } else {
+            snippet = None;
+            text = completion.new_text.clone();
+        };
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let old_range = completion.old_range.to_offset(&snapshot);
+
+        let selections = self.local_selections::<usize>(cx);
+        let mut common_prefix_len = None;
+        let mut ranges = Vec::new();
+        for selection in &selections {
+            let start = selection.start.saturating_sub(old_range.len());
+            let prefix_len = snapshot
+                .bytes_at(start)
+                .zip(completion.new_text.bytes())
+                .take_while(|(a, b)| a == b)
+                .count();
+            if common_prefix_len.is_none() {
+                common_prefix_len = Some(prefix_len);
+            }
+
+            if common_prefix_len == Some(prefix_len) {
+                ranges.push(start + prefix_len..selection.end);
+            } else {
+                common_prefix_len.take();
+                ranges.clear();
+                ranges.extend(selections.iter().map(|s| s.start..s.end));
+                break;
+            }
+        }
+        let common_prefix_len = common_prefix_len.unwrap_or(0);
+        let text = &text[common_prefix_len..];
+
+        self.start_transaction(cx);
+        if let Some(mut snippet) = snippet {
+            snippet.text = text.to_string();
+            for tabstop in snippet.tabstops.iter_mut().flatten() {
+                tabstop.start -= common_prefix_len as isize;
+                tabstop.end -= common_prefix_len as isize;
+            }
+
+            self.insert_snippet(&ranges, snippet, cx).log_err();
         } else {
             self.buffer.update(cx, |buffer, cx| {
-                let snapshot = buffer.read(cx);
-                let old_range = completion.old_range.to_offset(&snapshot);
-                if old_range.len() != completion.new_text.len()
-                    || !snapshot.contains_str_at(old_range.start, &completion.new_text)
-                {
-                    drop(snapshot);
-                    buffer.edit_with_autoindent([old_range], &completion.new_text, cx);
-                }
+                buffer.edit_with_autoindent(ranges, text, cx);
             });
         }
         self.end_transaction(cx);
@@ -1796,29 +1832,37 @@ impl Editor {
         })
     }
 
-    pub fn insert_snippet<S>(
+    pub fn insert_snippet(
         &mut self,
-        range: Range<S>,
-        text: &str,
+        insertion_ranges: &[Range<usize>],
+        snippet: Snippet,
         cx: &mut ViewContext<Self>,
-    ) -> Result<()>
-    where
-        S: Clone + ToOffset,
-    {
-        let snippet = Snippet::parse(text)?;
+    ) -> Result<()> {
         let tabstops = self.buffer.update(cx, |buffer, cx| {
-            buffer.edit_with_autoindent([range.clone()], snippet.text, cx);
-            let snapshot = buffer.read(cx);
-            let start = range.start.to_offset(&snapshot);
+            buffer.edit_with_autoindent(insertion_ranges.iter().cloned(), &snippet.text, cx);
+
+            let snapshot = &*buffer.read(cx);
+            let snippet = &snippet;
             snippet
                 .tabstops
                 .iter()
-                .map(|ranges| {
-                    ranges
-                        .into_iter()
-                        .map(|range| {
-                            snapshot.anchor_before(start + range.start)
-                                ..snapshot.anchor_after(start + range.end)
+                .map(|tabstop| {
+                    tabstop
+                        .iter()
+                        .flat_map(|tabstop_range| {
+                            let mut delta = 0 as isize;
+                            insertion_ranges.iter().map(move |insertion_range| {
+                                let insertion_start = insertion_range.start as isize + delta;
+                                delta +=
+                                    snippet.text.len() as isize - insertion_range.len() as isize;
+
+                                let start = snapshot.anchor_before(
+                                    (insertion_start + tabstop_range.start) as usize,
+                                );
+                                let end = snapshot
+                                    .anchor_after((insertion_start + tabstop_range.end) as usize);
+                                start..end
+                            })
                         })
                         .collect::<Vec<_>>()
                 })
@@ -1840,8 +1884,8 @@ impl Editor {
         self.move_to_snippet_tabstop(Bias::Right, cx)
     }
 
-    pub fn move_to_prev_snippet_tabstop(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        self.move_to_snippet_tabstop(Bias::Left, cx)
+    pub fn move_to_prev_snippet_tabstop(&mut self, cx: &mut ViewContext<Self>) {
+        self.move_to_snippet_tabstop(Bias::Left, cx);
     }
 
     pub fn move_to_snippet_tabstop(&mut self, bias: Bias, cx: &mut ViewContext<Self>) -> bool {
@@ -2017,7 +2061,8 @@ impl Editor {
     }
 
     pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
-        if self.move_to_prev_snippet_tabstop(cx) {
+        if !self.snippet_stack.is_empty() {
+            self.move_to_prev_snippet_tabstop(cx);
             return;
         }
 
@@ -6939,19 +6984,19 @@ mod tests {
         let (_, editor) = cx.add_window(|cx| build_editor(buffer, settings, cx));
 
         editor.update(&mut cx, |editor, cx| {
-            editor
-                .insert_snippet(2..2, "f(${1:one}, ${2:two})$0", cx)
-                .unwrap();
+            let snippet = Snippet::parse("f(${1:one}, ${2:two})$0").unwrap();
+            editor.insert_snippet(&[2..2], snippet, cx).unwrap();
             assert_eq!(editor.text(cx), "a.f(one, two) b");
             assert_eq!(editor.selected_ranges::<usize>(cx), &[4..7]);
 
             // Can't move earlier than the first tab stop
-            assert!(!editor.move_to_prev_snippet_tabstop(cx));
+            editor.move_to_prev_snippet_tabstop(cx);
+            assert_eq!(editor.selected_ranges::<usize>(cx), &[4..7]);
 
             assert!(editor.move_to_next_snippet_tabstop(cx));
             assert_eq!(editor.selected_ranges::<usize>(cx), &[9..12]);
 
-            assert!(editor.move_to_prev_snippet_tabstop(cx));
+            editor.move_to_prev_snippet_tabstop(cx);
             assert_eq!(editor.selected_ranges::<usize>(cx), &[4..7]);
 
             assert!(editor.move_to_next_snippet_tabstop(cx));
@@ -6959,7 +7004,8 @@ mod tests {
             assert_eq!(editor.selected_ranges::<usize>(cx), &[13..13]);
 
             // As soon as the last tab stop is reached, snippet state is gone
-            assert!(!editor.move_to_prev_snippet_tabstop(cx));
+            editor.move_to_prev_snippet_tabstop(cx);
+            assert_eq!(editor.selected_ranges::<usize>(cx), &[13..13]);
         });
     }
 

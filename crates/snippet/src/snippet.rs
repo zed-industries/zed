@@ -8,7 +8,7 @@ pub struct Snippet {
     pub tabstops: Vec<TabStop>,
 }
 
-type TabStop = SmallVec<[Range<usize>; 2]>;
+type TabStop = SmallVec<[Range<isize>; 2]>;
 
 impl Snippet {
     pub fn parse(source: &str) -> Result<Self> {
@@ -19,7 +19,7 @@ impl Snippet {
 
         let last_tabstop = tabstops
             .remove(&0)
-            .unwrap_or_else(|| SmallVec::from_iter([text.len()..text.len()]));
+            .unwrap_or_else(|| SmallVec::from_iter([text.len() as isize..text.len() as isize]));
         Ok(Snippet {
             text,
             tabstops: tabstops.into_values().chain(Some(last_tabstop)).collect(),
@@ -87,7 +87,7 @@ fn parse_tabstop<'a>(
     tabstops
         .entry(tabstop_index)
         .or_default()
-        .push(tabstop_start..text.len());
+        .push(tabstop_start as isize..text.len() as isize);
     Ok(source)
 }
 
@@ -161,7 +161,7 @@ mod tests {
         );
     }
 
-    fn tabstops(snippet: &Snippet) -> Vec<Vec<Range<usize>>> {
+    fn tabstops(snippet: &Snippet) -> Vec<Vec<Range<isize>>> {
         snippet.tabstops.iter().map(|t| t.to_vec()).collect()
     }
 }
