@@ -1677,7 +1677,7 @@ impl Editor {
         self.completion_state.take()
     }
 
-    fn confirm_completion(
+    pub fn confirm_completion(
         &mut self,
         completion_ix: Option<usize>,
         cx: &mut ViewContext<Self>,

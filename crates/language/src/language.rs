@@ -363,7 +363,15 @@ impl LanguageServerConfig {
     pub async fn fake(
         executor: Arc<gpui::executor::Background>,
     ) -> (Self, lsp::FakeLanguageServer) {
-        let (server, fake) = lsp::LanguageServer::fake(executor).await;
+        Self::fake_with_capabilities(Default::default(), executor).await
+    }
+
+    pub async fn fake_with_capabilities(
+        capabilites: lsp::ServerCapabilities,
+        executor: Arc<gpui::executor::Background>,
+    ) -> (Self, lsp::FakeLanguageServer) {
+        let (server, fake) =
+            lsp::LanguageServer::fake_with_capabilities(capabilites, executor).await;
         fake.started
             .store(false, std::sync::atomic::Ordering::SeqCst);
         let started = fake.started.clone();

@@ -1339,7 +1339,7 @@ impl MultiBufferSnapshot {
             range: range.clone(),
             excerpts: self.excerpts.cursor(),
             excerpt_chunks: None,
-            language_aware: language_aware,
+            language_aware,
         };
         chunks.seek(range.start);
         chunks
