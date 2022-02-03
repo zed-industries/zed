@@ -1543,6 +1543,13 @@ impl MultiBufferSnapshot {
         D: TextDimension + Ord + Sub<D, Output = D>,
         I: 'a + IntoIterator<Item = &'a Anchor>,
     {
+        if let Some(excerpt) = self.as_singleton() {
+            return excerpt
+                .buffer
+                .summaries_for_anchors(anchors.into_iter().map(|a| &a.text_anchor))
+                .collect();
+        }
+
         let mut anchors = anchors.into_iter().peekable();
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>();
         let mut summaries = Vec::new();
