@@ -1711,7 +1711,9 @@ impl Editor {
     }
 
     pub fn has_completions(&self) -> bool {
-        self.completion_state.is_some()
+        self.completion_state
+            .as_ref()
+            .map_or(false, |c| !c.matches.is_empty())
     }
 
     pub fn render_completions(&self, cx: &AppContext) -> Option<ElementBox> {
