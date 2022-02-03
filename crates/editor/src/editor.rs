@@ -1687,6 +1687,7 @@ impl Editor {
             .get(completion_ix.unwrap_or(completion_state.selected_item))?;
         let completion = completion_state.completions.get(mat.candidate_id)?;
 
+        self.start_transaction(cx);
         if completion.is_snippet() {
             self.insert_snippet(completion.old_range.clone(), &completion.new_text, cx)
                 .log_err();
@@ -1702,6 +1703,7 @@ impl Editor {
                 }
             });
         }
+        self.end_transaction(cx);
 
         Some(self.buffer.update(cx, |buffer, cx| {
             buffer.apply_additional_edits_for_completion(completion.clone(), cx)
