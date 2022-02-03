@@ -342,7 +342,7 @@ impl Grammar {
 }
 
 impl CompletionLabel {
-    fn plain(completion: &lsp::CompletionItem) -> Self {
+    pub fn plain(completion: &lsp::CompletionItem) -> Self {
         let mut result = Self {
             text: completion.label.clone(),
             runs: Vec::new(),

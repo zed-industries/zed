@@ -37,9 +37,9 @@ impl LspPostProcessor for RustPostProcessor {
         completion: &lsp::CompletionItem,
         language: &Language,
     ) -> Option<CompletionLabel> {
-        let detail = completion.detail.as_ref()?;
         match completion.kind {
-            Some(lsp::CompletionItemKind::FIELD) => {
+            Some(lsp::CompletionItemKind::FIELD) if completion.detail.is_some() => {
+                let detail = completion.detail.as_ref().unwrap();
                 let name = &completion.label;
                 let text = format!("{}: {}", name, detail);
                 let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
@@ -51,7 +51,10 @@ impl LspPostProcessor for RustPostProcessor {
                     left_aligned_len: name.len(),
                 });
             }
-            Some(lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE) => {
+            Some(lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE)
+                if completion.detail.is_some() =>
+            {
+                let detail = completion.detail.as_ref().unwrap();
                 let name = &completion.label;
                 let text = format!("{}: {}", name, detail);
                 let source = Rope::from(format!("let {} = ();", text).as_str());
@@ -63,11 +66,14 @@ impl LspPostProcessor for RustPostProcessor {
                     left_aligned_len: name.len(),
                 });
             }
-            Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD) => {
+            Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD)
+                if completion.detail.is_some() =>
+            {
                 lazy_static! {
                     static ref REGEX: Regex = Regex::new("\\(…?\\)").unwrap();
                 }
 
+                let detail = completion.detail.as_ref().unwrap();
                 if detail.starts_with("fn(") {
                     let text = REGEX.replace(&completion.label, &detail[2..]).to_string();
                     let source = Rope::from(format!("fn {} {{}}", text).as_str());
@@ -79,6 +85,26 @@ impl LspPostProcessor for RustPostProcessor {
                         runs,
                     });
                 }
+            }
+            Some(kind) => {
+                let highlight_name = match kind {
+                    lsp::CompletionItemKind::STRUCT
+                    | lsp::CompletionItemKind::INTERFACE
+                    | lsp::CompletionItemKind::ENUM => Some("type"),
+                    lsp::CompletionItemKind::ENUM_MEMBER => Some("variant"),
+                    lsp::CompletionItemKind::KEYWORD => Some("keyword"),
+                    lsp::CompletionItemKind::VALUE | lsp::CompletionItemKind::CONSTANT => {
+                        Some("constant")
+                    }
+                    _ => None,
+                };
+                let highlight_id = language.grammar()?.highlight_id_for_name(highlight_name?)?;
+                let mut label = CompletionLabel::plain(&completion);
+                label.runs.push((
+                    0..label.text.rfind('(').unwrap_or(label.text.len()),
+                    highlight_id,
+                ));
+                return Some(label);
             }
             _ => {}
         }
