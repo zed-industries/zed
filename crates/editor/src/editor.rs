@@ -3810,7 +3810,6 @@ impl Editor {
         T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
     {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let old_cursor_position = self.newest_anchor_selection().map(|s| s.head());
         selections.sort_unstable_by_key(|s| s.start);
 
         // Merge overlapping selections.
@@ -3829,28 +3828,9 @@ impl Editor {
             }
         }
 
-        self.pending_selection = None;
-        self.add_selections_state = None;
-        self.select_next_state = None;
-        self.select_larger_syntax_node_stack.clear();
-        self.autoclose_stack.invalidate(&selections, &buffer);
-        self.snippet_stack.invalidate(&selections, &buffer);
-
-        let new_cursor_position = selections.iter().max_by_key(|s| s.id).map(|s| s.head());
-        if let Some(old_cursor_position) = old_cursor_position {
-            if let Some(new_cursor_position) = new_cursor_position {
-                self.push_to_nav_history(
-                    old_cursor_position,
-                    Some(new_cursor_position.to_point(&buffer)),
-                    cx,
-                );
-            }
-        }
-
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
         }
-        self.pause_cursor_blinking(cx);
 
         self.set_selections(
             Arc::from_iter(selections.into_iter().map(|selection| {
@@ -3869,22 +3849,6 @@ impl Editor {
             })),
             cx,
         );
-
-        if let Some((completion_state, cursor_position)) =
-            self.completion_state.as_mut().zip(new_cursor_position)
-        {
-            let cursor_position = cursor_position.to_offset(&buffer);
-            let (word_range, kind) =
-                buffer.surrounding_word(completion_state.initial_position.clone());
-            if kind == Some(CharKind::Word) && word_range.to_inclusive().contains(&cursor_position)
-            {
-                let query = Self::completion_query(&buffer, cursor_position);
-                smol::block_on(completion_state.filter(query.as_deref(), cx.background().clone()));
-                self.show_completions(&ShowCompletions, cx);
-            } else {
-                self.hide_completions(cx);
-            }
-        }
     }
 
     /// Compute new ranges for any selections that were located in excerpts that have
@@ -3937,12 +3901,54 @@ impl Editor {
     }
 
     fn set_selections(&mut self, selections: Arc<[Selection<Anchor>]>, cx: &mut ViewContext<Self>) {
+        let old_cursor_position = self.newest_anchor_selection().map(|s| s.head());
         self.selections = selections;
         if self.focused {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.set_active_selections(&self.selections, cx)
             });
         }
+
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        self.pending_selection = None;
+        self.add_selections_state = None;
+        self.select_next_state = None;
+        self.select_larger_syntax_node_stack.clear();
+        self.autoclose_stack.invalidate(&self.selections, &buffer);
+        self.snippet_stack.invalidate(&self.selections, &buffer);
+
+        let new_cursor_position = self
+            .selections
+            .iter()
+            .max_by_key(|s| s.id)
+            .map(|s| s.head());
+        if let Some(old_cursor_position) = old_cursor_position {
+            if let Some(new_cursor_position) = new_cursor_position.as_ref() {
+                self.push_to_nav_history(
+                    old_cursor_position,
+                    Some(new_cursor_position.to_point(&buffer)),
+                    cx,
+                );
+            }
+        }
+
+        if let Some((completion_state, cursor_position)) =
+            self.completion_state.as_mut().zip(new_cursor_position)
+        {
+            let cursor_position = cursor_position.to_offset(&buffer);
+            let (word_range, kind) =
+                buffer.surrounding_word(completion_state.initial_position.clone());
+            if kind == Some(CharKind::Word) && word_range.to_inclusive().contains(&cursor_position)
+            {
+                let query = Self::completion_query(&buffer, cursor_position);
+                smol::block_on(completion_state.filter(query.as_deref(), cx.background().clone()));
+                self.show_completions(&ShowCompletions, cx);
+            } else {
+                self.hide_completions(cx);
+            }
+        }
+
+        self.pause_cursor_blinking(cx);
         cx.emit(Event::SelectionsChanged);
     }
 
