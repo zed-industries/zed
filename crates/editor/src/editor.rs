@@ -20,7 +20,7 @@ use gpui::{
     color::Color,
     elements::*,
     executor,
-    fonts::TextStyle,
+    fonts::{self, HighlightStyle, TextStyle},
     geometry::vector::{vec2f, Vector2F},
     keymap::Binding,
     text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
@@ -489,7 +489,7 @@ impl CompletionState {
         });
 
         for mat in &mut matches {
-            let filter_start = self.completions[mat.candidate_id].filter_range().start;
+            let filter_start = self.completions[mat.candidate_id].label.filter_range.start;
             for position in &mut mat.positions {
                 *position += filter_start;
             }
@@ -1628,7 +1628,7 @@ impl Editor {
                         .map(|(id, completion)| {
                             StringMatchCandidate::new(
                                 id,
-                                completion.lsp_completion.label[completion.filter_range()].into(),
+                                completion.label.text[completion.label.filter_range.clone()].into(),
                             )
                         })
                         .collect(),
@@ -1710,15 +1710,6 @@ impl Editor {
                 move |range, items, cx| {
                     let settings = build_settings(cx);
                     let start_ix = range.start;
-                    let label_style = LabelStyle {
-                        text: settings.style.text.clone(),
-                        highlight_text: settings
-                            .style
-                            .text
-                            .clone()
-                            .highlight(settings.style.autocomplete.match_highlight, cx.font_cache())
-                            .log_err(),
-                    };
                     for (ix, mat) in matches[range].iter().enumerate() {
                         let item_style = if start_ix + ix == selected_item {
                             settings.style.autocomplete.selected_item
@@ -1727,8 +1718,20 @@ impl Editor {
                         };
                         let completion = &completions[mat.candidate_id];
                         items.push(
-                            Label::new(completion.label().to_string(), label_style.clone())
-                                .with_highlights(mat.positions.clone())
+                            Text::new(completion.label.text.clone(), settings.style.text.clone())
+                                .with_soft_wrap(false)
+                                .with_highlights(combine_syntax_and_fuzzy_match_highlights(
+                                    &completion.label.text,
+                                    settings.style.text.color.into(),
+                                    completion.label.runs.iter().filter_map(
+                                        |(range, highlight_id)| {
+                                            highlight_id
+                                                .style(&settings.style.syntax)
+                                                .map(|style| (range.clone(), style))
+                                        },
+                                    ),
+                                    &mat.positions,
+                                ))
                                 .contained()
                                 .with_style(item_style)
                                 .boxed(),
@@ -1742,7 +1745,11 @@ impl Editor {
                     .iter()
                     .enumerate()
                     .max_by_key(|(_, mat)| {
-                        state.completions[mat.candidate_id].label().chars().count()
+                        state.completions[mat.candidate_id]
+                            .label
+                            .text
+                            .chars()
+                            .count()
                     })
                     .map(|(ix, _)| ix),
             )
@@ -4699,6 +4706,77 @@ pub fn settings_builder(
     })
 }
 
+pub fn combine_syntax_and_fuzzy_match_highlights(
+    text: &str,
+    default_style: HighlightStyle,
+    syntax_ranges: impl Iterator<Item = (Range<usize>, HighlightStyle)>,
+    match_indices: &[usize],
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let mut result = Vec::new();
+    let mut match_indices = match_indices.iter().copied().peekable();
+
+    for (range, mut syntax_highlight) in syntax_ranges.chain([(usize::MAX..0, Default::default())])
+    {
+        syntax_highlight.font_properties.weight(Default::default());
+
+        // Add highlights for any fuzzy match characters before the next
+        // syntax highlight range.
+        while let Some(&match_index) = match_indices.peek() {
+            if match_index >= range.start {
+                break;
+            }
+            match_indices.next();
+            let end_index = char_ix_after(match_index, text);
+            let mut match_style = default_style;
+            match_style.font_properties.weight(fonts::Weight::BOLD);
+            result.push((match_index..end_index, match_style));
+        }
+
+        if range.start == usize::MAX {
+            break;
+        }
+
+        // Add highlights for any fuzzy match characters within the
+        // syntax highlight range.
+        let mut offset = range.start;
+        while let Some(&match_index) = match_indices.peek() {
+            if match_index >= range.end {
+                break;
+            }
+
+            match_indices.next();
+            if match_index > offset {
+                result.push((offset..match_index, syntax_highlight));
+            }
+
+            let mut end_index = char_ix_after(match_index, text);
+            while let Some(&next_match_index) = match_indices.peek() {
+                if next_match_index == end_index && next_match_index < range.end {
+                    end_index = char_ix_after(next_match_index, text);
+                    match_indices.next();
+                } else {
+                    break;
+                }
+            }
+
+            let mut match_style = syntax_highlight;
+            match_style.font_properties.weight(fonts::Weight::BOLD);
+            result.push((match_index..end_index, match_style));
+            offset = end_index;
+        }
+
+        if offset < range.end {
+            result.push((offset..range.end, syntax_highlight));
+        }
+    }
+
+    fn char_ix_after(ix: usize, text: &str) -> usize {
+        ix + text[ix..].chars().next().unwrap().len_utf8()
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7325,6 +7403,76 @@ mod tests {
                 )]
             );
         });
+    }
+
+    #[test]
+    fn test_combine_syntax_and_fuzzy_match_highlights() {
+        let string = "abcdefghijklmnop";
+        let default = HighlightStyle::default();
+        let syntax_ranges = [
+            (
+                0..3,
+                HighlightStyle {
+                    color: Color::red(),
+                    ..default
+                },
+            ),
+            (
+                4..8,
+                HighlightStyle {
+                    color: Color::green(),
+                    ..default
+                },
+            ),
+        ];
+        let match_indices = [4, 6, 7, 8];
+        assert_eq!(
+            combine_syntax_and_fuzzy_match_highlights(
+                &string,
+                default,
+                syntax_ranges.into_iter(),
+                &match_indices,
+            ),
+            &[
+                (
+                    0..3,
+                    HighlightStyle {
+                        color: Color::red(),
+                        ..default
+                    },
+                ),
+                (
+                    4..5,
+                    HighlightStyle {
+                        color: Color::green(),
+                        font_properties: *fonts::Properties::default().weight(fonts::Weight::BOLD),
+                        ..default
+                    },
+                ),
+                (
+                    5..6,
+                    HighlightStyle {
+                        color: Color::green(),
+                        ..default
+                    },
+                ),
+                (
+                    6..8,
+                    HighlightStyle {
+                        color: Color::green(),
+                        font_properties: *fonts::Properties::default().weight(fonts::Weight::BOLD),
+                        ..default
+                    },
+                ),
+                (
+                    8..9,
+                    HighlightStyle {
+                        font_properties: *fonts::Properties::default().weight(fonts::Weight::BOLD),
+                        ..default
+                    },
+                ),
+            ]
+        );
     }
 
     fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

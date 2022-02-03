@@ -49,9 +49,21 @@ pub trait ToLspPosition {
 
 pub trait LspPostProcessor: 'static + Send + Sync {
     fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams);
-    fn label_for_completion(&self, _completion: &lsp::CompletionItem) -> Option<String> {
+    fn label_for_completion(
+        &self,
+        _: &lsp::CompletionItem,
+        _: &Language,
+    ) -> Option<CompletionLabel> {
         None
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompletionLabel {
+    pub text: String,
+    pub runs: Vec<(Range<usize>, HighlightId)>,
+    pub filter_range: Range<usize>,
+    pub left_aligned_len: usize,
 }
 
 #[derive(Default, Deserialize)]
@@ -253,24 +265,26 @@ impl Language {
         }
     }
 
-    pub fn label_for_completion(&self, completion: &lsp::CompletionItem) -> Option<String> {
+    pub fn label_for_completion(
+        &self,
+        completion: &lsp::CompletionItem,
+    ) -> Option<CompletionLabel> {
         self.lsp_post_processor
-            .as_ref()
-            .and_then(|p| p.label_for_completion(completion))
+            .as_ref()?
+            .label_for_completion(completion, self)
     }
 
-    pub fn highlight_text<'a>(&'a self, text: &'a Rope) -> Vec<(Range<usize>, HighlightId)> {
+    pub fn highlight_text<'a>(
+        &'a self,
+        text: &'a Rope,
+        range: Range<usize>,
+    ) -> Vec<(Range<usize>, HighlightId)> {
         let mut result = Vec::new();
         if let Some(grammar) = &self.grammar {
             let tree = grammar.parse_text(text, None);
             let mut offset = 0;
-            for chunk in BufferChunks::new(
-                text,
-                0..text.len(),
-                Some(&tree),
-                self.grammar.as_ref(),
-                vec![],
-            ) {
+            for chunk in BufferChunks::new(text, range, Some(&tree), self.grammar.as_ref(), vec![])
+            {
                 let end_offset = offset + chunk.text.len();
                 if let Some(highlight_id) = chunk.highlight_id {
                     result.push((offset..end_offset, highlight_id));
@@ -290,6 +304,10 @@ impl Language {
             *grammar.highlight_map.lock() =
                 HighlightMap::new(grammar.highlights_query.capture_names(), theme);
         }
+    }
+
+    pub fn grammar(&self) -> Option<&Arc<Grammar>> {
+        self.grammar.as_ref()
     }
 }
 
@@ -315,6 +333,28 @@ impl Grammar {
 
     pub fn highlight_map(&self) -> HighlightMap {
         self.highlight_map.lock().clone()
+    }
+
+    pub fn highlight_id_for_name(&self, name: &str) -> Option<HighlightId> {
+        let capture_id = self.highlights_query.capture_index_for_name(name)?;
+        Some(self.highlight_map.lock().get(capture_id))
+    }
+}
+
+impl CompletionLabel {
+    fn plain(completion: &lsp::CompletionItem) -> Self {
+        let mut result = Self {
+            text: completion.label.clone(),
+            runs: Vec::new(),
+            left_aligned_len: completion.label.len(),
+            filter_range: 0..completion.label.len(),
+        };
+        if let Some(filter_text) = &completion.filter_text {
+            if let Some(ix) = completion.label.find(filter_text) {
+                result.filter_range = ix..ix + filter_text.len();
+            }
+        }
+        result
     }
 }
 

@@ -1,4 +1,6 @@
-use crate::{diagnostic_set::DiagnosticEntry, Completion, Diagnostic, Language, Operation};
+use crate::{
+    diagnostic_set::DiagnosticEntry, Completion, CompletionLabel, Diagnostic, Language, Operation,
+};
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::HashSet;
@@ -403,7 +405,9 @@ pub fn deserialize_completion(
     Ok(Completion {
         old_range: old_start..old_end,
         new_text: completion.new_text,
-        label: language.and_then(|l| l.label_for_completion(&lsp_completion)),
+        label: language
+            .and_then(|l| l.label_for_completion(&lsp_completion))
+            .unwrap_or(CompletionLabel::plain(&lsp_completion)),
         lsp_completion,
     })
 }
