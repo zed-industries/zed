@@ -30,8 +30,8 @@ use gpui::{
 use items::BufferItemHandle;
 use itertools::Itertools as _;
 use language::{
-    AnchorRangeExt as _, BracketPair, Buffer, Completion, Diagnostic, DiagnosticSeverity, Language,
-    Point, Selection, SelectionGoal, TransactionId,
+    AnchorRangeExt as _, BracketPair, Buffer, Completion, CompletionLabel, Diagnostic,
+    DiagnosticSeverity, Language, Point, Selection, SelectionGoal, TransactionId,
 };
 use multi_buffer::MultiBufferChunks;
 pub use multi_buffer::{
@@ -1755,12 +1755,10 @@ impl Editor {
                                     .with_highlights(combine_syntax_and_fuzzy_match_highlights(
                                         &completion.label.text,
                                         settings.style.text.color.into(),
-                                        completion.label.runs.iter().filter_map(
-                                            |(range, highlight_id)| {
-                                                highlight_id
-                                                    .style(&settings.style.syntax)
-                                                    .map(|style| (range.clone(), style))
-                                            },
+                                        styled_runs_for_completion_label(
+                                            &completion.label,
+                                            settings.style.text.color,
+                                            &settings.style.syntax,
                                         ),
                                         &mat.positions,
                                     ))
@@ -4820,6 +4818,55 @@ pub fn combine_syntax_and_fuzzy_match_highlights(
     }
 
     result
+}
+
+fn styled_runs_for_completion_label<'a>(
+    label: &'a CompletionLabel,
+    default_color: Color,
+    syntax_theme: &'a theme::SyntaxTheme,
+) -> impl 'a + Iterator<Item = (Range<usize>, HighlightStyle)> {
+    const MUTED_OPACITY: usize = 165;
+
+    let mut muted_default_style = HighlightStyle {
+        color: default_color,
+        ..Default::default()
+    };
+    muted_default_style.color.a = ((default_color.a as usize * MUTED_OPACITY) / 255) as u8;
+
+    let mut prev_end = label.filter_range.end;
+    label
+        .runs
+        .iter()
+        .enumerate()
+        .flat_map(move |(ix, (range, highlight_id))| {
+            let style = if let Some(style) = highlight_id.style(syntax_theme) {
+                style
+            } else {
+                return Default::default();
+            };
+            let mut muted_style = style.clone();
+            muted_style.color.a = ((style.color.a as usize * MUTED_OPACITY) / 255) as u8;
+
+            let mut runs = SmallVec::<[(Range<usize>, HighlightStyle); 3]>::new();
+            if range.start >= label.filter_range.end {
+                if range.start > prev_end {
+                    runs.push((prev_end..range.start, muted_default_style));
+                }
+                runs.push((range.clone(), muted_style));
+            } else if range.end <= label.filter_range.end {
+                runs.push((range.clone(), style));
+            } else {
+                runs.push((range.start..label.filter_range.end, style));
+                runs.push((label.filter_range.end..range.end, muted_style));
+            }
+            prev_end = cmp::max(prev_end, range.end);
+
+            if ix + 1 == label.runs.len() && label.text.len() > prev_end {
+                runs.push((prev_end..label.text.len(), muted_default_style));
+            }
+
+            runs
+        })
 }
 
 #[cfg(test)]
