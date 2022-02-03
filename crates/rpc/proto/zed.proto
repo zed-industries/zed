@@ -40,22 +40,26 @@ message Envelope {
         BufferSaved buffer_saved = 32;
         BufferReloaded buffer_reloaded = 33;
         FormatBuffer format_buffer = 34;
+        GetCompletions get_completions = 35;
+        GetCompletionsResponse get_completions_response = 36;
+        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 37;
+        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 38;
 
-        GetChannels get_channels = 35;
-        GetChannelsResponse get_channels_response = 36;
-        JoinChannel join_channel = 37;
-        JoinChannelResponse join_channel_response = 38;
-        LeaveChannel leave_channel = 39;
-        SendChannelMessage send_channel_message = 40;
-        SendChannelMessageResponse send_channel_message_response = 41;
-        ChannelMessageSent channel_message_sent = 42;
-        GetChannelMessages get_channel_messages = 43;
-        GetChannelMessagesResponse get_channel_messages_response = 44;
+        GetChannels get_channels = 39;
+        GetChannelsResponse get_channels_response = 40;
+        JoinChannel join_channel = 41;
+        JoinChannelResponse join_channel_response = 42;
+        LeaveChannel leave_channel = 43;
+        SendChannelMessage send_channel_message = 44;
+        SendChannelMessageResponse send_channel_message_response = 45;
+        ChannelMessageSent channel_message_sent = 46;
+        GetChannelMessages get_channel_messages = 47;
+        GetChannelMessagesResponse get_channel_messages_response = 48;
 
-        UpdateContacts update_contacts = 45;
+        UpdateContacts update_contacts = 49;
 
-        GetUsers get_users = 46;
-        GetUsersResponse get_users_response = 47;
+        GetUsers get_users = 50;
+        GetUsersResponse get_users_response = 51;
     }
 }
 
@@ -203,6 +207,38 @@ message FormatBuffer {
     uint64 buffer_id = 2;
 }
 
+message GetCompletions {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+}
+
+message GetCompletionsResponse {
+    repeated Completion completions = 1;
+}
+
+message ApplyCompletionAdditionalEdits {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Completion completion = 3;
+}
+
+message ApplyCompletionAdditionalEditsResponse {
+    repeated AdditionalEdit additional_edits = 1;
+}
+
+message AdditionalEdit {
+    uint32 replica_id = 1;
+    uint32 local_timestamp = 2;
+}
+
+message Completion {
+    Anchor old_start = 1;
+    Anchor old_end = 2;
+    string new_text = 3;
+    bytes lsp_completion = 4;
+}
+
 message UpdateDiagnosticSummary {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
@@ -339,6 +375,7 @@ message BufferState {
     repeated Diagnostic diagnostics = 9;
     uint32 lamport_timestamp = 10;
     repeated Operation deferred_operations = 11;
+    repeated string completion_triggers = 12;
 }
 
 message BufferFragment {
@@ -409,6 +446,7 @@ message Operation {
         Undo undo = 2;
         UpdateSelections update_selections = 3;
         UpdateDiagnostics update_diagnostics = 4;
+        UpdateCompletionTriggers update_completion_triggers = 5;
     }
 
     message Edit {
@@ -433,6 +471,10 @@ message Operation {
         uint32 replica_id = 1;
         uint32 lamport_timestamp = 2;
         repeated Selection selections = 3;
+    }
+
+    message UpdateCompletionTriggers {
+        repeated string triggers = 1;
     }
 }
 

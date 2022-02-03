@@ -5,6 +5,7 @@ use anyhow::Result;
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
+pub use language::Completion;
 use language::{
     Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Outline,
     OutlineItem, Selection, ToOffset as _, ToPoint as _, TransactionId,
@@ -47,6 +48,14 @@ struct History {
     redo_stack: Vec<Transaction>,
     transaction_depth: usize,
     group_interval: Duration,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug)]
+pub enum CharKind {
+    Newline,
+    Punctuation,
+    Whitespace,
+    Word,
 }
 
 struct Transaction {
@@ -116,7 +125,7 @@ pub struct MultiBufferChunks<'a> {
     range: Range<usize>,
     excerpts: Cursor<'a, Excerpt, usize>,
     excerpt_chunks: Option<ExcerptChunks<'a>>,
-    theme: Option<&'a SyntaxTheme>,
+    language_aware: bool,
 }
 
 pub struct MultiBufferBytes<'a> {
@@ -304,9 +313,9 @@ impl MultiBuffer {
                 .map(|range| range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot));
             return buffer.update(cx, |buffer, cx| {
                 if autoindent {
-                    buffer.edit_with_autoindent(ranges, new_text, cx)
+                    buffer.edit_with_autoindent(ranges, new_text, cx);
                 } else {
-                    buffer.edit(ranges, new_text, cx)
+                    buffer.edit(ranges, new_text, cx);
                 }
             });
         }
@@ -847,6 +856,103 @@ impl MultiBuffer {
         })
     }
 
+    pub fn completions<T>(
+        &self,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Completion<Anchor>>>>
+    where
+        T: ToOffset,
+    {
+        let anchor = self.read(cx).anchor_before(position);
+        let buffer = self.buffers.borrow()[&anchor.buffer_id].buffer.clone();
+        let completions =
+            buffer.update(cx, |buffer, cx| buffer.completions(anchor.text_anchor, cx));
+        cx.spawn(|this, cx| async move {
+            completions.await.map(|completions| {
+                let snapshot = this.read_with(&cx, |buffer, cx| buffer.snapshot(cx));
+                completions
+                    .into_iter()
+                    .map(|completion| Completion {
+                        old_range: snapshot.anchor_in_excerpt(
+                            anchor.excerpt_id.clone(),
+                            completion.old_range.start,
+                        )
+                            ..snapshot.anchor_in_excerpt(
+                                anchor.excerpt_id.clone(),
+                                completion.old_range.end,
+                            ),
+                        new_text: completion.new_text,
+                        label: completion.label,
+                        lsp_completion: completion.lsp_completion,
+                    })
+                    .collect()
+            })
+        })
+    }
+
+    pub fn is_completion_trigger<T>(&self, position: T, text: &str, cx: &AppContext) -> bool
+    where
+        T: ToOffset,
+    {
+        let mut chars = text.chars();
+        let char = if let Some(char) = chars.next() {
+            char
+        } else {
+            return false;
+        };
+        if chars.next().is_some() {
+            return false;
+        }
+
+        if char.is_alphanumeric() || char == '_' {
+            return true;
+        }
+
+        let snapshot = self.snapshot(cx);
+        let anchor = snapshot.anchor_before(position);
+        let buffer = self.buffers.borrow()[&anchor.buffer_id].buffer.clone();
+        buffer
+            .read(cx)
+            .completion_triggers()
+            .iter()
+            .any(|string| string == text)
+    }
+
+    pub fn apply_additional_edits_for_completion(
+        &self,
+        completion: Completion<Anchor>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let buffer = if let Some(buffer_state) = self
+            .buffers
+            .borrow()
+            .get(&completion.old_range.start.buffer_id)
+        {
+            buffer_state.buffer.clone()
+        } else {
+            return Task::ready(Ok(()));
+        };
+
+        let apply_edits = buffer.update(cx, |buffer, cx| {
+            buffer.apply_additional_edits_for_completion(
+                Completion {
+                    old_range: completion.old_range.start.text_anchor
+                        ..completion.old_range.end.text_anchor,
+                    new_text: completion.new_text,
+                    label: completion.label,
+                    lsp_completion: completion.lsp_completion,
+                },
+                true,
+                cx,
+            )
+        });
+        cx.foreground().spawn(async move {
+            apply_edits.await?;
+            Ok(())
+        })
+    }
+
     pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
         self.buffers
             .borrow()
@@ -1007,7 +1113,7 @@ impl Entity for MultiBuffer {
 
 impl MultiBufferSnapshot {
     pub fn text(&self) -> String {
-        self.chunks(0..self.len(), None)
+        self.chunks(0..self.len(), false)
             .map(|chunk| chunk.text)
             .collect()
     }
@@ -1059,7 +1165,7 @@ impl MultiBufferSnapshot {
         &'a self,
         range: Range<T>,
     ) -> impl Iterator<Item = &'a str> {
-        self.chunks(range, None).map(|chunk| chunk.text)
+        self.chunks(range, false).map(|chunk| chunk.text)
     }
 
     pub fn is_line_blank(&self, row: u32) -> bool {
@@ -1079,6 +1185,35 @@ impl MultiBufferSnapshot {
                 .copied()
                 .take(needle.len())
                 .eq(needle.bytes())
+    }
+
+    pub fn surrounding_word<T: ToOffset>(&self, start: T) -> (Range<usize>, Option<CharKind>) {
+        let mut start = start.to_offset(self);
+        let mut end = start;
+        let mut next_chars = self.chars_at(start).peekable();
+        let mut prev_chars = self.reversed_chars_at(start).peekable();
+        let word_kind = cmp::max(
+            prev_chars.peek().copied().map(char_kind),
+            next_chars.peek().copied().map(char_kind),
+        );
+
+        for ch in prev_chars {
+            if Some(char_kind(ch)) == word_kind {
+                start -= ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+
+        for ch in next_chars {
+            if Some(char_kind(ch)) == word_kind {
+                end += ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+
+        (start..end, word_kind)
     }
 
     fn as_singleton(&self) -> Option<&Excerpt> {
@@ -1179,6 +1314,12 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn bytes_at<'a, T: ToOffset>(&'a self, position: T) -> impl 'a + Iterator<Item = u8> {
+        self.bytes_in_range(position.to_offset(self)..self.len())
+            .flatten()
+            .copied()
+    }
+
     pub fn buffer_rows<'a>(&'a self, start_row: u32) -> MultiBufferRows<'a> {
         let mut result = MultiBufferRows {
             buffer_row_range: 0..0,
@@ -1191,14 +1332,14 @@ impl MultiBufferSnapshot {
     pub fn chunks<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
-        theme: Option<&'a SyntaxTheme>,
+        language_aware: bool,
     ) -> MultiBufferChunks<'a> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut chunks = MultiBufferChunks {
             range: range.clone(),
             excerpts: self.excerpts.cursor(),
             excerpt_chunks: None,
-            theme,
+            language_aware,
         };
         chunks.seek(range.start);
         chunks
@@ -1408,6 +1549,13 @@ impl MultiBufferSnapshot {
         D: TextDimension + Ord + Sub<D, Output = D>,
         I: 'a + IntoIterator<Item = &'a Anchor>,
     {
+        if let Some(excerpt) = self.as_singleton() {
+            return excerpt
+                .buffer
+                .summaries_for_anchors(anchors.into_iter().map(|a| &a.text_anchor))
+                .collect();
+        }
+
         let mut anchors = anchors.into_iter().peekable();
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>();
         let mut summaries = Vec::new();
@@ -1984,7 +2132,7 @@ impl Excerpt {
     fn chunks_in_range<'a>(
         &'a self,
         range: Range<usize>,
-        theme: Option<&'a SyntaxTheme>,
+        language_aware: bool,
     ) -> ExcerptChunks<'a> {
         let content_start = self.range.start.to_offset(&self.buffer);
         let chunks_start = content_start + range.start;
@@ -1999,7 +2147,7 @@ impl Excerpt {
             0
         };
 
-        let content_chunks = self.buffer.chunks(chunks_start..chunks_end, theme);
+        let content_chunks = self.buffer.chunks(chunks_start..chunks_end, language_aware);
 
         ExcerptChunks {
             content_chunks,
@@ -2198,7 +2346,7 @@ impl<'a> MultiBufferChunks<'a> {
         if let Some(excerpt) = self.excerpts.item() {
             self.excerpt_chunks = Some(excerpt.chunks_in_range(
                 self.range.start - self.excerpts.start()..self.range.end - self.excerpts.start(),
-                self.theme,
+                self.language_aware,
             ));
         } else {
             self.excerpt_chunks = None;
@@ -2218,9 +2366,10 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
         } else {
             self.excerpts.next(&());
             let excerpt = self.excerpts.item()?;
-            self.excerpt_chunks = Some(
-                excerpt.chunks_in_range(0..self.range.end - self.excerpts.start(), self.theme),
-            );
+            self.excerpt_chunks = Some(excerpt.chunks_in_range(
+                0..self.range.end - self.excerpts.start(),
+                self.language_aware,
+            ));
             self.next()
         }
     }
@@ -2341,6 +2490,18 @@ impl ToPoint for usize {
 impl ToPoint for Point {
     fn to_point<'a>(&self, _: &MultiBufferSnapshot) -> Point {
         *self
+    }
+}
+
+pub fn char_kind(c: char) -> CharKind {
+    if c == '\n' {
+        CharKind::Newline
+    } else if c.is_whitespace() {
+        CharKind::Whitespace
+    } else if c.is_alphanumeric() || c == '_' {
+        CharKind::Word
+    } else {
+        CharKind::Punctuation
     }
 }
 
@@ -2963,7 +3124,7 @@ mod tests {
                 let mut buffer_point_utf16 = buffer_start_point_utf16;
                 for ch in buffer
                     .snapshot()
-                    .chunks(buffer_range.clone(), None)
+                    .chunks(buffer_range.clone(), false)
                     .flat_map(|c| c.text.chars())
                 {
                     for _ in 0..ch.len_utf8() {

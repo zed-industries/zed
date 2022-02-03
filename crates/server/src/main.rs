@@ -2,6 +2,7 @@ mod admin;
 mod api;
 mod assets;
 mod auth;
+mod careers;
 mod community;
 mod db;
 mod env;
@@ -12,7 +13,6 @@ mod home;
 mod releases;
 mod rpc;
 mod team;
-mod careers;
 
 use self::errors::TideResultExt as _;
 use ::rpc::Peer;

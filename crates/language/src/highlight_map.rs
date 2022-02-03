@@ -5,7 +5,7 @@ use theme::SyntaxTheme;
 #[derive(Clone, Debug)]
 pub struct HighlightMap(Arc<[HighlightId]>);
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HighlightId(pub u32);
 
 const DEFAULT_HIGHLIGHT_ID: HighlightId = HighlightId(u32::MAX);

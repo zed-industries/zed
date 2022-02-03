@@ -51,6 +51,7 @@ where
     append_items: F,
     padding_top: f32,
     padding_bottom: f32,
+    get_width_from_item: Option<usize>,
 }
 
 impl<F> UniformList<F>
@@ -64,7 +65,13 @@ where
             append_items,
             padding_top: 0.,
             padding_bottom: 0.,
+            get_width_from_item: None,
         }
+    }
+
+    pub fn with_width_from_item(mut self, item_ix: Option<usize>) -> Self {
+        self.get_width_from_item = item_ix;
+        self
     }
 
     pub fn with_padding_top(mut self, padding: f32) -> Self {
@@ -155,46 +162,70 @@ where
                 "UniformList does not support being rendered with an unconstrained height"
             );
         }
-        let mut size = constraint.max;
-        let mut item_constraint =
-            SizeConstraint::new(vec2f(size.x(), 0.0), vec2f(size.x(), f32::INFINITY));
-        let mut item_height = 0.;
-        let mut scroll_max = 0.;
-
         let mut items = Vec::new();
-        (self.append_items)(0..1, &mut items, cx);
-        if let Some(first_item) = items.first_mut() {
-            let mut item_size = first_item.layout(item_constraint, cx);
-            item_size.set_x(size.x());
-            item_constraint.min = item_size;
-            item_constraint.max = item_size;
-            item_height = item_size.y();
 
-            let scroll_height = self.item_count as f32 * item_height;
-            if scroll_height < size.y() {
-                size.set_y(size.y().min(scroll_height).max(constraint.min.y()));
-            }
-
-            let scroll_height =
-                item_height * self.item_count as f32 + self.padding_top + self.padding_bottom;
-            scroll_max = (scroll_height - size.y()).max(0.);
-            self.autoscroll(scroll_max, size.y(), item_height);
-
-            items.clear();
-            let start = cmp::min(
-                ((self.scroll_top() - self.padding_top) / item_height) as usize,
-                self.item_count,
+        if self.item_count == 0 {
+            return (
+                constraint.min,
+                LayoutState {
+                    item_height: 0.,
+                    scroll_max: 0.,
+                    items,
+                },
             );
-            let end = cmp::min(
-                self.item_count,
-                start + (size.y() / item_height).ceil() as usize + 1,
-            );
-            (self.append_items)(start..end, &mut items, cx);
-            for item in &mut items {
-                item.layout(item_constraint, cx);
-            }
+        }
+
+        let mut size = constraint.max;
+        let mut item_size;
+        if let Some(sample_item_ix) = self.get_width_from_item {
+            (self.append_items)(sample_item_ix..sample_item_ix + 1, &mut items, cx);
+            let sample_item = items.get_mut(0).unwrap();
+            item_size = sample_item.layout(constraint, cx);
+            size.set_x(item_size.x());
         } else {
-            size = constraint.min;
+            (self.append_items)(0..1, &mut items, cx);
+            let first_item = items.first_mut().unwrap();
+            item_size = first_item.layout(
+                SizeConstraint::new(
+                    vec2f(constraint.max.x(), 0.0),
+                    vec2f(constraint.max.x(), f32::INFINITY),
+                ),
+                cx,
+            );
+            item_size.set_x(size.x());
+        }
+
+        let item_constraint = SizeConstraint {
+            min: item_size,
+            max: vec2f(constraint.max.x(), item_size.y()),
+        };
+        let item_height = item_size.y();
+
+        let scroll_height = self.item_count as f32 * item_height;
+        if scroll_height < size.y() {
+            size.set_y(size.y().min(scroll_height).max(constraint.min.y()));
+        }
+
+        let scroll_height =
+            item_height * self.item_count as f32 + self.padding_top + self.padding_bottom;
+        let scroll_max = (scroll_height - size.y()).max(0.);
+        self.autoscroll(scroll_max, size.y(), item_height);
+
+        let start = cmp::min(
+            ((self.scroll_top() - self.padding_top) / item_height) as usize,
+            self.item_count,
+        );
+        let end = cmp::min(
+            self.item_count,
+            start + (size.y() / item_height).ceil() as usize + 1,
+        );
+        items.clear();
+        (self.append_items)(start..end, &mut items, cx);
+        for item in &mut items {
+            let item_size = item.layout(item_constraint, cx);
+            if item_size.x() > size.x() {
+                size.set_x(item_size.x());
+            }
         }
 
         (

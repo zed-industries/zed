@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context, Result};
 use futures::{io::BufWriter, AsyncRead, AsyncWrite};
 use gpui::{executor, Task};
 use parking_lot::{Mutex, RwLock};
-use postage::{barrier, oneshot, prelude::Stream, sink::Sink};
+use postage::{barrier, oneshot, prelude::Stream, sink::Sink, watch};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, value::RawValue, Value};
 use smol::{
@@ -34,6 +34,7 @@ type ResponseHandler = Box<dyn Send + FnOnce(Result<&str, Error>)>;
 pub struct LanguageServer {
     next_id: AtomicUsize,
     outbound_tx: RwLock<Option<channel::Sender<Vec<u8>>>>,
+    capabilities: watch::Receiver<Option<ServerCapabilities>>,
     notification_handlers: Arc<RwLock<HashMap<&'static str, NotificationHandler>>>,
     response_handlers: Arc<Mutex<HashMap<usize, ResponseHandler>>>,
     executor: Arc<executor::Background>,
@@ -194,9 +195,11 @@ impl LanguageServer {
         );
 
         let (initialized_tx, initialized_rx) = barrier::channel();
+        let (mut capabilities_tx, capabilities_rx) = watch::channel();
         let this = Arc::new(Self {
             notification_handlers,
             response_handlers,
+            capabilities: capabilities_rx,
             next_id: Default::default(),
             outbound_tx: RwLock::new(Some(outbound_tx)),
             executor: executor.clone(),
@@ -210,7 +213,10 @@ impl LanguageServer {
             .spawn({
                 let this = this.clone();
                 async move {
-                    this.init(root_uri).log_err().await;
+                    if let Some(capabilities) = this.init(root_uri).log_err().await {
+                        *capabilities_tx.borrow_mut() = Some(capabilities);
+                    }
+
                     drop(initialized_tx);
                 }
             })
@@ -219,7 +225,7 @@ impl LanguageServer {
         Ok(this)
     }
 
-    async fn init(self: Arc<Self>, root_uri: Url) -> Result<()> {
+    async fn init(self: Arc<Self>, root_uri: Url) -> Result<ServerCapabilities> {
         #[allow(deprecated)]
         let params = InitializeParams {
             process_id: Default::default(),
@@ -230,6 +236,16 @@ impl LanguageServer {
                 text_document: Some(TextDocumentClientCapabilities {
                     definition: Some(GotoCapability {
                         link_support: Some(true),
+                        ..Default::default()
+                    }),
+                    completion: Some(CompletionClientCapabilities {
+                        completion_item: Some(CompletionItemCapability {
+                            snippet_support: Some(true),
+                            resolve_support: Some(CompletionItemCapabilityResolveSupport {
+                                properties: vec!["additionalTextEdits".to_string()],
+                            }),
+                            ..Default::default()
+                        }),
                         ..Default::default()
                     }),
                     ..Default::default()
@@ -256,12 +272,12 @@ impl LanguageServer {
             this.outbound_tx.read().as_ref(),
             params,
         );
-        request.await?;
+        let response = request.await?;
         Self::notify_internal::<notification::Initialized>(
             this.outbound_tx.read().as_ref(),
             InitializedParams {},
         )?;
-        Ok(())
+        Ok(response.capabilities)
     }
 
     pub fn shutdown(&self) -> Option<impl 'static + Send + Future<Output = Result<()>>> {
@@ -313,6 +329,10 @@ impl LanguageServer {
             method: T::METHOD,
             notification_handlers: self.notification_handlers.clone(),
         }
+    }
+
+    pub fn capabilities(&self) -> watch::Receiver<Option<ServerCapabilities>> {
+        self.capabilities.clone()
     }
 
     pub fn request<T: request::Request>(
@@ -449,6 +469,13 @@ pub struct RequestId<T> {
 #[cfg(any(test, feature = "test-support"))]
 impl LanguageServer {
     pub async fn fake(executor: Arc<executor::Background>) -> (Arc<Self>, FakeLanguageServer) {
+        Self::fake_with_capabilities(Default::default(), executor).await
+    }
+
+    pub async fn fake_with_capabilities(
+        capabilities: ServerCapabilities,
+        executor: Arc<executor::Background>,
+    ) -> (Arc<Self>, FakeLanguageServer) {
         let stdin = async_pipe::pipe();
         let stdout = async_pipe::pipe();
         let mut fake = FakeLanguageServer {
@@ -461,7 +488,14 @@ impl LanguageServer {
         let server = Self::new_internal(stdin.0, stdout.1, Path::new("/"), executor).unwrap();
 
         let (init_id, _) = fake.receive_request::<request::Initialize>().await;
-        fake.respond(init_id, InitializeResult::default()).await;
+        fake.respond(
+            init_id,
+            InitializeResult {
+                capabilities,
+                ..Default::default()
+            },
+        )
+        .await;
         fake.receive_notification::<notification::Initialized>()
             .await;
 

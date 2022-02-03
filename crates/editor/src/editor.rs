@@ -8,49 +8,55 @@ mod multi_buffer;
 mod test;
 
 use aho_corasick::AhoCorasick;
+use anyhow::Result;
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap, HashSet};
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
+use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     action,
     color::Color,
     elements::*,
-    fonts::TextStyle,
+    executor,
+    fonts::{self, HighlightStyle, TextStyle},
     geometry::vector::{vec2f, Vector2F},
     keymap::Binding,
+    platform::CursorStyle,
     text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
-    MutableAppContext, RenderContext, View, ViewContext, WeakModelHandle, WeakViewHandle,
+    MutableAppContext, RenderContext, Task, View, ViewContext, WeakModelHandle, WeakViewHandle,
 };
 use items::BufferItemHandle;
 use itertools::Itertools as _;
 use language::{
-    AnchorRangeExt as _, BracketPair, Buffer, Diagnostic, DiagnosticSeverity, Language, Point,
-    Selection, SelectionGoal, TransactionId,
+    AnchorRangeExt as _, BracketPair, Buffer, Completion, CompletionLabel, Diagnostic,
+    DiagnosticSeverity, Language, Point, Selection, SelectionGoal, TransactionId,
 };
 use multi_buffer::MultiBufferChunks;
 pub use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptId, ExcerptProperties, MultiBuffer, MultiBufferSnapshot,
-    ToOffset, ToPoint,
+    char_kind, Anchor, AnchorRangeExt, CharKind, ExcerptId, ExcerptProperties, MultiBuffer,
+    MultiBufferSnapshot, ToOffset, ToPoint,
 };
+use ordered_float::OrderedFloat;
 use postage::watch;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
+use snippet::Snippet;
 use std::{
     any::TypeId,
-    cmp::{self, Ordering},
+    cmp::{self, Ordering, Reverse},
     iter::{self, FromIterator},
     mem,
-    ops::{Deref, Range, RangeInclusive, Sub},
+    ops::{Deref, DerefMut, Range, RangeInclusive, Sub},
     sync::Arc,
     time::{Duration, Instant},
 };
 pub use sum_tree::Bias;
 use text::rope::TextDimension;
 use theme::{DiagnosticStyle, EditorStyle};
-use util::post_inc;
+use util::{post_inc, ResultExt, TryFutureExt};
 use workspace::{ItemNavHistory, PathOpener, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -117,6 +123,8 @@ action!(Unfold);
 action!(FoldSelectedRanges);
 action!(Scroll, Vector2F);
 action!(Select, SelectPhase);
+action!(ShowCompletions);
+action!(ConfirmCompletion, Option<usize>);
 
 pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpener>>) {
     path_openers.push(Box::new(items::BufferOpener));
@@ -132,7 +140,13 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
             Input("\n".into()),
             Some("Editor && mode == auto_height"),
         ),
+        Binding::new(
+            "enter",
+            ConfirmCompletion(None),
+            Some("Editor && completing"),
+        ),
         Binding::new("tab", Tab, Some("Editor")),
+        Binding::new("tab", ConfirmCompletion(None), Some("Editor && completing")),
         Binding::new("shift-tab", Outdent, Some("Editor")),
         Binding::new("ctrl-shift-K", DeleteLine, Some("Editor")),
         Binding::new(
@@ -224,6 +238,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
         Binding::new("alt-cmd-[", Fold, Some("Editor")),
         Binding::new("alt-cmd-]", Unfold, Some("Editor")),
         Binding::new("alt-cmd-f", FoldSelectedRanges, Some("Editor")),
+        Binding::new("ctrl-space", ShowCompletions, Some("Editor")),
     ]);
 
     cx.add_action(Editor::open_new);
@@ -287,6 +302,14 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_action(Editor::fold);
     cx.add_action(Editor::unfold);
     cx.add_action(Editor::fold_selected_ranges);
+    cx.add_action(Editor::show_completions);
+    cx.add_action(
+        |editor: &mut Editor, &ConfirmCompletion(ix): &ConfirmCompletion, cx| {
+            if let Some(task) = editor.confirm_completion(ix, cx) {
+                task.detach_and_log_err(cx);
+            }
+        },
+    );
 }
 
 trait SelectionExt {
@@ -295,6 +318,10 @@ trait SelectionExt {
     fn display_range(&self, map: &DisplaySnapshot) -> Range<DisplayPoint>;
     fn spanned_rows(&self, include_end_if_at_line_start: bool, map: &DisplaySnapshot)
         -> Range<u32>;
+}
+
+trait InvalidationRegion {
+    fn ranges(&self) -> &[Range<Anchor>];
 }
 
 #[derive(Clone, Debug)]
@@ -370,7 +397,8 @@ pub struct Editor {
     select_next_state: Option<SelectNextState>,
     selection_history:
         HashMap<TransactionId, (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)>,
-    autoclose_stack: Vec<BracketPairState>,
+    autoclose_stack: InvalidationStack<BracketPairState>,
+    snippet_stack: InvalidationStack<SnippetState>,
     select_larger_syntax_node_stack: Vec<Box<[Selection<usize>]>>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     scroll_position: Vector2F,
@@ -387,6 +415,8 @@ pub struct Editor {
     highlighted_rows: Option<Range<u32>>,
     highlighted_ranges: BTreeMap<TypeId, (Color, Vec<Range<Anchor>>)>,
     nav_history: Option<ItemNavHistory>,
+    completion_state: Option<CompletionState>,
+    completions_task: Option<Task<Option<()>>>,
 }
 
 pub struct EditorSnapshot {
@@ -414,10 +444,67 @@ struct SelectNextState {
     done: bool,
 }
 
-#[derive(Debug)]
 struct BracketPairState {
     ranges: Vec<Range<Anchor>>,
     pair: BracketPair,
+}
+
+struct SnippetState {
+    ranges: Vec<Vec<Range<Anchor>>>,
+    active_index: usize,
+}
+
+struct InvalidationStack<T>(Vec<T>);
+
+struct CompletionState {
+    initial_position: Anchor,
+    completions: Arc<[Completion<Anchor>]>,
+    match_candidates: Vec<StringMatchCandidate>,
+    matches: Arc<[StringMatch]>,
+    selected_item: usize,
+    list: UniformListState,
+}
+
+impl CompletionState {
+    pub async fn filter(&mut self, query: Option<&str>, executor: Arc<executor::Background>) {
+        let mut matches = if let Some(query) = query {
+            fuzzy::match_strings(
+                &self.match_candidates,
+                query,
+                false,
+                100,
+                &Default::default(),
+                executor,
+            )
+            .await
+        } else {
+            self.match_candidates
+                .iter()
+                .enumerate()
+                .map(|(candidate_id, candidate)| StringMatch {
+                    candidate_id,
+                    score: Default::default(),
+                    positions: Default::default(),
+                    string: candidate.string.clone(),
+                })
+                .collect()
+        };
+        matches.sort_unstable_by_key(|mat| {
+            (
+                Reverse(OrderedFloat(mat.score)),
+                self.completions[mat.candidate_id].sort_key(),
+            )
+        });
+
+        for mat in &mut matches {
+            let filter_start = self.completions[mat.candidate_id].label.filter_range.start;
+            for position in &mut mat.positions {
+                *position += filter_start;
+            }
+        }
+
+        self.matches = matches.into();
+    }
 }
 
 #[derive(Debug)]
@@ -437,14 +524,6 @@ struct ClipboardSelection {
 pub struct NavigationData {
     anchor: Anchor,
     offset: usize,
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
-pub enum CharKind {
-    Newline,
-    Punctuation,
-    Whitespace,
-    Word,
 }
 
 impl Editor {
@@ -520,6 +599,7 @@ impl Editor {
             select_next_state: None,
             selection_history: Default::default(),
             autoclose_stack: Default::default(),
+            snippet_stack: Default::default(),
             select_larger_syntax_node_stack: Vec::new(),
             active_diagnostics: None,
             build_settings,
@@ -536,6 +616,8 @@ impl Editor {
             highlighted_rows: None,
             highlighted_ranges: Default::default(),
             nav_history: None,
+            completion_state: None,
+            completions_task: None,
         };
         let selection = Selection {
             id: post_inc(&mut this.next_selection_id),
@@ -793,6 +875,8 @@ impl Editor {
     }
 
     fn select(&mut self, Select(phase): &Select, cx: &mut ViewContext<Self>) {
+        self.hide_completions(cx);
+
         match phase {
             SelectPhase::Begin {
                 position,
@@ -1091,6 +1175,14 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        if self.hide_completions(cx).is_some() {
+            return;
+        }
+
+        if self.snippet_stack.pop().is_some() {
+            return;
+        }
+
         if self.mode != EditorMode::Full {
             cx.propagate_action();
             return;
@@ -1234,6 +1326,7 @@ impl Editor {
             self.insert(text, cx);
             self.autoclose_pairs(cx);
             self.end_transaction(cx);
+            self.trigger_completion_on_input(text, cx);
         }
     }
 
@@ -1369,6 +1462,20 @@ impl Editor {
         self.end_transaction(cx);
     }
 
+    fn trigger_completion_on_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
+        if let Some(selection) = self.newest_anchor_selection() {
+            if self
+                .buffer
+                .read(cx)
+                .is_completion_trigger(selection.head(), text, cx)
+            {
+                self.show_completions(&ShowCompletions, cx);
+            } else {
+                self.hide_completions(cx);
+            }
+        }
+    }
+
     fn autoclose_pairs(&mut self, cx: &mut ViewContext<Self>) {
         let selections = self.local_selections::<usize>(cx);
         let mut bracket_pair_state = None;
@@ -1495,6 +1602,345 @@ impl Editor {
         }
     }
 
+    fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
+        let offset = position.to_offset(buffer);
+        let (word_range, kind) = buffer.surrounding_word(offset);
+        if offset > word_range.start && kind == Some(CharKind::Word) {
+            Some(
+                buffer
+                    .text_for_range(word_range.start..offset)
+                    .collect::<String>(),
+            )
+        } else {
+            None
+        }
+    }
+
+    fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
+        let position = if let Some(selection) = self.newest_anchor_selection() {
+            selection.head()
+        } else {
+            return;
+        };
+
+        let query = Self::completion_query(&self.buffer.read(cx).read(cx), position.clone());
+        let completions = self
+            .buffer
+            .update(cx, |buffer, cx| buffer.completions(position.clone(), cx));
+
+        self.completions_task = Some(cx.spawn_weak(|this, mut cx| {
+            async move {
+                let completions = completions.await?;
+
+                let mut completion_state = CompletionState {
+                    initial_position: position,
+                    match_candidates: completions
+                        .iter()
+                        .enumerate()
+                        .map(|(id, completion)| {
+                            StringMatchCandidate::new(
+                                id,
+                                completion.label.text[completion.label.filter_range.clone()].into(),
+                            )
+                        })
+                        .collect(),
+                    completions: completions.into(),
+                    matches: Vec::new().into(),
+                    selected_item: 0,
+                    list: Default::default(),
+                };
+
+                completion_state
+                    .filter(query.as_deref(), cx.background())
+                    .await;
+
+                if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
+                    this.update(&mut cx, |this, cx| {
+                        if completion_state.matches.is_empty() {
+                            this.hide_completions(cx);
+                        } else if this.focused {
+                            this.completion_state = Some(completion_state);
+                        }
+
+                        cx.notify();
+                    });
+                }
+                Ok::<_, anyhow::Error>(())
+            }
+            .log_err()
+        }));
+    }
+
+    fn hide_completions(&mut self, cx: &mut ViewContext<Self>) -> Option<CompletionState> {
+        cx.notify();
+        self.completions_task.take();
+        self.completion_state.take()
+    }
+
+    pub fn confirm_completion(
+        &mut self,
+        completion_ix: Option<usize>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let completion_state = self.hide_completions(cx)?;
+        let mat = completion_state
+            .matches
+            .get(completion_ix.unwrap_or(completion_state.selected_item))?;
+        let completion = completion_state.completions.get(mat.candidate_id)?;
+
+        let snippet;
+        let text;
+        if completion.is_snippet() {
+            snippet = Some(Snippet::parse(&completion.new_text).log_err()?);
+            text = snippet.as_ref().unwrap().text.clone();
+        } else {
+            snippet = None;
+            text = completion.new_text.clone();
+        };
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let old_range = completion.old_range.to_offset(&snapshot);
+
+        let selections = self.local_selections::<usize>(cx);
+        let mut common_prefix_len = None;
+        let mut ranges = Vec::new();
+        for selection in &selections {
+            let start = selection.start.saturating_sub(old_range.len());
+            let prefix_len = snapshot
+                .bytes_at(start)
+                .zip(completion.new_text.bytes())
+                .take_while(|(a, b)| a == b)
+                .count();
+            if common_prefix_len.is_none() {
+                common_prefix_len = Some(prefix_len);
+            }
+
+            if common_prefix_len == Some(prefix_len) {
+                ranges.push(start + prefix_len..selection.end);
+            } else {
+                common_prefix_len.take();
+                ranges.clear();
+                ranges.extend(selections.iter().map(|s| s.start..s.end));
+                break;
+            }
+        }
+        let common_prefix_len = common_prefix_len.unwrap_or(0);
+        let text = &text[common_prefix_len..];
+
+        self.start_transaction(cx);
+        if let Some(mut snippet) = snippet {
+            snippet.text = text.to_string();
+            for tabstop in snippet.tabstops.iter_mut().flatten() {
+                tabstop.start -= common_prefix_len as isize;
+                tabstop.end -= common_prefix_len as isize;
+            }
+
+            self.insert_snippet(&ranges, snippet, cx).log_err();
+        } else {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.edit_with_autoindent(ranges, text, cx);
+            });
+        }
+        self.end_transaction(cx);
+
+        Some(self.buffer.update(cx, |buffer, cx| {
+            buffer.apply_additional_edits_for_completion(completion.clone(), cx)
+        }))
+    }
+
+    pub fn has_completions(&self) -> bool {
+        self.completion_state
+            .as_ref()
+            .map_or(false, |c| !c.matches.is_empty())
+    }
+
+    pub fn render_completions(&self, cx: &AppContext) -> Option<ElementBox> {
+        enum CompletionTag {}
+
+        self.completion_state.as_ref().map(|state| {
+            let build_settings = self.build_settings.clone();
+            let settings = build_settings(cx);
+            let completions = state.completions.clone();
+            let matches = state.matches.clone();
+            let selected_item = state.selected_item;
+            UniformList::new(
+                state.list.clone(),
+                matches.len(),
+                move |range, items, cx| {
+                    let settings = build_settings(cx);
+                    let start_ix = range.start;
+                    for (ix, mat) in matches[range].iter().enumerate() {
+                        let completion = &completions[mat.candidate_id];
+                        let item_ix = start_ix + ix;
+                        items.push(
+                            MouseEventHandler::new::<CompletionTag, _, _, _>(
+                                mat.candidate_id,
+                                cx,
+                                |state, _| {
+                                    let item_style = if item_ix == selected_item {
+                                        settings.style.autocomplete.selected_item
+                                    } else if state.hovered {
+                                        settings.style.autocomplete.hovered_item
+                                    } else {
+                                        settings.style.autocomplete.item
+                                    };
+
+                                    Text::new(
+                                        completion.label.text.clone(),
+                                        settings.style.text.clone(),
+                                    )
+                                    .with_soft_wrap(false)
+                                    .with_highlights(combine_syntax_and_fuzzy_match_highlights(
+                                        &completion.label.text,
+                                        settings.style.text.color.into(),
+                                        styled_runs_for_completion_label(
+                                            &completion.label,
+                                            settings.style.text.color,
+                                            &settings.style.syntax,
+                                        ),
+                                        &mat.positions,
+                                    ))
+                                    .contained()
+                                    .with_style(item_style)
+                                    .boxed()
+                                },
+                            )
+                            .with_cursor_style(CursorStyle::PointingHand)
+                            .on_mouse_down(move |cx| {
+                                cx.dispatch_action(ConfirmCompletion(Some(item_ix)));
+                            })
+                            .boxed(),
+                        );
+                    }
+                },
+            )
+            .with_width_from_item(
+                state
+                    .matches
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(_, mat)| {
+                        state.completions[mat.candidate_id]
+                            .label
+                            .text
+                            .chars()
+                            .count()
+                    })
+                    .map(|(ix, _)| ix),
+            )
+            .contained()
+            .with_style(settings.style.autocomplete.container)
+            .boxed()
+        })
+    }
+
+    pub fn insert_snippet(
+        &mut self,
+        insertion_ranges: &[Range<usize>],
+        snippet: Snippet,
+        cx: &mut ViewContext<Self>,
+    ) -> Result<()> {
+        let tabstops = self.buffer.update(cx, |buffer, cx| {
+            buffer.edit_with_autoindent(insertion_ranges.iter().cloned(), &snippet.text, cx);
+
+            let snapshot = &*buffer.read(cx);
+            let snippet = &snippet;
+            snippet
+                .tabstops
+                .iter()
+                .map(|tabstop| {
+                    let mut tabstop_ranges = tabstop
+                        .iter()
+                        .flat_map(|tabstop_range| {
+                            let mut delta = 0 as isize;
+                            insertion_ranges.iter().map(move |insertion_range| {
+                                let insertion_start = insertion_range.start as isize + delta;
+                                delta +=
+                                    snippet.text.len() as isize - insertion_range.len() as isize;
+
+                                let start = snapshot.anchor_before(
+                                    (insertion_start + tabstop_range.start) as usize,
+                                );
+                                let end = snapshot
+                                    .anchor_after((insertion_start + tabstop_range.end) as usize);
+                                start..end
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    tabstop_ranges
+                        .sort_unstable_by(|a, b| a.start.cmp(&b.start, snapshot).unwrap());
+                    tabstop_ranges
+                })
+                .collect::<Vec<_>>()
+        });
+
+        if let Some(tabstop) = tabstops.first() {
+            self.select_ranges(tabstop.iter().cloned(), Some(Autoscroll::Fit), cx);
+            self.snippet_stack.push(SnippetState {
+                active_index: 0,
+                ranges: tabstops,
+            });
+        }
+
+        Ok(())
+    }
+
+    pub fn move_to_next_snippet_tabstop(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        self.move_to_snippet_tabstop(Bias::Right, cx)
+    }
+
+    pub fn move_to_prev_snippet_tabstop(&mut self, cx: &mut ViewContext<Self>) {
+        self.move_to_snippet_tabstop(Bias::Left, cx);
+    }
+
+    pub fn move_to_snippet_tabstop(&mut self, bias: Bias, cx: &mut ViewContext<Self>) -> bool {
+        let buffer = self.buffer.read(cx).snapshot(cx);
+
+        if let Some(snippet) = self.snippet_stack.last_mut() {
+            match bias {
+                Bias::Left => {
+                    if snippet.active_index > 0 {
+                        snippet.active_index -= 1;
+                    } else {
+                        return false;
+                    }
+                }
+                Bias::Right => {
+                    if snippet.active_index + 1 < snippet.ranges.len() {
+                        snippet.active_index += 1;
+                    } else {
+                        return false;
+                    }
+                }
+            }
+            if let Some(current_ranges) = snippet.ranges.get(snippet.active_index) {
+                let new_selections = current_ranges
+                    .iter()
+                    .map(|new_range| {
+                        let new_range = new_range.to_offset(&buffer);
+                        Selection {
+                            id: post_inc(&mut self.next_selection_id),
+                            start: new_range.start,
+                            end: new_range.end,
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        }
+                    })
+                    .collect();
+
+                // Remove the snippet state when moving to the last tabstop.
+                if snippet.active_index + 1 == snippet.ranges.len() {
+                    self.snippet_stack.pop();
+                }
+
+                self.update_selections(new_selections, Some(Autoscroll::Fit), cx);
+                return true;
+            }
+            self.snippet_stack.pop();
+        }
+
+        false
+    }
+
     pub fn clear(&mut self, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
         self.select_all(&SelectAll, cx);
@@ -1541,6 +1987,10 @@ impl Editor {
     }
 
     pub fn tab(&mut self, _: &Tab, cx: &mut ViewContext<Self>) {
+        if self.move_to_next_snippet_tabstop(cx) {
+            return;
+        }
+
         self.start_transaction(cx);
         let tab_size = (self.build_settings)(cx).tab_size;
         let mut selections = self.local_selections::<Point>(cx);
@@ -1613,6 +2063,11 @@ impl Editor {
     }
 
     pub fn outdent(&mut self, _: &Outdent, cx: &mut ViewContext<Self>) {
+        if !self.snippet_stack.is_empty() {
+            self.move_to_prev_snippet_tabstop(cx);
+            return;
+        }
+
         self.start_transaction(cx);
         let tab_size = (self.build_settings)(cx).tab_size;
         let selections = self.local_selections::<Point>(cx);
@@ -2182,6 +2637,17 @@ impl Editor {
     }
 
     pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
+        if let Some(completion_state) = &mut self.completion_state {
+            if completion_state.selected_item > 0 {
+                completion_state.selected_item -= 1;
+                completion_state
+                    .list
+                    .scroll_to(ScrollTarget::Show(completion_state.selected_item));
+            }
+            cx.notify();
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
             return;
@@ -2220,6 +2686,17 @@ impl Editor {
     }
 
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
+        if let Some(completion_state) = &mut self.completion_state {
+            if completion_state.selected_item + 1 < completion_state.matches.len() {
+                completion_state.selected_item += 1;
+                completion_state
+                    .list
+                    .scroll_to(ScrollTarget::Show(completion_state.selected_item));
+            }
+            cx.notify();
+            return;
+        }
+
         if matches!(self.mode, EditorMode::SingleLine) {
             cx.propagate_action();
             return;
@@ -3382,7 +3859,6 @@ impl Editor {
         T: ToOffset + ToPoint + Ord + std::marker::Copy + std::fmt::Debug,
     {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let old_cursor_position = self.newest_anchor_selection().map(|s| s.head());
         selections.sort_unstable_by_key(|s| s.start);
 
         // Merge overlapping selections.
@@ -3401,45 +3877,9 @@ impl Editor {
             }
         }
 
-        self.pending_selection = None;
-        self.add_selections_state = None;
-        self.select_next_state = None;
-        self.select_larger_syntax_node_stack.clear();
-        while let Some(autoclose_pair) = self.autoclose_stack.last() {
-            let all_selections_inside_autoclose_ranges =
-                if selections.len() == autoclose_pair.ranges.len() {
-                    selections
-                        .iter()
-                        .zip(autoclose_pair.ranges.iter().map(|r| r.to_point(&buffer)))
-                        .all(|(selection, autoclose_range)| {
-                            let head = selection.head().to_point(&buffer);
-                            autoclose_range.start <= head && autoclose_range.end >= head
-                        })
-                } else {
-                    false
-                };
-
-            if all_selections_inside_autoclose_ranges {
-                break;
-            } else {
-                self.autoclose_stack.pop();
-            }
-        }
-
-        if let Some(old_cursor_position) = old_cursor_position {
-            let new_cursor_position = selections
-                .iter()
-                .max_by_key(|s| s.id)
-                .map(|s| s.head().to_point(&buffer));
-            if new_cursor_position.is_some() {
-                self.push_to_nav_history(old_cursor_position, new_cursor_position, cx);
-            }
-        }
-
         if let Some(autoscroll) = autoscroll {
             self.request_autoscroll(autoscroll, cx);
         }
-        self.pause_cursor_blinking(cx);
 
         self.set_selections(
             Arc::from_iter(selections.into_iter().map(|selection| {
@@ -3510,12 +3950,54 @@ impl Editor {
     }
 
     fn set_selections(&mut self, selections: Arc<[Selection<Anchor>]>, cx: &mut ViewContext<Self>) {
+        let old_cursor_position = self.newest_anchor_selection().map(|s| s.head());
         self.selections = selections;
         if self.focused {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.set_active_selections(&self.selections, cx)
             });
         }
+
+        let buffer = self.buffer.read(cx).snapshot(cx);
+        self.pending_selection = None;
+        self.add_selections_state = None;
+        self.select_next_state = None;
+        self.select_larger_syntax_node_stack.clear();
+        self.autoclose_stack.invalidate(&self.selections, &buffer);
+        self.snippet_stack.invalidate(&self.selections, &buffer);
+
+        let new_cursor_position = self
+            .selections
+            .iter()
+            .max_by_key(|s| s.id)
+            .map(|s| s.head());
+        if let Some(old_cursor_position) = old_cursor_position {
+            if let Some(new_cursor_position) = new_cursor_position.as_ref() {
+                self.push_to_nav_history(
+                    old_cursor_position,
+                    Some(new_cursor_position.to_point(&buffer)),
+                    cx,
+                );
+            }
+        }
+
+        if let Some((completion_state, cursor_position)) =
+            self.completion_state.as_mut().zip(new_cursor_position)
+        {
+            let cursor_position = cursor_position.to_offset(&buffer);
+            let (word_range, kind) =
+                buffer.surrounding_word(completion_state.initial_position.clone());
+            if kind == Some(CharKind::Word) && word_range.to_inclusive().contains(&cursor_position)
+            {
+                let query = Self::completion_query(&buffer, cursor_position);
+                smol::block_on(completion_state.filter(query.as_deref(), cx.background().clone()));
+                self.show_completions(&ShowCompletions, cx);
+            } else {
+                self.hide_completions(cx);
+            }
+        }
+
+        self.pause_cursor_blinking(cx);
         cx.emit(Event::SelectionsChanged);
     }
 
@@ -3995,6 +4477,7 @@ impl EditorSettings {
                     invalid_information_diagnostic: default_diagnostic_style.clone(),
                     hint_diagnostic: default_diagnostic_style.clone(),
                     invalid_hint_diagnostic: default_diagnostic_style.clone(),
+                    autocomplete: Default::default(),
                 }
             },
         }
@@ -4062,6 +4545,7 @@ impl View for Editor {
         self.show_local_cursors = false;
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
+        self.hide_completions(cx);
         cx.emit(Event::Blurred);
         cx.notify();
     }
@@ -4074,6 +4558,9 @@ impl View for Editor {
             EditorMode::Full => "full",
         };
         cx.map.insert("mode".into(), mode.into());
+        if self.completion_state.is_some() {
+            cx.set.insert("completing".into());
+        }
         cx
     }
 }
@@ -4129,6 +4616,66 @@ impl<T: ToPoint + ToOffset> SelectionExt for Selection<T> {
         let buffer_start = map.prev_line_boundary(start).0;
         let buffer_end = map.next_line_boundary(end).0;
         buffer_start.row..buffer_end.row + 1
+    }
+}
+
+impl<T: InvalidationRegion> InvalidationStack<T> {
+    fn invalidate<S>(&mut self, selections: &[Selection<S>], buffer: &MultiBufferSnapshot)
+    where
+        S: Clone + ToOffset,
+    {
+        while let Some(region) = self.last() {
+            let all_selections_inside_invalidation_ranges =
+                if selections.len() == region.ranges().len() {
+                    selections
+                        .iter()
+                        .zip(region.ranges().iter().map(|r| r.to_offset(&buffer)))
+                        .all(|(selection, invalidation_range)| {
+                            let head = selection.head().to_offset(&buffer);
+                            invalidation_range.start <= head && invalidation_range.end >= head
+                        })
+                } else {
+                    false
+                };
+
+            if all_selections_inside_invalidation_ranges {
+                break;
+            } else {
+                self.pop();
+            }
+        }
+    }
+}
+
+impl<T> Default for InvalidationStack<T> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
+
+impl<T> Deref for InvalidationStack<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for InvalidationStack<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl InvalidationRegion for BracketPairState {
+    fn ranges(&self) -> &[Range<Anchor>] {
+        &self.ranges
+    }
+}
+
+impl InvalidationRegion for SnippetState {
+    fn ranges(&self) -> &[Range<Anchor>] {
+        &self.ranges[self.active_index]
     }
 }
 
@@ -4249,23 +4796,131 @@ pub fn settings_builder(
     })
 }
 
-pub fn char_kind(c: char) -> CharKind {
-    if c == '\n' {
-        CharKind::Newline
-    } else if c.is_whitespace() {
-        CharKind::Whitespace
-    } else if c.is_alphanumeric() || c == '_' {
-        CharKind::Word
-    } else {
-        CharKind::Punctuation
+pub fn combine_syntax_and_fuzzy_match_highlights(
+    text: &str,
+    default_style: HighlightStyle,
+    syntax_ranges: impl Iterator<Item = (Range<usize>, HighlightStyle)>,
+    match_indices: &[usize],
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    let mut result = Vec::new();
+    let mut match_indices = match_indices.iter().copied().peekable();
+
+    for (range, mut syntax_highlight) in syntax_ranges.chain([(usize::MAX..0, Default::default())])
+    {
+        syntax_highlight.font_properties.weight(Default::default());
+
+        // Add highlights for any fuzzy match characters before the next
+        // syntax highlight range.
+        while let Some(&match_index) = match_indices.peek() {
+            if match_index >= range.start {
+                break;
+            }
+            match_indices.next();
+            let end_index = char_ix_after(match_index, text);
+            let mut match_style = default_style;
+            match_style.font_properties.weight(fonts::Weight::BOLD);
+            result.push((match_index..end_index, match_style));
+        }
+
+        if range.start == usize::MAX {
+            break;
+        }
+
+        // Add highlights for any fuzzy match characters within the
+        // syntax highlight range.
+        let mut offset = range.start;
+        while let Some(&match_index) = match_indices.peek() {
+            if match_index >= range.end {
+                break;
+            }
+
+            match_indices.next();
+            if match_index > offset {
+                result.push((offset..match_index, syntax_highlight));
+            }
+
+            let mut end_index = char_ix_after(match_index, text);
+            while let Some(&next_match_index) = match_indices.peek() {
+                if next_match_index == end_index && next_match_index < range.end {
+                    end_index = char_ix_after(next_match_index, text);
+                    match_indices.next();
+                } else {
+                    break;
+                }
+            }
+
+            let mut match_style = syntax_highlight;
+            match_style.font_properties.weight(fonts::Weight::BOLD);
+            result.push((match_index..end_index, match_style));
+            offset = end_index;
+        }
+
+        if offset < range.end {
+            result.push((offset..range.end, syntax_highlight));
+        }
     }
+
+    fn char_ix_after(ix: usize, text: &str) -> usize {
+        ix + text[ix..].chars().next().unwrap().len_utf8()
+    }
+
+    result
+}
+
+fn styled_runs_for_completion_label<'a>(
+    label: &'a CompletionLabel,
+    default_color: Color,
+    syntax_theme: &'a theme::SyntaxTheme,
+) -> impl 'a + Iterator<Item = (Range<usize>, HighlightStyle)> {
+    const MUTED_OPACITY: usize = 165;
+
+    let mut muted_default_style = HighlightStyle {
+        color: default_color,
+        ..Default::default()
+    };
+    muted_default_style.color.a = ((default_color.a as usize * MUTED_OPACITY) / 255) as u8;
+
+    let mut prev_end = label.filter_range.end;
+    label
+        .runs
+        .iter()
+        .enumerate()
+        .flat_map(move |(ix, (range, highlight_id))| {
+            let style = if let Some(style) = highlight_id.style(syntax_theme) {
+                style
+            } else {
+                return Default::default();
+            };
+            let mut muted_style = style.clone();
+            muted_style.color.a = ((style.color.a as usize * MUTED_OPACITY) / 255) as u8;
+
+            let mut runs = SmallVec::<[(Range<usize>, HighlightStyle); 3]>::new();
+            if range.start >= label.filter_range.end {
+                if range.start > prev_end {
+                    runs.push((prev_end..range.start, muted_default_style));
+                }
+                runs.push((range.clone(), muted_style));
+            } else if range.end <= label.filter_range.end {
+                runs.push((range.clone(), style));
+            } else {
+                runs.push((range.start..label.filter_range.end, style));
+                runs.push((label.filter_range.end..range.end, muted_style));
+            }
+            prev_end = cmp::max(prev_end, range.end);
+
+            if ix + 1 == label.runs.len() && label.text.len() > prev_end {
+                runs.push((prev_end..label.text.len(), muted_default_style));
+            }
+
+            runs
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use language::LanguageConfig;
-    use std::{cell::RefCell, rc::Rc, time::Instant};
+    use language::{FakeFile, LanguageConfig};
+    use std::{cell::RefCell, path::Path, rc::Rc, time::Instant};
     use text::Point;
     use unindent::Unindent;
     use util::test::sample_text;
@@ -6323,6 +6978,231 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_snippets(mut cx: gpui::TestAppContext) {
+        let settings = cx.read(EditorSettings::test);
+
+        let text = "
+            a. b
+            a. b
+            a. b
+        "
+        .unindent();
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+        let (_, editor) = cx.add_window(|cx| build_editor(buffer, settings, cx));
+
+        editor.update(&mut cx, |editor, cx| {
+            let buffer = &editor.snapshot(cx).buffer_snapshot;
+            let snippet = Snippet::parse("f(${1:one}, ${2:two}, ${1:three})$0").unwrap();
+            let insertion_ranges = [
+                Point::new(0, 2).to_offset(buffer)..Point::new(0, 2).to_offset(buffer),
+                Point::new(1, 2).to_offset(buffer)..Point::new(1, 2).to_offset(buffer),
+                Point::new(2, 2).to_offset(buffer)..Point::new(2, 2).to_offset(buffer),
+            ];
+
+            editor
+                .insert_snippet(&insertion_ranges, snippet, cx)
+                .unwrap();
+            assert_eq!(
+                editor.text(cx),
+                "
+                    a.f(one, two, three) b
+                    a.f(one, two, three) b
+                    a.f(one, two, three) b
+                "
+                .unindent()
+            );
+            assert_eq!(
+                editor.selected_ranges::<Point>(cx),
+                &[
+                    Point::new(0, 4)..Point::new(0, 7),
+                    Point::new(0, 14)..Point::new(0, 19),
+                    Point::new(1, 4)..Point::new(1, 7),
+                    Point::new(1, 14)..Point::new(1, 19),
+                    Point::new(2, 4)..Point::new(2, 7),
+                    Point::new(2, 14)..Point::new(2, 19),
+                ]
+            );
+
+            // Can't move earlier than the first tab stop
+            editor.move_to_prev_snippet_tabstop(cx);
+            assert_eq!(
+                editor.selected_ranges::<Point>(cx),
+                &[
+                    Point::new(0, 4)..Point::new(0, 7),
+                    Point::new(0, 14)..Point::new(0, 19),
+                    Point::new(1, 4)..Point::new(1, 7),
+                    Point::new(1, 14)..Point::new(1, 19),
+                    Point::new(2, 4)..Point::new(2, 7),
+                    Point::new(2, 14)..Point::new(2, 19),
+                ]
+            );
+
+            assert!(editor.move_to_next_snippet_tabstop(cx));
+            assert_eq!(
+                editor.selected_ranges::<Point>(cx),
+                &[
+                    Point::new(0, 9)..Point::new(0, 12),
+                    Point::new(1, 9)..Point::new(1, 12),
+                    Point::new(2, 9)..Point::new(2, 12)
+                ]
+            );
+
+            editor.move_to_prev_snippet_tabstop(cx);
+            assert_eq!(
+                editor.selected_ranges::<Point>(cx),
+                &[
+                    Point::new(0, 4)..Point::new(0, 7),
+                    Point::new(0, 14)..Point::new(0, 19),
+                    Point::new(1, 4)..Point::new(1, 7),
+                    Point::new(1, 14)..Point::new(1, 19),
+                    Point::new(2, 4)..Point::new(2, 7),
+                    Point::new(2, 14)..Point::new(2, 19),
+                ]
+            );
+
+            assert!(editor.move_to_next_snippet_tabstop(cx));
+            assert!(editor.move_to_next_snippet_tabstop(cx));
+            assert_eq!(
+                editor.selected_ranges::<Point>(cx),
+                &[
+                    Point::new(0, 20)..Point::new(0, 20),
+                    Point::new(1, 20)..Point::new(1, 20),
+                    Point::new(2, 20)..Point::new(2, 20)
+                ]
+            );
+
+            // As soon as the last tab stop is reached, snippet state is gone
+            editor.move_to_prev_snippet_tabstop(cx);
+            assert_eq!(
+                editor.selected_ranges::<Point>(cx),
+                &[
+                    Point::new(0, 20)..Point::new(0, 20),
+                    Point::new(1, 20)..Point::new(1, 20),
+                    Point::new(2, 20)..Point::new(2, 20)
+                ]
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_completion(mut cx: gpui::TestAppContext) {
+        let settings = cx.read(EditorSettings::test);
+        let (language_server, mut fake) = lsp::LanguageServer::fake_with_capabilities(
+            lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            cx.background(),
+        )
+        .await;
+
+        let text = "
+            one
+            two
+            three
+        "
+        .unindent();
+        let buffer = cx.add_model(|cx| {
+            Buffer::from_file(
+                0,
+                text,
+                Box::new(FakeFile {
+                    path: Arc::from(Path::new("/the/file")),
+                }),
+                cx,
+            )
+            .with_language_server(language_server, cx)
+        });
+        let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        buffer.next_notification(&cx).await;
+
+        let (_, editor) = cx.add_window(|cx| build_editor(buffer, settings, cx));
+
+        editor.update(&mut cx, |editor, cx| {
+            editor.select_ranges([3..3], None, cx);
+            editor.handle_input(&Input(".".to_string()), cx);
+        });
+
+        let (id, params) = fake.receive_request::<lsp::request::Completion>().await;
+        assert_eq!(
+            params.text_document_position.text_document.uri,
+            lsp::Url::from_file_path("/the/file").unwrap()
+        );
+        assert_eq!(
+            params.text_document_position.position,
+            lsp::Position::new(0, 4)
+        );
+
+        fake.respond(
+            id,
+            Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 4)),
+                        new_text: "first_completion".to_string(),
+                    })),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 4)),
+                        new_text: "second_completion".to_string(),
+                    })),
+                    ..Default::default()
+                },
+            ])),
+        )
+        .await;
+
+        editor.next_notification(&cx).await;
+
+        let apply_additional_edits = editor.update(&mut cx, |editor, cx| {
+            editor.move_down(&MoveDown, cx);
+            let apply_additional_edits = editor.confirm_completion(None, cx).unwrap();
+            assert_eq!(
+                editor.text(cx),
+                "
+                    one.second_completion
+                    two
+                    three
+                "
+                .unindent()
+            );
+            apply_additional_edits
+        });
+
+        let (id, _) = fake
+            .receive_request::<lsp::request::ResolveCompletionItem>()
+            .await;
+        fake.respond(
+            id,
+            lsp::CompletionItem {
+                additional_text_edits: Some(vec![lsp::TextEdit::new(
+                    lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 5)),
+                    "\nadditional edit".to_string(),
+                )]),
+                ..Default::default()
+            },
+        )
+        .await;
+
+        apply_additional_edits.await.unwrap();
+        assert_eq!(
+            editor.read_with(&cx, |editor, cx| editor.text(cx)),
+            "
+                one.second_completion
+                two
+                three
+                additional edit
+            "
+            .unindent()
+        );
+    }
+
+    #[gpui::test]
     async fn test_toggle_comment(mut cx: gpui::TestAppContext) {
         let settings = cx.read(EditorSettings::test);
         let language = Arc::new(Language::new(
@@ -6697,20 +7577,16 @@ mod tests {
             );
 
             let snapshot = editor.snapshot(cx);
+            let mut highlighted_ranges = editor.highlighted_ranges_in_range(
+                anchor_range(Point::new(3, 4)..Point::new(7, 4)),
+                &snapshot,
+            );
+            // Enforce a consistent ordering based on color without relying on the ordering of the
+            // highlight's `TypeId` which is non-deterministic.
+            highlighted_ranges.sort_unstable_by_key(|(_, color)| *color);
             assert_eq!(
-                editor.highlighted_ranges_in_range(
-                    anchor_range(Point::new(3, 4)..Point::new(7, 4)),
-                    &snapshot,
-                ),
+                highlighted_ranges,
                 &[
-                    (
-                        DisplayPoint::new(4, 2)..DisplayPoint::new(4, 4),
-                        Color::red(),
-                    ),
-                    (
-                        DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
-                        Color::red(),
-                    ),
                     (
                         DisplayPoint::new(3, 2)..DisplayPoint::new(3, 5),
                         Color::green(),
@@ -6718,6 +7594,14 @@ mod tests {
                     (
                         DisplayPoint::new(5, 3)..DisplayPoint::new(5, 6),
                         Color::green(),
+                    ),
+                    (
+                        DisplayPoint::new(4, 2)..DisplayPoint::new(4, 4),
+                        Color::red(),
+                    ),
+                    (
+                        DisplayPoint::new(6, 3)..DisplayPoint::new(6, 5),
+                        Color::red(),
                     ),
                 ]
             );
@@ -6732,6 +7616,76 @@ mod tests {
                 )]
             );
         });
+    }
+
+    #[test]
+    fn test_combine_syntax_and_fuzzy_match_highlights() {
+        let string = "abcdefghijklmnop";
+        let default = HighlightStyle::default();
+        let syntax_ranges = [
+            (
+                0..3,
+                HighlightStyle {
+                    color: Color::red(),
+                    ..default
+                },
+            ),
+            (
+                4..8,
+                HighlightStyle {
+                    color: Color::green(),
+                    ..default
+                },
+            ),
+        ];
+        let match_indices = [4, 6, 7, 8];
+        assert_eq!(
+            combine_syntax_and_fuzzy_match_highlights(
+                &string,
+                default,
+                syntax_ranges.into_iter(),
+                &match_indices,
+            ),
+            &[
+                (
+                    0..3,
+                    HighlightStyle {
+                        color: Color::red(),
+                        ..default
+                    },
+                ),
+                (
+                    4..5,
+                    HighlightStyle {
+                        color: Color::green(),
+                        font_properties: *fonts::Properties::default().weight(fonts::Weight::BOLD),
+                        ..default
+                    },
+                ),
+                (
+                    5..6,
+                    HighlightStyle {
+                        color: Color::green(),
+                        ..default
+                    },
+                ),
+                (
+                    6..8,
+                    HighlightStyle {
+                        color: Color::green(),
+                        font_properties: *fonts::Properties::default().weight(fonts::Weight::BOLD),
+                        ..default
+                    },
+                ),
+                (
+                    8..9,
+                    HighlightStyle {
+                        font_properties: *fonts::Properties::default().weight(fonts::Weight::BOLD),
+                        ..default
+                    },
+                ),
+            ]
+        );
     }
 
     fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

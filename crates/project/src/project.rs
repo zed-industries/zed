@@ -334,6 +334,12 @@ impl Project {
                 client.subscribe_to_entity(remote_id, cx, Self::handle_save_buffer),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_format_buffer),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_get_completions),
+                client.subscribe_to_entity(
+                    remote_id,
+                    cx,
+                    Self::handle_apply_additional_edits_for_completion,
+                ),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_get_definition),
             ]);
         }
@@ -1680,6 +1686,114 @@ impl Project {
             .log_err();
         })
         .detach();
+        Ok(())
+    }
+
+    fn handle_get_completions(
+        &mut self,
+        envelope: TypedEnvelope<proto::GetCompletions>,
+        rpc: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let receipt = envelope.receipt();
+        let sender_id = envelope.original_sender_id()?;
+        let buffer = self
+            .shared_buffers
+            .get(&sender_id)
+            .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
+            .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
+        let position = envelope
+            .payload
+            .position
+            .and_then(language::proto::deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        cx.spawn(|_, mut cx| async move {
+            match buffer
+                .update(&mut cx, |buffer, cx| buffer.completions(position, cx))
+                .await
+            {
+                Ok(completions) => {
+                    rpc.respond(
+                        receipt,
+                        proto::GetCompletionsResponse {
+                            completions: completions
+                                .iter()
+                                .map(language::proto::serialize_completion)
+                                .collect(),
+                        },
+                    )
+                    .await
+                }
+                Err(error) => {
+                    rpc.respond_with_error(
+                        receipt,
+                        proto::Error {
+                            message: error.to_string(),
+                        },
+                    )
+                    .await
+                }
+            }
+        })
+        .detach_and_log_err(cx);
+        Ok(())
+    }
+
+    fn handle_apply_additional_edits_for_completion(
+        &mut self,
+        envelope: TypedEnvelope<proto::ApplyCompletionAdditionalEdits>,
+        rpc: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let receipt = envelope.receipt();
+        let sender_id = envelope.original_sender_id()?;
+        let buffer = self
+            .shared_buffers
+            .get(&sender_id)
+            .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
+            .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
+        let language = buffer.read(cx).language();
+        let completion = language::proto::deserialize_completion(
+            envelope
+                .payload
+                .completion
+                .ok_or_else(|| anyhow!("invalid position"))?,
+            language,
+        )?;
+        cx.spawn(|_, mut cx| async move {
+            match buffer
+                .update(&mut cx, |buffer, cx| {
+                    buffer.apply_additional_edits_for_completion(completion, false, cx)
+                })
+                .await
+            {
+                Ok(edit_ids) => {
+                    rpc.respond(
+                        receipt,
+                        proto::ApplyCompletionAdditionalEditsResponse {
+                            additional_edits: edit_ids
+                                .into_iter()
+                                .map(|edit_id| proto::AdditionalEdit {
+                                    replica_id: edit_id.replica_id as u32,
+                                    local_timestamp: edit_id.value,
+                                })
+                                .collect(),
+                        },
+                    )
+                    .await
+                }
+                Err(error) => {
+                    rpc.respond_with_error(
+                        receipt,
+                        proto::Error {
+                            message: error.to_string(),
+                        },
+                    )
+                    .await
+                }
+            }
+        })
+        .detach_and_log_err(cx);
         Ok(())
     }
 

@@ -12,7 +12,6 @@ use language::{Point, Subscription as BufferSubscription};
 use std::ops::Range;
 use sum_tree::Bias;
 use tab_map::TabMap;
-use theme::SyntaxTheme;
 use wrap_map::WrapMap;
 
 pub use block_map::{
@@ -251,16 +250,16 @@ impl DisplaySnapshot {
 
     pub fn text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
         self.blocks_snapshot
-            .chunks(display_row..self.max_point().row() + 1, None)
+            .chunks(display_row..self.max_point().row() + 1, false)
             .map(|h| h.text)
     }
 
     pub fn chunks<'a>(
         &'a self,
         display_rows: Range<u32>,
-        theme: Option<&'a SyntaxTheme>,
+        language_aware: bool,
     ) -> DisplayChunks<'a> {
-        self.blocks_snapshot.chunks(display_rows, theme)
+        self.blocks_snapshot.chunks(display_rows, language_aware)
     }
 
     pub fn chars_at<'a>(&'a self, point: DisplayPoint) -> impl Iterator<Item = char> + 'a {
@@ -1122,8 +1121,10 @@ mod tests {
     ) -> Vec<(String, Option<Color>)> {
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<Color>)> = Vec::new();
-        for chunk in snapshot.chunks(rows, Some(theme)) {
-            let color = chunk.highlight_style.map(|s| s.color);
+        for chunk in snapshot.chunks(rows, true) {
+            let color = chunk
+                .highlight_id
+                .and_then(|id| id.style(theme).map(|s| s.color));
             if let Some((last_chunk, last_color)) = chunks.last_mut() {
                 if color == *last_color {
                     last_chunk.push_str(chunk.text);

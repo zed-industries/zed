@@ -98,6 +98,16 @@ impl<'a> MatchCandidate for PathMatchCandidate<'a> {
     }
 }
 
+impl StringMatchCandidate {
+    pub fn new(id: usize, string: String) -> Self {
+        Self {
+            id,
+            char_bag: CharBag::from(string.as_str()),
+            string,
+        }
+    }
+}
+
 impl<'a> MatchCandidate for &'a StringMatchCandidate {
     fn has_chars(&self, bag: CharBag) -> bool {
         self.char_bag.is_superset(bag)
@@ -171,6 +181,10 @@ pub async fn match_strings(
     cancel_flag: &AtomicBool,
     background: Arc<executor::Background>,
 ) -> Vec<StringMatch> {
+    if candidates.is_empty() {
+        return Default::default();
+    }
+
     let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
     let query = query.chars().collect::<Vec<_>>();
 

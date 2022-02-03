@@ -21,6 +21,7 @@ use operation_queue::OperationQueue;
 pub use patch::Patch;
 pub use point::*;
 pub use point_utf16::*;
+use postage::{oneshot, prelude::*};
 #[cfg(any(test, feature = "test-support"))]
 pub use random_char_iter::*;
 use rope::TextDimension;
@@ -28,6 +29,7 @@ pub use rope::{Chunks, Rope, TextSummary};
 pub use selection::*;
 use std::{
     cmp::{self, Ordering},
+    future::Future,
     iter::Iterator,
     ops::{self, Deref, Range, Sub},
     str,
@@ -50,6 +52,7 @@ pub struct Buffer {
     local_clock: clock::Local,
     pub lamport_clock: clock::Lamport,
     subscriptions: Topic,
+    edit_id_resolvers: HashMap<clock::Local, Vec<oneshot::Sender<()>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -233,6 +236,20 @@ impl History {
         }
     }
 
+    fn push_transaction(&mut self, edit_ids: impl IntoIterator<Item = clock::Local>, now: Instant) {
+        assert_eq!(self.transaction_depth, 0);
+        let mut edit_ids = edit_ids.into_iter().peekable();
+
+        if let Some(first_edit_id) = edit_ids.peek() {
+            let version = self.ops[first_edit_id].version.clone();
+            self.start_transaction(version, now);
+            for edit_id in edit_ids {
+                self.push_undo(edit_id);
+            }
+            self.end_transaction(now);
+        }
+    }
+
     fn push_undo(&mut self, edit_id: clock::Local) {
         assert_ne!(self.transaction_depth, 0);
         let last_transaction = self.undo_stack.last_mut().unwrap();
@@ -257,6 +274,17 @@ impl History {
             self.redo_stack.last()
         } else {
             None
+        }
+    }
+
+    fn forget(&mut self, transaction_id: TransactionId) {
+        assert_eq!(self.transaction_depth, 0);
+        if let Some(transaction_ix) = self.undo_stack.iter().rposition(|t| t.id == transaction_id) {
+            self.undo_stack.remove(transaction_ix);
+        } else if let Some(transaction_ix) =
+            self.redo_stack.iter().rposition(|t| t.id == transaction_id)
+        {
+            self.undo_stack.remove(transaction_ix);
         }
     }
 
@@ -377,14 +405,14 @@ pub struct InsertionTimestamp {
 }
 
 impl InsertionTimestamp {
-    fn local(&self) -> clock::Local {
+    pub fn local(&self) -> clock::Local {
         clock::Local {
             replica_id: self.replica_id,
             value: self.local,
         }
     }
 
-    fn lamport(&self) -> clock::Lamport {
+    pub fn lamport(&self) -> clock::Lamport {
         clock::Lamport {
             replica_id: self.replica_id,
             value: self.lamport,
@@ -513,6 +541,7 @@ impl Buffer {
             local_clock,
             lamport_clock,
             subscriptions: Default::default(),
+            edit_id_resolvers: Default::default(),
         }
     }
 
@@ -554,6 +583,7 @@ impl Buffer {
                 value: lamport_timestamp,
             },
             subscriptions: Default::default(),
+            edit_id_resolvers: Default::default(),
             snapshot: BufferSnapshot {
                 replica_id,
                 visible_text,
@@ -808,6 +838,7 @@ impl Buffer {
                         edit.timestamp,
                     );
                     self.snapshot.version.observe(edit.timestamp.local());
+                    self.resolve_edit(edit.timestamp.local());
                     self.history.push(edit);
                 }
             }
@@ -1205,6 +1236,10 @@ impl Buffer {
         }
     }
 
+    pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
+        self.history.forget(transaction_id);
+    }
+
     pub fn redo(&mut self) -> Option<(TransactionId, Operation)> {
         if let Some(transaction) = self.history.pop_redo().cloned() {
             let transaction_id = transaction.id;
@@ -1245,8 +1280,47 @@ impl Buffer {
         })
     }
 
+    pub fn push_transaction(
+        &mut self,
+        edit_ids: impl IntoIterator<Item = clock::Local>,
+        now: Instant,
+    ) {
+        self.history.push_transaction(edit_ids, now);
+    }
+
     pub fn subscribe(&mut self) -> Subscription {
         self.subscriptions.subscribe()
+    }
+
+    pub fn wait_for_edits(
+        &mut self,
+        edit_ids: &[clock::Local],
+    ) -> impl 'static + Future<Output = ()> {
+        let mut futures = Vec::new();
+        for edit_id in edit_ids {
+            if !self.version.observed(*edit_id) {
+                let (tx, rx) = oneshot::channel();
+                self.edit_id_resolvers.entry(*edit_id).or_default().push(tx);
+                futures.push(rx);
+            }
+        }
+
+        async move {
+            for mut future in futures {
+                future.recv().await;
+            }
+        }
+    }
+
+    fn resolve_edit(&mut self, edit_id: clock::Local) {
+        for mut tx in self
+            .edit_id_resolvers
+            .remove(&edit_id)
+            .into_iter()
+            .flatten()
+        {
+            let _ = tx.try_send(());
+        }
     }
 }
 

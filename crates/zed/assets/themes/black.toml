@@ -40,6 +40,7 @@ bad = "#b7372e"
 active_line = "#161313"
 highlighted_line = "#faca5033"
 hover = "#00000033"
+selected = "#00000088"
 
 [editor.syntax]
 keyword = { color = "#0086c0", weight = "bold" }

@@ -5,7 +5,7 @@ use crate::{
     text_layout::RunStyle,
     FontCache,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, Result};
 pub use font_kit::{
     metrics::Metrics,
     properties::{Properties, Stretch, Style, Weight},
@@ -107,7 +107,7 @@ impl TextStyle {
         underline: Option<Underline>,
         color: Color,
         font_cache: &FontCache,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self> {
         let font_family_name = font_family_name.into();
         let font_family_id = font_cache.load_family(&[&font_family_name])?;
         let font_id = font_cache.select_font(font_family_id, &font_properties)?;
@@ -127,6 +127,15 @@ impl TextStyle {
         self
     }
 
+    pub fn highlight(mut self, style: HighlightStyle, font_cache: &FontCache) -> Result<Self> {
+        if self.font_properties != style.font_properties {
+            self.font_id = font_cache.select_font(self.font_family_id, &style.font_properties)?;
+        }
+        self.color = style.color;
+        self.underline = style.underline;
+        Ok(self)
+    }
+
     pub fn to_run(&self) -> RunStyle {
         RunStyle {
             font_id: self.font_id,
@@ -135,7 +144,7 @@ impl TextStyle {
         }
     }
 
-    fn from_json(json: TextStyleJson) -> anyhow::Result<Self> {
+    fn from_json(json: TextStyleJson) -> Result<Self> {
         FONT_CACHE.with(|font_cache| {
             if let Some(font_cache) = font_cache.borrow().as_ref() {
                 let font_properties = properties_from_json(json.weight, json.italic);

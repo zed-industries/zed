@@ -83,6 +83,8 @@ impl Server {
             .add_handler(Server::buffer_saved)
             .add_handler(Server::save_buffer)
             .add_handler(Server::format_buffer)
+            .add_handler(Server::get_completions)
+            .add_handler(Server::apply_additional_edits_for_completion)
             .add_handler(Server::get_channels)
             .add_handler(Server::get_users)
             .add_handler(Server::join_channel)
@@ -341,7 +343,7 @@ impl Server {
                     self.peer.send(
                         conn_id,
                         proto::AddProjectCollaborator {
-                            project_id: project_id,
+                            project_id,
                             collaborator: Some(proto::Collaborator {
                                 peer_id: request.sender_id.0,
                                 replica_id: response.replica_id,
@@ -701,6 +703,54 @@ impl Server {
     async fn format_buffer(
         self: Arc<Server>,
         request: TypedEnvelope<proto::FormatBuffer>,
+    ) -> tide::Result<()> {
+        let host;
+        {
+            let state = self.state();
+            let project = state
+                .read_project(request.payload.project_id, request.sender_id)
+                .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+            host = project.host_connection_id;
+        }
+
+        let sender = request.sender_id;
+        let receipt = request.receipt();
+        let response = self
+            .peer
+            .forward_request(sender, host, request.payload.clone())
+            .await?;
+        self.peer.respond(receipt, response).await?;
+
+        Ok(())
+    }
+
+    async fn get_completions(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::GetCompletions>,
+    ) -> tide::Result<()> {
+        let host;
+        {
+            let state = self.state();
+            let project = state
+                .read_project(request.payload.project_id, request.sender_id)
+                .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+            host = project.host_connection_id;
+        }
+
+        let sender = request.sender_id;
+        let receipt = request.receipt();
+        let response = self
+            .peer
+            .forward_request(sender, host, request.payload.clone())
+            .await?;
+        self.peer.respond(receipt, response).await?;
+
+        Ok(())
+    }
+
+    async fn apply_additional_edits_for_completion(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::ApplyCompletionAdditionalEdits>,
     ) -> tide::Result<()> {
         let host;
         {
@@ -2245,6 +2295,231 @@ mod tests {
                 ]
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_collaborating_with_completion(
+        mut cx_a: TestAppContext,
+        mut cx_b: TestAppContext,
+    ) {
+        cx_a.foreground().forbid_parking();
+        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(FakeFs::new(cx_a.background()));
+
+        // Set up a fake language server.
+        let (language_server_config, mut fake_language_server) =
+            LanguageServerConfig::fake_with_capabilities(
+                lsp::ServerCapabilities {
+                    completion_provider: Some(lsp::CompletionOptions {
+                        trigger_characters: Some(vec![".".to_string()]),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                cx_a.background(),
+            )
+            .await;
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Rust".to_string(),
+                    path_suffixes: vec!["rs".to_string()],
+                    language_server: Some(language_server_config),
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )));
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground()).await;
+        let client_a = server.create_client(&mut cx_a, "user_a").await;
+        let client_b = server.create_client(&mut cx_b, "user_b").await;
+
+        // Share a project as client A
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "main.rs": "fn main() { a }",
+                "other.rs": "",
+            }),
+        )
+        .await;
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/a", false, cx)
+            })
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
+        project_a
+            .update(&mut cx_a, |p, cx| p.share(cx))
+            .await
+            .unwrap();
+
+        // Join the worktree as client B.
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+
+        // Open a file in an editor as the guest.
+        let buffer_b = project_b
+            .update(&mut cx_b, |p, cx| {
+                p.open_buffer((worktree_id, "main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let (window_b, _) = cx_b.add_window(|_| EmptyView);
+        let editor_b = cx_b.add_view(window_b, |cx| {
+            Editor::for_buffer(
+                cx.add_model(|cx| MultiBuffer::singleton(buffer_b.clone(), cx)),
+                Arc::new(|cx| EditorSettings::test(cx)),
+                cx,
+            )
+        });
+
+        // Type a completion trigger character as the guest.
+        editor_b.update(&mut cx_b, |editor, cx| {
+            editor.select_ranges([13..13], None, cx);
+            editor.handle_input(&Input(".".into()), cx);
+            cx.focus(&editor_b);
+        });
+
+        // Receive a completion request as the host's language server.
+        let (request_id, params) = fake_language_server
+            .receive_request::<lsp::request::Completion>()
+            .await;
+        assert_eq!(
+            params.text_document_position.text_document.uri,
+            lsp::Url::from_file_path("/a/main.rs").unwrap(),
+        );
+        assert_eq!(
+            params.text_document_position.position,
+            lsp::Position::new(0, 14),
+        );
+
+        // Return some completions from the host's language server.
+        fake_language_server
+            .respond(
+                request_id,
+                Some(lsp::CompletionResponse::Array(vec![
+                    lsp::CompletionItem {
+                        label: "first_method(…)".into(),
+                        detail: Some("fn(&mut self, B) -> C".into()),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            new_text: "first_method($1)".to_string(),
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 14),
+                                lsp::Position::new(0, 14),
+                            ),
+                        })),
+                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                        ..Default::default()
+                    },
+                    lsp::CompletionItem {
+                        label: "second_method(…)".into(),
+                        detail: Some("fn(&mut self, C) -> D<E>".into()),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            new_text: "second_method()".to_string(),
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 14),
+                                lsp::Position::new(0, 14),
+                            ),
+                        })),
+                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                        ..Default::default()
+                    },
+                ])),
+            )
+            .await;
+
+        // Open the buffer on the host.
+        let buffer_a = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.open_buffer((worktree_id, "main.rs"), cx)
+            })
+            .await
+            .unwrap();
+        buffer_a
+            .condition(&cx_a, |buffer, _| buffer.text() == "fn main() { a. }")
+            .await;
+
+        // Confirm a completion on the guest.
+        editor_b.next_notification(&cx_b).await;
+        editor_b.update(&mut cx_b, |editor, cx| {
+            assert!(editor.has_completions());
+            editor.confirm_completion(Some(0), cx);
+            assert_eq!(editor.text(cx), "fn main() { a.first_method() }");
+        });
+
+        buffer_a
+            .condition(&cx_a, |buffer, _| {
+                buffer.text() == "fn main() { a.first_method() }"
+            })
+            .await;
+
+        // Receive a request resolve the selected completion on the host's language server.
+        let (request_id, params) = fake_language_server
+            .receive_request::<lsp::request::ResolveCompletionItem>()
+            .await;
+        assert_eq!(params.label, "first_method(…)");
+
+        // Return a resolved completion from the host's language server.
+        // The resolved completion has an additional text edit.
+        fake_language_server
+            .respond(
+                request_id,
+                lsp::CompletionItem {
+                    label: "first_method(…)".into(),
+                    detail: Some("fn(&mut self, B) -> C".into()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        new_text: "first_method($1)".to_string(),
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 14),
+                            lsp::Position::new(0, 14),
+                        ),
+                    })),
+                    additional_text_edits: Some(vec![lsp::TextEdit {
+                        new_text: "use d::SomeTrait;\n".to_string(),
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                    }]),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    ..Default::default()
+                },
+            )
+            .await;
+
+        // The additional edit is applied.
+        buffer_b
+            .condition(&cx_b, |buffer, _| {
+                buffer.text() == "use d::SomeTrait;\nfn main() { a.first_method() }"
+            })
+            .await;
+        assert_eq!(
+            buffer_a.read_with(&cx_a, |buffer, _| buffer.text()),
+            buffer_b.read_with(&cx_b, |buffer, _| buffer.text()),
+        );
     }
 
     #[gpui::test]

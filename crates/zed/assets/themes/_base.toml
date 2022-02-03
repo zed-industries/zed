@@ -314,6 +314,26 @@ extends = "$editor.hint_diagnostic"
 message.text.color = "$text.3.color"
 message.highlight_text.color = "$text.3.color"
 
+[editor.autocomplete]
+background = "$surface.2"
+border = { width = 2, color = "$border.1" }
+corner_radius = 6
+padding = 6
+match_highlight = { color = "$editor.syntax.keyword.color", weight = "$editor.syntax.keyword.weight" }
+margin.left = -14
+
+[editor.autocomplete.item]
+padding = { left = 6, right = 6, top = 2, bottom = 2 }
+corner_radius = 6
+
+[editor.autocomplete.selected_item]
+extends = "$editor.autocomplete.item"
+background = "$state.selected"
+
+[editor.autocomplete.hovered_item]
+extends = "$editor.autocomplete.item"
+background = "$state.hover"
+
 [project_diagnostics]
 background = "$surface.1"
 empty_message = { extends = "$text.0", size = 18 }

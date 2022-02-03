@@ -17,10 +17,14 @@ use lazy_static::lazy_static;
 pub use outline::{Outline, OutlineItem};
 use parking_lot::Mutex;
 use serde::Deserialize;
-use std::{ops::Range, path::Path, str, sync::Arc};
+use std::{cell::RefCell, ops::Range, path::Path, str, sync::Arc};
 use theme::SyntaxTheme;
 use tree_sitter::{self, Query};
 pub use tree_sitter::{Parser, Tree};
+
+thread_local! {
+    static PARSER: RefCell<Parser>  = RefCell::new(Parser::new());
+}
 
 lazy_static! {
     pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
@@ -39,8 +43,27 @@ pub trait ToPointUtf16 {
     fn to_point_utf16(self) -> PointUtf16;
 }
 
-pub trait DiagnosticProcessor: 'static + Send + Sync {
+pub trait ToLspPosition {
+    fn to_lsp_position(self) -> lsp::Position;
+}
+
+pub trait LspPostProcessor: 'static + Send + Sync {
     fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams);
+    fn label_for_completion(
+        &self,
+        _: &lsp::CompletionItem,
+        _: &Language,
+    ) -> Option<CompletionLabel> {
+        None
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompletionLabel {
+    pub text: String,
+    pub runs: Vec<(Range<usize>, HighlightId)>,
+    pub filter_range: Range<usize>,
+    pub left_aligned_len: usize,
 }
 
 #[derive(Default, Deserialize)]
@@ -73,7 +96,7 @@ pub struct BracketPair {
 pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
-    pub(crate) diagnostic_processor: Option<Box<dyn DiagnosticProcessor>>,
+    pub(crate) lsp_post_processor: Option<Box<dyn LspPostProcessor>>,
 }
 
 pub struct Grammar {
@@ -140,7 +163,7 @@ impl Language {
                     highlight_map: Default::default(),
                 })
             }),
-            diagnostic_processor: None,
+            lsp_post_processor: None,
         }
     }
 
@@ -184,8 +207,8 @@ impl Language {
         Ok(self)
     }
 
-    pub fn with_diagnostics_processor(mut self, processor: impl DiagnosticProcessor) -> Self {
-        self.diagnostic_processor = Some(Box::new(processor));
+    pub fn with_lsp_post_processor(mut self, processor: impl LspPostProcessor) -> Self {
+        self.lsp_post_processor = Some(Box::new(processor));
         self
     }
 
@@ -237,9 +260,39 @@ impl Language {
     }
 
     pub fn process_diagnostics(&self, diagnostics: &mut lsp::PublishDiagnosticsParams) {
-        if let Some(processor) = self.diagnostic_processor.as_ref() {
+        if let Some(processor) = self.lsp_post_processor.as_ref() {
             processor.process_diagnostics(diagnostics);
         }
+    }
+
+    pub fn label_for_completion(
+        &self,
+        completion: &lsp::CompletionItem,
+    ) -> Option<CompletionLabel> {
+        self.lsp_post_processor
+            .as_ref()?
+            .label_for_completion(completion, self)
+    }
+
+    pub fn highlight_text<'a>(
+        &'a self,
+        text: &'a Rope,
+        range: Range<usize>,
+    ) -> Vec<(Range<usize>, HighlightId)> {
+        let mut result = Vec::new();
+        if let Some(grammar) = &self.grammar {
+            let tree = grammar.parse_text(text, None);
+            let mut offset = 0;
+            for chunk in BufferChunks::new(text, range, Some(&tree), self.grammar.as_ref(), vec![])
+            {
+                let end_offset = offset + chunk.text.len();
+                if let Some(highlight_id) = chunk.highlight_id {
+                    result.push((offset..end_offset, highlight_id));
+                }
+                offset = end_offset;
+            }
+        }
+        result
     }
 
     pub fn brackets(&self) -> &[BracketPair] {
@@ -252,11 +305,56 @@ impl Language {
                 HighlightMap::new(grammar.highlights_query.capture_names(), theme);
         }
     }
+
+    pub fn grammar(&self) -> Option<&Arc<Grammar>> {
+        self.grammar.as_ref()
+    }
 }
 
 impl Grammar {
+    fn parse_text(&self, text: &Rope, old_tree: Option<Tree>) -> Tree {
+        PARSER.with(|parser| {
+            let mut parser = parser.borrow_mut();
+            parser
+                .set_language(self.ts_language)
+                .expect("incompatible grammar");
+            let mut chunks = text.chunks_in_range(0..text.len());
+            parser
+                .parse_with(
+                    &mut move |offset, _| {
+                        chunks.seek(offset);
+                        chunks.next().unwrap_or("").as_bytes()
+                    },
+                    old_tree.as_ref(),
+                )
+                .unwrap()
+        })
+    }
+
     pub fn highlight_map(&self) -> HighlightMap {
         self.highlight_map.lock().clone()
+    }
+
+    pub fn highlight_id_for_name(&self, name: &str) -> Option<HighlightId> {
+        let capture_id = self.highlights_query.capture_index_for_name(name)?;
+        Some(self.highlight_map.lock().get(capture_id))
+    }
+}
+
+impl CompletionLabel {
+    pub fn plain(completion: &lsp::CompletionItem) -> Self {
+        let mut result = Self {
+            text: completion.label.clone(),
+            runs: Vec::new(),
+            left_aligned_len: completion.label.len(),
+            filter_range: 0..completion.label.len(),
+        };
+        if let Some(filter_text) = &completion.filter_text {
+            if let Some(ix) = completion.label.find(filter_text) {
+                result.filter_range = ix..ix + filter_text.len();
+            }
+        }
+        result
     }
 }
 
@@ -265,7 +363,15 @@ impl LanguageServerConfig {
     pub async fn fake(
         executor: Arc<gpui::executor::Background>,
     ) -> (Self, lsp::FakeLanguageServer) {
-        let (server, fake) = lsp::LanguageServer::fake(executor).await;
+        Self::fake_with_capabilities(Default::default(), executor).await
+    }
+
+    pub async fn fake_with_capabilities(
+        capabilites: lsp::ServerCapabilities,
+        executor: Arc<gpui::executor::Background>,
+    ) -> (Self, lsp::FakeLanguageServer) {
+        let (server, fake) =
+            lsp::LanguageServer::fake_with_capabilities(capabilites, executor).await;
         fake.started
             .store(false, std::sync::atomic::Ordering::SeqCst);
         let started = fake.started.clone();
@@ -283,6 +389,12 @@ impl LanguageServerConfig {
 impl ToPointUtf16 for lsp::Position {
     fn to_point_utf16(self) -> PointUtf16 {
         PointUtf16::new(self.line, self.character)
+    }
+}
+
+impl ToLspPosition for PointUtf16 {
+    fn to_lsp_position(self) -> lsp::Position {
+        lsp::Position::new(self.row, self.column)
     }
 }
 

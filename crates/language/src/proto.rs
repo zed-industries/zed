@@ -1,4 +1,6 @@
-use crate::{diagnostic_set::DiagnosticEntry, Diagnostic, Operation};
+use crate::{
+    diagnostic_set::DiagnosticEntry, Completion, CompletionLabel, Diagnostic, Language, Operation,
+};
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::HashSet;
@@ -58,6 +60,13 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 lamport_timestamp: lamport_timestamp.value,
                 diagnostics: serialize_diagnostics(diagnostics.iter()),
             }),
+            Operation::UpdateCompletionTriggers { triggers } => {
+                proto::operation::Variant::UpdateCompletionTriggers(
+                    proto::operation::UpdateCompletionTriggers {
+                        triggers: triggers.clone(),
+                    },
+                )
+            }
         }),
     }
 }
@@ -238,6 +247,11 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                     value: message.lamport_timestamp,
                 },
             },
+            proto::operation::Variant::UpdateCompletionTriggers(message) => {
+                Operation::UpdateCompletionTriggers {
+                    triggers: message.triggers,
+                }
+            }
         },
     )
 }
@@ -363,5 +377,37 @@ pub fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
             proto::Bias::Left => Bias::Left,
             proto::Bias::Right => Bias::Right,
         },
+    })
+}
+
+pub fn serialize_completion(completion: &Completion<Anchor>) -> proto::Completion {
+    proto::Completion {
+        old_start: Some(serialize_anchor(&completion.old_range.start)),
+        old_end: Some(serialize_anchor(&completion.old_range.end)),
+        new_text: completion.new_text.clone(),
+        lsp_completion: serde_json::to_vec(&completion.lsp_completion).unwrap(),
+    }
+}
+
+pub fn deserialize_completion(
+    completion: proto::Completion,
+    language: Option<&Arc<Language>>,
+) -> Result<Completion<Anchor>> {
+    let old_start = completion
+        .old_start
+        .and_then(deserialize_anchor)
+        .ok_or_else(|| anyhow!("invalid old start"))?;
+    let old_end = completion
+        .old_end
+        .and_then(deserialize_anchor)
+        .ok_or_else(|| anyhow!("invalid old end"))?;
+    let lsp_completion = serde_json::from_slice(&completion.lsp_completion)?;
+    Ok(Completion {
+        old_range: old_start..old_end,
+        new_text: completion.new_text,
+        label: language
+            .and_then(|l| l.label_for_completion(&lsp_completion))
+            .unwrap_or(CompletionLabel::plain(&lsp_completion)),
+        lsp_completion,
     })
 }

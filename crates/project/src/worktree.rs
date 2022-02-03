@@ -14,7 +14,9 @@ use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
 };
-use language::{Buffer, DiagnosticEntry, Operation, PointUtf16, Rope};
+use language::{
+    Anchor, Buffer, Completion, DiagnosticEntry, Language, Operation, PointUtf16, Rope,
+};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
@@ -1419,6 +1421,77 @@ impl language::File for File {
             .await?;
             Ok(())
         }))
+    }
+
+    fn completions(
+        &self,
+        buffer_id: u64,
+        position: Anchor,
+        language: Option<Arc<Language>>,
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<Vec<Completion<Anchor>>>> {
+        let worktree = self.worktree.read(cx);
+        let worktree = if let Some(worktree) = worktree.as_remote() {
+            worktree
+        } else {
+            return Task::ready(Err(anyhow!(
+                "remote completions requested on a local worktree"
+            )));
+        };
+        let rpc = worktree.client.clone();
+        let project_id = worktree.project_id;
+        cx.foreground().spawn(async move {
+            let response = rpc
+                .request(proto::GetCompletions {
+                    project_id,
+                    buffer_id,
+                    position: Some(language::proto::serialize_anchor(&position)),
+                })
+                .await?;
+            response
+                .completions
+                .into_iter()
+                .map(|completion| {
+                    language::proto::deserialize_completion(completion, language.as_ref())
+                })
+                .collect()
+        })
+    }
+
+    fn apply_additional_edits_for_completion(
+        &self,
+        buffer_id: u64,
+        completion: Completion<Anchor>,
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<Vec<clock::Local>>> {
+        let worktree = self.worktree.read(cx);
+        let worktree = if let Some(worktree) = worktree.as_remote() {
+            worktree
+        } else {
+            return Task::ready(Err(anyhow!(
+                "remote additional edits application requested on a local worktree"
+            )));
+        };
+        let rpc = worktree.client.clone();
+        let project_id = worktree.project_id;
+        cx.foreground().spawn(async move {
+            let response = rpc
+                .request(proto::ApplyCompletionAdditionalEdits {
+                    project_id,
+                    buffer_id,
+                    completion: Some(language::proto::serialize_completion(&completion)),
+                })
+                .await?;
+
+            Ok(response
+                .additional_edits
+                .into_iter()
+                .map(|edit| clock::Local {
+                    replica_id: edit.replica_id as ReplicaId,
+                    value: edit.local_timestamp,
+                })
+                .collect())
+        })
     }
 
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext) {

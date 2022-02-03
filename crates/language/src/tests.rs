@@ -1090,7 +1090,7 @@ fn chunks_with_diagnostics<T: ToOffset + ToPoint>(
     range: Range<T>,
 ) -> Vec<(String, Option<DiagnosticSeverity>)> {
     let mut chunks: Vec<(String, Option<DiagnosticSeverity>)> = Vec::new();
-    for chunk in buffer.snapshot().chunks(range, Some(&Default::default())) {
+    for chunk in buffer.snapshot().chunks(range, true) {
         if chunks
             .last()
             .map_or(false, |prev_chunk| prev_chunk.1 == chunk.diagnostic)

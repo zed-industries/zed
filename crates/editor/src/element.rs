@@ -300,7 +300,7 @@ impl EditorElement {
         &mut self,
         bounds: RectF,
         visible_bounds: RectF,
-        layout: &LayoutState,
+        layout: &mut LayoutState,
         cx: &mut PaintContext,
     ) {
         let view = self.view(cx.app);
@@ -391,6 +391,28 @@ impl EditorElement {
             cursor.paint(cx);
         }
         cx.scene.pop_layer();
+
+        if let Some((position, completions_list)) = layout.completions.as_mut() {
+            cx.scene.push_stacking_context(None);
+
+            let cursor_row_layout = &layout.line_layouts[(position.row() - start_row) as usize];
+            let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
+            let y = (position.row() + 1) as f32 * layout.line_height - scroll_top;
+            let mut list_origin = content_origin + vec2f(x, y);
+            let list_height = completions_list.size().y();
+
+            if list_origin.y() + list_height > bounds.lower_left().y() {
+                list_origin.set_y(list_origin.y() - layout.line_height - list_height);
+            }
+
+            completions_list.paint(
+                list_origin,
+                RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
+                cx,
+            );
+
+            cx.scene.pop_stacking_context();
+        }
 
         cx.scene.pop_layer();
     }
@@ -576,31 +598,32 @@ impl EditorElement {
                 .collect();
         } else {
             let style = &self.settings.style;
-            let chunks = snapshot
-                .chunks(rows.clone(), Some(&style.syntax))
-                .map(|chunk| {
-                    let highlight = if let Some(severity) = chunk.diagnostic {
-                        let diagnostic_style = super::diagnostic_style(severity, true, style);
-                        let underline = Some(Underline {
-                            color: diagnostic_style.message.text.color,
-                            thickness: 1.0.into(),
-                            squiggly: true,
-                        });
-                        if let Some(mut highlight) = chunk.highlight_style {
-                            highlight.underline = underline;
-                            Some(highlight)
-                        } else {
-                            Some(HighlightStyle {
-                                underline,
-                                color: style.text.color,
-                                font_properties: style.text.font_properties,
-                            })
-                        }
+            let chunks = snapshot.chunks(rows.clone(), true).map(|chunk| {
+                let highlight_style = chunk
+                    .highlight_id
+                    .and_then(|highlight_id| highlight_id.style(&style.syntax));
+                let highlight = if let Some(severity) = chunk.diagnostic {
+                    let diagnostic_style = super::diagnostic_style(severity, true, style);
+                    let underline = Some(Underline {
+                        color: diagnostic_style.message.text.color,
+                        thickness: 1.0.into(),
+                        squiggly: true,
+                    });
+                    if let Some(mut highlight) = highlight_style {
+                        highlight.underline = underline;
+                        Some(highlight)
                     } else {
-                        chunk.highlight_style
-                    };
-                    (chunk.text, highlight)
-                });
+                        Some(HighlightStyle {
+                            underline,
+                            color: style.text.color,
+                            font_properties: style.text.font_properties,
+                        })
+                    }
+                } else {
+                    highlight_style
+                };
+                (chunk.text, highlight)
+            });
             layout_highlighted_chunks(
                 chunks,
                 &style.text,
@@ -667,8 +690,8 @@ impl EditorElement {
 }
 
 impl Element for EditorElement {
-    type LayoutState = Option<LayoutState>;
-    type PaintState = Option<PaintState>;
+    type LayoutState = LayoutState;
+    type PaintState = PaintState;
 
     fn layout(
         &mut self,
@@ -836,6 +859,7 @@ impl Element for EditorElement {
             max_row.saturating_sub(1) as f32,
         );
 
+        let mut completions = None;
         self.update_view(cx.app, |view, cx| {
             let clamped = view.clamp_scroll_left(scroll_max.x());
             let autoscrolled;
@@ -855,7 +879,32 @@ impl Element for EditorElement {
             if clamped || autoscrolled {
                 snapshot = view.snapshot(cx);
             }
+
+            if view.has_completions() {
+                let newest_selection_head = view
+                    .newest_selection::<usize>(&snapshot.buffer_snapshot)
+                    .head()
+                    .to_display_point(&snapshot);
+
+                if (start_row..end_row).contains(&newest_selection_head.row()) {
+                    let list = view.render_completions(cx).unwrap();
+                    completions = Some((newest_selection_head, list));
+                }
+            }
         });
+
+        if let Some((_, completions_list)) = completions.as_mut() {
+            completions_list.layout(
+                SizeConstraint {
+                    min: Vector2F::zero(),
+                    max: vec2f(
+                        f32::INFINITY,
+                        (12. * line_height).min((size.y() - line_height) / 2.),
+                    ),
+                },
+                cx,
+            );
+        }
 
         let blocks = self.layout_blocks(
             start_row..end_row,
@@ -873,7 +922,7 @@ impl Element for EditorElement {
 
         (
             size,
-            Some(LayoutState {
+            LayoutState {
                 size,
                 scroll_max,
                 gutter_size,
@@ -891,7 +940,8 @@ impl Element for EditorElement {
                 em_width,
                 em_advance,
                 selections,
-            }),
+                completions,
+            },
         )
     }
 
@@ -902,7 +952,6 @@ impl Element for EditorElement {
         layout: &mut Self::LayoutState,
         cx: &mut PaintContext,
     ) -> Self::PaintState {
-        let layout = layout.as_mut()?;
         cx.scene.push_layer(Some(bounds));
 
         let gutter_bounds = RectF::new(bounds.origin(), layout.gutter_size);
@@ -925,46 +974,48 @@ impl Element for EditorElement {
 
         cx.scene.pop_layer();
 
-        Some(PaintState {
+        PaintState {
             bounds,
             gutter_bounds,
             text_bounds,
-        })
+        }
     }
 
     fn dispatch_event(
         &mut self,
         event: &Event,
         _: RectF,
-        layout: &mut Self::LayoutState,
-        paint: &mut Self::PaintState,
+        layout: &mut LayoutState,
+        paint: &mut PaintState,
         cx: &mut EventContext,
     ) -> bool {
-        if let (Some(layout), Some(paint)) = (layout, paint) {
-            match event {
-                Event::LeftMouseDown {
-                    position,
-                    alt,
-                    shift,
-                    click_count,
-                    ..
-                } => self.mouse_down(*position, *alt, *shift, *click_count, layout, paint, cx),
-                Event::LeftMouseUp { position } => self.mouse_up(*position, cx),
-                Event::LeftMouseDragged { position } => {
-                    self.mouse_dragged(*position, layout, paint, cx)
-                }
-                Event::ScrollWheel {
-                    position,
-                    delta,
-                    precise,
-                } => self.scroll(*position, *delta, *precise, layout, paint, cx),
-                Event::KeyDown {
-                    chars, keystroke, ..
-                } => self.key_down(chars, keystroke, cx),
-                _ => false,
+        if let Some((_, completion_list)) = &mut layout.completions {
+            if completion_list.dispatch_event(event, cx) {
+                return true;
             }
-        } else {
-            false
+        }
+
+        match event {
+            Event::LeftMouseDown {
+                position,
+                alt,
+                shift,
+                click_count,
+                ..
+            } => self.mouse_down(*position, *alt, *shift, *click_count, layout, paint, cx),
+            Event::LeftMouseUp { position } => self.mouse_up(*position, cx),
+            Event::LeftMouseDragged { position } => {
+                self.mouse_dragged(*position, layout, paint, cx)
+            }
+            Event::ScrollWheel {
+                position,
+                delta,
+                precise,
+            } => self.scroll(*position, *delta, *precise, layout, paint, cx),
+            Event::KeyDown {
+                chars, keystroke, ..
+            } => self.key_down(chars, keystroke, cx),
+            _ => false,
         }
     }
 
@@ -1000,6 +1051,7 @@ pub struct LayoutState {
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     selections: HashMap<ReplicaId, Vec<text::Selection<DisplayPoint>>>,
     text_offset: Vector2F,
+    completions: Option<(DisplayPoint, ElementBox)>,
 }
 
 fn layout_line(

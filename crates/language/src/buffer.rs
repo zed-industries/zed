@@ -7,12 +7,12 @@ pub use crate::{
 use crate::{
     diagnostic_set::{DiagnosticEntry, DiagnosticGroup},
     outline::OutlineItem,
-    range_from_lsp, Outline,
+    range_from_lsp, CompletionLabel, Outline, ToLspPosition,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use futures::FutureExt as _;
-use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, MutableAppContext, Task};
+use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
 use lsp::LanguageServer;
 use parking_lot::Mutex;
@@ -21,7 +21,6 @@ use similar::{ChangeTag, TextDiff};
 use smol::future::yield_now;
 use std::{
     any::Any,
-    cell::RefCell,
     cmp::{self, Ordering},
     collections::{BTreeMap, HashMap},
     ffi::OsString,
@@ -38,17 +37,13 @@ use sum_tree::TreeMap;
 use text::{operation_queue::OperationQueue, rope::TextDimension};
 pub use text::{Buffer as TextBuffer, Operation as _, *};
 use theme::SyntaxTheme;
-use tree_sitter::{InputEdit, Parser, QueryCursor, Tree};
+use tree_sitter::{InputEdit, QueryCursor, Tree};
 use util::{post_inc, TryFutureExt as _};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use tree_sitter_rust;
 
 pub use lsp::DiagnosticSeverity;
-
-thread_local! {
-    static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
-}
 
 lazy_static! {
     static ref QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Default::default();
@@ -74,6 +69,7 @@ pub struct Buffer {
     selections_update_count: usize,
     diagnostics_update_count: usize,
     language_server: Option<LanguageServerState>,
+    completion_triggers: Vec<String>,
     deferred_ops: OperationQueue<Operation>,
     #[cfg(test)]
     pub(crate) operations: Vec<Operation>,
@@ -114,12 +110,20 @@ pub struct Diagnostic {
     pub is_disk_based: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct Completion<T> {
+    pub old_range: Range<T>,
+    pub new_text: String,
+    pub label: CompletionLabel,
+    pub lsp_completion: lsp::CompletionItem,
+}
+
 struct LanguageServerState {
     server: Arc<LanguageServer>,
     latest_snapshot: watch::Sender<Option<LanguageServerSnapshot>>,
     pending_snapshots: BTreeMap<usize, LanguageServerSnapshot>,
     next_version: usize,
-    _maintain_server: Task<Option<()>>,
+    _maintain_server: Task<()>,
 }
 
 #[derive(Clone)]
@@ -141,6 +145,9 @@ pub enum Operation {
         selections: Arc<[Selection<Anchor>]>,
         lamport_timestamp: clock::Lamport,
     },
+    UpdateCompletionTriggers {
+        triggers: Vec<String>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -157,6 +164,10 @@ pub enum Event {
 
 pub trait File {
     fn as_local(&self) -> Option<&dyn LocalFile>;
+
+    fn is_local(&self) -> bool {
+        self.as_local().is_some()
+    }
 
     fn mtime(&self) -> SystemTime;
 
@@ -184,6 +195,21 @@ pub trait File {
     fn format_remote(&self, buffer_id: u64, cx: &mut MutableAppContext)
         -> Option<Task<Result<()>>>;
 
+    fn completions(
+        &self,
+        buffer_id: u64,
+        position: Anchor,
+        language: Option<Arc<Language>>,
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<Vec<Completion<Anchor>>>>;
+
+    fn apply_additional_edits_for_completion(
+        &self,
+        buffer_id: u64,
+        completion: Completion<Anchor>,
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<Vec<clock::Local>>>;
+
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext);
 
     fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext);
@@ -208,6 +234,97 @@ pub trait LocalFile: File {
     );
 }
 
+#[cfg(feature = "test-support")]
+pub struct FakeFile {
+    pub path: Arc<Path>,
+}
+
+#[cfg(feature = "test-support")]
+impl File for FakeFile {
+    fn as_local(&self) -> Option<&dyn LocalFile> {
+        Some(self)
+    }
+
+    fn mtime(&self) -> SystemTime {
+        SystemTime::UNIX_EPOCH
+    }
+
+    fn path(&self) -> &Arc<Path> {
+        &self.path
+    }
+
+    fn full_path(&self, _: &AppContext) -> PathBuf {
+        self.path.to_path_buf()
+    }
+
+    fn file_name(&self, _: &AppContext) -> OsString {
+        self.path.file_name().unwrap().to_os_string()
+    }
+
+    fn is_deleted(&self) -> bool {
+        false
+    }
+
+    fn save(
+        &self,
+        _: u64,
+        _: Rope,
+        _: clock::Global,
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<(clock::Global, SystemTime)>> {
+        cx.spawn(|_| async move { Ok((Default::default(), SystemTime::UNIX_EPOCH)) })
+    }
+
+    fn format_remote(&self, _: u64, _: &mut MutableAppContext) -> Option<Task<Result<()>>> {
+        None
+    }
+
+    fn completions(
+        &self,
+        _: u64,
+        _: Anchor,
+        _: Option<Arc<Language>>,
+        _: &mut MutableAppContext,
+    ) -> Task<Result<Vec<Completion<Anchor>>>> {
+        Task::ready(Ok(Default::default()))
+    }
+
+    fn apply_additional_edits_for_completion(
+        &self,
+        _: u64,
+        _: Completion<Anchor>,
+        _: &mut MutableAppContext,
+    ) -> Task<Result<Vec<clock::Local>>> {
+        Task::ready(Ok(Default::default()))
+    }
+
+    fn buffer_updated(&self, _: u64, _: Operation, _: &mut MutableAppContext) {}
+
+    fn buffer_removed(&self, _: u64, _: &mut MutableAppContext) {}
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn to_proto(&self) -> rpc::proto::File {
+        unimplemented!()
+    }
+}
+
+#[cfg(feature = "test-support")]
+impl LocalFile for FakeFile {
+    fn abs_path(&self, _: &AppContext) -> PathBuf {
+        self.path.to_path_buf()
+    }
+
+    fn load(&self, cx: &AppContext) -> Task<Result<String>> {
+        cx.background().spawn(async move { Ok(Default::default()) })
+    }
+
+    fn buffer_reloaded(&self, _: u64, _: &clock::Global, _: SystemTime, _: &mut MutableAppContext) {
+    }
+}
+
 pub(crate) struct QueryCursorHandle(Option<QueryCursor>);
 
 #[derive(Clone)]
@@ -229,14 +346,13 @@ struct IndentSuggestion {
     indent: bool,
 }
 
-struct TextProvider<'a>(&'a Rope);
+pub(crate) struct TextProvider<'a>(pub(crate) &'a Rope);
 
 struct BufferChunkHighlights<'a> {
     captures: tree_sitter::QueryCaptures<'a, 'a, TextProvider<'a>>,
     next_capture: Option<(tree_sitter::QueryMatch<'a, 'a>, usize)>,
     stack: Vec<(usize, HighlightId)>,
     highlight_map: HighlightMap,
-    theme: &'a SyntaxTheme,
     _query_cursor: QueryCursorHandle,
 }
 
@@ -254,7 +370,7 @@ pub struct BufferChunks<'a> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Chunk<'a> {
     pub text: &'a str,
-    pub highlight_style: Option<HighlightStyle>,
+    pub highlight_id: Option<HighlightId>,
     pub diagnostic: Option<DiagnosticSeverity>,
 }
 
@@ -265,7 +381,7 @@ pub(crate) struct Diff {
 }
 
 #[derive(Clone, Copy)]
-struct DiagnosticEndpoint {
+pub(crate) struct DiagnosticEndpoint {
     offset: usize,
     is_start: bool,
     severity: DiagnosticSeverity,
@@ -349,6 +465,8 @@ impl Buffer {
             cx,
         );
 
+        this.completion_triggers = message.completion_triggers;
+
         let deferred_ops = message
             .deferred_operations
             .into_iter()
@@ -397,6 +515,7 @@ impl Buffer {
                         .map(|op| proto::serialize_operation(&Operation::Buffer(op.clone()))),
                 )
                 .collect(),
+            completion_triggers: self.completion_triggers.clone(),
         }
     }
 
@@ -439,6 +558,7 @@ impl Buffer {
             diagnostics: Default::default(),
             diagnostics_update_count: 0,
             language_server: None,
+            completion_triggers: Default::default(),
             deferred_ops: OperationQueue::new(),
             #[cfg(test)]
             operations: Default::default(),
@@ -488,20 +608,7 @@ impl Buffer {
                 if let Some(edits) = edits {
                     this.update(&mut cx, |this, cx| {
                         if this.version == version {
-                            for edit in &edits {
-                                let range = range_from_lsp(edit.range);
-                                if this.clip_point_utf16(range.start, Bias::Left) != range.start
-                                    || this.clip_point_utf16(range.end, Bias::Left) != range.end
-                                {
-                                    return Err(anyhow!(
-                                        "invalid formatting edits received from language server"
-                                    ));
-                                }
-                            }
-
-                            for edit in edits.into_iter().rev() {
-                                this.edit([range_from_lsp(edit.range)], edit.new_text, cx);
-                            }
+                            this.apply_lsp_edits(edits, cx)?;
                             Ok(())
                         } else {
                             Err(anyhow!("buffer edited since starting to format"))
@@ -554,81 +661,103 @@ impl Buffer {
         cx: &mut ModelContext<Self>,
     ) {
         self.language_server = if let Some(server) = language_server {
-            let (latest_snapshot_tx, mut latest_snapshot_rx) = watch::channel();
+            let (latest_snapshot_tx, mut latest_snapshot_rx) =
+                watch::channel::<Option<LanguageServerSnapshot>>();
+
+            let maintain_changes = cx.background().spawn({
+                let server = server.clone();
+                async move {
+                    let mut prev_snapshot: Option<LanguageServerSnapshot> = None;
+                    while let Some(snapshot) = latest_snapshot_rx.recv().await {
+                        if let Some(snapshot) = snapshot {
+                            let uri = lsp::Url::from_file_path(&snapshot.path).unwrap();
+                            if let Some(prev_snapshot) = prev_snapshot {
+                                let changes = lsp::DidChangeTextDocumentParams {
+                                    text_document: lsp::VersionedTextDocumentIdentifier::new(
+                                        uri,
+                                        snapshot.version as i32,
+                                    ),
+                                    content_changes: snapshot
+                                        .buffer_snapshot
+                                        .edits_since::<(PointUtf16, usize)>(
+                                            prev_snapshot.buffer_snapshot.version(),
+                                        )
+                                        .map(|edit| {
+                                            let edit_start = edit.new.start.0;
+                                            let edit_end =
+                                                edit_start + (edit.old.end.0 - edit.old.start.0);
+                                            let new_text = snapshot
+                                                .buffer_snapshot
+                                                .text_for_range(edit.new.start.1..edit.new.end.1)
+                                                .collect();
+                                            lsp::TextDocumentContentChangeEvent {
+                                                range: Some(lsp::Range::new(
+                                                    edit_start.to_lsp_position(),
+                                                    edit_end.to_lsp_position(),
+                                                )),
+                                                range_length: None,
+                                                text: new_text,
+                                            }
+                                        })
+                                        .collect(),
+                                };
+                                server
+                                    .notify::<lsp::notification::DidChangeTextDocument>(changes)
+                                    .await?;
+                            } else {
+                                server
+                                    .notify::<lsp::notification::DidOpenTextDocument>(
+                                        lsp::DidOpenTextDocumentParams {
+                                            text_document: lsp::TextDocumentItem::new(
+                                                uri,
+                                                Default::default(),
+                                                snapshot.version as i32,
+                                                snapshot.buffer_snapshot.text().to_string(),
+                                            ),
+                                        },
+                                    )
+                                    .await?;
+                            }
+
+                            prev_snapshot = Some(snapshot);
+                        }
+                    }
+                    Ok(())
+                }
+            });
+
             Some(LanguageServerState {
                 latest_snapshot: latest_snapshot_tx,
                 pending_snapshots: Default::default(),
                 next_version: 0,
                 server: server.clone(),
-                _maintain_server: cx.background().spawn(
-                    async move {
-                        let mut prev_snapshot: Option<LanguageServerSnapshot> = None;
-                        while let Some(snapshot) = latest_snapshot_rx.recv().await {
-                            if let Some(snapshot) = snapshot {
-                                let uri = lsp::Url::from_file_path(&snapshot.path).unwrap();
-                                if let Some(prev_snapshot) = prev_snapshot {
-                                    let changes = lsp::DidChangeTextDocumentParams {
-                                        text_document: lsp::VersionedTextDocumentIdentifier::new(
-                                            uri,
-                                            snapshot.version as i32,
-                                        ),
-                                        content_changes: snapshot
-                                            .buffer_snapshot
-                                            .edits_since::<(PointUtf16, usize)>(
-                                                prev_snapshot.buffer_snapshot.version(),
-                                            )
-                                            .map(|edit| {
-                                                let edit_start = edit.new.start.0;
-                                                let edit_end = edit_start
-                                                    + (edit.old.end.0 - edit.old.start.0);
-                                                let new_text = snapshot
-                                                    .buffer_snapshot
-                                                    .text_for_range(
-                                                        edit.new.start.1..edit.new.end.1,
-                                                    )
-                                                    .collect();
-                                                lsp::TextDocumentContentChangeEvent {
-                                                    range: Some(lsp::Range::new(
-                                                        lsp::Position::new(
-                                                            edit_start.row,
-                                                            edit_start.column,
-                                                        ),
-                                                        lsp::Position::new(
-                                                            edit_end.row,
-                                                            edit_end.column,
-                                                        ),
-                                                    )),
-                                                    range_length: None,
-                                                    text: new_text,
-                                                }
-                                            })
-                                            .collect(),
-                                    };
-                                    server
-                                        .notify::<lsp::notification::DidChangeTextDocument>(changes)
-                                        .await?;
-                                } else {
-                                    server
-                                        .notify::<lsp::notification::DidOpenTextDocument>(
-                                            lsp::DidOpenTextDocumentParams {
-                                                text_document: lsp::TextDocumentItem::new(
-                                                    uri,
-                                                    Default::default(),
-                                                    snapshot.version as i32,
-                                                    snapshot.buffer_snapshot.text().to_string(),
-                                                ),
-                                            },
-                                        )
-                                        .await?;
-                                }
-
-                                prev_snapshot = Some(snapshot);
+                _maintain_server: cx.spawn_weak(|this, mut cx| async move {
+                    let mut capabilities = server.capabilities();
+                    loop {
+                        if let Some(capabilities) = capabilities.recv().await.flatten() {
+                            if let Some(this) = this.upgrade(&cx) {
+                                let triggers = capabilities
+                                    .completion_provider
+                                    .and_then(|c| c.trigger_characters)
+                                    .unwrap_or_default();
+                                this.update(&mut cx, |this, cx| {
+                                    this.completion_triggers = triggers.clone();
+                                    this.send_operation(
+                                        Operation::UpdateCompletionTriggers { triggers },
+                                        cx,
+                                    );
+                                    cx.notify();
+                                });
+                            } else {
+                                return;
                             }
+
+                            break;
                         }
-                        Ok(())
                     }
-                    .log_err(),
-                ),
+
+                    maintain_changes.log_err().await;
+                }),
             })
         } else {
             None
@@ -759,6 +888,10 @@ impl Buffer {
         self.language.as_ref()
     }
 
+    pub fn language_server(&self) -> Option<&Arc<LanguageServer>> {
+        self.language_server.as_ref().map(|state| &state.server)
+    }
+
     pub fn parse_count(&self) -> usize {
         self.parse_count
     }
@@ -801,7 +934,7 @@ impl Buffer {
             let parsed_version = self.version();
             let parse_task = cx.background().spawn({
                 let grammar = grammar.clone();
-                async move { Self::parse_text(&text, old_tree, &grammar) }
+                async move { grammar.parse_text(&text, old_tree) }
             });
 
             match cx
@@ -835,26 +968,6 @@ impl Buffer {
             }
         }
         false
-    }
-
-    fn parse_text(text: &Rope, old_tree: Option<Tree>, grammar: &Grammar) -> Tree {
-        PARSER.with(|parser| {
-            let mut parser = parser.borrow_mut();
-            parser
-                .set_language(grammar.ts_language)
-                .expect("incompatible grammar");
-            let mut chunks = text.chunks_in_range(0..text.len());
-            let tree = parser
-                .parse_with(
-                    &mut move |offset, _| {
-                        chunks.seek(offset);
-                        chunks.next().unwrap_or("").as_bytes()
-                    },
-                    old_tree.as_ref(),
-                )
-                .unwrap();
-            tree
-        })
     }
 
     fn interpolate_tree(&self, tree: &mut SyntaxTree) {
@@ -1177,7 +1290,9 @@ impl Buffer {
                 let range = offset..(offset + len);
                 match tag {
                     ChangeTag::Equal => offset += len,
-                    ChangeTag::Delete => self.edit(Some(range), "", cx),
+                    ChangeTag::Delete => {
+                        self.edit(Some(range), "", cx);
+                    }
                     ChangeTag::Insert => {
                         self.edit(Some(offset..offset), &diff.new_text[range], cx);
                         offset += len;
@@ -1291,7 +1406,12 @@ impl Buffer {
             .blocking_send(Some(snapshot));
     }
 
-    pub fn edit<I, S, T>(&mut self, ranges_iter: I, new_text: T, cx: &mut ModelContext<Self>)
+    pub fn edit<I, S, T>(
+        &mut self,
+        ranges_iter: I,
+        new_text: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<clock::Local>
     where
         I: IntoIterator<Item = Range<S>>,
         S: ToOffset,
@@ -1305,7 +1425,8 @@ impl Buffer {
         ranges_iter: I,
         new_text: T,
         cx: &mut ModelContext<Self>,
-    ) where
+    ) -> Option<clock::Local>
+    where
         I: IntoIterator<Item = Range<S>>,
         S: ToOffset,
         T: Into<String>,
@@ -1313,20 +1434,14 @@ impl Buffer {
         self.edit_internal(ranges_iter, new_text, true, cx)
     }
 
-    /*
-    impl Buffer
-        pub fn edit
-        pub fn edit_internal
-        pub fn edit_with_autoindent
-    */
-
     pub fn edit_internal<I, S, T>(
         &mut self,
         ranges_iter: I,
         new_text: T,
         autoindent: bool,
         cx: &mut ModelContext<Self>,
-    ) where
+    ) -> Option<clock::Local>
+    where
         I: IntoIterator<Item = Range<S>>,
         S: ToOffset,
         T: Into<String>,
@@ -1350,7 +1465,7 @@ impl Buffer {
             }
         }
         if ranges.is_empty() {
-            return;
+            return None;
         }
 
         self.start_transaction();
@@ -1377,6 +1492,7 @@ impl Buffer {
         let new_text_len = new_text.len();
 
         let edit = self.text.edit(ranges.iter().cloned(), new_text);
+        let edit_id = edit.timestamp.local();
 
         if let Some((before_edit, edited)) = autoindent_request {
             let mut inserted = None;
@@ -1406,6 +1522,33 @@ impl Buffer {
 
         self.end_transaction(cx);
         self.send_operation(Operation::Buffer(text::Operation::Edit(edit)), cx);
+        Some(edit_id)
+    }
+
+    fn apply_lsp_edits(
+        &mut self,
+        edits: Vec<lsp::TextEdit>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<Vec<clock::Local>> {
+        for edit in &edits {
+            let range = range_from_lsp(edit.range);
+            if self.clip_point_utf16(range.start, Bias::Left) != range.start
+                || self.clip_point_utf16(range.end, Bias::Left) != range.end
+            {
+                return Err(anyhow!(
+                    "invalid formatting edits received from language server"
+                ));
+            }
+        }
+
+        self.start_transaction();
+        let edit_ids = edits
+            .into_iter()
+            .rev()
+            .filter_map(|edit| self.edit([range_from_lsp(edit.range)], edit.new_text, cx))
+            .collect();
+        self.end_transaction(cx);
+        Ok(edit_ids)
     }
 
     fn did_edit(
@@ -1492,6 +1635,7 @@ impl Buffer {
             Operation::UpdateSelections { selections, .. } => selections
                 .iter()
                 .all(|s| self.can_resolve(&s.start) && self.can_resolve(&s.end)),
+            Operation::UpdateCompletionTriggers { .. } => true,
         }
     }
 
@@ -1530,6 +1674,9 @@ impl Buffer {
                 );
                 self.text.lamport_clock.observe(lamport_timestamp);
                 self.selections_update_count += 1;
+            }
+            Operation::UpdateCompletionTriggers { triggers } => {
+                self.completion_triggers = triggers;
             }
         }
     }
@@ -1616,6 +1763,155 @@ impl Buffer {
         } else {
             false
         }
+    }
+
+    pub fn completions<T>(
+        &self,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Completion<Anchor>>>>
+    where
+        T: ToOffset,
+    {
+        let file = if let Some(file) = self.file.as_ref() {
+            file
+        } else {
+            return Task::ready(Ok(Default::default()));
+        };
+        let language = self.language.clone();
+
+        if let Some(file) = file.as_local() {
+            let server = if let Some(language_server) = self.language_server.as_ref() {
+                language_server.server.clone()
+            } else {
+                return Task::ready(Ok(Default::default()));
+            };
+            let abs_path = file.abs_path(cx);
+            let position = self.offset_to_point_utf16(position.to_offset(self));
+
+            cx.spawn(|this, cx| async move {
+                let completions = server
+                    .request::<lsp::request::Completion>(lsp::CompletionParams {
+                        text_document_position: lsp::TextDocumentPositionParams::new(
+                            lsp::TextDocumentIdentifier::new(
+                                lsp::Url::from_file_path(abs_path).unwrap(),
+                            ),
+                            position.to_lsp_position(),
+                        ),
+                        context: Default::default(),
+                        work_done_progress_params: Default::default(),
+                        partial_result_params: Default::default(),
+                    })
+                    .await?;
+
+                let completions = if let Some(completions) = completions {
+                    match completions {
+                        lsp::CompletionResponse::Array(completions) => completions,
+                        lsp::CompletionResponse::List(list) => list.items,
+                    }
+                } else {
+                    Default::default()
+                };
+
+                this.read_with(&cx, |this, _| {
+                    Ok(completions.into_iter().filter_map(|lsp_completion| {
+                        let (old_range, new_text) = match lsp_completion.text_edit.as_ref()? {
+                            lsp::CompletionTextEdit::Edit(edit) => (range_from_lsp(edit.range), edit.new_text.clone()),
+                            lsp::CompletionTextEdit::InsertAndReplace(_) => {
+                                log::info!("received an insert and replace completion but we don't yet support that");
+                                return None
+                            },
+                        };
+
+                        let clipped_start = this.clip_point_utf16(old_range.start, Bias::Left);
+                        let clipped_end = this.clip_point_utf16(old_range.end, Bias::Left) ;
+                        if clipped_start == old_range.start && clipped_end == old_range.end {
+                            Some(Completion {
+                                old_range: this.anchor_before(old_range.start)..this.anchor_after(old_range.end),
+                                new_text,
+                                label: language.as_ref().and_then(|l| l.label_for_completion(&lsp_completion)).unwrap_or_else(|| CompletionLabel::plain(&lsp_completion)),
+                                lsp_completion,
+                            })
+                        } else {
+                            None
+                        }
+                    }).collect())
+                })
+            })
+        } else {
+            file.completions(
+                self.remote_id(),
+                self.anchor_before(position),
+                language,
+                cx.as_mut(),
+            )
+        }
+    }
+
+    pub fn apply_additional_edits_for_completion(
+        &mut self,
+        completion: Completion<Anchor>,
+        push_to_history: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<clock::Local>>> {
+        let file = if let Some(file) = self.file.as_ref() {
+            file
+        } else {
+            return Task::ready(Ok(Default::default()));
+        };
+
+        if file.is_local() {
+            let server = if let Some(lang) = self.language_server.as_ref() {
+                lang.server.clone()
+            } else {
+                return Task::ready(Ok(Default::default()));
+            };
+
+            cx.spawn(|this, mut cx| async move {
+                let resolved_completion = server
+                    .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
+                    .await?;
+                if let Some(additional_edits) = resolved_completion.additional_text_edits {
+                    this.update(&mut cx, |this, cx| {
+                        if !push_to_history {
+                            this.avoid_grouping_next_transaction();
+                        }
+                        this.start_transaction();
+                        let edit_ids = this.apply_lsp_edits(additional_edits, cx);
+                        if let Some(transaction_id) = this.end_transaction(cx) {
+                            if !push_to_history {
+                                this.text.forget_transaction(transaction_id);
+                            }
+                        }
+                        edit_ids
+                    })
+                } else {
+                    Ok(Default::default())
+                }
+            })
+        } else {
+            let apply_edits = file.apply_additional_edits_for_completion(
+                self.remote_id(),
+                completion,
+                cx.as_mut(),
+            );
+            cx.spawn(|this, mut cx| async move {
+                let edit_ids = apply_edits.await?;
+                this.update(&mut cx, |this, _| this.text.wait_for_edits(&edit_ids))
+                    .await;
+                if push_to_history {
+                    this.update(&mut cx, |this, _| {
+                        this.text
+                            .push_transaction(edit_ids.iter().copied(), Instant::now());
+                    });
+                }
+                Ok(edit_ids)
+            })
+        }
+    }
+
+    pub fn completion_triggers(&self) -> &[String] {
+        &self.completion_triggers
     }
 }
 
@@ -1799,13 +2095,14 @@ impl BufferSnapshot {
     pub fn chunks<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
-        theme: Option<&'a SyntaxTheme>,
+        language_aware: bool,
     ) -> BufferChunks<'a> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
-        let mut highlights = None;
-        let mut diagnostic_endpoints = Vec::<DiagnosticEndpoint>::new();
-        if let Some(theme) = theme {
+        let mut tree = None;
+        let mut diagnostic_endpoints = Vec::new();
+        if language_aware {
+            tree = self.tree.as_ref();
             for entry in self.diagnostics_in_range::<_, usize>(range.clone()) {
                 diagnostic_endpoints.push(DiagnosticEndpoint {
                     offset: entry.range.start,
@@ -1820,43 +2117,15 @@ impl BufferSnapshot {
             }
             diagnostic_endpoints
                 .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
-
-            if let Some((grammar, tree)) = self.grammar().zip(self.tree.as_ref()) {
-                let mut query_cursor = QueryCursorHandle::new();
-
-                // TODO - add a Tree-sitter API to remove the need for this.
-                let cursor = unsafe {
-                    std::mem::transmute::<_, &'static mut QueryCursor>(query_cursor.deref_mut())
-                };
-                let captures = cursor.set_byte_range(range.clone()).captures(
-                    &grammar.highlights_query,
-                    tree.root_node(),
-                    TextProvider(self.text.as_rope()),
-                );
-                highlights = Some(BufferChunkHighlights {
-                    captures,
-                    next_capture: None,
-                    stack: Default::default(),
-                    highlight_map: grammar.highlight_map(),
-                    _query_cursor: query_cursor,
-                    theme,
-                })
-            }
         }
 
-        let diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
-        let chunks = self.text.as_rope().chunks_in_range(range.clone());
-
-        BufferChunks {
+        BufferChunks::new(
+            self.text.as_rope(),
             range,
-            chunks,
+            tree,
+            self.grammar(),
             diagnostic_endpoints,
-            error_depth: 0,
-            warning_depth: 0,
-            information_depth: 0,
-            hint_depth: 0,
-            highlights,
-        }
+        )
     }
 
     pub fn language(&self) -> Option<&Arc<Language>> {
@@ -1897,7 +2166,7 @@ impl BufferSnapshot {
             TextProvider(self.as_rope()),
         );
 
-        let mut chunks = self.chunks(0..self.len(), theme);
+        let mut chunks = self.chunks(0..self.len(), true);
 
         let item_capture_ix = grammar.outline_query.capture_index_for_name("item")?;
         let name_capture_ix = grammar.outline_query.capture_index_for_name("name")?;
@@ -1951,7 +2220,11 @@ impl BufferSnapshot {
                         } else {
                             offset += chunk.text.len();
                         }
-                        if let Some(style) = chunk.highlight_style {
+                        let style = chunk
+                            .highlight_id
+                            .zip(theme)
+                            .and_then(|(highlight, theme)| highlight.style(theme));
+                        if let Some(style) = style {
                             let start = text.len();
                             let end = start + chunk.text.len();
                             highlight_ranges.push((start..end, style));
@@ -2126,7 +2399,7 @@ impl<'a> tree_sitter::TextProvider<'a> for TextProvider<'a> {
     }
 }
 
-struct ByteChunks<'a>(rope::Chunks<'a>);
+pub(crate) struct ByteChunks<'a>(rope::Chunks<'a>);
 
 impl<'a> Iterator for ByteChunks<'a> {
     type Item = &'a [u8];
@@ -2139,6 +2412,50 @@ impl<'a> Iterator for ByteChunks<'a> {
 unsafe impl<'a> Send for BufferChunks<'a> {}
 
 impl<'a> BufferChunks<'a> {
+    pub(crate) fn new(
+        text: &'a Rope,
+        range: Range<usize>,
+        tree: Option<&'a Tree>,
+        grammar: Option<&'a Arc<Grammar>>,
+        diagnostic_endpoints: Vec<DiagnosticEndpoint>,
+    ) -> Self {
+        let mut highlights = None;
+        if let Some((grammar, tree)) = grammar.zip(tree) {
+            let mut query_cursor = QueryCursorHandle::new();
+
+            // TODO - add a Tree-sitter API to remove the need for this.
+            let cursor = unsafe {
+                std::mem::transmute::<_, &'static mut QueryCursor>(query_cursor.deref_mut())
+            };
+            let captures = cursor.set_byte_range(range.clone()).captures(
+                &grammar.highlights_query,
+                tree.root_node(),
+                TextProvider(text),
+            );
+            highlights = Some(BufferChunkHighlights {
+                captures,
+                next_capture: None,
+                stack: Default::default(),
+                highlight_map: grammar.highlight_map(),
+                _query_cursor: query_cursor,
+            })
+        }
+
+        let diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
+        let chunks = text.chunks_in_range(range.clone());
+
+        BufferChunks {
+            range,
+            chunks,
+            diagnostic_endpoints,
+            error_depth: 0,
+            warning_depth: 0,
+            information_depth: 0,
+            hint_depth: 0,
+            highlights,
+        }
+    }
+
     pub fn seek(&mut self, offset: usize) {
         self.range.start = offset;
         self.chunks.seek(self.range.start);
@@ -2247,11 +2564,11 @@ impl<'a> Iterator for BufferChunks<'a> {
             let mut chunk_end = (self.chunks.offset() + chunk.len())
                 .min(next_capture_start)
                 .min(next_diagnostic_endpoint);
-            let mut highlight_style = None;
+            let mut highlight_id = None;
             if let Some(highlights) = self.highlights.as_ref() {
                 if let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last() {
                     chunk_end = chunk_end.min(*parent_capture_end);
-                    highlight_style = parent_highlight_id.style(highlights.theme);
+                    highlight_id = Some(*parent_highlight_id);
                 }
             }
 
@@ -2264,7 +2581,7 @@ impl<'a> Iterator for BufferChunks<'a> {
 
             Some(Chunk {
                 text: slice,
-                highlight_style,
+                highlight_id,
                 diagnostic: self.current_diagnostic_severity(),
             })
         } else {
@@ -2334,6 +2651,9 @@ impl operation_queue::Operation for Operation {
             | Operation::UpdateSelections {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
+            Operation::UpdateCompletionTriggers { .. } => {
+                unreachable!("updating completion triggers should never be deferred")
+            }
         }
     }
 }
@@ -2349,6 +2669,20 @@ impl Default for Diagnostic {
             is_valid: true,
             is_disk_based: false,
         }
+    }
+}
+
+impl<T> Completion<T> {
+    pub fn sort_key(&self) -> (usize, &str) {
+        let kind_key = match self.lsp_completion.kind {
+            Some(lsp::CompletionItemKind::VARIABLE) => 0,
+            _ => 1,
+        };
+        (kind_key, &self.label.text[self.label.filter_range.clone()])
+    }
+
+    pub fn is_snippet(&self) -> bool {
+        self.lsp_completion.insert_text_format == Some(lsp::InsertTextFormat::SNIPPET)
     }
 }
 

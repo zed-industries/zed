@@ -40,6 +40,7 @@ bad = "#b7372e"
 active_line = "#00000022"
 highlighted_line = "#faca5033"
 hover = "#00000033"
+selected = "#00000088"
 
 [editor.syntax]
 keyword = { color = "#0086c0", weight = "bold" }
@@ -51,7 +52,6 @@ comment = "#6a9955"
 property = "#4e94ce"
 variant = "#4fc1ff"
 constant = "#9cdcfe"
-
 title = { color = "#9cdcfe", weight = "bold" }
 emphasis = "#4ec9b0"
 "emphasis.strong" = { color = "#4ec9b0", weight = "bold" }

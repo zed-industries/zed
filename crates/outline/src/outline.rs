@@ -1,12 +1,11 @@
 use editor::{
-    display_map::ToDisplayPoint, Anchor, AnchorRangeExt, Autoscroll, DisplayPoint, Editor,
-    EditorSettings, ToPoint,
+    combine_syntax_and_fuzzy_match_highlights, display_map::ToDisplayPoint, Anchor, AnchorRangeExt,
+    Autoscroll, DisplayPoint, Editor, EditorSettings, ToPoint,
 };
 use fuzzy::StringMatch;
 use gpui::{
     action,
     elements::*,
-    fonts::{self, HighlightStyle},
     geometry::vector::Vector2F,
     keymap::{self, Binding},
     AppContext, Axis, Entity, MutableAppContext, RenderContext, View, ViewContext, ViewHandle,
@@ -17,7 +16,6 @@ use ordered_float::OrderedFloat;
 use postage::watch;
 use std::{
     cmp::{self, Reverse},
-    ops::Range,
     sync::Arc,
 };
 use workspace::{
@@ -362,7 +360,7 @@ impl OutlineView {
             .with_highlights(combine_syntax_and_fuzzy_match_highlights(
                 &outline_item.text,
                 style.label.text.clone().into(),
-                &outline_item.highlight_ranges,
+                outline_item.highlight_ranges.iter().cloned(),
                 &string_match.positions,
             ))
             .contained()
@@ -370,155 +368,5 @@ impl OutlineView {
             .contained()
             .with_style(style.container)
             .boxed()
-    }
-}
-
-fn combine_syntax_and_fuzzy_match_highlights(
-    text: &str,
-    default_style: HighlightStyle,
-    syntax_ranges: &[(Range<usize>, HighlightStyle)],
-    match_indices: &[usize],
-) -> Vec<(Range<usize>, HighlightStyle)> {
-    let mut result = Vec::new();
-    let mut match_indices = match_indices.iter().copied().peekable();
-
-    for (range, mut syntax_highlight) in syntax_ranges
-        .iter()
-        .cloned()
-        .chain([(usize::MAX..0, Default::default())])
-    {
-        syntax_highlight.font_properties.weight(Default::default());
-
-        // Add highlights for any fuzzy match characters before the next
-        // syntax highlight range.
-        while let Some(&match_index) = match_indices.peek() {
-            if match_index >= range.start {
-                break;
-            }
-            match_indices.next();
-            let end_index = char_ix_after(match_index, text);
-            let mut match_style = default_style;
-            match_style.font_properties.weight(fonts::Weight::BOLD);
-            result.push((match_index..end_index, match_style));
-        }
-
-        if range.start == usize::MAX {
-            break;
-        }
-
-        // Add highlights for any fuzzy match characters within the
-        // syntax highlight range.
-        let mut offset = range.start;
-        while let Some(&match_index) = match_indices.peek() {
-            if match_index >= range.end {
-                break;
-            }
-
-            match_indices.next();
-            if match_index > offset {
-                result.push((offset..match_index, syntax_highlight));
-            }
-
-            let mut end_index = char_ix_after(match_index, text);
-            while let Some(&next_match_index) = match_indices.peek() {
-                if next_match_index == end_index && next_match_index < range.end {
-                    end_index = char_ix_after(next_match_index, text);
-                    match_indices.next();
-                } else {
-                    break;
-                }
-            }
-
-            let mut match_style = syntax_highlight;
-            match_style.font_properties.weight(fonts::Weight::BOLD);
-            result.push((match_index..end_index, match_style));
-            offset = end_index;
-        }
-
-        if offset < range.end {
-            result.push((offset..range.end, syntax_highlight));
-        }
-    }
-
-    result
-}
-
-fn char_ix_after(ix: usize, text: &str) -> usize {
-    ix + text[ix..].chars().next().unwrap().len_utf8()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use gpui::{color::Color, fonts::HighlightStyle};
-
-    #[test]
-    fn test_combine_syntax_and_fuzzy_match_highlights() {
-        let string = "abcdefghijklmnop";
-        let default = HighlightStyle::default();
-        let syntax_ranges = [
-            (
-                0..3,
-                HighlightStyle {
-                    color: Color::red(),
-                    ..default
-                },
-            ),
-            (
-                4..8,
-                HighlightStyle {
-                    color: Color::green(),
-                    ..default
-                },
-            ),
-        ];
-        let match_indices = [4, 6, 7, 8];
-        assert_eq!(
-            combine_syntax_and_fuzzy_match_highlights(
-                &string,
-                default,
-                &syntax_ranges,
-                &match_indices,
-            ),
-            &[
-                (
-                    0..3,
-                    HighlightStyle {
-                        color: Color::red(),
-                        ..default
-                    },
-                ),
-                (
-                    4..5,
-                    HighlightStyle {
-                        color: Color::green(),
-                        font_properties: *fonts::Properties::default().weight(fonts::Weight::BOLD),
-                        ..default
-                    },
-                ),
-                (
-                    5..6,
-                    HighlightStyle {
-                        color: Color::green(),
-                        ..default
-                    },
-                ),
-                (
-                    6..8,
-                    HighlightStyle {
-                        color: Color::green(),
-                        font_properties: *fonts::Properties::default().weight(fonts::Weight::BOLD),
-                        ..default
-                    },
-                ),
-                (
-                    8..9,
-                    HighlightStyle {
-                        font_properties: *fonts::Properties::default().weight(fonts::Weight::BOLD),
-                        ..default
-                    },
-                ),
-            ]
-        );
     }
 }
