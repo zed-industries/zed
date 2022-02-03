@@ -320,6 +320,7 @@ border = { width = 2, color = "$border.1" }
 corner_radius = 6
 padding = 6
 match_highlight = { color = "$editor.syntax.keyword.color", weight = "$editor.syntax.keyword.weight" }
+margin.left = -14
 
 [editor.autocomplete.item]
 padding = { left = 6, right = 6, top = 2, bottom = 2 }
