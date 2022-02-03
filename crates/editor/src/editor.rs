@@ -146,6 +146,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
             Some("Editor && completing"),
         ),
         Binding::new("tab", Tab, Some("Editor")),
+        Binding::new("tab", ConfirmCompletion(None), Some("Editor && completing")),
         Binding::new("shift-tab", Outdent, Some("Editor")),
         Binding::new("ctrl-shift-K", DeleteLine, Some("Editor")),
         Binding::new(
