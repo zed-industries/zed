@@ -17,10 +17,14 @@ use lazy_static::lazy_static;
 pub use outline::{Outline, OutlineItem};
 use parking_lot::Mutex;
 use serde::Deserialize;
-use std::{ops::Range, path::Path, str, sync::Arc};
+use std::{cell::RefCell, ops::Range, path::Path, str, sync::Arc};
 use theme::SyntaxTheme;
 use tree_sitter::{self, Query};
 pub use tree_sitter::{Parser, Tree};
+
+thread_local! {
+    static PARSER: RefCell<Parser>  = RefCell::new(Parser::new());
+}
 
 lazy_static! {
     pub static ref PLAIN_TEXT: Arc<Language> = Arc::new(Language::new(
@@ -255,6 +259,28 @@ impl Language {
             .and_then(|p| p.label_for_completion(completion))
     }
 
+    pub fn highlight_text<'a>(&'a self, text: &'a Rope) -> Vec<(Range<usize>, HighlightId)> {
+        let mut result = Vec::new();
+        if let Some(grammar) = &self.grammar {
+            let tree = grammar.parse_text(text, None);
+            let mut offset = 0;
+            for chunk in BufferChunks::new(
+                text,
+                0..text.len(),
+                Some(&tree),
+                self.grammar.as_ref(),
+                vec![],
+            ) {
+                let end_offset = offset + chunk.text.len();
+                if let Some(highlight_id) = chunk.highlight_id {
+                    result.push((offset..end_offset, highlight_id));
+                }
+                offset = end_offset;
+            }
+        }
+        result
+    }
+
     pub fn brackets(&self) -> &[BracketPair] {
         &self.config.brackets
     }
@@ -268,6 +294,25 @@ impl Language {
 }
 
 impl Grammar {
+    fn parse_text(&self, text: &Rope, old_tree: Option<Tree>) -> Tree {
+        PARSER.with(|parser| {
+            let mut parser = parser.borrow_mut();
+            parser
+                .set_language(self.ts_language)
+                .expect("incompatible grammar");
+            let mut chunks = text.chunks_in_range(0..text.len());
+            parser
+                .parse_with(
+                    &mut move |offset, _| {
+                        chunks.seek(offset);
+                        chunks.next().unwrap_or("").as_bytes()
+                    },
+                    old_tree.as_ref(),
+                )
+                .unwrap()
+        })
+    }
+
     pub fn highlight_map(&self) -> HighlightMap {
         self.highlight_map.lock().clone()
     }

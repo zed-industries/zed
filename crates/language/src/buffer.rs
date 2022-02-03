@@ -21,7 +21,6 @@ use similar::{ChangeTag, TextDiff};
 use smol::future::yield_now;
 use std::{
     any::Any,
-    cell::RefCell,
     cmp::{self, Ordering},
     collections::{BTreeMap, HashMap},
     ffi::OsString,
@@ -38,17 +37,13 @@ use sum_tree::TreeMap;
 use text::{operation_queue::OperationQueue, rope::TextDimension};
 pub use text::{Buffer as TextBuffer, Operation as _, *};
 use theme::SyntaxTheme;
-use tree_sitter::{InputEdit, Parser, QueryCursor, Tree};
+use tree_sitter::{InputEdit, QueryCursor, Tree};
 use util::{post_inc, TryFutureExt as _};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use tree_sitter_rust;
 
 pub use lsp::DiagnosticSeverity;
-
-thread_local! {
-    static PARSER: RefCell<Parser> = RefCell::new(Parser::new());
-}
 
 lazy_static! {
     static ref QUERY_CURSORS: Mutex<Vec<QueryCursor>> = Default::default();
@@ -351,7 +346,7 @@ struct IndentSuggestion {
     indent: bool,
 }
 
-struct TextProvider<'a>(&'a Rope);
+pub(crate) struct TextProvider<'a>(pub(crate) &'a Rope);
 
 struct BufferChunkHighlights<'a> {
     captures: tree_sitter::QueryCaptures<'a, 'a, TextProvider<'a>>,
@@ -938,7 +933,7 @@ impl Buffer {
             let parsed_version = self.version();
             let parse_task = cx.background().spawn({
                 let grammar = grammar.clone();
-                async move { Self::parse_text(&text, old_tree, &grammar) }
+                async move { grammar.parse_text(&text, old_tree) }
             });
 
             match cx
@@ -972,26 +967,6 @@ impl Buffer {
             }
         }
         false
-    }
-
-    fn parse_text(text: &Rope, old_tree: Option<Tree>, grammar: &Grammar) -> Tree {
-        PARSER.with(|parser| {
-            let mut parser = parser.borrow_mut();
-            parser
-                .set_language(grammar.ts_language)
-                .expect("incompatible grammar");
-            let mut chunks = text.chunks_in_range(0..text.len());
-            let tree = parser
-                .parse_with(
-                    &mut move |offset, _| {
-                        chunks.seek(offset);
-                        chunks.next().unwrap_or("").as_bytes()
-                    },
-                    old_tree.as_ref(),
-                )
-                .unwrap();
-            tree
-        })
     }
 
     fn interpolate_tree(&self, tree: &mut SyntaxTree) {
@@ -2414,7 +2389,7 @@ impl<'a> tree_sitter::TextProvider<'a> for TextProvider<'a> {
     }
 }
 
-struct ByteChunks<'a>(rope::Chunks<'a>);
+pub(crate) struct ByteChunks<'a>(rope::Chunks<'a>);
 
 impl<'a> Iterator for ByteChunks<'a> {
     type Item = &'a [u8];
