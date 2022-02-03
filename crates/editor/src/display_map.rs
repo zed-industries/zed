@@ -250,12 +250,16 @@ impl DisplaySnapshot {
 
     pub fn text_chunks(&self, display_row: u32) -> impl Iterator<Item = &str> {
         self.blocks_snapshot
-            .chunks(display_row..self.max_point().row() + 1)
+            .chunks(display_row..self.max_point().row() + 1, false)
             .map(|h| h.text)
     }
 
-    pub fn chunks<'a>(&'a self, display_rows: Range<u32>) -> DisplayChunks<'a> {
-        self.blocks_snapshot.chunks(display_rows)
+    pub fn chunks<'a>(
+        &'a self,
+        display_rows: Range<u32>,
+        language_aware: bool,
+    ) -> DisplayChunks<'a> {
+        self.blocks_snapshot.chunks(display_rows, language_aware)
     }
 
     pub fn chars_at<'a>(&'a self, point: DisplayPoint) -> impl Iterator<Item = char> + 'a {
@@ -1117,7 +1121,7 @@ mod tests {
     ) -> Vec<(String, Option<Color>)> {
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         let mut chunks: Vec<(String, Option<Color>)> = Vec::new();
-        for chunk in snapshot.chunks(rows) {
+        for chunk in snapshot.chunks(rows, true) {
             let color = chunk
                 .highlight_id
                 .and_then(|id| id.style(theme).map(|s| s.color));

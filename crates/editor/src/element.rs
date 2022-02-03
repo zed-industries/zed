@@ -598,7 +598,7 @@ impl EditorElement {
                 .collect();
         } else {
             let style = &self.settings.style;
-            let chunks = snapshot.chunks(rows.clone()).map(|chunk| {
+            let chunks = snapshot.chunks(rows.clone(), true).map(|chunk| {
                 let highlight_style = chunk
                     .highlight_id
                     .and_then(|highlight_id| highlight_id.style(&style.syntax));

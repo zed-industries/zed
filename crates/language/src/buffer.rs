@@ -2092,28 +2092,37 @@ impl BufferSnapshot {
         None
     }
 
-    pub fn chunks<'a, T: ToOffset>(&'a self, range: Range<T>) -> BufferChunks<'a> {
+    pub fn chunks<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+        language_aware: bool,
+    ) -> BufferChunks<'a> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
-        let mut diagnostic_endpoints = Vec::<DiagnosticEndpoint>::new();
-        for entry in self.diagnostics_in_range::<_, usize>(range.clone()) {
-            diagnostic_endpoints.push(DiagnosticEndpoint {
-                offset: entry.range.start,
-                is_start: true,
-                severity: entry.diagnostic.severity,
-            });
-            diagnostic_endpoints.push(DiagnosticEndpoint {
-                offset: entry.range.end,
-                is_start: false,
-                severity: entry.diagnostic.severity,
-            });
+        let mut tree = None;
+        let mut diagnostic_endpoints = Vec::new();
+        if language_aware {
+            tree = self.tree.as_ref();
+            for entry in self.diagnostics_in_range::<_, usize>(range.clone()) {
+                diagnostic_endpoints.push(DiagnosticEndpoint {
+                    offset: entry.range.start,
+                    is_start: true,
+                    severity: entry.diagnostic.severity,
+                });
+                diagnostic_endpoints.push(DiagnosticEndpoint {
+                    offset: entry.range.end,
+                    is_start: false,
+                    severity: entry.diagnostic.severity,
+                });
+            }
+            diagnostic_endpoints
+                .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
         }
-        diagnostic_endpoints.sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
 
         BufferChunks::new(
             self.text.as_rope(),
             range,
-            self.tree.as_ref(),
+            tree,
             self.grammar(),
             diagnostic_endpoints,
         )
@@ -2157,7 +2166,7 @@ impl BufferSnapshot {
             TextProvider(self.as_rope()),
         );
 
-        let mut chunks = self.chunks(0..self.len());
+        let mut chunks = self.chunks(0..self.len(), true);
 
         let item_capture_ix = grammar.outline_query.capture_index_for_name("item")?;
         let name_capture_ix = grammar.outline_query.capture_index_for_name("name")?;

@@ -607,7 +607,7 @@ async fn regex_search(
         let mut line = String::new();
         let mut line_offset = 0;
         for (chunk_ix, chunk) in buffer
-            .chunks(0..buffer.len())
+            .chunks(0..buffer.len(), false)
             .map(|c| c.text)
             .chain(["\n"])
             .enumerate()

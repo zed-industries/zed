@@ -460,12 +460,12 @@ impl<'a> BlockMapWriter<'a> {
 impl BlockSnapshot {
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(0..self.transforms.summary().output_rows)
+        self.chunks(0..self.transforms.summary().output_rows, false)
             .map(|chunk| chunk.text)
             .collect()
     }
 
-    pub fn chunks<'a>(&'a self, rows: Range<u32>) -> BlockChunks<'a> {
+    pub fn chunks<'a>(&'a self, rows: Range<u32>, language_aware: bool) -> BlockChunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
         let input_end = {
@@ -493,7 +493,9 @@ impl BlockSnapshot {
             cursor.start().1 .0 + overshoot
         };
         BlockChunks {
-            input_chunks: self.wrap_snapshot.chunks(input_start..input_end),
+            input_chunks: self
+                .wrap_snapshot
+                .chunks(input_start..input_end, language_aware),
             input_chunk: Default::default(),
             transforms: cursor,
             output_row: rows.start,
@@ -1335,7 +1337,7 @@ mod tests {
             for start_row in 0..expected_row_count {
                 let expected_text = expected_lines[start_row..].join("\n");
                 let actual_text = blocks_snapshot
-                    .chunks(start_row as u32..expected_row_count as u32)
+                    .chunks(start_row as u32..expected_row_count as u32, false)
                     .map(|chunk| chunk.text)
                     .collect::<String>();
                 assert_eq!(

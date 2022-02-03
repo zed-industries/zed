@@ -489,7 +489,7 @@ impl FoldSnapshot {
 
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(FoldOffset(0)..self.len())
+        self.chunks(FoldOffset(0)..self.len(), false)
             .map(|c| c.text)
             .collect()
     }
@@ -629,11 +629,11 @@ impl FoldSnapshot {
 
     pub fn chars_at(&self, start: FoldPoint) -> impl '_ + Iterator<Item = char> {
         let start = start.to_offset(self);
-        self.chunks(start..self.len())
+        self.chunks(start..self.len(), false)
             .flat_map(|chunk| chunk.text.chars())
     }
 
-    pub fn chunks<'a>(&'a self, range: Range<FoldOffset>) -> FoldChunks<'a> {
+    pub fn chunks<'a>(&'a self, range: Range<FoldOffset>, language_aware: bool) -> FoldChunks<'a> {
         let mut transform_cursor = self.transforms.cursor::<(FoldOffset, usize)>();
 
         transform_cursor.seek(&range.end, Bias::Right, &());
@@ -646,7 +646,9 @@ impl FoldSnapshot {
 
         FoldChunks {
             transform_cursor,
-            buffer_chunks: self.buffer_snapshot.chunks(buffer_start..buffer_end),
+            buffer_chunks: self
+                .buffer_snapshot
+                .chunks(buffer_start..buffer_end, language_aware),
             buffer_chunk: None,
             buffer_offset: buffer_start,
             output_offset: range.start.0,
@@ -1393,7 +1395,7 @@ mod tests {
                 let text = &expected_text[start.0..end.0];
                 assert_eq!(
                     snapshot
-                        .chunks(start..end)
+                        .chunks(start..end, false)
                         .map(|c| c.text)
                         .collect::<String>(),
                     text,
