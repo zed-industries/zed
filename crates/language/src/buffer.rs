@@ -746,6 +746,7 @@ impl Buffer {
                                         Operation::UpdateCompletionTriggers { triggers },
                                         cx,
                                     );
+                                    cx.notify();
                                 });
                             } else {
                                 return;

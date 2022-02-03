@@ -6826,6 +6826,7 @@ mod tests {
             .with_language_server(language_server, cx)
         });
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
+        buffer.next_notification(&cx).await;
 
         let (_, editor) = cx.add_window(|cx| build_editor(buffer, settings, cx));
 
@@ -6881,6 +6882,7 @@ mod tests {
             );
             apply_additional_edits
         });
+
         let (id, _) = fake
             .receive_request::<lsp::request::ResolveCompletionItem>()
             .await;
@@ -6900,11 +6902,11 @@ mod tests {
         assert_eq!(
             editor.read_with(&cx, |editor, cx| editor.text(cx)),
             "
-                    one.second_completion
-                    two
-                    three
-                    additional edit
-                "
+                one.second_completion
+                two
+                three
+                additional edit
+            "
             .unindent()
         );
     }
