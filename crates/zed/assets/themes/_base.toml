@@ -322,6 +322,10 @@ match_highlight = { color = "$editor.syntax.keyword.color", weight = "$editor.sy
 
 [editor.autocomplete.selected_item]
 extends = "$editor.autocomplete.item"
+background = "$state.selected"
+
+[editor.autocomplete.hovered_item]
+extends = "$editor.autocomplete.item"
 background = "$state.hover"
 
 [project_diagnostics]

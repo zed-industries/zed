@@ -328,6 +328,7 @@ pub struct AutocompleteStyle {
     pub container: ContainerStyle,
     pub item: ContainerStyle,
     pub selected_item: ContainerStyle,
+    pub hovered_item: ContainerStyle,
     pub match_highlight: HighlightStyle,
 }
 

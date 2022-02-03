@@ -23,6 +23,7 @@ use gpui::{
     fonts::{self, HighlightStyle, TextStyle},
     geometry::vector::{vec2f, Vector2F},
     keymap::Binding,
+    platform::CursorStyle,
     text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
     MutableAppContext, RenderContext, Task, View, ViewContext, WeakModelHandle, WeakViewHandle,
 };
@@ -123,7 +124,7 @@ action!(FoldSelectedRanges);
 action!(Scroll, Vector2F);
 action!(Select, SelectPhase);
 action!(ShowCompletions);
-action!(ConfirmCompletion);
+action!(ConfirmCompletion, Option<usize>);
 
 pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpener>>) {
     path_openers.push(Box::new(items::BufferOpener));
@@ -139,7 +140,11 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
             Input("\n".into()),
             Some("Editor && mode == auto_height"),
         ),
-        Binding::new("enter", ConfirmCompletion, Some("Editor && completing")),
+        Binding::new(
+            "enter",
+            ConfirmCompletion(None),
+            Some("Editor && completing"),
+        ),
         Binding::new("tab", Tab, Some("Editor")),
         Binding::new("shift-tab", Outdent, Some("Editor")),
         Binding::new("ctrl-shift-K", DeleteLine, Some("Editor")),
@@ -297,11 +302,13 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_action(Editor::unfold);
     cx.add_action(Editor::fold_selected_ranges);
     cx.add_action(Editor::show_completions);
-    cx.add_action(|editor: &mut Editor, _: &ConfirmCompletion, cx| {
-        if let Some(task) = editor.confirm_completion(cx) {
-            task.detach_and_log_err(cx);
-        }
-    });
+    cx.add_action(
+        |editor: &mut Editor, &ConfirmCompletion(ix): &ConfirmCompletion, cx| {
+            if let Some(task) = editor.confirm_completion(ix, cx) {
+                task.detach_and_log_err(cx);
+            }
+        },
+    );
 }
 
 trait SelectionExt {
@@ -1669,11 +1676,15 @@ impl Editor {
         self.completion_state.take()
     }
 
-    fn confirm_completion(&mut self, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+    fn confirm_completion(
+        &mut self,
+        completion_ix: Option<usize>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
         let completion_state = self.hide_completions(cx)?;
         let mat = completion_state
             .matches
-            .get(completion_state.selected_item)?;
+            .get(completion_ix.unwrap_or(completion_state.selected_item))?;
         let completion = completion_state.completions.get(mat.candidate_id)?;
 
         if completion.is_snippet() {
@@ -1702,6 +1713,8 @@ impl Editor {
     }
 
     pub fn render_completions(&self, cx: &AppContext) -> Option<ElementBox> {
+        enum CompletionTag {}
+
         self.completion_state.as_ref().map(|state| {
             let build_settings = self.build_settings.clone();
             let settings = build_settings(cx);
@@ -1715,30 +1728,48 @@ impl Editor {
                     let settings = build_settings(cx);
                     let start_ix = range.start;
                     for (ix, mat) in matches[range].iter().enumerate() {
-                        let item_style = if start_ix + ix == selected_item {
-                            settings.style.autocomplete.selected_item
-                        } else {
-                            settings.style.autocomplete.item
-                        };
                         let completion = &completions[mat.candidate_id];
+                        let item_ix = start_ix + ix;
                         items.push(
-                            Text::new(completion.label.text.clone(), settings.style.text.clone())
-                                .with_soft_wrap(false)
-                                .with_highlights(combine_syntax_and_fuzzy_match_highlights(
-                                    &completion.label.text,
-                                    settings.style.text.color.into(),
-                                    completion.label.runs.iter().filter_map(
-                                        |(range, highlight_id)| {
-                                            highlight_id
-                                                .style(&settings.style.syntax)
-                                                .map(|style| (range.clone(), style))
-                                        },
-                                    ),
-                                    &mat.positions,
-                                ))
-                                .contained()
-                                .with_style(item_style)
-                                .boxed(),
+                            MouseEventHandler::new::<CompletionTag, _, _, _>(
+                                mat.candidate_id,
+                                cx,
+                                |state, _| {
+                                    let item_style = if item_ix == selected_item {
+                                        settings.style.autocomplete.selected_item
+                                    } else if state.hovered {
+                                        settings.style.autocomplete.hovered_item
+                                    } else {
+                                        settings.style.autocomplete.item
+                                    };
+
+                                    Text::new(
+                                        completion.label.text.clone(),
+                                        settings.style.text.clone(),
+                                    )
+                                    .with_soft_wrap(false)
+                                    .with_highlights(combine_syntax_and_fuzzy_match_highlights(
+                                        &completion.label.text,
+                                        settings.style.text.color.into(),
+                                        completion.label.runs.iter().filter_map(
+                                            |(range, highlight_id)| {
+                                                highlight_id
+                                                    .style(&settings.style.syntax)
+                                                    .map(|style| (range.clone(), style))
+                                            },
+                                        ),
+                                        &mat.positions,
+                                    ))
+                                    .contained()
+                                    .with_style(item_style)
+                                    .boxed()
+                                },
+                            )
+                            .with_cursor_style(CursorStyle::PointingHand)
+                            .on_mouse_down(move |cx| {
+                                cx.dispatch_action(ConfirmCompletion(Some(item_ix)));
+                            })
+                            .boxed(),
                         );
                     }
                 },
@@ -6952,7 +6983,7 @@ mod tests {
 
         let apply_additional_edits = editor.update(&mut cx, |editor, cx| {
             editor.move_down(&MoveDown, cx);
-            let apply_additional_edits = editor.confirm_completion(cx).unwrap();
+            let apply_additional_edits = editor.confirm_completion(None, cx).unwrap();
             assert_eq!(
                 editor.text(cx),
                 "
