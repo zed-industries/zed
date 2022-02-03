@@ -13,7 +13,6 @@ use smol::future::yield_now;
 use std::{cmp, collections::VecDeque, mem, ops::Range, time::Duration};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::Patch;
-use theme::SyntaxTheme;
 
 pub use super::tab_map::TextSummary;
 pub type WrapEdit = text::Edit<u32>;
@@ -434,10 +433,8 @@ impl WrapSnapshot {
 
                 let mut line = String::new();
                 let mut remaining = None;
-                let mut chunks = new_tab_snapshot.chunks(
-                    TabPoint::new(edit.new_rows.start, 0)..new_tab_snapshot.max_point(),
-                    None,
-                );
+                let mut chunks = new_tab_snapshot
+                    .chunks(TabPoint::new(edit.new_rows.start, 0)..new_tab_snapshot.max_point());
                 let mut edit_transforms = Vec::<Transform>::new();
                 for _ in edit.new_rows.start..edit.new_rows.end {
                     while let Some(chunk) =
@@ -562,15 +559,11 @@ impl WrapSnapshot {
     }
 
     pub fn text_chunks(&self, wrap_row: u32) -> impl Iterator<Item = &str> {
-        self.chunks(wrap_row..self.max_point().row() + 1, None)
+        self.chunks(wrap_row..self.max_point().row() + 1)
             .map(|h| h.text)
     }
 
-    pub fn chunks<'a>(
-        &'a self,
-        rows: Range<u32>,
-        theme: Option<&'a SyntaxTheme>,
-    ) -> WrapChunks<'a> {
+    pub fn chunks<'a>(&'a self, rows: Range<u32>) -> WrapChunks<'a> {
         let output_start = WrapPoint::new(rows.start, 0);
         let output_end = WrapPoint::new(rows.end, 0);
         let mut transforms = self.transforms.cursor::<(WrapPoint, TabPoint)>();
@@ -583,7 +576,7 @@ impl WrapSnapshot {
             .to_tab_point(output_end)
             .min(self.tab_snapshot.max_point());
         WrapChunks {
-            input_chunks: self.tab_snapshot.chunks(input_start..input_end, theme),
+            input_chunks: self.tab_snapshot.chunks(input_start..input_end),
             input_chunk: Default::default(),
             output_position: output_start,
             max_output_row: rows.end,
@@ -1295,7 +1288,7 @@ mod tests {
                 }
 
                 let actual_text = self
-                    .chunks(start_row..end_row, None)
+                    .chunks(start_row..end_row)
                     .map(|c| c.text)
                     .collect::<String>();
                 assert_eq!(

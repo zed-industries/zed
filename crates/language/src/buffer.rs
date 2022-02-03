@@ -12,7 +12,7 @@ use crate::{
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use futures::FutureExt as _;
-use gpui::{fonts::HighlightStyle, AppContext, Entity, ModelContext, MutableAppContext, Task};
+use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
 use lsp::LanguageServer;
 use parking_lot::Mutex;
@@ -358,7 +358,6 @@ struct BufferChunkHighlights<'a> {
     next_capture: Option<(tree_sitter::QueryMatch<'a, 'a>, usize)>,
     stack: Vec<(usize, HighlightId)>,
     highlight_map: HighlightMap,
-    theme: &'a SyntaxTheme,
     _query_cursor: QueryCursorHandle,
 }
 
@@ -376,7 +375,7 @@ pub struct BufferChunks<'a> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Chunk<'a> {
     pub text: &'a str,
-    pub highlight_style: Option<HighlightStyle>,
+    pub highlight_id: Option<HighlightId>,
     pub diagnostic: Option<DiagnosticSeverity>,
 }
 
@@ -387,7 +386,7 @@ pub(crate) struct Diff {
 }
 
 #[derive(Clone, Copy)]
-struct DiagnosticEndpoint {
+pub(crate) struct DiagnosticEndpoint {
     offset: usize,
     is_start: bool,
     severity: DiagnosticSeverity,
@@ -2117,67 +2116,31 @@ impl BufferSnapshot {
         None
     }
 
-    pub fn chunks<'a, T: ToOffset>(
-        &'a self,
-        range: Range<T>,
-        theme: Option<&'a SyntaxTheme>,
-    ) -> BufferChunks<'a> {
+    pub fn chunks<'a, T: ToOffset>(&'a self, range: Range<T>) -> BufferChunks<'a> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
-        let mut highlights = None;
         let mut diagnostic_endpoints = Vec::<DiagnosticEndpoint>::new();
-        if let Some(theme) = theme {
-            for entry in self.diagnostics_in_range::<_, usize>(range.clone()) {
-                diagnostic_endpoints.push(DiagnosticEndpoint {
-                    offset: entry.range.start,
-                    is_start: true,
-                    severity: entry.diagnostic.severity,
-                });
-                diagnostic_endpoints.push(DiagnosticEndpoint {
-                    offset: entry.range.end,
-                    is_start: false,
-                    severity: entry.diagnostic.severity,
-                });
-            }
-            diagnostic_endpoints
-                .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
-
-            if let Some((grammar, tree)) = self.grammar().zip(self.tree.as_ref()) {
-                let mut query_cursor = QueryCursorHandle::new();
-
-                // TODO - add a Tree-sitter API to remove the need for this.
-                let cursor = unsafe {
-                    std::mem::transmute::<_, &'static mut QueryCursor>(query_cursor.deref_mut())
-                };
-                let captures = cursor.set_byte_range(range.clone()).captures(
-                    &grammar.highlights_query,
-                    tree.root_node(),
-                    TextProvider(self.text.as_rope()),
-                );
-                highlights = Some(BufferChunkHighlights {
-                    captures,
-                    next_capture: None,
-                    stack: Default::default(),
-                    highlight_map: grammar.highlight_map(),
-                    _query_cursor: query_cursor,
-                    theme,
-                })
-            }
+        for entry in self.diagnostics_in_range::<_, usize>(range.clone()) {
+            diagnostic_endpoints.push(DiagnosticEndpoint {
+                offset: entry.range.start,
+                is_start: true,
+                severity: entry.diagnostic.severity,
+            });
+            diagnostic_endpoints.push(DiagnosticEndpoint {
+                offset: entry.range.end,
+                is_start: false,
+                severity: entry.diagnostic.severity,
+            });
         }
+        diagnostic_endpoints.sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
 
-        let diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
-        let chunks = self.text.as_rope().chunks_in_range(range.clone());
-
-        BufferChunks {
+        BufferChunks::new(
+            self.text.as_rope(),
             range,
-            chunks,
+            self.tree.as_ref(),
+            self.grammar(),
             diagnostic_endpoints,
-            error_depth: 0,
-            warning_depth: 0,
-            information_depth: 0,
-            hint_depth: 0,
-            highlights,
-        }
+        )
     }
 
     pub fn language(&self) -> Option<&Arc<Language>> {
@@ -2218,7 +2181,7 @@ impl BufferSnapshot {
             TextProvider(self.as_rope()),
         );
 
-        let mut chunks = self.chunks(0..self.len(), theme);
+        let mut chunks = self.chunks(0..self.len());
 
         let item_capture_ix = grammar.outline_query.capture_index_for_name("item")?;
         let name_capture_ix = grammar.outline_query.capture_index_for_name("name")?;
@@ -2272,7 +2235,11 @@ impl BufferSnapshot {
                         } else {
                             offset += chunk.text.len();
                         }
-                        if let Some(style) = chunk.highlight_style {
+                        let style = chunk
+                            .highlight_id
+                            .zip(theme)
+                            .and_then(|(highlight, theme)| highlight.style(theme));
+                        if let Some(style) = style {
                             let start = text.len();
                             let end = start + chunk.text.len();
                             highlight_ranges.push((start..end, style));
@@ -2460,6 +2427,50 @@ impl<'a> Iterator for ByteChunks<'a> {
 unsafe impl<'a> Send for BufferChunks<'a> {}
 
 impl<'a> BufferChunks<'a> {
+    pub(crate) fn new(
+        text: &'a Rope,
+        range: Range<usize>,
+        tree: Option<&'a Tree>,
+        grammar: Option<&'a Arc<Grammar>>,
+        diagnostic_endpoints: Vec<DiagnosticEndpoint>,
+    ) -> Self {
+        let mut highlights = None;
+        if let Some((grammar, tree)) = grammar.zip(tree) {
+            let mut query_cursor = QueryCursorHandle::new();
+
+            // TODO - add a Tree-sitter API to remove the need for this.
+            let cursor = unsafe {
+                std::mem::transmute::<_, &'static mut QueryCursor>(query_cursor.deref_mut())
+            };
+            let captures = cursor.set_byte_range(range.clone()).captures(
+                &grammar.highlights_query,
+                tree.root_node(),
+                TextProvider(text),
+            );
+            highlights = Some(BufferChunkHighlights {
+                captures,
+                next_capture: None,
+                stack: Default::default(),
+                highlight_map: grammar.highlight_map(),
+                _query_cursor: query_cursor,
+            })
+        }
+
+        let diagnostic_endpoints = diagnostic_endpoints.into_iter().peekable();
+        let chunks = text.chunks_in_range(range.clone());
+
+        BufferChunks {
+            range,
+            chunks,
+            diagnostic_endpoints,
+            error_depth: 0,
+            warning_depth: 0,
+            information_depth: 0,
+            hint_depth: 0,
+            highlights,
+        }
+    }
+
     pub fn seek(&mut self, offset: usize) {
         self.range.start = offset;
         self.chunks.seek(self.range.start);
@@ -2568,11 +2579,11 @@ impl<'a> Iterator for BufferChunks<'a> {
             let mut chunk_end = (self.chunks.offset() + chunk.len())
                 .min(next_capture_start)
                 .min(next_diagnostic_endpoint);
-            let mut highlight_style = None;
+            let mut highlight_id = None;
             if let Some(highlights) = self.highlights.as_ref() {
                 if let Some((parent_capture_end, parent_highlight_id)) = highlights.stack.last() {
                     chunk_end = chunk_end.min(*parent_capture_end);
-                    highlight_style = parent_highlight_id.style(highlights.theme);
+                    highlight_id = Some(*parent_highlight_id);
                 }
             }
 
@@ -2585,7 +2596,7 @@ impl<'a> Iterator for BufferChunks<'a> {
 
             Some(Chunk {
                 text: slice,
-                highlight_style,
+                highlight_id,
                 diagnostic: self.current_diagnostic_severity(),
             })
         } else {

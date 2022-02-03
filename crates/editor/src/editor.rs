@@ -1628,7 +1628,7 @@ impl Editor {
                         .map(|(id, completion)| {
                             StringMatchCandidate::new(
                                 id,
-                                completion.label()[completion.filter_range()].into(),
+                                completion.lsp_completion.label[completion.filter_range()].into(),
                             )
                         })
                         .collect(),

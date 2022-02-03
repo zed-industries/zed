@@ -125,7 +125,6 @@ pub struct MultiBufferChunks<'a> {
     range: Range<usize>,
     excerpts: Cursor<'a, Excerpt, usize>,
     excerpt_chunks: Option<ExcerptChunks<'a>>,
-    theme: Option<&'a SyntaxTheme>,
 }
 
 pub struct MultiBufferBytes<'a> {
@@ -1113,9 +1112,7 @@ impl Entity for MultiBuffer {
 
 impl MultiBufferSnapshot {
     pub fn text(&self) -> String {
-        self.chunks(0..self.len(), None)
-            .map(|chunk| chunk.text)
-            .collect()
+        self.chunks(0..self.len()).map(|chunk| chunk.text).collect()
     }
 
     pub fn reversed_chars_at<'a, T: ToOffset>(
@@ -1165,7 +1162,7 @@ impl MultiBufferSnapshot {
         &'a self,
         range: Range<T>,
     ) -> impl Iterator<Item = &'a str> {
-        self.chunks(range, None).map(|chunk| chunk.text)
+        self.chunks(range).map(|chunk| chunk.text)
     }
 
     pub fn is_line_blank(&self, row: u32) -> bool {
@@ -1323,17 +1320,12 @@ impl MultiBufferSnapshot {
         result
     }
 
-    pub fn chunks<'a, T: ToOffset>(
-        &'a self,
-        range: Range<T>,
-        theme: Option<&'a SyntaxTheme>,
-    ) -> MultiBufferChunks<'a> {
+    pub fn chunks<'a, T: ToOffset>(&'a self, range: Range<T>) -> MultiBufferChunks<'a> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut chunks = MultiBufferChunks {
             range: range.clone(),
             excerpts: self.excerpts.cursor(),
             excerpt_chunks: None,
-            theme,
         };
         chunks.seek(range.start);
         chunks
@@ -2116,11 +2108,7 @@ impl Excerpt {
         }
     }
 
-    fn chunks_in_range<'a>(
-        &'a self,
-        range: Range<usize>,
-        theme: Option<&'a SyntaxTheme>,
-    ) -> ExcerptChunks<'a> {
+    fn chunks_in_range<'a>(&'a self, range: Range<usize>) -> ExcerptChunks<'a> {
         let content_start = self.range.start.to_offset(&self.buffer);
         let chunks_start = content_start + range.start;
         let chunks_end = content_start + cmp::min(range.end, self.text_summary.bytes);
@@ -2134,7 +2122,7 @@ impl Excerpt {
             0
         };
 
-        let content_chunks = self.buffer.chunks(chunks_start..chunks_end, theme);
+        let content_chunks = self.buffer.chunks(chunks_start..chunks_end);
 
         ExcerptChunks {
             content_chunks,
@@ -2333,7 +2321,6 @@ impl<'a> MultiBufferChunks<'a> {
         if let Some(excerpt) = self.excerpts.item() {
             self.excerpt_chunks = Some(excerpt.chunks_in_range(
                 self.range.start - self.excerpts.start()..self.range.end - self.excerpts.start(),
-                self.theme,
             ));
         } else {
             self.excerpt_chunks = None;
@@ -2353,9 +2340,8 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
         } else {
             self.excerpts.next(&());
             let excerpt = self.excerpts.item()?;
-            self.excerpt_chunks = Some(
-                excerpt.chunks_in_range(0..self.range.end - self.excerpts.start(), self.theme),
-            );
+            self.excerpt_chunks =
+                Some(excerpt.chunks_in_range(0..self.range.end - self.excerpts.start()));
             self.next()
         }
     }
@@ -3110,7 +3096,7 @@ mod tests {
                 let mut buffer_point_utf16 = buffer_start_point_utf16;
                 for ch in buffer
                     .snapshot()
-                    .chunks(buffer_range.clone(), None)
+                    .chunks(buffer_range.clone())
                     .flat_map(|c| c.text.chars())
                 {
                     for _ in 0..ch.len_utf8() {

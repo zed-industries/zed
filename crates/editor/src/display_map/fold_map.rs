@@ -11,7 +11,6 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering::SeqCst},
 };
 use sum_tree::{Bias, Cursor, FilterCursor, SumTree};
-use theme::SyntaxTheme;
 
 pub trait ToFoldPoint {
     fn to_fold_point(&self, snapshot: &FoldSnapshot, bias: Bias) -> FoldPoint;
@@ -490,7 +489,7 @@ impl FoldSnapshot {
 
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(FoldOffset(0)..self.len(), None)
+        self.chunks(FoldOffset(0)..self.len())
             .map(|c| c.text)
             .collect()
     }
@@ -630,15 +629,11 @@ impl FoldSnapshot {
 
     pub fn chars_at(&self, start: FoldPoint) -> impl '_ + Iterator<Item = char> {
         let start = start.to_offset(self);
-        self.chunks(start..self.len(), None)
+        self.chunks(start..self.len())
             .flat_map(|chunk| chunk.text.chars())
     }
 
-    pub fn chunks<'a>(
-        &'a self,
-        range: Range<FoldOffset>,
-        theme: Option<&'a SyntaxTheme>,
-    ) -> FoldChunks<'a> {
+    pub fn chunks<'a>(&'a self, range: Range<FoldOffset>) -> FoldChunks<'a> {
         let mut transform_cursor = self.transforms.cursor::<(FoldOffset, usize)>();
 
         transform_cursor.seek(&range.end, Bias::Right, &());
@@ -651,7 +646,7 @@ impl FoldSnapshot {
 
         FoldChunks {
             transform_cursor,
-            buffer_chunks: self.buffer_snapshot.chunks(buffer_start..buffer_end, theme),
+            buffer_chunks: self.buffer_snapshot.chunks(buffer_start..buffer_end),
             buffer_chunk: None,
             buffer_offset: buffer_start,
             output_offset: range.start.0,
@@ -976,7 +971,7 @@ impl<'a> Iterator for FoldChunks<'a> {
             self.output_offset += output_text.len();
             return Some(Chunk {
                 text: output_text,
-                highlight_style: None,
+                highlight_id: None,
                 diagnostic: None,
             });
         }
@@ -1398,7 +1393,7 @@ mod tests {
                 let text = &expected_text[start.0..end.0];
                 assert_eq!(
                     snapshot
-                        .chunks(start..end, None)
+                        .chunks(start..end)
                         .map(|c| c.text)
                         .collect::<String>(),
                     text,

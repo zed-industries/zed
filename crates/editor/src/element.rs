@@ -598,31 +598,32 @@ impl EditorElement {
                 .collect();
         } else {
             let style = &self.settings.style;
-            let chunks = snapshot
-                .chunks(rows.clone(), Some(&style.syntax))
-                .map(|chunk| {
-                    let highlight = if let Some(severity) = chunk.diagnostic {
-                        let diagnostic_style = super::diagnostic_style(severity, true, style);
-                        let underline = Some(Underline {
-                            color: diagnostic_style.message.text.color,
-                            thickness: 1.0.into(),
-                            squiggly: true,
-                        });
-                        if let Some(mut highlight) = chunk.highlight_style {
-                            highlight.underline = underline;
-                            Some(highlight)
-                        } else {
-                            Some(HighlightStyle {
-                                underline,
-                                color: style.text.color,
-                                font_properties: style.text.font_properties,
-                            })
-                        }
+            let chunks = snapshot.chunks(rows.clone()).map(|chunk| {
+                let highlight_style = chunk
+                    .highlight_id
+                    .and_then(|highlight_id| highlight_id.style(&style.syntax));
+                let highlight = if let Some(severity) = chunk.diagnostic {
+                    let diagnostic_style = super::diagnostic_style(severity, true, style);
+                    let underline = Some(Underline {
+                        color: diagnostic_style.message.text.color,
+                        thickness: 1.0.into(),
+                        squiggly: true,
+                    });
+                    if let Some(mut highlight) = highlight_style {
+                        highlight.underline = underline;
+                        Some(highlight)
                     } else {
-                        chunk.highlight_style
-                    };
-                    (chunk.text, highlight)
-                });
+                        Some(HighlightStyle {
+                            underline,
+                            color: style.text.color,
+                            font_properties: style.text.font_properties,
+                        })
+                    }
+                } else {
+                    highlight_style
+                };
+                (chunk.text, highlight)
+            });
             layout_highlighted_chunks(
                 chunks,
                 &style.text,

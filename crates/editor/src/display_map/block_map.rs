@@ -15,7 +15,6 @@ use std::{
 };
 use sum_tree::{Bias, SumTree};
 use text::{Edit, Point};
-use theme::SyntaxTheme;
 
 const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
 
@@ -461,16 +460,12 @@ impl<'a> BlockMapWriter<'a> {
 impl BlockSnapshot {
     #[cfg(test)]
     pub fn text(&self) -> String {
-        self.chunks(0..self.transforms.summary().output_rows, None)
+        self.chunks(0..self.transforms.summary().output_rows)
             .map(|chunk| chunk.text)
             .collect()
     }
 
-    pub fn chunks<'a>(
-        &'a self,
-        rows: Range<u32>,
-        theme: Option<&'a SyntaxTheme>,
-    ) -> BlockChunks<'a> {
+    pub fn chunks<'a>(&'a self, rows: Range<u32>) -> BlockChunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
         let input_end = {
@@ -498,7 +493,7 @@ impl BlockSnapshot {
             cursor.start().1 .0 + overshoot
         };
         BlockChunks {
-            input_chunks: self.wrap_snapshot.chunks(input_start..input_end, theme),
+            input_chunks: self.wrap_snapshot.chunks(input_start..input_end),
             input_chunk: Default::default(),
             transforms: cursor,
             output_row: rows.start,
@@ -715,7 +710,7 @@ impl<'a> Iterator for BlockChunks<'a> {
 
             return Some(Chunk {
                 text: unsafe { std::str::from_utf8_unchecked(&NEWLINES[..line_count as usize]) },
-                highlight_style: None,
+                highlight_id: None,
                 diagnostic: None,
             });
         }
@@ -1340,7 +1335,7 @@ mod tests {
             for start_row in 0..expected_row_count {
                 let expected_text = expected_lines[start_row..].join("\n");
                 let actual_text = blocks_snapshot
-                    .chunks(start_row as u32..expected_row_count as u32, None)
+                    .chunks(start_row as u32..expected_row_count as u32)
                     .map(|chunk| chunk.text)
                     .collect::<String>();
                 assert_eq!(
