@@ -1847,7 +1847,7 @@ impl Editor {
                 .tabstops
                 .iter()
                 .map(|tabstop| {
-                    tabstop
+                    let mut tabstop_ranges = tabstop
                         .iter()
                         .flat_map(|tabstop_range| {
                             let mut delta = 0 as isize;
@@ -1864,7 +1864,10 @@ impl Editor {
                                 start..end
                             })
                         })
-                        .collect::<Vec<_>>()
+                        .collect::<Vec<_>>();
+                    tabstop_ranges
+                        .sort_unstable_by(|a, b| a.start.cmp(&b.start, snapshot).unwrap());
+                    tabstop_ranges
                 })
                 .collect::<Vec<_>>()
         });
@@ -1890,7 +1893,6 @@ impl Editor {
 
     pub fn move_to_snippet_tabstop(&mut self, bias: Bias, cx: &mut ViewContext<Self>) -> bool {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let old_selections = self.local_selections::<usize>(cx);
 
         if let Some(snippet) = self.snippet_stack.last_mut() {
             match bias {
@@ -1910,13 +1912,12 @@ impl Editor {
                 }
             }
             if let Some(current_ranges) = snippet.ranges.get(snippet.active_index) {
-                let new_selections = old_selections
-                    .into_iter()
-                    .zip(current_ranges.iter())
-                    .map(|(selection, new_range)| {
+                let new_selections = current_ranges
+                    .iter()
+                    .map(|new_range| {
                         let new_range = new_range.to_offset(&buffer);
                         Selection {
-                            id: selection.id,
+                            id: post_inc(&mut self.next_selection_id),
                             start: new_range.start,
                             end: new_range.end,
                             reversed: false,
@@ -6979,33 +6980,106 @@ mod tests {
     async fn test_snippets(mut cx: gpui::TestAppContext) {
         let settings = cx.read(EditorSettings::test);
 
-        let text = "a. b";
+        let text = "
+            a. b
+            a. b
+            a. b
+        "
+        .unindent();
         let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
         let (_, editor) = cx.add_window(|cx| build_editor(buffer, settings, cx));
 
         editor.update(&mut cx, |editor, cx| {
-            let snippet = Snippet::parse("f(${1:one}, ${2:two})$0").unwrap();
-            editor.insert_snippet(&[2..2], snippet, cx).unwrap();
-            assert_eq!(editor.text(cx), "a.f(one, two) b");
-            assert_eq!(editor.selected_ranges::<usize>(cx), &[4..7]);
+            let buffer = &editor.snapshot(cx).buffer_snapshot;
+            let snippet = Snippet::parse("f(${1:one}, ${2:two}, ${1:three})$0").unwrap();
+            let insertion_ranges = [
+                Point::new(0, 2).to_offset(buffer)..Point::new(0, 2).to_offset(buffer),
+                Point::new(1, 2).to_offset(buffer)..Point::new(1, 2).to_offset(buffer),
+                Point::new(2, 2).to_offset(buffer)..Point::new(2, 2).to_offset(buffer),
+            ];
+
+            editor
+                .insert_snippet(&insertion_ranges, snippet, cx)
+                .unwrap();
+            assert_eq!(
+                editor.text(cx),
+                "
+                    a.f(one, two, three) b
+                    a.f(one, two, three) b
+                    a.f(one, two, three) b
+                "
+                .unindent()
+            );
+            assert_eq!(
+                editor.selected_ranges::<Point>(cx),
+                &[
+                    Point::new(0, 4)..Point::new(0, 7),
+                    Point::new(0, 14)..Point::new(0, 19),
+                    Point::new(1, 4)..Point::new(1, 7),
+                    Point::new(1, 14)..Point::new(1, 19),
+                    Point::new(2, 4)..Point::new(2, 7),
+                    Point::new(2, 14)..Point::new(2, 19),
+                ]
+            );
 
             // Can't move earlier than the first tab stop
             editor.move_to_prev_snippet_tabstop(cx);
-            assert_eq!(editor.selected_ranges::<usize>(cx), &[4..7]);
+            assert_eq!(
+                editor.selected_ranges::<Point>(cx),
+                &[
+                    Point::new(0, 4)..Point::new(0, 7),
+                    Point::new(0, 14)..Point::new(0, 19),
+                    Point::new(1, 4)..Point::new(1, 7),
+                    Point::new(1, 14)..Point::new(1, 19),
+                    Point::new(2, 4)..Point::new(2, 7),
+                    Point::new(2, 14)..Point::new(2, 19),
+                ]
+            );
 
             assert!(editor.move_to_next_snippet_tabstop(cx));
-            assert_eq!(editor.selected_ranges::<usize>(cx), &[9..12]);
+            assert_eq!(
+                editor.selected_ranges::<Point>(cx),
+                &[
+                    Point::new(0, 9)..Point::new(0, 12),
+                    Point::new(1, 9)..Point::new(1, 12),
+                    Point::new(2, 9)..Point::new(2, 12)
+                ]
+            );
 
             editor.move_to_prev_snippet_tabstop(cx);
-            assert_eq!(editor.selected_ranges::<usize>(cx), &[4..7]);
+            assert_eq!(
+                editor.selected_ranges::<Point>(cx),
+                &[
+                    Point::new(0, 4)..Point::new(0, 7),
+                    Point::new(0, 14)..Point::new(0, 19),
+                    Point::new(1, 4)..Point::new(1, 7),
+                    Point::new(1, 14)..Point::new(1, 19),
+                    Point::new(2, 4)..Point::new(2, 7),
+                    Point::new(2, 14)..Point::new(2, 19),
+                ]
+            );
 
             assert!(editor.move_to_next_snippet_tabstop(cx));
             assert!(editor.move_to_next_snippet_tabstop(cx));
-            assert_eq!(editor.selected_ranges::<usize>(cx), &[13..13]);
+            assert_eq!(
+                editor.selected_ranges::<Point>(cx),
+                &[
+                    Point::new(0, 20)..Point::new(0, 20),
+                    Point::new(1, 20)..Point::new(1, 20),
+                    Point::new(2, 20)..Point::new(2, 20)
+                ]
+            );
 
             // As soon as the last tab stop is reached, snippet state is gone
             editor.move_to_prev_snippet_tabstop(cx);
-            assert_eq!(editor.selected_ranges::<usize>(cx), &[13..13]);
+            assert_eq!(
+                editor.selected_ranges::<Point>(cx),
+                &[
+                    Point::new(0, 20)..Point::new(0, 20),
+                    Point::new(1, 20)..Point::new(1, 20),
+                    Point::new(2, 20)..Point::new(2, 20)
+                ]
+            );
         });
     }
 
