@@ -897,7 +897,10 @@ impl Element for EditorElement {
             completions_list.layout(
                 SizeConstraint {
                     min: Vector2F::zero(),
-                    max: vec2f(800., (12. * line_height).min((size.y() - line_height) / 2.)),
+                    max: vec2f(
+                        f32::INFINITY,
+                        (12. * line_height).min((size.y() - line_height) / 2.),
+                    ),
                 },
                 cx,
             );
