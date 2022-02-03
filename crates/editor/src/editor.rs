@@ -1171,6 +1171,10 @@ impl Editor {
             return;
         }
 
+        if self.snippet_stack.pop().is_some() {
+            return;
+        }
+
         if self.mode != EditorMode::Full {
             cx.propagate_action();
             return;
