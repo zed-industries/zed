@@ -1699,31 +1699,39 @@ impl Editor {
         };
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let old_range = completion.old_range.to_offset(&snapshot);
+        let old_text = snapshot
+            .text_for_range(old_range.clone())
+            .collect::<String>();
 
         let selections = self.local_selections::<usize>(cx);
-        let mut common_prefix_len = None;
+        let newest_selection = selections.iter().max_by_key(|s| s.id)?;
+        let lookbehind = newest_selection.start.saturating_sub(old_range.start);
+        let lookahead = old_range.end.saturating_sub(newest_selection.end);
+        let mut common_prefix_len = old_text
+            .bytes()
+            .zip(text.bytes())
+            .take_while(|(a, b)| a == b)
+            .count();
+
         let mut ranges = Vec::new();
         for selection in &selections {
-            let start = selection.start.saturating_sub(old_range.len());
-            let prefix_len = snapshot
-                .bytes_at(start)
-                .zip(completion.new_text.bytes())
-                .take_while(|(a, b)| a == b)
-                .count();
-            if common_prefix_len.is_none() {
-                common_prefix_len = Some(prefix_len);
-            }
-
-            if common_prefix_len == Some(prefix_len) {
-                ranges.push(start + prefix_len..selection.end);
+            if snapshot.contains_str_at(selection.start.saturating_sub(lookbehind), &old_text) {
+                let start = selection.start.saturating_sub(lookbehind);
+                let end = selection.end + lookahead;
+                ranges.push(start + common_prefix_len..end);
             } else {
-                common_prefix_len.take();
+                common_prefix_len = 0;
                 ranges.clear();
-                ranges.extend(selections.iter().map(|s| s.start..s.end));
+                ranges.extend(selections.iter().map(|s| {
+                    if s.id == newest_selection.id {
+                        old_range.clone()
+                    } else {
+                        s.start..s.end
+                    }
+                }));
                 break;
             }
         }
-        let common_prefix_len = common_prefix_len.unwrap_or(0);
         let text = &text[common_prefix_len..];
 
         self.start_transaction(cx);
