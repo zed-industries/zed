@@ -95,7 +95,7 @@ pub fn down(
 pub fn line_beginning(
     map: &DisplaySnapshot,
     display_point: DisplayPoint,
-    toggle_indent: bool,
+    stop_at_soft_boundaries: bool,
 ) -> DisplayPoint {
     let point = display_point.to_point(map);
     let soft_line_start = map.clip_point(DisplayPoint::new(display_point.row(), 0), Bias::Right);
@@ -106,24 +106,29 @@ pub fn line_beginning(
     .to_display_point(map);
     let line_start = map.prev_line_boundary(point).1;
 
-    if display_point != soft_line_start {
+    if stop_at_soft_boundaries && soft_line_start > indent_start && display_point != soft_line_start
+    {
         soft_line_start
-    } else if toggle_indent && display_point != indent_start {
+    } else if stop_at_soft_boundaries && display_point != indent_start {
         indent_start
     } else {
         line_start
     }
 }
 
-pub fn line_end(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+pub fn line_end(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    stop_at_soft_boundaries: bool,
+) -> DisplayPoint {
     let soft_line_end = map.clip_point(
         DisplayPoint::new(display_point.row(), map.line_len(display_point.row())),
         Bias::Left,
     );
-    if display_point == soft_line_end {
-        map.next_line_boundary(display_point.to_point(map)).1
-    } else {
+    if stop_at_soft_boundaries && display_point != soft_line_end {
         soft_line_end
+    } else {
+        map.next_line_boundary(display_point.to_point(map)).1
     }
 }
 
