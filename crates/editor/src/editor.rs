@@ -383,6 +383,8 @@ pub enum SoftWrap {
     Column(u32),
 }
 
+type CompletionId = usize;
+
 pub type BuildSettings = Arc<dyn 'static + Send + Sync + Fn(&AppContext) -> EditorSettings>;
 
 pub struct Editor {
@@ -416,7 +418,8 @@ pub struct Editor {
     highlighted_ranges: BTreeMap<TypeId, (Color, Vec<Range<Anchor>>)>,
     nav_history: Option<ItemNavHistory>,
     completion_state: Option<CompletionState>,
-    completions_task: Option<Task<Option<()>>>,
+    completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
+    next_completion_id: CompletionId,
 }
 
 pub struct EditorSnapshot {
@@ -457,6 +460,7 @@ struct SnippetState {
 struct InvalidationStack<T>(Vec<T>);
 
 struct CompletionState {
+    id: CompletionId,
     initial_position: Anchor,
     completions: Arc<[Completion<Anchor>]>,
     match_candidates: Vec<StringMatchCandidate>,
@@ -617,7 +621,8 @@ impl Editor {
             highlighted_ranges: Default::default(),
             nav_history: None,
             completion_state: None,
-            completions_task: None,
+            completion_tasks: Default::default(),
+            next_completion_id: 0,
         };
         let selection = Selection {
             id: post_inc(&mut this.next_selection_id),
@@ -1628,11 +1633,13 @@ impl Editor {
             .buffer
             .update(cx, |buffer, cx| buffer.completions(position.clone(), cx));
 
-        self.completions_task = Some(cx.spawn_weak(|this, mut cx| {
+        let id = post_inc(&mut self.next_completion_id);
+        let task = cx.spawn_weak(|this, mut cx| {
             async move {
                 let completions = completions.await?;
 
                 let mut completion_state = CompletionState {
+                    id,
                     initial_position: position,
                     match_candidates: completions
                         .iter()
@@ -1656,6 +1663,14 @@ impl Editor {
 
                 if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
                     this.update(&mut cx, |this, cx| {
+                        if let Some(prev_completion_state) = this.completion_state.as_ref() {
+                            if prev_completion_state.id > completion_state.id {
+                                return;
+                            }
+                        }
+
+                        this.completion_tasks
+                            .retain(|(id, _)| *id > completion_state.id);
                         if completion_state.matches.is_empty() {
                             this.hide_completions(cx);
                         } else if this.focused {
@@ -1668,12 +1683,13 @@ impl Editor {
                 Ok::<_, anyhow::Error>(())
             }
             .log_err()
-        }));
+        });
+        self.completion_tasks.push((id, task));
     }
 
     fn hide_completions(&mut self, cx: &mut ViewContext<Self>) -> Option<CompletionState> {
         cx.notify();
-        self.completions_task.take();
+        self.completion_tasks.clear();
         self.completion_state.take()
     }
 
