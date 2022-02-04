@@ -115,7 +115,7 @@ impl Fs for RealFs {
         path: &Path,
         latency: Duration,
     ) -> Pin<Box<dyn Send + Stream<Item = Vec<fsevent::Event>>>> {
-        let (mut tx, rx) = postage::mpsc::channel(64);
+        let (tx, rx) = smol::channel::unbounded();
         let (stream, handle) = EventStream::new(&[path], latency);
         std::mem::forget(handle);
         std::thread::spawn(move || {
