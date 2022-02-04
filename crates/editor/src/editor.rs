@@ -2498,6 +2498,7 @@ impl Editor {
                 if is_entire_line {
                     selection.start = Point::new(selection.start.row, 0);
                     selection.end = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
+                    selection.goal = SelectionGoal::None;
                 }
                 let mut len = 0;
                 for chunk in buffer.text_for_range(selection.start..selection.end) {
