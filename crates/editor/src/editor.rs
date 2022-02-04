@@ -968,15 +968,16 @@ impl Editor {
                 mode = SelectMode::Word(start.clone()..end.clone());
             }
             3 => {
-                let position = display_map.clip_point(position, Bias::Left);
-                let line_start = movement::line_beginning(&display_map, position, false);
-                let mut next_line_start = line_start.clone();
-                *next_line_start.row_mut() += 1;
-                *next_line_start.column_mut() = 0;
-                next_line_start = display_map.clip_point(next_line_start, Bias::Right);
-
-                start = buffer.anchor_before(line_start.to_point(&display_map));
-                end = buffer.anchor_before(next_line_start.to_point(&display_map));
+                let position = display_map
+                    .clip_point(position, Bias::Left)
+                    .to_point(&display_map);
+                let line_start = display_map.prev_line_boundary(position).0;
+                let next_line_start = buffer.clip_point(
+                    display_map.next_line_boundary(position).0 + Point::new(1, 0),
+                    Bias::Left,
+                );
+                start = buffer.anchor_before(line_start);
+                end = buffer.anchor_before(next_line_start);
                 mode = SelectMode::Line(start.clone()..end.clone());
             }
             _ => {
@@ -1082,26 +1083,27 @@ impl Editor {
                     }
                 }
                 SelectMode::Line(original_range) => {
-                    let original_display_range = original_range.start.to_display_point(&display_map)
-                        ..original_range.end.to_display_point(&display_map);
-                    let original_buffer_range = original_display_range.start.to_point(&display_map)
-                        ..original_display_range.end.to_point(&display_map);
-                    let line_start = movement::line_beginning(&display_map, position, false);
-                    let mut next_line_start = line_start.clone();
-                    *next_line_start.row_mut() += 1;
-                    *next_line_start.column_mut() = 0;
-                    next_line_start = display_map.clip_point(next_line_start, Bias::Right);
+                    let original_range = original_range.to_point(&display_map.buffer_snapshot);
 
-                    if line_start < original_display_range.start {
-                        head = line_start.to_point(&display_map);
+                    let position = display_map
+                        .clip_point(position, Bias::Left)
+                        .to_point(&display_map);
+                    let line_start = display_map.prev_line_boundary(position).0;
+                    let next_line_start = buffer.clip_point(
+                        display_map.next_line_boundary(position).0 + Point::new(1, 0),
+                        Bias::Left,
+                    );
+
+                    if line_start < original_range.start {
+                        head = line_start
                     } else {
-                        head = next_line_start.to_point(&display_map);
+                        head = next_line_start
                     }
 
-                    if head <= original_buffer_range.start {
-                        tail = original_buffer_range.end;
+                    if head <= original_range.start {
+                        tail = original_range.end;
                     } else {
-                        tail = original_buffer_range.start;
+                        tail = original_range.start;
                     }
                 }
                 SelectMode::All => {
