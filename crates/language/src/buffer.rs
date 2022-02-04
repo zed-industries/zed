@@ -2139,17 +2139,53 @@ impl BufferSnapshot {
     }
 
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
-        if let Some(tree) = self.tree.as_ref() {
-            let root = tree.root_node();
-            let range = range.start.to_offset(self)..range.end.to_offset(self);
-            let mut node = root.descendant_for_byte_range(range.start, range.end);
-            while node.map_or(false, |n| n.byte_range() == range) {
-                node = node.unwrap().parent();
+        let tree = self.tree.as_ref()?;
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut cursor = tree.root_node().walk();
+
+        // Descend to smallest leaf that touches or exceeds the start of the range.
+        while cursor.goto_first_child_for_byte(range.start).is_some() {}
+
+        // Ascend to the smallest ancestor that strictly contains the range.
+        loop {
+            let node_range = cursor.node().byte_range();
+            if node_range.start <= range.start
+                && node_range.end >= range.end
+                && node_range.len() > range.len()
+            {
+                break;
             }
-            node.map(|n| n.byte_range())
-        } else {
-            None
+            if !cursor.goto_parent() {
+                break;
+            }
         }
+
+        let left_node = cursor.node();
+
+        // For an empty range, try to find another node immediately to the right of the range.
+        if left_node.end_byte() == range.start {
+            let mut right_node = None;
+            while !cursor.goto_next_sibling() {
+                if !cursor.goto_parent() {
+                    break;
+                }
+            }
+
+            while cursor.node().start_byte() == range.start {
+                right_node = Some(cursor.node());
+                if !cursor.goto_first_child() {
+                    break;
+                }
+            }
+
+            if let Some(right_node) = right_node {
+                if right_node.is_named() || !left_node.is_named() {
+                    return Some(right_node.byte_range());
+                }
+            }
+        }
+
+        Some(left_node.byte_range())
     }
 
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {

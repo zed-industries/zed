@@ -40,7 +40,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 similar = "1.3"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
-tree-sitter = "0.20.0"
+tree-sitter = "0.20"
 tree-sitter-rust = { version = "0.20.0", optional = true }
 
 [dev-dependencies]
