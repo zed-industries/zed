@@ -1,6 +1,7 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{char_kind, CharKind, ToPoint};
 use anyhow::Result;
+use language::Point;
 use std::ops::Range;
 
 pub fn left(map: &DisplaySnapshot, mut point: DisplayPoint) -> Result<DisplayPoint> {
@@ -93,20 +94,37 @@ pub fn down(
 
 pub fn line_beginning(
     map: &DisplaySnapshot,
-    point: DisplayPoint,
+    display_point: DisplayPoint,
     toggle_indent: bool,
 ) -> DisplayPoint {
-    let (indent, is_blank) = map.line_indent(point.row());
-    if toggle_indent && !is_blank && point.column() != indent {
-        DisplayPoint::new(point.row(), indent)
+    let point = display_point.to_point(map);
+    let soft_line_start = map.clip_point(DisplayPoint::new(display_point.row(), 0), Bias::Right);
+    let indent_start = Point::new(
+        point.row,
+        map.buffer_snapshot.indent_column_for_line(point.row),
+    )
+    .to_display_point(map);
+    let line_start = map.prev_line_boundary(point).1;
+
+    if display_point != soft_line_start {
+        soft_line_start
+    } else if toggle_indent && display_point != indent_start {
+        indent_start
     } else {
-        DisplayPoint::new(point.row(), 0)
+        line_start
     }
 }
 
-pub fn line_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
-    let line_end = DisplayPoint::new(point.row(), map.line_len(point.row()));
-    map.clip_point(line_end, Bias::Left)
+pub fn line_end(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
+    let soft_line_end = map.clip_point(
+        DisplayPoint::new(display_point.row(), map.line_len(display_point.row())),
+        Bias::Left,
+    );
+    if display_point == soft_line_end {
+        map.next_line_boundary(display_point.to_point(map)).1
+    } else {
+        soft_line_end
+    }
 }
 
 pub fn prev_word_boundary(map: &DisplaySnapshot, mut point: DisplayPoint) -> DisplayPoint {
