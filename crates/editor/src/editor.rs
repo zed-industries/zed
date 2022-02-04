@@ -4000,7 +4000,8 @@ impl Editor {
             if kind == Some(CharKind::Word) && word_range.to_inclusive().contains(&cursor_position)
             {
                 let query = Self::completion_query(&buffer, cursor_position);
-                smol::block_on(completion_state.filter(query.as_deref(), cx.background().clone()));
+                cx.background()
+                    .block(completion_state.filter(query.as_deref(), cx.background().clone()));
                 self.show_completions(&ShowCompletions, cx);
             } else {
                 self.hide_completions(cx);
@@ -7133,15 +7134,7 @@ mod tests {
         let (_, editor) = cx.add_window(|cx| build_editor(buffer, settings, cx));
 
         editor.update(&mut cx, |editor, cx| {
-            editor.select_ranges(
-                [
-                    Point::new(0, 3)..Point::new(0, 3),
-                    Point::new(1, 3)..Point::new(1, 3),
-                    Point::new(2, 3)..Point::new(2, 3),
-                ],
-                None,
-                cx,
-            );
+            editor.select_ranges([Point::new(0, 3)..Point::new(0, 3)], None, cx);
             editor.handle_input(&Input(".".to_string()), cx);
         });
 
@@ -7150,8 +7143,8 @@ mod tests {
             "/the/file",
             Point::new(0, 4),
             &[
-                (Point::new(0, 4)..Point::new(0, 4), "first completion"),
-                (Point::new(0, 4)..Point::new(0, 4), "second completion"),
+                (Point::new(0, 4)..Point::new(0, 4), "first_completion"),
+                (Point::new(0, 4)..Point::new(0, 4), "second_completion"),
             ],
         )
         .await;
@@ -7189,6 +7182,71 @@ mod tests {
             .unindent()
         );
 
+        editor.update(&mut cx, |editor, cx| {
+            editor.select_ranges(
+                [
+                    Point::new(1, 3)..Point::new(1, 3),
+                    Point::new(2, 5)..Point::new(2, 5),
+                ],
+                None,
+                cx,
+            );
+
+            editor.handle_input(&Input(" ".to_string()), cx);
+            assert!(editor.completion_state.is_none());
+            editor.handle_input(&Input("s".to_string()), cx);
+            assert!(editor.completion_state.is_none());
+        });
+
+        handle_completion_request(
+            &mut fake,
+            "/the/file",
+            Point::new(2, 7),
+            &[
+                (Point::new(2, 6)..Point::new(2, 7), "fourth_completion"),
+                (Point::new(2, 6)..Point::new(2, 7), "fifth_completion"),
+                (Point::new(2, 6)..Point::new(2, 7), "sixth_completion"),
+            ],
+        )
+        .await;
+        editor
+            .condition(&cx, |editor, _| editor.completion_state.is_some())
+            .await;
+
+        editor.update(&mut cx, |editor, cx| {
+            editor.handle_input(&Input("i".to_string()), cx);
+        });
+
+        handle_completion_request(
+            &mut fake,
+            "/the/file",
+            Point::new(2, 8),
+            &[
+                (Point::new(2, 6)..Point::new(2, 8), "fourth_completion"),
+                (Point::new(2, 6)..Point::new(2, 8), "fifth_completion"),
+                (Point::new(2, 6)..Point::new(2, 8), "sixth_completion"),
+            ],
+        )
+        .await;
+        editor.next_notification(&cx).await;
+
+        let apply_additional_edits = editor.update(&mut cx, |editor, cx| {
+            let apply_additional_edits = editor.confirm_completion(None, cx).unwrap();
+            assert_eq!(
+                editor.text(cx),
+                "
+                    one.second_completion
+                    two sixth_completion
+                    three sixth_completion
+                    additional edit
+                "
+                .unindent()
+            );
+            apply_additional_edits
+        });
+        handle_resolve_completion_request(&mut fake, None).await;
+        apply_additional_edits.await.unwrap();
+
         async fn handle_completion_request(
             fake: &mut FakeLanguageServer,
             path: &str,
@@ -7208,6 +7266,7 @@ mod tests {
             let completions = completions
                 .iter()
                 .map(|(range, new_text)| lsp::CompletionItem {
+                    label: new_text.to_string(),
                     text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
                         range: lsp::Range::new(
                             lsp::Position::new(range.start.row, range.start.column),
