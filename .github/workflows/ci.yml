@@ -19,6 +19,8 @@ jobs:
   tests:
     name: Run tests
     runs-on: self-hosted
+    env:
+      RUSTFLAGS: -D warnings
     steps:
       - name: Install Rust
         uses: actions-rs/toolchain@v1
