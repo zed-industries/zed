@@ -190,7 +190,7 @@ async fn test_reparse(mut cx: gpui::TestAppContext) {
         concat!(
             "(source_file (function_item name: (identifier) ",
             "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
-            "body: (block (identifier))))"
+            "body: (block (expression_statement (identifier)))))"
         )
     );
 
@@ -224,11 +224,11 @@ async fn test_reparse(mut cx: gpui::TestAppContext) {
         concat!(
             "(source_file (function_item name: (identifier) ",
             "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
-            "body: (block (call_expression ",
+            "body: (block (expression_statement (call_expression ",
             "function: (generic_function ",
             "function: (field_expression value: (identifier) field: (field_identifier)) ",
             "type_arguments: (type_arguments (type_identifier))) ",
-            "arguments: (arguments (identifier))))))",
+            "arguments: (arguments (identifier)))))))",
         )
     );
 
@@ -262,11 +262,11 @@ async fn test_reparse(mut cx: gpui::TestAppContext) {
         concat!(
             "(source_file (function_item name: (identifier) ",
             "parameters: (parameters (parameter pattern: (identifier) type: (type_identifier))) ",
-            "body: (block (call_expression ",
+            "body: (block (expression_statement (call_expression ",
             "function: (generic_function ",
             "function: (field_expression value: (identifier) field: (field_identifier)) ",
             "type_arguments: (type_arguments (type_identifier))) ",
-            "arguments: (arguments (identifier))))))",
+            "arguments: (arguments (identifier)))))))",
         )
     );
 
