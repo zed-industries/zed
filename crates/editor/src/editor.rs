@@ -101,7 +101,7 @@ action!(SelectRight);
 action!(SelectToPreviousWordBoundary);
 action!(SelectToNextWordBoundary);
 action!(SelectToBeginningOfLine, bool);
-action!(SelectToEndOfLine);
+action!(SelectToEndOfLine, bool);
 action!(SelectToBeginning);
 action!(SelectToEnd);
 action!(SelectAll);
@@ -212,8 +212,8 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
             SelectToBeginningOfLine(true),
             Some("Editor"),
         ),
-        Binding::new("cmd-shift-right", SelectToEndOfLine, Some("Editor")),
-        Binding::new("ctrl-shift-E", SelectToEndOfLine, Some("Editor")),
+        Binding::new("cmd-shift-right", SelectToEndOfLine(true), Some("Editor")),
+        Binding::new("ctrl-shift-E", SelectToEndOfLine(true), Some("Editor")),
         Binding::new("cmd-shift-up", SelectToBeginning, Some("Editor")),
         Binding::new("cmd-shift-down", SelectToEnd, Some("Editor")),
         Binding::new("cmd-a", SelectAll, Some("Editor")),
@@ -968,15 +968,16 @@ impl Editor {
                 mode = SelectMode::Word(start.clone()..end.clone());
             }
             3 => {
-                let position = display_map.clip_point(position, Bias::Left);
-                let line_start = movement::line_beginning(&display_map, position, false);
-                let mut next_line_start = line_start.clone();
-                *next_line_start.row_mut() += 1;
-                *next_line_start.column_mut() = 0;
-                next_line_start = display_map.clip_point(next_line_start, Bias::Right);
-
-                start = buffer.anchor_before(line_start.to_point(&display_map));
-                end = buffer.anchor_before(next_line_start.to_point(&display_map));
+                let position = display_map
+                    .clip_point(position, Bias::Left)
+                    .to_point(&display_map);
+                let line_start = display_map.prev_line_boundary(position).0;
+                let next_line_start = buffer.clip_point(
+                    display_map.next_line_boundary(position).0 + Point::new(1, 0),
+                    Bias::Left,
+                );
+                start = buffer.anchor_before(line_start);
+                end = buffer.anchor_before(next_line_start);
                 mode = SelectMode::Line(start.clone()..end.clone());
             }
             _ => {
@@ -1082,26 +1083,27 @@ impl Editor {
                     }
                 }
                 SelectMode::Line(original_range) => {
-                    let original_display_range = original_range.start.to_display_point(&display_map)
-                        ..original_range.end.to_display_point(&display_map);
-                    let original_buffer_range = original_display_range.start.to_point(&display_map)
-                        ..original_display_range.end.to_point(&display_map);
-                    let line_start = movement::line_beginning(&display_map, position, false);
-                    let mut next_line_start = line_start.clone();
-                    *next_line_start.row_mut() += 1;
-                    *next_line_start.column_mut() = 0;
-                    next_line_start = display_map.clip_point(next_line_start, Bias::Right);
+                    let original_range = original_range.to_point(&display_map.buffer_snapshot);
 
-                    if line_start < original_display_range.start {
-                        head = line_start.to_point(&display_map);
+                    let position = display_map
+                        .clip_point(position, Bias::Left)
+                        .to_point(&display_map);
+                    let line_start = display_map.prev_line_boundary(position).0;
+                    let next_line_start = buffer.clip_point(
+                        display_map.next_line_boundary(position).0 + Point::new(1, 0),
+                        Bias::Left,
+                    );
+
+                    if line_start < original_range.start {
+                        head = line_start
                     } else {
-                        head = next_line_start.to_point(&display_map);
+                        head = next_line_start
                     }
 
-                    if head <= original_buffer_range.start {
-                        tail = original_buffer_range.end;
+                    if head <= original_range.start {
+                        tail = original_range.end;
                     } else {
-                        tail = original_buffer_range.start;
+                        tail = original_range.start;
                     }
                 }
                 SelectMode::All => {
@@ -2923,14 +2925,14 @@ impl Editor {
 
     pub fn select_to_beginning_of_line(
         &mut self,
-        SelectToBeginningOfLine(toggle_indent): &SelectToBeginningOfLine,
+        SelectToBeginningOfLine(stop_at_soft_boundaries): &SelectToBeginningOfLine,
         cx: &mut ViewContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
-            let new_head = movement::line_beginning(&display_map, head, *toggle_indent);
+            let new_head = movement::line_beginning(&display_map, head, *stop_at_soft_boundaries);
             selection.set_head(new_head.to_point(&display_map));
             selection.goal = SelectionGoal::None;
         }
@@ -2954,7 +2956,7 @@ impl Editor {
         {
             for selection in &mut selections {
                 let head = selection.head().to_display_point(&display_map);
-                let new_head = movement::line_end(&display_map, head);
+                let new_head = movement::line_end(&display_map, head, true);
                 let anchor = new_head.to_point(&display_map);
                 selection.start = anchor.clone();
                 selection.end = anchor;
@@ -2965,12 +2967,16 @@ impl Editor {
         self.update_selections(selections, Some(Autoscroll::Fit), cx);
     }
 
-    pub fn select_to_end_of_line(&mut self, _: &SelectToEndOfLine, cx: &mut ViewContext<Self>) {
+    pub fn select_to_end_of_line(
+        &mut self,
+        SelectToEndOfLine(stop_at_soft_boundaries): &SelectToEndOfLine,
+        cx: &mut ViewContext<Self>,
+    ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let mut selections = self.local_selections::<Point>(cx);
         for selection in &mut selections {
             let head = selection.head().to_display_point(&display_map);
-            let new_head = movement::line_end(&display_map, head);
+            let new_head = movement::line_end(&display_map, head, *stop_at_soft_boundaries);
             selection.set_head(new_head.to_point(&display_map));
             selection.goal = SelectionGoal::None;
         }
@@ -2979,14 +2985,14 @@ impl Editor {
 
     pub fn delete_to_end_of_line(&mut self, _: &DeleteToEndOfLine, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
-        self.select_to_end_of_line(&SelectToEndOfLine, cx);
+        self.select_to_end_of_line(&SelectToEndOfLine(false), cx);
         self.delete(&Delete, cx);
         self.end_transaction(cx);
     }
 
     pub fn cut_to_end_of_line(&mut self, _: &CutToEndOfLine, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
-        self.select_to_end_of_line(&SelectToEndOfLine, cx);
+        self.select_to_end_of_line(&SelectToEndOfLine(false), cx);
         self.cut(&Cut, cx);
         self.end_transaction(cx);
     }
@@ -5671,7 +5677,7 @@ mod tests {
         });
 
         view.update(cx, |view, cx| {
-            view.select_to_end_of_line(&SelectToEndOfLine, cx);
+            view.select_to_end_of_line(&SelectToEndOfLine(true), cx);
             assert_eq!(
                 view.selected_display_ranges(cx),
                 &[
