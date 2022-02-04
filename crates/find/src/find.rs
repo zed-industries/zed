@@ -328,10 +328,10 @@ impl FindBar {
         });
     }
 
-    fn dismiss(workspace: &mut Workspace, _: &Dismiss, cx: &mut ViewContext<Workspace>) {
-        workspace
-            .active_pane()
-            .update(cx, |pane, cx| pane.dismiss_toolbar(cx));
+    fn dismiss(pane: &mut Pane, _: &Dismiss, cx: &mut ViewContext<Pane>) {
+        if pane.toolbar::<FindBar>().is_some() {
+            pane.dismiss_toolbar(cx);
+        }
     }
 
     fn focus_editor(&mut self, _: &FocusEditor, cx: &mut ViewContext<Self>) {
