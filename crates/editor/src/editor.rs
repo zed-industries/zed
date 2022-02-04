@@ -1334,15 +1334,15 @@ impl Editor {
         self.start_transaction(cx);
         let mut old_selections = SmallVec::<[_; 32]>::new();
         {
-            let selections = self.local_selections::<Point>(cx);
+            let selections = self.local_selections::<usize>(cx);
             let buffer = self.buffer.read(cx).snapshot(cx);
             for selection in selections.iter() {
-                let start_point = selection.start;
+                let start_point = selection.start.to_point(&buffer);
                 let indent = buffer
                     .indent_column_for_line(start_point.row)
                     .min(start_point.column);
-                let start = selection.start.to_offset(&buffer);
-                let end = selection.end.to_offset(&buffer);
+                let start = selection.start;
+                let end = selection.end;
 
                 let mut insert_extra_newline = false;
                 if let Some(language) = buffer.language() {
@@ -1371,14 +1371,20 @@ impl Editor {
                     });
                 }
 
-                old_selections.push((selection.id, start..end, indent, insert_extra_newline));
+                old_selections.push((
+                    selection.id,
+                    buffer.anchor_after(end),
+                    start..end,
+                    indent,
+                    insert_extra_newline,
+                ));
             }
         }
 
         self.buffer.update(cx, |buffer, cx| {
             let mut delta = 0_isize;
             let mut pending_edit: Option<PendingEdit> = None;
-            for (_, range, indent, insert_extra_newline) in &old_selections {
+            for (_, _, range, indent, insert_extra_newline) in &old_selections {
                 if pending_edit.as_ref().map_or(false, |pending| {
                     pending.indent != *indent
                         || pending.insert_extra_newline != *insert_extra_newline
@@ -1423,17 +1429,19 @@ impl Editor {
                 .iter()
                 .cloned()
                 .zip(old_selections)
-                .map(|(mut new_selection, (_, _, _, insert_extra_newline))| {
-                    if insert_extra_newline {
-                        let mut cursor = new_selection.start.to_point(&buffer);
-                        cursor.row -= 1;
-                        cursor.column = buffer.line_len(cursor.row);
+                .map(
+                    |(mut new_selection, (_, end_anchor, _, _, insert_extra_newline))| {
+                        let mut cursor = end_anchor.to_point(&buffer);
+                        if insert_extra_newline {
+                            cursor.row -= 1;
+                            cursor.column = buffer.line_len(cursor.row);
+                        }
                         let anchor = buffer.anchor_after(cursor);
                         new_selection.start = anchor.clone();
                         new_selection.end = anchor;
-                    }
-                    new_selection
-                })
+                        new_selection
+                    },
+                )
                 .collect();
         });
 
@@ -1451,13 +1459,37 @@ impl Editor {
 
     pub fn insert(&mut self, text: &str, cx: &mut ViewContext<Self>) {
         self.start_transaction(cx);
+
         let old_selections = self.local_selections::<usize>(cx);
-        self.buffer.update(cx, |buffer, cx| {
+        let selection_anchors = self.buffer.update(cx, |buffer, cx| {
+            let anchors = {
+                let snapshot = buffer.read(cx);
+                old_selections
+                    .iter()
+                    .map(|s| (s.id, s.goal, snapshot.anchor_after(s.end)))
+                    .collect::<Vec<_>>()
+            };
             let edit_ranges = old_selections.iter().map(|s| s.start..s.end);
             buffer.edit_with_autoindent(edit_ranges, text, cx);
+            anchors
         });
 
-        let selections = self.local_selections::<usize>(cx);
+        let selections = {
+            let snapshot = self.buffer.read(cx).read(cx);
+            selection_anchors
+                .into_iter()
+                .map(|(id, goal, position)| {
+                    let position = position.to_offset(&snapshot);
+                    Selection {
+                        id,
+                        start: position,
+                        end: position,
+                        goal,
+                        reversed: false,
+                    }
+                })
+                .collect()
+        };
         self.update_selections(selections, Some(Autoscroll::Fit), cx);
         self.end_transaction(cx);
     }
@@ -5898,6 +5930,119 @@ mod tests {
 
             view.newline(&Newline, cx);
             assert_eq!(view.text(cx), "aa\naa\n  \n    bb\n    bb\n");
+        });
+    }
+
+    #[gpui::test]
+    fn test_newline_with_old_selections(cx: &mut gpui::MutableAppContext) {
+        let buffer = MultiBuffer::build_simple(
+            "
+                a
+                b(
+                    X
+                )
+                c(
+                    X
+                )
+            "
+            .unindent()
+            .as_str(),
+            cx,
+        );
+
+        let settings = EditorSettings::test(&cx);
+        let (_, editor) = cx.add_window(Default::default(), |cx| {
+            let mut editor = build_editor(buffer.clone(), settings, cx);
+            editor.select_ranges(
+                [
+                    Point::new(2, 4)..Point::new(2, 5),
+                    Point::new(5, 4)..Point::new(5, 5),
+                ],
+                None,
+                cx,
+            );
+            editor
+        });
+
+        // Edit the buffer directly, deleting ranges surrounding the editor's selections
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [
+                    Point::new(1, 2)..Point::new(3, 0),
+                    Point::new(4, 2)..Point::new(6, 0),
+                ],
+                "",
+                cx,
+            );
+            assert_eq!(
+                buffer.read(cx).text(),
+                "
+                    a
+                    b()
+                    c()
+                "
+                .unindent()
+            );
+        });
+
+        editor.update(cx, |editor, cx| {
+            assert_eq!(
+                editor.selected_ranges(cx),
+                &[
+                    Point::new(1, 2)..Point::new(1, 2),
+                    Point::new(2, 2)..Point::new(2, 2),
+                ],
+            );
+
+            editor.newline(&Newline, cx);
+            assert_eq!(
+                editor.text(cx),
+                "
+                    a
+                    b(
+                    )
+                    c(
+                    )
+                "
+                .unindent()
+            );
+
+            // The selections are moved after the inserted newlines
+            assert_eq!(
+                editor.selected_ranges(cx),
+                &[
+                    Point::new(2, 0)..Point::new(2, 0),
+                    Point::new(4, 0)..Point::new(4, 0),
+                ],
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_insert_with_old_selections(cx: &mut gpui::MutableAppContext) {
+        let buffer = MultiBuffer::build_simple("a( X ), b( Y ), c( Z )", cx);
+
+        let settings = EditorSettings::test(&cx);
+        let (_, editor) = cx.add_window(Default::default(), |cx| {
+            let mut editor = build_editor(buffer.clone(), settings, cx);
+            editor.select_ranges([3..4, 11..12, 19..20], None, cx);
+            editor
+        });
+
+        // Edit the buffer directly, deleting ranges surrounding the editor's selections
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([2..5, 10..13, 18..21], "", cx);
+            assert_eq!(buffer.read(cx).text(), "a(), b(), c()".unindent());
+        });
+
+        editor.update(cx, |editor, cx| {
+            assert_eq!(editor.selected_ranges(cx), &[2..2, 7..7, 12..12],);
+
+            editor.insert("Z", cx);
+            assert_eq!(editor.text(cx), "a(Z), b(Z), c(Z)");
+
+            // The selections are moved after the inserted characters
+            assert_eq!(editor.selected_ranges(cx), &[3..3, 9..9, 15..15],);
         });
     }
 
