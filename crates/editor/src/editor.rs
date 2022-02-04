@@ -383,6 +383,8 @@ pub enum SoftWrap {
     Column(u32),
 }
 
+type CompletionId = usize;
+
 pub type BuildSettings = Arc<dyn 'static + Send + Sync + Fn(&AppContext) -> EditorSettings>;
 
 pub struct Editor {
@@ -416,7 +418,8 @@ pub struct Editor {
     highlighted_ranges: BTreeMap<TypeId, (Color, Vec<Range<Anchor>>)>,
     nav_history: Option<ItemNavHistory>,
     completion_state: Option<CompletionState>,
-    completions_task: Option<Task<Option<()>>>,
+    completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
+    next_completion_id: CompletionId,
 }
 
 pub struct EditorSnapshot {
@@ -457,6 +460,7 @@ struct SnippetState {
 struct InvalidationStack<T>(Vec<T>);
 
 struct CompletionState {
+    id: CompletionId,
     initial_position: Anchor,
     completions: Arc<[Completion<Anchor>]>,
     match_candidates: Vec<StringMatchCandidate>,
@@ -617,7 +621,8 @@ impl Editor {
             highlighted_ranges: Default::default(),
             nav_history: None,
             completion_state: None,
-            completions_task: None,
+            completion_tasks: Default::default(),
+            next_completion_id: 0,
         };
         let selection = Selection {
             id: post_inc(&mut this.next_selection_id),
@@ -1660,11 +1665,13 @@ impl Editor {
             .buffer
             .update(cx, |buffer, cx| buffer.completions(position.clone(), cx));
 
-        self.completions_task = Some(cx.spawn_weak(|this, mut cx| {
+        let id = post_inc(&mut self.next_completion_id);
+        let task = cx.spawn_weak(|this, mut cx| {
             async move {
                 let completions = completions.await?;
 
                 let mut completion_state = CompletionState {
+                    id,
                     initial_position: position,
                     match_candidates: completions
                         .iter()
@@ -1688,6 +1695,14 @@ impl Editor {
 
                 if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
                     this.update(&mut cx, |this, cx| {
+                        if let Some(prev_completion_state) = this.completion_state.as_ref() {
+                            if prev_completion_state.id > completion_state.id {
+                                return;
+                            }
+                        }
+
+                        this.completion_tasks
+                            .retain(|(id, _)| *id > completion_state.id);
                         if completion_state.matches.is_empty() {
                             this.hide_completions(cx);
                         } else if this.focused {
@@ -1700,12 +1715,13 @@ impl Editor {
                 Ok::<_, anyhow::Error>(())
             }
             .log_err()
-        }));
+        });
+        self.completion_tasks.push((id, task));
     }
 
     fn hide_completions(&mut self, cx: &mut ViewContext<Self>) -> Option<CompletionState> {
         cx.notify();
-        self.completions_task.take();
+        self.completion_tasks.clear();
         self.completion_state.take()
     }
 
@@ -1731,31 +1747,39 @@ impl Editor {
         };
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let old_range = completion.old_range.to_offset(&snapshot);
+        let old_text = snapshot
+            .text_for_range(old_range.clone())
+            .collect::<String>();
 
         let selections = self.local_selections::<usize>(cx);
-        let mut common_prefix_len = None;
+        let newest_selection = selections.iter().max_by_key(|s| s.id)?;
+        let lookbehind = newest_selection.start.saturating_sub(old_range.start);
+        let lookahead = old_range.end.saturating_sub(newest_selection.end);
+        let mut common_prefix_len = old_text
+            .bytes()
+            .zip(text.bytes())
+            .take_while(|(a, b)| a == b)
+            .count();
+
         let mut ranges = Vec::new();
         for selection in &selections {
-            let start = selection.start.saturating_sub(old_range.len());
-            let prefix_len = snapshot
-                .bytes_at(start)
-                .zip(completion.new_text.bytes())
-                .take_while(|(a, b)| a == b)
-                .count();
-            if common_prefix_len.is_none() {
-                common_prefix_len = Some(prefix_len);
-            }
-
-            if common_prefix_len == Some(prefix_len) {
-                ranges.push(start + prefix_len..selection.end);
+            if snapshot.contains_str_at(selection.start.saturating_sub(lookbehind), &old_text) {
+                let start = selection.start.saturating_sub(lookbehind);
+                let end = selection.end + lookahead;
+                ranges.push(start + common_prefix_len..end);
             } else {
-                common_prefix_len.take();
+                common_prefix_len = 0;
                 ranges.clear();
-                ranges.extend(selections.iter().map(|s| s.start..s.end));
+                ranges.extend(selections.iter().map(|s| {
+                    if s.id == newest_selection.id {
+                        old_range.clone()
+                    } else {
+                        s.start..s.end
+                    }
+                }));
                 break;
             }
         }
-        let common_prefix_len = common_prefix_len.unwrap_or(0);
         let text = &text[common_prefix_len..];
 
         self.start_transaction(cx);
@@ -4024,7 +4048,8 @@ impl Editor {
             if kind == Some(CharKind::Word) && word_range.to_inclusive().contains(&cursor_position)
             {
                 let query = Self::completion_query(&buffer, cursor_position);
-                smol::block_on(completion_state.filter(query.as_deref(), cx.background().clone()));
+                cx.background()
+                    .block(completion_state.filter(query.as_deref(), cx.background().clone()));
                 self.show_completions(&ShowCompletions, cx);
             } else {
                 self.hide_completions(cx);
@@ -4954,6 +4979,7 @@ fn styled_runs_for_completion_label<'a>(
 mod tests {
     use super::*;
     use language::{FakeFile, LanguageConfig};
+    use lsp::FakeLanguageServer;
     use std::{cell::RefCell, path::Path, rc::Rc, time::Instant};
     use text::Point;
     use unindent::Unindent;
@@ -7269,41 +7295,20 @@ mod tests {
         let (_, editor) = cx.add_window(|cx| build_editor(buffer, settings, cx));
 
         editor.update(&mut cx, |editor, cx| {
-            editor.select_ranges([3..3], None, cx);
+            editor.select_ranges([Point::new(0, 3)..Point::new(0, 3)], None, cx);
             editor.handle_input(&Input(".".to_string()), cx);
         });
 
-        let (id, params) = fake.receive_request::<lsp::request::Completion>().await;
-        assert_eq!(
-            params.text_document_position.text_document.uri,
-            lsp::Url::from_file_path("/the/file").unwrap()
-        );
-        assert_eq!(
-            params.text_document_position.position,
-            lsp::Position::new(0, 4)
-        );
-
-        fake.respond(
-            id,
-            Some(lsp::CompletionResponse::Array(vec![
-                lsp::CompletionItem {
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 4)),
-                        new_text: "first_completion".to_string(),
-                    })),
-                    ..Default::default()
-                },
-                lsp::CompletionItem {
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 4)),
-                        new_text: "second_completion".to_string(),
-                    })),
-                    ..Default::default()
-                },
-            ])),
+        handle_completion_request(
+            &mut fake,
+            "/the/file",
+            Point::new(0, 4),
+            &[
+                (Point::new(0, 4)..Point::new(0, 4), "first_completion"),
+                (Point::new(0, 4)..Point::new(0, 4), "second_completion"),
+            ],
         )
         .await;
-
         editor.next_notification(&cx).await;
 
         let apply_additional_edits = editor.update(&mut cx, |editor, cx| {
@@ -7321,21 +7326,11 @@ mod tests {
             apply_additional_edits
         });
 
-        let (id, _) = fake
-            .receive_request::<lsp::request::ResolveCompletionItem>()
-            .await;
-        fake.respond(
-            id,
-            lsp::CompletionItem {
-                additional_text_edits: Some(vec![lsp::TextEdit::new(
-                    lsp::Range::new(lsp::Position::new(2, 5), lsp::Position::new(2, 5)),
-                    "\nadditional edit".to_string(),
-                )]),
-                ..Default::default()
-            },
+        handle_resolve_completion_request(
+            &mut fake,
+            Some((Point::new(2, 5)..Point::new(2, 5), "\nadditional edit")),
         )
         .await;
-
         apply_additional_edits.await.unwrap();
         assert_eq!(
             editor.read_with(&cx, |editor, cx| editor.text(cx)),
@@ -7347,6 +7342,130 @@ mod tests {
             "
             .unindent()
         );
+
+        editor.update(&mut cx, |editor, cx| {
+            editor.select_ranges(
+                [
+                    Point::new(1, 3)..Point::new(1, 3),
+                    Point::new(2, 5)..Point::new(2, 5),
+                ],
+                None,
+                cx,
+            );
+
+            editor.handle_input(&Input(" ".to_string()), cx);
+            assert!(editor.completion_state.is_none());
+            editor.handle_input(&Input("s".to_string()), cx);
+            assert!(editor.completion_state.is_none());
+        });
+
+        handle_completion_request(
+            &mut fake,
+            "/the/file",
+            Point::new(2, 7),
+            &[
+                (Point::new(2, 6)..Point::new(2, 7), "fourth_completion"),
+                (Point::new(2, 6)..Point::new(2, 7), "fifth_completion"),
+                (Point::new(2, 6)..Point::new(2, 7), "sixth_completion"),
+            ],
+        )
+        .await;
+        editor
+            .condition(&cx, |editor, _| editor.completion_state.is_some())
+            .await;
+
+        editor.update(&mut cx, |editor, cx| {
+            editor.handle_input(&Input("i".to_string()), cx);
+        });
+
+        handle_completion_request(
+            &mut fake,
+            "/the/file",
+            Point::new(2, 8),
+            &[
+                (Point::new(2, 6)..Point::new(2, 8), "fourth_completion"),
+                (Point::new(2, 6)..Point::new(2, 8), "fifth_completion"),
+                (Point::new(2, 6)..Point::new(2, 8), "sixth_completion"),
+            ],
+        )
+        .await;
+        editor.next_notification(&cx).await;
+
+        let apply_additional_edits = editor.update(&mut cx, |editor, cx| {
+            let apply_additional_edits = editor.confirm_completion(None, cx).unwrap();
+            assert_eq!(
+                editor.text(cx),
+                "
+                    one.second_completion
+                    two sixth_completion
+                    three sixth_completion
+                    additional edit
+                "
+                .unindent()
+            );
+            apply_additional_edits
+        });
+        handle_resolve_completion_request(&mut fake, None).await;
+        apply_additional_edits.await.unwrap();
+
+        async fn handle_completion_request(
+            fake: &mut FakeLanguageServer,
+            path: &str,
+            position: Point,
+            completions: &[(Range<Point>, &str)],
+        ) {
+            let (id, params) = fake.receive_request::<lsp::request::Completion>().await;
+            assert_eq!(
+                params.text_document_position.text_document.uri,
+                lsp::Url::from_file_path(path).unwrap()
+            );
+            assert_eq!(
+                params.text_document_position.position,
+                lsp::Position::new(position.row, position.column)
+            );
+
+            let completions = completions
+                .iter()
+                .map(|(range, new_text)| lsp::CompletionItem {
+                    label: new_text.to_string(),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range::new(
+                            lsp::Position::new(range.start.row, range.start.column),
+                            lsp::Position::new(range.start.row, range.start.column),
+                        ),
+                        new_text: new_text.to_string(),
+                    })),
+                    ..Default::default()
+                })
+                .collect();
+            fake.respond(id, Some(lsp::CompletionResponse::Array(completions)))
+                .await;
+        }
+
+        async fn handle_resolve_completion_request(
+            fake: &mut FakeLanguageServer,
+            edit: Option<(Range<Point>, &str)>,
+        ) {
+            let (id, _) = fake
+                .receive_request::<lsp::request::ResolveCompletionItem>()
+                .await;
+            fake.respond(
+                id,
+                lsp::CompletionItem {
+                    additional_text_edits: edit.map(|(range, new_text)| {
+                        vec![lsp::TextEdit::new(
+                            lsp::Range::new(
+                                lsp::Position::new(range.start.row, range.start.column),
+                                lsp::Position::new(range.end.row, range.end.column),
+                            ),
+                            new_text.to_string(),
+                        )]
+                    }),
+                    ..Default::default()
+                },
+            )
+            .await;
+        }
     }
 
     #[gpui::test]

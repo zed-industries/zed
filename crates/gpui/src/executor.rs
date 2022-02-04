@@ -236,16 +236,14 @@ impl Deterministic {
         }
     }
 
-    fn block_on(&self, future: &mut AnyLocalFuture) -> Option<Box<dyn Any>> {
+    fn block<F, T>(&self, future: &mut F, max_ticks: usize) -> Option<T>
+    where
+        F: Unpin + Future<Output = T>,
+    {
         let unparker = self.parker.lock().unparker();
         let waker = waker_fn(move || {
             unparker.unpark();
         });
-        let max_ticks = {
-            let mut state = self.state.lock();
-            let range = state.block_on_ticks.clone();
-            state.rng.gen_range(range)
-        };
 
         let mut cx = Context::from_waker(&waker);
         for _ in 0..max_ticks {
@@ -258,7 +256,7 @@ impl Deterministic {
                 runnable.run();
             } else {
                 drop(state);
-                if let Poll::Ready(result) = future.as_mut().poll(&mut cx) {
+                if let Poll::Ready(result) = future.poll(&mut cx) {
                     return Some(result);
                 }
                 let mut state = self.state.lock();
@@ -488,6 +486,19 @@ impl Background {
         Task::send(any_task)
     }
 
+    pub fn block<F, T>(&self, future: F) -> T
+    where
+        F: Future<Output = T>,
+    {
+        smol::pin!(future);
+        match self {
+            Self::Production { .. } => smol::block_on(&mut future),
+            Self::Deterministic { executor, .. } => {
+                executor.block(&mut future, usize::MAX).unwrap()
+            }
+        }
+    }
+
     pub fn block_with_timeout<F, T>(
         &self,
         timeout: Duration,
@@ -501,7 +512,14 @@ impl Background {
         if !timeout.is_zero() {
             let output = match self {
                 Self::Production { .. } => smol::block_on(util::timeout(timeout, &mut future)).ok(),
-                Self::Deterministic { executor, .. } => executor.block_on(&mut future),
+                Self::Deterministic { executor, .. } => {
+                    let max_ticks = {
+                        let mut state = executor.state.lock();
+                        let range = state.block_on_ticks.clone();
+                        state.rng.gen_range(range)
+                    };
+                    executor.block(&mut future, max_ticks)
+                }
             };
             if let Some(output) = output {
                 return Ok(*output.downcast().unwrap());

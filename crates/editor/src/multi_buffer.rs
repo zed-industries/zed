@@ -1314,12 +1314,6 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn bytes_at<'a, T: ToOffset>(&'a self, position: T) -> impl 'a + Iterator<Item = u8> {
-        self.bytes_in_range(position.to_offset(self)..self.len())
-            .flatten()
-            .copied()
-    }
-
     pub fn buffer_rows<'a>(&'a self, start_row: u32) -> MultiBufferRows<'a> {
         let mut result = MultiBufferRows {
             buffer_row_range: 0..0,
