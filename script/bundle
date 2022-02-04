@@ -7,6 +7,9 @@ export ZED_BUNDLE=true
 # Install cargo-bundle 0.5.0 if it's not already installed
 cargo install cargo-bundle --version 0.5.0
 
+# Deal with versions of macOS that don't include libstdc++ headers
+export CXXFLAGS="-stdlib=libc++"
+
 # Build the app bundle for x86_64
 pushd crates/zed > /dev/null
 cargo bundle --release --target x86_64-apple-darwin
