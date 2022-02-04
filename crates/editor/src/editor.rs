@@ -3456,7 +3456,7 @@ impl Editor {
     pub fn show_next_diagnostic(&mut self, _: &ShowNextDiagnostic, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selection = self.newest_selection::<usize>(&buffer);
-        let active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
+        let mut active_primary_range = self.active_diagnostics.as_ref().map(|active_diagnostics| {
             active_diagnostics
                 .primary_range
                 .to_offset(&buffer)
@@ -3503,8 +3503,10 @@ impl Editor {
             } else if search_start == 0 {
                 break;
             } else {
-                // Cycle around to the start of the buffer.
+                // Cycle around to the start of the buffer, potentially moving back to the start of
+                // the currently active diagnostic.
                 search_start = 0;
+                active_primary_range.take();
             }
         }
     }
