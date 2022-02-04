@@ -274,64 +274,56 @@ impl FindBar {
     fn deploy(workspace: &mut Workspace, Deploy(focus): &Deploy, cx: &mut ViewContext<Workspace>) {
         let settings = workspace.settings();
         workspace.active_pane().update(cx, |pane, cx| {
-            let findbar_was_visible = pane
-                .active_toolbar()
-                .map_or(false, |toolbar| toolbar.downcast::<Self>().is_some());
-
             pane.show_toolbar(cx, |cx| FindBar::new(settings, cx));
 
             if let Some(find_bar) = pane
                 .active_toolbar()
                 .and_then(|toolbar| toolbar.downcast::<Self>())
             {
-                if !findbar_was_visible {
-                    let editor = pane.active_item().unwrap().act_as::<Editor>(cx).unwrap();
-                    let display_map = editor
-                        .update(cx, |editor, cx| editor.snapshot(cx))
-                        .display_snapshot;
-                    let selection = editor
-                        .read(cx)
-                        .newest_selection::<usize>(&display_map.buffer_snapshot);
+                let editor = pane.active_item().unwrap().act_as::<Editor>(cx).unwrap();
+                let display_map = editor
+                    .update(cx, |editor, cx| editor.snapshot(cx))
+                    .display_snapshot;
+                let selection = editor
+                    .read(cx)
+                    .newest_selection::<usize>(&display_map.buffer_snapshot);
 
-                    let mut text: String;
-                    if selection.start == selection.end {
-                        let point = selection.start.to_display_point(&display_map);
-                        let range = editor::movement::surrounding_word(&display_map, point);
-                        let range = range.start.to_offset(&display_map, Bias::Left)
-                            ..range.end.to_offset(&display_map, Bias::Right);
-                        text = display_map.buffer_snapshot.text_for_range(range).collect();
-                        if text.trim().is_empty() {
-                            text = String::new();
-                        }
-                    } else {
-                        text = display_map
-                            .buffer_snapshot
-                            .text_for_range(selection.start..selection.end)
-                            .collect();
+                let mut text: String;
+                if selection.start == selection.end {
+                    let point = selection.start.to_display_point(&display_map);
+                    let range = editor::movement::surrounding_word(&display_map, point);
+                    let range = range.start.to_offset(&display_map, Bias::Left)
+                        ..range.end.to_offset(&display_map, Bias::Right);
+                    text = display_map.buffer_snapshot.text_for_range(range).collect();
+                    if text.trim().is_empty() {
+                        text = String::new();
                     }
+                } else {
+                    text = display_map
+                        .buffer_snapshot
+                        .text_for_range(selection.start..selection.end)
+                        .collect();
+                }
 
-                    if !text.is_empty() {
-                        find_bar.update(cx, |find_bar, cx| find_bar.set_query(&text, cx));
-                    }
+                if !text.is_empty() {
+                    find_bar.update(cx, |find_bar, cx| find_bar.set_query(&text, cx));
                 }
 
                 if *focus {
-                    if !findbar_was_visible {
-                        let query_editor = find_bar.read(cx).query_editor.clone();
-                        query_editor.update(cx, |query_editor, cx| {
-                            query_editor.select_all(&editor::SelectAll, cx);
-                        });
-                    }
+                    let query_editor = find_bar.read(cx).query_editor.clone();
+                    query_editor.update(cx, |query_editor, cx| {
+                        query_editor.select_all(&editor::SelectAll, cx);
+                    });
                     cx.focus(&find_bar);
                 }
             }
         });
     }
 
-    fn dismiss(workspace: &mut Workspace, _: &Dismiss, cx: &mut ViewContext<Workspace>) {
-        workspace
-            .active_pane()
-            .update(cx, |pane, cx| pane.dismiss_toolbar(cx));
+    fn dismiss(pane: &mut Pane, _: &Dismiss, cx: &mut ViewContext<Pane>) {
+        if pane.toolbar::<FindBar>().is_some() {
+            pane.dismiss_toolbar(cx);
+        }
     }
 
     fn focus_editor(&mut self, _: &FocusEditor, cx: &mut ViewContext<Self>) {
