@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Result};
 use fsevent::EventStream;
 use futures::{Stream, StreamExt};
-use postage::prelude::Sink as _;
 use smol::io::{AsyncReadExt, AsyncWriteExt};
 use std::{
     io,
@@ -164,6 +163,8 @@ impl FakeFsState {
     }
 
     async fn emit_event(&mut self, paths: &[&Path]) {
+        use postage::prelude::Sink as _;
+
         let events = paths
             .iter()
             .map(|path| fsevent::Event {
