@@ -238,6 +238,17 @@ impl LanguageServer {
                         link_support: Some(true),
                         ..Default::default()
                     }),
+                    code_action: Some(CodeActionClientCapabilities {
+                        code_action_literal_support: Some(CodeActionLiteralSupport {
+                            code_action_kind: CodeActionKindLiteralSupport {
+                                value_set: vec![
+                                    CodeActionKind::REFACTOR.as_str().into(),
+                                    CodeActionKind::QUICKFIX.as_str().into(),
+                                ],
+                            },
+                        }),
+                        ..Default::default()
+                    }),
                     completion: Some(CompletionClientCapabilities {
                         completion_item: Some(CompletionItemCapability {
                             snippet_support: Some(true),

@@ -124,6 +124,7 @@ action!(FoldSelectedRanges);
 action!(Scroll, Vector2F);
 action!(Select, SelectPhase);
 action!(ShowCompletions);
+action!(ShowCodeActions);
 action!(ConfirmCompletion, Option<usize>);
 
 pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpener>>) {
@@ -239,6 +240,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
         Binding::new("alt-cmd-]", Unfold, Some("Editor")),
         Binding::new("alt-cmd-f", FoldSelectedRanges, Some("Editor")),
         Binding::new("ctrl-space", ShowCompletions, Some("Editor")),
+        Binding::new("cmd-.", ShowCodeActions, Some("Editor")),
     ]);
 
     cx.add_action(Editor::open_new);
@@ -303,6 +305,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_action(Editor::unfold);
     cx.add_action(Editor::fold_selected_ranges);
     cx.add_action(Editor::show_completions);
+    cx.add_action(Editor::show_code_actions);
     cx.add_action(
         |editor: &mut Editor, &ConfirmCompletion(ix): &ConfirmCompletion, cx| {
             if let Some(task) = editor.confirm_completion(ix, cx) {
@@ -1719,6 +1722,22 @@ impl Editor {
             .log_err()
         });
         self.completion_tasks.push((id, task));
+    }
+
+    fn show_code_actions(&mut self, _: &ShowCodeActions, cx: &mut ViewContext<Self>) {
+        let position = if let Some(selection) = self.newest_anchor_selection() {
+            selection.head()
+        } else {
+            return;
+        };
+
+        let actions = self
+            .buffer
+            .update(cx, |buffer, cx| buffer.code_actions(position.clone(), cx));
+        cx.spawn(|this, cx| async move {
+            dbg!(actions.await.unwrap());
+        })
+        .detach();
     }
 
     fn hide_completions(&mut self, cx: &mut ViewContext<Self>) -> Option<CompletionState> {

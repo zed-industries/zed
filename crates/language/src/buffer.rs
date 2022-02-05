@@ -14,7 +14,7 @@ use clock::ReplicaId;
 use futures::FutureExt as _;
 use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
-use lsp::LanguageServer;
+use lsp::{CodeActionKind, LanguageServer};
 use parking_lot::Mutex;
 use postage::{prelude::Stream, sink::Sink, watch};
 use similar::{ChangeTag, TextDiff};
@@ -1845,6 +1845,69 @@ impl Buffer {
                 language,
                 cx.as_mut(),
             )
+        }
+    }
+
+    pub fn code_actions<T>(
+        &self,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<lsp::CodeAction>>>
+    where
+        T: ToPointUtf16,
+    {
+        let file = if let Some(file) = self.file.as_ref() {
+            file
+        } else {
+            return Task::ready(Ok(Default::default()));
+        };
+
+        if let Some(file) = file.as_local() {
+            let server = if let Some(language_server) = self.language_server.as_ref() {
+                language_server.server.clone()
+            } else {
+                return Task::ready(Ok(Default::default()));
+            };
+            let abs_path = file.abs_path(cx);
+            let position = position.to_point_utf16(self);
+
+            cx.spawn(|this, mut cx| async move {
+                let actions = server
+                    .request::<lsp::request::CodeActionRequest>(lsp::CodeActionParams {
+                        text_document: lsp::TextDocumentIdentifier::new(
+                            lsp::Url::from_file_path(abs_path).unwrap(),
+                        ),
+                        range: lsp::Range::new(
+                            position.to_lsp_position(),
+                            position.to_lsp_position(),
+                        ),
+                        work_done_progress_params: Default::default(),
+                        partial_result_params: Default::default(),
+                        context: lsp::CodeActionContext {
+                            diagnostics: Default::default(),
+                            only: Some(vec![
+                                lsp::CodeActionKind::QUICKFIX,
+                                lsp::CodeActionKind::REFACTOR,
+                                lsp::CodeActionKind::REFACTOR_EXTRACT,
+                            ]),
+                        },
+                    })
+                    .await?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|entry| {
+                        if let lsp::CodeActionOrCommand::CodeAction(action) = entry {
+                            Some(action)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                Ok(actions)
+            })
+        } else {
+            log::info!("code actions are not implemented for guests");
+            Task::ready(Ok(Default::default()))
         }
     }
 

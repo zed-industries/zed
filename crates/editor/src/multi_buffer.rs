@@ -860,6 +860,21 @@ impl MultiBuffer {
         })
     }
 
+    pub fn code_actions<T>(
+        &self,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<lsp::CodeAction>>>
+    where
+        T: ToOffset,
+    {
+        let anchor = self.read(cx).anchor_before(position);
+        let buffer = self.buffers.borrow()[&anchor.buffer_id].buffer.clone();
+        let code_actions =
+            buffer.update(cx, |buffer, cx| buffer.code_actions(anchor.text_anchor, cx));
+        cx.spawn(|this, cx| async move { code_actions.await })
+    }
+
     pub fn completions<T>(
         &self,
         position: T,
