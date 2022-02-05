@@ -126,6 +126,7 @@ action!(Select, SelectPhase);
 action!(ShowCompletions);
 action!(ShowCodeActions);
 action!(ConfirmCompletion, Option<usize>);
+action!(ConfirmCodeAction, Option<usize>);
 
 pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpener>>) {
     path_openers.push(Box::new(items::BufferOpener));
@@ -463,36 +464,41 @@ struct SnippetState {
 struct InvalidationStack<T>(Vec<T>);
 
 enum ContextMenu {
-    Completion(CompletionMenu),
+    Completions(CompletionsMenu),
+    CodeActions(CodeActionsMenu),
 }
 
 impl ContextMenu {
     fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
         match self {
-            ContextMenu::Completion(menu) => menu.select_prev(cx),
+            ContextMenu::Completions(menu) => menu.select_prev(cx),
+            ContextMenu::CodeActions(menu) => menu.select_prev(cx),
         }
     }
 
     fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
         match self {
-            ContextMenu::Completion(menu) => menu.select_next(cx),
+            ContextMenu::Completions(menu) => menu.select_next(cx),
+            ContextMenu::CodeActions(menu) => menu.select_next(cx),
         }
     }
 
     fn should_render(&self) -> bool {
         match self {
-            ContextMenu::Completion(menu) => menu.should_render(),
+            ContextMenu::Completions(menu) => menu.should_render(),
+            ContextMenu::CodeActions(menu) => menu.should_render(),
         }
     }
 
     fn render(&self, build_settings: BuildSettings, cx: &AppContext) -> ElementBox {
         match self {
-            ContextMenu::Completion(menu) => menu.render(build_settings, cx),
+            ContextMenu::Completions(menu) => menu.render(build_settings, cx),
+            ContextMenu::CodeActions(menu) => menu.render(build_settings, cx),
         }
     }
 }
 
-struct CompletionMenu {
+struct CompletionsMenu {
     id: CompletionId,
     initial_position: Anchor,
     completions: Arc<[Completion<Anchor>]>,
@@ -502,7 +508,7 @@ struct CompletionMenu {
     list: UniformListState,
 }
 
-impl CompletionMenu {
+impl CompletionsMenu {
     fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
         if self.selected_item > 0 {
             self.selected_item -= 1;
@@ -630,6 +636,79 @@ impl CompletionMenu {
         }
 
         self.matches = matches.into();
+    }
+}
+
+struct CodeActionsMenu {
+    actions: Arc<[lsp::CodeAction]>,
+    selected_item: usize,
+    list: UniformListState,
+}
+
+impl CodeActionsMenu {
+    fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
+        if self.selected_item > 0 {
+            self.selected_item -= 1;
+            cx.notify()
+        }
+    }
+
+    fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
+        if self.selected_item + 1 < self.actions.len() {
+            self.selected_item += 1;
+            cx.notify()
+        }
+    }
+
+    fn should_render(&self) -> bool {
+        !self.actions.is_empty()
+    }
+
+    fn render(&self, build_settings: BuildSettings, cx: &AppContext) -> ElementBox {
+        enum ActionTag {}
+
+        let settings = build_settings(cx);
+        let actions = self.actions.clone();
+        let selected_item = self.selected_item;
+        UniformList::new(self.list.clone(), actions.len(), move |range, items, cx| {
+            let settings = build_settings(cx);
+            let start_ix = range.start;
+            for (ix, action) in actions[range].iter().enumerate() {
+                let item_ix = start_ix + ix;
+                items.push(
+                    MouseEventHandler::new::<ActionTag, _, _, _>(item_ix, cx, |state, _| {
+                        let item_style = if item_ix == selected_item {
+                            settings.style.autocomplete.selected_item
+                        } else if state.hovered {
+                            settings.style.autocomplete.hovered_item
+                        } else {
+                            settings.style.autocomplete.item
+                        };
+
+                        Text::new(action.title.clone(), settings.style.text.clone())
+                            .with_soft_wrap(false)
+                            .contained()
+                            .with_style(item_style)
+                            .boxed()
+                    })
+                    .with_cursor_style(CursorStyle::PointingHand)
+                    .on_mouse_down(move |cx| {
+                        cx.dispatch_action(ConfirmCodeAction(Some(item_ix)));
+                    })
+                    .boxed(),
+                );
+            }
+        })
+        .with_width_from_item(
+            self.actions
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, action)| action.title.chars().count())
+                .map(|(ix, _)| ix),
+        )
+        .contained()
+        .with_style(settings.style.autocomplete.container)
+        .boxed()
     }
 }
 
@@ -1794,7 +1873,7 @@ impl Editor {
             async move {
                 let completions = completions.await?;
 
-                let mut menu = CompletionMenu {
+                let mut menu = CompletionsMenu {
                     id,
                     initial_position: position,
                     match_candidates: completions
@@ -1819,7 +1898,7 @@ impl Editor {
                     this.update(&mut cx, |this, cx| {
                         match this.context_menu.as_ref() {
                             None => {}
-                            Some(ContextMenu::Completion(prev_menu)) => {
+                            Some(ContextMenu::Completions(prev_menu)) => {
                                 if prev_menu.id > menu.id {
                                     return;
                                 }
@@ -1831,7 +1910,7 @@ impl Editor {
                         if menu.matches.is_empty() {
                             this.hide_completions(cx);
                         } else if this.focused {
-                            this.context_menu = Some(ContextMenu::Completion(menu));
+                            this.context_menu = Some(ContextMenu::Completions(menu));
                         }
 
                         cx.notify();
@@ -1854,17 +1933,29 @@ impl Editor {
         let actions = self
             .buffer
             .update(cx, |buffer, cx| buffer.code_actions(position.clone(), cx));
-        cx.spawn(|this, cx| async move {
-            dbg!(actions.await.unwrap());
+
+        cx.spawn(|this, mut cx| async move {
+            let actions = actions.await?;
+            if !actions.is_empty() {
+                this.update(&mut cx, |this, cx| {
+                    this.context_menu = Some(ContextMenu::CodeActions(CodeActionsMenu {
+                        actions: actions.into(),
+                        selected_item: 0,
+                        list: UniformListState::default(),
+                    }));
+                    cx.notify();
+                });
+            }
+            Ok::<_, anyhow::Error>(())
         })
-        .detach();
+        .detach_and_log_err(cx);
     }
 
-    fn hide_completions(&mut self, cx: &mut ViewContext<Self>) -> Option<CompletionMenu> {
+    fn hide_completions(&mut self, cx: &mut ViewContext<Self>) -> Option<CompletionsMenu> {
         cx.notify();
         self.completion_tasks.clear();
         self.context_menu.take().and_then(|menu| {
-            if let ContextMenu::Completion(menu) = menu {
+            if let ContextMenu::Completions(menu) = menu {
                 Some(menu)
             } else {
                 None
@@ -4105,12 +4196,13 @@ impl Editor {
             }
         }
 
-        let completion_menu =
-            if let Some(ContextMenu::Completion(menu)) = self.context_menu.as_mut() {
-                Some(menu)
-            } else {
+        let completion_menu = match self.context_menu.as_mut() {
+            Some(ContextMenu::Completions(menu)) => Some(menu),
+            _ => {
+                self.context_menu.take();
                 None
-            };
+            }
+        };
 
         if let Some((completion_menu, cursor_position)) = completion_menu.zip(new_cursor_position) {
             let cursor_position = cursor_position.to_offset(&buffer);
