@@ -2468,7 +2468,7 @@ mod tests {
         // Confirm a completion on the guest.
         editor_b.next_notification(&cx_b).await;
         editor_b.update(&mut cx_b, |editor, cx| {
-            assert!(editor.has_completions());
+            assert!(editor.should_render_context_menu());
             editor.confirm_completion(Some(0), cx);
             assert_eq!(editor.text(cx), "fn main() { a.first_method() }");
         });

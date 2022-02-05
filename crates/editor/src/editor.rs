@@ -466,6 +466,32 @@ enum ContextMenu {
     Completion(CompletionMenu),
 }
 
+impl ContextMenu {
+    fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
+        match self {
+            ContextMenu::Completion(menu) => menu.select_prev(cx),
+        }
+    }
+
+    fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
+        match self {
+            ContextMenu::Completion(menu) => menu.select_next(cx),
+        }
+    }
+
+    fn should_render(&self) -> bool {
+        match self {
+            ContextMenu::Completion(menu) => menu.should_render(),
+        }
+    }
+
+    fn render(&self, build_settings: BuildSettings, cx: &AppContext) -> ElementBox {
+        match self {
+            ContextMenu::Completion(menu) => menu.render(build_settings, cx),
+        }
+    }
+}
+
 struct CompletionMenu {
     id: CompletionId,
     initial_position: Anchor,
@@ -477,6 +503,95 @@ struct CompletionMenu {
 }
 
 impl CompletionMenu {
+    fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
+        if self.selected_item > 0 {
+            self.selected_item -= 1;
+            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        }
+        cx.notify();
+    }
+
+    fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
+        if self.selected_item + 1 < self.matches.len() {
+            self.selected_item += 1;
+            self.list.scroll_to(ScrollTarget::Show(self.selected_item));
+        }
+        cx.notify();
+    }
+
+    fn should_render(&self) -> bool {
+        !self.matches.is_empty()
+    }
+
+    fn render(&self, build_settings: BuildSettings, cx: &AppContext) -> ElementBox {
+        enum CompletionTag {}
+
+        let settings = build_settings(cx);
+        let completions = self.completions.clone();
+        let matches = self.matches.clone();
+        let selected_item = self.selected_item;
+        UniformList::new(self.list.clone(), matches.len(), move |range, items, cx| {
+            let settings = build_settings(cx);
+            let start_ix = range.start;
+            for (ix, mat) in matches[range].iter().enumerate() {
+                let completion = &completions[mat.candidate_id];
+                let item_ix = start_ix + ix;
+                items.push(
+                    MouseEventHandler::new::<CompletionTag, _, _, _>(
+                        mat.candidate_id,
+                        cx,
+                        |state, _| {
+                            let item_style = if item_ix == selected_item {
+                                settings.style.autocomplete.selected_item
+                            } else if state.hovered {
+                                settings.style.autocomplete.hovered_item
+                            } else {
+                                settings.style.autocomplete.item
+                            };
+
+                            Text::new(completion.label.text.clone(), settings.style.text.clone())
+                                .with_soft_wrap(false)
+                                .with_highlights(combine_syntax_and_fuzzy_match_highlights(
+                                    &completion.label.text,
+                                    settings.style.text.color.into(),
+                                    styled_runs_for_completion_label(
+                                        &completion.label,
+                                        settings.style.text.color,
+                                        &settings.style.syntax,
+                                    ),
+                                    &mat.positions,
+                                ))
+                                .contained()
+                                .with_style(item_style)
+                                .boxed()
+                        },
+                    )
+                    .with_cursor_style(CursorStyle::PointingHand)
+                    .on_mouse_down(move |cx| {
+                        cx.dispatch_action(ConfirmCompletion(Some(item_ix)));
+                    })
+                    .boxed(),
+                );
+            }
+        })
+        .with_width_from_item(
+            self.matches
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, mat)| {
+                    self.completions[mat.candidate_id]
+                        .label
+                        .text
+                        .chars()
+                        .count()
+                })
+                .map(|(ix, _)| ix),
+        )
+        .contained()
+        .with_style(settings.style.autocomplete.container)
+        .boxed()
+    }
+
     pub async fn filter(&mut self, query: Option<&str>, executor: Arc<executor::Background>) {
         let mut matches = if let Some(query) = query {
             fuzzy::match_strings(
@@ -1648,22 +1763,6 @@ impl Editor {
         }
     }
 
-    fn completion_menu(&self) -> Option<&CompletionMenu> {
-        if let Some(ContextMenu::Completion(menu)) = self.context_menu.as_ref() {
-            Some(menu)
-        } else {
-            None
-        }
-    }
-
-    fn completion_menu_mut(&mut self) -> Option<&mut CompletionMenu> {
-        if let Some(ContextMenu::Completion(menu)) = self.context_menu.as_mut() {
-            Some(menu)
-        } else {
-            None
-        }
-    }
-
     fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
         let offset = position.to_offset(buffer);
         let (word_range, kind) = buffer.surrounding_word(offset);
@@ -1718,10 +1817,14 @@ impl Editor {
 
                 if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
                     this.update(&mut cx, |this, cx| {
-                        if let Some(prev_menu) = this.completion_menu() {
-                            if prev_menu.id > menu.id {
-                                return;
+                        match this.context_menu.as_ref() {
+                            None => {}
+                            Some(ContextMenu::Completion(prev_menu)) => {
+                                if prev_menu.id > menu.id {
+                                    return;
+                                }
                             }
+                            _ => return,
                         }
 
                         this.completion_tasks.retain(|(id, _)| *id > menu.id);
@@ -1847,89 +1950,16 @@ impl Editor {
         }))
     }
 
-    pub fn has_completions(&self) -> bool {
-        self.completion_menu()
-            .map_or(false, |c| !c.matches.is_empty())
+    pub fn should_render_context_menu(&self) -> bool {
+        self.context_menu
+            .as_ref()
+            .map_or(false, |menu| menu.should_render())
     }
 
-    pub fn render_completions(&self, cx: &AppContext) -> Option<ElementBox> {
-        enum CompletionTag {}
-
-        self.completion_menu().map(|state| {
-            let build_settings = self.build_settings.clone();
-            let settings = build_settings(cx);
-            let completions = state.completions.clone();
-            let matches = state.matches.clone();
-            let selected_item = state.selected_item;
-            UniformList::new(
-                state.list.clone(),
-                matches.len(),
-                move |range, items, cx| {
-                    let settings = build_settings(cx);
-                    let start_ix = range.start;
-                    for (ix, mat) in matches[range].iter().enumerate() {
-                        let completion = &completions[mat.candidate_id];
-                        let item_ix = start_ix + ix;
-                        items.push(
-                            MouseEventHandler::new::<CompletionTag, _, _, _>(
-                                mat.candidate_id,
-                                cx,
-                                |state, _| {
-                                    let item_style = if item_ix == selected_item {
-                                        settings.style.autocomplete.selected_item
-                                    } else if state.hovered {
-                                        settings.style.autocomplete.hovered_item
-                                    } else {
-                                        settings.style.autocomplete.item
-                                    };
-
-                                    Text::new(
-                                        completion.label.text.clone(),
-                                        settings.style.text.clone(),
-                                    )
-                                    .with_soft_wrap(false)
-                                    .with_highlights(combine_syntax_and_fuzzy_match_highlights(
-                                        &completion.label.text,
-                                        settings.style.text.color.into(),
-                                        styled_runs_for_completion_label(
-                                            &completion.label,
-                                            settings.style.text.color,
-                                            &settings.style.syntax,
-                                        ),
-                                        &mat.positions,
-                                    ))
-                                    .contained()
-                                    .with_style(item_style)
-                                    .boxed()
-                                },
-                            )
-                            .with_cursor_style(CursorStyle::PointingHand)
-                            .on_mouse_down(move |cx| {
-                                cx.dispatch_action(ConfirmCompletion(Some(item_ix)));
-                            })
-                            .boxed(),
-                        );
-                    }
-                },
-            )
-            .with_width_from_item(
-                state
-                    .matches
-                    .iter()
-                    .enumerate()
-                    .max_by_key(|(_, mat)| {
-                        state.completions[mat.candidate_id]
-                            .label
-                            .text
-                            .chars()
-                            .count()
-                    })
-                    .map(|(ix, _)| ix),
-            )
-            .contained()
-            .with_style(settings.style.autocomplete.container)
-            .boxed()
-        })
+    pub fn render_context_menu(&self, cx: &AppContext) -> Option<ElementBox> {
+        self.context_menu
+            .as_ref()
+            .map(|menu| menu.render(self.build_settings.clone(), cx))
     }
 
     pub fn insert_snippet(
@@ -2737,14 +2767,8 @@ impl Editor {
     }
 
     pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
-        if let Some(context_menu) = self.completion_menu_mut() {
-            if context_menu.selected_item > 0 {
-                context_menu.selected_item -= 1;
-                context_menu
-                    .list
-                    .scroll_to(ScrollTarget::Show(context_menu.selected_item));
-            }
-            cx.notify();
+        if let Some(context_menu) = self.context_menu.as_mut() {
+            context_menu.select_prev(cx);
             return;
         }
 
@@ -2786,14 +2810,8 @@ impl Editor {
     }
 
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
-        if let Some(context_menu) = &mut self.completion_menu_mut() {
-            if context_menu.selected_item + 1 < context_menu.matches.len() {
-                context_menu.selected_item += 1;
-                context_menu
-                    .list
-                    .scroll_to(ScrollTarget::Show(context_menu.selected_item));
-            }
-            cx.notify();
+        if let Some(context_menu) = self.context_menu.as_mut() {
+            context_menu.select_next(cx);
             return;
         }
 
@@ -4087,16 +4105,22 @@ impl Editor {
             }
         }
 
-        if let Some((context_menu, cursor_position)) =
-            self.completion_menu_mut().zip(new_cursor_position)
-        {
+        let completion_menu =
+            if let Some(ContextMenu::Completion(menu)) = self.context_menu.as_mut() {
+                Some(menu)
+            } else {
+                None
+            };
+
+        if let Some((completion_menu, cursor_position)) = completion_menu.zip(new_cursor_position) {
             let cursor_position = cursor_position.to_offset(&buffer);
-            let (word_range, kind) = buffer.surrounding_word(context_menu.initial_position.clone());
+            let (word_range, kind) =
+                buffer.surrounding_word(completion_menu.initial_position.clone());
             if kind == Some(CharKind::Word) && word_range.to_inclusive().contains(&cursor_position)
             {
                 let query = Self::completion_query(&buffer, cursor_position);
                 cx.background()
-                    .block(context_menu.filter(query.as_deref(), cx.background().clone()));
+                    .block(completion_menu.filter(query.as_deref(), cx.background().clone()));
                 self.show_completions(&ShowCompletions, cx);
             } else {
                 self.hide_completions(cx);

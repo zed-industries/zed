@@ -880,14 +880,14 @@ impl Element for EditorElement {
                 snapshot = view.snapshot(cx);
             }
 
-            if view.has_completions() {
+            if view.should_render_context_menu() {
                 let newest_selection_head = view
                     .newest_selection::<usize>(&snapshot.buffer_snapshot)
                     .head()
                     .to_display_point(&snapshot);
 
                 if (start_row..end_row).contains(&newest_selection_head.row()) {
-                    let list = view.render_completions(cx).unwrap();
+                    let list = view.render_context_menu(cx).unwrap();
                     completions = Some((newest_selection_head, list));
                 }
             }

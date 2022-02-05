@@ -14,7 +14,7 @@ use clock::ReplicaId;
 use futures::FutureExt as _;
 use gpui::{AppContext, Entity, ModelContext, MutableAppContext, Task};
 use lazy_static::lazy_static;
-use lsp::{CodeActionKind, LanguageServer};
+use lsp::LanguageServer;
 use parking_lot::Mutex;
 use postage::{prelude::Stream, sink::Sink, watch};
 use similar::{ChangeTag, TextDiff};
