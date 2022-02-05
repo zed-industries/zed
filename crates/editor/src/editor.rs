@@ -469,24 +469,34 @@ enum ContextMenu {
 }
 
 impl ContextMenu {
-    fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
-        match self {
-            ContextMenu::Completions(menu) => menu.select_prev(cx),
-            ContextMenu::CodeActions(menu) => menu.select_prev(cx),
+    fn select_prev(&mut self, cx: &mut ViewContext<Editor>) -> bool {
+        if self.visible() {
+            match self {
+                ContextMenu::Completions(menu) => menu.select_prev(cx),
+                ContextMenu::CodeActions(menu) => menu.select_prev(cx),
+            }
+            true
+        } else {
+            false
         }
     }
 
-    fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
-        match self {
-            ContextMenu::Completions(menu) => menu.select_next(cx),
-            ContextMenu::CodeActions(menu) => menu.select_next(cx),
+    fn select_next(&mut self, cx: &mut ViewContext<Editor>) -> bool {
+        if self.visible() {
+            match self {
+                ContextMenu::Completions(menu) => menu.select_next(cx),
+                ContextMenu::CodeActions(menu) => menu.select_next(cx),
+            }
+            true
+        } else {
+            false
         }
     }
 
-    fn should_render(&self) -> bool {
+    fn visible(&self) -> bool {
         match self {
-            ContextMenu::Completions(menu) => menu.should_render(),
-            ContextMenu::CodeActions(menu) => menu.should_render(),
+            ContextMenu::Completions(menu) => menu.visible(),
+            ContextMenu::CodeActions(menu) => menu.visible(),
         }
     }
 
@@ -525,7 +535,7 @@ impl CompletionsMenu {
         cx.notify();
     }
 
-    fn should_render(&self) -> bool {
+    fn visible(&self) -> bool {
         !self.matches.is_empty()
     }
 
@@ -660,7 +670,7 @@ impl CodeActionsMenu {
         }
     }
 
-    fn should_render(&self) -> bool {
+    fn visible(&self) -> bool {
         !self.actions.is_empty()
     }
 
@@ -1081,7 +1091,7 @@ impl Editor {
     }
 
     fn select(&mut self, Select(phase): &Select, cx: &mut ViewContext<Self>) {
-        self.hide_completions(cx);
+        self.hide_context_menu(cx);
 
         match phase {
             SelectPhase::Begin {
@@ -1383,7 +1393,7 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
-        if self.hide_completions(cx).is_some() {
+        if self.hide_context_menu(cx).is_some() {
             return;
         }
 
@@ -1711,7 +1721,7 @@ impl Editor {
             {
                 self.show_completions(&ShowCompletions, cx);
             } else {
-                self.hide_completions(cx);
+                self.hide_context_menu(cx);
             }
         }
     }
@@ -1907,10 +1917,8 @@ impl Editor {
                         }
 
                         this.completion_tasks.retain(|(id, _)| *id > menu.id);
-                        if menu.matches.is_empty() {
-                            this.hide_completions(cx);
-                        } else if this.focused {
-                            this.context_menu = Some(ContextMenu::Completions(menu));
+                        if this.focused {
+                            this.show_context_menu(ContextMenu::Completions(menu), cx);
                         }
 
                         cx.notify();
@@ -1938,12 +1946,16 @@ impl Editor {
             let actions = actions.await?;
             if !actions.is_empty() {
                 this.update(&mut cx, |this, cx| {
-                    this.context_menu = Some(ContextMenu::CodeActions(CodeActionsMenu {
-                        actions: actions.into(),
-                        selected_item: 0,
-                        list: UniformListState::default(),
-                    }));
-                    cx.notify();
+                    if this.focused {
+                        this.show_context_menu(
+                            ContextMenu::CodeActions(CodeActionsMenu {
+                                actions: actions.into(),
+                                selected_item: 0,
+                                list: UniformListState::default(),
+                            }),
+                            cx,
+                        );
+                    }
                 });
             }
             Ok::<_, anyhow::Error>(())
@@ -1951,28 +1963,21 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
-    fn hide_completions(&mut self, cx: &mut ViewContext<Self>) -> Option<CompletionsMenu> {
-        cx.notify();
-        self.completion_tasks.clear();
-        self.context_menu.take().and_then(|menu| {
-            if let ContextMenu::Completions(menu) = menu {
-                Some(menu)
-            } else {
-                None
-            }
-        })
-    }
-
     pub fn confirm_completion(
         &mut self,
         completion_ix: Option<usize>,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let context_menu = self.hide_completions(cx)?;
-        let mat = context_menu
+        let completions_menu = if let ContextMenu::Completions(menu) = self.hide_context_menu(cx)? {
+            menu
+        } else {
+            return None;
+        };
+
+        let mat = completions_menu
             .matches
-            .get(completion_ix.unwrap_or(context_menu.selected_item))?;
-        let completion = context_menu.completions.get(mat.candidate_id)?;
+            .get(completion_ix.unwrap_or(completions_menu.selected_item))?;
+        let completion = completions_menu.completions.get(mat.candidate_id)?;
 
         let snippet;
         let text;
@@ -2041,16 +2046,30 @@ impl Editor {
         }))
     }
 
-    pub fn should_render_context_menu(&self) -> bool {
+    pub fn showing_context_menu(&self) -> bool {
         self.context_menu
             .as_ref()
-            .map_or(false, |menu| menu.should_render())
+            .map_or(false, |menu| menu.visible())
     }
 
     pub fn render_context_menu(&self, cx: &AppContext) -> Option<ElementBox> {
         self.context_menu
             .as_ref()
             .map(|menu| menu.render(self.build_settings.clone(), cx))
+    }
+
+    fn show_context_menu(&mut self, menu: ContextMenu, cx: &mut ViewContext<Self>) {
+        if !matches!(menu, ContextMenu::Completions(_)) {
+            self.completion_tasks.clear();
+        }
+        self.context_menu = Some(menu);
+        cx.notify()
+    }
+
+    fn hide_context_menu(&mut self, cx: &mut ViewContext<Self>) -> Option<ContextMenu> {
+        cx.notify();
+        self.completion_tasks.clear();
+        self.context_menu.take()
     }
 
     pub fn insert_snippet(
@@ -2859,8 +2878,9 @@ impl Editor {
 
     pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
         if let Some(context_menu) = self.context_menu.as_mut() {
-            context_menu.select_prev(cx);
-            return;
+            if context_menu.select_prev(cx) {
+                return;
+            }
         }
 
         if matches!(self.mode, EditorMode::SingleLine) {
@@ -2902,8 +2922,9 @@ impl Editor {
 
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
         if let Some(context_menu) = self.context_menu.as_mut() {
-            context_menu.select_next(cx);
-            return;
+            if context_menu.select_next(cx) {
+                return;
+            }
         }
 
         if matches!(self.mode, EditorMode::SingleLine) {
@@ -4215,7 +4236,7 @@ impl Editor {
                     .block(completion_menu.filter(query.as_deref(), cx.background().clone()));
                 self.show_completions(&ShowCompletions, cx);
             } else {
-                self.hide_completions(cx);
+                self.hide_context_menu(cx);
             }
         }
 
@@ -4767,7 +4788,7 @@ impl View for Editor {
         self.show_local_cursors = false;
         self.buffer
             .update(cx, |buffer, cx| buffer.remove_active_selections(cx));
-        self.hide_completions(cx);
+        self.hide_context_menu(cx);
         cx.emit(Event::Blurred);
         cx.notify();
     }
@@ -4780,7 +4801,7 @@ impl View for Editor {
             EditorMode::Full => "full",
         };
         cx.map.insert("mode".into(), mode.into());
-        if self.context_menu.is_some() {
+        if matches!(self.context_menu.as_ref(), Some(ContextMenu::Completions(_))) {
             cx.set.insert("completing".into());
         }
         cx

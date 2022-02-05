@@ -880,7 +880,7 @@ impl Element for EditorElement {
                 snapshot = view.snapshot(cx);
             }
 
-            if view.should_render_context_menu() {
+            if view.showing_context_menu() {
                 let newest_selection_head = view
                     .newest_selection::<usize>(&snapshot.buffer_snapshot)
                     .head()
