@@ -57,6 +57,7 @@ action!(CollapseSelectedEntry);
 action!(ToggleExpanded, ProjectEntry);
 action!(Open, ProjectEntry);
 action!(CreateFile);
+action!(FocusSelf);
 
 pub fn init(cx: &mut MutableAppContext) {
     input_bar::init(cx);
@@ -68,6 +69,7 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::select_next);
     cx.add_action(ProjectPanel::open_entry);
     cx.add_action(ProjectPanel::create_file);
+    cx.add_action(ProjectPanel::focus_self);
     cx.add_bindings([
         Binding::new("right", ExpandSelectedEntry, Some("ProjectPanel")),
         Binding::new("left", CollapseSelectedEntry, Some("ProjectPanel")),
@@ -579,6 +581,10 @@ impl ProjectPanel {
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
     }
+
+    fn focus_self(&mut self, _: &FocusSelf, cx: &mut ViewContext<Self>) {
+        cx.focus_self()
+    }
 }
 
 impl View for ProjectPanel {
@@ -586,37 +592,46 @@ impl View for ProjectPanel {
         "ProjectPanel"
     }
 
-    fn render(&mut self, _: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
+    fn render(&mut self, render_cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
         let settings = self.settings.clone();
         let mut container_style = settings.borrow().theme.project_panel.container;
         let padding = std::mem::take(&mut container_style.padding);
         let handle = self.handle.clone();
-        Stack::new()
-            .with_child(
-                UniformList::new(
-                    self.list.clone(),
-                    self.visible_entries
-                        .iter()
-                        .map(|(_, worktree_entries)| worktree_entries.len())
-                        .sum(),
-                    move |range, items, cx| {
-                        let theme = &settings.borrow().theme.project_panel;
-                        let this = handle.upgrade(cx).unwrap();
-                        this.update(cx.app, |this, cx| {
-                            this.for_each_visible_entry(range.clone(), cx, |entry, details, cx| {
-                                items.push(Self::render_entry(entry, details, theme, cx));
-                            });
-                        })
-                    },
+        MouseEventHandler::new::<Self, _, _, _>(self.handle.id(), render_cx, |_state, _| {
+            Stack::new()
+                .with_child(
+                    UniformList::new(
+                        self.list.clone(),
+                        self.visible_entries
+                            .iter()
+                            .map(|(_, worktree_entries)| worktree_entries.len())
+                            .sum(),
+                        move |range, items, layout_cx| {
+                            let theme = &settings.borrow().theme.project_panel;
+                            let this = handle.upgrade(layout_cx).unwrap();
+                            this.update(layout_cx.app, |this, cx| {
+                                this.for_each_visible_entry(
+                                    range.clone(),
+                                    cx,
+                                    |entry, details, cx| {
+                                        items.push(Self::render_entry(entry, details, theme, cx));
+                                    },
+                                );
+                            })
+                        },
+                    )
+                    .with_padding_top(padding.top)
+                    .with_padding_bottom(padding.bottom)
+                    .contained()
+                    .with_style(container_style)
+                    .boxed(),
                 )
-                .with_padding_top(padding.top)
-                .with_padding_bottom(padding.bottom)
-                .contained()
-                .with_style(container_style)
-                .boxed(),
-            )
-            .with_children(self.input_bar.as_ref().map(|m| ChildView::new(m).boxed()))
-            .boxed()
+                .with_children(self.input_bar.as_ref().map(|m| ChildView::new(m).boxed()))
+                .boxed()
+        })
+        .on_click(move |event_cx| event_cx.dispatch_action(FocusSelf))
+        .with_cursor_style(CursorStyle::Arrow)
+        .boxed()
     }
 
     fn keymap_context(&self, _: &AppContext) -> keymap::Context {
