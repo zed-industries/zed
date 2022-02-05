@@ -1,6 +1,6 @@
-mod input_bar;
+mod create_entry;
 
-use crate::input_bar::InputBar;
+use crate::create_entry::{CreateEntry, Object};
 use gpui::elements::{ChildView, Stack};
 use gpui::{
     action,
@@ -15,6 +15,7 @@ use gpui::{
 };
 use postage::watch;
 use project::{Project, ProjectEntry, ProjectPath, Worktree, WorktreeId};
+use std::path::PathBuf;
 use std::{
     collections::{hash_map, HashMap},
     ffi::OsStr,
@@ -33,7 +34,7 @@ pub struct ProjectPanel {
     selection: Option<Selection>,
     settings: watch::Receiver<Settings>,
     handle: WeakViewHandle<Self>,
-    input_bar: Option<ViewHandle<InputBar>>,
+    create_entry: Option<ViewHandle<CreateEntry>>,
 }
 
 #[derive(Copy, Clone)]
@@ -57,10 +58,11 @@ action!(CollapseSelectedEntry);
 action!(ToggleExpanded, ProjectEntry);
 action!(Open, ProjectEntry);
 action!(CreateFile);
+action!(CreateDirectory);
 action!(FocusSelf);
 
 pub fn init(cx: &mut MutableAppContext) {
-    input_bar::init(cx);
+    create_entry::init(cx);
 
     cx.add_action(ProjectPanel::expand_selected_entry);
     cx.add_action(ProjectPanel::collapse_selected_entry);
@@ -69,11 +71,13 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(ProjectPanel::select_next);
     cx.add_action(ProjectPanel::open_entry);
     cx.add_action(ProjectPanel::create_file);
+    cx.add_action(ProjectPanel::create_dir);
     cx.add_action(ProjectPanel::focus_self);
     cx.add_bindings([
         Binding::new("right", ExpandSelectedEntry, Some("ProjectPanel")),
         Binding::new("left", CollapseSelectedEntry, Some("ProjectPanel")),
-        Binding::new("n", CreateFile, Some("ProjectPanel")),
+        Binding::new("alt-n", CreateDirectory, Some("ProjectPanel")),
+        Binding::new("ctrl-n", CreateFile, Some("ProjectPanel")),
     ]);
 }
 
@@ -84,7 +88,11 @@ pub enum Event {
     },
     CreateFile {
         worktree_id: WorktreeId,
-        name: String,
+        path: PathBuf,
+    },
+    CreateDirectory {
+        worktree_id: WorktreeId,
+        path: PathBuf,
     },
 }
 
@@ -127,7 +135,7 @@ impl ProjectPanel {
                 expanded_dir_ids: Default::default(),
                 selection: None,
                 handle: cx.weak_handle(),
-                input_bar: None,
+                create_entry: None,
             };
             this.update_visible_entries(None, cx);
             this
@@ -151,10 +159,17 @@ impl ProjectPanel {
                     }
                 }
             }
-            Event::CreateFile { worktree_id, name } => {
+            Event::CreateFile { worktree_id, path } => {
                 if let Some(_) = project.read(cx).worktree_for_id(*worktree_id, cx) {
                     workspace
-                        .create_path((*worktree_id, name).into(), cx)
+                        .create_path((*worktree_id, path).into(), cx)
+                        .detach_and_log_err(cx);
+                }
+            }
+            Event::CreateDirectory { worktree_id, path } => {
+                if let Some(_) = project.read(cx).worktree_for_id(*worktree_id, cx) {
+                    workspace
+                        .create_dir((*worktree_id, path).into(), cx)
                         .detach_and_log_err(cx);
                 }
             }
@@ -266,21 +281,30 @@ impl ProjectPanel {
         });
     }
 
-    fn dismiss_input_bar(&mut self, cx: &mut ViewContext<Self>) {
-        if self.input_bar.is_some() {
-            self.input_bar.take();
+    fn dismiss_create_entry(&mut self, cx: &mut ViewContext<Self>) {
+        if self.create_entry.is_some() {
+            self.create_entry.take();
             cx.focus_self();
             cx.notify();
         }
     }
 
     fn create_file(&mut self, _: &CreateFile, cx: &mut ViewContext<Self>) {
-        if self.input_bar.is_none() {
-            let input_bar =
-                cx.add_view(|input_bar_cx| InputBar::new(self.settings.clone(), input_bar_cx));
-            cx.focus(&input_bar);
-            cx.subscribe(&input_bar, InputBar::on_event).detach();
-            self.input_bar = Some(input_bar);
+        self.deploy_create_entry(Object::File, cx)
+    }
+
+    fn create_dir(&mut self, _: &CreateDirectory, cx: &mut ViewContext<Self>) {
+        self.deploy_create_entry(Object::Directory, cx);
+    }
+
+    fn deploy_create_entry(&mut self, object: Object, cx: &mut ViewContext<Self>) {
+        if self.create_entry.is_none() && self.selection.is_some() {
+            let create_entry = cx.add_view(|create_entry_cx| {
+                CreateEntry::new(self.settings.clone(), object, create_entry_cx)
+            });
+            cx.focus(&create_entry);
+            cx.subscribe(&create_entry, CreateEntry::on_event).detach();
+            self.create_entry = Some(create_entry);
             cx.notify();
         }
     }
@@ -626,7 +650,11 @@ impl View for ProjectPanel {
                     .with_style(container_style)
                     .boxed(),
                 )
-                .with_children(self.input_bar.as_ref().map(|m| ChildView::new(m).boxed()))
+                .with_children(
+                    self.create_entry
+                        .as_ref()
+                        .map(|m| ChildView::new(m).boxed()),
+                )
                 .boxed()
         })
         .on_click(move |event_cx| event_cx.dispatch_action(FocusSelf))

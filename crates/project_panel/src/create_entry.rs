@@ -5,24 +5,33 @@ use gpui::{
     ViewContext, ViewHandle,
 };
 use postage::watch;
+use std::fmt::{Display, Formatter};
+use std::path::Path;
 use std::sync::Arc;
 use workspace::Settings;
 
 action!(Dismiss);
 action!(Confirm);
+action!(RedeployCreateDir);
+action!(RedeployCreateFile);
 
 pub fn init(cx: &mut MutableAppContext) {
     cx.add_bindings([
-        Binding::new("escape", Dismiss, Some("InputBar")),
-        Binding::new("enter", Confirm, Some("InputBar")),
+        Binding::new("escape", Dismiss, Some("CreateEntry")),
+        Binding::new("enter", Confirm, Some("CreateEntry")),
+        Binding::new("alt-n", RedeployCreateDir, Some("CreateEntry")),
+        Binding::new("ctrl-n", RedeployCreateFile, Some("CreateEntry")),
     ]);
-    cx.add_action(InputBar::confirm);
-    cx.add_action(InputBar::dismiss);
+    cx.add_action(CreateEntry::confirm);
+    cx.add_action(CreateEntry::dismiss);
+    cx.add_action(CreateEntry::redeploy_as_create_dir);
+    cx.add_action(CreateEntry::redeploy_as_create_file);
 }
 
-pub struct InputBar {
+pub struct CreateEntry {
     settings: watch::Receiver<Settings>,
     query_editor: ViewHandle<Editor>,
+    object: Object,
 }
 
 pub enum Event {
@@ -30,8 +39,31 @@ pub enum Event {
     Dismissed,
 }
 
-impl InputBar {
-    pub fn new(settings: watch::Receiver<Settings>, cx: &mut ViewContext<Self>) -> Self {
+#[derive(Clone, Copy)]
+pub enum Object {
+    File,
+    Directory,
+}
+
+impl Display for Object {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Object::File => "file",
+                Object::Directory => "directory",
+            }
+        )
+    }
+}
+
+impl CreateEntry {
+    pub fn new(
+        settings: watch::Receiver<Settings>,
+        object: Object,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let query_editor = cx.add_view(|cx| {
             Editor::single_line(
                 {
@@ -54,6 +86,7 @@ impl InputBar {
         Self {
             settings: settings.clone(),
             query_editor,
+            object,
         }
     }
 
@@ -63,6 +96,16 @@ impl InputBar {
 
     fn dismiss(&mut self, _: &Dismiss, cx: &mut ViewContext<Self>) {
         cx.emit(Event::Dismissed)
+    }
+
+    fn redeploy_as_create_file(&mut self, _: &RedeployCreateFile, cx: &mut ViewContext<Self>) {
+        self.object = Object::File;
+        cx.notify();
+    }
+
+    fn redeploy_as_create_dir(&mut self, _: &RedeployCreateDir, cx: &mut ViewContext<Self>) {
+        self.object = Object::Directory;
+        cx.notify();
     }
 
     pub(crate) fn on_event(
@@ -75,16 +118,29 @@ impl InputBar {
             Event::Confirmed => {
                 let name = this.read(cx).query_editor.read(cx).text(cx);
                 if !name.is_empty() {
-                    let worktree_id = project_panel
-                        .selected_entry(cx)
-                        .map(|(worktree, _)| worktree.id());
-                    if let Some(worktree_id) = worktree_id {
-                        cx.emit(crate::Event::CreateFile { worktree_id, name });
+                    if let Some((worktree, entry)) = project_panel.selected_entry(cx) {
+                        let worktree_id = worktree.id();
+                        let parent_path = if entry.is_dir() {
+                            entry.path.clone()
+                        } else {
+                            entry
+                                .path
+                                .clone()
+                                .parent()
+                                .map_or(Path::new("").into(), |p| p.into())
+                        };
+                        let path = parent_path.join(Path::new(&name));
+                        match this.read(cx).object {
+                            Object::File => cx.emit(crate::Event::CreateFile { worktree_id, path }),
+                            Object::Directory => {
+                                cx.emit(crate::Event::CreateDirectory { worktree_id, path })
+                            }
+                        }
+                        project_panel.dismiss_create_entry(cx)
                     }
-                    project_panel.dismiss_input_bar(cx)
                 }
             }
-            Event::Dismissed => project_panel.dismiss_input_bar(cx),
+            Event::Dismissed => project_panel.dismiss_create_entry(cx),
         }
     }
 
@@ -101,19 +157,18 @@ impl InputBar {
     }
 }
 
-impl Entity for InputBar {
+impl Entity for CreateEntry {
     type Event = Event;
 }
 
-impl View for InputBar {
+impl View for CreateEntry {
     fn ui_name() -> &'static str {
-        "InputBar"
+        "CreateEntry"
     }
 
     fn render(&mut self, _: &mut RenderContext<Self>) -> ElementBox {
         let theme = &self.settings.borrow().theme.selector;
-
-        let label = format!("enter file name");
+        let label = format!("enter {} name", self.object);
 
         Align::new(
             ConstrainedBox::new(
@@ -138,7 +193,7 @@ impl View for InputBar {
             .boxed(),
         )
         .top()
-        .named("input bar")
+        .named("create entry")
     }
 
     fn on_focus(&mut self, cx: &mut ViewContext<Self>) {

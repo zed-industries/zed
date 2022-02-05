@@ -144,6 +144,13 @@ pub trait PathOpener {
         options: LoadOptions,
         cx: &mut ModelContext<Project>,
     ) -> Option<Task<Result<Box<dyn ItemHandle>>>>;
+
+    fn create_dir(
+        &self,
+        project: &mut Project,
+        path: ProjectPath,
+        cx: &mut ModelContext<Project>,
+    ) -> Option<Task<Result<()>>>;
 }
 
 pub trait Item: Entity + Sized {
@@ -779,6 +786,21 @@ impl Workspace {
         self.open_path_with_options(path, LoadOptions::create_new(), cx)
     }
 
+    pub fn create_dir(
+        &mut self,
+        path: ProjectPath,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<(), Arc<anyhow::Error>>> {
+        let create_task = self.create_dir_task(path, cx);
+        cx.spawn(|this, mut cx| async move {
+            create_task.await?;
+            this.update(&mut cx, |_, cx| {
+                cx.notify();
+                Ok(())
+            })
+        })
+    }
+
     pub fn open_path(
         &mut self,
         path: ProjectPath,
@@ -823,12 +845,33 @@ impl Workspace {
         if let Some(existing_item) = self.item_for_path(&path, cx) {
             return Task::ready(Ok(existing_item));
         }
-
         let project_path = path.clone();
         let path_openers = self.path_openers.clone();
         self.project.update(cx, |project, cx| {
             for opener in path_openers.iter() {
-                if let Some(task) = opener.open_with_options(project, project_path.clone(), options, cx) {
+                if let Some(task) =
+                    opener.open_with_options(project, project_path.clone(), options, cx)
+                {
+                    return task;
+                }
+            }
+            Task::ready(Err(anyhow!("no opener found for path {:?}", project_path)))
+        })
+    }
+
+    pub fn create_dir_task(
+        &mut self,
+        path: ProjectPath,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        if let Some(_) = self.item_for_path(&path, cx) {
+            return Task::ready(Ok(()));
+        }
+        let project_path = path.clone();
+        let path_openers = self.path_openers.clone();
+        self.project.update(cx, |project, cx| {
+            for opener in path_openers.iter() {
+                if let Some(task) = opener.create_dir(project, project_path.clone(), cx) {
                     return task;
                 }
             }

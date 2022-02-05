@@ -592,6 +592,21 @@ impl LocalWorktree {
         })
     }
 
+    pub(crate) fn create_dir(
+        &mut self,
+        path: &Path,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Result<()>> {
+        let path = Arc::from(path);
+        cx.spawn(move |this, mut cx| async move {
+            this.update(&mut cx, |t, cx| {
+                t.as_local().unwrap().create_dir_task(&path, cx)
+            })
+            .await?;
+            Ok(())
+        })
+    }
+
     pub fn diagnostics_for_path(&self, path: &Path) -> Option<Vec<DiagnosticEntry<PointUtf16>>> {
         self.diagnostics.get(path).cloned()
     }
@@ -685,6 +700,16 @@ impl LocalWorktree {
                 },
                 text,
             ))
+        })
+    }
+
+    fn create_dir_task(&self, path: &Path, cx: &mut ModelContext<Worktree>) -> Task<Result<()>> {
+        let path = Arc::from(path);
+        let abs_path = self.absolutize(&path);
+        let fs = self.fs.clone();
+        cx.spawn(|_, _| async move {
+            fs.create_dir(&abs_path).await?;
+            Ok(())
         })
     }
 

@@ -48,6 +48,7 @@ pub trait Fs: Send + Sync {
     async fn load(&self, path: &Path) -> Result<String> {
         self.load_with_options(path, LoadOptions::default()).await
     }
+    async fn create_dir(&self, path: &Path) -> Result<()>;
     async fn save(&self, path: &Path, text: &Rope) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
     async fn is_file(&self, path: &Path) -> bool;
@@ -88,6 +89,11 @@ impl Fs for RealFs {
         let mut text = String::new();
         file.read_to_string(&mut text).await?;
         Ok(text)
+    }
+
+    async fn create_dir(&self, path: &Path) -> Result<()> {
+        smol::fs::create_dir(path).await?;
+        Ok(())
     }
 
     async fn save(&self, path: &Path, text: &Rope) -> Result<()> {
@@ -380,6 +386,17 @@ impl Fs for FakeFs {
             .and_then(|e| e.content.as_ref())
             .ok_or_else(|| anyhow!("file {:?} does not exist", path))?;
         Ok(text.clone())
+    }
+
+    async fn create_dir(&self, path: &Path) -> Result<()> {
+        self.executor.simulate_random_delay().await;
+        let state = self.state.lock().await;
+        state
+            .entries
+            .get(path)
+            .and_then(|e| e.content.as_ref())
+            .ok_or_else(|| anyhow!("directory {:?} does not exist", path))?;
+        Ok(())
     }
 
     async fn save(&self, path: &Path, text: &Rope) -> Result<()> {

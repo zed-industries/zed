@@ -40,6 +40,20 @@ impl PathOpener for BufferOpener {
         });
         Some(task)
     }
+
+    fn create_dir(
+        &self,
+        project: &mut Project,
+        project_path: ProjectPath,
+        cx: &mut ModelContext<Project>,
+    ) -> Option<Task<Result<()>>> {
+        let dir = project.create_dir(project_path, cx);
+        let task = cx.spawn(|_, _| async move {
+            dir.await?;
+            Ok(())
+        });
+        Some(task)
+    }
 }
 
 impl ItemHandle for BufferItemHandle {

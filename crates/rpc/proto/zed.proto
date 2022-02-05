@@ -60,6 +60,9 @@ message Envelope {
 
         GetUsers get_users = 50;
         GetUsersResponse get_users_response = 51;
+
+        CreateDir create_dir = 52;
+        CreateDirResponse create_dir_response = 53;
     }
 }
 
@@ -169,6 +172,16 @@ message OpenBuffer {
 
 message OpenBufferResponse {
     Buffer buffer = 1;
+}
+
+message CreateDir {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string path = 3;
+}
+
+message CreateDirResponse {
+    bool success = 1;
 }
 
 message CloseBuffer {
