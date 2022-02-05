@@ -145,10 +145,19 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
         Binding::new(
             "enter",
             ConfirmCompletion(None),
-            Some("Editor && completing"),
+            Some("Editor && showing_completions"),
+        ),
+        Binding::new(
+            "enter",
+            ConfirmCodeAction(None),
+            Some("Editor && showing_code_actions"),
         ),
         Binding::new("tab", Tab, Some("Editor")),
-        Binding::new("tab", ConfirmCompletion(None), Some("Editor && completing")),
+        Binding::new(
+            "tab",
+            ConfirmCompletion(None),
+            Some("Editor && showing_completions"),
+        ),
         Binding::new("shift-tab", Outdent, Some("Editor")),
         Binding::new("ctrl-shift-K", DeleteLine, Some("Editor")),
         Binding::new(
@@ -307,13 +316,8 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_action(Editor::fold_selected_ranges);
     cx.add_action(Editor::show_completions);
     cx.add_action(Editor::show_code_actions);
-    cx.add_action(
-        |editor: &mut Editor, &ConfirmCompletion(ix): &ConfirmCompletion, cx| {
-            if let Some(task) = editor.confirm_completion(ix, cx) {
-                task.detach_and_log_err(cx);
-            }
-        },
-    );
+    cx.add_async_action(Editor::confirm_completion);
+    cx.add_async_action(Editor::confirm_code_action);
 }
 
 trait SelectionExt {
@@ -1931,41 +1935,9 @@ impl Editor {
         self.completion_tasks.push((id, task));
     }
 
-    fn show_code_actions(&mut self, _: &ShowCodeActions, cx: &mut ViewContext<Self>) {
-        let position = if let Some(selection) = self.newest_anchor_selection() {
-            selection.head()
-        } else {
-            return;
-        };
-
-        let actions = self
-            .buffer
-            .update(cx, |buffer, cx| buffer.code_actions(position.clone(), cx));
-
-        cx.spawn(|this, mut cx| async move {
-            let actions = actions.await?;
-            if !actions.is_empty() {
-                this.update(&mut cx, |this, cx| {
-                    if this.focused {
-                        this.show_context_menu(
-                            ContextMenu::CodeActions(CodeActionsMenu {
-                                actions: actions.into(),
-                                selected_item: 0,
-                                list: UniformListState::default(),
-                            }),
-                            cx,
-                        );
-                    }
-                });
-            }
-            Ok::<_, anyhow::Error>(())
-        })
-        .detach_and_log_err(cx);
-    }
-
-    pub fn confirm_completion(
+    fn confirm_completion(
         &mut self,
-        completion_ix: Option<usize>,
+        ConfirmCompletion(completion_ix): &ConfirmCompletion,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
         let completions_menu = if let ContextMenu::Completions(menu) = self.hide_context_menu(cx)? {
@@ -2044,6 +2016,58 @@ impl Editor {
         Some(self.buffer.update(cx, |buffer, cx| {
             buffer.apply_additional_edits_for_completion(completion.clone(), cx)
         }))
+    }
+
+    fn show_code_actions(&mut self, _: &ShowCodeActions, cx: &mut ViewContext<Self>) {
+        let position = if let Some(selection) = self.newest_anchor_selection() {
+            selection.head()
+        } else {
+            return;
+        };
+
+        let actions = self
+            .buffer
+            .update(cx, |buffer, cx| buffer.code_actions(position.clone(), cx));
+
+        cx.spawn(|this, mut cx| async move {
+            let actions = actions.await?;
+            if !actions.is_empty() {
+                this.update(&mut cx, |this, cx| {
+                    if this.focused {
+                        this.show_context_menu(
+                            ContextMenu::CodeActions(CodeActionsMenu {
+                                actions: actions.into(),
+                                selected_item: 0,
+                                list: UniformListState::default(),
+                            }),
+                            cx,
+                        );
+                    }
+                });
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn confirm_code_action(
+        &mut self,
+        ConfirmCodeAction(action_ix): &ConfirmCodeAction,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let actions_menu = if let ContextMenu::CodeActions(menu) = self.hide_context_menu(cx)? {
+            menu
+        } else {
+            return None;
+        };
+
+        let action = actions_menu
+            .actions
+            .get(action_ix.unwrap_or(actions_menu.selected_item))?;
+
+        dbg!(action);
+
+        None
     }
 
     pub fn showing_context_menu(&self) -> bool {
@@ -4801,8 +4825,14 @@ impl View for Editor {
             EditorMode::Full => "full",
         };
         cx.map.insert("mode".into(), mode.into());
-        if matches!(self.context_menu.as_ref(), Some(ContextMenu::Completions(_))) {
-            cx.set.insert("completing".into());
+        match self.context_menu.as_ref() {
+            Some(ContextMenu::Completions(_)) => {
+                cx.set.insert("showing_completions".into());
+            }
+            Some(ContextMenu::CodeActions(_)) => {
+                cx.set.insert("showing_code_actions".into());
+            }
+            None => {}
         }
         cx
     }
@@ -7497,7 +7527,9 @@ mod tests {
 
         let apply_additional_edits = editor.update(&mut cx, |editor, cx| {
             editor.move_down(&MoveDown, cx);
-            let apply_additional_edits = editor.confirm_completion(None, cx).unwrap();
+            let apply_additional_edits = editor
+                .confirm_completion(&ConfirmCompletion(None), cx)
+                .unwrap();
             assert_eq!(
                 editor.text(cx),
                 "
@@ -7576,7 +7608,9 @@ mod tests {
         editor.next_notification(&cx).await;
 
         let apply_additional_edits = editor.update(&mut cx, |editor, cx| {
-            let apply_additional_edits = editor.confirm_completion(None, cx).unwrap();
+            let apply_additional_edits = editor
+                .confirm_completion(&ConfirmCompletion(None), cx)
+                .unwrap();
             assert_eq!(
                 editor.text(cx),
                 "

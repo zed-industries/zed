@@ -831,6 +831,17 @@ impl MutableAppContext {
             .push(handler);
     }
 
+    pub fn add_async_action<A, V, F>(&mut self, mut handler: F)
+    where
+        A: Action,
+        V: View,
+        F: 'static + FnMut(&mut V, &A, &mut ViewContext<V>) -> Option<Task<Result<()>>>,
+    {
+        self.add_action(move |view, action, cx| {
+            handler(view, action, cx).map(|task| task.detach_and_log_err(cx));
+        })
+    }
+
     pub fn add_global_action<A, F>(&mut self, mut handler: F)
     where
         A: Action,
