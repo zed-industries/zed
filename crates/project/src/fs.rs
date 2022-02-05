@@ -11,9 +11,40 @@ use std::{
 };
 use text::Rope;
 
+impl Default for OpenOptions {
+    fn default() -> Self {
+        OpenOptions { create_new: false }
+    }
+}
+
+impl OpenOptions {
+    pub fn create_new() -> Self {
+        OpenOptions { create_new: true }
+    }
+}
+
+impl From<rpc::proto::OpenOptions> for OpenOptions {
+    fn from(options: rpc::proto::OpenOptions) -> Self {
+        let rpc::proto::OpenOptions { create_new } = options;
+        OpenOptions { create_new }
+    }
+}
+
+impl Into<rpc::proto::OpenOptions> for OpenOptions {
+    fn into(self) -> rpc::proto::OpenOptions {
+        let OpenOptions { create_new } = self;
+        rpc::proto::OpenOptions { create_new }
+    }
+}
+
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
-    async fn load(&self, path: &Path) -> Result<String>;
+    async fn load_with_options(&self, path: &Path, options: OpenOptions) -> Result<String>;
+    async fn load(&self, path: &Path) -> Result<String> {
+        self.load_with_options(path, OpenOptions::default()).await
+    }
+    async fn create_dir(&self, path: &Path) -> Result<()>;
+    async fn remove(&self, path: &Path) -> Result<()>;
     async fn save(&self, path: &Path, text: &Rope) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
     async fn is_file(&self, path: &Path) -> bool;
@@ -40,15 +71,40 @@ pub struct Metadata {
     pub is_dir: bool,
 }
 
+#[derive(Clone, Copy)]
+pub struct OpenOptions {
+    create_new: bool,
+}
+
 pub struct RealFs;
 
 #[async_trait::async_trait]
 impl Fs for RealFs {
-    async fn load(&self, path: &Path) -> Result<String> {
-        let mut file = smol::fs::File::open(path).await?;
+    async fn load_with_options(&self, path: &Path, options: OpenOptions) -> Result<String> {
+        let mut file = smol::fs::OpenOptions::new()
+            .read(true)
+            .write(options.create_new)
+            .create_new(options.create_new)
+            .open(path)
+            .await?;
         let mut text = String::new();
         file.read_to_string(&mut text).await?;
         Ok(text)
+    }
+
+    async fn create_dir(&self, path: &Path) -> Result<()> {
+        smol::fs::create_dir(path).await?;
+        Ok(())
+    }
+
+    async fn remove(&self, path: &Path) -> Result<()> {
+        if path.is_dir() {
+            smol::fs::remove_dir_all(path).await?;
+        } else {
+            // on Unix, unlike Windows, symlinks can only be files
+            smol::fs::remove_file(path).await?;
+        }
+        Ok(())
     }
 
     async fn save(&self, path: &Path, text: &Rope) -> Result<()> {
@@ -293,14 +349,6 @@ impl FakeFs {
         .boxed()
     }
 
-    pub async fn remove(&self, path: &Path) -> Result<()> {
-        let mut state = self.state.lock().await;
-        state.validate_path(path)?;
-        state.entries.retain(|path, _| !path.starts_with(path));
-        state.emit_event(&[path]).await;
-        Ok(())
-    }
-
     pub async fn rename(&self, source: &Path, target: &Path) -> Result<()> {
         let mut state = self.state.lock().await;
         state.validate_path(source)?;
@@ -332,7 +380,7 @@ impl FakeFs {
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait::async_trait]
 impl Fs for FakeFs {
-    async fn load(&self, path: &Path) -> Result<String> {
+    async fn load_with_options(&self, path: &Path, _: OpenOptions) -> Result<String> {
         self.executor.simulate_random_delay().await;
         let state = self.state.lock().await;
         let text = state
@@ -341,6 +389,25 @@ impl Fs for FakeFs {
             .and_then(|e| e.content.as_ref())
             .ok_or_else(|| anyhow!("file {:?} does not exist", path))?;
         Ok(text.clone())
+    }
+
+    async fn create_dir(&self, path: &Path) -> Result<()> {
+        self.executor.simulate_random_delay().await;
+        let state = self.state.lock().await;
+        state
+            .entries
+            .get(path)
+            .and_then(|e| e.content.as_ref())
+            .ok_or_else(|| anyhow!("directory {:?} does not exist", path))?;
+        Ok(())
+    }
+
+    async fn remove(&self, path: &Path) -> Result<()> {
+        let mut state = self.state.lock().await;
+        state.validate_path(path)?;
+        state.entries.retain(|path, _| !path.starts_with(path));
+        state.emit_event(&[path]).await;
+        Ok(())
     }
 
     async fn save(&self, path: &Path, text: &Rope) -> Result<()> {

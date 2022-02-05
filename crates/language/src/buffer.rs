@@ -225,6 +225,8 @@ pub trait LocalFile: File {
 
     fn load(&self, cx: &AppContext) -> Task<Result<String>>;
 
+    fn delete(&self, cx: &AppContext) -> Task<Result<()>>;
+
     fn buffer_reloaded(
         &self,
         buffer_id: u64,

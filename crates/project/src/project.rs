@@ -20,6 +20,8 @@ use language::{
 use lsp::{DiagnosticSeverity, LanguageServer};
 use postage::{prelude::Stream, watch};
 use smol::block_on;
+use std::fmt::{Debug, Formatter};
+use std::os::unix::ffi::OsStrExt;
 use std::{
     convert::TryInto,
     ops::Range,
@@ -44,11 +46,32 @@ pub struct Project {
     subscriptions: Vec<client::Subscription>,
     language_servers_with_diagnostics_running: isize,
     open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
-    loading_buffers: HashMap<
+    fs_tasks: HashMap<
         ProjectPath,
-        postage::watch::Receiver<Option<Result<ModelHandle<Buffer>, Arc<anyhow::Error>>>>,
+        postage::watch::Receiver<Option<Result<FsTaskOutput, Arc<anyhow::Error>>>>,
     >,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
+}
+
+#[derive(Clone)]
+pub enum FsTaskOutput {
+    LoadedBuffer(ModelHandle<Buffer>),
+    CreatedDirectory,
+    RemovedPath,
+}
+
+impl Debug for FsTaskOutput {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                FsTaskOutput::LoadedBuffer(_) => "LoadedBuffer",
+                FsTaskOutput::CreatedDirectory => "CreatedDirectory",
+                FsTaskOutput::RemovedPath => "RemovedPath",
+            }
+        )
+    }
 }
 
 enum WorktreeHandle {
@@ -202,7 +225,7 @@ impl Project {
                 worktrees: Default::default(),
                 collaborators: Default::default(),
                 open_buffers: Default::default(),
-                loading_buffers: Default::default(),
+                fs_tasks: Default::default(),
                 shared_buffers: Default::default(),
                 client_state: ProjectClientState::Local {
                     is_shared: false,
@@ -266,7 +289,7 @@ impl Project {
             let mut this = Self {
                 worktrees: Vec::new(),
                 open_buffers: Default::default(),
-                loading_buffers: Default::default(),
+                fs_tasks: Default::default(),
                 shared_buffers: Default::default(),
                 active_entry: None,
                 collaborators,
@@ -497,6 +520,15 @@ impl Project {
         path: impl Into<ProjectPath>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
+        self.open_buffer_with_options(path, OpenOptions::default(), cx)
+    }
+
+    pub fn open_buffer_with_options(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        options: OpenOptions,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<Buffer>>> {
         let project_path = path.into();
         let worktree = if let Some(worktree) = self.worktree_for_id(project_path.worktree_id, cx) {
             worktree
@@ -510,9 +542,9 @@ impl Project {
             return Task::ready(Ok(existing_buffer));
         }
 
-        let mut loading_watch = match self.loading_buffers.entry(project_path.clone()) {
-            // If the given path is already being loaded, then wait for that existing
-            // task to complete and return the same buffer.
+        let mut loading_watch = match self.fs_tasks.entry(project_path.clone()) {
+            // If the given path is already being acted upon, then wait for that existing task to
+            // complete. If it was a buffer loading task, the loaded buffer will be returned.
             hash_map::Entry::Occupied(e) => e.get().clone(),
 
             // Otherwise, record the fact that this path is now being loaded.
@@ -521,18 +553,18 @@ impl Project {
                 entry.insert(rx.clone());
 
                 let load_buffer = if worktree.read(cx).is_local() {
-                    self.open_local_buffer(&project_path.path, &worktree, cx)
+                    self.open_local_buffer_with_options(&project_path.path, &worktree, options, cx)
                 } else {
-                    self.open_remote_buffer(&project_path.path, &worktree, cx)
+                    self.open_remote_buffer_with_options(&project_path.path, &worktree, options, cx)
                 };
 
                 cx.spawn(move |this, mut cx| async move {
                     let load_result = load_buffer.await;
                     *tx.borrow_mut() = Some(this.update(&mut cx, |this, _| {
                         // Record the fact that the buffer is no longer loading.
-                        this.loading_buffers.remove(&project_path);
+                        this.fs_tasks.remove(&project_path);
                         let buffer = load_result.map_err(Arc::new)?;
-                        Ok(buffer)
+                        Ok(FsTaskOutput::LoadedBuffer(buffer))
                     }));
                 })
                 .detach();
@@ -543,25 +575,151 @@ impl Project {
         cx.foreground().spawn(async move {
             loop {
                 if let Some(result) = loading_watch.borrow().as_ref() {
-                    match result {
-                        Ok(buffer) => return Ok(buffer.clone()),
-                        Err(error) => return Err(anyhow!("{}", error)),
-                    }
+                    return match result {
+                        Ok(out) => match out {
+                            FsTaskOutput::LoadedBuffer(buffer) => Ok(buffer.clone()),
+                            // TODO: should this really raise an error?
+                            // for now, returning an Error, because all current calls to this
+                            // method assume that a buffer should be returned, unless there was
+                            // an error.
+                            other => Err(anyhow!("expected loaded buffer, received {:?}", other)),
+                        },
+                        Err(error) => Err(anyhow!("{}", error)),
+                    };
                 }
                 loading_watch.recv().await;
             }
         })
     }
 
-    fn open_local_buffer(
+    pub fn create_dir(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let project_path = path.into();
+        let worktree = if let Some(worktree) = self.worktree_for_id(project_path.worktree_id, cx) {
+            worktree
+        } else {
+            return Task::ready(Err(anyhow!("no such worktree")));
+        };
+
+        let mut loading_watch = match self.fs_tasks.entry(project_path.clone()) {
+            // If the given directory is already being created, then do nothing.
+            hash_map::Entry::Occupied(e) => e.get().clone(),
+
+            // Otherwise, record the fact that this path is now being created.
+            hash_map::Entry::Vacant(entry) => {
+                let (mut tx, rx) = postage::watch::channel();
+                entry.insert(rx.clone());
+
+                let create_dir_task = if worktree.read(cx).is_local() {
+                    self.create_local_dir(&project_path.path, &worktree, cx)
+                } else {
+                    self.create_remote_dir(&project_path.path, &worktree, cx)
+                };
+
+                cx.spawn(move |this, mut cx| async move {
+                    let create_dir_result = create_dir_task.await;
+                    *tx.borrow_mut() = Some(this.update(&mut cx, |this, _| {
+                        // Record the fact that the path is no longer being created.
+                        this.fs_tasks.remove(&project_path);
+                        create_dir_result?;
+                        Ok(FsTaskOutput::CreatedDirectory)
+                    }));
+                })
+                .detach();
+                rx
+            }
+        };
+
+        cx.foreground().spawn(async move {
+            loop {
+                if let Some(result) = loading_watch.borrow().as_ref() {
+                    return match result {
+                        Ok(_) => {
+                            // We were trying to create a directory. If instead something was
+                            // created/loaded there, then do nothing further.
+                            // TODO: is this the right behaviour?
+                            Ok(())
+                        }
+                        Err(error) => Err(anyhow!("{}", error)),
+                    };
+                }
+                loading_watch.recv().await;
+            }
+        })
+    }
+
+    pub fn remove_path(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let project_path = path.into();
+        let worktree = if let Some(worktree) = self.worktree_for_id(project_path.worktree_id, cx) {
+            worktree
+        } else {
+            return Task::ready(Err(anyhow!("no such worktree")));
+        };
+
+        let mut removed_watch = match self.fs_tasks.entry(project_path.clone()) {
+            // If the given path is already being acted upon, then do nothing.
+            hash_map::Entry::Occupied(e) => e.get().clone(),
+
+            // Otherwise, record the fact that this path is now being removed.
+            hash_map::Entry::Vacant(entry) => {
+                let (mut tx, rx) = postage::watch::channel();
+                entry.insert(rx.clone());
+
+                let remove_task = if worktree.read(cx).is_local() {
+                    self.remove_local_path(&project_path.path, &worktree, cx)
+                } else {
+                    self.remove_remote_path(&project_path.path, &worktree, cx)
+                };
+
+                cx.spawn(move |this, mut cx| async move {
+                    let remove_result = remove_task.await;
+                    *tx.borrow_mut() = Some(this.update(&mut cx, |this, _| {
+                        // Record the fact that the path is no longer being acted upon.
+                        this.fs_tasks.remove(&project_path);
+                        remove_result?;
+                        Ok(FsTaskOutput::RemovedPath)
+                    }));
+                })
+                .detach();
+                rx
+            }
+        };
+
+        cx.foreground().spawn(async move {
+            loop {
+                if let Some(result) = removed_watch.borrow().as_ref() {
+                    return match result {
+                        Ok(_) => {
+                            // We were trying to remove a path. If instead something was
+                            // created/loaded there, then do nothing further
+                            // TODO: is this the right behaviour?
+                            Ok(())
+                        }
+                        Err(error) => Err(anyhow!("{}", error)),
+                    };
+                }
+                removed_watch.recv().await;
+            }
+        })
+    }
+
+    fn open_local_buffer_with_options(
         &mut self,
         path: &Arc<Path>,
         worktree: &ModelHandle<Worktree>,
+        options: OpenOptions,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
         let load_buffer = worktree.update(cx, |worktree, cx| {
             let worktree = worktree.as_local_mut().unwrap();
-            worktree.load_buffer(path, cx)
+            worktree.load_buffer_with_options(path, options, cx)
         });
         let worktree = worktree.downgrade();
         cx.spawn(|this, mut cx| async move {
@@ -576,10 +734,45 @@ impl Project {
         })
     }
 
-    fn open_remote_buffer(
+    fn create_local_dir(
         &mut self,
         path: &Arc<Path>,
         worktree: &ModelHandle<Worktree>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let create_dir = worktree.update(cx, |worktree, cx| {
+            let worktree = worktree.as_local_mut().unwrap();
+            worktree.create_dir(path, cx)
+        });
+        cx.spawn(|this, mut cx| async move {
+            create_dir.await?;
+            this.update(&mut cx, |_, cx| cx.notify());
+            Ok(())
+        })
+    }
+
+    fn remove_local_path(
+        &mut self,
+        path: &Arc<Path>,
+        worktree: &ModelHandle<Worktree>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let create_dir = worktree.update(cx, |worktree, cx| {
+            let worktree = worktree.as_local_mut().unwrap();
+            worktree.remove_path(path, cx)
+        });
+        cx.spawn(|this, mut cx| async move {
+            create_dir.await?;
+            this.update(&mut cx, |_, cx| cx.notify());
+            Ok(())
+        })
+    }
+
+    fn open_remote_buffer_with_options(
+        &mut self,
+        path: &Arc<Path>,
+        worktree: &ModelHandle<Worktree>,
+        options: OpenOptions,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
         let rpc = self.client.clone();
@@ -593,12 +786,67 @@ impl Project {
                     project_id,
                     worktree_id: remote_worktree_id.to_proto(),
                     path: path_string,
+                    options: Some(options.into()),
                 })
                 .await?;
             let buffer = response.buffer.ok_or_else(|| anyhow!("missing buffer"))?;
             this.update(&mut cx, |this, cx| {
                 this.deserialize_remote_buffer(buffer, cx)
             })
+        })
+    }
+
+    fn create_remote_dir(
+        &mut self,
+        path: &Arc<Path>,
+        worktree: &ModelHandle<Worktree>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let rpc = self.client.clone();
+        let project_id = self.remote_id().unwrap();
+        let remote_worktree_id = worktree.read(cx).id();
+        let path = path.as_os_str().as_bytes().into();
+        cx.spawn(|this, mut cx| async move {
+            let response = rpc
+                .request(proto::CreateDir {
+                    project_id,
+                    worktree_id: remote_worktree_id.to_proto(),
+                    path,
+                })
+                .await?;
+            response
+                .success
+                .then(|| {})
+                .ok_or_else(|| anyhow!("could not create directory"))?;
+            this.update(&mut cx, |_, cx| cx.notify());
+            Ok(())
+        })
+    }
+
+    fn remove_remote_path(
+        &mut self,
+        path: &Arc<Path>,
+        worktree: &ModelHandle<Worktree>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let rpc = self.client.clone();
+        let project_id = self.remote_id().unwrap();
+        let remote_worktree_id = worktree.read(cx).id();
+        let path = path.as_os_str().as_bytes().into();
+        cx.spawn(|this, mut cx| async move {
+            let response = rpc
+                .request(proto::RemovePath {
+                    project_id,
+                    worktree_id: remote_worktree_id.to_proto(),
+                    path,
+                })
+                .await?;
+            response
+                .success
+                .then(|| {})
+                .ok_or_else(|| anyhow!("could not remove path"))?;
+            this.update(&mut cx, |_, cx| cx.notify());
+            Ok(())
         })
     }
 

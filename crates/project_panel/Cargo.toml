@@ -12,6 +12,7 @@ project = { path = "../project" }
 theme = { path = "../theme" }
 util = { path = "../util" }
 workspace = { path = "../workspace" }
+editor = { path = "../editor" }
 postage = { version = "0.4.1", features = ["futures-traits"] }
 
 [dev-dependencies]

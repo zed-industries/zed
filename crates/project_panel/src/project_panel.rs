@@ -1,3 +1,7 @@
+mod create_entry;
+
+use crate::create_entry::{CreateEntry, Object};
+use gpui::elements::{ChildView, Stack};
 use gpui::{
     action,
     elements::{
@@ -11,6 +15,7 @@ use gpui::{
 };
 use postage::watch;
 use project::{Project, ProjectEntry, ProjectPath, Worktree, WorktreeId};
+use std::path::PathBuf;
 use std::{
     collections::{hash_map, HashMap},
     ffi::OsStr,
@@ -29,6 +34,7 @@ pub struct ProjectPanel {
     selection: Option<Selection>,
     settings: watch::Receiver<Settings>,
     handle: WeakViewHandle<Self>,
+    create_entry: Option<ViewHandle<CreateEntry>>,
 }
 
 #[derive(Copy, Clone)]
@@ -51,17 +57,50 @@ action!(ExpandSelectedEntry);
 action!(CollapseSelectedEntry);
 action!(ToggleExpanded, ProjectEntry);
 action!(Open, ProjectEntry);
+action!(CreateFile);
+action!(CreateDirectory);
+action!(RemoveSelectedEntry);
+action!(FocusSelf);
 
 pub fn init(cx: &mut MutableAppContext) {
+    create_entry::init(cx);
+
     cx.add_action(ProjectPanel::expand_selected_entry);
     cx.add_action(ProjectPanel::collapse_selected_entry);
     cx.add_action(ProjectPanel::toggle_expanded);
     cx.add_action(ProjectPanel::select_prev);
     cx.add_action(ProjectPanel::select_next);
     cx.add_action(ProjectPanel::open_entry);
+    cx.add_action(ProjectPanel::create_file);
+    cx.add_action(ProjectPanel::create_dir);
+    cx.add_action(ProjectPanel::remove_selected_entry);
+    cx.add_action(ProjectPanel::focus_self);
     cx.add_bindings([
-        Binding::new("right", ExpandSelectedEntry, Some("ProjectPanel")),
-        Binding::new("left", CollapseSelectedEntry, Some("ProjectPanel")),
+        Binding::new(
+            "right",
+            ExpandSelectedEntry,
+            Some("ProjectPanel && creating_entry == false"),
+        ),
+        Binding::new(
+            "left",
+            CollapseSelectedEntry,
+            Some("ProjectPanel && creating_entry == false"),
+        ),
+        Binding::new(
+            "n d",
+            CreateDirectory,
+            Some("ProjectPanel && creating_entry == false"),
+        ),
+        Binding::new(
+            "n f",
+            CreateFile,
+            Some("ProjectPanel && creating_entry == false"),
+        ),
+        Binding::new(
+            "delete delete",
+            RemoveSelectedEntry,
+            Some("ProjectPanel && creating_entry == false"),
+        ),
     ]);
 }
 
@@ -69,6 +108,18 @@ pub enum Event {
     OpenedEntry {
         worktree_id: WorktreeId,
         entry_id: usize,
+    },
+    RemovedEntry {
+        worktree_id: WorktreeId,
+        entry_id: usize,
+    },
+    CreateFile {
+        worktree_id: WorktreeId,
+        path: PathBuf,
+    },
+    CreateDirectory {
+        worktree_id: WorktreeId,
+        path: PathBuf,
     },
 }
 
@@ -111,6 +162,7 @@ impl ProjectPanel {
                 expanded_dir_ids: Default::default(),
                 selection: None,
                 handle: cx.weak_handle(),
+                create_entry: None,
             };
             this.update_visible_entries(None, cx);
             this
@@ -132,6 +184,41 @@ impl ProjectPanel {
                             )
                             .detach_and_log_err(cx);
                     }
+                }
+            }
+            &Event::RemovedEntry {
+                worktree_id,
+                entry_id,
+            } => {
+                if let Some(worktree) = project.read(cx).worktree_for_id(worktree_id, cx) {
+                    if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
+                        let entry_path = entry.path.clone();
+                        if entry_path.components().next().is_some() {
+                            workspace
+                                .remove_path(
+                                    ProjectPath {
+                                        worktree_id,
+                                        path: entry_path,
+                                    },
+                                    cx,
+                                )
+                                .detach_and_log_err(cx);
+                        }
+                    }
+                }
+            }
+            Event::CreateFile { worktree_id, path } => {
+                if let Some(_) = project.read(cx).worktree_for_id(*worktree_id, cx) {
+                    workspace
+                        .create_path((*worktree_id, path).into(), cx)
+                        .detach_and_log_err(cx);
+                }
+            }
+            Event::CreateDirectory { worktree_id, path } => {
+                if let Some(_) = project.read(cx).worktree_for_id(*worktree_id, cx) {
+                    workspace
+                        .create_dir((*worktree_id, path).into(), cx)
+                        .detach_and_log_err(cx);
                 }
             }
         })
@@ -240,6 +327,46 @@ impl ProjectPanel {
             worktree_id: action.0.worktree_id,
             entry_id: action.0.entry_id,
         });
+    }
+
+    fn remove_selected_entry(&mut self, _: &RemoveSelectedEntry, cx: &mut ViewContext<Self>) {
+        if let Some((worktree_id, entry_id)) = self
+            .selected_entry(cx)
+            .map(|(worktree, entry)| (worktree.id(), entry.id))
+        {
+            cx.emit(Event::RemovedEntry {
+                worktree_id,
+                entry_id,
+            });
+        }
+    }
+
+    fn dismiss_create_entry(&mut self, cx: &mut ViewContext<Self>) {
+        if self.create_entry.is_some() {
+            self.create_entry.take();
+            cx.focus_self();
+            cx.notify();
+        }
+    }
+
+    fn create_file(&mut self, _: &CreateFile, cx: &mut ViewContext<Self>) {
+        self.deploy_create_entry(Object::File, cx)
+    }
+
+    fn create_dir(&mut self, _: &CreateDirectory, cx: &mut ViewContext<Self>) {
+        self.deploy_create_entry(Object::Directory, cx);
+    }
+
+    fn deploy_create_entry(&mut self, object: Object, cx: &mut ViewContext<Self>) {
+        if self.create_entry.is_none() && self.selection.is_some() {
+            let create_entry = cx.add_view(|create_entry_cx| {
+                CreateEntry::new(self.settings.clone(), object, create_entry_cx)
+            });
+            cx.focus(&create_entry);
+            cx.subscribe(&create_entry, CreateEntry::on_event).detach();
+            self.create_entry = Some(create_entry);
+            cx.notify();
+        }
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
@@ -538,6 +665,10 @@ impl ProjectPanel {
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()
     }
+
+    fn focus_self(&mut self, _: &FocusSelf, cx: &mut ViewContext<Self>) {
+        cx.focus_self()
+    }
 }
 
 impl View for ProjectPanel {
@@ -545,36 +676,58 @@ impl View for ProjectPanel {
         "ProjectPanel"
     }
 
-    fn render(&mut self, _: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
+    fn render(&mut self, render_cx: &mut gpui::RenderContext<'_, Self>) -> gpui::ElementBox {
         let settings = self.settings.clone();
         let mut container_style = settings.borrow().theme.project_panel.container;
         let padding = std::mem::take(&mut container_style.padding);
         let handle = self.handle.clone();
-        UniformList::new(
-            self.list.clone(),
-            self.visible_entries
-                .iter()
-                .map(|(_, worktree_entries)| worktree_entries.len())
-                .sum(),
-            move |range, items, cx| {
-                let theme = &settings.borrow().theme.project_panel;
-                let this = handle.upgrade(cx).unwrap();
-                this.update(cx.app, |this, cx| {
-                    this.for_each_visible_entry(range.clone(), cx, |entry, details, cx| {
-                        items.push(Self::render_entry(entry, details, theme, cx));
-                    });
-                })
-            },
-        )
-        .with_padding_top(padding.top)
-        .with_padding_bottom(padding.bottom)
-        .contained()
-        .with_style(container_style)
+        MouseEventHandler::new::<Self, _, _, _>(self.handle.id(), render_cx, |_state, _| {
+            Stack::new()
+                .with_child(
+                    UniformList::new(
+                        self.list.clone(),
+                        self.visible_entries
+                            .iter()
+                            .map(|(_, worktree_entries)| worktree_entries.len())
+                            .sum(),
+                        move |range, items, layout_cx| {
+                            let theme = &settings.borrow().theme.project_panel;
+                            let this = handle.upgrade(layout_cx).unwrap();
+                            this.update(layout_cx.app, |this, cx| {
+                                this.for_each_visible_entry(
+                                    range.clone(),
+                                    cx,
+                                    |entry, details, cx| {
+                                        items.push(Self::render_entry(entry, details, theme, cx));
+                                    },
+                                );
+                            })
+                        },
+                    )
+                    .with_padding_top(padding.top)
+                    .with_padding_bottom(padding.bottom)
+                    .contained()
+                    .with_style(container_style)
+                    .boxed(),
+                )
+                .with_children(
+                    self.create_entry
+                        .as_ref()
+                        .map(|m| ChildView::new(m).boxed()),
+                )
+                .boxed()
+        })
+        .on_click(move |event_cx| event_cx.dispatch_action(FocusSelf))
+        .with_cursor_style(CursorStyle::Arrow)
         .boxed()
     }
 
     fn keymap_context(&self, _: &AppContext) -> keymap::Context {
         let mut cx = Self::default_keymap_context();
+        cx.map.insert(
+            "creating_entry".into(),
+            format!("{}", self.create_entry.is_some()),
+        );
         cx.set.insert("menu".into());
         cx
     }

@@ -389,6 +389,23 @@ impl Pane {
         cx.notify();
     }
 
+    pub fn close_items_with_path(&mut self, path: ProjectPath, cx: &mut ViewContext<Self>) {
+        let item_view_ids = self
+            .item_views
+            .iter()
+            .filter_map(|(_, item_view)| {
+                if item_view.project_path(cx).map_or(false, |p| p == path) {
+                    Some(item_view.id())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<usize>>();
+        item_view_ids
+            .into_iter()
+            .for_each(|item_view_id| self.close_item(item_view_id, cx));
+    }
+
     fn focus_active_item(&mut self, cx: &mut ViewContext<Self>) {
         if let Some(active_item) = self.active_item() {
             cx.focus(active_item);
