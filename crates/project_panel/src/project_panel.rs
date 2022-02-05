@@ -1,3 +1,7 @@
+mod input_bar;
+
+use crate::input_bar::InputBar;
+use gpui::elements::{ChildView, Stack};
 use gpui::{
     action,
     elements::{
@@ -29,6 +33,7 @@ pub struct ProjectPanel {
     selection: Option<Selection>,
     settings: watch::Receiver<Settings>,
     handle: WeakViewHandle<Self>,
+    input_bar: Option<ViewHandle<InputBar>>,
 }
 
 #[derive(Copy, Clone)]
@@ -51,17 +56,22 @@ action!(ExpandSelectedEntry);
 action!(CollapseSelectedEntry);
 action!(ToggleExpanded, ProjectEntry);
 action!(Open, ProjectEntry);
+action!(CreateFile);
 
 pub fn init(cx: &mut MutableAppContext) {
+    input_bar::init(cx);
+
     cx.add_action(ProjectPanel::expand_selected_entry);
     cx.add_action(ProjectPanel::collapse_selected_entry);
     cx.add_action(ProjectPanel::toggle_expanded);
     cx.add_action(ProjectPanel::select_prev);
     cx.add_action(ProjectPanel::select_next);
     cx.add_action(ProjectPanel::open_entry);
+    cx.add_action(ProjectPanel::create_file);
     cx.add_bindings([
         Binding::new("right", ExpandSelectedEntry, Some("ProjectPanel")),
         Binding::new("left", CollapseSelectedEntry, Some("ProjectPanel")),
+        Binding::new("n", CreateFile, Some("ProjectPanel")),
     ]);
 }
 
@@ -69,6 +79,10 @@ pub enum Event {
     OpenedEntry {
         worktree_id: WorktreeId,
         entry_id: usize,
+    },
+    CreateFile {
+        worktree_id: WorktreeId,
+        name: String,
     },
 }
 
@@ -111,6 +125,7 @@ impl ProjectPanel {
                 expanded_dir_ids: Default::default(),
                 selection: None,
                 handle: cx.weak_handle(),
+                input_bar: None,
             };
             this.update_visible_entries(None, cx);
             this
@@ -132,6 +147,13 @@ impl ProjectPanel {
                             )
                             .detach_and_log_err(cx);
                     }
+                }
+            }
+            Event::CreateFile { worktree_id, name } => {
+                if let Some(_) = project.read(cx).worktree_for_id(*worktree_id, cx) {
+                    workspace
+                        .create_path((*worktree_id, name).into(), cx)
+                        .detach_and_log_err(cx);
                 }
             }
         })
@@ -240,6 +262,25 @@ impl ProjectPanel {
             worktree_id: action.0.worktree_id,
             entry_id: action.0.entry_id,
         });
+    }
+
+    fn dismiss_input_bar(&mut self, cx: &mut ViewContext<Self>) {
+        if self.input_bar.is_some() {
+            self.input_bar.take();
+            cx.focus_self();
+            cx.notify();
+        }
+    }
+
+    fn create_file(&mut self, _: &CreateFile, cx: &mut ViewContext<Self>) {
+        if self.input_bar.is_none() {
+            let input_bar =
+                cx.add_view(|input_bar_cx| InputBar::new(self.settings.clone(), input_bar_cx));
+            cx.focus(&input_bar);
+            cx.subscribe(&input_bar, InputBar::on_event).detach();
+            self.input_bar = Some(input_bar);
+            cx.notify();
+        }
     }
 
     fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
@@ -550,27 +591,32 @@ impl View for ProjectPanel {
         let mut container_style = settings.borrow().theme.project_panel.container;
         let padding = std::mem::take(&mut container_style.padding);
         let handle = self.handle.clone();
-        UniformList::new(
-            self.list.clone(),
-            self.visible_entries
-                .iter()
-                .map(|(_, worktree_entries)| worktree_entries.len())
-                .sum(),
-            move |range, items, cx| {
-                let theme = &settings.borrow().theme.project_panel;
-                let this = handle.upgrade(cx).unwrap();
-                this.update(cx.app, |this, cx| {
-                    this.for_each_visible_entry(range.clone(), cx, |entry, details, cx| {
-                        items.push(Self::render_entry(entry, details, theme, cx));
-                    });
-                })
-            },
-        )
-        .with_padding_top(padding.top)
-        .with_padding_bottom(padding.bottom)
-        .contained()
-        .with_style(container_style)
-        .boxed()
+        Stack::new()
+            .with_child(
+                UniformList::new(
+                    self.list.clone(),
+                    self.visible_entries
+                        .iter()
+                        .map(|(_, worktree_entries)| worktree_entries.len())
+                        .sum(),
+                    move |range, items, cx| {
+                        let theme = &settings.borrow().theme.project_panel;
+                        let this = handle.upgrade(cx).unwrap();
+                        this.update(cx.app, |this, cx| {
+                            this.for_each_visible_entry(range.clone(), cx, |entry, details, cx| {
+                                items.push(Self::render_entry(entry, details, theme, cx));
+                            });
+                        })
+                    },
+                )
+                .with_padding_top(padding.top)
+                .with_padding_bottom(padding.bottom)
+                .contained()
+                .with_style(container_style)
+                .boxed(),
+            )
+            .with_children(self.input_bar.as_ref().map(|m| ChildView::new(m).boxed()))
+            .boxed()
     }
 
     fn keymap_context(&self, _: &AppContext) -> keymap::Context {
