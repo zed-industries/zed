@@ -6,7 +6,7 @@ use gpui::{
 };
 use language::{Bias, Buffer, Diagnostic, File as _};
 use postage::watch;
-use project::{File, Project, ProjectPath};
+use project::{File, LoadOptions, Project, ProjectPath};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::{cell::RefCell, fmt::Write};
@@ -26,13 +26,14 @@ pub struct BufferItemHandle(pub ModelHandle<Buffer>);
 struct WeakBufferItemHandle(WeakModelHandle<Buffer>);
 
 impl PathOpener for BufferOpener {
-    fn open(
+    fn open_with_options(
         &self,
         project: &mut Project,
         project_path: ProjectPath,
+        options: LoadOptions,
         cx: &mut ModelContext<Project>,
     ) -> Option<Task<Result<Box<dyn ItemHandle>>>> {
-        let buffer = project.open_buffer(project_path, cx);
+        let buffer = project.open_buffer_with_options(project_path, options, cx);
         let task = cx.spawn(|_, _| async move {
             let buffer = buffer.await?;
             Ok(Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)

@@ -11,9 +11,43 @@ use std::{
 };
 use text::Rope;
 
+#[derive(Clone, Copy)]
+pub struct LoadOptions {
+    create_new: bool,
+}
+
+impl Default for LoadOptions {
+    fn default() -> Self {
+        LoadOptions { create_new: false }
+    }
+}
+
+impl LoadOptions {
+    pub fn create_new() -> Self {
+        LoadOptions { create_new: true }
+    }
+}
+
+impl From<rpc::proto::LoadOptions> for LoadOptions {
+    fn from(options: rpc::proto::LoadOptions) -> Self {
+        let rpc::proto::LoadOptions { create_new } = options;
+        LoadOptions { create_new }
+    }
+}
+
+impl Into<rpc::proto::LoadOptions> for LoadOptions {
+    fn into(self) -> rpc::proto::LoadOptions {
+        let LoadOptions { create_new } = self;
+        rpc::proto::LoadOptions { create_new }
+    }
+}
+
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
-    async fn load(&self, path: &Path) -> Result<String>;
+    async fn load_with_options(&self, path: &Path, options: LoadOptions) -> Result<String>;
+    async fn load(&self, path: &Path) -> Result<String> {
+        self.load_with_options(path, LoadOptions::default()).await
+    }
     async fn save(&self, path: &Path, text: &Rope) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
     async fn is_file(&self, path: &Path) -> bool;
@@ -44,8 +78,13 @@ pub struct RealFs;
 
 #[async_trait::async_trait]
 impl Fs for RealFs {
-    async fn load(&self, path: &Path) -> Result<String> {
-        let mut file = smol::fs::File::open(path).await?;
+    async fn load_with_options(&self, path: &Path, options: LoadOptions) -> Result<String> {
+        let mut file = smol::fs::OpenOptions::new()
+            .read(true)
+            .write(options.create_new)
+            .create_new(options.create_new)
+            .open(path)
+            .await?;
         let mut text = String::new();
         file.read_to_string(&mut text).await?;
         Ok(text)
@@ -332,7 +371,7 @@ impl FakeFs {
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait::async_trait]
 impl Fs for FakeFs {
-    async fn load(&self, path: &Path) -> Result<String> {
+    async fn load_with_options(&self, path: &Path, _: LoadOptions) -> Result<String> {
         self.executor.simulate_random_delay().await;
         let state = self.state.lock().await;
         let text = state

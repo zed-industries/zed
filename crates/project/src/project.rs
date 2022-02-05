@@ -497,6 +497,15 @@ impl Project {
         path: impl Into<ProjectPath>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
+        self.open_buffer_with_options(path, LoadOptions::default(), cx)
+    }
+
+    pub fn open_buffer_with_options(
+        &mut self,
+        path: impl Into<ProjectPath>,
+        options: LoadOptions,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<Buffer>>> {
         let project_path = path.into();
         let worktree = if let Some(worktree) = self.worktree_for_id(project_path.worktree_id, cx) {
             worktree
@@ -521,9 +530,9 @@ impl Project {
                 entry.insert(rx.clone());
 
                 let load_buffer = if worktree.read(cx).is_local() {
-                    self.open_local_buffer(&project_path.path, &worktree, cx)
+                    self.open_local_buffer_with_options(&project_path.path, &worktree, options, cx)
                 } else {
-                    self.open_remote_buffer(&project_path.path, &worktree, cx)
+                    self.open_remote_buffer_with_options(&project_path.path, &worktree, options, cx)
                 };
 
                 cx.spawn(move |this, mut cx| async move {
@@ -553,15 +562,16 @@ impl Project {
         })
     }
 
-    fn open_local_buffer(
+    fn open_local_buffer_with_options(
         &mut self,
         path: &Arc<Path>,
         worktree: &ModelHandle<Worktree>,
+        options: LoadOptions,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
         let load_buffer = worktree.update(cx, |worktree, cx| {
             let worktree = worktree.as_local_mut().unwrap();
-            worktree.load_buffer(path, cx)
+            worktree.load_buffer_with_options(path, options, cx)
         });
         let worktree = worktree.downgrade();
         cx.spawn(|this, mut cx| async move {
@@ -576,10 +586,11 @@ impl Project {
         })
     }
 
-    fn open_remote_buffer(
+    fn open_remote_buffer_with_options(
         &mut self,
         path: &Arc<Path>,
         worktree: &ModelHandle<Worktree>,
+        options: LoadOptions,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
         let rpc = self.client.clone();
@@ -593,6 +604,7 @@ impl Project {
                     project_id,
                     worktree_id: remote_worktree_id.to_proto(),
                     path: path_string,
+                    options: Some(options.into()),
                 })
                 .await?;
             let buffer = response.buffer.ok_or_else(|| anyhow!("missing buffer"))?;

@@ -156,10 +156,15 @@ message Definition {
     Anchor target_end = 3;
 }
 
+message LoadOptions {
+    bool create_new = 1;
+}
+
 message OpenBuffer {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     string path = 3;
+    LoadOptions options = 4;
 }
 
 message OpenBufferResponse {

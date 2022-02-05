@@ -3,6 +3,7 @@ use super::{
     ignore::IgnoreStack,
     DiagnosticSummary,
 };
+use crate::LoadOptions;
 use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Result};
 use client::{proto, Client, TypedEnvelope};
@@ -574,15 +575,18 @@ impl LocalWorktree {
         self.config.collaborators.clone()
     }
 
-    pub(crate) fn load_buffer(
+    pub(crate) fn load_buffer_with_options(
         &mut self,
         path: &Path,
+        options: LoadOptions,
         cx: &mut ModelContext<Worktree>,
     ) -> Task<Result<ModelHandle<Buffer>>> {
         let path = Arc::from(path);
         cx.spawn(move |this, mut cx| async move {
             let (file, contents) = this
-                .update(&mut cx, |t, cx| t.as_local().unwrap().load(&path, cx))
+                .update(&mut cx, |t, cx| {
+                    t.as_local().unwrap().load_with_options(&path, options, cx)
+                })
                 .await?;
             Ok(cx.add_model(|cx| Buffer::from_file(0, contents, Box::new(file), cx)))
         })
@@ -655,14 +659,19 @@ impl LocalWorktree {
         self.snapshot.clone()
     }
 
-    fn load(&self, path: &Path, cx: &mut ModelContext<Worktree>) -> Task<Result<(File, String)>> {
+    fn load_with_options(
+        &self,
+        path: &Path,
+        options: LoadOptions,
+        cx: &mut ModelContext<Worktree>,
+    ) -> Task<Result<(File, String)>> {
         let handle = cx.handle();
         let path = Arc::from(path);
         let abs_path = self.absolutize(&path);
         let background_snapshot = self.background_snapshot.clone();
         let fs = self.fs.clone();
         cx.spawn(|this, mut cx| async move {
-            let text = fs.load(&abs_path).await?;
+            let text = fs.load_with_options(&abs_path, options).await?;
             // Eagerly populate the snapshot with an updated entry for the loaded file
             let entry = refresh_entry(fs.as_ref(), &background_snapshot, path, &abs_path).await?;
             this.update(&mut cx, |this, cx| this.poll_snapshot(cx));

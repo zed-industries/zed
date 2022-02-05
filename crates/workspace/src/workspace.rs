@@ -27,7 +27,7 @@ pub use pane::*;
 pub use pane_group::*;
 use parking_lot::Mutex;
 use postage::{prelude::Stream, watch};
-use project::{fs, Fs, Project, ProjectPath, Worktree};
+use project::{fs, Fs, LoadOptions, Project, ProjectPath, Worktree};
 pub use settings::Settings;
 use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus};
 use status_bar::StatusBar;
@@ -132,6 +132,16 @@ pub trait PathOpener {
         &self,
         project: &mut Project,
         path: ProjectPath,
+        cx: &mut ModelContext<Project>,
+    ) -> Option<Task<Result<Box<dyn ItemHandle>>>> {
+        self.open_with_options(project, path, LoadOptions::default(), cx)
+    }
+
+    fn open_with_options(
+        &self,
+        project: &mut Project,
+        path: ProjectPath,
+        options: LoadOptions,
         cx: &mut ModelContext<Project>,
     ) -> Option<Task<Result<Box<dyn ItemHandle>>>>;
 }
@@ -761,12 +771,29 @@ impl Workspace {
         }
     }
 
+    pub fn create_path(
+        &mut self,
+        path: ProjectPath,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>> {
+        self.open_path_with_options(path, LoadOptions::create_new(), cx)
+    }
+
     pub fn open_path(
         &mut self,
         path: ProjectPath,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>> {
-        let load_task = self.load_path(path, cx);
+        self.open_path_with_options(path, LoadOptions::default(), cx)
+    }
+
+    pub fn open_path_with_options(
+        &mut self,
+        path: ProjectPath,
+        options: LoadOptions,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>> {
+        let load_task = self.load_path_with_options(path, options, cx);
         let pane = self.active_pane().clone().downgrade();
         cx.spawn(|this, mut cx| async move {
             let item = load_task.await?;
@@ -784,6 +811,15 @@ impl Workspace {
         path: ProjectPath,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemHandle>>> {
+        self.load_path_with_options(path, LoadOptions::default(), cx)
+    }
+
+    pub fn load_path_with_options(
+        &mut self,
+        path: ProjectPath,
+        options: LoadOptions,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<Box<dyn ItemHandle>>> {
         if let Some(existing_item) = self.item_for_path(&path, cx) {
             return Task::ready(Ok(existing_item));
         }
@@ -792,7 +828,7 @@ impl Workspace {
         let path_openers = self.path_openers.clone();
         self.project.update(cx, |project, cx| {
             for opener in path_openers.iter() {
-                if let Some(task) = opener.open(project, project_path.clone(), cx) {
+                if let Some(task) = opener.open_with_options(project, project_path.clone(), options, cx) {
                     return task;
                 }
             }
