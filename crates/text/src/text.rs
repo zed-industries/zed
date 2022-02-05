@@ -1512,6 +1512,10 @@ impl BufferSnapshot {
         self.visible_text.offset_to_point_utf16(offset)
     }
 
+    pub fn point_to_point_utf16(&self, point: Point) -> PointUtf16 {
+        self.visible_text.point_to_point_utf16(point)
+    }
+
     pub fn version(&self) -> &clock::Global {
         &self.version
     }
@@ -2257,6 +2261,34 @@ impl ToPoint for PointUtf16 {
 impl ToPoint for Point {
     fn to_point<'a>(&self, _: &BufferSnapshot) -> Point {
         *self
+    }
+}
+
+pub trait ToPointUtf16 {
+    fn to_point_utf16<'a>(&self, snapshot: &BufferSnapshot) -> PointUtf16;
+}
+
+impl ToPointUtf16 for Anchor {
+    fn to_point_utf16<'a>(&self, snapshot: &BufferSnapshot) -> PointUtf16 {
+        snapshot.summary_for_anchor(self)
+    }
+}
+
+impl ToPointUtf16 for usize {
+    fn to_point_utf16<'a>(&self, snapshot: &BufferSnapshot) -> PointUtf16 {
+        snapshot.offset_to_point_utf16(*self)
+    }
+}
+
+impl ToPointUtf16 for PointUtf16 {
+    fn to_point_utf16<'a>(&self, _: &BufferSnapshot) -> PointUtf16 {
+        *self
+    }
+}
+
+impl ToPointUtf16 for Point {
+    fn to_point_utf16<'a>(&self, snapshot: &BufferSnapshot) -> PointUtf16 {
+        snapshot.point_to_point_utf16(*self)
     }
 }
 

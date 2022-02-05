@@ -8,7 +8,7 @@ use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
     Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Outline,
-    OutlineItem, Selection, ToOffset as _, ToPoint as _, TransactionId,
+    OutlineItem, Selection, ToOffset as _, ToPoint as _, ToPointUtf16 as _, TransactionId,
 };
 use std::{
     cell::{Ref, RefCell},
@@ -71,6 +71,10 @@ pub trait ToOffset: 'static + fmt::Debug {
 
 pub trait ToPoint: 'static + fmt::Debug {
     fn to_point(&self, snapshot: &MultiBufferSnapshot) -> Point;
+}
+
+pub trait ToPointUtf16: 'static + fmt::Debug {
+    fn to_point_utf16(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16;
 }
 
 struct BufferState {
@@ -1360,6 +1364,48 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn offset_to_point_utf16(&self, offset: usize) -> PointUtf16 {
+        if let Some(excerpt) = self.as_singleton() {
+            return excerpt.buffer.offset_to_point_utf16(offset);
+        }
+
+        let mut cursor = self.excerpts.cursor::<(usize, PointUtf16)>();
+        cursor.seek(&offset, Bias::Right, &());
+        if let Some(excerpt) = cursor.item() {
+            let (start_offset, start_point) = cursor.start();
+            let overshoot = offset - start_offset;
+            let excerpt_start_offset = excerpt.range.start.to_offset(&excerpt.buffer);
+            let excerpt_start_point = excerpt.range.start.to_point_utf16(&excerpt.buffer);
+            let buffer_point = excerpt
+                .buffer
+                .offset_to_point_utf16(excerpt_start_offset + overshoot);
+            *start_point + (buffer_point - excerpt_start_point)
+        } else {
+            self.excerpts.summary().text.lines_utf16
+        }
+    }
+
+    pub fn point_to_point_utf16(&self, point: Point) -> PointUtf16 {
+        if let Some(excerpt) = self.as_singleton() {
+            return excerpt.buffer.point_to_point_utf16(point);
+        }
+
+        let mut cursor = self.excerpts.cursor::<(Point, PointUtf16)>();
+        cursor.seek(&point, Bias::Right, &());
+        if let Some(excerpt) = cursor.item() {
+            let (start_offset, start_point) = cursor.start();
+            let overshoot = point - start_offset;
+            let excerpt_start_point = excerpt.range.start.to_point(&excerpt.buffer);
+            let excerpt_start_point_utf16 = excerpt.range.start.to_point_utf16(&excerpt.buffer);
+            let buffer_point = excerpt
+                .buffer
+                .point_to_point_utf16(excerpt_start_point + overshoot);
+            *start_point + (buffer_point - excerpt_start_point_utf16)
+        } else {
+            self.excerpts.summary().text.lines_utf16
+        }
+    }
+
     pub fn point_to_offset(&self, point: Point) -> usize {
         if let Some(excerpt) = self.as_singleton() {
             return excerpt.buffer.point_to_offset(point);
@@ -2483,6 +2529,24 @@ impl ToPoint for usize {
 
 impl ToPoint for Point {
     fn to_point<'a>(&self, _: &MultiBufferSnapshot) -> Point {
+        *self
+    }
+}
+
+impl ToPointUtf16 for usize {
+    fn to_point_utf16<'a>(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
+        snapshot.offset_to_point_utf16(*self)
+    }
+}
+
+impl ToPointUtf16 for Point {
+    fn to_point_utf16<'a>(&self, snapshot: &MultiBufferSnapshot) -> PointUtf16 {
+        snapshot.point_to_point_utf16(*self)
+    }
+}
+
+impl ToPointUtf16 for PointUtf16 {
+    fn to_point_utf16<'a>(&self, _: &MultiBufferSnapshot) -> PointUtf16 {
         *self
     }
 }

@@ -13,9 +13,10 @@ use gpui::{
     WeakModelHandle,
 };
 use language::{
+    point_from_lsp,
     proto::{deserialize_anchor, serialize_anchor},
     range_from_lsp, Bias, Buffer, Diagnostic, DiagnosticEntry, File as _, Language,
-    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16,
+    LanguageRegistry, PointUtf16, ToOffset,
 };
 use lsp::{DiagnosticSeverity, LanguageServer};
 use postage::{prelude::Stream, watch};
@@ -1098,9 +1099,9 @@ impl Project {
                         cx.read(|cx| {
                             let target_buffer = target_buffer_handle.read(cx);
                             let target_start = target_buffer
-                                .clip_point_utf16(target_range.start.to_point_utf16(), Bias::Left);
+                                .clip_point_utf16(point_from_lsp(target_range.start), Bias::Left);
                             let target_end = target_buffer
-                                .clip_point_utf16(target_range.end.to_point_utf16(), Bias::Left);
+                                .clip_point_utf16(point_from_lsp(target_range.end), Bias::Left);
                             definitions.push(Definition {
                                 target_buffer: target_buffer_handle,
                                 target_range: target_buffer.anchor_after(target_start)
