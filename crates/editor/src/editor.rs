@@ -420,7 +420,7 @@ pub struct Editor {
     highlighted_rows: Option<Range<u32>>,
     highlighted_ranges: BTreeMap<TypeId, (Color, Vec<Range<Anchor>>)>,
     nav_history: Option<ItemNavHistory>,
-    completion_state: Option<CompletionState>,
+    context_menu: Option<ContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     next_completion_id: CompletionId,
 }
@@ -462,7 +462,11 @@ struct SnippetState {
 
 struct InvalidationStack<T>(Vec<T>);
 
-struct CompletionState {
+enum ContextMenu {
+    Completion(CompletionMenu),
+}
+
+struct CompletionMenu {
     id: CompletionId,
     initial_position: Anchor,
     completions: Arc<[Completion<Anchor>]>,
@@ -472,7 +476,7 @@ struct CompletionState {
     list: UniformListState,
 }
 
-impl CompletionState {
+impl CompletionMenu {
     pub async fn filter(&mut self, query: Option<&str>, executor: Arc<executor::Background>) {
         let mut matches = if let Some(query) = query {
             fuzzy::match_strings(
@@ -623,7 +627,7 @@ impl Editor {
             highlighted_rows: None,
             highlighted_ranges: Default::default(),
             nav_history: None,
-            completion_state: None,
+            context_menu: None,
             completion_tasks: Default::default(),
             next_completion_id: 0,
         };
@@ -1644,6 +1648,22 @@ impl Editor {
         }
     }
 
+    fn completion_menu(&self) -> Option<&CompletionMenu> {
+        if let Some(ContextMenu::Completion(menu)) = self.context_menu.as_ref() {
+            Some(menu)
+        } else {
+            None
+        }
+    }
+
+    fn completion_menu_mut(&mut self) -> Option<&mut CompletionMenu> {
+        if let Some(ContextMenu::Completion(menu)) = self.context_menu.as_mut() {
+            Some(menu)
+        } else {
+            None
+        }
+    }
+
     fn completion_query(buffer: &MultiBufferSnapshot, position: impl ToOffset) -> Option<String> {
         let offset = position.to_offset(buffer);
         let (word_range, kind) = buffer.surrounding_word(offset);
@@ -1675,7 +1695,7 @@ impl Editor {
             async move {
                 let completions = completions.await?;
 
-                let mut completion_state = CompletionState {
+                let mut menu = CompletionMenu {
                     id,
                     initial_position: position,
                     match_candidates: completions
@@ -1694,24 +1714,21 @@ impl Editor {
                     list: Default::default(),
                 };
 
-                completion_state
-                    .filter(query.as_deref(), cx.background())
-                    .await;
+                menu.filter(query.as_deref(), cx.background()).await;
 
                 if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
                     this.update(&mut cx, |this, cx| {
-                        if let Some(prev_completion_state) = this.completion_state.as_ref() {
-                            if prev_completion_state.id > completion_state.id {
+                        if let Some(prev_menu) = this.completion_menu() {
+                            if prev_menu.id > menu.id {
                                 return;
                             }
                         }
 
-                        this.completion_tasks
-                            .retain(|(id, _)| *id > completion_state.id);
-                        if completion_state.matches.is_empty() {
+                        this.completion_tasks.retain(|(id, _)| *id > menu.id);
+                        if menu.matches.is_empty() {
                             this.hide_completions(cx);
                         } else if this.focused {
-                            this.completion_state = Some(completion_state);
+                            this.context_menu = Some(ContextMenu::Completion(menu));
                         }
 
                         cx.notify();
@@ -1740,10 +1757,16 @@ impl Editor {
         .detach();
     }
 
-    fn hide_completions(&mut self, cx: &mut ViewContext<Self>) -> Option<CompletionState> {
+    fn hide_completions(&mut self, cx: &mut ViewContext<Self>) -> Option<CompletionMenu> {
         cx.notify();
         self.completion_tasks.clear();
-        self.completion_state.take()
+        self.context_menu.take().and_then(|menu| {
+            if let ContextMenu::Completion(menu) = menu {
+                Some(menu)
+            } else {
+                None
+            }
+        })
     }
 
     pub fn confirm_completion(
@@ -1751,11 +1774,11 @@ impl Editor {
         completion_ix: Option<usize>,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let completion_state = self.hide_completions(cx)?;
-        let mat = completion_state
+        let context_menu = self.hide_completions(cx)?;
+        let mat = context_menu
             .matches
-            .get(completion_ix.unwrap_or(completion_state.selected_item))?;
-        let completion = completion_state.completions.get(mat.candidate_id)?;
+            .get(completion_ix.unwrap_or(context_menu.selected_item))?;
+        let completion = context_menu.completions.get(mat.candidate_id)?;
 
         let snippet;
         let text;
@@ -1825,15 +1848,14 @@ impl Editor {
     }
 
     pub fn has_completions(&self) -> bool {
-        self.completion_state
-            .as_ref()
+        self.completion_menu()
             .map_or(false, |c| !c.matches.is_empty())
     }
 
     pub fn render_completions(&self, cx: &AppContext) -> Option<ElementBox> {
         enum CompletionTag {}
 
-        self.completion_state.as_ref().map(|state| {
+        self.completion_menu().map(|state| {
             let build_settings = self.build_settings.clone();
             let settings = build_settings(cx);
             let completions = state.completions.clone();
@@ -2715,12 +2737,12 @@ impl Editor {
     }
 
     pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
-        if let Some(completion_state) = &mut self.completion_state {
-            if completion_state.selected_item > 0 {
-                completion_state.selected_item -= 1;
-                completion_state
+        if let Some(context_menu) = self.completion_menu_mut() {
+            if context_menu.selected_item > 0 {
+                context_menu.selected_item -= 1;
+                context_menu
                     .list
-                    .scroll_to(ScrollTarget::Show(completion_state.selected_item));
+                    .scroll_to(ScrollTarget::Show(context_menu.selected_item));
             }
             cx.notify();
             return;
@@ -2764,12 +2786,12 @@ impl Editor {
     }
 
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
-        if let Some(completion_state) = &mut self.completion_state {
-            if completion_state.selected_item + 1 < completion_state.matches.len() {
-                completion_state.selected_item += 1;
-                completion_state
+        if let Some(context_menu) = &mut self.completion_menu_mut() {
+            if context_menu.selected_item + 1 < context_menu.matches.len() {
+                context_menu.selected_item += 1;
+                context_menu
                     .list
-                    .scroll_to(ScrollTarget::Show(completion_state.selected_item));
+                    .scroll_to(ScrollTarget::Show(context_menu.selected_item));
             }
             cx.notify();
             return;
@@ -4065,17 +4087,16 @@ impl Editor {
             }
         }
 
-        if let Some((completion_state, cursor_position)) =
-            self.completion_state.as_mut().zip(new_cursor_position)
+        if let Some((context_menu, cursor_position)) =
+            self.completion_menu_mut().zip(new_cursor_position)
         {
             let cursor_position = cursor_position.to_offset(&buffer);
-            let (word_range, kind) =
-                buffer.surrounding_word(completion_state.initial_position.clone());
+            let (word_range, kind) = buffer.surrounding_word(context_menu.initial_position.clone());
             if kind == Some(CharKind::Word) && word_range.to_inclusive().contains(&cursor_position)
             {
                 let query = Self::completion_query(&buffer, cursor_position);
                 cx.background()
-                    .block(completion_state.filter(query.as_deref(), cx.background().clone()));
+                    .block(context_menu.filter(query.as_deref(), cx.background().clone()));
                 self.show_completions(&ShowCompletions, cx);
             } else {
                 self.hide_completions(cx);
@@ -4643,7 +4664,7 @@ impl View for Editor {
             EditorMode::Full => "full",
         };
         cx.map.insert("mode".into(), mode.into());
-        if self.completion_state.is_some() {
+        if self.context_menu.is_some() {
             cx.set.insert("completing".into());
         }
         cx
@@ -7380,9 +7401,9 @@ mod tests {
             );
 
             editor.handle_input(&Input(" ".to_string()), cx);
-            assert!(editor.completion_state.is_none());
+            assert!(editor.context_menu.is_none());
             editor.handle_input(&Input("s".to_string()), cx);
-            assert!(editor.completion_state.is_none());
+            assert!(editor.context_menu.is_none());
         });
 
         handle_completion_request(
@@ -7397,7 +7418,7 @@ mod tests {
         )
         .await;
         editor
-            .condition(&cx, |editor, _| editor.completion_state.is_some())
+            .condition(&cx, |editor, _| editor.context_menu.is_some())
             .await;
 
         editor.update(&mut cx, |editor, cx| {
