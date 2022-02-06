@@ -25,6 +25,7 @@ action!(ActivateItem, usize);
 action!(ActivatePrevItem);
 action!(ActivateNextItem);
 action!(CloseActiveItem);
+action!(CloseInactiveItems);
 action!(CloseItem, usize);
 action!(GoBack);
 action!(GoForward);
@@ -47,6 +48,9 @@ pub fn init(cx: &mut MutableAppContext) {
     });
     cx.add_action(|pane: &mut Pane, action: &CloseItem, cx| {
         pane.close_item(action.0, cx);
+    });
+    cx.add_action(|pane: &mut Pane, _: &CloseInactiveItems, cx| {
+        pane.close_inactive_items(cx);
     });
     cx.add_action(|pane: &mut Pane, action: &Split, cx| {
         pane.split(action.0, cx);
@@ -102,6 +106,7 @@ pub fn init(cx: &mut MutableAppContext) {
             ShiftFocus(SplitDirection::Right),
             Some("Pane"),
         ),
+        Binding::new("cmd-alt-t", CloseInactiveItems, Some("Pane")),
     ]);
 }
 
@@ -384,6 +389,26 @@ impl Pane {
     pub fn close_active_item(&mut self, cx: &mut ViewContext<Self>) {
         if !self.item_views.is_empty() {
             self.close_item(self.item_views[self.active_item_index].1.id(), cx)
+        }
+    }
+
+    pub fn close_inactive_items(&mut self, cx: &mut ViewContext<Self>) {
+        if !self.item_views.is_empty() {
+            let inactive_item_ids = self
+                .item_views
+                .iter()
+                .enumerate()
+                .filter_map(|(ix, (_, item))| {
+                    if ix != self.active_item_index {
+                        Some(item.id())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<usize>>();
+            inactive_item_ids
+                .into_iter()
+                .for_each(|id| self.close_item(id, cx));
         }
     }
 
