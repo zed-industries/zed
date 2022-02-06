@@ -415,6 +415,7 @@ impl FindBar {
                 self.clear_matches(cx);
                 self.update_matches(cx);
                 cx.notify();
+                self.go_to_match(&GoToMatch(Direction::Next), cx);
             }
             _ => {}
         }
