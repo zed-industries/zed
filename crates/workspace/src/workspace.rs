@@ -1029,6 +1029,7 @@ impl Workspace {
                 pane::Event::Activate => {
                     self.activate_pane(pane, cx);
                 }
+                pane::Event::ShiftFocus(direction) => self.shift_focus_pane(*direction, cx),
             }
         } else {
             error!("pane {} not found", pane_id);
@@ -1051,6 +1052,12 @@ impl Workspace {
         self.center.split(&pane, &new_pane, direction).unwrap();
         cx.notify();
         new_pane
+    }
+
+    fn shift_focus_pane(&mut self, direction: SplitDirection, cx: &mut ViewContext<Self>) {
+        if let Some(neighbor) = self.center.find_adjacent(self.active_pane(), direction) {
+            self.activate_pane(neighbor, cx);
+        }
     }
 
     fn remove_pane(&mut self, pane: ViewHandle<Pane>, cx: &mut ViewContext<Self>) {

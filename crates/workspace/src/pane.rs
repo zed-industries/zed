@@ -28,6 +28,7 @@ action!(CloseActiveItem);
 action!(CloseItem, usize);
 action!(GoBack);
 action!(GoForward);
+action!(ShiftFocus, SplitDirection);
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
 
@@ -50,6 +51,9 @@ pub fn init(cx: &mut MutableAppContext) {
     cx.add_action(|pane: &mut Pane, action: &Split, cx| {
         pane.split(action.0, cx);
     });
+    cx.add_action(|pane: &mut Pane, action: &ShiftFocus, cx| {
+        pane.shift_focus(action.0, cx);
+    });
     cx.add_action(|workspace: &mut Workspace, _: &GoBack, cx| {
         Pane::go_back(workspace, cx).detach();
     });
@@ -67,6 +71,37 @@ pub fn init(cx: &mut MutableAppContext) {
         Binding::new("cmd-k right", Split(SplitDirection::Right), Some("Pane")),
         Binding::new("ctrl--", GoBack, Some("Pane")),
         Binding::new("shift-ctrl-_", GoForward, Some("Pane")),
+        Binding::new(
+            "cmd-k cmd-left",
+            ShiftFocus(SplitDirection::Left),
+            Some("Pane"),
+        ),
+        Binding::new(
+            "cmd-k cmd-right",
+            ShiftFocus(SplitDirection::Right),
+            Some("Pane"),
+        ),
+        Binding::new("cmd-k cmd-up", ShiftFocus(SplitDirection::Up), Some("Pane")),
+        Binding::new(
+            "cmd-k cmd-down",
+            ShiftFocus(SplitDirection::Down),
+            Some("Pane"),
+        ),
+        Binding::new(
+            "cmd-k cmd-down",
+            ShiftFocus(SplitDirection::Down),
+            Some("Pane"),
+        ),
+        Binding::new(
+            "cmd-k cmd-left",
+            ShiftFocus(SplitDirection::Left),
+            Some("Pane"),
+        ),
+        Binding::new(
+            "cmd-k cmd-right",
+            ShiftFocus(SplitDirection::Right),
+            Some("Pane"),
+        ),
     ]);
 }
 
@@ -74,6 +109,7 @@ pub enum Event {
     Activate,
     Remove,
     Split(SplitDirection),
+    ShiftFocus(SplitDirection),
 }
 
 pub struct Pane {
@@ -397,6 +433,10 @@ impl Pane {
 
     pub fn split(&mut self, direction: SplitDirection, cx: &mut ViewContext<Self>) {
         cx.emit(Event::Split(direction));
+    }
+
+    pub fn shift_focus(&mut self, direction: SplitDirection, cx: &mut ViewContext<Self>) {
+        cx.emit(Event::ShiftFocus(direction))
     }
 
     pub fn show_toolbar<F, V>(&mut self, cx: &mut ViewContext<Self>, build_toolbar: F)

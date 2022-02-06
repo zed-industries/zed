@@ -35,6 +35,31 @@ impl PaneGroup {
         }
     }
 
+    pub fn find_adjacent(
+        &self,
+        focus_pane: &ViewHandle<Pane>,
+        direction: SplitDirection,
+    ) -> Option<ViewHandle<Pane>> {
+        match &self.root {
+            Member::Pane(_) => None,
+            Member::Axis(axis) => {
+                use SplitDirection::*;
+                axis.find_adjacent(
+                    focus_pane,
+                    direction,
+                    FindResult {
+                        last: match direction {
+                            Left | Up => axis.members.first().and_then(|m| m.first()),
+                            Right | Down => axis.members.last().and_then(|m| m.last()),
+                        },
+                        success: false,
+                    },
+                )
+                .into()
+            }
+        }
+    }
+
     pub fn remove(&mut self, pane: &ViewHandle<Pane>) -> Result<bool> {
         match &mut self.root {
             Member::Pane(_) => Ok(false),
@@ -58,6 +83,21 @@ enum Member {
     Pane(ViewHandle<Pane>),
 }
 
+struct FindResult {
+    last: Option<ViewHandle<Pane>>,
+    success: bool,
+}
+
+impl From<FindResult> for Option<ViewHandle<Pane>> {
+    fn from(result: FindResult) -> Self {
+        if result.success {
+            result.last
+        } else {
+            None
+        }
+    }
+}
+
 impl Member {
     fn new_axis(
         old_pane: ViewHandle<Pane>,
@@ -78,6 +118,44 @@ impl Member {
         };
 
         Member::Axis(PaneAxis { axis, members })
+    }
+
+    fn find_adjacent(
+        &self,
+        focus_pane: &ViewHandle<Pane>,
+        direction: SplitDirection,
+        in_parallel_axis: bool,
+        mut current_result: FindResult,
+    ) -> FindResult {
+        match self {
+            Member::Axis(axis) => {
+                current_result = axis.find_adjacent(focus_pane, direction, current_result);
+            }
+            Member::Pane(pane) => {
+                if pane == focus_pane {
+                    current_result.success = true;
+                } else {
+                    if in_parallel_axis {
+                        current_result.last = Some(pane.clone());
+                    }
+                }
+            }
+        }
+        current_result
+    }
+
+    fn first(&self) -> Option<ViewHandle<Pane>> {
+        match self {
+            Member::Axis(axis) => axis.members.first().and_then(|m| m.first()),
+            Member::Pane(pane) => Some(pane.clone()),
+        }
+    }
+
+    fn last(&self) -> Option<ViewHandle<Pane>> {
+        match self {
+            Member::Axis(axis) => axis.members.last().and_then(|m| m.last()),
+            Member::Pane(pane) => Some(pane.clone()),
+        }
     }
 
     pub fn render(&self, theme: &Theme) -> ElementBox {
@@ -131,6 +209,51 @@ impl PaneAxis {
             }
         }
         Err(anyhow!("Pane not found"))
+    }
+
+    fn find_adjacent(
+        &self,
+        focus_pane: &ViewHandle<Pane>,
+        direction: SplitDirection,
+        mut current_result: FindResult,
+    ) -> FindResult {
+        use SplitDirection::*;
+        let in_matching_axis = direction.matches_axis(self.axis);
+        match direction {
+            Right | Down => {
+                for member in self.members.iter().rev() {
+                    current_result = member.find_adjacent(
+                        focus_pane,
+                        direction,
+                        in_matching_axis,
+                        current_result,
+                    );
+                    if current_result.success {
+                        return current_result;
+                    }
+                }
+                if !in_matching_axis {
+                    current_result.last = self.members.first().and_then(|m| m.first());
+                }
+            }
+            Left | Up => {
+                for member in self.members.iter() {
+                    current_result = member.find_adjacent(
+                        focus_pane,
+                        direction,
+                        in_matching_axis,
+                        current_result,
+                    );
+                    if current_result.success {
+                        return current_result;
+                    }
+                }
+                if !in_matching_axis {
+                    current_result.last = self.members.last().and_then(|m| m.last());
+                }
+            }
+        }
+        current_result
     }
 
     fn remove(&mut self, pane_to_remove: &ViewHandle<Pane>) -> Result<Option<Member>> {
