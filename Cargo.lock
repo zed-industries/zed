@@ -5850,6 +5850,7 @@ dependencies = [
  "tide-compress",
  "time 0.2.25",
  "toml",
+ "util",
  "zed",
 ]
 

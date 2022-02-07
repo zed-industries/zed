@@ -534,6 +534,7 @@ pub mod tests {
         Postgres,
     };
     use std::{mem, path::Path};
+    use util::ResultExt as _;
 
     pub struct TestDb {
         pub db: Option<Db>,
@@ -545,11 +546,29 @@ pub mod tests {
         static ref POOL: Mutex<Vec<TestDb>> = Default::default();
     }
 
-    #[ctor::dtor]
-    fn clear_pool() {
-        for db in POOL.lock().drain(..) {
-            db.teardown();
+    use std::os::raw::c_int;
+
+    extern "C" {
+        fn atexit(callback: extern "C" fn()) -> c_int;
+    }
+
+    #[ctor::ctor]
+    fn init() {
+        unsafe {
+            atexit(teardown_db_pool);
         }
+    }
+
+    extern "C" fn teardown_db_pool() {
+        std::thread::spawn(|| {
+            block_on(async move {
+                for db in POOL.lock().drain(..) {
+                    db.teardown().await.log_err();
+                }
+            });
+        })
+        .join()
+        .log_err();
     }
 
     impl TestDb {
@@ -606,22 +625,20 @@ pub mod tests {
             })
         }
 
-        fn teardown(mut self) {
+        async fn teardown(mut self) -> Result<()> {
             let db = self.db.take().unwrap();
-            block_on(async {
-                let query = "
+            let query = "
                     SELECT pg_terminate_backend(pg_stat_activity.pid)
                     FROM pg_stat_activity
                     WHERE pg_stat_activity.datname = '{}' AND pid <> pg_backend_pid();
                 ";
-                sqlx::query(query)
-                    .bind(&self.name)
-                    .execute(&db.pool)
-                    .await
-                    .unwrap();
-                db.pool.close().await;
-                Postgres::drop_database(&self.url).await.unwrap();
-            });
+            sqlx::query(query)
+                .bind(&self.name)
+                .execute(&db.pool)
+                .await?;
+            db.pool.close().await;
+            Postgres::drop_database(&self.url).await?;
+            Ok(())
         }
     }
 
