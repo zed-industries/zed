@@ -2077,8 +2077,13 @@ impl Editor {
             Some((buffer, action))
         })?;
 
-        Some(workspace.project().update(cx, |project, cx| {
+        let apply_code_actions = workspace.project().update(cx, |project, cx| {
             project.apply_code_action(buffer, action, cx)
+        });
+        Some(cx.spawn(|workspace, cx| async move {
+            let buffers = apply_code_actions.await?;
+
+            Ok(())
         }))
     }
 

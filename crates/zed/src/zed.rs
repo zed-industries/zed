@@ -126,7 +126,7 @@ mod tests {
     use super::*;
     use editor::{DisplayPoint, Editor};
     use gpui::{MutableAppContext, TestAppContext, ViewHandle};
-    use project::ProjectPath;
+    use project::{Fs, ProjectPath};
     use serde_json::json;
     use std::{
         collections::HashSet,
@@ -817,7 +817,10 @@ mod tests {
                     .active_pane()
                     .update(cx, |pane, cx| pane.close_item(editor2.id(), cx));
                 drop(editor2);
-                app_state.fs.as_fake().remove(Path::new("/root/a/file2"))
+                app_state
+                    .fs
+                    .as_fake()
+                    .remove_file(Path::new("/root/a/file2"), Default::default())
             })
             .await
             .unwrap();

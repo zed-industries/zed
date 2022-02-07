@@ -1607,10 +1607,14 @@ mod tests {
         buffer_c.condition(&cx_c, |buf, _| !buf.is_dirty()).await;
 
         // Make changes on host's file system, see those changes on guest worktrees.
-        fs.rename("/a/file1".as_ref(), "/a/file1-renamed".as_ref())
-            .await
-            .unwrap();
-        fs.rename("/a/file2".as_ref(), "/a/file3".as_ref())
+        fs.rename(
+            "/a/file1".as_ref(),
+            "/a/file1-renamed".as_ref(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        fs.rename("/a/file2".as_ref(), "/a/file3".as_ref(), Default::default())
             .await
             .unwrap();
         fs.insert_file(Path::new("/a/file4"), "4".into())

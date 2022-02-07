@@ -1156,7 +1156,7 @@ impl Project {
         buffer: ModelHandle<Buffer>,
         mut action: CodeAction<language::Anchor>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<HashMap<ModelHandle<Buffer>, Vec<Range<language::Anchor>>>>> {
         if self.is_local() {
             let buffer = buffer.read(cx);
             let server = if let Some(language_server) = buffer.language_server() {
@@ -1165,6 +1165,7 @@ impl Project {
                 return Task::ready(Ok(Default::default()));
             };
             let position = action.position.to_point_utf16(buffer).to_lsp_position();
+            let fs = self.fs.clone();
 
             cx.spawn(|this, mut cx| async move {
                 let range = action
@@ -1178,9 +1179,68 @@ impl Project {
                 let action = server
                     .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
                     .await?;
-                let edit = action
-                    .edit
-                    .ok_or_else(|| anyhow!("code action has no edit"));
+
+                let mut operations = Vec::new();
+                match action.edit.and_then(|e| e.document_changes) {
+                    Some(lsp::DocumentChanges::Edits(edits)) => {
+                        operations.extend(edits.into_iter().map(lsp::DocumentChangeOperation::Edit))
+                    }
+                    Some(lsp::DocumentChanges::Operations(ops)) => operations = ops,
+                    None => {}
+                }
+
+                for operation in operations {
+                    match operation {
+                        lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Create(op)) => {
+                            let path = op
+                                .uri
+                                .to_file_path()
+                                .map_err(|_| anyhow!("can't convert URI to path"))?;
+
+                            if let Some(parent_path) = path.parent() {
+                                fs.create_dir(parent_path).await?;
+                            }
+                            if path.ends_with("/") {
+                                fs.create_dir(&path).await?;
+                            } else {
+                                fs.create_file(
+                                    &path,
+                                    op.options.map(Into::into).unwrap_or_default(),
+                                )
+                                .await?;
+                            }
+                        }
+                        lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(op)) => {
+                            let source = op
+                                .old_uri
+                                .to_file_path()
+                                .map_err(|_| anyhow!("can't convert URI to path"))?;
+                            let target = op
+                                .new_uri
+                                .to_file_path()
+                                .map_err(|_| anyhow!("can't convert URI to path"))?;
+                            fs.rename(
+                                &source,
+                                &target,
+                                op.options.map(Into::into).unwrap_or_default(),
+                            )
+                            .await?;
+                        }
+                        lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(op)) => {
+                            let path = op
+                                .uri
+                                .to_file_path()
+                                .map_err(|_| anyhow!("can't convert URI to path"))?;
+                            let options = op.options.map(Into::into).unwrap_or_default();
+                            if path.ends_with("/") {
+                                fs.remove_dir(&path, options).await?;
+                            } else {
+                                fs.remove_file(&path, options).await?;
+                            }
+                        }
+                        lsp::DocumentChangeOperation::Edit(edit) => todo!(),
+                    }
+                }
                 // match edit {
                 //     Ok(edit) => edit.,
                 //     Err(_) => todo!(),
@@ -2259,6 +2319,33 @@ impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
         Self {
             worktree_id,
             path: path.as_ref().into(),
+        }
+    }
+}
+
+impl From<lsp::CreateFileOptions> for fs::CreateOptions {
+    fn from(options: lsp::CreateFileOptions) -> Self {
+        Self {
+            overwrite: options.overwrite.unwrap_or(false),
+            ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
+        }
+    }
+}
+
+impl From<lsp::RenameFileOptions> for fs::RenameOptions {
+    fn from(options: lsp::RenameFileOptions) -> Self {
+        Self {
+            overwrite: options.overwrite.unwrap_or(false),
+            ignore_if_exists: options.ignore_if_exists.unwrap_or(false),
+        }
+    }
+}
+
+impl From<lsp::DeleteFileOptions> for fs::RemoveOptions {
+    fn from(options: lsp::DeleteFileOptions) -> Self {
+        Self {
+            recursive: options.recursive.unwrap_or(false),
+            ignore_if_not_exists: options.ignore_if_not_exists.unwrap_or(false),
         }
     }
 }
