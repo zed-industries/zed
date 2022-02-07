@@ -150,19 +150,20 @@ impl Server {
                     message = next_message => {
                         if let Some(message) = message {
                             let start_time = Instant::now();
-                            log::info!("RPC message received: {}", message.payload_type_name());
+                            let type_name = message.payload_type_name();
+                            log::info!("rpc message received. connection:{}, type:{}", connection_id, type_name);
                             if let Some(handler) = this.handlers.get(&message.payload_type_id()) {
                                 if let Err(err) = (handler)(this.clone(), message).await {
-                                    log::error!("error handling message: {:?}", err);
+                                    log::error!("rpc message error. connection:{}, type:{}, error:{:?}", connection_id, type_name, err);
                                 } else {
-                                    log::info!("RPC message handled. duration:{:?}", start_time.elapsed());
+                                    log::info!("rpc message handled. connection:{}, type:{}, duration:{:?}", connection_id, type_name, start_time.elapsed());
                                 }
 
                                 if let Some(mut notifications) = this.notifications.clone() {
                                     let _ = notifications.send(()).await;
                                 }
                             } else {
-                                log::warn!("unhandled message: {}", message.payload_type_name());
+                                log::warn!("unhandled message: {}", type_name);
                             }
                         } else {
                             log::info!("rpc connection closed {:?}", addr);
@@ -1191,6 +1192,13 @@ mod tests {
         lsp,
         project::{DiagnosticSummary, Project, ProjectPath},
     };
+
+    #[cfg(test)]
+    #[ctor::ctor]
+    fn init_logger() {
+        // std::env::set_var("RUST_LOG", "info");
+        env_logger::init();
+    }
 
     #[gpui::test]
     async fn test_share_project(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {

@@ -5,7 +5,7 @@ use futures::stream::BoxStream;
 use futures::{FutureExt as _, StreamExt};
 use parking_lot::{Mutex, RwLock};
 use postage::{
-    mpsc,
+    barrier, mpsc,
     prelude::{Sink as _, Stream as _},
 };
 use smol_timeout::TimeoutExt as _;
@@ -91,7 +91,8 @@ pub struct Peer {
 pub struct ConnectionState {
     outgoing_tx: futures::channel::mpsc::UnboundedSender<proto::Envelope>,
     next_message_id: Arc<AtomicU32>,
-    response_channels: Arc<Mutex<Option<HashMap<u32, mpsc::Sender<proto::Envelope>>>>>,
+    response_channels:
+        Arc<Mutex<Option<HashMap<u32, mpsc::Sender<(proto::Envelope, barrier::Sender)>>>>>,
 }
 
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -177,7 +178,9 @@ impl Peer {
                 if let Some(responding_to) = incoming.responding_to {
                     let channel = response_channels.lock().as_mut()?.remove(&responding_to);
                     if let Some(mut tx) = channel {
-                        tx.send(incoming).await.ok();
+                        let mut requester_resumed = barrier::channel();
+                        tx.send((incoming, requester_resumed.0)).await.ok();
+                        requester_resumed.1.recv().await;
                     } else {
                         log::warn!("received RPC response to unknown request {}", responding_to);
                     }
@@ -205,7 +208,7 @@ impl Peer {
     }
 
     pub fn request<T: RequestMessage>(
-        self: &Arc<Self>,
+        &self,
         receiver_id: ConnectionId,
         request: T,
     ) -> impl Future<Output = Result<T::Response>> {
@@ -213,7 +216,7 @@ impl Peer {
     }
 
     pub fn forward_request<T: RequestMessage>(
-        self: &Arc<Self>,
+        &self,
         sender_id: ConnectionId,
         receiver_id: ConnectionId,
         request: T,
@@ -222,15 +225,13 @@ impl Peer {
     }
 
     pub fn request_internal<T: RequestMessage>(
-        self: &Arc<Self>,
+        &self,
         original_sender_id: Option<ConnectionId>,
         receiver_id: ConnectionId,
         request: T,
     ) -> impl Future<Output = Result<T::Response>> {
-        let this = self.clone();
-        async move {
-            let (tx, mut rx) = mpsc::channel(1);
-            let connection = this.connection_state(receiver_id)?;
+        let (tx, mut rx) = mpsc::channel(1);
+        let send = self.connection_state(receiver_id).and_then(|connection| {
             let message_id = connection.next_message_id.fetch_add(1, SeqCst);
             connection
                 .response_channels
@@ -246,7 +247,11 @@ impl Peer {
                     original_sender_id.map(|id| id.0),
                 ))
                 .map_err(|_| anyhow!("connection was closed"))?;
-            let response = rx
+            Ok(())
+        });
+        async move {
+            send?;
+            let (response, _barrier) = rx
                 .recv()
                 .await
                 .ok_or_else(|| anyhow!("connection was closed"))?;
@@ -259,11 +264,7 @@ impl Peer {
         }
     }
 
-    pub fn send<T: EnvelopedMessage>(
-        self: &Arc<Self>,
-        receiver_id: ConnectionId,
-        message: T,
-    ) -> Result<()> {
+    pub fn send<T: EnvelopedMessage>(&self, receiver_id: ConnectionId, message: T) -> Result<()> {
         let connection = self.connection_state(receiver_id)?;
         let message_id = connection
             .next_message_id
@@ -275,7 +276,7 @@ impl Peer {
     }
 
     pub fn forward_send<T: EnvelopedMessage>(
-        self: &Arc<Self>,
+        &self,
         sender_id: ConnectionId,
         receiver_id: ConnectionId,
         message: T,
@@ -291,7 +292,7 @@ impl Peer {
     }
 
     pub fn respond<T: RequestMessage>(
-        self: &Arc<Self>,
+        &self,
         receipt: Receipt<T>,
         response: T::Response,
     ) -> Result<()> {
@@ -306,7 +307,7 @@ impl Peer {
     }
 
     pub fn respond_with_error<T: RequestMessage>(
-        self: &Arc<Self>,
+        &self,
         receipt: Receipt<T>,
         response: proto::Error,
     ) -> Result<()> {
