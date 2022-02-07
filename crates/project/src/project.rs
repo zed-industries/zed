@@ -1241,10 +1241,7 @@ impl Project {
                         lsp::DocumentChangeOperation::Edit(edit) => todo!(),
                     }
                 }
-                // match edit {
-                //     Ok(edit) => edit.,
-                //     Err(_) => todo!(),
-                // }
+
                 Ok(Default::default())
             })
         } else {

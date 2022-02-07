@@ -1025,14 +1025,7 @@ impl Buffer {
         let version = version.map(|version| version as usize);
         let content =
             if let Some((version, language_server)) = version.zip(self.language_server.as_mut()) {
-                language_server
-                    .pending_snapshots
-                    .retain(|&v, _| v >= version);
-                let snapshot = language_server
-                    .pending_snapshots
-                    .get(&version)
-                    .ok_or_else(|| anyhow!("missing snapshot"))?;
-                &snapshot.buffer_snapshot
+                language_server.snapshot_for_version(version)?
             } else {
                 self.deref()
             };
@@ -2769,6 +2762,20 @@ impl operation_queue::Operation for Operation {
                 unreachable!("updating completion triggers should never be deferred")
             }
         }
+    }
+}
+
+impl LanguageServerState {
+    fn snapshot_for_version(&mut self, version: usize) -> Result<&text::BufferSnapshot> {
+        const OLD_VERSIONS_TO_RETAIN: usize = 10;
+
+        self.pending_snapshots
+            .retain(|&v, _| v + OLD_VERSIONS_TO_RETAIN >= version);
+        let snapshot = self
+            .pending_snapshots
+            .get(&version)
+            .ok_or_else(|| anyhow!("missing snapshot"))?;
+        Ok(&snapshot.buffer_snapshot)
     }
 }
 
