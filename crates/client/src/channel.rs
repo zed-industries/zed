@@ -17,7 +17,7 @@ use std::{
 };
 use sum_tree::{Bias, SumTree};
 use time::OffsetDateTime;
-use util::{post_inc, TryFutureExt};
+use util::{post_inc, ResultExt as _, TryFutureExt};
 
 pub struct ChannelList {
     available_channels: Option<Vec<ChannelDetails>>,
@@ -168,16 +168,12 @@ impl ChannelList {
 impl Entity for Channel {
     type Event = ChannelEvent;
 
-    fn release(&mut self, cx: &mut MutableAppContext) {
-        let rpc = self.rpc.clone();
-        let channel_id = self.details.id;
-        cx.foreground()
-            .spawn(async move {
-                if let Err(error) = rpc.send(proto::LeaveChannel { channel_id }).await {
-                    log::error!("error leaving channel: {}", error);
-                };
+    fn release(&mut self, _: &mut MutableAppContext) {
+        self.rpc
+            .send(proto::LeaveChannel {
+                channel_id: self.details.id,
             })
-            .detach()
+            .log_err();
     }
 }
 
@@ -718,18 +714,16 @@ mod tests {
         });
 
         // Receive a new message.
-        server
-            .send(proto::ChannelMessageSent {
-                channel_id: channel.read_with(&cx, |channel, _| channel.details.id),
-                message: Some(proto::ChannelMessage {
-                    id: 12,
-                    body: "c".into(),
-                    timestamp: 1002,
-                    sender_id: 7,
-                    nonce: Some(3.into()),
-                }),
-            })
-            .await;
+        server.send(proto::ChannelMessageSent {
+            channel_id: channel.read_with(&cx, |channel, _| channel.details.id),
+            message: Some(proto::ChannelMessage {
+                id: 12,
+                body: "c".into(),
+                timestamp: 1002,
+                sender_id: 7,
+                nonce: Some(3.into()),
+            }),
+        });
 
         // Client requests user for message since they haven't seen them yet
         let get_users = server.receive::<proto::GetUsers>().await.unwrap();

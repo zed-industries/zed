@@ -131,7 +131,7 @@ impl Server {
             }
 
             this.state_mut().add_connection(connection_id, user_id);
-            if let Err(err) = this.update_contacts_for_users(&[user_id]).await {
+            if let Err(err) = this.update_contacts_for_users(&[user_id]) {
                 log::error!("error updating contacts for {:?}: {}", user_id, err);
             }
 
@@ -141,6 +141,12 @@ impl Server {
                 let next_message = incoming_rx.next().fuse();
                 futures::pin_mut!(next_message);
                 futures::select_biased! {
+                    result = handle_io => {
+                        if let Err(err) = result {
+                            log::error!("error handling rpc connection {:?} - {:?}", addr, err);
+                        }
+                        break;
+                    }
                     message = next_message => {
                         if let Some(message) = message {
                             let start_time = Instant::now();
@@ -162,12 +168,6 @@ impl Server {
                             log::info!("rpc connection closed {:?}", addr);
                             break;
                         }
-                    }
-                    handle_io = handle_io => {
-                        if let Err(err) = handle_io {
-                            log::error!("error handling rpc connection {:?} - {:?}", addr, err);
-                        }
-                        break;
                     }
                 }
             }
@@ -191,8 +191,7 @@ impl Server {
                         self.peer
                             .send(conn_id, proto::UnshareProject { project_id })
                     },
-                )
-                .await?;
+                )?;
             }
         }
 
@@ -205,18 +204,15 @@ impl Server {
                         peer_id: connection_id.0,
                     },
                 )
-            })
-            .await?;
+            })?;
         }
 
-        self.update_contacts_for_users(removed_connection.contact_ids.iter())
-            .await?;
-
+        self.update_contacts_for_users(removed_connection.contact_ids.iter())?;
         Ok(())
     }
 
     async fn ping(self: Arc<Server>, request: TypedEnvelope<proto::Ping>) -> tide::Result<()> {
-        self.peer.respond(request.receipt(), proto::Ack {}).await?;
+        self.peer.respond(request.receipt(), proto::Ack {})?;
         Ok(())
     }
 
@@ -229,12 +225,10 @@ impl Server {
             let user_id = state.user_id_for_connection(request.sender_id)?;
             state.register_project(request.sender_id, user_id)
         };
-        self.peer
-            .respond(
-                request.receipt(),
-                proto::RegisterProjectResponse { project_id },
-            )
-            .await?;
+        self.peer.respond(
+            request.receipt(),
+            proto::RegisterProjectResponse { project_id },
+        )?;
         Ok(())
     }
 
@@ -246,8 +240,7 @@ impl Server {
             .state_mut()
             .unregister_project(request.payload.project_id, request.sender_id)
             .ok_or_else(|| anyhow!("no such project"))?;
-        self.update_contacts_for_users(project.authorized_user_ids().iter())
-            .await?;
+        self.update_contacts_for_users(project.authorized_user_ids().iter())?;
         Ok(())
     }
 
@@ -257,7 +250,7 @@ impl Server {
     ) -> tide::Result<()> {
         self.state_mut()
             .share_project(request.payload.project_id, request.sender_id);
-        self.peer.respond(request.receipt(), proto::Ack {}).await?;
+        self.peer.respond(request.receipt(), proto::Ack {})?;
         Ok(())
     }
 
@@ -273,11 +266,8 @@ impl Server {
         broadcast(request.sender_id, project.connection_ids, |conn_id| {
             self.peer
                 .send(conn_id, proto::UnshareProject { project_id })
-        })
-        .await?;
-        self.update_contacts_for_users(&project.authorized_user_ids)
-            .await?;
-
+        })?;
+        self.update_contacts_for_users(&project.authorized_user_ids)?;
         Ok(())
     }
 
@@ -351,20 +341,17 @@ impl Server {
                             }),
                         },
                     )
-                })
-                .await?;
-                self.peer.respond(request.receipt(), response).await?;
-                self.update_contacts_for_users(&contact_user_ids).await?;
+                })?;
+                self.peer.respond(request.receipt(), response)?;
+                self.update_contacts_for_users(&contact_user_ids)?;
             }
             Err(error) => {
-                self.peer
-                    .respond_with_error(
-                        request.receipt(),
-                        proto::Error {
-                            message: error.to_string(),
-                        },
-                    )
-                    .await?;
+                self.peer.respond_with_error(
+                    request.receipt(),
+                    proto::Error {
+                        message: error.to_string(),
+                    },
+                )?;
             }
         }
 
@@ -387,10 +374,8 @@ impl Server {
                         peer_id: sender_id.0,
                     },
                 )
-            })
-            .await?;
-            self.update_contacts_for_users(&worktree.authorized_user_ids)
-                .await?;
+            })?;
+            self.update_contacts_for_users(&worktree.authorized_user_ids)?;
         }
         Ok(())
     }
@@ -412,8 +397,7 @@ impl Server {
                 Err(err) => {
                     let message = err.to_string();
                     self.peer
-                        .respond_with_error(receipt, proto::Error { message })
-                        .await?;
+                        .respond_with_error(receipt, proto::Error { message })?;
                     return Ok(());
                 }
             }
@@ -432,17 +416,15 @@ impl Server {
         );
 
         if ok {
-            self.peer.respond(receipt, proto::Ack {}).await?;
-            self.update_contacts_for_users(&contact_user_ids).await?;
+            self.peer.respond(receipt, proto::Ack {})?;
+            self.update_contacts_for_users(&contact_user_ids)?;
         } else {
-            self.peer
-                .respond_with_error(
-                    receipt,
-                    proto::Error {
-                        message: NO_SUCH_PROJECT.to_string(),
-                    },
-                )
-                .await?;
+            self.peer.respond_with_error(
+                receipt,
+                proto::Error {
+                    message: NO_SUCH_PROJECT.to_string(),
+                },
+            )?;
         }
 
         Ok(())
@@ -457,7 +439,6 @@ impl Server {
         let (worktree, guest_connection_ids) =
             self.state_mut()
                 .unregister_worktree(project_id, worktree_id, request.sender_id)?;
-
         broadcast(request.sender_id, guest_connection_ids, |conn_id| {
             self.peer.send(
                 conn_id,
@@ -466,10 +447,8 @@ impl Server {
                     worktree_id,
                 },
             )
-        })
-        .await?;
-        self.update_contacts_for_users(&worktree.authorized_user_ids)
-            .await?;
+        })?;
+        self.update_contacts_for_users(&worktree.authorized_user_ids)?;
         Ok(())
     }
 
@@ -511,20 +490,16 @@ impl Server {
                         request.payload.clone(),
                     )
                 },
-            )
-            .await?;
-            self.peer.respond(request.receipt(), proto::Ack {}).await?;
-            self.update_contacts_for_users(&shared_worktree.authorized_user_ids)
-                .await?;
+            )?;
+            self.peer.respond(request.receipt(), proto::Ack {})?;
+            self.update_contacts_for_users(&shared_worktree.authorized_user_ids)?;
         } else {
-            self.peer
-                .respond_with_error(
-                    request.receipt(),
-                    proto::Error {
-                        message: "no such worktree".to_string(),
-                    },
-                )
-                .await?;
+            self.peer.respond_with_error(
+                request.receipt(),
+                proto::Error {
+                    message: "no such worktree".to_string(),
+                },
+            )?;
         }
         Ok(())
     }
@@ -547,8 +522,7 @@ impl Server {
         broadcast(request.sender_id, connection_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
-        })
-        .await?;
+        })?;
 
         Ok(())
     }
@@ -574,8 +548,7 @@ impl Server {
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
-        })
-        .await?;
+        })?;
         Ok(())
     }
 
@@ -590,8 +563,7 @@ impl Server {
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
-        })
-        .await?;
+        })?;
         Ok(())
     }
 
@@ -606,8 +578,7 @@ impl Server {
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
-        })
-        .await?;
+        })?;
         Ok(())
     }
 
@@ -625,7 +596,7 @@ impl Server {
             .peer
             .forward_request(request.sender_id, host_connection_id, request.payload)
             .await?;
-        self.peer.respond(receipt, response).await?;
+        self.peer.respond(receipt, response)?;
         Ok(())
     }
 
@@ -643,7 +614,7 @@ impl Server {
             .peer
             .forward_request(request.sender_id, host_connection_id, request.payload)
             .await?;
-        self.peer.respond(receipt, response).await?;
+        self.peer.respond(receipt, response)?;
         Ok(())
     }
 
@@ -657,8 +628,7 @@ impl Server {
             .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?
             .host_connection_id;
         self.peer
-            .forward_send(request.sender_id, host_connection_id, request.payload)
-            .await?;
+            .forward_send(request.sender_id, host_connection_id, request.payload)?;
         Ok(())
     }
 
@@ -686,16 +656,12 @@ impl Server {
 
         broadcast(host, guests, |conn_id| {
             let response = response.clone();
-            let peer = &self.peer;
-            async move {
-                if conn_id == sender {
-                    peer.respond(receipt, response).await
-                } else {
-                    peer.forward_send(host, conn_id, response).await
-                }
+            if conn_id == sender {
+                self.peer.respond(receipt, response)
+            } else {
+                self.peer.forward_send(host, conn_id, response)
             }
-        })
-        .await?;
+        })?;
 
         Ok(())
     }
@@ -719,7 +685,7 @@ impl Server {
             .peer
             .forward_request(sender, host, request.payload.clone())
             .await?;
-        self.peer.respond(receipt, response).await?;
+        self.peer.respond(receipt, response)?;
 
         Ok(())
     }
@@ -743,8 +709,7 @@ impl Server {
             .peer
             .forward_request(sender, host, request.payload.clone())
             .await?;
-        self.peer.respond(receipt, response).await?;
-
+        self.peer.respond(receipt, response)?;
         Ok(())
     }
 
@@ -767,8 +732,7 @@ impl Server {
             .peer
             .forward_request(sender, host, request.payload.clone())
             .await?;
-        self.peer.respond(receipt, response).await?;
-
+        self.peer.respond(receipt, response)?;
         Ok(())
     }
 
@@ -783,9 +747,8 @@ impl Server {
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
-        })
-        .await?;
-        self.peer.respond(request.receipt(), proto::Ack {}).await?;
+        })?;
+        self.peer.respond(request.receipt(), proto::Ack {})?;
         Ok(())
     }
 
@@ -800,8 +763,7 @@ impl Server {
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
-        })
-        .await?;
+        })?;
         Ok(())
     }
 
@@ -816,8 +778,7 @@ impl Server {
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
-        })
-        .await?;
+        })?;
         Ok(())
     }
 
@@ -832,8 +793,7 @@ impl Server {
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
-        })
-        .await?;
+        })?;
         Ok(())
     }
 
@@ -843,20 +803,18 @@ impl Server {
     ) -> tide::Result<()> {
         let user_id = self.state().user_id_for_connection(request.sender_id)?;
         let channels = self.app_state.db.get_accessible_channels(user_id).await?;
-        self.peer
-            .respond(
-                request.receipt(),
-                proto::GetChannelsResponse {
-                    channels: channels
-                        .into_iter()
-                        .map(|chan| proto::Channel {
-                            id: chan.id.to_proto(),
-                            name: chan.name,
-                        })
-                        .collect(),
-                },
-            )
-            .await?;
+        self.peer.respond(
+            request.receipt(),
+            proto::GetChannelsResponse {
+                channels: channels
+                    .into_iter()
+                    .map(|chan| proto::Channel {
+                        id: chan.id.to_proto(),
+                        name: chan.name,
+                    })
+                    .collect(),
+            },
+        )?;
         Ok(())
     }
 
@@ -879,34 +837,30 @@ impl Server {
             })
             .collect();
         self.peer
-            .respond(receipt, proto::GetUsersResponse { users })
-            .await?;
+            .respond(receipt, proto::GetUsersResponse { users })?;
         Ok(())
     }
 
-    async fn update_contacts_for_users<'a>(
+    fn update_contacts_for_users<'a>(
         self: &Arc<Server>,
         user_ids: impl IntoIterator<Item = &'a UserId>,
-    ) -> tide::Result<()> {
-        let mut send_futures = Vec::new();
-
-        {
-            let state = self.state();
-            for user_id in user_ids {
-                let contacts = state.contacts_for_user(*user_id);
-                for connection_id in state.connection_ids_for_user(*user_id) {
-                    send_futures.push(self.peer.send(
-                        connection_id,
-                        proto::UpdateContacts {
-                            contacts: contacts.clone(),
-                        },
-                    ));
+    ) -> anyhow::Result<()> {
+        let mut result = Ok(());
+        let state = self.state();
+        for user_id in user_ids {
+            let contacts = state.contacts_for_user(*user_id);
+            for connection_id in state.connection_ids_for_user(*user_id) {
+                if let Err(error) = self.peer.send(
+                    connection_id,
+                    proto::UpdateContacts {
+                        contacts: contacts.clone(),
+                    },
+                ) {
+                    result = Err(error);
                 }
             }
         }
-        futures::future::try_join_all(send_futures).await?;
-
-        Ok(())
+        result
     }
 
     async fn join_channel(
@@ -939,15 +893,13 @@ impl Server {
                 nonce: Some(msg.nonce.as_u128().into()),
             })
             .collect::<Vec<_>>();
-        self.peer
-            .respond(
-                request.receipt(),
-                proto::JoinChannelResponse {
-                    done: messages.len() < MESSAGE_COUNT_PER_PAGE,
-                    messages,
-                },
-            )
-            .await?;
+        self.peer.respond(
+            request.receipt(),
+            proto::JoinChannelResponse {
+                done: messages.len() < MESSAGE_COUNT_PER_PAGE,
+                messages,
+            },
+        )?;
         Ok(())
     }
 
@@ -993,25 +945,21 @@ impl Server {
         // Validate the message body.
         let body = request.payload.body.trim().to_string();
         if body.len() > MAX_MESSAGE_LEN {
-            self.peer
-                .respond_with_error(
-                    receipt,
-                    proto::Error {
-                        message: "message is too long".to_string(),
-                    },
-                )
-                .await?;
+            self.peer.respond_with_error(
+                receipt,
+                proto::Error {
+                    message: "message is too long".to_string(),
+                },
+            )?;
             return Ok(());
         }
         if body.is_empty() {
-            self.peer
-                .respond_with_error(
-                    receipt,
-                    proto::Error {
-                        message: "message can't be blank".to_string(),
-                    },
-                )
-                .await?;
+            self.peer.respond_with_error(
+                receipt,
+                proto::Error {
+                    message: "message can't be blank".to_string(),
+                },
+            )?;
             return Ok(());
         }
 
@@ -1019,14 +967,12 @@ impl Server {
         let nonce = if let Some(nonce) = request.payload.nonce {
             nonce
         } else {
-            self.peer
-                .respond_with_error(
-                    receipt,
-                    proto::Error {
-                        message: "nonce can't be blank".to_string(),
-                    },
-                )
-                .await?;
+            self.peer.respond_with_error(
+                receipt,
+                proto::Error {
+                    message: "nonce can't be blank".to_string(),
+                },
+            )?;
             return Ok(());
         };
 
@@ -1051,16 +997,13 @@ impl Server {
                     message: Some(message.clone()),
                 },
             )
-        })
-        .await?;
-        self.peer
-            .respond(
-                receipt,
-                proto::SendChannelMessageResponse {
-                    message: Some(message),
-                },
-            )
-            .await?;
+        })?;
+        self.peer.respond(
+            receipt,
+            proto::SendChannelMessageResponse {
+                message: Some(message),
+            },
+        )?;
         Ok(())
     }
 
@@ -1097,15 +1040,13 @@ impl Server {
                 nonce: Some(msg.nonce.as_u128().into()),
             })
             .collect::<Vec<_>>();
-        self.peer
-            .respond(
-                request.receipt(),
-                proto::GetChannelMessagesResponse {
-                    done: messages.len() < MESSAGE_COUNT_PER_PAGE,
-                    messages,
-                },
-            )
-            .await?;
+        self.peer.respond(
+            request.receipt(),
+            proto::GetChannelMessagesResponse {
+                done: messages.len() < MESSAGE_COUNT_PER_PAGE,
+                messages,
+            },
+        )?;
         Ok(())
     }
 
@@ -1118,21 +1059,25 @@ impl Server {
     }
 }
 
-pub async fn broadcast<F, T>(
+fn broadcast<F>(
     sender_id: ConnectionId,
     receiver_ids: Vec<ConnectionId>,
     mut f: F,
 ) -> anyhow::Result<()>
 where
-    F: FnMut(ConnectionId) -> T,
-    T: Future<Output = anyhow::Result<()>>,
+    F: FnMut(ConnectionId) -> anyhow::Result<()>,
 {
-    let futures = receiver_ids
-        .into_iter()
-        .filter(|id| *id != sender_id)
-        .map(|id| f(id));
-    futures::future::try_join_all(futures).await?;
-    Ok(())
+    let mut result = Ok(());
+    for receiver_id in receiver_ids {
+        if receiver_id != sender_id {
+            if let Err(error) = f(receiver_id) {
+                if result.is_ok() {
+                    result = Err(error);
+                }
+            }
+        }
+    }
+    result
 }
 
 pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {

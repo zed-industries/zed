@@ -24,7 +24,6 @@ use std::{
     collections::HashMap,
     convert::TryFrom,
     fmt::Write as _,
-    future::Future,
     sync::{Arc, Weak},
     time::{Duration, Instant},
 };
@@ -677,8 +676,8 @@ impl Client {
         }
     }
 
-    pub async fn send<T: EnvelopedMessage>(&self, message: T) -> Result<()> {
-        self.peer.send(self.connection_id()?, message).await
+    pub fn send<T: EnvelopedMessage>(&self, message: T) -> Result<()> {
+        self.peer.send(self.connection_id()?, message)
     }
 
     pub async fn request<T: RequestMessage>(&self, request: T) -> Result<T::Response> {
@@ -689,7 +688,7 @@ impl Client {
         &self,
         receipt: Receipt<T>,
         response: T::Response,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> Result<()> {
         self.peer.respond(receipt, response)
     }
 
@@ -697,7 +696,7 @@ impl Client {
         &self,
         receipt: Receipt<T>,
         error: proto::Error,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> Result<()> {
         self.peer.respond_with_error(receipt, error)
     }
 }
@@ -860,8 +859,8 @@ mod tests {
         });
         drop(subscription3);
 
-        server.send(proto::UnshareProject { project_id: 1 }).await;
-        server.send(proto::UnshareProject { project_id: 2 }).await;
+        server.send(proto::UnshareProject { project_id: 1 });
+        server.send(proto::UnshareProject { project_id: 2 });
         done_rx1.next().await.unwrap();
         done_rx2.next().await.unwrap();
     }
@@ -890,7 +889,7 @@ mod tests {
                 Ok(())
             })
         });
-        server.send(proto::Ping {}).await;
+        server.send(proto::Ping {});
         done_rx2.next().await.unwrap();
     }
 
@@ -914,7 +913,7 @@ mod tests {
                 },
             ));
         });
-        server.send(proto::Ping {}).await;
+        server.send(proto::Ping {});
         done_rx.next().await.unwrap();
     }
 
