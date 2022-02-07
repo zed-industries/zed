@@ -603,6 +603,43 @@ impl Project {
         })
     }
 
+    fn open_local_buffer_from_lsp_path(
+        &mut self,
+        abs_path: lsp::Url,
+        lang_name: String,
+        lang_server: Arc<LanguageServer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ModelHandle<Buffer>>> {
+        cx.spawn(|this, mut cx| async move {
+            let abs_path = abs_path
+                .to_file_path()
+                .map_err(|_| anyhow!("can't convert URI to path"))?;
+            let (worktree, relative_path) = if let Some(result) =
+                this.read_with(&cx, |this, cx| this.find_local_worktree(&abs_path, cx))
+            {
+                result
+            } else {
+                let worktree = this
+                    .update(&mut cx, |this, cx| {
+                        this.create_local_worktree(&abs_path, true, cx)
+                    })
+                    .await?;
+                this.update(&mut cx, |this, cx| {
+                    this.language_servers
+                        .insert((worktree.read(cx).id(), lang_name), lang_server);
+                });
+                (worktree, PathBuf::new())
+            };
+
+            let project_path = ProjectPath {
+                worktree_id: worktree.read_with(&cx, |worktree, _| worktree.id()),
+                path: relative_path.into(),
+            };
+            this.update(&mut cx, |this, cx| this.open_buffer(project_path, cx))
+                .await
+        })
+    }
+
     pub fn save_buffer_as(
         &self,
         buffer: ModelHandle<Buffer>,
@@ -731,7 +768,7 @@ impl Project {
         if let Some(local_worktree) = worktree.and_then(|w| w.read(cx).as_local()) {
             if let Some(diagnostics) = local_worktree.diagnostics_for_path(&path) {
                 buffer.update(cx, |buffer, cx| {
-                    buffer.update_diagnostics(None, diagnostics, cx).log_err();
+                    buffer.update_diagnostics(diagnostics, None, cx).log_err();
                 });
             }
         }
@@ -980,7 +1017,7 @@ impl Project {
                     .map_or(false, |file| *file.path() == project_path.path)
                 {
                     buffer.update(cx, |buffer, cx| {
-                        buffer.update_diagnostics(version, diagnostics.clone(), cx)
+                        buffer.update_diagnostics(diagnostics.clone(), version, cx)
                     })?;
                     break;
                 }
@@ -1066,36 +1103,17 @@ impl Project {
                     }
 
                     for (target_uri, target_range) in unresolved_locations {
-                        let abs_path = target_uri
-                            .to_file_path()
-                            .map_err(|_| anyhow!("invalid target path"))?;
-
-                        let (worktree, relative_path) = if let Some(result) =
-                            this.read_with(&cx, |this, cx| this.find_local_worktree(&abs_path, cx))
-                        {
-                            result
-                        } else {
-                            let worktree = this
-                                .update(&mut cx, |this, cx| {
-                                    this.create_local_worktree(&abs_path, true, cx)
-                                })
-                                .await?;
-                            this.update(&mut cx, |this, cx| {
-                                this.language_servers.insert(
-                                    (worktree.read(cx).id(), lang_name.clone()),
-                                    lang_server.clone(),
-                                );
-                            });
-                            (worktree, PathBuf::new())
-                        };
-
-                        let project_path = ProjectPath {
-                            worktree_id: worktree.read_with(&cx, |worktree, _| worktree.id()),
-                            path: relative_path.into(),
-                        };
                         let target_buffer_handle = this
-                            .update(&mut cx, |this, cx| this.open_buffer(project_path, cx))
+                            .update(&mut cx, |this, cx| {
+                                this.open_local_buffer_from_lsp_path(
+                                    target_uri,
+                                    lang_name.clone(),
+                                    lang_server.clone(),
+                                    cx,
+                                )
+                            })
                             .await?;
+
                         cx.read(|cx| {
                             let target_buffer = target_buffer_handle.read(cx);
                             let target_start = target_buffer
@@ -1156,10 +1174,16 @@ impl Project {
         buffer: ModelHandle<Buffer>,
         mut action: CodeAction<language::Anchor>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<HashMap<ModelHandle<Buffer>, Vec<Range<language::Anchor>>>>> {
+    ) -> Task<Result<HashMap<ModelHandle<Buffer>, Vec<(Range<language::Anchor>, clock::Local)>>>>
+    {
         if self.is_local() {
             let buffer = buffer.read(cx);
-            let server = if let Some(language_server) = buffer.language_server() {
+            let lang_name = if let Some(lang) = buffer.language() {
+                lang.name().to_string()
+            } else {
+                return Task::ready(Ok(Default::default()));
+            };
+            let lang_server = if let Some(language_server) = buffer.language_server() {
                 language_server.clone()
             } else {
                 return Task::ready(Ok(Default::default()));
@@ -1168,20 +1192,24 @@ impl Project {
             let fs = self.fs.clone();
 
             cx.spawn(|this, mut cx| async move {
-                let range = action
+                if let Some(range) = action
                     .lsp_action
                     .data
                     .as_mut()
                     .and_then(|d| d.get_mut("codeActionParams"))
                     .and_then(|d| d.get_mut("range"))
-                    .ok_or_else(|| anyhow!("code action has no range"))?;
-                *range = serde_json::to_value(&lsp::Range::new(position, position)).unwrap();
-                let action = server
-                    .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
-                    .await?;
+                {
+                    *range = serde_json::to_value(&lsp::Range::new(position, position)).unwrap();
+                    action = CodeAction {
+                        position: action.position,
+                        lsp_action: lang_server
+                            .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
+                            .await?,
+                    }
+                }
 
                 let mut operations = Vec::new();
-                match action.edit.and_then(|e| e.document_changes) {
+                match action.lsp_action.edit.and_then(|e| e.document_changes) {
                     Some(lsp::DocumentChanges::Edits(edits)) => {
                         operations.extend(edits.into_iter().map(lsp::DocumentChangeOperation::Edit))
                     }
@@ -1189,60 +1217,83 @@ impl Project {
                     None => {}
                 }
 
+                let mut edited_buffers = HashMap::default();
                 for operation in operations {
                     match operation {
                         lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Create(op)) => {
-                            let path = op
+                            let abs_path = op
                                 .uri
                                 .to_file_path()
                                 .map_err(|_| anyhow!("can't convert URI to path"))?;
 
-                            if let Some(parent_path) = path.parent() {
+                            if let Some(parent_path) = abs_path.parent() {
                                 fs.create_dir(parent_path).await?;
                             }
-                            if path.ends_with("/") {
-                                fs.create_dir(&path).await?;
+                            if abs_path.ends_with("/") {
+                                fs.create_dir(&abs_path).await?;
                             } else {
                                 fs.create_file(
-                                    &path,
+                                    &abs_path,
                                     op.options.map(Into::into).unwrap_or_default(),
                                 )
                                 .await?;
                             }
                         }
                         lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(op)) => {
-                            let source = op
+                            let source_abs_path = op
                                 .old_uri
                                 .to_file_path()
                                 .map_err(|_| anyhow!("can't convert URI to path"))?;
-                            let target = op
+                            let target_abs_path = op
                                 .new_uri
                                 .to_file_path()
                                 .map_err(|_| anyhow!("can't convert URI to path"))?;
                             fs.rename(
-                                &source,
-                                &target,
+                                &source_abs_path,
+                                &target_abs_path,
                                 op.options.map(Into::into).unwrap_or_default(),
                             )
                             .await?;
                         }
                         lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(op)) => {
-                            let path = op
+                            let abs_path = op
                                 .uri
                                 .to_file_path()
                                 .map_err(|_| anyhow!("can't convert URI to path"))?;
                             let options = op.options.map(Into::into).unwrap_or_default();
-                            if path.ends_with("/") {
-                                fs.remove_dir(&path, options).await?;
+                            if abs_path.ends_with("/") {
+                                fs.remove_dir(&abs_path, options).await?;
                             } else {
-                                fs.remove_file(&path, options).await?;
+                                fs.remove_file(&abs_path, options).await?;
                             }
                         }
-                        lsp::DocumentChangeOperation::Edit(edit) => todo!(),
+                        lsp::DocumentChangeOperation::Edit(op) => {
+                            let buffer_to_edit = this
+                                .update(&mut cx, |this, cx| {
+                                    this.open_local_buffer_from_lsp_path(
+                                        op.text_document.uri,
+                                        lang_name.clone(),
+                                        lang_server.clone(),
+                                        cx,
+                                    )
+                                })
+                                .await?;
+                            let edits = buffer_to_edit.update(&mut cx, |buffer, cx| {
+                                let edits = op.edits.into_iter().map(|edit| match edit {
+                                    lsp::OneOf::Left(edit) => edit,
+                                    lsp::OneOf::Right(edit) => edit.text_edit,
+                                });
+                                buffer.apply_lsp_edits(edits, op.text_document.version, cx)
+                            })?;
+                            edited_buffers
+                                .entry(buffer_to_edit)
+                                .or_insert(Vec::new())
+                                .extend(edits);
+                        }
                     }
                 }
 
-                Ok(Default::default())
+                Ok(edited_buffers)
             })
         } else {
             log::info!("applying code actions is not implemented for guests");

@@ -614,7 +614,7 @@ impl Buffer {
                 if let Some(edits) = edits {
                     this.update(&mut cx, |this, cx| {
                         if this.version == version {
-                            this.apply_lsp_edits(edits, cx)?;
+                            this.apply_lsp_edits(edits, None, cx)?;
                             Ok(())
                         } else {
                             Err(anyhow!("buffer edited since starting to format"))
@@ -1007,8 +1007,8 @@ impl Buffer {
 
     pub fn update_diagnostics<T>(
         &mut self,
-        version: Option<i32>,
         mut diagnostics: Vec<DiagnosticEntry<T>>,
+        version: Option<i32>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()>
     where
@@ -1524,27 +1524,40 @@ impl Buffer {
         Some(edit_id)
     }
 
-    fn apply_lsp_edits(
+    pub fn apply_lsp_edits(
         &mut self,
-        edits: Vec<lsp::TextEdit>,
+        edits: impl IntoIterator<Item = lsp::TextEdit>,
+        version: Option<i32>,
         cx: &mut ModelContext<Self>,
-    ) -> Result<Vec<clock::Local>> {
-        for edit in &edits {
+    ) -> Result<Vec<(Range<Anchor>, clock::Local)>> {
+        let mut anchored_edits = Vec::new();
+        let snapshot =
+            if let Some((version, language_server)) = version.zip(self.language_server.as_mut()) {
+                language_server.snapshot_for_version(version as usize)?
+            } else {
+                self.deref()
+            };
+        for edit in edits {
             let range = range_from_lsp(edit.range);
-            if self.clip_point_utf16(range.start, Bias::Left) != range.start
-                || self.clip_point_utf16(range.end, Bias::Left) != range.end
+            if snapshot.clip_point_utf16(range.start, Bias::Left) != range.start
+                || snapshot.clip_point_utf16(range.end, Bias::Left) != range.end
             {
                 return Err(anyhow!(
                     "invalid formatting edits received from language server"
                 ));
+            } else {
+                let start = snapshot.anchor_before(range.start);
+                let end = snapshot.anchor_before(range.end);
+                anchored_edits.push((start..end, edit.new_text));
             }
         }
 
         self.start_transaction();
-        let edit_ids = edits
+        let edit_ids = anchored_edits
             .into_iter()
-            .rev()
-            .filter_map(|edit| self.edit([range_from_lsp(edit.range)], edit.new_text, cx))
+            .filter_map(|(range, new_text)| {
+                Some((range.clone(), self.edit([range], new_text, cx)?))
+            })
             .collect();
         self.end_transaction(cx);
         Ok(edit_ids)
@@ -1897,15 +1910,10 @@ impl Buffer {
                     .into_iter()
                     .filter_map(|entry| {
                         if let lsp::CodeActionOrCommand::CodeAction(lsp_action) = entry {
-                            if lsp_action.data.is_none() {
-                                log::warn!("skipping code action without data {lsp_action:?}");
-                                None
-                            } else {
-                                Some(CodeAction {
-                                    position: anchor.clone(),
-                                    lsp_action,
-                                })
-                            }
+                            Some(CodeAction {
+                                position: anchor.clone(),
+                                lsp_action,
+                            })
                         } else {
                             None
                         }
@@ -1948,13 +1956,13 @@ impl Buffer {
                             this.avoid_grouping_next_transaction();
                         }
                         this.start_transaction();
-                        let edit_ids = this.apply_lsp_edits(additional_edits, cx);
+                        let edits = this.apply_lsp_edits(additional_edits, None, cx);
                         if let Some(transaction_id) = this.end_transaction(cx) {
                             if !push_to_history {
                                 this.text.forget_transaction(transaction_id);
                             }
                         }
-                        edit_ids
+                        Ok(edits?.into_iter().map(|(_, edit_id)| edit_id).collect())
                     })
                 } else {
                     Ok(Default::default())

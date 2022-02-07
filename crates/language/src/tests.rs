@@ -591,7 +591,6 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
         // Receive diagnostics for an earlier version of the buffer.
         buffer
             .update_diagnostics(
-                Some(open_notification.text_document.version),
                 vec![
                     DiagnosticEntry {
                         range: PointUtf16::new(0, 9)..PointUtf16::new(0, 10),
@@ -627,6 +626,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         },
                     },
                 ],
+                Some(open_notification.text_document.version),
                 cx,
             )
             .unwrap();
@@ -686,7 +686,6 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
         // Ensure overlapping diagnostics are highlighted correctly.
         buffer
             .update_diagnostics(
-                Some(open_notification.text_document.version),
                 vec![
                     DiagnosticEntry {
                         range: PointUtf16::new(0, 9)..PointUtf16::new(0, 10),
@@ -710,6 +709,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         },
                     },
                 ],
+                Some(open_notification.text_document.version),
                 cx,
             )
             .unwrap();
@@ -776,7 +776,6 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
     buffer.update(&mut cx, |buffer, cx| {
         buffer
             .update_diagnostics(
-                Some(change_notification_2.text_document.version),
                 vec![
                     DiagnosticEntry {
                         range: PointUtf16::new(1, 9)..PointUtf16::new(1, 11),
@@ -801,6 +800,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         },
                     },
                 ],
+                Some(change_notification_2.text_document.version),
                 cx,
             )
             .unwrap();
@@ -850,7 +850,6 @@ async fn test_empty_diagnostic_ranges(mut cx: gpui::TestAppContext) {
         buffer.set_language(Some(Arc::new(rust_lang())), cx);
         buffer
             .update_diagnostics(
-                None,
                 vec![
                     DiagnosticEntry {
                         range: PointUtf16::new(0, 10)..PointUtf16::new(0, 10),
@@ -869,6 +868,7 @@ async fn test_empty_diagnostic_ranges(mut cx: gpui::TestAppContext) {
                         },
                     },
                 ],
+                None,
                 cx,
             )
             .unwrap();

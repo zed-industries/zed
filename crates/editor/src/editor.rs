@@ -2080,8 +2080,14 @@ impl Editor {
         let apply_code_actions = workspace.project().update(cx, |project, cx| {
             project.apply_code_action(buffer, action, cx)
         });
-        Some(cx.spawn(|workspace, cx| async move {
+        Some(cx.spawn(|workspace, mut cx| async move {
             let buffers = apply_code_actions.await?;
+            // TODO: replace this with opening a single tab that is a multibuffer
+            workspace.update(&mut cx, |workspace, cx| {
+                for (buffer, _) in buffers {
+                    workspace.open_item(BufferItemHandle(buffer), cx);
+                }
+            });
 
             Ok(())
         }))
