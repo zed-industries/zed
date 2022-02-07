@@ -526,54 +526,88 @@ pub struct ChannelMessage {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use lazy_static::lazy_static;
+    use parking_lot::Mutex;
     use rand::prelude::*;
     use sqlx::{
         migrate::{MigrateDatabase, Migrator},
         Postgres,
     };
-    use std::path::Path;
+    use std::{mem, path::Path};
 
     pub struct TestDb {
-        pub db: Db,
+        pub db: Option<Db>,
         pub name: String,
         pub url: String,
     }
 
-    impl TestDb {
-        pub fn new() -> Self {
-            // Enable tests to run in parallel by serializing the creation of each test database.
-            lazy_static::lazy_static! {
-                static ref DB_CREATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
-            }
+    lazy_static! {
+        static ref POOL: Mutex<Vec<TestDb>> = Default::default();
+    }
 
-            let mut rng = StdRng::from_entropy();
-            let name = format!("zed-test-{}", rng.gen::<u128>());
-            let url = format!("postgres://postgres@localhost/{}", name);
-            let migrations_path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"));
-            let db = block_on(async {
-                {
-                    let _lock = DB_CREATION.lock();
-                    Postgres::create_database(&url)
-                        .await
-                        .expect("failed to create test db");
-                }
-                let mut db = Db::new(&url, 5).await.unwrap();
-                db.test_mode = true;
-                let migrator = Migrator::new(migrations_path).await.unwrap();
-                migrator.run(&db.pool).await.unwrap();
-                db
-            });
-
-            Self { db, name, url }
-        }
-
-        pub fn db(&self) -> &Db {
-            &self.db
+    #[ctor::dtor]
+    fn clear_pool() {
+        for db in POOL.lock().drain(..) {
+            db.teardown();
         }
     }
 
-    impl Drop for TestDb {
-        fn drop(&mut self) {
+    impl TestDb {
+        pub fn new() -> Self {
+            let mut pool = POOL.lock();
+            if let Some(db) = pool.pop() {
+                db.truncate();
+                db
+            } else {
+                let mut rng = StdRng::from_entropy();
+                let name = format!("zed-test-{}", rng.gen::<u128>());
+                let url = format!("postgres://postgres@localhost/{}", name);
+                let migrations_path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"));
+                let db = block_on(async {
+                    Postgres::create_database(&url)
+                        .await
+                        .expect("failed to create test db");
+                    let mut db = Db::new(&url, 5).await.unwrap();
+                    db.test_mode = true;
+                    let migrator = Migrator::new(migrations_path).await.unwrap();
+                    migrator.run(&db.pool).await.unwrap();
+                    db
+                });
+
+                Self {
+                    db: Some(db),
+                    name,
+                    url,
+                }
+            }
+        }
+
+        pub fn db(&self) -> &Db {
+            self.db.as_ref().unwrap()
+        }
+
+        fn truncate(&self) {
+            block_on(async {
+                let query = "
+                    SELECT tablename FROM pg_tables
+                    WHERE schemaname = 'public';
+                ";
+                let table_names = sqlx::query_scalar::<_, String>(query)
+                    .fetch_all(&self.db().pool)
+                    .await
+                    .unwrap();
+                sqlx::query(&format!(
+                    "TRUNCATE TABLE {} RESTART IDENTITY",
+                    table_names.join(", ")
+                ))
+                .execute(&self.db().pool)
+                .await
+                .unwrap();
+            })
+        }
+
+        fn teardown(mut self) {
+            let db = self.db.take().unwrap();
             block_on(async {
                 let query = "
                     SELECT pg_terminate_backend(pg_stat_activity.pid)
@@ -582,12 +616,24 @@ pub mod tests {
                 ";
                 sqlx::query(query)
                     .bind(&self.name)
-                    .execute(&self.db.pool)
+                    .execute(&db.pool)
                     .await
                     .unwrap();
-                self.db.pool.close().await;
+                db.pool.close().await;
                 Postgres::drop_database(&self.url).await.unwrap();
             });
+        }
+    }
+
+    impl Drop for TestDb {
+        fn drop(&mut self) {
+            if let Some(db) = self.db.take() {
+                POOL.lock().push(TestDb {
+                    db: Some(db),
+                    name: mem::take(&mut self.name),
+                    url: mem::take(&mut self.url),
+                });
+            }
         }
     }
 

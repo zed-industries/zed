@@ -12,7 +12,9 @@ use workspace::Settings;
 #[cfg(test)]
 #[ctor::ctor]
 fn init_logger() {
-    env_logger::init();
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::init();
+    }
 }
 
 pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
