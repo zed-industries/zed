@@ -15,8 +15,8 @@ use gpui::{
 use language::{
     point_from_lsp,
     proto::{deserialize_anchor, serialize_anchor},
-    range_from_lsp, Bias, Buffer, Diagnostic, DiagnosticEntry, File as _, Language,
-    LanguageRegistry, PointUtf16, ToOffset,
+    range_from_lsp, Bias, Buffer, CodeAction, Diagnostic, DiagnosticEntry, File as _, Language,
+    LanguageRegistry, PointUtf16, ToLspPosition, ToOffset, ToPointUtf16,
 };
 use lsp::{DiagnosticSeverity, LanguageServer};
 use postage::{prelude::Stream, watch};
@@ -1149,6 +1149,87 @@ impl Project {
         } else {
             Task::ready(Err(anyhow!("project does not have a remote id")))
         }
+    }
+
+    pub fn apply_code_action(
+        &self,
+        buffer: ModelHandle<Buffer>,
+        mut action: CodeAction<language::Anchor>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        if self.is_local() {
+            let buffer = buffer.read(cx);
+            let server = if let Some(language_server) = buffer.language_server() {
+                language_server.clone()
+            } else {
+                return Task::ready(Ok(Default::default()));
+            };
+            let position = action.position.to_point_utf16(buffer).to_lsp_position();
+
+            cx.spawn(|this, mut cx| async move {
+                let range = action
+                    .lsp_action
+                    .data
+                    .as_mut()
+                    .and_then(|d| d.get_mut("codeActionParams"))
+                    .and_then(|d| d.get_mut("range"))
+                    .ok_or_else(|| anyhow!("code action has no range"))?;
+                *range = serde_json::to_value(&lsp::Range::new(position, position)).unwrap();
+                let action = server
+                    .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
+                    .await?;
+                let edit = action
+                    .edit
+                    .ok_or_else(|| anyhow!("code action has no edit"));
+                // match edit {
+                //     Ok(edit) => edit.,
+                //     Err(_) => todo!(),
+                // }
+                Ok(Default::default())
+            })
+        } else {
+            log::info!("applying code actions is not implemented for guests");
+            Task::ready(Ok(Default::default()))
+        }
+        // let file = if let Some(file) = self.file.as_ref() {
+        //     file
+        // } else {
+        //     return Task::ready(Ok(Default::default()));
+        // };
+
+        // if file.is_local() {
+        //     let server = if let Some(language_server) = self.language_server.as_ref() {
+        //         language_server.server.clone()
+        //     } else {
+        //         return Task::ready(Ok(Default::default()));
+        //     };
+        //     let position = action.position.to_point_utf16(self).to_lsp_position();
+
+        //     cx.spawn(|this, mut cx| async move {
+        //         let range = action
+        //             .lsp_action
+        //             .data
+        //             .as_mut()
+        //             .and_then(|d| d.get_mut("codeActionParams"))
+        //             .and_then(|d| d.get_mut("range"))
+        //             .ok_or_else(|| anyhow!("code action has no range"))?;
+        //         *range = serde_json::to_value(&lsp::Range::new(position, position)).unwrap();
+        //         let action = server
+        //             .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
+        //             .await?;
+        //         let edit = action
+        //             .edit
+        //             .ok_or_else(|| anyhow!("code action has no edit"));
+        //         match edit {
+        //             Ok(edit) => edit.,
+        //             Err(_) => todo!(),
+        //         }
+        //         Ok(Default::default())
+        //     })
+        // } else {
+        //     log::info!("applying code actions is not implemented for guests");
+        //     Task::ready(Ok(Default::default()))
+        // }
     }
 
     pub fn find_or_create_local_worktree(

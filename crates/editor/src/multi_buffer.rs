@@ -5,11 +5,11 @@ use anyhow::Result;
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
-pub use language::Completion;
 use language::{
     Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Outline,
     OutlineItem, Selection, ToOffset as _, ToPoint as _, ToPointUtf16 as _, TransactionId,
 };
+pub use language::{CodeAction, Completion};
 use std::{
     cell::{Ref, RefCell},
     cmp, fmt, io,
@@ -864,15 +864,25 @@ impl MultiBuffer {
         &self,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<lsp::CodeAction>>>
+    ) -> Task<Result<Vec<CodeAction<Anchor>>>>
     where
         T: ToOffset,
     {
         let anchor = self.read(cx).anchor_before(position);
         let buffer = self.buffers.borrow()[&anchor.buffer_id].buffer.clone();
-        let code_actions =
-            buffer.update(cx, |buffer, cx| buffer.code_actions(anchor.text_anchor, cx));
-        cx.spawn(|this, cx| async move { code_actions.await })
+        let code_actions = buffer.update(cx, |buffer, cx| {
+            buffer.code_actions(anchor.text_anchor.clone(), cx)
+        });
+        cx.foreground().spawn(async move {
+            Ok(code_actions
+                .await?
+                .into_iter()
+                .map(|action| CodeAction {
+                    position: anchor.clone(),
+                    lsp_action: action.lsp_action,
+                })
+                .collect())
+        })
     }
 
     pub fn completions<T>(

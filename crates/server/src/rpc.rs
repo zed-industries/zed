@@ -1237,7 +1237,7 @@ mod tests {
             self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Credentials,
             EstablishConnectionError, UserStore,
         },
-        editor::{Editor, EditorSettings, Input, MultiBuffer},
+        editor::{ConfirmCompletion, Editor, EditorSettings, Input, MultiBuffer},
         fs::{FakeFs, Fs as _},
         language::{
             tree_sitter_rust, AnchorRangeExt, Diagnostic, DiagnosticEntry, Language,
@@ -2469,7 +2469,7 @@ mod tests {
         editor_b.next_notification(&cx_b).await;
         editor_b.update(&mut cx_b, |editor, cx| {
             assert!(editor.showing_context_menu());
-            editor.confirm_completion(Some(0), cx);
+            editor.confirm_completion(&ConfirmCompletion(Some(0)), cx);
             assert_eq!(editor.text(cx), "fn main() { a.first_method() }");
         });
 

@@ -118,6 +118,12 @@ pub struct Completion<T> {
     pub lsp_completion: lsp::CompletionItem,
 }
 
+#[derive(Clone, Debug)]
+pub struct CodeAction<T> {
+    pub position: T,
+    pub lsp_action: lsp::CodeAction,
+}
+
 struct LanguageServerState {
     server: Arc<LanguageServer>,
     latest_snapshot: watch::Sender<Option<LanguageServerSnapshot>>,
@@ -1852,7 +1858,7 @@ impl Buffer {
         &self,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<lsp::CodeAction>>>
+    ) -> Task<Result<Vec<CodeAction<Anchor>>>>
     where
         T: ToPointUtf16,
     {
@@ -1870,8 +1876,9 @@ impl Buffer {
             };
             let abs_path = file.abs_path(cx);
             let position = position.to_point_utf16(self);
+            let anchor = self.anchor_after(position);
 
-            cx.spawn(|this, mut cx| async move {
+            cx.foreground().spawn(async move {
                 let actions = server
                     .request::<lsp::request::CodeActionRequest>(lsp::CodeActionParams {
                         text_document: lsp::TextDocumentIdentifier::new(
@@ -1896,8 +1903,16 @@ impl Buffer {
                     .unwrap_or_default()
                     .into_iter()
                     .filter_map(|entry| {
-                        if let lsp::CodeActionOrCommand::CodeAction(action) = entry {
-                            Some(action)
+                        if let lsp::CodeActionOrCommand::CodeAction(lsp_action) = entry {
+                            if lsp_action.data.is_none() {
+                                log::warn!("skipping code action without data {lsp_action:?}");
+                                None
+                            } else {
+                                Some(CodeAction {
+                                    position: anchor.clone(),
+                                    lsp_action,
+                                })
+                            }
                         } else {
                             None
                         }

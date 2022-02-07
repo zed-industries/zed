@@ -30,7 +30,7 @@ use gpui::{
 use items::BufferItemHandle;
 use itertools::Itertools as _;
 use language::{
-    AnchorRangeExt as _, BracketPair, Buffer, Completion, CompletionLabel, Diagnostic,
+    AnchorRangeExt as _, BracketPair, Buffer, CodeAction, Completion, CompletionLabel, Diagnostic,
     DiagnosticSeverity, Language, Point, Selection, SelectionGoal, TransactionId,
 };
 use multi_buffer::MultiBufferChunks;
@@ -654,7 +654,7 @@ impl CompletionsMenu {
 }
 
 struct CodeActionsMenu {
-    actions: Arc<[lsp::CodeAction]>,
+    actions: Arc<[CodeAction<Anchor>]>,
     selected_item: usize,
     list: UniformListState,
 }
@@ -699,7 +699,7 @@ impl CodeActionsMenu {
                             settings.style.autocomplete.item
                         };
 
-                        Text::new(action.title.clone(), settings.style.text.clone())
+                        Text::new(action.lsp_action.title.clone(), settings.style.text.clone())
                             .with_soft_wrap(false)
                             .contained()
                             .with_style(item_style)
@@ -717,7 +717,7 @@ impl CodeActionsMenu {
             self.actions
                 .iter()
                 .enumerate()
-                .max_by_key(|(_, action)| action.title.chars().count())
+                .max_by_key(|(_, action)| action.lsp_action.title.chars().count())
                 .map(|(ix, _)| ix),
         )
         .contained()
@@ -1935,7 +1935,7 @@ impl Editor {
         self.completion_tasks.push((id, task));
     }
 
-    fn confirm_completion(
+    pub fn confirm_completion(
         &mut self,
         ConfirmCompletion(completion_ix): &ConfirmCompletion,
         cx: &mut ViewContext<Self>,
@@ -2051,23 +2051,35 @@ impl Editor {
     }
 
     fn confirm_code_action(
-        &mut self,
+        workspace: &mut Workspace,
         ConfirmCodeAction(action_ix): &ConfirmCodeAction,
-        cx: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Workspace>,
     ) -> Option<Task<Result<()>>> {
-        let actions_menu = if let ContextMenu::CodeActions(menu) = self.hide_context_menu(cx)? {
-            menu
-        } else {
-            return None;
-        };
+        let active_item = workspace.active_item(cx)?;
+        let editor = active_item.act_as::<Self>(cx)?;
+        let (buffer, action) = editor.update(cx, |editor, cx| {
+            let actions_menu =
+                if let ContextMenu::CodeActions(menu) = editor.hide_context_menu(cx)? {
+                    menu
+                } else {
+                    return None;
+                };
+            let action_ix = action_ix.unwrap_or(actions_menu.selected_item);
+            let action = actions_menu.actions.get(action_ix)?.clone();
+            let (buffer, position) = editor
+                .buffer
+                .read(cx)
+                .text_anchor_for_position(action.position, cx);
+            let action = CodeAction {
+                position,
+                lsp_action: action.lsp_action,
+            };
+            Some((buffer, action))
+        })?;
 
-        let action = actions_menu
-            .actions
-            .get(action_ix.unwrap_or(actions_menu.selected_item))?;
-
-        dbg!(action);
-
-        None
+        Some(workspace.project().update(cx, |project, cx| {
+            project.apply_code_action(buffer, action, cx)
+        }))
     }
 
     pub fn showing_context_menu(&self) -> bool {

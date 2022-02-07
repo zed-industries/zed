@@ -247,6 +247,10 @@ impl LanguageServer {
                                 ],
                             },
                         }),
+                        data_support: Some(true),
+                        resolve_support: Some(CodeActionCapabilityResolveSupport {
+                            properties: vec!["edit".to_string()],
+                        }),
                         ..Default::default()
                     }),
                     completion: Some(CompletionClientCapabilities {
