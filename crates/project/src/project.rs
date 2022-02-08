@@ -322,6 +322,15 @@ impl Project {
         }))
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn test(fs: Arc<dyn Fs>, cx: &mut gpui::TestAppContext) -> ModelHandle<Project> {
+        let languages = Arc::new(LanguageRegistry::new());
+        let http_client = client::test::FakeHttpClient::with_404_response();
+        let client = client::Client::new(http_client.clone());
+        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
+        cx.update(|cx| Project::local(client, user_store, languages, fs, cx))
+    }
+
     fn set_remote_id(&mut self, remote_id: Option<u64>, cx: &mut ModelContext<Self>) {
         if let ProjectClientState::Local { remote_id_tx, .. } = &mut self.client_state {
             *remote_id_tx.borrow_mut() = remote_id;
@@ -1197,21 +1206,11 @@ impl Project {
 
         if worktree.read(cx).as_local().is_some() {
             let buffer_abs_path = buffer_abs_path.unwrap();
-            let lang_name;
-            let lang_server;
-            if let Some(lang) = &language {
-                lang_name = lang.name().to_string();
-                if let Some(server) = self
-                    .language_servers
-                    .get(&(worktree.read(cx).id(), lang_name.clone()))
-                {
-                    lang_server = server.clone();
-                } else {
-                    return Task::ready(Err(anyhow!("buffer does not have a language server")));
-                };
+            let lang_server = if let Some(server) = source_buffer.language_server().cloned() {
+                server
             } else {
-                return Task::ready(Err(anyhow!("buffer does not have a language")));
-            }
+                return Task::ready(Err(anyhow!("buffer does not have a language server")));
+            };
 
             cx.spawn(|_, cx| async move {
                 let completions = lang_server
@@ -2793,7 +2792,7 @@ mod tests {
     use client::test::FakeHttpClient;
     use fs::RealFs;
     use futures::StreamExt;
-    use gpui::{test::subscribe, TestAppContext};
+    use gpui::test::subscribe;
     use language::{
         tree_sitter_rust, AnchorRangeExt, Diagnostic, LanguageConfig, LanguageRegistry,
         LanguageServerConfig, Point,
@@ -2830,7 +2829,7 @@ mod tests {
         )
         .unwrap();
 
-        let project = build_project(Arc::new(RealFs), &mut cx);
+        let project = Project::test(Arc::new(RealFs), &mut cx);
 
         let (tree, _) = project
             .update(&mut cx, |project, cx| {
@@ -2870,8 +2869,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_language_server_diagnostics(mut cx: gpui::TestAppContext) {
-        let (language_server_config, mut fake_server) =
-            LanguageServerConfig::fake(cx.background()).await;
+        let (language_server_config, mut fake_server) = LanguageServerConfig::fake(&cx).await;
         let progress_token = language_server_config
             .disk_based_diagnostics_progress_token
             .clone()
@@ -3012,7 +3010,7 @@ mod tests {
             }
         }));
 
-        let project = build_project(Arc::new(RealFs), &mut cx);
+        let project = Project::test(Arc::new(RealFs), &mut cx);
         let (tree, _) = project
             .update(&mut cx, |project, cx| {
                 project.find_or_create_local_worktree(&dir.path(), false, cx)
@@ -3035,8 +3033,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_definition(mut cx: gpui::TestAppContext) {
-        let (language_server_config, mut fake_server) =
-            LanguageServerConfig::fake(cx.background()).await;
+        let (language_server_config, mut fake_server) = LanguageServerConfig::fake(&cx).await;
 
         let mut languages = LanguageRegistry::new();
         languages.add(Arc::new(Language::new(
@@ -3169,7 +3166,7 @@ mod tests {
         )
         .await;
 
-        let project = build_project(fs.clone(), &mut cx);
+        let project = Project::test(fs.clone(), &mut cx);
         let worktree_id = project
             .update(&mut cx, |p, cx| {
                 p.find_or_create_local_worktree("/dir", false, cx)
@@ -3207,7 +3204,7 @@ mod tests {
         )
         .await;
 
-        let project = build_project(fs.clone(), &mut cx);
+        let project = Project::test(fs.clone(), &mut cx);
         let worktree_id = project
             .update(&mut cx, |p, cx| {
                 p.find_or_create_local_worktree("/dir/file1", false, cx)
@@ -3249,7 +3246,7 @@ mod tests {
             }
         }));
 
-        let project = build_project(Arc::new(RealFs), &mut cx);
+        let project = Project::test(Arc::new(RealFs), &mut cx);
         let rpc = project.read_with(&cx, |p, _| p.client.clone());
 
         let (tree, _) = project
@@ -3395,7 +3392,7 @@ mod tests {
         )
         .await;
 
-        let project = build_project(fs.clone(), &mut cx);
+        let project = Project::test(fs.clone(), &mut cx);
         let worktree_id = project
             .update(&mut cx, |p, cx| {
                 p.find_or_create_local_worktree("/the-dir", false, cx)
@@ -3445,7 +3442,7 @@ mod tests {
             "file3": "ghi",
         }));
 
-        let project = build_project(Arc::new(RealFs), &mut cx);
+        let project = Project::test(Arc::new(RealFs), &mut cx);
         let (worktree, _) = project
             .update(&mut cx, |p, cx| {
                 p.find_or_create_local_worktree(dir.path(), false, cx)
@@ -3579,7 +3576,7 @@ mod tests {
         let initial_contents = "aaa\nbbbbb\nc\n";
         let dir = temp_tree(json!({ "the-file": initial_contents }));
 
-        let project = build_project(Arc::new(RealFs), &mut cx);
+        let project = Project::test(Arc::new(RealFs), &mut cx);
         let (worktree, _) = project
             .update(&mut cx, |p, cx| {
                 p.find_or_create_local_worktree(dir.path(), false, cx)
@@ -3690,7 +3687,7 @@ mod tests {
         )
         .await;
 
-        let project = build_project(fs.clone(), &mut cx);
+        let project = Project::test(fs.clone(), &mut cx);
         let (worktree, _) = project
             .update(&mut cx, |p, cx| {
                 p.find_or_create_local_worktree("/the-dir", false, cx)
@@ -3929,13 +3926,5 @@ mod tests {
                 }
             ]
         );
-    }
-
-    fn build_project(fs: Arc<dyn Fs>, cx: &mut TestAppContext) -> ModelHandle<Project> {
-        let languages = Arc::new(LanguageRegistry::new());
-        let http_client = FakeHttpClient::with_404_response();
-        let client = client::Client::new(http_client.clone());
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        cx.update(|cx| Project::local(client, user_store, languages, fs, cx))
     }
 }

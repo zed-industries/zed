@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufWriter, AsyncRead, AsyncWrite};
-use gpui::{executor, Task};
+use gpui::{executor, Task, TestAppContext};
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, oneshot, prelude::Stream, sink::Sink, watch};
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,7 @@ use std::{
     collections::HashMap,
     future::Future,
     io::Write,
+    rc::Rc,
     str::FromStr,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -472,6 +473,7 @@ pub struct FakeLanguageServer {
     buffer: Vec<u8>,
     stdin: smol::io::BufReader<async_pipe::PipeReader>,
     stdout: smol::io::BufWriter<async_pipe::PipeWriter>,
+    executor: Rc<executor::Foreground>,
     pub started: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -483,13 +485,13 @@ pub struct RequestId<T> {
 
 #[cfg(any(test, feature = "test-support"))]
 impl LanguageServer {
-    pub async fn fake(executor: Arc<executor::Background>) -> (Arc<Self>, FakeLanguageServer) {
-        Self::fake_with_capabilities(Default::default(), executor).await
+    pub async fn fake(cx: &TestAppContext) -> (Arc<Self>, FakeLanguageServer) {
+        Self::fake_with_capabilities(Default::default(), cx).await
     }
 
     pub async fn fake_with_capabilities(
         capabilities: ServerCapabilities,
-        executor: Arc<executor::Background>,
+        cx: &TestAppContext,
     ) -> (Arc<Self>, FakeLanguageServer) {
         let stdin = async_pipe::pipe();
         let stdout = async_pipe::pipe();
@@ -497,10 +499,12 @@ impl LanguageServer {
             stdin: smol::io::BufReader::new(stdin.1),
             stdout: smol::io::BufWriter::new(stdout.0),
             buffer: Vec::new(),
+            executor: cx.foreground(),
             started: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         };
 
-        let server = Self::new_internal(stdin.0, stdout.1, Path::new("/"), executor).unwrap();
+        let server =
+            Self::new_internal(stdin.0, stdout.1, Path::new("/"), cx.background()).unwrap();
 
         let (init_id, _) = fake.receive_request::<request::Initialize>().await;
         fake.respond(
@@ -549,11 +553,14 @@ impl FakeLanguageServer {
     }
 
     pub async fn receive_request<T: request::Request>(&mut self) -> (RequestId<T>, T::Params) {
+        let executor = self.executor.clone();
+        executor.start_waiting();
         loop {
             self.receive().await;
             if let Ok(request) = serde_json::from_slice::<Request<T::Params>>(&self.buffer) {
                 assert_eq!(request.method, T::METHOD);
                 assert_eq!(request.jsonrpc, JSON_RPC_VERSION);
+                executor.finish_waiting();
                 return (
                     RequestId {
                         id: request.id,
@@ -704,7 +711,7 @@ mod tests {
     async fn test_fake(cx: TestAppContext) {
         SimpleLogger::init(log::LevelFilter::Info, Default::default()).unwrap();
 
-        let (server, mut fake) = LanguageServer::fake(cx.background()).await;
+        let (server, mut fake) = LanguageServer::fake(&cx).await;
 
         let (message_tx, message_rx) = channel::unbounded();
         let (diagnostics_tx, diagnostics_rx) = channel::unbounded();

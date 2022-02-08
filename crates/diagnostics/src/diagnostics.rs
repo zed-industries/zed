@@ -148,7 +148,7 @@ impl ProjectDiagnosticsEditor {
             let mut editor = Editor::for_buffer(
                 excerpts.clone(),
                 build_settings.clone(),
-                Some(workspace.clone()),
+                Some(project.clone()),
                 cx,
             );
             editor.set_vertical_scroll_margin(5, cx);

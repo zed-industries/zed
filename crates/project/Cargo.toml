@@ -7,7 +7,11 @@ edition = "2021"
 path = "src/project.rs"
 
 [features]
-test-support = ["language/test-support", "text/test-support"]
+test-support = [
+    "client/test-support",
+    "language/test-support",
+    "text/test-support",
+]
 
 [dependencies]
 text = { path = "../text" }

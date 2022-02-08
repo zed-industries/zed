@@ -2090,7 +2090,7 @@ mod tests {
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake(cx_a.background()).await;
+            LanguageServerConfig::fake(&cx_a).await;
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -2322,7 +2322,7 @@ mod tests {
                     }),
                     ..Default::default()
                 },
-                cx_a.background(),
+                &cx_a,
             )
             .await;
         Arc::get_mut(&mut lang_registry)
@@ -2401,7 +2401,7 @@ mod tests {
             Editor::for_buffer(
                 cx.add_model(|cx| MultiBuffer::singleton(buffer_b.clone(), cx)),
                 Arc::new(|cx| EditorSettings::test(cx)),
-                None,
+                Some(project_b.clone()),
                 cx,
             )
         });
@@ -2537,7 +2537,7 @@ mod tests {
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake(cx_a.background()).await;
+            LanguageServerConfig::fake(&cx_a).await;
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -2656,7 +2656,7 @@ mod tests {
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake(cx_a.background()).await;
+            LanguageServerConfig::fake(&cx_a).await;
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -2811,7 +2811,7 @@ mod tests {
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake(cx_a.background()).await;
+            LanguageServerConfig::fake(&cx_a).await;
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(

@@ -40,6 +40,7 @@ pub use multi_buffer::{
 };
 use ordered_float::OrderedFloat;
 use postage::watch;
+use project::Project;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
@@ -415,7 +416,7 @@ pub struct Editor {
     scroll_top_anchor: Option<Anchor>,
     autoscroll_request: Option<Autoscroll>,
     build_settings: BuildSettings,
-    workspace: Option<WeakViewHandle<Workspace>>,
+    project: Option<ModelHandle<Project>>,
     focused: bool,
     show_local_cursors: bool,
     blink_epoch: usize,
@@ -772,17 +773,17 @@ impl Editor {
     pub fn for_buffer(
         buffer: ModelHandle<MultiBuffer>,
         build_settings: BuildSettings,
-        workspace: Option<WeakViewHandle<Workspace>>,
+        project: Option<ModelHandle<Project>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        Self::new(buffer, build_settings, workspace, cx)
+        Self::new(buffer, build_settings, project, cx)
     }
 
     pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
         let mut clone = Self::new(
             self.buffer.clone(),
             self.build_settings.clone(),
-            self.workspace.clone(),
+            self.project.clone(),
             cx,
         );
         clone.scroll_position = self.scroll_position;
@@ -797,7 +798,7 @@ impl Editor {
     pub fn new(
         buffer: ModelHandle<MultiBuffer>,
         build_settings: BuildSettings,
-        workspace: Option<WeakViewHandle<Workspace>>,
+        project: Option<ModelHandle<Project>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let settings = build_settings(cx);
@@ -832,7 +833,7 @@ impl Editor {
             select_larger_syntax_node_stack: Vec::new(),
             active_diagnostics: None,
             build_settings,
-            workspace,
+            project,
             scroll_position: Vector2F::zero(),
             scroll_top_anchor: None,
             autoscroll_request: None,
@@ -1882,8 +1883,8 @@ impl Editor {
     }
 
     fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
-        let project = if let Some(workspace) = self.workspace.as_ref().and_then(|w| w.upgrade(cx)) {
-            workspace.read(cx).project().clone()
+        let project = if let Some(project) = self.project.clone() {
+            project
         } else {
             return;
         };
@@ -2050,13 +2051,7 @@ impl Editor {
         }
         self.end_transaction(cx);
 
-        let project = self
-            .workspace
-            .as_ref()?
-            .upgrade(cx)?
-            .read(cx)
-            .project()
-            .clone();
+        let project = self.project.clone()?;
         let apply_edits = project.update(cx, |project, cx| {
             project.apply_additional_edits_for_completion(
                 buffer_handle,
@@ -2077,19 +2072,14 @@ impl Editor {
         } else {
             return;
         };
-        let workspace = if let Some(workspace) = self.workspace.as_ref().and_then(|w| w.upgrade(cx))
-        {
-            workspace
+        let project = if let Some(project) = self.project.clone() {
+            project
         } else {
             return;
         };
 
         let (buffer, head) = self.buffer.read(cx).text_anchor_for_position(head, cx);
-        let actions = workspace
-            .read(cx)
-            .project()
-            .clone()
-            .update(cx, |project, cx| project.code_actions(&buffer, head, cx));
+        let actions = project.update(cx, |project, cx| project.code_actions(&buffer, head, cx));
 
         cx.spawn(|this, mut cx| async move {
             let actions = actions.await?;
@@ -2114,13 +2104,14 @@ impl Editor {
     }
 
     fn confirm_code_action(
-        &mut self,
+        workspace: &mut Workspace,
         ConfirmCodeAction(action_ix): &ConfirmCodeAction,
-        cx: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Workspace>,
     ) -> Option<Task<Result<()>>> {
-        let workspace = self.workspace.as_ref()?.upgrade(cx)?;
-
-        let actions_menu = if let ContextMenu::CodeActions(menu) = self.hide_context_menu(cx)? {
+        let editor = workspace.active_item(cx)?.act_as::<Editor>(cx)?;
+        let actions_menu = if let ContextMenu::CodeActions(menu) =
+            editor.update(cx, |editor, cx| editor.hide_context_menu(cx))?
+        {
             menu
         } else {
             return None;
@@ -2129,14 +2120,10 @@ impl Editor {
         let action = actions_menu.actions.get(action_ix)?.clone();
         let buffer = actions_menu.buffer;
 
-        let apply_code_actions = workspace
-            .read(cx)
-            .project()
-            .clone()
-            .update(cx, |project, cx| {
-                project.apply_code_action(buffer, action, true, cx)
-            });
-        Some(cx.spawn(|_, mut cx| async move {
+        let apply_code_actions = workspace.project().clone().update(cx, |project, cx| {
+            project.apply_code_action(buffer, action, true, cx)
+        });
+        Some(cx.spawn(|workspace, mut cx| async move {
             let project_transaction = apply_code_actions.await?;
 
             // TODO: replace this with opening a single tab that is a multibuffer
@@ -5272,9 +5259,10 @@ fn styled_runs_for_completion_label<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use language::{FakeFile, LanguageConfig};
+    use language::LanguageConfig;
     use lsp::FakeLanguageServer;
-    use std::{cell::RefCell, path::Path, rc::Rc, time::Instant};
+    use project::{FakeFs, ProjectPath};
+    use std::{cell::RefCell, rc::Rc, time::Instant};
     use text::Point;
     use unindent::Unindent;
     use util::test::sample_text;
@@ -7562,7 +7550,7 @@ mod tests {
                 }),
                 ..Default::default()
             },
-            cx.background(),
+            &cx,
         )
         .await;
 
@@ -7573,30 +7561,43 @@ mod tests {
         "
         .unindent();
 
-        let buffer = cx.add_model(|cx| {
-            Buffer::from_file(
-                0,
-                text,
-                Box::new(FakeFile {
-                    path: Arc::from(Path::new("/the/file")),
-                }),
-                cx,
-            )
-            .with_language_server(language_server, cx)
+        let fs = Arc::new(FakeFs::new(cx.background().clone()));
+        fs.insert_file("/file", text).await.unwrap();
+
+        let project = Project::test(fs, &mut cx);
+
+        let (worktree, relative_path) = project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_local_worktree("/file", false, cx)
+            })
+            .await
+            .unwrap();
+        let project_path = ProjectPath {
+            worktree_id: worktree.read_with(&cx, |worktree, _| worktree.id()),
+            path: relative_path.into(),
+        };
+        let buffer = project
+            .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))
+            .await
+            .unwrap();
+        buffer.update(&mut cx, |buffer, cx| {
+            buffer.set_language_server(Some(language_server), cx);
         });
+
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
         buffer.next_notification(&cx).await;
 
         let (_, editor) = cx.add_window(|cx| build_editor(buffer, settings, cx));
 
         editor.update(&mut cx, |editor, cx| {
+            editor.project = Some(project);
             editor.select_ranges([Point::new(0, 3)..Point::new(0, 3)], None, cx);
             editor.handle_input(&Input(".".to_string()), cx);
         });
 
         handle_completion_request(
             &mut fake,
-            "/the/file",
+            "/file",
             Point::new(0, 4),
             &[
                 (Point::new(0, 4)..Point::new(0, 4), "first_completion"),
@@ -7658,7 +7659,7 @@ mod tests {
 
         handle_completion_request(
             &mut fake,
-            "/the/file",
+            "/file",
             Point::new(2, 7),
             &[
                 (Point::new(2, 6)..Point::new(2, 7), "fourth_completion"),
@@ -7677,7 +7678,7 @@ mod tests {
 
         handle_completion_request(
             &mut fake,
-            "/the/file",
+            "/file",
             Point::new(2, 8),
             &[
                 (Point::new(2, 6)..Point::new(2, 8), "fourth_completion"),

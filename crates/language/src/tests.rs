@@ -557,7 +557,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
 
 #[gpui::test]
 async fn test_diagnostics(mut cx: gpui::TestAppContext) {
-    let (language_server, mut fake) = lsp::LanguageServer::fake(cx.background()).await;
+    let (language_server, mut fake) = lsp::LanguageServer::fake(&cx).await;
     let mut rust_lang = rust_lang();
     rust_lang.config.language_server = Some(LanguageServerConfig {
         disk_based_diagnostic_sources: HashSet::from_iter(["disk".to_string()]),
