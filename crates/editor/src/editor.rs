@@ -1886,6 +1886,9 @@ impl Editor {
         let task = cx.spawn_weak(|this, mut cx| {
             async move {
                 let completions = completions.await?;
+                if completions.is_empty() {
+                    return Ok(());
+                }
 
                 let mut menu = CompletionsMenu {
                     id,
