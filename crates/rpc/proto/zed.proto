@@ -44,22 +44,26 @@ message Envelope {
         GetCompletionsResponse get_completions_response = 36;
         ApplyCompletionAdditionalEdits apply_completion_additional_edits = 37;
         ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 38;
+        GetCodeActions get_code_actions = 39;
+        GetCodeActionsResponse get_code_actions_response = 40;
+        ApplyCodeAction apply_code_action = 41;
+        ApplyCodeActionResponse apply_code_action_response = 42;
 
-        GetChannels get_channels = 39;
-        GetChannelsResponse get_channels_response = 40;
-        JoinChannel join_channel = 41;
-        JoinChannelResponse join_channel_response = 42;
-        LeaveChannel leave_channel = 43;
-        SendChannelMessage send_channel_message = 44;
-        SendChannelMessageResponse send_channel_message_response = 45;
-        ChannelMessageSent channel_message_sent = 46;
-        GetChannelMessages get_channel_messages = 47;
-        GetChannelMessagesResponse get_channel_messages_response = 48;
+        GetChannels get_channels = 43;
+        GetChannelsResponse get_channels_response = 44;
+        JoinChannel join_channel = 45;
+        JoinChannelResponse join_channel_response = 46;
+        LeaveChannel leave_channel = 47;
+        SendChannelMessage send_channel_message = 48;
+        SendChannelMessageResponse send_channel_message_response = 49;
+        ChannelMessageSent channel_message_sent = 50;
+        GetChannelMessages get_channel_messages = 51;
+        GetChannelMessagesResponse get_channel_messages_response = 52;
 
-        UpdateContacts update_contacts = 49;
+        UpdateContacts update_contacts = 53;
 
-        GetUsers get_users = 50;
-        GetUsersResponse get_users_response = 51;
+        GetUsers get_users = 54;
+        GetUsersResponse get_users_response = 55;
     }
 }
 
@@ -224,12 +228,7 @@ message ApplyCompletionAdditionalEdits {
 }
 
 message ApplyCompletionAdditionalEditsResponse {
-    repeated AdditionalEdit additional_edits = 1;
-}
-
-message AdditionalEdit {
-    uint32 replica_id = 1;
-    uint32 local_timestamp = 2;
+    repeated EditId additional_edits = 1;
 }
 
 message Completion {
@@ -237,6 +236,47 @@ message Completion {
     Anchor old_end = 2;
     string new_text = 3;
     bytes lsp_completion = 4;
+}
+
+message GetCodeActions {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+}
+
+message GetCodeActionsResponse {
+    repeated CodeAction actions = 1;
+}
+
+message ApplyCodeAction {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    CodeAction action = 3;
+}
+
+message ApplyCodeActionResponse {
+    repeated CodeActionBufferEdits buffer_edits = 1;
+}
+
+message CodeAction {
+    Anchor position = 1;
+    bytes lsp_action = 2;
+}
+
+message CodeActionBufferEdits {
+    Buffer buffer = 1;
+    repeated CodeActionEdit edits = 2;
+}
+
+message CodeActionEdit {
+    EditId id = 1;
+    Anchor old_start = 2;
+    Anchor old_end = 3;
+}
+
+message EditId {
+    uint32 replica_id = 1;
+    uint32 local_timestamp = 2;
 }
 
 message UpdateDiagnosticSummary {

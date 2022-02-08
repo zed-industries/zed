@@ -26,6 +26,7 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
+    time::Instant,
 };
 use util::{post_inc, ResultExt, TryFutureExt as _};
 
@@ -341,6 +342,8 @@ impl Project {
                     cx,
                     Self::handle_apply_additional_edits_for_completion,
                 ),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_get_code_actions),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_apply_code_action),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_get_definition),
             ]);
         }
@@ -1169,6 +1172,7 @@ impl Project {
         &self,
         buffer_handle: ModelHandle<Buffer>,
         mut action: CodeAction<language::Anchor>,
+        push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<HashMap<ModelHandle<Buffer>, Vec<(Range<language::Anchor>, clock::Local)>>>>
     {
@@ -1299,7 +1303,19 @@ impl Project {
                                     lsp::OneOf::Left(edit) => edit,
                                     lsp::OneOf::Right(edit) => edit.text_edit,
                                 });
-                                buffer.apply_lsp_edits(edits, op.text_document.version, cx)
+                                if !push_to_history {
+                                    buffer.avoid_grouping_next_transaction();
+                                }
+                                buffer.start_transaction();
+                                let edits =
+                                    buffer.apply_lsp_edits(edits, op.text_document.version, cx);
+                                if let Some(transaction_id) = buffer.end_transaction(cx) {
+                                    if !push_to_history {
+                                        buffer.forget_transaction(transaction_id);
+                                    }
+                                }
+
+                                edits
                             })?;
                             edited_buffers
                                 .entry(buffer_to_edit)
@@ -1311,49 +1327,47 @@ impl Project {
 
                 Ok(edited_buffers)
             })
+        } else if let Some(project_id) = self.remote_id() {
+            let client = self.client.clone();
+            let request = proto::ApplyCodeAction {
+                project_id,
+                buffer_id: buffer_handle.read(cx).remote_id(),
+                action: Some(language::proto::serialize_code_action(&action)),
+            };
+            cx.spawn(|this, mut cx| async move {
+                let response = client.request(request).await?;
+                let mut edited_buffers = HashMap::default();
+                for buffer_edit in response.buffer_edits {
+                    let buffer = buffer_edit
+                        .buffer
+                        .ok_or_else(|| anyhow!("invalid buffer"))?;
+                    let buffer = this.update(&mut cx, |this, cx| {
+                        this.deserialize_remote_buffer(buffer, cx)
+                    })?;
+
+                    let buffer_edits = edited_buffers.entry(buffer.clone()).or_insert(Vec::new());
+                    for edit in buffer_edit.edits {
+                        buffer_edits.push(language::proto::deserialize_code_action_edit(edit)?);
+                    }
+
+                    buffer
+                        .update(&mut cx, |buffer, _| {
+                            buffer.wait_for_edits(buffer_edits.iter().map(|e| e.1))
+                        })
+                        .await;
+
+                    if push_to_history {
+                        buffer.update(&mut cx, |buffer, _| {
+                            buffer
+                                .push_transaction(buffer_edits.iter().map(|e| e.1), Instant::now());
+                        });
+                    }
+                }
+                Ok(edited_buffers)
+            })
         } else {
-            log::info!("applying code actions is not implemented for guests");
-            Task::ready(Ok(Default::default()))
+            Task::ready(Err(anyhow!("project does not have a remote id")))
         }
-        // let file = if let Some(file) = self.file.as_ref() {
-        //     file
-        // } else {
-        //     return Task::ready(Ok(Default::default()));
-        // };
-
-        // if file.is_local() {
-        //     let server = if let Some(language_server) = self.language_server.as_ref() {
-        //         language_server.server.clone()
-        //     } else {
-        //         return Task::ready(Ok(Default::default()));
-        //     };
-        //     let position = action.position.to_point_utf16(self).to_lsp_position();
-
-        //     cx.spawn(|this, mut cx| async move {
-        //         let range = action
-        //             .lsp_action
-        //             .data
-        //             .as_mut()
-        //             .and_then(|d| d.get_mut("codeActionParams"))
-        //             .and_then(|d| d.get_mut("range"))
-        //             .ok_or_else(|| anyhow!("code action has no range"))?;
-        //         *range = serde_json::to_value(&lsp::Range::new(position, position)).unwrap();
-        //         let action = server
-        //             .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
-        //             .await?;
-        //         let edit = action
-        //             .edit
-        //             .ok_or_else(|| anyhow!("code action has no edit"));
-        //         match edit {
-        //             Ok(edit) => edit.,
-        //             Err(_) => todo!(),
-        //         }
-        //         Ok(Default::default())
-        //     })
-        // } else {
-        //     log::info!("applying code actions is not implemented for guests");
-        //     Task::ready(Ok(Default::default()))
-        // }
     }
 
     pub fn find_or_create_local_worktree(
@@ -1951,7 +1965,7 @@ impl Project {
             envelope
                 .payload
                 .completion
-                .ok_or_else(|| anyhow!("invalid position"))?,
+                .ok_or_else(|| anyhow!("invalid completion"))?,
             language,
         )?;
         cx.spawn(|_, mut cx| async move {
@@ -1966,13 +1980,103 @@ impl Project {
                     proto::ApplyCompletionAdditionalEditsResponse {
                         additional_edits: edit_ids
                             .into_iter()
-                            .map(|edit_id| proto::AdditionalEdit {
-                                replica_id: edit_id.replica_id as u32,
-                                local_timestamp: edit_id.value,
-                            })
+                            .map(language::proto::serialize_edit_id)
                             .collect(),
                     },
                 ),
+                Err(error) => rpc.respond_with_error(
+                    receipt,
+                    proto::Error {
+                        message: error.to_string(),
+                    },
+                ),
+            }
+        })
+        .detach_and_log_err(cx);
+        Ok(())
+    }
+
+    fn handle_get_code_actions(
+        &mut self,
+        envelope: TypedEnvelope<proto::GetCodeActions>,
+        rpc: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let receipt = envelope.receipt();
+        let sender_id = envelope.original_sender_id()?;
+        let buffer = self
+            .shared_buffers
+            .get(&sender_id)
+            .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
+            .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
+        let position = envelope
+            .payload
+            .position
+            .and_then(language::proto::deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        cx.spawn(|_, mut cx| async move {
+            match buffer
+                .update(&mut cx, |buffer, cx| buffer.code_actions(position, cx))
+                .await
+            {
+                Ok(completions) => rpc.respond(
+                    receipt,
+                    proto::GetCodeActionsResponse {
+                        actions: completions
+                            .iter()
+                            .map(language::proto::serialize_code_action)
+                            .collect(),
+                    },
+                ),
+                Err(error) => rpc.respond_with_error(
+                    receipt,
+                    proto::Error {
+                        message: error.to_string(),
+                    },
+                ),
+            }
+        })
+        .detach_and_log_err(cx);
+        Ok(())
+    }
+
+    fn handle_apply_code_action(
+        &mut self,
+        envelope: TypedEnvelope<proto::ApplyCodeAction>,
+        rpc: Arc<Client>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()> {
+        let receipt = envelope.receipt();
+        let sender_id = envelope.original_sender_id()?;
+        let buffer = self
+            .shared_buffers
+            .get(&sender_id)
+            .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
+            .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
+        let action = language::proto::deserialize_code_action(
+            envelope
+                .payload
+                .action
+                .ok_or_else(|| anyhow!("invalid action"))?,
+        )?;
+        let apply_code_action = self.apply_code_action(buffer, action, false, cx);
+        cx.spawn(|this, mut cx| async move {
+            match apply_code_action.await {
+                Ok(edited_buffers) => this.update(&mut cx, |this, cx| {
+                    let buffer_edits = edited_buffers
+                        .into_iter()
+                        .map(|(buffer, edits)| proto::CodeActionBufferEdits {
+                            buffer: Some(this.serialize_buffer_for_peer(&buffer, sender_id, cx)),
+                            edits: edits
+                                .into_iter()
+                                .map(|(range, edit_id)| {
+                                    language::proto::serialize_code_action_edit(edit_id, &range)
+                                })
+                                .collect(),
+                        })
+                        .collect();
+                    rpc.respond(receipt, proto::ApplyCodeActionResponse { buffer_edits })
+                }),
                 Err(error) => rpc.respond_with_error(
                     receipt,
                     proto::Error {

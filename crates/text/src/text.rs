@@ -570,7 +570,6 @@ impl Buffer {
         Self {
             remote_id,
             replica_id,
-
             history: History::new("".into()),
             deferred_ops: OperationQueue::new(),
             deferred_replicas: Default::default(),
@@ -1294,13 +1293,13 @@ impl Buffer {
 
     pub fn wait_for_edits(
         &mut self,
-        edit_ids: &[clock::Local],
+        edit_ids: impl IntoIterator<Item = clock::Local>,
     ) -> impl 'static + Future<Output = ()> {
         let mut futures = Vec::new();
         for edit_id in edit_ids {
-            if !self.version.observed(*edit_id) {
+            if !self.version.observed(edit_id) {
                 let (tx, rx) = oneshot::channel();
-                self.edit_id_resolvers.entry(*edit_id).or_default().push(tx);
+                self.edit_id_resolvers.entry(edit_id).or_default().push(tx);
                 futures.push(rx);
             }
         }

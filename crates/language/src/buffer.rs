@@ -216,6 +216,13 @@ pub trait File {
         cx: &mut MutableAppContext,
     ) -> Task<Result<Vec<clock::Local>>>;
 
+    fn code_actions(
+        &self,
+        buffer_id: u64,
+        position: Anchor,
+        cx: &mut MutableAppContext,
+    ) -> Task<Result<Vec<CodeAction<Anchor>>>>;
+
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext);
 
     fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext);
@@ -301,6 +308,15 @@ impl File for FakeFile {
         _: Completion<Anchor>,
         _: &mut MutableAppContext,
     ) -> Task<Result<Vec<clock::Local>>> {
+        Task::ready(Ok(Default::default()))
+    }
+
+    fn code_actions(
+        &self,
+        _: u64,
+        _: Anchor,
+        _: &mut MutableAppContext,
+    ) -> Task<Result<Vec<CodeAction<Anchor>>>> {
         Task::ready(Ok(Default::default()))
     }
 
@@ -1350,8 +1366,27 @@ impl Buffer {
         }
     }
 
+    pub fn push_transaction(
+        &mut self,
+        edit_ids: impl IntoIterator<Item = clock::Local>,
+        now: Instant,
+    ) {
+        self.text.push_transaction(edit_ids, now);
+    }
+
     pub fn avoid_grouping_next_transaction(&mut self) {
         self.text.avoid_grouping_next_transaction();
+    }
+
+    pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
+        self.text.forget_transaction(transaction_id);
+    }
+
+    pub fn wait_for_edits(
+        &mut self,
+        edit_ids: impl IntoIterator<Item = clock::Local>,
+    ) -> impl Future<Output = ()> {
+        self.text.wait_for_edits(edit_ids)
     }
 
     pub fn set_active_selections(
@@ -1873,6 +1908,8 @@ impl Buffer {
         } else {
             return Task::ready(Ok(Default::default()));
         };
+        let position = position.to_point_utf16(self);
+        let anchor = self.anchor_after(position);
 
         if let Some(file) = file.as_local() {
             let server = if let Some(language_server) = self.language_server.as_ref() {
@@ -1881,8 +1918,6 @@ impl Buffer {
                 return Task::ready(Ok(Default::default()));
             };
             let abs_path = file.abs_path(cx);
-            let position = position.to_point_utf16(self);
-            let anchor = self.anchor_after(position);
 
             cx.foreground().spawn(async move {
                 let actions = server
@@ -1922,8 +1957,7 @@ impl Buffer {
                 Ok(actions)
             })
         } else {
-            log::info!("code actions are not implemented for guests");
-            Task::ready(Ok(Default::default()))
+            file.code_actions(self.remote_id(), anchor, cx.as_mut())
         }
     }
 
@@ -1959,7 +1993,7 @@ impl Buffer {
                         let edits = this.apply_lsp_edits(additional_edits, None, cx);
                         if let Some(transaction_id) = this.end_transaction(cx) {
                             if !push_to_history {
-                                this.text.forget_transaction(transaction_id);
+                                this.forget_transaction(transaction_id);
                             }
                         }
                         Ok(edits?.into_iter().map(|(_, edit_id)| edit_id).collect())
@@ -1976,12 +2010,13 @@ impl Buffer {
             );
             cx.spawn(|this, mut cx| async move {
                 let edit_ids = apply_edits.await?;
-                this.update(&mut cx, |this, _| this.text.wait_for_edits(&edit_ids))
-                    .await;
+                this.update(&mut cx, |this, _| {
+                    this.wait_for_edits(edit_ids.iter().copied())
+                })
+                .await;
                 if push_to_history {
                     this.update(&mut cx, |this, _| {
-                        this.text
-                            .push_transaction(edit_ids.iter().copied(), Instant::now());
+                        this.push_transaction(edit_ids.iter().copied(), Instant::now());
                     });
                 }
                 Ok(edit_ids)

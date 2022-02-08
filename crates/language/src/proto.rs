@@ -1,12 +1,13 @@
 use crate::{
-    diagnostic_set::DiagnosticEntry, Completion, CompletionLabel, Diagnostic, Language, Operation,
+    diagnostic_set::DiagnosticEntry, CodeAction, Completion, CompletionLabel, Diagnostic, Language,
+    Operation,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::HashSet;
 use lsp::DiagnosticSeverity;
 use rpc::proto;
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 use text::*;
 
 pub use proto::{Buffer, BufferState, SelectionSet};
@@ -410,4 +411,63 @@ pub fn deserialize_completion(
             .unwrap_or(CompletionLabel::plain(&lsp_completion)),
         lsp_completion,
     })
+}
+
+pub fn serialize_code_action(action: &CodeAction<Anchor>) -> proto::CodeAction {
+    proto::CodeAction {
+        position: Some(serialize_anchor(&action.position)),
+        lsp_action: serde_json::to_vec(&action.lsp_action).unwrap(),
+    }
+}
+
+pub fn deserialize_code_action(action: proto::CodeAction) -> Result<CodeAction<Anchor>> {
+    let position = action
+        .position
+        .and_then(deserialize_anchor)
+        .ok_or_else(|| anyhow!("invalid position"))?;
+    let lsp_action = serde_json::from_slice(&action.lsp_action)?;
+    Ok(CodeAction {
+        position,
+        lsp_action,
+    })
+}
+
+pub fn serialize_code_action_edit(
+    edit_id: clock::Local,
+    old_range: &Range<Anchor>,
+) -> proto::CodeActionEdit {
+    proto::CodeActionEdit {
+        id: Some(serialize_edit_id(edit_id)),
+        old_start: Some(serialize_anchor(&old_range.start)),
+        old_end: Some(serialize_anchor(&old_range.end)),
+    }
+}
+
+pub fn deserialize_code_action_edit(
+    edit: proto::CodeActionEdit,
+) -> Result<(Range<Anchor>, clock::Local)> {
+    let old_start = edit
+        .old_start
+        .and_then(deserialize_anchor)
+        .ok_or_else(|| anyhow!("invalid old_start"))?;
+    let old_end = edit
+        .old_end
+        .and_then(deserialize_anchor)
+        .ok_or_else(|| anyhow!("invalid old_end"))?;
+    let edit_id = deserialize_edit_id(edit.id.ok_or_else(|| anyhow!("invalid edit_id"))?);
+    Ok((old_start..old_end, edit_id))
+}
+
+pub fn serialize_edit_id(edit_id: clock::Local) -> proto::EditId {
+    proto::EditId {
+        replica_id: edit_id.replica_id as u32,
+        local_timestamp: edit_id.value,
+    }
+}
+
+pub fn deserialize_edit_id(edit_id: proto::EditId) -> clock::Local {
+    clock::Local {
+        replica_id: edit_id.replica_id as ReplicaId,
+        value: edit_id.local_timestamp,
+    }
 }
