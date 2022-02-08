@@ -24,8 +24,10 @@ use std::{
     collections::HashMap,
     convert::TryFrom,
     fmt::Write as _,
-    future::Future,
-    sync::{Arc, Weak},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Weak,
+    },
     time::{Duration, Instant},
 };
 use surf::{http::Method, Url};
@@ -55,6 +57,7 @@ pub fn init(rpc: Arc<Client>, cx: &mut MutableAppContext) {
 }
 
 pub struct Client {
+    id: usize,
     peer: Arc<Peer>,
     http: Arc<dyn HttpClient>,
     state: RwLock<ClientState>,
@@ -167,7 +170,12 @@ impl Drop for Subscription {
 
 impl Client {
     pub fn new(http: Arc<dyn HttpClient>) -> Arc<Self> {
+        lazy_static! {
+            static ref NEXT_CLIENT_ID: AtomicUsize = AtomicUsize::default();
+        }
+
         Arc::new(Self {
+            id: NEXT_CLIENT_ID.fetch_add(1, Ordering::SeqCst),
             peer: Peer::new(),
             http,
             state: Default::default(),
@@ -448,21 +456,31 @@ impl Client {
                             None
                         };
 
+                        let type_name = message.payload_type_name();
+
                         let handler_key = (payload_type_id, entity_id);
                         if let Some(handler) = state.model_handlers.get_mut(&handler_key) {
                             let mut handler = handler.take().unwrap();
                             drop(state); // Avoid deadlocks if the handler interacts with rpc::Client
-                            let start_time = Instant::now();
-                            log::info!("RPC client message {}", message.payload_type_name());
+
+                            log::debug!(
+                                "rpc message received. client_id:{}, name:{}",
+                                this.id,
+                                type_name
+                            );
                             (handler)(message, &mut cx);
-                            log::info!("RPC message handled. duration:{:?}", start_time.elapsed());
+                            log::debug!(
+                                "rpc message handled. client_id:{}, name:{}",
+                                this.id,
+                                type_name
+                            );
 
                             let mut state = this.state.write();
                             if state.model_handlers.contains_key(&handler_key) {
                                 state.model_handlers.insert(handler_key, Some(handler));
                             }
                         } else {
-                            log::info!("unhandled message {}", message.payload_type_name());
+                            log::info!("unhandled message {}", type_name);
                         }
                     }
                 }
@@ -677,19 +695,32 @@ impl Client {
         }
     }
 
-    pub async fn send<T: EnvelopedMessage>(&self, message: T) -> Result<()> {
-        self.peer.send(self.connection_id()?, message).await
+    pub fn send<T: EnvelopedMessage>(&self, message: T) -> Result<()> {
+        log::debug!("rpc send. client_id:{}, name:{}", self.id, T::NAME);
+        self.peer.send(self.connection_id()?, message)
     }
 
     pub async fn request<T: RequestMessage>(&self, request: T) -> Result<T::Response> {
-        self.peer.request(self.connection_id()?, request).await
+        log::debug!(
+            "rpc request start. client_id: {}. name:{}",
+            self.id,
+            T::NAME
+        );
+        let response = self.peer.request(self.connection_id()?, request).await;
+        log::debug!(
+            "rpc request finish. client_id: {}. name:{}",
+            self.id,
+            T::NAME
+        );
+        response
     }
 
     pub fn respond<T: RequestMessage>(
         &self,
         receipt: Receipt<T>,
         response: T::Response,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> Result<()> {
+        log::debug!("rpc respond. client_id: {}. name:{}", self.id, T::NAME);
         self.peer.respond(receipt, response)
     }
 
@@ -697,7 +728,8 @@ impl Client {
         &self,
         receipt: Receipt<T>,
         error: proto::Error,
-    ) -> impl Future<Output = Result<()>> {
+    ) -> Result<()> {
+        log::debug!("rpc respond. client_id: {}. name:{}", self.id, T::NAME);
         self.peer.respond_with_error(receipt, error)
     }
 }
@@ -860,8 +892,8 @@ mod tests {
         });
         drop(subscription3);
 
-        server.send(proto::UnshareProject { project_id: 1 }).await;
-        server.send(proto::UnshareProject { project_id: 2 }).await;
+        server.send(proto::UnshareProject { project_id: 1 });
+        server.send(proto::UnshareProject { project_id: 2 });
         done_rx1.next().await.unwrap();
         done_rx2.next().await.unwrap();
     }
@@ -890,7 +922,7 @@ mod tests {
                 Ok(())
             })
         });
-        server.send(proto::Ping {}).await;
+        server.send(proto::Ping {});
         done_rx2.next().await.unwrap();
     }
 
@@ -914,7 +946,7 @@ mod tests {
                 },
             ));
         });
-        server.send(proto::Ping {}).await;
+        server.send(proto::Ping {});
         done_rx.next().await.unwrap();
     }
 

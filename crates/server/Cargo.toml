@@ -59,6 +59,8 @@ features = ["runtime-async-std-rustls", "postgres", "time", "uuid"]
 collections = { path = "../collections", features = ["test-support"] }
 gpui = { path = "../gpui" }
 zed = { path = "../zed", features = ["test-support"] }
+ctor = "0.1"
+env_logger = "0.8"
 
 lazy_static = "1.4"
 serde_json = { version = "1.0.64", features = ["preserve_order"] }

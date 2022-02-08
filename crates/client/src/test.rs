@@ -118,8 +118,8 @@ impl FakeServer {
         self.forbid_connections.store(false, SeqCst);
     }
 
-    pub async fn send<T: proto::EnvelopedMessage>(&self, message: T) {
-        self.peer.send(self.connection_id(), message).await.unwrap();
+    pub fn send<T: proto::EnvelopedMessage>(&self, message: T) {
+        self.peer.send(self.connection_id(), message).unwrap();
     }
 
     pub async fn receive<M: proto::EnvelopedMessage>(&self) -> Result<TypedEnvelope<M>> {
@@ -148,7 +148,7 @@ impl FakeServer {
         receipt: Receipt<T>,
         response: T::Response,
     ) {
-        self.peer.respond(receipt, response).await.unwrap()
+        self.peer.respond(receipt, response).unwrap()
     }
 
     fn connection_id(&self) -> ConnectionId {
