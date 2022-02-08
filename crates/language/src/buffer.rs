@@ -247,12 +247,12 @@ pub trait LocalFile: File {
     );
 }
 
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 pub struct FakeFile {
     pub path: Arc<Path>,
 }
 
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 impl File for FakeFile {
     fn as_local(&self) -> Option<&dyn LocalFile> {
         Some(self)
@@ -333,7 +333,7 @@ impl File for FakeFile {
     }
 }
 
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 impl LocalFile for FakeFile {
     fn abs_path(&self, _: &AppContext) -> PathBuf {
         self.path.to_path_buf()
@@ -759,8 +759,6 @@ impl Buffer {
         } else {
             None
         };
-
-        self.update_language_server(cx);
     }
 
     pub fn did_save(

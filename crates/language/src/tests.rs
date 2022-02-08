@@ -570,8 +570,11 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
     "
     .unindent();
 
+    let file = Box::new(FakeFile {
+        path: Path::new("/some/path").into(),
+    }) as Box<dyn File>;
     let buffer = cx.add_model(|cx| {
-        Buffer::new(0, text, cx)
+        Buffer::from_file(0, text, file, cx)
             .with_language(Arc::new(rust_lang), cx)
             .with_language_server(language_server, cx)
     });
