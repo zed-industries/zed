@@ -61,6 +61,7 @@ gpui = { path = "../gpui" }
 zed = { path = "../zed", features = ["test-support"] }
 ctor = "0.1"
 env_logger = "0.8"
+util = { path = "../util" }
 
 lazy_static = "1.4"
 serde_json = { version = "1.0.64", features = ["preserve_order"] }

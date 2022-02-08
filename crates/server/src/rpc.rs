@@ -1196,11 +1196,12 @@ mod tests {
     #[cfg(test)]
     #[ctor::ctor]
     fn init_logger() {
-        // std::env::set_var("RUST_LOG", "info");
-        env_logger::init();
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::init();
+        }
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_share_project(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         let (window_b, _) = cx_b.add_window(|_| EmptyView);
         let lang_registry = Arc::new(LanguageRegistry::new());
@@ -1339,7 +1340,7 @@ mod tests {
             .await;
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_unshare_project(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(FakeFs::new(cx_a.background()));
@@ -1436,7 +1437,7 @@ mod tests {
             .unwrap();
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_propagate_saves_and_fs_changes(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
@@ -1622,7 +1623,7 @@ mod tests {
             .await;
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_buffer_conflict_after_save(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
@@ -1715,7 +1716,7 @@ mod tests {
         });
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_buffer_reloading(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
@@ -1877,7 +1878,7 @@ mod tests {
         buffer_b.condition(&cx_b, |buf, _| buf.text() == text).await;
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_leaving_worktree_while_opening_buffer(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
@@ -1955,7 +1956,7 @@ mod tests {
             .await;
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_peer_disconnection(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
@@ -2026,7 +2027,7 @@ mod tests {
             .await;
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_collaborating_with_diagnostics(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
@@ -2250,7 +2251,7 @@ mod tests {
         });
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_collaborating_with_completion(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
@@ -2475,7 +2476,7 @@ mod tests {
         );
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_formatting_buffer(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
@@ -2579,7 +2580,7 @@ mod tests {
         );
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_definition(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
@@ -2736,7 +2737,7 @@ mod tests {
             .await;
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_open_buffer_while_getting_definition_pointing_to_it(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
@@ -2850,7 +2851,7 @@ mod tests {
         assert_eq!(definitions[0].target_buffer, buffer_b2);
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_basic_chat(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
 
@@ -2990,7 +2991,7 @@ mod tests {
             .await;
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_chat_message_validation(mut cx_a: TestAppContext) {
         cx_a.foreground().forbid_parking();
 
@@ -3050,7 +3051,7 @@ mod tests {
         );
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_chat_reconnection(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
 
@@ -3262,7 +3263,7 @@ mod tests {
             .await;
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_contacts(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
