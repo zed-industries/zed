@@ -1554,7 +1554,7 @@ impl Buffer {
         }
 
         self.start_transaction();
-        for (range, new_text) in anchored_edits {
+        for (range, new_text) in anchored_edits.into_iter().rev() {
             self.edit([range], new_text, cx);
         }
         self.end_transaction(cx);
