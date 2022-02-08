@@ -655,7 +655,7 @@ mod tests {
             )
         });
         let editor = cx.add_view(Default::default(), |cx| {
-            Editor::new(buffer.clone(), Arc::new(EditorSettings::test), cx)
+            Editor::new(buffer.clone(), Arc::new(EditorSettings::test), None, cx)
         });
 
         let find_bar = cx.add_view(Default::default(), |cx| {

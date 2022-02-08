@@ -394,7 +394,7 @@ pub fn lamport_timestamp_for_operation(operation: &proto::Operation) -> Option<c
     })
 }
 
-pub fn serialize_completion(completion: &Completion<Anchor>) -> proto::Completion {
+pub fn serialize_completion(completion: &Completion) -> proto::Completion {
     proto::Completion {
         old_start: Some(serialize_anchor(&completion.old_range.start)),
         old_end: Some(serialize_anchor(&completion.old_range.end)),
@@ -406,7 +406,7 @@ pub fn serialize_completion(completion: &Completion<Anchor>) -> proto::Completio
 pub fn deserialize_completion(
     completion: proto::Completion,
     language: Option<&Arc<Language>>,
-) -> Result<Completion<Anchor>> {
+) -> Result<Completion> {
     let old_start = completion
         .old_start
         .and_then(deserialize_anchor)

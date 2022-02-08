@@ -861,41 +861,6 @@ impl MultiBuffer {
         })
     }
 
-    pub fn completions<T>(
-        &self,
-        position: T,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<Completion<Anchor>>>>
-    where
-        T: ToOffset,
-    {
-        let anchor = self.read(cx).anchor_before(position);
-        let buffer = self.buffers.borrow()[&anchor.buffer_id].buffer.clone();
-        let completions =
-            buffer.update(cx, |buffer, cx| buffer.completions(anchor.text_anchor, cx));
-        cx.spawn(|this, cx| async move {
-            completions.await.map(|completions| {
-                let snapshot = this.read_with(&cx, |buffer, cx| buffer.snapshot(cx));
-                completions
-                    .into_iter()
-                    .map(|completion| Completion {
-                        old_range: snapshot.anchor_in_excerpt(
-                            anchor.excerpt_id.clone(),
-                            completion.old_range.start,
-                        )
-                            ..snapshot.anchor_in_excerpt(
-                                anchor.excerpt_id.clone(),
-                                completion.old_range.end,
-                            ),
-                        new_text: completion.new_text,
-                        label: completion.label,
-                        lsp_completion: completion.lsp_completion,
-                    })
-                    .collect()
-            })
-        })
-    }
-
     pub fn is_completion_trigger<T>(&self, position: T, text: &str, cx: &AppContext) -> bool
     where
         T: ToOffset,
@@ -922,40 +887,6 @@ impl MultiBuffer {
             .completion_triggers()
             .iter()
             .any(|string| string == text)
-    }
-
-    pub fn apply_additional_edits_for_completion(
-        &self,
-        completion: Completion<Anchor>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
-        let buffer = if let Some(buffer_state) = self
-            .buffers
-            .borrow()
-            .get(&completion.old_range.start.buffer_id)
-        {
-            buffer_state.buffer.clone()
-        } else {
-            return Task::ready(Ok(()));
-        };
-
-        let apply_edits = buffer.update(cx, |buffer, cx| {
-            buffer.apply_additional_edits_for_completion(
-                Completion {
-                    old_range: completion.old_range.start.text_anchor
-                        ..completion.old_range.end.text_anchor,
-                    new_text: completion.new_text,
-                    label: completion.label,
-                    lsp_completion: completion.lsp_completion,
-                },
-                true,
-                cx,
-            )
-        });
-        cx.foreground().spawn(async move {
-            apply_edits.await?;
-            Ok(())
-        })
     }
 
     pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {

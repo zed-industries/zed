@@ -38,7 +38,7 @@ use text::{operation_queue::OperationQueue, rope::TextDimension};
 pub use text::{Buffer as TextBuffer, Operation as _, *};
 use theme::SyntaxTheme;
 use tree_sitter::{InputEdit, QueryCursor, Tree};
-use util::{post_inc, ResultExt, TryFutureExt as _};
+use util::{post_inc, TryFutureExt as _};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use tree_sitter_rust;
@@ -111,8 +111,8 @@ pub struct Diagnostic {
 }
 
 #[derive(Clone, Debug)]
-pub struct Completion<T> {
-    pub old_range: Range<T>,
+pub struct Completion {
+    pub old_range: Range<Anchor>,
     pub new_text: String,
     pub label: CompletionLabel,
     pub lsp_completion: lsp::CompletionItem,
@@ -201,21 +201,6 @@ pub trait File {
     fn format_remote(&self, buffer_id: u64, cx: &mut MutableAppContext)
         -> Option<Task<Result<()>>>;
 
-    fn completions(
-        &self,
-        buffer_id: u64,
-        position: Anchor,
-        language: Option<Arc<Language>>,
-        cx: &mut MutableAppContext,
-    ) -> Task<Result<Vec<Completion<Anchor>>>>;
-
-    fn apply_additional_edits_for_completion(
-        &self,
-        buffer_id: u64,
-        completion: Completion<Anchor>,
-        cx: &mut MutableAppContext,
-    ) -> Task<Result<Option<Transaction>>>;
-
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext);
 
     fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext);
@@ -283,25 +268,6 @@ impl File for FakeFile {
 
     fn format_remote(&self, _: u64, _: &mut MutableAppContext) -> Option<Task<Result<()>>> {
         None
-    }
-
-    fn completions(
-        &self,
-        _: u64,
-        _: Anchor,
-        _: Option<Arc<Language>>,
-        _: &mut MutableAppContext,
-    ) -> Task<Result<Vec<Completion<Anchor>>>> {
-        Task::ready(Ok(Default::default()))
-    }
-
-    fn apply_additional_edits_for_completion(
-        &self,
-        _: u64,
-        _: Completion<Anchor>,
-        _: &mut MutableAppContext,
-    ) -> Task<Result<Option<Transaction>>> {
-        Task::ready(Ok(Default::default()))
     }
 
     fn buffer_updated(&self, _: u64, _: Operation, _: &mut MutableAppContext) {}
@@ -1762,157 +1728,6 @@ impl Buffer {
         }
     }
 
-    pub fn completions<T>(
-        &self,
-        position: T,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<Completion<Anchor>>>>
-    where
-        T: ToOffset,
-    {
-        let file = if let Some(file) = self.file.as_ref() {
-            file
-        } else {
-            return Task::ready(Ok(Default::default()));
-        };
-        let language = self.language.clone();
-
-        if let Some(file) = file.as_local() {
-            let server = if let Some(language_server) = self.language_server.as_ref() {
-                language_server.server.clone()
-            } else {
-                return Task::ready(Ok(Default::default()));
-            };
-            let abs_path = file.abs_path(cx);
-            let position = self.offset_to_point_utf16(position.to_offset(self));
-
-            cx.spawn(|this, cx| async move {
-                let completions = server
-                    .request::<lsp::request::Completion>(lsp::CompletionParams {
-                        text_document_position: lsp::TextDocumentPositionParams::new(
-                            lsp::TextDocumentIdentifier::new(
-                                lsp::Url::from_file_path(abs_path).unwrap(),
-                            ),
-                            position.to_lsp_position(),
-                        ),
-                        context: Default::default(),
-                        work_done_progress_params: Default::default(),
-                        partial_result_params: Default::default(),
-                    })
-                    .await?;
-
-                let completions = if let Some(completions) = completions {
-                    match completions {
-                        lsp::CompletionResponse::Array(completions) => completions,
-                        lsp::CompletionResponse::List(list) => list.items,
-                    }
-                } else {
-                    Default::default()
-                };
-
-                this.read_with(&cx, |this, _| {
-                    Ok(completions.into_iter().filter_map(|lsp_completion| {
-                        let (old_range, new_text) = match lsp_completion.text_edit.as_ref()? {
-                            lsp::CompletionTextEdit::Edit(edit) => (range_from_lsp(edit.range), edit.new_text.clone()),
-                            lsp::CompletionTextEdit::InsertAndReplace(_) => {
-                                log::info!("received an insert and replace completion but we don't yet support that");
-                                return None
-                            },
-                        };
-
-                        let clipped_start = this.clip_point_utf16(old_range.start, Bias::Left);
-                        let clipped_end = this.clip_point_utf16(old_range.end, Bias::Left) ;
-                        if clipped_start == old_range.start && clipped_end == old_range.end {
-                            Some(Completion {
-                                old_range: this.anchor_before(old_range.start)..this.anchor_after(old_range.end),
-                                new_text,
-                                label: language.as_ref().and_then(|l| l.label_for_completion(&lsp_completion)).unwrap_or_else(|| CompletionLabel::plain(&lsp_completion)),
-                                lsp_completion,
-                            })
-                        } else {
-                            None
-                        }
-                    }).collect())
-                })
-            })
-        } else {
-            file.completions(
-                self.remote_id(),
-                self.anchor_before(position),
-                language,
-                cx.as_mut(),
-            )
-        }
-    }
-
-    pub fn apply_additional_edits_for_completion(
-        &mut self,
-        completion: Completion<Anchor>,
-        push_to_history: bool,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Transaction>>> {
-        let file = if let Some(file) = self.file.as_ref() {
-            file
-        } else {
-            return Task::ready(Ok(Default::default()));
-        };
-
-        if file.is_local() {
-            let server = if let Some(lang) = self.language_server.as_ref() {
-                lang.server.clone()
-            } else {
-                return Task::ready(Ok(Default::default()));
-            };
-
-            cx.spawn(|this, mut cx| async move {
-                let resolved_completion = server
-                    .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
-                    .await?;
-                if let Some(additional_edits) = resolved_completion.additional_text_edits {
-                    this.update(&mut cx, |this, cx| {
-                        this.finalize_last_transaction();
-                        this.start_transaction();
-                        this.apply_lsp_edits(additional_edits, None, cx).log_err();
-                        let transaction = if this.end_transaction(cx).is_some() {
-                            let transaction = this.finalize_last_transaction().unwrap().clone();
-                            if !push_to_history {
-                                this.forget_transaction(transaction.id);
-                            }
-                            Some(transaction)
-                        } else {
-                            None
-                        };
-                        Ok(transaction)
-                    })
-                } else {
-                    Ok(None)
-                }
-            })
-        } else {
-            let apply_edits = file.apply_additional_edits_for_completion(
-                self.remote_id(),
-                completion,
-                cx.as_mut(),
-            );
-            cx.spawn(|this, mut cx| async move {
-                if let Some(transaction) = apply_edits.await? {
-                    this.update(&mut cx, |this, _| {
-                        this.wait_for_edits(transaction.edit_ids.iter().copied())
-                    })
-                    .await;
-                    if push_to_history {
-                        this.update(&mut cx, |this, _| {
-                            this.push_transaction(transaction.clone(), Instant::now());
-                        });
-                    }
-                    Ok(Some(transaction))
-                } else {
-                    Ok(None)
-                }
-            })
-        }
-    }
-
     pub fn completion_triggers(&self) -> &[String] {
         &self.completion_triggers
     }
@@ -2737,7 +2552,7 @@ impl Default for Diagnostic {
     }
 }
 
-impl<T> Completion<T> {
+impl Completion {
     pub fn sort_key(&self) -> (usize, &str) {
         let kind_key = match self.lsp_completion.kind {
             Some(lsp::CompletionItemKind::VARIABLE) => 0,

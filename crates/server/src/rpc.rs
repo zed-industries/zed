@@ -1349,7 +1349,7 @@ mod tests {
             .unwrap();
 
         let editor_b = cx_b.add_view(window_b, |cx| {
-            Editor::for_buffer(buffer_b, Arc::new(|cx| EditorSettings::test(cx)), cx)
+            Editor::for_buffer(buffer_b, Arc::new(|cx| EditorSettings::test(cx)), None, cx)
         });
 
         // TODO
@@ -2401,6 +2401,7 @@ mod tests {
             Editor::for_buffer(
                 cx.add_model(|cx| MultiBuffer::singleton(buffer_b.clone(), cx)),
                 Arc::new(|cx| EditorSettings::test(cx)),
+                None,
                 cx,
             )
         });

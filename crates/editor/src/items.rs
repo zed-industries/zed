@@ -55,6 +55,7 @@ impl ItemHandle for BufferItemHandle {
             let mut editor = Editor::for_buffer(
                 buffer,
                 crate::settings_builder(weak_buffer, workspace.settings()),
+                Some(workspace.weak_handle()),
                 cx,
             );
             editor.nav_history = Some(ItemNavHistory::new(nav_history, &cx.handle()));

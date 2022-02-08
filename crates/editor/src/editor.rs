@@ -415,6 +415,7 @@ pub struct Editor {
     scroll_top_anchor: Option<Anchor>,
     autoscroll_request: Option<Autoscroll>,
     build_settings: BuildSettings,
+    workspace: Option<WeakViewHandle<Workspace>>,
     focused: bool,
     show_local_cursors: bool,
     blink_epoch: usize,
@@ -515,7 +516,8 @@ impl ContextMenu {
 struct CompletionsMenu {
     id: CompletionId,
     initial_position: Anchor,
-    completions: Arc<[Completion<Anchor>]>,
+    buffer: ModelHandle<Buffer>,
+    completions: Arc<[Completion]>,
     match_candidates: Vec<StringMatchCandidate>,
     matches: Arc<[StringMatch]>,
     selected_item: usize,
@@ -750,7 +752,7 @@ impl Editor {
     pub fn single_line(build_settings: BuildSettings, cx: &mut ViewContext<Self>) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-        let mut view = Self::for_buffer(buffer, build_settings, cx);
+        let mut view = Self::for_buffer(buffer, build_settings, None, cx);
         view.mode = EditorMode::SingleLine;
         view
     }
@@ -762,7 +764,7 @@ impl Editor {
     ) -> Self {
         let buffer = cx.add_model(|cx| Buffer::new(0, String::new(), cx));
         let buffer = cx.add_model(|cx| MultiBuffer::singleton(buffer, cx));
-        let mut view = Self::for_buffer(buffer, build_settings, cx);
+        let mut view = Self::for_buffer(buffer, build_settings, None, cx);
         view.mode = EditorMode::AutoHeight { max_lines };
         view
     }
@@ -770,13 +772,19 @@ impl Editor {
     pub fn for_buffer(
         buffer: ModelHandle<MultiBuffer>,
         build_settings: BuildSettings,
+        workspace: Option<WeakViewHandle<Workspace>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        Self::new(buffer, build_settings, cx)
+        Self::new(buffer, build_settings, workspace, cx)
     }
 
     pub fn clone(&self, cx: &mut ViewContext<Self>) -> Self {
-        let mut clone = Self::new(self.buffer.clone(), self.build_settings.clone(), cx);
+        let mut clone = Self::new(
+            self.buffer.clone(),
+            self.build_settings.clone(),
+            self.workspace.clone(),
+            cx,
+        );
         clone.scroll_position = self.scroll_position;
         clone.scroll_top_anchor = self.scroll_top_anchor.clone();
         clone.nav_history = self
@@ -789,6 +797,7 @@ impl Editor {
     pub fn new(
         buffer: ModelHandle<MultiBuffer>,
         build_settings: BuildSettings,
+        workspace: Option<WeakViewHandle<Workspace>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let settings = build_settings(cx);
@@ -823,6 +832,7 @@ impl Editor {
             select_larger_syntax_node_stack: Vec::new(),
             active_diagnostics: None,
             build_settings,
+            workspace,
             scroll_position: Vector2F::zero(),
             scroll_top_anchor: None,
             autoscroll_request: None,
@@ -1872,16 +1882,26 @@ impl Editor {
     }
 
     fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
+        let project = if let Some(workspace) = self.workspace.as_ref().and_then(|w| w.upgrade(cx)) {
+            workspace.read(cx).project().clone()
+        } else {
+            return;
+        };
+
         let position = if let Some(selection) = self.newest_anchor_selection() {
             selection.head()
         } else {
             return;
         };
+        let (buffer, buffer_position) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(position.clone(), cx);
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position.clone());
-        let completions = self
-            .buffer
-            .update(cx, |buffer, cx| buffer.completions(position.clone(), cx));
+        let completions = project.update(cx, |project, cx| {
+            project.completions(&buffer, buffer_position.clone(), cx)
+        });
 
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn_weak(|this, mut cx| {
@@ -1904,6 +1924,7 @@ impl Editor {
                             )
                         })
                         .collect(),
+                    buffer,
                     completions: completions.into(),
                     matches: Vec::new().into(),
                     selected_item: 0,
@@ -1953,6 +1974,7 @@ impl Editor {
         let mat = completions_menu
             .matches
             .get(completion_ix.unwrap_or(completions_menu.selected_item))?;
+        let buffer_handle = completions_menu.buffer;
         let completion = completions_menu.completions.get(mat.candidate_id)?;
 
         let snippet;
@@ -1964,11 +1986,9 @@ impl Editor {
             snippet = None;
             text = completion.new_text.clone();
         };
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let old_range = completion.old_range.to_offset(&snapshot);
-        let old_text = snapshot
-            .text_for_range(old_range.clone())
-            .collect::<String>();
+        let buffer = buffer_handle.read(cx);
+        let old_range = completion.old_range.to_offset(&buffer);
+        let old_text = buffer.text_for_range(old_range.clone()).collect::<String>();
 
         let selections = self.local_selections::<usize>(cx);
         let newest_selection = selections.iter().max_by_key(|s| s.id)?;
@@ -1982,7 +2002,7 @@ impl Editor {
 
         let mut ranges = Vec::new();
         for selection in &selections {
-            if snapshot.contains_str_at(selection.start.saturating_sub(lookbehind), &old_text) {
+            if buffer.contains_str_at(selection.start.saturating_sub(lookbehind), &old_text) {
                 let start = selection.start.saturating_sub(lookbehind);
                 let end = selection.end + lookahead;
                 ranges.push(start + common_prefix_len..end);
@@ -2017,41 +2037,51 @@ impl Editor {
         }
         self.end_transaction(cx);
 
-        Some(self.buffer.update(cx, |buffer, cx| {
-            buffer.apply_additional_edits_for_completion(completion.clone(), cx)
+        let project = self
+            .workspace
+            .as_ref()?
+            .upgrade(cx)?
+            .read(cx)
+            .project()
+            .clone();
+        let apply_edits = project.update(cx, |project, cx| {
+            project.apply_additional_edits_for_completion(
+                buffer_handle,
+                completion.clone(),
+                true,
+                cx,
+            )
+        });
+        Some(cx.foreground().spawn(async move {
+            apply_edits.await?;
+            Ok(())
         }))
     }
 
-    fn show_code_actions(
-        workspace: &mut Workspace,
-        _: &ShowCodeActions,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        let active_item = workspace.active_item(cx);
-        let editor_handle = if let Some(editor) = active_item
-            .as_ref()
-            .and_then(|item| item.act_as::<Self>(cx))
-        {
-            editor
-        } else {
-            return;
-        };
-
-        let editor = editor_handle.read(cx);
-        let head = if let Some(selection) = editor.newest_anchor_selection() {
+    fn show_code_actions(&mut self, _: &ShowCodeActions, cx: &mut ViewContext<Self>) {
+        let head = if let Some(selection) = self.newest_anchor_selection() {
             selection.head()
         } else {
             return;
         };
-        let (buffer, head) = editor.buffer.read(cx).text_anchor_for_position(head, cx);
+        let workspace = if let Some(workspace) = self.workspace.as_ref().and_then(|w| w.upgrade(cx))
+        {
+            workspace
+        } else {
+            return;
+        };
+
+        let (buffer, head) = self.buffer.read(cx).text_anchor_for_position(head, cx);
         let actions = workspace
+            .read(cx)
             .project()
+            .clone()
             .update(cx, |project, cx| project.code_actions(&buffer, head, cx));
 
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let actions = actions.await?;
             if !actions.is_empty() {
-                editor_handle.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |this, cx| {
                     if this.focused {
                         this.show_context_menu(
                             ContextMenu::CodeActions(CodeActionsMenu {
@@ -2071,29 +2101,31 @@ impl Editor {
     }
 
     fn confirm_code_action(
-        workspace: &mut Workspace,
+        &mut self,
         ConfirmCodeAction(action_ix): &ConfirmCodeAction,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
-        let active_item = workspace.active_item(cx)?;
-        let editor = active_item.act_as::<Self>(cx)?;
-        let (buffer, action) = editor.update(cx, |editor, cx| {
-            let actions_menu =
-                if let ContextMenu::CodeActions(menu) = editor.hide_context_menu(cx)? {
-                    menu
-                } else {
-                    return None;
-                };
-            let action_ix = action_ix.unwrap_or(actions_menu.selected_item);
-            let action = actions_menu.actions.get(action_ix)?.clone();
-            Some((actions_menu.buffer, action))
-        })?;
+        let workspace = self.workspace.as_ref()?.upgrade(cx)?;
 
-        let apply_code_actions = workspace.project().update(cx, |project, cx| {
-            project.apply_code_action(buffer, action, true, cx)
-        });
-        Some(cx.spawn(|workspace, mut cx| async move {
+        let actions_menu = if let ContextMenu::CodeActions(menu) = self.hide_context_menu(cx)? {
+            menu
+        } else {
+            return None;
+        };
+        let action_ix = action_ix.unwrap_or(actions_menu.selected_item);
+        let action = actions_menu.actions.get(action_ix)?.clone();
+        let buffer = actions_menu.buffer;
+
+        let apply_code_actions = workspace
+            .read(cx)
+            .project()
+            .clone()
+            .update(cx, |project, cx| {
+                project.apply_code_action(buffer, action, true, cx)
+            });
+        Some(cx.spawn(|_, mut cx| async move {
             let project_transaction = apply_code_actions.await?;
+
             // TODO: replace this with opening a single tab that is a multibuffer
             workspace.update(&mut cx, |workspace, cx| {
                 for (buffer, _) in project_transaction.0 {
@@ -7527,6 +7559,7 @@ mod tests {
             three
         "
         .unindent();
+
         let buffer = cx.add_model(|cx| {
             Buffer::from_file(
                 0,
@@ -8217,7 +8250,7 @@ mod tests {
         settings: EditorSettings,
         cx: &mut ViewContext<Editor>,
     ) -> Editor {
-        Editor::for_buffer(buffer, Arc::new(move |_| settings.clone()), cx)
+        Editor::for_buffer(buffer, Arc::new(move |_| settings.clone()), None, cx)
     }
 }
 

@@ -15,8 +15,9 @@ use gpui::{
 use language::{
     point_from_lsp,
     proto::{deserialize_anchor, serialize_anchor},
-    range_from_lsp, Bias, Buffer, CodeAction, Diagnostic, DiagnosticEntry, File as _, Language,
-    LanguageRegistry, PointUtf16, ToLspPosition, ToOffset, ToPointUtf16,
+    range_from_lsp, Bias, Buffer, CodeAction, Completion, CompletionLabel, Diagnostic,
+    DiagnosticEntry, File as _, Language, LanguageRegistry, PointUtf16, ToLspPosition,
+    ToPointUtf16, Transaction,
 };
 use lsp::{DiagnosticSeverity, LanguageServer};
 use postage::{prelude::Stream, watch};
@@ -1035,7 +1036,7 @@ impl Project {
         Ok(())
     }
 
-    pub fn definition<T: ToOffset>(
+    pub fn definition<T: ToPointUtf16>(
         &self,
         source_buffer_handle: &ModelHandle<Buffer>,
         position: T,
@@ -1052,8 +1053,9 @@ impl Project {
             return Task::ready(Err(anyhow!("buffer does not belong to any worktree")));
         };
 
+        let position = position.to_point_utf16(source_buffer);
+
         if worktree.read(cx).as_local().is_some() {
-            let point = source_buffer.offset_to_point_utf16(position.to_offset(source_buffer));
             let buffer_abs_path = buffer_abs_path.unwrap();
             let lang_name;
             let lang_server;
@@ -1078,7 +1080,7 @@ impl Project {
                             text_document: lsp::TextDocumentIdentifier::new(
                                 lsp::Url::from_file_path(&buffer_abs_path).unwrap(),
                             ),
-                            position: lsp::Position::new(point.row, point.column),
+                            position: lsp::Position::new(position.row, position.column),
                         },
                         work_done_progress_params: Default::default(),
                         partial_result_params: Default::default(),
@@ -1165,6 +1167,193 @@ impl Project {
 
                     Ok(definitions)
                 })
+            })
+        } else {
+            Task::ready(Err(anyhow!("project does not have a remote id")))
+        }
+    }
+
+    pub fn completions<T: ToPointUtf16>(
+        &self,
+        source_buffer_handle: &ModelHandle<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Completion>>> {
+        let source_buffer_handle = source_buffer_handle.clone();
+        let source_buffer = source_buffer_handle.read(cx);
+        let buffer_id = source_buffer.remote_id();
+        let language = source_buffer.language().cloned();
+        let worktree;
+        let buffer_abs_path;
+        if let Some(file) = File::from_dyn(source_buffer.file()) {
+            worktree = file.worktree.clone();
+            buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
+        } else {
+            return Task::ready(Err(anyhow!("buffer does not belong to any worktree")));
+        };
+
+        let position = position.to_point_utf16(source_buffer);
+        let anchor = source_buffer.anchor_after(position);
+
+        if worktree.read(cx).as_local().is_some() {
+            let buffer_abs_path = buffer_abs_path.unwrap();
+            let lang_name;
+            let lang_server;
+            if let Some(lang) = &language {
+                lang_name = lang.name().to_string();
+                if let Some(server) = self
+                    .language_servers
+                    .get(&(worktree.read(cx).id(), lang_name.clone()))
+                {
+                    lang_server = server.clone();
+                } else {
+                    return Task::ready(Err(anyhow!("buffer does not have a language server")));
+                };
+            } else {
+                return Task::ready(Err(anyhow!("buffer does not have a language")));
+            }
+
+            cx.spawn(|_, cx| async move {
+                let completions = lang_server
+                .request::<lsp::request::Completion>(lsp::CompletionParams {
+                    text_document_position: lsp::TextDocumentPositionParams::new(
+                        lsp::TextDocumentIdentifier::new(
+                            lsp::Url::from_file_path(buffer_abs_path).unwrap(),
+                        ),
+                        position.to_lsp_position(),
+                    ),
+                    context: Default::default(),
+                    work_done_progress_params: Default::default(),
+                    partial_result_params: Default::default(),
+                })
+                .await?;
+
+                let completions = if let Some(completions) = completions {
+                    match completions {
+                        lsp::CompletionResponse::Array(completions) => completions,
+                        lsp::CompletionResponse::List(list) => list.items,
+                    }
+                } else {
+                    Default::default()
+                };
+
+                source_buffer_handle.read_with(&cx, |this, _| {
+                    Ok(completions.into_iter().filter_map(|lsp_completion| {
+                        let (old_range, new_text) = match lsp_completion.text_edit.as_ref()? {
+                            lsp::CompletionTextEdit::Edit(edit) => (range_from_lsp(edit.range), edit.new_text.clone()),
+                            lsp::CompletionTextEdit::InsertAndReplace(_) => {
+                                log::info!("received an insert and replace completion but we don't yet support that");
+                                return None
+                            },
+                        };
+
+                        let clipped_start = this.clip_point_utf16(old_range.start, Bias::Left);
+                        let clipped_end = this.clip_point_utf16(old_range.end, Bias::Left) ;
+                        if clipped_start == old_range.start && clipped_end == old_range.end {
+                            Some(Completion {
+                                old_range: this.anchor_before(old_range.start)..this.anchor_after(old_range.end),
+                                new_text,
+                                label: language.as_ref().and_then(|l| l.label_for_completion(&lsp_completion)).unwrap_or_else(|| CompletionLabel::plain(&lsp_completion)),
+                                lsp_completion,
+                            })
+                        } else {
+                            None
+                        }
+                    }).collect())
+                })
+
+            })
+        } else if let Some(project_id) = self.remote_id() {
+            let rpc = self.client.clone();
+            cx.foreground().spawn(async move {
+                let response = rpc
+                    .request(proto::GetCompletions {
+                        project_id,
+                        buffer_id,
+                        position: Some(language::proto::serialize_anchor(&anchor)),
+                    })
+                    .await?;
+                response
+                    .completions
+                    .into_iter()
+                    .map(|completion| {
+                        language::proto::deserialize_completion(completion, language.as_ref())
+                    })
+                    .collect()
+            })
+        } else {
+            Task::ready(Err(anyhow!("project does not have a remote id")))
+        }
+    }
+
+    pub fn apply_additional_edits_for_completion(
+        &self,
+        buffer_handle: ModelHandle<Buffer>,
+        completion: Completion,
+        push_to_history: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Option<Transaction>>> {
+        let buffer = buffer_handle.read(cx);
+        let buffer_id = buffer.remote_id();
+
+        if self.is_local() {
+            let lang_server = if let Some(language_server) = buffer.language_server() {
+                language_server.clone()
+            } else {
+                return Task::ready(Ok(Default::default()));
+            };
+
+            cx.spawn(|_, mut cx| async move {
+                let resolved_completion = lang_server
+                    .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
+                    .await?;
+                if let Some(additional_edits) = resolved_completion.additional_text_edits {
+                    buffer_handle.update(&mut cx, |buffer, cx| {
+                        buffer.finalize_last_transaction();
+                        buffer.start_transaction();
+                        buffer.apply_lsp_edits(additional_edits, None, cx).log_err();
+                        let transaction = if buffer.end_transaction(cx).is_some() {
+                            let transaction = buffer.finalize_last_transaction().unwrap().clone();
+                            if !push_to_history {
+                                buffer.forget_transaction(transaction.id);
+                            }
+                            Some(transaction)
+                        } else {
+                            None
+                        };
+                        Ok(transaction)
+                    })
+                } else {
+                    Ok(None)
+                }
+            })
+        } else if let Some(project_id) = self.remote_id() {
+            let client = self.client.clone();
+            cx.spawn(|_, mut cx| async move {
+                let response = client
+                    .request(proto::ApplyCompletionAdditionalEdits {
+                        project_id,
+                        buffer_id,
+                        completion: Some(language::proto::serialize_completion(&completion)),
+                    })
+                    .await?;
+
+                if let Some(transaction) = response.transaction {
+                    let transaction = language::proto::deserialize_transaction(transaction)?;
+                    buffer_handle
+                        .update(&mut cx, |buffer, _| {
+                            buffer.wait_for_edits(transaction.edit_ids.iter().copied())
+                        })
+                        .await;
+                    if push_to_history {
+                        buffer_handle.update(&mut cx, |buffer, _| {
+                            buffer.push_transaction(transaction.clone(), Instant::now());
+                        });
+                    }
+                    Ok(Some(transaction))
+                } else {
+                    Ok(None)
+                }
             })
         } else {
             Task::ready(Err(anyhow!("project does not have a remote id")))
@@ -2023,9 +2212,9 @@ impl Project {
             .position
             .and_then(language::proto::deserialize_anchor)
             .ok_or_else(|| anyhow!("invalid position"))?;
-        cx.spawn(|_, mut cx| async move {
-            match buffer
-                .update(&mut cx, |buffer, cx| buffer.completions(position, cx))
+        cx.spawn(|this, mut cx| async move {
+            match this
+                .update(&mut cx, |this, cx| this.completions(&buffer, position, cx))
                 .await
             {
                 Ok(completions) => rpc.respond(
@@ -2070,10 +2259,10 @@ impl Project {
                 .ok_or_else(|| anyhow!("invalid completion"))?,
             language,
         )?;
-        cx.spawn(|_, mut cx| async move {
-            match buffer
-                .update(&mut cx, |buffer, cx| {
-                    buffer.apply_additional_edits_for_completion(completion, false, cx)
+        cx.spawn(|this, mut cx| async move {
+            match this
+                .update(&mut cx, |this, cx| {
+                    this.apply_additional_edits_for_completion(buffer, completion, false, cx)
                 })
                 .await
             {

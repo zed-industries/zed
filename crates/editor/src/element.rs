@@ -1298,6 +1298,7 @@ mod tests {
                     let settings = settings.clone();
                     Arc::new(move |_| settings.clone())
                 },
+                None,
                 cx,
             )
         });
