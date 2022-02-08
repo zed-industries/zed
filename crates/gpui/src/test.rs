@@ -18,9 +18,9 @@ use crate::{
 #[cfg(test)]
 #[ctor::ctor]
 fn init_logger() {
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Info)
-        .init();
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::init();
+    }
 }
 
 pub fn run_test(

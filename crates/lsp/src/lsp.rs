@@ -562,7 +562,7 @@ impl FakeLanguageServer {
                     request.params,
                 );
             } else {
-                println!(
+                log::info!(
                     "skipping message in fake language server {:?}",
                     std::str::from_utf8(&self.buffer)
                 );
