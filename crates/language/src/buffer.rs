@@ -126,7 +126,7 @@ pub struct CodeAction<T> {
 
 struct LanguageServerState {
     server: Arc<LanguageServer>,
-    latest_snapshot: watch::Sender<Option<LanguageServerSnapshot>>,
+    latest_snapshot: watch::Sender<LanguageServerSnapshot>,
     pending_snapshots: BTreeMap<usize, LanguageServerSnapshot>,
     next_version: usize,
     _maintain_server: Task<()>,
@@ -666,76 +666,21 @@ impl Buffer {
         language_server: Option<Arc<lsp::LanguageServer>>,
         cx: &mut ModelContext<Self>,
     ) {
-        self.language_server = if let Some(server) = language_server {
+        self.language_server = if let Some((server, file)) =
+            language_server.zip(self.file.as_ref().and_then(|f| f.as_local()))
+        {
+            let initial_snapshot = LanguageServerSnapshot {
+                buffer_snapshot: self.text.snapshot(),
+                version: 0,
+                path: file.abs_path(cx).into(),
+            };
             let (latest_snapshot_tx, mut latest_snapshot_rx) =
-                watch::channel::<Option<LanguageServerSnapshot>>();
-
-            let maintain_changes = cx.background().spawn({
-                let server = server.clone();
-                async move {
-                    let mut prev_snapshot: Option<LanguageServerSnapshot> = None;
-                    while let Some(snapshot) = latest_snapshot_rx.recv().await {
-                        if let Some(snapshot) = snapshot {
-                            let uri = lsp::Url::from_file_path(&snapshot.path).unwrap();
-                            if let Some(prev_snapshot) = prev_snapshot {
-                                let changes = lsp::DidChangeTextDocumentParams {
-                                    text_document: lsp::VersionedTextDocumentIdentifier::new(
-                                        uri,
-                                        snapshot.version as i32,
-                                    ),
-                                    content_changes: snapshot
-                                        .buffer_snapshot
-                                        .edits_since::<(PointUtf16, usize)>(
-                                            prev_snapshot.buffer_snapshot.version(),
-                                        )
-                                        .map(|edit| {
-                                            let edit_start = edit.new.start.0;
-                                            let edit_end =
-                                                edit_start + (edit.old.end.0 - edit.old.start.0);
-                                            let new_text = snapshot
-                                                .buffer_snapshot
-                                                .text_for_range(edit.new.start.1..edit.new.end.1)
-                                                .collect();
-                                            lsp::TextDocumentContentChangeEvent {
-                                                range: Some(lsp::Range::new(
-                                                    edit_start.to_lsp_position(),
-                                                    edit_end.to_lsp_position(),
-                                                )),
-                                                range_length: None,
-                                                text: new_text,
-                                            }
-                                        })
-                                        .collect(),
-                                };
-                                server
-                                    .notify::<lsp::notification::DidChangeTextDocument>(changes)
-                                    .await?;
-                            } else {
-                                server
-                                    .notify::<lsp::notification::DidOpenTextDocument>(
-                                        lsp::DidOpenTextDocumentParams {
-                                            text_document: lsp::TextDocumentItem::new(
-                                                uri,
-                                                Default::default(),
-                                                snapshot.version as i32,
-                                                snapshot.buffer_snapshot.text().to_string(),
-                                            ),
-                                        },
-                                    )
-                                    .await?;
-                            }
-
-                            prev_snapshot = Some(snapshot);
-                        }
-                    }
-                    Ok(())
-                }
-            });
+                watch::channel_with::<LanguageServerSnapshot>(initial_snapshot.clone());
 
             Some(LanguageServerState {
                 latest_snapshot: latest_snapshot_tx,
-                pending_snapshots: Default::default(),
-                next_version: 0,
+                pending_snapshots: BTreeMap::from_iter([(0, initial_snapshot)]),
+                next_version: 1,
                 server: server.clone(),
                 _maintain_server: cx.spawn_weak(|this, mut cx| async move {
                     let mut capabilities = server.capabilities();
@@ -761,6 +706,63 @@ impl Buffer {
                             break;
                         }
                     }
+
+                    let maintain_changes = cx.background().spawn(async move {
+                        let initial_snapshot =
+                            latest_snapshot_rx.recv().await.ok_or_else(|| {
+                                anyhow!("buffer dropped before sending DidOpenTextDocument")
+                            })?;
+                        server
+                            .notify::<lsp::notification::DidOpenTextDocument>(
+                                lsp::DidOpenTextDocumentParams {
+                                    text_document: lsp::TextDocumentItem::new(
+                                        lsp::Url::from_file_path(initial_snapshot.path).unwrap(),
+                                        Default::default(),
+                                        initial_snapshot.version as i32,
+                                        initial_snapshot.buffer_snapshot.text(),
+                                    ),
+                                },
+                            )
+                            .await?;
+
+                        let mut prev_version = initial_snapshot.buffer_snapshot.version().clone();
+                        while let Some(snapshot) = latest_snapshot_rx.recv().await {
+                            let uri = lsp::Url::from_file_path(&snapshot.path).unwrap();
+                            let buffer_snapshot = snapshot.buffer_snapshot.clone();
+                            let content_changes = buffer_snapshot
+                                .edits_since::<(PointUtf16, usize)>(&prev_version)
+                                .map(|edit| {
+                                    let edit_start = edit.new.start.0;
+                                    let edit_end = edit_start + (edit.old.end.0 - edit.old.start.0);
+                                    let new_text = buffer_snapshot
+                                        .text_for_range(edit.new.start.1..edit.new.end.1)
+                                        .collect();
+                                    lsp::TextDocumentContentChangeEvent {
+                                        range: Some(lsp::Range::new(
+                                            edit_start.to_lsp_position(),
+                                            edit_end.to_lsp_position(),
+                                        )),
+                                        range_length: None,
+                                        text: new_text,
+                                    }
+                                })
+                                .collect();
+                            let changes = lsp::DidChangeTextDocumentParams {
+                                text_document: lsp::VersionedTextDocumentIdentifier::new(
+                                    uri,
+                                    snapshot.version as i32,
+                                ),
+                                content_changes,
+                            };
+                            server
+                                .notify::<lsp::notification::DidChangeTextDocument>(changes)
+                                .await?;
+
+                            prev_version = snapshot.buffer_snapshot.version().clone();
+                        }
+
+                        Ok::<_, anyhow::Error>(())
+                    });
 
                     maintain_changes.log_err().await;
                 }),
@@ -1385,24 +1387,22 @@ impl Buffer {
         } else {
             return;
         };
-        let abs_path = self
-            .file
-            .as_ref()
-            .and_then(|f| f.as_local())
-            .map_or(Path::new("/").to_path_buf(), |file| file.abs_path(cx));
+        let file = if let Some(file) = self.file.as_ref().and_then(|f| f.as_local()) {
+            file
+        } else {
+            return;
+        };
 
         let version = post_inc(&mut language_server.next_version);
         let snapshot = LanguageServerSnapshot {
             buffer_snapshot: self.text.snapshot(),
             version,
-            path: Arc::from(abs_path),
+            path: Arc::from(file.abs_path(cx)),
         };
         language_server
             .pending_snapshots
             .insert(version, snapshot.clone());
-        let _ = language_server
-            .latest_snapshot
-            .blocking_send(Some(snapshot));
+        let _ = language_server.latest_snapshot.blocking_send(snapshot);
     }
 
     pub fn edit<I, S, T>(
@@ -2049,6 +2049,18 @@ impl Entity for Buffer {
     fn release(&mut self, cx: &mut gpui::MutableAppContext) {
         if let Some(file) = self.file.as_ref() {
             file.buffer_removed(self.remote_id(), cx);
+            if let Some((lang_server, file)) = self.language_server.as_ref().zip(file.as_local()) {
+                let request = lang_server
+                    .server
+                    .notify::<lsp::notification::DidCloseTextDocument>(
+                        lsp::DidCloseTextDocumentParams {
+                            text_document: lsp::TextDocumentIdentifier::new(
+                                lsp::Url::from_file_path(file.abs_path(cx)).unwrap(),
+                            ),
+                        },
+                    );
+                cx.foreground().spawn(request).detach_and_log_err(cx);
+            }
         }
     }
 }
