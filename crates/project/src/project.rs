@@ -461,7 +461,7 @@ impl Project {
                 }
             })?;
 
-            rpc.send(proto::UnshareProject { project_id }).await?;
+            rpc.send(proto::UnshareProject { project_id })?;
             this.update(&mut cx, |this, cx| {
                 this.collaborators.clear();
                 this.shared_buffers.clear();
@@ -856,15 +856,13 @@ impl Project {
                 let this = cx.read(|cx| this.upgrade(cx))?;
                 match message {
                     LspEvent::DiagnosticsStart => {
-                        let send = this.update(&mut cx, |this, cx| {
+                        this.update(&mut cx, |this, cx| {
                             this.disk_based_diagnostics_started(cx);
-                            this.remote_id().map(|project_id| {
+                            if let Some(project_id) = this.remote_id() {
                                 rpc.send(proto::DiskBasedDiagnosticsUpdating { project_id })
-                            })
+                                    .log_err();
+                            }
                         });
-                        if let Some(send) = send {
-                            send.await.log_err();
-                        }
                     }
                     LspEvent::DiagnosticsUpdate(mut params) => {
                         language.process_diagnostics(&mut params);
@@ -874,15 +872,13 @@ impl Project {
                         });
                     }
                     LspEvent::DiagnosticsFinish => {
-                        let send = this.update(&mut cx, |this, cx| {
+                        this.update(&mut cx, |this, cx| {
                             this.disk_based_diagnostics_finished(cx);
-                            this.remote_id().map(|project_id| {
+                            if let Some(project_id) = this.remote_id() {
                                 rpc.send(proto::DiskBasedDiagnosticsUpdated { project_id })
-                            })
+                                    .log_err();
+                            }
                         });
-                        if let Some(send) = send {
-                            send.await.log_err();
-                        }
                     }
                 }
             }
@@ -1501,15 +1497,13 @@ impl Project {
                         };
 
                         if let Some(project_id) = self.remote_id() {
-                            let client = self.client.clone();
-                            let message = proto::UpdateBufferFile {
-                                project_id,
-                                buffer_id: *buffer_id as u64,
-                                file: Some(new_file.to_proto()),
-                            };
-                            cx.foreground()
-                                .spawn(async move { client.send(message).await })
-                                .detach_and_log_err(cx);
+                            self.client
+                                .send(proto::UpdateBufferFile {
+                                    project_id,
+                                    buffer_id: *buffer_id as u64,
+                                    file: Some(new_file.to_proto()),
+                                })
+                                .log_err();
                         }
                         buffer.file_updated(Box::new(new_file), cx).detach();
                     }
@@ -1829,8 +1823,7 @@ impl Project {
                             version: (&version).into(),
                             mtime: Some(mtime.into()),
                         },
-                    )
-                    .await?;
+                    )?;
 
                     Ok(())
                 }
@@ -1859,16 +1852,13 @@ impl Project {
             // associated with formatting.
             cx.spawn(|_| async move {
                 match format {
-                    Ok(()) => rpc.respond(receipt, proto::Ack {}).await?,
-                    Err(error) => {
-                        rpc.respond_with_error(
-                            receipt,
-                            proto::Error {
-                                message: error.to_string(),
-                            },
-                        )
-                        .await?
-                    }
+                    Ok(()) => rpc.respond(receipt, proto::Ack {})?,
+                    Err(error) => rpc.respond_with_error(
+                        receipt,
+                        proto::Error {
+                            message: error.to_string(),
+                        },
+                    )?,
                 }
                 Ok::<_, anyhow::Error>(())
             })
@@ -1902,27 +1892,21 @@ impl Project {
                 .update(&mut cx, |buffer, cx| buffer.completions(position, cx))
                 .await
             {
-                Ok(completions) => {
-                    rpc.respond(
-                        receipt,
-                        proto::GetCompletionsResponse {
-                            completions: completions
-                                .iter()
-                                .map(language::proto::serialize_completion)
-                                .collect(),
-                        },
-                    )
-                    .await
-                }
-                Err(error) => {
-                    rpc.respond_with_error(
-                        receipt,
-                        proto::Error {
-                            message: error.to_string(),
-                        },
-                    )
-                    .await
-                }
+                Ok(completions) => rpc.respond(
+                    receipt,
+                    proto::GetCompletionsResponse {
+                        completions: completions
+                            .iter()
+                            .map(language::proto::serialize_completion)
+                            .collect(),
+                    },
+                ),
+                Err(error) => rpc.respond_with_error(
+                    receipt,
+                    proto::Error {
+                        message: error.to_string(),
+                    },
+                ),
             }
         })
         .detach_and_log_err(cx);
@@ -1957,30 +1941,24 @@ impl Project {
                 })
                 .await
             {
-                Ok(edit_ids) => {
-                    rpc.respond(
-                        receipt,
-                        proto::ApplyCompletionAdditionalEditsResponse {
-                            additional_edits: edit_ids
-                                .into_iter()
-                                .map(|edit_id| proto::AdditionalEdit {
-                                    replica_id: edit_id.replica_id as u32,
-                                    local_timestamp: edit_id.value,
-                                })
-                                .collect(),
-                        },
-                    )
-                    .await
-                }
-                Err(error) => {
-                    rpc.respond_with_error(
-                        receipt,
-                        proto::Error {
-                            message: error.to_string(),
-                        },
-                    )
-                    .await
-                }
+                Ok(edit_ids) => rpc.respond(
+                    receipt,
+                    proto::ApplyCompletionAdditionalEditsResponse {
+                        additional_edits: edit_ids
+                            .into_iter()
+                            .map(|edit_id| proto::AdditionalEdit {
+                                replica_id: edit_id.replica_id as u32,
+                                local_timestamp: edit_id.value,
+                            })
+                            .collect(),
+                    },
+                ),
+                Err(error) => rpc.respond_with_error(
+                    receipt,
+                    proto::Error {
+                        message: error.to_string(),
+                    },
+                ),
             }
         })
         .detach_and_log_err(cx);
@@ -2026,7 +2004,7 @@ impl Project {
                     });
                 }
             });
-            rpc.respond(receipt, response).await?;
+            rpc.respond(receipt, response)?;
             Ok::<_, anyhow::Error>(())
         })
         .detach_and_log_err(cx);
@@ -2062,7 +2040,6 @@ impl Project {
                         buffer: Some(buffer),
                     },
                 )
-                .await
             }
             .log_err()
         })
@@ -2296,28 +2273,21 @@ impl<'a> Iterator for CandidateSetIter<'a> {
 impl Entity for Project {
     type Event = Event;
 
-    fn release(&mut self, cx: &mut gpui::MutableAppContext) {
+    fn release(&mut self, _: &mut gpui::MutableAppContext) {
         match &self.client_state {
             ProjectClientState::Local { remote_id_rx, .. } => {
                 if let Some(project_id) = *remote_id_rx.borrow() {
-                    let rpc = self.client.clone();
-                    cx.spawn(|_| async move {
-                        if let Err(err) = rpc.send(proto::UnregisterProject { project_id }).await {
-                            log::error!("error unregistering project: {}", err);
-                        }
-                    })
-                    .detach();
+                    self.client
+                        .send(proto::UnregisterProject { project_id })
+                        .log_err();
                 }
             }
             ProjectClientState::Remote { remote_id, .. } => {
-                let rpc = self.client.clone();
-                let project_id = *remote_id;
-                cx.spawn(|_| async move {
-                    if let Err(err) = rpc.send(proto::LeaveProject { project_id }).await {
-                        log::error!("error leaving project: {}", err);
-                    }
-                })
-                .detach();
+                self.client
+                    .send(proto::LeaveProject {
+                        project_id: *remote_id,
+                    })
+                    .log_err();
             }
         }
     }

@@ -149,7 +149,7 @@ pub enum Event {
 impl Entity for Worktree {
     type Event = Event;
 
-    fn release(&mut self, cx: &mut MutableAppContext) {
+    fn release(&mut self, _: &mut MutableAppContext) {
         if let Some(worktree) = self.as_local_mut() {
             if let Registration::Done { project_id } = worktree.registration {
                 let client = worktree.client.clone();
@@ -157,12 +157,7 @@ impl Entity for Worktree {
                     project_id,
                     worktree_id: worktree.id().to_proto(),
                 };
-                cx.foreground()
-                    .spawn(async move {
-                        client.send(unregister_message).await?;
-                        Ok::<_, anyhow::Error>(())
-                    })
-                    .detach_and_log_err(cx);
+                client.send(unregister_message).log_err();
             }
         }
     }
@@ -596,7 +591,7 @@ impl LocalWorktree {
         &mut self,
         worktree_path: Arc<Path>,
         diagnostics: Vec<DiagnosticEntry<PointUtf16>>,
-        cx: &mut ModelContext<Worktree>,
+        _: &mut ModelContext<Worktree>,
     ) -> Result<()> {
         let summary = DiagnosticSummary::new(&diagnostics);
         self.diagnostic_summaries
@@ -604,30 +599,19 @@ impl LocalWorktree {
         self.diagnostics.insert(worktree_path.clone(), diagnostics);
 
         if let Some(share) = self.share.as_ref() {
-            cx.foreground()
-                .spawn({
-                    let client = self.client.clone();
-                    let project_id = share.project_id;
-                    let worktree_id = self.id().to_proto();
-                    let path = worktree_path.to_string_lossy().to_string();
-                    async move {
-                        client
-                            .send(proto::UpdateDiagnosticSummary {
-                                project_id,
-                                worktree_id,
-                                summary: Some(proto::DiagnosticSummary {
-                                    path,
-                                    error_count: summary.error_count as u32,
-                                    warning_count: summary.warning_count as u32,
-                                    info_count: summary.info_count as u32,
-                                    hint_count: summary.hint_count as u32,
-                                }),
-                            })
-                            .await
-                            .log_err()
-                    }
+            self.client
+                .send(proto::UpdateDiagnosticSummary {
+                    project_id: share.project_id,
+                    worktree_id: self.id().to_proto(),
+                    summary: Some(proto::DiagnosticSummary {
+                        path: worktree_path.to_string_lossy().to_string(),
+                        error_count: summary.error_count as u32,
+                        warning_count: summary.warning_count as u32,
+                        info_count: summary.info_count as u32,
+                        hint_count: summary.hint_count as u32,
+                    }),
                 })
-                .detach();
+                .log_err();
         }
 
         Ok(())
@@ -787,7 +771,7 @@ impl LocalWorktree {
                 while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
                     let message =
                         snapshot.build_update(&prev_snapshot, project_id, worktree_id, false);
-                    match rpc.send(message).await {
+                    match rpc.send(message) {
                         Ok(()) => prev_snapshot = snapshot,
                         Err(err) => log::error!("error sending snapshot diff {}", err),
                     }
@@ -1377,8 +1361,7 @@ impl language::File for File {
                             buffer_id,
                             version: (&version).into(),
                             mtime: Some(entry.mtime.into()),
-                        })
-                        .await?;
+                        })?;
                     }
                     Ok((version, entry.mtime))
                 })
@@ -1501,23 +1484,15 @@ impl language::File for File {
     }
 
     fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext) {
-        self.worktree.update(cx, |worktree, cx| {
+        self.worktree.update(cx, |worktree, _| {
             if let Worktree::Remote(worktree) = worktree {
-                let project_id = worktree.project_id;
-                let rpc = worktree.client.clone();
-                cx.background()
-                    .spawn(async move {
-                        if let Err(error) = rpc
-                            .send(proto::CloseBuffer {
-                                project_id,
-                                buffer_id,
-                            })
-                            .await
-                        {
-                            log::error!("error closing remote buffer: {}", error);
-                        }
+                worktree
+                    .client
+                    .send(proto::CloseBuffer {
+                        project_id: worktree.project_id,
+                        buffer_id,
                     })
-                    .detach();
+                    .log_err();
             }
         });
     }
@@ -1563,16 +1538,15 @@ impl language::LocalFile for File {
     ) {
         let worktree = self.worktree.read(cx).as_local().unwrap();
         if let Some(project_id) = worktree.share.as_ref().map(|share| share.project_id) {
-            let rpc = worktree.client.clone();
-            let message = proto::BufferReloaded {
-                project_id,
-                buffer_id,
-                version: version.into(),
-                mtime: Some(mtime.into()),
-            };
-            cx.background()
-                .spawn(async move { rpc.send(message).await })
-                .detach_and_log_err(cx);
+            worktree
+                .client
+                .send(proto::BufferReloaded {
+                    project_id,
+                    buffer_id,
+                    version: version.into(),
+                    mtime: Some(mtime.into()),
+                })
+                .log_err();
         }
     }
 }
