@@ -109,6 +109,9 @@ pub struct Definition {
     pub target_range: Range<language::Anchor>,
 }
 
+#[derive(Default)]
+pub struct ProjectTransaction(pub HashMap<ModelHandle<Buffer>, language::Transaction>);
+
 impl DiagnosticSummary {
     fn new<'a, T: 'a>(diagnostics: impl IntoIterator<Item = &'a DiagnosticEntry<T>>) -> Self {
         let mut this = Self {
@@ -1174,8 +1177,7 @@ impl Project {
         mut action: CodeAction<language::Anchor>,
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<HashMap<ModelHandle<Buffer>, Vec<(Range<language::Anchor>, clock::Local)>>>>
-    {
+    ) -> Task<Result<ProjectTransaction>> {
         if self.is_local() {
             let buffer = buffer_handle.read(cx);
             let lang_name = if let Some(lang) = buffer.language() {
@@ -1237,7 +1239,7 @@ impl Project {
                     }
                 }
 
-                let mut edited_buffers = HashMap::default();
+                let mut project_transaction = ProjectTransaction::default();
                 for operation in operations {
                     match operation {
                         lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Create(op)) => {
@@ -1298,34 +1300,38 @@ impl Project {
                                     )
                                 })
                                 .await?;
-                            let edits = buffer_to_edit.update(&mut cx, |buffer, cx| {
+                            let transaction = buffer_to_edit.update(&mut cx, |buffer, cx| {
                                 let edits = op.edits.into_iter().map(|edit| match edit {
                                     lsp::OneOf::Left(edit) => edit,
                                     lsp::OneOf::Right(edit) => edit.text_edit,
                                 });
-                                if !push_to_history {
-                                    buffer.avoid_grouping_next_transaction();
-                                }
-                                buffer.start_transaction();
-                                let edits =
-                                    buffer.apply_lsp_edits(edits, op.text_document.version, cx);
-                                if let Some(transaction_id) = buffer.end_transaction(cx) {
-                                    if !push_to_history {
-                                        buffer.forget_transaction(transaction_id);
-                                    }
-                                }
 
-                                edits
-                            })?;
-                            edited_buffers
-                                .entry(buffer_to_edit)
-                                .or_insert(Vec::new())
-                                .extend(edits);
+                                buffer.finalize_last_transaction();
+                                buffer.start_transaction();
+                                buffer
+                                    .apply_lsp_edits(edits, op.text_document.version, cx)
+                                    .log_err();
+                                let transaction = if buffer.end_transaction(cx).is_some() {
+                                    let transaction =
+                                        buffer.finalize_last_transaction().unwrap().clone();
+                                    if !push_to_history {
+                                        buffer.forget_transaction(transaction.id);
+                                    }
+                                    Some(transaction)
+                                } else {
+                                    None
+                                };
+
+                                transaction
+                            });
+                            if let Some(transaction) = transaction {
+                                project_transaction.0.insert(buffer_to_edit, transaction);
+                            }
                         }
                     }
                 }
 
-                Ok(edited_buffers)
+                Ok(project_transaction)
             })
         } else if let Some(project_id) = self.remote_id() {
             let client = self.client.clone();
@@ -1335,35 +1341,34 @@ impl Project {
                 action: Some(language::proto::serialize_code_action(&action)),
             };
             cx.spawn(|this, mut cx| async move {
-                let response = client.request(request).await?;
-                let mut edited_buffers = HashMap::default();
-                for buffer_edit in response.buffer_edits {
-                    let buffer = buffer_edit
-                        .buffer
-                        .ok_or_else(|| anyhow!("invalid buffer"))?;
+                let response = client
+                    .request(request)
+                    .await?
+                    .transaction
+                    .ok_or_else(|| anyhow!("missing transaction"))?;
+                let mut project_transaction = ProjectTransaction::default();
+                for (buffer, transaction) in response.buffers.into_iter().zip(response.transactions)
+                {
                     let buffer = this.update(&mut cx, |this, cx| {
                         this.deserialize_remote_buffer(buffer, cx)
                     })?;
-
-                    let buffer_edits = edited_buffers.entry(buffer.clone()).or_insert(Vec::new());
-                    for edit in buffer_edit.edits {
-                        buffer_edits.push(language::proto::deserialize_code_action_edit(edit)?);
-                    }
+                    let transaction = language::proto::deserialize_transaction(transaction)?;
 
                     buffer
                         .update(&mut cx, |buffer, _| {
-                            buffer.wait_for_edits(buffer_edits.iter().map(|e| e.1))
+                            buffer.wait_for_edits(transaction.edit_ids.iter().copied())
                         })
                         .await;
 
                     if push_to_history {
                         buffer.update(&mut cx, |buffer, _| {
-                            buffer
-                                .push_transaction(buffer_edits.iter().map(|e| e.1), Instant::now());
+                            buffer.push_transaction(transaction.clone(), Instant::now());
                         });
                     }
+
+                    project_transaction.0.insert(buffer, transaction);
                 }
-                Ok(edited_buffers)
+                Ok(project_transaction)
             })
         } else {
             Task::ready(Err(anyhow!("project does not have a remote id")))
@@ -1975,13 +1980,12 @@ impl Project {
                 })
                 .await
             {
-                Ok(edit_ids) => rpc.respond(
+                Ok(transaction) => rpc.respond(
                     receipt,
                     proto::ApplyCompletionAdditionalEditsResponse {
-                        additional_edits: edit_ids
-                            .into_iter()
-                            .map(language::proto::serialize_edit_id)
-                            .collect(),
+                        transaction: transaction
+                            .as_ref()
+                            .map(language::proto::serialize_transaction),
                     },
                 ),
                 Err(error) => rpc.respond_with_error(
@@ -2062,20 +2066,25 @@ impl Project {
         let apply_code_action = self.apply_code_action(buffer, action, false, cx);
         cx.spawn(|this, mut cx| async move {
             match apply_code_action.await {
-                Ok(edited_buffers) => this.update(&mut cx, |this, cx| {
-                    let buffer_edits = edited_buffers
-                        .into_iter()
-                        .map(|(buffer, edits)| proto::CodeActionBufferEdits {
-                            buffer: Some(this.serialize_buffer_for_peer(&buffer, sender_id, cx)),
-                            edits: edits
-                                .into_iter()
-                                .map(|(range, edit_id)| {
-                                    language::proto::serialize_code_action_edit(edit_id, &range)
-                                })
-                                .collect(),
-                        })
-                        .collect();
-                    rpc.respond(receipt, proto::ApplyCodeActionResponse { buffer_edits })
+                Ok(project_transaction) => this.update(&mut cx, |this, cx| {
+                    let mut serialized_transaction = proto::ProjectTransaction {
+                        buffers: Default::default(),
+                        transactions: Default::default(),
+                    };
+                    for (buffer, transaction) in project_transaction.0 {
+                        serialized_transaction
+                            .buffers
+                            .push(this.serialize_buffer_for_peer(&buffer, sender_id, cx));
+                        serialized_transaction
+                            .transactions
+                            .push(language::proto::serialize_transaction(&transaction));
+                    }
+                    rpc.respond(
+                        receipt,
+                        proto::ApplyCodeActionResponse {
+                            transaction: Some(serialized_transaction),
+                        },
+                    )
                 }),
                 Err(error) => rpc.respond_with_error(
                     receipt,

@@ -38,7 +38,7 @@ use text::{operation_queue::OperationQueue, rope::TextDimension};
 pub use text::{Buffer as TextBuffer, Operation as _, *};
 use theme::SyntaxTheme;
 use tree_sitter::{InputEdit, QueryCursor, Tree};
-use util::{post_inc, TryFutureExt as _};
+use util::{post_inc, ResultExt, TryFutureExt as _};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use tree_sitter_rust;
@@ -214,7 +214,7 @@ pub trait File {
         buffer_id: u64,
         completion: Completion<Anchor>,
         cx: &mut MutableAppContext,
-    ) -> Task<Result<Vec<clock::Local>>>;
+    ) -> Task<Result<Option<Transaction>>>;
 
     fn code_actions(
         &self,
@@ -307,7 +307,7 @@ impl File for FakeFile {
         _: u64,
         _: Completion<Anchor>,
         _: &mut MutableAppContext,
-    ) -> Task<Result<Vec<clock::Local>>> {
+    ) -> Task<Result<Option<Transaction>>> {
         Task::ready(Ok(Default::default()))
     }
 
@@ -1339,16 +1339,12 @@ impl Buffer {
         }
     }
 
-    pub fn push_transaction(
-        &mut self,
-        edit_ids: impl IntoIterator<Item = clock::Local>,
-        now: Instant,
-    ) {
-        self.text.push_transaction(edit_ids, now);
+    pub fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
+        self.text.push_transaction(transaction, now);
     }
 
-    pub fn avoid_grouping_next_transaction(&mut self) {
-        self.text.avoid_grouping_next_transaction();
+    pub fn finalize_last_transaction(&mut self) -> Option<&Transaction> {
+        self.text.finalize_last_transaction()
     }
 
     pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
@@ -1536,7 +1532,7 @@ impl Buffer {
         edits: impl IntoIterator<Item = lsp::TextEdit>,
         version: Option<i32>,
         cx: &mut ModelContext<Self>,
-    ) -> Result<Vec<(Range<Anchor>, clock::Local)>> {
+    ) -> Result<()> {
         let mut anchored_edits = Vec::new();
         let snapshot =
             if let Some((version, language_server)) = version.zip(self.language_server.as_mut()) {
@@ -1560,14 +1556,11 @@ impl Buffer {
         }
 
         self.start_transaction();
-        let edit_ids = anchored_edits
-            .into_iter()
-            .filter_map(|(range, new_text)| {
-                Some((range.clone(), self.edit([range], new_text, cx)?))
-            })
-            .collect();
+        for (range, new_text) in anchored_edits {
+            self.edit([range], new_text, cx);
+        }
         self.end_transaction(cx);
-        Ok(edit_ids)
+        Ok(())
     }
 
     fn did_edit(
@@ -1941,7 +1934,7 @@ impl Buffer {
         completion: Completion<Anchor>,
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<clock::Local>>> {
+    ) -> Task<Result<Option<Transaction>>> {
         let file = if let Some(file) = self.file.as_ref() {
             file
         } else {
@@ -1961,20 +1954,22 @@ impl Buffer {
                     .await?;
                 if let Some(additional_edits) = resolved_completion.additional_text_edits {
                     this.update(&mut cx, |this, cx| {
-                        if !push_to_history {
-                            this.avoid_grouping_next_transaction();
-                        }
+                        this.finalize_last_transaction();
                         this.start_transaction();
-                        let edits = this.apply_lsp_edits(additional_edits, None, cx);
-                        if let Some(transaction_id) = this.end_transaction(cx) {
+                        this.apply_lsp_edits(additional_edits, None, cx).log_err();
+                        let transaction = if this.end_transaction(cx).is_some() {
+                            let transaction = this.finalize_last_transaction().unwrap().clone();
                             if !push_to_history {
-                                this.forget_transaction(transaction_id);
+                                this.forget_transaction(transaction.id);
                             }
-                        }
-                        Ok(edits?.into_iter().map(|(_, edit_id)| edit_id).collect())
+                            Some(transaction)
+                        } else {
+                            None
+                        };
+                        Ok(transaction)
                     })
                 } else {
-                    Ok(Default::default())
+                    Ok(None)
                 }
             })
         } else {
@@ -1984,17 +1979,20 @@ impl Buffer {
                 cx.as_mut(),
             );
             cx.spawn(|this, mut cx| async move {
-                let edit_ids = apply_edits.await?;
-                this.update(&mut cx, |this, _| {
-                    this.wait_for_edits(edit_ids.iter().copied())
-                })
-                .await;
-                if push_to_history {
+                if let Some(transaction) = apply_edits.await? {
                     this.update(&mut cx, |this, _| {
-                        this.push_transaction(edit_ids.iter().copied(), Instant::now());
-                    });
+                        this.wait_for_edits(transaction.edit_ids.iter().copied())
+                    })
+                    .await;
+                    if push_to_history {
+                        this.update(&mut cx, |this, _| {
+                            this.push_transaction(transaction.clone(), Instant::now());
+                        });
+                    }
+                    Ok(Some(transaction))
+                } else {
+                    Ok(None)
                 }
-                Ok(edit_ids)
             })
         }
     }

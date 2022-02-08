@@ -431,28 +431,28 @@ fn test_undo_redo() {
     buffer.edit(vec![3..5], "cd");
     assert_eq!(buffer.text(), "1abcdef234");
 
-    let transactions = buffer.history.undo_stack.clone();
-    assert_eq!(transactions.len(), 3);
+    let entries = buffer.history.undo_stack.clone();
+    assert_eq!(entries.len(), 3);
 
-    buffer.undo_or_redo(transactions[0].clone()).unwrap();
+    buffer.undo_or_redo(entries[0].transaction.clone()).unwrap();
     assert_eq!(buffer.text(), "1cdef234");
-    buffer.undo_or_redo(transactions[0].clone()).unwrap();
+    buffer.undo_or_redo(entries[0].transaction.clone()).unwrap();
     assert_eq!(buffer.text(), "1abcdef234");
 
-    buffer.undo_or_redo(transactions[1].clone()).unwrap();
+    buffer.undo_or_redo(entries[1].transaction.clone()).unwrap();
     assert_eq!(buffer.text(), "1abcdx234");
-    buffer.undo_or_redo(transactions[2].clone()).unwrap();
+    buffer.undo_or_redo(entries[2].transaction.clone()).unwrap();
     assert_eq!(buffer.text(), "1abx234");
-    buffer.undo_or_redo(transactions[1].clone()).unwrap();
+    buffer.undo_or_redo(entries[1].transaction.clone()).unwrap();
     assert_eq!(buffer.text(), "1abyzef234");
-    buffer.undo_or_redo(transactions[2].clone()).unwrap();
+    buffer.undo_or_redo(entries[2].transaction.clone()).unwrap();
     assert_eq!(buffer.text(), "1abcdef234");
 
-    buffer.undo_or_redo(transactions[2].clone()).unwrap();
+    buffer.undo_or_redo(entries[2].transaction.clone()).unwrap();
     assert_eq!(buffer.text(), "1abyzef234");
-    buffer.undo_or_redo(transactions[0].clone()).unwrap();
+    buffer.undo_or_redo(entries[0].transaction.clone()).unwrap();
     assert_eq!(buffer.text(), "1yzef234");
-    buffer.undo_or_redo(transactions[1].clone()).unwrap();
+    buffer.undo_or_redo(entries[1].transaction.clone()).unwrap();
     assert_eq!(buffer.text(), "1234");
 }
 
@@ -510,7 +510,7 @@ fn test_avoid_grouping_next_transaction() {
     buffer.end_transaction_at(now);
     assert_eq!(buffer.text(), "12cd56");
 
-    buffer.avoid_grouping_next_transaction();
+    buffer.finalize_last_transaction();
     buffer.start_transaction_at(now);
     buffer.edit(vec![4..5], "e");
     buffer.end_transaction_at(now).unwrap();

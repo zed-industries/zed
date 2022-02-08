@@ -27,7 +27,6 @@ use text::{
     AnchorRangeExt as _, Edit, Point, PointUtf16, TextSummary,
 };
 use theme::SyntaxTheme;
-use util::post_inc;
 
 const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
 
@@ -43,7 +42,7 @@ pub struct MultiBuffer {
 }
 
 struct History {
-    next_transaction_id: usize,
+    next_transaction_id: TransactionId,
     undo_stack: Vec<Transaction>,
     redo_stack: Vec<Transaction>,
     transaction_depth: usize,
@@ -59,7 +58,7 @@ pub enum CharKind {
 }
 
 struct Transaction {
-    id: usize,
+    id: TransactionId,
     buffer_transactions: HashSet<(usize, text::TransactionId)>,
     first_edit_at: Instant,
     last_edit_at: Instant,
@@ -472,9 +471,11 @@ impl MultiBuffer {
         }
     }
 
-    pub fn avoid_grouping_next_transaction(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn finalize_last_transaction(&mut self, cx: &mut ModelContext<Self>) {
         for BufferState { buffer, .. } in self.buffers.borrow().values() {
-            buffer.update(cx, |buffer, _| buffer.avoid_grouping_next_transaction());
+            buffer.update(cx, |buffer, _| {
+                buffer.finalize_last_transaction();
+            });
         }
     }
 
@@ -2092,7 +2093,7 @@ impl History {
     fn start_transaction(&mut self, now: Instant) -> Option<TransactionId> {
         self.transaction_depth += 1;
         if self.transaction_depth == 1 {
-            let id = post_inc(&mut self.next_transaction_id);
+            let id = self.next_transaction_id.tick();
             self.undo_stack.push(Transaction {
                 id,
                 buffer_transactions: Default::default(),

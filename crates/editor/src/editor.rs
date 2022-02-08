@@ -2081,10 +2081,10 @@ impl Editor {
             project.apply_code_action(buffer, action, true, cx)
         });
         Some(cx.spawn(|workspace, mut cx| async move {
-            let buffers = apply_code_actions.await?;
+            let project_transaction = apply_code_actions.await?;
             // TODO: replace this with opening a single tab that is a multibuffer
             workspace.update(&mut cx, |workspace, cx| {
-                for (buffer, _) in buffers {
+                for (buffer, _) in project_transaction.0 {
                     workspace.open_item(BufferItemHandle(buffer), cx);
                 }
             });
@@ -4825,7 +4825,7 @@ impl View for Editor {
         self.focused = true;
         self.blink_cursors(self.blink_epoch, cx);
         self.buffer.update(cx, |buffer, cx| {
-            buffer.avoid_grouping_next_transaction(cx);
+            buffer.finalize_last_transaction(cx);
             buffer.set_active_selections(&self.selections, cx)
         });
     }

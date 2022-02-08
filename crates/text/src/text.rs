@@ -40,7 +40,7 @@ pub use subscription::*;
 pub use sum_tree::Bias;
 use sum_tree::{FilterCursor, SumTree};
 
-pub type TransactionId = usize;
+pub type TransactionId = clock::Local;
 
 pub struct Buffer {
     snapshot: BufferSnapshot,
@@ -67,28 +67,33 @@ pub struct BufferSnapshot {
 }
 
 #[derive(Clone, Debug)]
-pub struct Transaction {
-    id: TransactionId,
-    start: clock::Global,
-    end: clock::Global,
-    edits: Vec<clock::Local>,
-    ranges: Vec<Range<FullOffset>>,
+pub struct HistoryEntry {
+    transaction: Transaction,
     first_edit_at: Instant,
     last_edit_at: Instant,
     suppress_grouping: bool,
 }
 
-impl Transaction {
+#[derive(Clone, Debug)]
+pub struct Transaction {
+    pub id: TransactionId,
+    pub edit_ids: Vec<clock::Local>,
+    pub start: clock::Global,
+    pub end: clock::Global,
+    pub ranges: Vec<Range<FullOffset>>,
+}
+
+impl HistoryEntry {
     fn push_edit(&mut self, edit: &EditOperation) {
-        self.edits.push(edit.timestamp.local());
-        self.end.observe(edit.timestamp.local());
+        self.transaction.edit_ids.push(edit.timestamp.local());
+        self.transaction.end.observe(edit.timestamp.local());
 
         let mut other_ranges = edit.ranges.iter().peekable();
         let mut new_ranges = Vec::new();
         let insertion_len = edit.new_text.as_ref().map_or(0, |t| t.len());
         let mut delta = 0;
 
-        for mut self_range in self.ranges.iter().cloned() {
+        for mut self_range in self.transaction.ranges.iter().cloned() {
             self_range.start += delta;
             self_range.end += delta;
 
@@ -122,7 +127,7 @@ impl Transaction {
             delta += insertion_len;
         }
 
-        self.ranges = new_ranges;
+        self.transaction.ranges = new_ranges;
     }
 }
 
@@ -131,11 +136,10 @@ pub struct History {
     // TODO: Turn this into a String or Rope, maybe.
     pub base_text: Arc<str>,
     operations: HashMap<clock::Local, Operation>,
-    undo_stack: Vec<Transaction>,
-    redo_stack: Vec<Transaction>,
+    undo_stack: Vec<HistoryEntry>,
+    redo_stack: Vec<HistoryEntry>,
     transaction_depth: usize,
     group_interval: Duration,
-    next_transaction_id: TransactionId,
 }
 
 impl History {
@@ -147,7 +151,6 @@ impl History {
             redo_stack: Vec::new(),
             transaction_depth: 0,
             group_interval: Duration::from_millis(300),
-            next_transaction_id: 0,
         }
     }
 
@@ -155,17 +158,23 @@ impl History {
         self.operations.insert(op.local_timestamp(), op);
     }
 
-    fn start_transaction(&mut self, start: clock::Global, now: Instant) -> Option<TransactionId> {
+    fn start_transaction(
+        &mut self,
+        start: clock::Global,
+        now: Instant,
+        local_clock: &mut clock::Local,
+    ) -> Option<TransactionId> {
         self.transaction_depth += 1;
         if self.transaction_depth == 1 {
-            let id = self.next_transaction_id;
-            self.next_transaction_id += 1;
-            self.undo_stack.push(Transaction {
-                id,
-                start: start.clone(),
-                end: start,
-                edits: Vec::new(),
-                ranges: Vec::new(),
+            let id = local_clock.tick();
+            self.undo_stack.push(HistoryEntry {
+                transaction: Transaction {
+                    id,
+                    start: start.clone(),
+                    end: start,
+                    edit_ids: Default::default(),
+                    ranges: Default::default(),
+                },
                 first_edit_at: now,
                 last_edit_at: now,
                 suppress_grouping: false,
@@ -176,17 +185,24 @@ impl History {
         }
     }
 
-    fn end_transaction(&mut self, now: Instant) -> Option<&Transaction> {
+    fn end_transaction(&mut self, now: Instant) -> Option<&HistoryEntry> {
         assert_ne!(self.transaction_depth, 0);
         self.transaction_depth -= 1;
         if self.transaction_depth == 0 {
-            if self.undo_stack.last().unwrap().ranges.is_empty() {
+            if self
+                .undo_stack
+                .last()
+                .unwrap()
+                .transaction
+                .ranges
+                .is_empty()
+            {
                 self.undo_stack.pop();
                 None
             } else {
-                let transaction = self.undo_stack.last_mut().unwrap();
-                transaction.last_edit_at = now;
-                Some(transaction)
+                let entry = self.undo_stack.last_mut().unwrap();
+                entry.last_edit_at = now;
+                Some(entry)
             }
         } else {
             None
@@ -195,16 +211,15 @@ impl History {
 
     fn group(&mut self) -> Option<TransactionId> {
         let mut new_len = self.undo_stack.len();
-        let mut transactions = self.undo_stack.iter_mut();
+        let mut entries = self.undo_stack.iter_mut();
 
-        if let Some(mut transaction) = transactions.next_back() {
-            while let Some(prev_transaction) = transactions.next_back() {
-                if !prev_transaction.suppress_grouping
-                    && transaction.first_edit_at - prev_transaction.last_edit_at
-                        <= self.group_interval
-                    && transaction.start == prev_transaction.end
+        if let Some(mut entry) = entries.next_back() {
+            while let Some(prev_entry) = entries.next_back() {
+                if !prev_entry.suppress_grouping
+                    && entry.first_edit_at - prev_entry.last_edit_at <= self.group_interval
+                    && entry.transaction.start == prev_entry.transaction.end
                 {
-                    transaction = prev_transaction;
+                    entry = prev_entry;
                     new_len -= 1;
                 } else {
                     break;
@@ -212,45 +227,39 @@ impl History {
             }
         }
 
-        let (transactions_to_keep, transactions_to_merge) = self.undo_stack.split_at_mut(new_len);
-        if let Some(last_transaction) = transactions_to_keep.last_mut() {
-            for transaction in &*transactions_to_merge {
-                for edit_id in &transaction.edits {
-                    last_transaction.push_edit(self.operations[edit_id].as_edit().unwrap());
+        let (entries_to_keep, entries_to_merge) = self.undo_stack.split_at_mut(new_len);
+        if let Some(last_entry) = entries_to_keep.last_mut() {
+            for entry in &*entries_to_merge {
+                for edit_id in &entry.transaction.edit_ids {
+                    last_entry.push_edit(self.operations[edit_id].as_edit().unwrap());
                 }
             }
 
-            if let Some(transaction) = transactions_to_merge.last_mut() {
-                last_transaction.last_edit_at = transaction.last_edit_at;
-                last_transaction.end = transaction.end.clone();
+            if let Some(entry) = entries_to_merge.last_mut() {
+                last_entry.last_edit_at = entry.last_edit_at;
+                last_entry.transaction.end = entry.transaction.end.clone();
             }
         }
 
         self.undo_stack.truncate(new_len);
-        self.undo_stack.last().map(|t| t.id)
+        self.undo_stack.last().map(|e| e.transaction.id)
     }
 
-    fn avoid_grouping_next_transaction(&mut self) {
-        if let Some(transaction) = self.undo_stack.last_mut() {
-            transaction.suppress_grouping = true;
-        }
+    fn finalize_last_transaction(&mut self) -> Option<&Transaction> {
+        self.undo_stack.last_mut().map(|entry| {
+            entry.suppress_grouping = true;
+            &entry.transaction
+        })
     }
 
-    fn push_transaction(&mut self, edit_ids: impl IntoIterator<Item = clock::Local>, now: Instant) {
+    fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
         assert_eq!(self.transaction_depth, 0);
-        let mut edit_ids = edit_ids.into_iter().peekable();
-
-        if let Some(first_edit) = edit_ids
-            .peek()
-            .and_then(|e| self.operations.get(&e)?.as_edit())
-        {
-            let version = first_edit.version.clone();
-            self.start_transaction(version, now);
-            for edit_id in edit_ids {
-                self.push_undo(edit_id);
-            }
-            self.end_transaction(now);
-        }
+        self.undo_stack.push(HistoryEntry {
+            transaction,
+            first_edit_at: now,
+            last_edit_at: now,
+            suppress_grouping: false,
+        });
     }
 
     fn push_undo(&mut self, op_id: clock::Local) {
@@ -261,21 +270,25 @@ impl History {
         }
     }
 
-    fn pop_undo(&mut self) -> Option<&Transaction> {
+    fn pop_undo(&mut self) -> Option<&HistoryEntry> {
         assert_eq!(self.transaction_depth, 0);
-        if let Some(transaction) = self.undo_stack.pop() {
-            self.redo_stack.push(transaction);
+        if let Some(entry) = self.undo_stack.pop() {
+            self.redo_stack.push(entry);
             self.redo_stack.last()
         } else {
             None
         }
     }
 
-    fn remove_from_undo(&mut self, transaction_id: TransactionId) -> Option<&Transaction> {
+    fn remove_from_undo(&mut self, transaction_id: TransactionId) -> Option<&HistoryEntry> {
         assert_eq!(self.transaction_depth, 0);
-        if let Some(transaction_ix) = self.undo_stack.iter().rposition(|t| t.id == transaction_id) {
-            let transaction = self.undo_stack.remove(transaction_ix);
-            self.redo_stack.push(transaction);
+        if let Some(entry_ix) = self
+            .undo_stack
+            .iter()
+            .rposition(|entry| entry.transaction.id == transaction_id)
+        {
+            let entry = self.undo_stack.remove(entry_ix);
+            self.redo_stack.push(entry);
             self.redo_stack.last()
         } else {
             None
@@ -284,30 +297,40 @@ impl History {
 
     fn forget(&mut self, transaction_id: TransactionId) {
         assert_eq!(self.transaction_depth, 0);
-        if let Some(transaction_ix) = self.undo_stack.iter().rposition(|t| t.id == transaction_id) {
-            self.undo_stack.remove(transaction_ix);
-        } else if let Some(transaction_ix) =
-            self.redo_stack.iter().rposition(|t| t.id == transaction_id)
+        if let Some(entry_ix) = self
+            .undo_stack
+            .iter()
+            .rposition(|entry| entry.transaction.id == transaction_id)
         {
-            self.undo_stack.remove(transaction_ix);
+            self.undo_stack.remove(entry_ix);
+        } else if let Some(entry_ix) = self
+            .redo_stack
+            .iter()
+            .rposition(|entry| entry.transaction.id == transaction_id)
+        {
+            self.undo_stack.remove(entry_ix);
         }
     }
 
-    fn pop_redo(&mut self) -> Option<&Transaction> {
+    fn pop_redo(&mut self) -> Option<&HistoryEntry> {
         assert_eq!(self.transaction_depth, 0);
-        if let Some(transaction) = self.redo_stack.pop() {
-            self.undo_stack.push(transaction);
+        if let Some(entry) = self.redo_stack.pop() {
+            self.undo_stack.push(entry);
             self.undo_stack.last()
         } else {
             None
         }
     }
 
-    fn remove_from_redo(&mut self, transaction_id: TransactionId) -> Option<&Transaction> {
+    fn remove_from_redo(&mut self, transaction_id: TransactionId) -> Option<&HistoryEntry> {
         assert_eq!(self.transaction_depth, 0);
-        if let Some(transaction_ix) = self.redo_stack.iter().rposition(|t| t.id == transaction_id) {
-            let transaction = self.redo_stack.remove(transaction_ix);
-            self.undo_stack.push(transaction);
+        if let Some(entry_ix) = self
+            .redo_stack
+            .iter()
+            .rposition(|entry| entry.transaction.id == transaction_id)
+        {
+            let entry = self.redo_stack.remove(entry_ix);
+            self.undo_stack.push(entry);
             self.undo_stack.last()
         } else {
             None
@@ -1123,7 +1146,7 @@ impl Buffer {
         }
     }
 
-    pub fn peek_undo_stack(&self) -> Option<&Transaction> {
+    pub fn peek_undo_stack(&self) -> Option<&HistoryEntry> {
         self.history.undo_stack.last()
     }
 
@@ -1132,7 +1155,8 @@ impl Buffer {
     }
 
     pub fn start_transaction_at(&mut self, now: Instant) -> Option<TransactionId> {
-        self.history.start_transaction(self.version.clone(), now)
+        self.history
+            .start_transaction(self.version.clone(), now, &mut self.local_clock)
     }
 
     pub fn end_transaction(&mut self) -> Option<(TransactionId, clock::Global)> {
@@ -1140,8 +1164,8 @@ impl Buffer {
     }
 
     pub fn end_transaction_at(&mut self, now: Instant) -> Option<(TransactionId, clock::Global)> {
-        if let Some(transaction) = self.history.end_transaction(now) {
-            let since = transaction.start.clone();
+        if let Some(entry) = self.history.end_transaction(now) {
+            let since = entry.transaction.start.clone();
             let id = self.history.group().unwrap();
             Some((id, since))
         } else {
@@ -1149,8 +1173,8 @@ impl Buffer {
         }
     }
 
-    pub fn avoid_grouping_next_transaction(&mut self) {
-        self.history.avoid_grouping_next_transaction()
+    pub fn finalize_last_transaction(&mut self) -> Option<&Transaction> {
+        self.history.finalize_last_transaction()
     }
 
     pub fn base_text(&self) -> &Arc<str> {
@@ -1169,7 +1193,8 @@ impl Buffer {
     }
 
     pub fn undo(&mut self) -> Option<(TransactionId, Operation)> {
-        if let Some(transaction) = self.history.pop_undo().cloned() {
+        if let Some(entry) = self.history.pop_undo() {
+            let transaction = entry.transaction.clone();
             let transaction_id = transaction.id;
             let op = self.undo_or_redo(transaction).unwrap();
             Some((transaction_id, op))
@@ -1179,7 +1204,8 @@ impl Buffer {
     }
 
     pub fn undo_transaction(&mut self, transaction_id: TransactionId) -> Option<Operation> {
-        if let Some(transaction) = self.history.remove_from_undo(transaction_id).cloned() {
+        if let Some(entry) = self.history.remove_from_undo(transaction_id) {
+            let transaction = entry.transaction.clone();
             let op = self.undo_or_redo(transaction).unwrap();
             Some(op)
         } else {
@@ -1192,7 +1218,8 @@ impl Buffer {
     }
 
     pub fn redo(&mut self) -> Option<(TransactionId, Operation)> {
-        if let Some(transaction) = self.history.pop_redo().cloned() {
+        if let Some(entry) = self.history.pop_redo() {
+            let transaction = entry.transaction.clone();
             let transaction_id = transaction.id;
             let op = self.undo_or_redo(transaction).unwrap();
             Some((transaction_id, op))
@@ -1202,7 +1229,8 @@ impl Buffer {
     }
 
     pub fn redo_transaction(&mut self, transaction_id: TransactionId) -> Option<Operation> {
-        if let Some(transaction) = self.history.remove_from_redo(transaction_id).cloned() {
+        if let Some(entry) = self.history.remove_from_redo(transaction_id) {
+            let transaction = entry.transaction.clone();
             let op = self.undo_or_redo(transaction).unwrap();
             Some(op)
         } else {
@@ -1212,7 +1240,7 @@ impl Buffer {
 
     fn undo_or_redo(&mut self, transaction: Transaction) -> Result<Operation> {
         let mut counts = HashMap::default();
-        for edit_id in transaction.edits {
+        for edit_id in transaction.edit_ids {
             counts.insert(edit_id, self.undo_map.undo_count(edit_id) + 1);
         }
 
@@ -1232,12 +1260,9 @@ impl Buffer {
         Ok(operation)
     }
 
-    pub fn push_transaction(
-        &mut self,
-        edit_ids: impl IntoIterator<Item = clock::Local>,
-        now: Instant,
-    ) {
-        self.history.push_transaction(edit_ids, now);
+    pub fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
+        self.history.push_transaction(transaction, now);
+        self.history.finalize_last_transaction();
     }
 
     pub fn subscribe(&mut self) -> Subscription {
@@ -1364,7 +1389,8 @@ impl Buffer {
 
         let mut ops = Vec::new();
         for _ in 0..rng.gen_range(1..=5) {
-            if let Some(transaction) = self.history.undo_stack.choose(rng).cloned() {
+            if let Some(entry) = self.history.undo_stack.choose(rng) {
+                let transaction = entry.transaction.clone();
                 log::info!(
                     "undoing buffer {} transaction {:?}",
                     self.replica_id,

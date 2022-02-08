@@ -228,7 +228,7 @@ message ApplyCompletionAdditionalEdits {
 }
 
 message ApplyCompletionAdditionalEditsResponse {
-    repeated EditId additional_edits = 1;
+    Transaction transaction = 1;
 }
 
 message Completion {
@@ -255,7 +255,7 @@ message ApplyCodeAction {
 }
 
 message ApplyCodeActionResponse {
-    repeated CodeActionBufferEdits buffer_edits = 1;
+    ProjectTransaction transaction = 1;
 }
 
 message CodeAction {
@@ -263,20 +263,22 @@ message CodeAction {
     bytes lsp_action = 2;
 }
 
-message CodeActionBufferEdits {
-    Buffer buffer = 1;
-    repeated CodeActionEdit edits = 2;
+message ProjectTransaction {
+    repeated Buffer buffers = 1;
+    repeated Transaction transactions = 2;
 }
 
-message CodeActionEdit {
-    EditId id = 1;
-    Anchor old_start = 2;
-    Anchor old_end = 3;
+message Transaction {
+    LocalTimestamp id = 1;
+    repeated LocalTimestamp edit_ids = 2;
+    repeated VectorClockEntry start = 3;
+    repeated VectorClockEntry end = 4;
+    repeated Range ranges = 5;
 }
 
-message EditId {
+message LocalTimestamp {
     uint32 replica_id = 1;
-    uint32 local_timestamp = 2;
+    uint32 value = 2;
 }
 
 message UpdateDiagnosticSummary {

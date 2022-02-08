@@ -15,7 +15,7 @@ use gpui::{
     Task,
 };
 use language::{
-    Anchor, Buffer, Completion, DiagnosticEntry, Language, Operation, PointUtf16, Rope,
+    Anchor, Buffer, Completion, DiagnosticEntry, Language, Operation, PointUtf16, Rope, Transaction,
 };
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -1446,7 +1446,7 @@ impl language::File for File {
         buffer_id: u64,
         completion: Completion<Anchor>,
         cx: &mut MutableAppContext,
-    ) -> Task<Result<Vec<clock::Local>>> {
+    ) -> Task<Result<Option<Transaction>>> {
         let worktree = self.worktree.read(cx);
         let worktree = if let Some(worktree) = worktree.as_remote() {
             worktree
@@ -1466,11 +1466,11 @@ impl language::File for File {
                 })
                 .await?;
 
-            Ok(response
-                .additional_edits
-                .into_iter()
-                .map(language::proto::deserialize_edit_id)
-                .collect())
+            if let Some(transaction) = response.transaction {
+                Ok(Some(language::proto::deserialize_transaction(transaction)?))
+            } else {
+                Ok(None)
+            }
         })
     }
 
