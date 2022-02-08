@@ -1167,13 +1167,13 @@ impl Project {
 
     pub fn apply_code_action(
         &self,
-        buffer: ModelHandle<Buffer>,
+        buffer_handle: ModelHandle<Buffer>,
         mut action: CodeAction<language::Anchor>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<HashMap<ModelHandle<Buffer>, Vec<(Range<language::Anchor>, clock::Local)>>>>
     {
         if self.is_local() {
-            let buffer = buffer.read(cx);
+            let buffer = buffer_handle.read(cx);
             let lang_name = if let Some(lang) = buffer.language() {
                 lang.name().to_string()
             } else {
@@ -1196,21 +1196,41 @@ impl Project {
                     .and_then(|d| d.get_mut("range"))
                 {
                     *range = serde_json::to_value(&lsp::Range::new(position, position)).unwrap();
-                    action = CodeAction {
-                        position: action.position,
-                        lsp_action: lang_server
-                            .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
-                            .await?,
-                    }
+                    action.lsp_action = lang_server
+                        .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
+                        .await?;
+                } else {
+                    let actions = buffer_handle
+                        .update(&mut cx, |buffer, cx| {
+                            buffer.code_actions(action.position.clone(), cx)
+                        })
+                        .await?;
+                    action.lsp_action = actions
+                        .into_iter()
+                        .find(|a| a.lsp_action.title == action.lsp_action.title)
+                        .ok_or_else(|| anyhow!("code action is outdated"))?
+                        .lsp_action;
                 }
 
                 let mut operations = Vec::new();
-                match action.lsp_action.edit.and_then(|e| e.document_changes) {
-                    Some(lsp::DocumentChanges::Edits(edits)) => {
-                        operations.extend(edits.into_iter().map(lsp::DocumentChangeOperation::Edit))
+                if let Some(edit) = action.lsp_action.edit {
+                    if let Some(document_changes) = edit.document_changes {
+                        match document_changes {
+                            lsp::DocumentChanges::Edits(edits) => operations
+                                .extend(edits.into_iter().map(lsp::DocumentChangeOperation::Edit)),
+                            lsp::DocumentChanges::Operations(ops) => operations = ops,
+                        }
+                    } else if let Some(changes) = edit.changes {
+                        operations.extend(changes.into_iter().map(|(uri, edits)| {
+                            lsp::DocumentChangeOperation::Edit(lsp::TextDocumentEdit {
+                                text_document: lsp::OptionalVersionedTextDocumentIdentifier {
+                                    uri,
+                                    version: None,
+                                },
+                                edits: edits.into_iter().map(lsp::OneOf::Left).collect(),
+                            })
+                        }));
                     }
-                    Some(lsp::DocumentChanges::Operations(ops)) => operations = ops,
-                    None => {}
                 }
 
                 let mut edited_buffers = HashMap::default();
