@@ -147,12 +147,12 @@ pub enum Operation {
         lamport_timestamp: clock::Lamport,
     },
     UpdateSelections {
-        replica_id: ReplicaId,
         selections: Arc<[Selection<Anchor>]>,
         lamport_timestamp: clock::Lamport,
     },
     UpdateCompletionTriggers {
         triggers: Vec<String>,
+        lamport_timestamp: clock::Lamport,
     },
 }
 
@@ -447,27 +447,19 @@ impl Buffer {
         file: Option<Box<dyn File>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<Self> {
-        let fragments_len = message.fragments.len();
-        let buffer = TextBuffer::from_parts(
+        let buffer = TextBuffer::new(
             replica_id,
             message.id,
-            &message.visible_text,
-            &message.deleted_text,
-            message
-                .undo_map
-                .into_iter()
-                .map(proto::deserialize_undo_map_entry),
-            message
-                .fragments
-                .into_iter()
-                .enumerate()
-                .map(|(i, fragment)| {
-                    proto::deserialize_buffer_fragment(fragment, i, fragments_len)
-                }),
-            message.lamport_timestamp,
-            From::from(message.version),
+            History::new(Arc::from(message.base_text)),
         );
         let mut this = Self::build(buffer, file);
+        let ops = message
+            .operations
+            .into_iter()
+            .map(proto::deserialize_operation)
+            .collect::<Result<Vec<_>>>()?;
+        this.apply_ops(ops, cx)?;
+
         for selection_set in message.selections {
             this.remote_selections.insert(
                 selection_set.replica_id as ReplicaId,
@@ -486,37 +478,24 @@ impl Buffer {
             DiagnosticSet::from_sorted_entries(entries.into_iter().cloned(), &snapshot),
             cx,
         );
-
         this.completion_triggers = message.completion_triggers;
-
-        let deferred_ops = message
-            .deferred_operations
-            .into_iter()
-            .map(proto::deserialize_operation)
-            .collect::<Result<Vec<_>>>()?;
-        this.apply_ops(deferred_ops, cx)?;
 
         Ok(this)
     }
 
     pub fn to_proto(&self) -> proto::BufferState {
+        let mut operations = self
+            .text
+            .history()
+            .map(|op| proto::serialize_operation(&Operation::Buffer(op.clone())))
+            .chain(self.deferred_ops.iter().map(proto::serialize_operation))
+            .collect::<Vec<_>>();
+        operations.sort_unstable_by_key(proto::lamport_timestamp_for_operation);
         proto::BufferState {
             id: self.remote_id(),
             file: self.file.as_ref().map(|f| f.to_proto()),
-            visible_text: self.text.text(),
-            deleted_text: self.text.deleted_text(),
-            undo_map: self
-                .text
-                .undo_history()
-                .map(proto::serialize_undo_map_entry)
-                .collect(),
-            version: From::from(&self.version),
-            lamport_timestamp: self.lamport_clock.value,
-            fragments: self
-                .text
-                .fragments()
-                .map(proto::serialize_buffer_fragment)
-                .collect(),
+            base_text: self.base_text().to_string(),
+            operations,
             selections: self
                 .remote_selections
                 .iter()
@@ -527,16 +506,6 @@ impl Buffer {
                 })
                 .collect(),
             diagnostics: proto::serialize_diagnostics(self.diagnostics.iter()),
-            deferred_operations: self
-                .deferred_ops
-                .iter()
-                .map(proto::serialize_operation)
-                .chain(
-                    self.text
-                        .deferred_ops()
-                        .map(|op| proto::serialize_operation(&Operation::Buffer(op.clone()))),
-                )
-                .collect(),
             completion_triggers: self.completion_triggers.clone(),
         }
     }
@@ -708,9 +677,13 @@ impl Buffer {
                                     .and_then(|c| c.trigger_characters)
                                     .unwrap_or_default();
                                 this.update(&mut cx, |this, cx| {
+                                    let lamport_timestamp = this.text.lamport_clock.tick();
                                     this.completion_triggers = triggers.clone();
                                     this.send_operation(
-                                        Operation::UpdateCompletionTriggers { triggers },
+                                        Operation::UpdateCompletionTriggers {
+                                            triggers,
+                                            lamport_timestamp,
+                                        },
                                         cx,
                                     );
                                     cx.notify();
@@ -1404,7 +1377,6 @@ impl Buffer {
         );
         self.send_operation(
             Operation::UpdateSelections {
-                replica_id: self.text.replica_id(),
                 selections,
                 lamport_timestamp,
             },
@@ -1526,7 +1498,7 @@ impl Buffer {
         let new_text_len = new_text.len();
 
         let edit = self.text.edit(ranges.iter().cloned(), new_text);
-        let edit_id = edit.timestamp.local();
+        let edit_id = edit.local_timestamp();
 
         if let Some((before_edit, edited)) = autoindent_request {
             let mut inserted = None;
@@ -1555,7 +1527,7 @@ impl Buffer {
         }
 
         self.end_transaction(cx);
-        self.send_operation(Operation::Buffer(text::Operation::Edit(edit)), cx);
+        self.send_operation(Operation::Buffer(edit), cx);
         Some(edit_id)
     }
 
@@ -1702,18 +1674,17 @@ impl Buffer {
                 );
             }
             Operation::UpdateSelections {
-                replica_id,
                 selections,
                 lamport_timestamp,
             } => {
-                if let Some(set) = self.remote_selections.get(&replica_id) {
+                if let Some(set) = self.remote_selections.get(&lamport_timestamp.replica_id) {
                     if set.lamport_timestamp > lamport_timestamp {
                         return;
                     }
                 }
 
                 self.remote_selections.insert(
-                    replica_id,
+                    lamport_timestamp.replica_id,
                     SelectionSet {
                         selections,
                         lamport_timestamp,
@@ -1722,8 +1693,12 @@ impl Buffer {
                 self.text.lamport_clock.observe(lamport_timestamp);
                 self.selections_update_count += 1;
             }
-            Operation::UpdateCompletionTriggers { triggers } => {
+            Operation::UpdateCompletionTriggers {
+                triggers,
+                lamport_timestamp,
+            } => {
                 self.completion_triggers = triggers;
+                self.text.lamport_clock.observe(lamport_timestamp);
             }
         }
     }
@@ -2812,10 +2787,10 @@ impl operation_queue::Operation for Operation {
             }
             | Operation::UpdateSelections {
                 lamport_timestamp, ..
-            } => *lamport_timestamp,
-            Operation::UpdateCompletionTriggers { .. } => {
-                unreachable!("updating completion triggers should never be deferred")
             }
+            | Operation::UpdateCompletionTriggers {
+                lamport_timestamp, ..
+            } => *lamport_timestamp,
         }
     }
 }

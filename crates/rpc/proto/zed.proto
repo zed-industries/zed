@@ -406,16 +406,11 @@ message Buffer {
 message BufferState {
     uint64 id = 1;
     optional File file = 2;
-    string visible_text = 3;
-    string deleted_text = 4;
-    repeated BufferFragment fragments = 5;
-    repeated UndoMapEntry undo_map = 6;
-    repeated VectorClockEntry version = 7;
-    repeated SelectionSet selections = 8;
-    repeated Diagnostic diagnostics = 9;
-    uint32 lamport_timestamp = 10;
-    repeated Operation deferred_operations = 11;
-    repeated string completion_triggers = 12;
+    string base_text = 3;
+    repeated Operation operations = 4;
+    repeated SelectionSet selections = 5;
+    repeated Diagnostic diagnostics = 6;
+    repeated string completion_triggers = 7;
 }
 
 message BufferFragment {
@@ -514,7 +509,9 @@ message Operation {
     }
 
     message UpdateCompletionTriggers {
-        repeated string triggers = 1;
+        uint32 replica_id = 1;
+        uint32 lamport_timestamp = 2;
+        repeated string triggers = 3;
     }
 }
 

@@ -130,7 +130,7 @@ impl Transaction {
 pub struct History {
     // TODO: Turn this into a String or Rope, maybe.
     pub base_text: Arc<str>,
-    ops: HashMap<clock::Local, EditOperation>,
+    operations: HashMap<clock::Local, Operation>,
     undo_stack: Vec<Transaction>,
     redo_stack: Vec<Transaction>,
     transaction_depth: usize,
@@ -142,7 +142,7 @@ impl History {
     pub fn new(base_text: Arc<str>) -> Self {
         Self {
             base_text,
-            ops: Default::default(),
+            operations: Default::default(),
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             transaction_depth: 0,
@@ -151,8 +151,8 @@ impl History {
         }
     }
 
-    fn push(&mut self, op: EditOperation) {
-        self.ops.insert(op.timestamp.local(), op);
+    fn push(&mut self, op: Operation) {
+        self.operations.insert(op.local_timestamp(), op);
     }
 
     fn start_transaction(&mut self, start: clock::Global, now: Instant) -> Option<TransactionId> {
@@ -216,7 +216,7 @@ impl History {
         if let Some(last_transaction) = transactions_to_keep.last_mut() {
             for transaction in &*transactions_to_merge {
                 for edit_id in &transaction.edits {
-                    last_transaction.push_edit(&self.ops[edit_id]);
+                    last_transaction.push_edit(self.operations[edit_id].as_edit().unwrap());
                 }
             }
 
@@ -240,8 +240,11 @@ impl History {
         assert_eq!(self.transaction_depth, 0);
         let mut edit_ids = edit_ids.into_iter().peekable();
 
-        if let Some(first_edit_id) = edit_ids.peek() {
-            let version = self.ops[first_edit_id].version.clone();
+        if let Some(first_edit) = edit_ids
+            .peek()
+            .and_then(|e| self.operations.get(&e)?.as_edit())
+        {
+            let version = first_edit.version.clone();
             self.start_transaction(version, now);
             for edit_id in edit_ids {
                 self.push_undo(edit_id);
@@ -250,10 +253,12 @@ impl History {
         }
     }
 
-    fn push_undo(&mut self, edit_id: clock::Local) {
+    fn push_undo(&mut self, op_id: clock::Local) {
         assert_ne!(self.transaction_depth, 0);
-        let last_transaction = self.undo_stack.last_mut().unwrap();
-        last_transaction.push_edit(&self.ops[&edit_id]);
+        if let Some(Operation::Edit(edit)) = self.operations.get(&op_id) {
+            let last_transaction = self.undo_stack.last_mut().unwrap();
+            last_transaction.push_edit(&edit);
+        }
     }
 
     fn pop_undo(&mut self) -> Option<&Transaction> {
@@ -545,56 +550,6 @@ impl Buffer {
         }
     }
 
-    pub fn from_parts(
-        replica_id: u16,
-        remote_id: u64,
-        visible_text: &str,
-        deleted_text: &str,
-        undo_map: impl Iterator<Item = (clock::Local, Vec<(clock::Local, u32)>)>,
-        fragments: impl ExactSizeIterator<Item = Fragment>,
-        lamport_timestamp: u32,
-        version: clock::Global,
-    ) -> Self {
-        let visible_text = visible_text.into();
-        let deleted_text = deleted_text.into();
-        let fragments = SumTree::from_iter(fragments, &None);
-        let mut insertions = fragments
-            .iter()
-            .map(|fragment| InsertionFragment {
-                timestamp: fragment.insertion_timestamp.local(),
-                split_offset: fragment.insertion_offset,
-                fragment_id: fragment.id.clone(),
-            })
-            .collect::<Vec<_>>();
-        insertions.sort_unstable_by_key(|i| (i.timestamp, i.split_offset));
-        Self {
-            remote_id,
-            replica_id,
-            history: History::new("".into()),
-            deferred_ops: OperationQueue::new(),
-            deferred_replicas: Default::default(),
-            local_clock: clock::Local {
-                replica_id,
-                value: version.get(replica_id) + 1,
-            },
-            lamport_clock: clock::Lamport {
-                replica_id,
-                value: lamport_timestamp,
-            },
-            subscriptions: Default::default(),
-            edit_id_resolvers: Default::default(),
-            snapshot: BufferSnapshot {
-                replica_id,
-                visible_text,
-                deleted_text,
-                undo_map: UndoMap(undo_map.collect()),
-                fragments,
-                insertions: SumTree::from_iter(insertions, &()),
-                version,
-            },
-        }
-    }
-
     pub fn version(&self) -> clock::Global {
         self.version.clone()
     }
@@ -619,7 +574,7 @@ impl Buffer {
         self.history.group_interval
     }
 
-    pub fn edit<R, I, S, T>(&mut self, ranges: R, new_text: T) -> EditOperation
+    pub fn edit<R, I, S, T>(&mut self, ranges: R, new_text: T) -> Operation
     where
         R: IntoIterator<IntoIter = I>,
         I: ExactSizeIterator<Item = Range<S>>,
@@ -640,13 +595,14 @@ impl Buffer {
             local: self.local_clock.tick().value,
             lamport: self.lamport_clock.tick().value,
         };
-        let edit = self.apply_local_edit(ranges.into_iter(), new_text, timestamp);
+        let operation =
+            Operation::Edit(self.apply_local_edit(ranges.into_iter(), new_text, timestamp));
 
-        self.history.push(edit.clone());
-        self.history.push_undo(edit.timestamp.local());
-        self.snapshot.version.observe(edit.timestamp.local());
+        self.history.push(operation.clone());
+        self.history.push_undo(operation.local_timestamp());
+        self.snapshot.version.observe(operation.local_timestamp());
         self.end_transaction();
-        edit
+        operation
     }
 
     fn apply_local_edit<S: ToOffset>(
@@ -814,6 +770,7 @@ impl Buffer {
     pub fn apply_ops<I: IntoIterator<Item = Operation>>(&mut self, ops: I) -> Result<()> {
         let mut deferred_ops = Vec::new();
         for op in ops {
+            self.history.push(op.clone());
             if self.can_apply_op(&op) {
                 self.apply_op(op)?;
             } else {
@@ -838,7 +795,6 @@ impl Buffer {
                     );
                     self.snapshot.version.observe(edit.timestamp.local());
                     self.resolve_edit(edit.timestamp.local());
-                    self.history.push(edit);
                 }
             }
             Operation::Undo {
@@ -1141,10 +1097,6 @@ impl Buffer {
         Ok(())
     }
 
-    pub fn deferred_ops(&self) -> impl Iterator<Item = &Operation> {
-        self.deferred_ops.iter()
-    }
-
     fn flush_deferred_ops(&mut self) -> Result<()> {
         self.deferred_replicas.clear();
         let mut deferred_ops = Vec::new();
@@ -1205,8 +1157,8 @@ impl Buffer {
         &self.history.base_text
     }
 
-    pub fn history(&self) -> impl Iterator<Item = &EditOperation> {
-        self.history.ops.values()
+    pub fn history(&self) -> impl Iterator<Item = &Operation> {
+        self.history.operations.values()
     }
 
     pub fn undo_history(&self) -> impl Iterator<Item = (&clock::Local, &[(clock::Local, u32)])> {
@@ -1271,12 +1223,13 @@ impl Buffer {
             version: transaction.start.clone(),
         };
         self.apply_undo(&undo)?;
-        self.snapshot.version.observe(undo.id);
-
-        Ok(Operation::Undo {
+        let operation = Operation::Undo {
             undo,
             lamport_timestamp: self.lamport_clock.tick(),
-        })
+        };
+        self.snapshot.version.observe(operation.local_timestamp());
+        self.history.push(operation.clone());
+        Ok(operation)
     }
 
     pub fn push_transaction(
@@ -1403,7 +1356,7 @@ impl Buffer {
             new_text
         );
         let op = self.edit(old_ranges.iter().cloned(), new_text.as_str());
-        (old_ranges, new_text, Operation::Edit(op))
+        (old_ranges, new_text, op)
     }
 
     pub fn randomly_undo_redo(&mut self, rng: &mut impl rand::Rng) -> Vec<Operation> {
@@ -2179,6 +2132,20 @@ impl<'a> sum_tree::SeekTarget<'a, FragmentSummary, Self> for VersionedFullOffset
 impl Operation {
     fn replica_id(&self) -> ReplicaId {
         operation_queue::Operation::lamport_timestamp(self).replica_id
+    }
+
+    pub fn local_timestamp(&self) -> clock::Local {
+        match self {
+            Operation::Edit(edit) => edit.timestamp.local(),
+            Operation::Undo { undo, .. } => undo.id,
+        }
+    }
+
+    pub fn as_edit(&self) -> Option<&EditOperation> {
+        match self {
+            Operation::Edit(edit) => Some(edit),
+            _ => None,
+        }
     }
 
     pub fn is_edit(&self) -> bool {

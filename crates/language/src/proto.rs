@@ -45,11 +45,10 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 version: From::from(&undo.version),
             }),
             Operation::UpdateSelections {
-                replica_id,
                 selections,
                 lamport_timestamp,
             } => proto::operation::Variant::UpdateSelections(proto::operation::UpdateSelections {
-                replica_id: *replica_id as u32,
+                replica_id: lamport_timestamp.replica_id as u32,
                 lamport_timestamp: lamport_timestamp.value,
                 selections: serialize_selections(selections),
             }),
@@ -61,13 +60,16 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 lamport_timestamp: lamport_timestamp.value,
                 diagnostics: serialize_diagnostics(diagnostics.iter()),
             }),
-            Operation::UpdateCompletionTriggers { triggers } => {
-                proto::operation::Variant::UpdateCompletionTriggers(
-                    proto::operation::UpdateCompletionTriggers {
-                        triggers: triggers.clone(),
-                    },
-                )
-            }
+            Operation::UpdateCompletionTriggers {
+                triggers,
+                lamport_timestamp,
+            } => proto::operation::Variant::UpdateCompletionTriggers(
+                proto::operation::UpdateCompletionTriggers {
+                    replica_id: lamport_timestamp.replica_id as u32,
+                    lamport_timestamp: lamport_timestamp.value,
+                    triggers: triggers.clone(),
+                },
+            ),
         }),
     }
 }
@@ -233,7 +235,6 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                     .collect::<Vec<_>>();
 
                 Operation::UpdateSelections {
-                    replica_id: message.replica_id as ReplicaId,
                     lamport_timestamp: clock::Lamport {
                         replica_id: message.replica_id as ReplicaId,
                         value: message.lamport_timestamp,
@@ -251,6 +252,10 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
             proto::operation::Variant::UpdateCompletionTriggers(message) => {
                 Operation::UpdateCompletionTriggers {
                     triggers: message.triggers,
+                    lamport_timestamp: clock::Lamport {
+                        replica_id: message.replica_id as ReplicaId,
+                        value: message.lamport_timestamp,
+                    },
                 }
             }
         },
@@ -378,6 +383,38 @@ pub fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
             proto::Bias::Left => Bias::Left,
             proto::Bias::Right => Bias::Right,
         },
+    })
+}
+
+pub fn lamport_timestamp_for_operation(operation: &proto::Operation) -> Option<clock::Lamport> {
+    let replica_id;
+    let value;
+    match operation.variant.as_ref()? {
+        proto::operation::Variant::Edit(op) => {
+            replica_id = op.replica_id;
+            value = op.lamport_timestamp;
+        }
+        proto::operation::Variant::Undo(op) => {
+            replica_id = op.replica_id;
+            value = op.lamport_timestamp;
+        }
+        proto::operation::Variant::UpdateDiagnostics(op) => {
+            replica_id = op.replica_id;
+            value = op.lamport_timestamp;
+        }
+        proto::operation::Variant::UpdateSelections(op) => {
+            replica_id = op.replica_id;
+            value = op.lamport_timestamp;
+        }
+        proto::operation::Variant::UpdateCompletionTriggers(op) => {
+            replica_id = op.replica_id;
+            value = op.lamport_timestamp;
+        }
+    }
+
+    Some(clock::Lamport {
+        replica_id: replica_id as ReplicaId,
+        value,
     })
 }
 

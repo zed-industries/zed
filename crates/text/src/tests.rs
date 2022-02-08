@@ -550,12 +550,12 @@ fn test_concurrent_edits() {
     let buf3_op = buffer3.edit(vec![5..6], "56");
     assert_eq!(buffer3.text(), "abcde56");
 
-    buffer1.apply_op(Operation::Edit(buf2_op.clone())).unwrap();
-    buffer1.apply_op(Operation::Edit(buf3_op.clone())).unwrap();
-    buffer2.apply_op(Operation::Edit(buf1_op.clone())).unwrap();
-    buffer2.apply_op(Operation::Edit(buf3_op.clone())).unwrap();
-    buffer3.apply_op(Operation::Edit(buf1_op.clone())).unwrap();
-    buffer3.apply_op(Operation::Edit(buf2_op.clone())).unwrap();
+    buffer1.apply_op(buf2_op.clone()).unwrap();
+    buffer1.apply_op(buf3_op.clone()).unwrap();
+    buffer2.apply_op(buf1_op.clone()).unwrap();
+    buffer2.apply_op(buf3_op.clone()).unwrap();
+    buffer3.apply_op(buf1_op.clone()).unwrap();
+    buffer3.apply_op(buf2_op.clone()).unwrap();
 
     assert_eq!(buffer1.text(), "a12c34e56");
     assert_eq!(buffer2.text(), "a12c34e56");

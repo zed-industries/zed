@@ -1072,14 +1072,14 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
 
     for buffer in &buffers {
         let buffer = buffer.read(cx).snapshot();
+        let actual_remote_selections = buffer
+            .remote_selections_in_range(Anchor::min()..Anchor::max())
+            .map(|(replica_id, selections)| (replica_id, selections.collect::<Vec<_>>()))
+            .collect::<Vec<_>>();
         let expected_remote_selections = active_selections
             .iter()
             .filter(|(replica_id, _)| **replica_id != buffer.replica_id())
             .map(|(replica_id, selections)| (*replica_id, selections.iter().collect::<Vec<_>>()))
-            .collect::<Vec<_>>();
-        let actual_remote_selections = buffer
-            .remote_selections_in_range(Anchor::min()..Anchor::max())
-            .map(|(replica_id, selections)| (replica_id, selections.collect::<Vec<_>>()))
             .collect::<Vec<_>>();
         assert_eq!(actual_remote_selections, expected_remote_selections);
     }
