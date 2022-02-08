@@ -1965,6 +1965,8 @@ impl Editor {
         ConfirmCompletion(completion_ix): &ConfirmCompletion,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<()>>> {
+        use language::ToOffset as _;
+
         let completions_menu = if let ContextMenu::Completions(menu) = self.hide_context_menu(cx)? {
             menu
         } else {
@@ -1991,18 +1993,29 @@ impl Editor {
         let old_text = buffer.text_for_range(old_range.clone()).collect::<String>();
 
         let selections = self.local_selections::<usize>(cx);
-        let newest_selection = selections.iter().max_by_key(|s| s.id)?;
-        let lookbehind = newest_selection.start.saturating_sub(old_range.start);
-        let lookahead = old_range.end.saturating_sub(newest_selection.end);
+        let newest_selection = self.newest_anchor_selection()?;
+        if newest_selection.start.buffer_id != buffer_handle.id() {
+            return None;
+        }
+
+        let lookbehind = newest_selection
+            .start
+            .text_anchor
+            .to_offset(buffer)
+            .saturating_sub(old_range.start);
+        let lookahead = old_range
+            .end
+            .saturating_sub(newest_selection.end.text_anchor.to_offset(buffer));
         let mut common_prefix_len = old_text
             .bytes()
             .zip(text.bytes())
             .take_while(|(a, b)| a == b)
             .count();
 
+        let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut ranges = Vec::new();
         for selection in &selections {
-            if buffer.contains_str_at(selection.start.saturating_sub(lookbehind), &old_text) {
+            if snapshot.contains_str_at(selection.start.saturating_sub(lookbehind), &old_text) {
                 let start = selection.start.saturating_sub(lookbehind);
                 let end = selection.end + lookahead;
                 ranges.push(start + common_prefix_len..end);
