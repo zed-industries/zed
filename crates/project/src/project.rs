@@ -1171,10 +1171,107 @@ impl Project {
         }
     }
 
+    pub fn code_actions<T: ToPointUtf16>(
+        &self,
+        source_buffer_handle: &ModelHandle<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<CodeAction>>> {
+        let source_buffer_handle = source_buffer_handle.clone();
+        let source_buffer = source_buffer_handle.read(cx);
+        let buffer_id = source_buffer.remote_id();
+        let worktree;
+        let buffer_abs_path;
+        if let Some(file) = File::from_dyn(source_buffer.file()) {
+            worktree = file.worktree.clone();
+            buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
+        } else {
+            return Task::ready(Err(anyhow!("buffer does not belong to any worktree")));
+        };
+
+        let position = position.to_point_utf16(source_buffer);
+        let anchor = source_buffer.anchor_after(position);
+
+        if worktree.read(cx).as_local().is_some() {
+            let buffer_abs_path = buffer_abs_path.unwrap();
+            let lang_name;
+            let lang_server;
+            if let Some(lang) = source_buffer.language() {
+                lang_name = lang.name().to_string();
+                if let Some(server) = self
+                    .language_servers
+                    .get(&(worktree.read(cx).id(), lang_name.clone()))
+                {
+                    lang_server = server.clone();
+                } else {
+                    return Task::ready(Err(anyhow!("buffer does not have a language server")));
+                };
+            } else {
+                return Task::ready(Err(anyhow!("buffer does not have a language")));
+            }
+
+            cx.foreground().spawn(async move {
+                let actions = lang_server
+                    .request::<lsp::request::CodeActionRequest>(lsp::CodeActionParams {
+                        text_document: lsp::TextDocumentIdentifier::new(
+                            lsp::Url::from_file_path(buffer_abs_path).unwrap(),
+                        ),
+                        range: lsp::Range::new(
+                            position.to_lsp_position(),
+                            position.to_lsp_position(),
+                        ),
+                        work_done_progress_params: Default::default(),
+                        partial_result_params: Default::default(),
+                        context: lsp::CodeActionContext {
+                            diagnostics: Default::default(),
+                            only: Some(vec![
+                                lsp::CodeActionKind::QUICKFIX,
+                                lsp::CodeActionKind::REFACTOR,
+                                lsp::CodeActionKind::REFACTOR_EXTRACT,
+                            ]),
+                        },
+                    })
+                    .await?
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(|entry| {
+                        if let lsp::CodeActionOrCommand::CodeAction(lsp_action) = entry {
+                            Some(CodeAction {
+                                position: anchor.clone(),
+                                lsp_action,
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                Ok(actions)
+            })
+        } else if let Some(project_id) = self.remote_id() {
+            let rpc = self.client.clone();
+            cx.foreground().spawn(async move {
+                let response = rpc
+                    .request(proto::GetCodeActions {
+                        project_id,
+                        buffer_id,
+                        position: Some(language::proto::serialize_anchor(&anchor)),
+                    })
+                    .await?;
+                response
+                    .actions
+                    .into_iter()
+                    .map(language::proto::deserialize_code_action)
+                    .collect()
+            })
+        } else {
+            Task::ready(Err(anyhow!("project does not have a remote id")))
+        }
+    }
+
     pub fn apply_code_action(
         &self,
         buffer_handle: ModelHandle<Buffer>,
-        mut action: CodeAction<language::Anchor>,
+        mut action: CodeAction,
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ProjectTransaction>> {
@@ -1206,9 +1303,9 @@ impl Project {
                         .request::<lsp::request::CodeActionResolveRequest>(action.lsp_action)
                         .await?;
                 } else {
-                    let actions = buffer_handle
-                        .update(&mut cx, |buffer, cx| {
-                            buffer.code_actions(action.position.clone(), cx)
+                    let actions = this
+                        .update(&mut cx, |this, cx| {
+                            this.code_actions(&buffer_handle, action.position.clone(), cx)
                         })
                         .await?;
                     action.lsp_action = actions
@@ -2018,9 +2115,9 @@ impl Project {
             .position
             .and_then(language::proto::deserialize_anchor)
             .ok_or_else(|| anyhow!("invalid position"))?;
-        cx.spawn(|_, mut cx| async move {
-            match buffer
-                .update(&mut cx, |buffer, cx| buffer.code_actions(position, cx))
+        cx.spawn(|this, mut cx| async move {
+            match this
+                .update(&mut cx, |this, cx| this.code_actions(&buffer, position, cx))
                 .await
             {
                 Ok(completions) => rpc.respond(

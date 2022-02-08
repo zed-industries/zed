@@ -654,7 +654,8 @@ impl CompletionsMenu {
 }
 
 struct CodeActionsMenu {
-    actions: Arc<[CodeAction<Anchor>]>,
+    actions: Arc<[CodeAction]>,
+    buffer: ModelHandle<Buffer>,
     selected_item: usize,
     list: UniformListState,
 }
@@ -2021,24 +2022,40 @@ impl Editor {
         }))
     }
 
-    fn show_code_actions(&mut self, _: &ShowCodeActions, cx: &mut ViewContext<Self>) {
-        let position = if let Some(selection) = self.newest_anchor_selection() {
-            selection.head()
+    fn show_code_actions(
+        workspace: &mut Workspace,
+        _: &ShowCodeActions,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let active_item = workspace.active_item(cx);
+        let editor_handle = if let Some(editor) = active_item
+            .as_ref()
+            .and_then(|item| item.act_as::<Self>(cx))
+        {
+            editor
         } else {
             return;
         };
 
-        let actions = self
-            .buffer
-            .update(cx, |buffer, cx| buffer.code_actions(position.clone(), cx));
+        let editor = editor_handle.read(cx);
+        let head = if let Some(selection) = editor.newest_anchor_selection() {
+            selection.head()
+        } else {
+            return;
+        };
+        let (buffer, head) = editor.buffer.read(cx).text_anchor_for_position(head, cx);
+        let actions = workspace
+            .project()
+            .update(cx, |project, cx| project.code_actions(&buffer, head, cx));
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|_, mut cx| async move {
             let actions = actions.await?;
             if !actions.is_empty() {
-                this.update(&mut cx, |this, cx| {
+                editor_handle.update(&mut cx, |this, cx| {
                     if this.focused {
                         this.show_context_menu(
                             ContextMenu::CodeActions(CodeActionsMenu {
+                                buffer,
                                 actions: actions.into(),
                                 selected_item: 0,
                                 list: UniformListState::default(),
@@ -2069,15 +2086,7 @@ impl Editor {
                 };
             let action_ix = action_ix.unwrap_or(actions_menu.selected_item);
             let action = actions_menu.actions.get(action_ix)?.clone();
-            let (buffer, position) = editor
-                .buffer
-                .read(cx)
-                .text_anchor_for_position(action.position, cx);
-            let action = CodeAction {
-                position,
-                lsp_action: action.lsp_action,
-            };
-            Some((buffer, action))
+            Some((actions_menu.buffer, action))
         })?;
 
         let apply_code_actions = workspace.project().update(cx, |project, cx| {

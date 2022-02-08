@@ -426,14 +426,14 @@ pub fn deserialize_completion(
     })
 }
 
-pub fn serialize_code_action(action: &CodeAction<Anchor>) -> proto::CodeAction {
+pub fn serialize_code_action(action: &CodeAction) -> proto::CodeAction {
     proto::CodeAction {
         position: Some(serialize_anchor(&action.position)),
         lsp_action: serde_json::to_vec(&action.lsp_action).unwrap(),
     }
 }
 
-pub fn deserialize_code_action(action: proto::CodeAction) -> Result<CodeAction<Anchor>> {
+pub fn deserialize_code_action(action: proto::CodeAction) -> Result<CodeAction> {
     let position = action
         .position
         .and_then(deserialize_anchor)

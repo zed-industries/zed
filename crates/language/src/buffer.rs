@@ -119,8 +119,8 @@ pub struct Completion<T> {
 }
 
 #[derive(Clone, Debug)]
-pub struct CodeAction<T> {
-    pub position: T,
+pub struct CodeAction {
+    pub position: Anchor,
     pub lsp_action: lsp::CodeAction,
 }
 
@@ -216,13 +216,6 @@ pub trait File {
         cx: &mut MutableAppContext,
     ) -> Task<Result<Option<Transaction>>>;
 
-    fn code_actions(
-        &self,
-        buffer_id: u64,
-        position: Anchor,
-        cx: &mut MutableAppContext,
-    ) -> Task<Result<Vec<CodeAction<Anchor>>>>;
-
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext);
 
     fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext);
@@ -308,15 +301,6 @@ impl File for FakeFile {
         _: Completion<Anchor>,
         _: &mut MutableAppContext,
     ) -> Task<Result<Option<Transaction>>> {
-        Task::ready(Ok(Default::default()))
-    }
-
-    fn code_actions(
-        &self,
-        _: u64,
-        _: Anchor,
-        _: &mut MutableAppContext,
-    ) -> Task<Result<Vec<CodeAction<Anchor>>>> {
         Task::ready(Ok(Default::default()))
     }
 
@@ -1858,72 +1842,6 @@ impl Buffer {
                 language,
                 cx.as_mut(),
             )
-        }
-    }
-
-    pub fn code_actions<T>(
-        &self,
-        position: T,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<CodeAction<Anchor>>>>
-    where
-        T: ToPointUtf16,
-    {
-        let file = if let Some(file) = self.file.as_ref() {
-            file
-        } else {
-            return Task::ready(Ok(Default::default()));
-        };
-        let position = position.to_point_utf16(self);
-        let anchor = self.anchor_after(position);
-
-        if let Some(file) = file.as_local() {
-            let server = if let Some(language_server) = self.language_server.as_ref() {
-                language_server.server.clone()
-            } else {
-                return Task::ready(Ok(Default::default()));
-            };
-            let abs_path = file.abs_path(cx);
-
-            cx.foreground().spawn(async move {
-                let actions = server
-                    .request::<lsp::request::CodeActionRequest>(lsp::CodeActionParams {
-                        text_document: lsp::TextDocumentIdentifier::new(
-                            lsp::Url::from_file_path(abs_path).unwrap(),
-                        ),
-                        range: lsp::Range::new(
-                            position.to_lsp_position(),
-                            position.to_lsp_position(),
-                        ),
-                        work_done_progress_params: Default::default(),
-                        partial_result_params: Default::default(),
-                        context: lsp::CodeActionContext {
-                            diagnostics: Default::default(),
-                            only: Some(vec![
-                                lsp::CodeActionKind::QUICKFIX,
-                                lsp::CodeActionKind::REFACTOR,
-                                lsp::CodeActionKind::REFACTOR_EXTRACT,
-                            ]),
-                        },
-                    })
-                    .await?
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|entry| {
-                        if let lsp::CodeActionOrCommand::CodeAction(lsp_action) = entry {
-                            Some(CodeAction {
-                                position: anchor.clone(),
-                                lsp_action,
-                            })
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                Ok(actions)
-            })
-        } else {
-            file.code_actions(self.remote_id(), anchor, cx.as_mut())
         }
     }
 

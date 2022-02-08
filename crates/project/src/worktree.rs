@@ -1474,38 +1474,6 @@ impl language::File for File {
         })
     }
 
-    fn code_actions(
-        &self,
-        buffer_id: u64,
-        position: Anchor,
-        cx: &mut MutableAppContext,
-    ) -> Task<Result<Vec<language::CodeAction<Anchor>>>> {
-        let worktree = self.worktree.read(cx);
-        let worktree = if let Some(worktree) = worktree.as_remote() {
-            worktree
-        } else {
-            return Task::ready(Err(anyhow!(
-                "remote code actions requested on a local worktree"
-            )));
-        };
-        let rpc = worktree.client.clone();
-        let project_id = worktree.project_id;
-        cx.foreground().spawn(async move {
-            let response = rpc
-                .request(proto::GetCodeActions {
-                    project_id,
-                    buffer_id,
-                    position: Some(language::proto::serialize_anchor(&position)),
-                })
-                .await?;
-            response
-                .actions
-                .into_iter()
-                .map(language::proto::deserialize_code_action)
-                .collect()
-        })
-    }
-
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext) {
         self.worktree.update(cx, |worktree, cx| {
             worktree.send_buffer_update(buffer_id, operation, cx);
