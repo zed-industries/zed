@@ -90,10 +90,7 @@ struct Transform {
 
 #[derive(Clone)]
 pub enum TransformBlock {
-    Custom {
-        block: Arc<Block>,
-        column: u32,
-    },
+    Custom(Arc<Block>),
     ExcerptHeader {
         buffer: BufferSnapshot,
         range: Range<text::Anchor>,
@@ -104,14 +101,14 @@ pub enum TransformBlock {
 impl TransformBlock {
     fn disposition(&self) -> BlockDisposition {
         match self {
-            TransformBlock::Custom { block, .. } => block.disposition,
+            TransformBlock::Custom(block) => block.disposition,
             TransformBlock::ExcerptHeader { .. } => BlockDisposition::Above,
         }
     }
 
-    fn height(&self) -> u8 {
+    pub fn height(&self) -> u8 {
         match self {
-            TransformBlock::Custom { block, .. } => block.height,
+            TransformBlock::Custom(block) => block.height,
             TransformBlock::ExcerptHeader { height, .. } => *height,
         }
     }
@@ -120,11 +117,7 @@ impl TransformBlock {
 impl Debug for TransformBlock {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Custom { block, column } => f
-                .debug_struct("Custom")
-                .field("block", block)
-                .field("column", column)
-                .finish(),
+            Self::Custom(block) => f.debug_struct("Custom").field("block", block).finish(),
             Self::ExcerptHeader { buffer, .. } => f
                 .debug_struct("ExcerptHeader")
                 .field("path", &buffer.path())
@@ -319,7 +312,6 @@ impl BlockMap {
                     .iter()
                     .map(|block| {
                         let mut position = block.position.to_point(&buffer);
-                        let column = wrap_snapshot.from_point(position, Bias::Left).column();
                         match block.disposition {
                             BlockDisposition::Above => position.column = 0,
                             BlockDisposition::Below => {
@@ -327,13 +319,7 @@ impl BlockMap {
                             }
                         }
                         let position = wrap_snapshot.from_point(position, Bias::Left);
-                        (
-                            position.row(),
-                            TransformBlock::Custom {
-                                block: block.clone(),
-                                column,
-                            },
-                        )
+                        (position.row(), TransformBlock::Custom(block.clone()))
                     }),
             );
             blocks_in_edit.extend(
@@ -362,10 +348,7 @@ impl BlockMap {
                     ) => Ordering::Equal,
                     (TransformBlock::ExcerptHeader { .. }, _) => Ordering::Less,
                     (_, TransformBlock::ExcerptHeader { .. }) => Ordering::Greater,
-                    (
-                        TransformBlock::Custom { block: block_a, .. },
-                        TransformBlock::Custom { block: block_b, .. },
-                    ) => block_a
+                    (TransformBlock::Custom(block_a), TransformBlock::Custom(block_b)) => block_a
                         .disposition
                         .cmp(&block_b.disposition)
                         .then_with(|| block_a.id.cmp(&block_b.id)),
@@ -908,6 +891,10 @@ impl Block {
     pub fn render(&self, cx: &BlockContext) -> ElementBox {
         self.render.lock()(cx)
     }
+
+    pub fn position(&self) -> &Anchor {
+        &self.position
+    }
 }
 
 impl Debug for Block {
@@ -1008,10 +995,9 @@ mod tests {
         let blocks = snapshot
             .blocks_in_range(0..8)
             .map(|(start_row, block)| {
-                let (block, column) = block.as_custom().unwrap();
+                let block = block.as_custom().unwrap();
                 (
                     start_row..start_row + block.height as u32,
-                    column,
                     block
                         .render(&BlockContext {
                             cx,
@@ -1033,9 +1019,9 @@ mod tests {
         assert_eq!(
             blocks,
             &[
-                (1..3, 2, "block 2".to_string()),
-                (3..4, 0, "block 1".to_string()),
-                (7..10, 3, "block 3".to_string()),
+                (1..2, "block 1".to_string()),
+                (2..4, "block 2".to_string()),
+                (7..10, "block 3".to_string()),
             ]
         );
 
@@ -1324,7 +1310,6 @@ mod tests {
             let mut expected_blocks = Vec::new();
             expected_blocks.extend(custom_blocks.iter().map(|(id, block)| {
                 let mut position = block.position.to_point(&buffer_snapshot);
-                let column = wraps_snapshot.from_point(position, Bias::Left).column();
                 match block.disposition {
                     BlockDisposition::Above => {
                         position.column = 0;
@@ -1426,7 +1411,7 @@ mod tests {
             assert_eq!(
                 blocks_snapshot
                     .blocks_in_range(0..(expected_row_count as u32))
-                    .map(|(row, block)| (row, block.as_custom().map(|(b, _)| b.id)))
+                    .map(|(row, block)| { (row, block.as_custom().map(|b| b.id)) })
                     .collect::<Vec<_>>(),
                 expected_block_positions
             );
@@ -1508,9 +1493,9 @@ mod tests {
     }
 
     impl TransformBlock {
-        fn as_custom(&self) -> Option<(&Block, u32)> {
+        fn as_custom(&self) -> Option<&Block> {
             match self {
-                TransformBlock::Custom { block, column } => Some((block, *column)),
+                TransformBlock::Custom(block) => Some(block),
                 TransformBlock::ExcerptHeader { .. } => None,
             }
         }

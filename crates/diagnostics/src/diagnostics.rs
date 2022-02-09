@@ -423,25 +423,16 @@ impl ProjectDiagnosticsEditor {
         self.editor.update(cx, |editor, cx| {
             blocks_to_remove.extend(path_state.header);
             editor.remove_blocks(blocks_to_remove, cx);
-            let header_block = first_excerpt_id.map(|excerpt_id| BlockProperties {
-                position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, language::Anchor::min()),
-                height: 2,
-                render: path_header_renderer(buffer, self.build_settings.clone()),
-                disposition: BlockDisposition::Above,
-            });
             let block_ids = editor.insert_blocks(
-                blocks_to_add
-                    .into_iter()
-                    .map(|block| {
-                        let (excerpt_id, text_anchor) = block.position;
-                        BlockProperties {
-                            position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor),
-                            height: block.height,
-                            render: block.render,
-                            disposition: block.disposition,
-                        }
-                    })
-                    .chain(header_block.into_iter()),
+                blocks_to_add.into_iter().map(|block| {
+                    let (excerpt_id, text_anchor) = block.position;
+                    BlockProperties {
+                        position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor),
+                        height: block.height,
+                        render: block.render,
+                        disposition: block.disposition,
+                    }
+                }),
                 cx,
             );
 
@@ -660,51 +651,6 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
     }
 }
 
-fn path_header_renderer(buffer: ModelHandle<Buffer>, build_settings: BuildSettings) -> RenderBlock {
-    Arc::new(move |cx| {
-        let settings = build_settings(cx);
-        let style = settings.style.diagnostic_path_header;
-        let font_size = (style.text_scale_factor * settings.style.text.font_size).round();
-
-        let mut filename = None;
-        let mut path = None;
-        if let Some(file) = buffer.read(&**cx).file() {
-            filename = file
-                .path()
-                .file_name()
-                .map(|f| f.to_string_lossy().to_string());
-            path = file
-                .path()
-                .parent()
-                .map(|p| p.to_string_lossy().to_string() + "/");
-        }
-
-        Flex::row()
-            .with_child(
-                Label::new(
-                    filename.unwrap_or_else(|| "untitled".to_string()),
-                    style.filename.text.clone().with_font_size(font_size),
-                )
-                .contained()
-                .with_style(style.filename.container)
-                .boxed(),
-            )
-            .with_children(path.map(|path| {
-                Label::new(path, style.path.text.clone().with_font_size(font_size))
-                    .contained()
-                    .with_style(style.path.container)
-                    .boxed()
-            }))
-            .aligned()
-            .left()
-            .contained()
-            .with_style(style.container)
-            .with_padding_left(cx.gutter_padding + cx.scroll_x * cx.em_width)
-            .expanded()
-            .named("path header block")
-    })
-}
-
 fn diagnostic_header_renderer(
     diagnostic: Diagnostic,
     build_settings: BuildSettings,
@@ -843,7 +789,10 @@ fn compare_diagnostics<L: language::ToOffset, R: language::ToOffset>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::{display_map::BlockContext, DisplayPoint, EditorSnapshot};
+    use editor::{
+        display_map::{BlockContext, TransformBlock},
+        DisplayPoint, EditorSnapshot,
+    };
     use gpui::TestAppContext;
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16};
     use serde_json::json;
@@ -1259,18 +1208,23 @@ mod tests {
         editor
             .blocks_in_range(0..editor.max_point().row())
             .filter_map(|(row, block)| {
-                block
-                    .render(&BlockContext {
-                        cx,
-                        anchor_x: 0.,
-                        scroll_x: 0.,
-                        gutter_padding: 0.,
-                        gutter_width: 0.,
-                        line_height: 0.,
-                        em_width: 0.,
-                    })
-                    .name()
-                    .map(|s| (row, s.to_string()))
+                let name = match block {
+                    TransformBlock::Custom(block) => block
+                        .render(&BlockContext {
+                            cx,
+                            anchor_x: 0.,
+                            scroll_x: 0.,
+                            gutter_padding: 0.,
+                            gutter_width: 0.,
+                            line_height: 0.,
+                            em_width: 0.,
+                        })
+                        .name()?
+                        .to_string(),
+                    TransformBlock::ExcerptHeader { .. } => "path header block".to_string(),
+                };
+
+                Some((row, name))
             })
             .collect()
     }

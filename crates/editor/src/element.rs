@@ -3,11 +3,12 @@ use super::{
     Anchor, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, Input,
     Scroll, Select, SelectPhase, SoftWrap, ToPoint, MAX_LINE_LEN,
 };
+use crate::display_map::TransformBlock;
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
 use gpui::{
     color::Color,
-    elements::layout_highlighted_chunks,
+    elements::*,
     fonts::{HighlightStyle, Underline},
     geometry::{
         rect::RectF,
@@ -649,44 +650,84 @@ impl EditorElement {
         line_layouts: &[text_layout::Line],
         cx: &mut LayoutContext,
     ) -> Vec<(u32, ElementBox)> {
-        Default::default()
-        // snapshot
-        //     .blocks_in_range(rows.clone())
-        //     .map(|(start_row, block)| {
-        //         let anchor_row = block
-        //             .position()
-        //             .to_point(&snapshot.buffer_snapshot)
-        //             .to_display_point(snapshot)
-        //             .row();
+        let scroll_x = snapshot.scroll_position.x();
+        snapshot
+            .blocks_in_range(rows.clone())
+            .map(|(block_row, block)| {
+                let mut element = match block {
+                    TransformBlock::Custom(block) => {
+                        let align_to = block
+                            .position()
+                            .to_point(&snapshot.buffer_snapshot)
+                            .to_display_point(snapshot);
+                        let anchor_x = text_x
+                            + if rows.contains(&align_to.row()) {
+                                line_layouts[(align_to.row() - rows.start) as usize]
+                                    .x_for_index(align_to.column() as usize)
+                            } else {
+                                layout_line(align_to.row(), snapshot, style, cx.text_layout_cache)
+                                    .x_for_index(align_to.column() as usize)
+                            };
 
-        //         let anchor_x = text_x
-        //             + if rows.contains(&anchor_row) {
-        //                 line_layouts[(anchor_row - rows.start) as usize]
-        //                     .x_for_index(block.column() as usize)
-        //             } else {
-        //                 layout_line(anchor_row, snapshot, style, cx.text_layout_cache)
-        //                     .x_for_index(block.column() as usize)
-        //             };
+                        block.render(&BlockContext {
+                            cx,
+                            anchor_x,
+                            gutter_padding,
+                            line_height,
+                            scroll_x,
+                            gutter_width,
+                            em_width,
+                        })
+                    }
+                    TransformBlock::ExcerptHeader { buffer, .. } => {
+                        let style = &self.settings.style.diagnostic_path_header;
+                        let font_size =
+                            (style.text_scale_factor * self.settings.style.text.font_size).round();
 
-        //         let mut element = block.render(&BlockContext {
-        //             cx,
-        //             anchor_x,
-        //             gutter_padding,
-        //             line_height,
-        //             scroll_x: snapshot.scroll_position.x(),
-        //             gutter_width,
-        //             em_width,
-        //         });
-        //         element.layout(
-        //             SizeConstraint {
-        //                 min: Vector2F::zero(),
-        //                 max: vec2f(width, block.height() as f32 * line_height),
-        //             },
-        //             cx,
-        //         );
-        //         (start_row, element)
-        //     })
-        //     .collect()
+                        let mut filename = None;
+                        let mut parent_path = None;
+                        if let Some(path) = buffer.path() {
+                            filename = path.file_name().map(|f| f.to_string_lossy().to_string());
+                            parent_path =
+                                path.parent().map(|p| p.to_string_lossy().to_string() + "/");
+                        }
+
+                        Flex::row()
+                            .with_child(
+                                Label::new(
+                                    filename.unwrap_or_else(|| "untitled".to_string()),
+                                    style.filename.text.clone().with_font_size(font_size),
+                                )
+                                .contained()
+                                .with_style(style.filename.container)
+                                .boxed(),
+                            )
+                            .with_children(parent_path.map(|path| {
+                                Label::new(path, style.path.text.clone().with_font_size(font_size))
+                                    .contained()
+                                    .with_style(style.path.container)
+                                    .boxed()
+                            }))
+                            .aligned()
+                            .left()
+                            .contained()
+                            .with_style(style.container)
+                            .with_padding_left(gutter_padding + scroll_x * em_width)
+                            .expanded()
+                            .named("path header block")
+                    }
+                };
+
+                element.layout(
+                    SizeConstraint {
+                        min: Vector2F::zero(),
+                        max: vec2f(width, block.height() as f32 * line_height),
+                    },
+                    cx,
+                );
+                (block_row, element)
+            })
+            .collect()
     }
 }
 
