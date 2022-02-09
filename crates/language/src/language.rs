@@ -8,7 +8,7 @@ mod tests;
 
 use anyhow::{anyhow, Result};
 use collections::HashSet;
-use gpui::{AppContext, TestAppContext};
+use gpui::AppContext;
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
@@ -357,13 +357,13 @@ impl CompletionLabel {
 
 #[cfg(any(test, feature = "test-support"))]
 impl LanguageServerConfig {
-    pub async fn fake(cx: &TestAppContext) -> (Self, lsp::FakeLanguageServer) {
+    pub async fn fake(cx: &gpui::TestAppContext) -> (Self, lsp::FakeLanguageServer) {
         Self::fake_with_capabilities(Default::default(), cx).await
     }
 
     pub async fn fake_with_capabilities(
         capabilites: lsp::ServerCapabilities,
-        cx: &TestAppContext,
+        cx: &gpui::TestAppContext,
     ) -> (Self, lsp::FakeLanguageServer) {
         let (server, fake) = lsp::LanguageServer::fake_with_capabilities(capabilites, cx).await;
         fake.started

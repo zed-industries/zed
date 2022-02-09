@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufWriter, AsyncRead, AsyncWrite};
-use gpui::{executor, Task, TestAppContext};
+use gpui::{executor, Task};
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, oneshot, prelude::Stream, sink::Sink, watch};
 use serde::{Deserialize, Serialize};
@@ -485,13 +485,13 @@ pub struct RequestId<T> {
 
 #[cfg(any(test, feature = "test-support"))]
 impl LanguageServer {
-    pub async fn fake(cx: &TestAppContext) -> (Arc<Self>, FakeLanguageServer) {
+    pub async fn fake(cx: &gpui::TestAppContext) -> (Arc<Self>, FakeLanguageServer) {
         Self::fake_with_capabilities(Default::default(), cx).await
     }
 
     pub async fn fake_with_capabilities(
         capabilities: ServerCapabilities,
-        cx: &TestAppContext,
+        cx: &gpui::TestAppContext,
     ) -> (Arc<Self>, FakeLanguageServer) {
         let stdin = async_pipe::pipe();
         let stdout = async_pipe::pipe();
