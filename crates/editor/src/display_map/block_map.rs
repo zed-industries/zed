@@ -2,12 +2,13 @@ use super::wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot};
 use crate::{Anchor, ToPoint as _};
 use collections::{HashMap, HashSet};
 use gpui::{AppContext, ElementBox};
-use language::Chunk;
+use language::{BufferSnapshot, Chunk};
 use parking_lot::Mutex;
 use std::{
     cmp::{self, Ordering, Reverse},
     fmt::Debug,
     ops::{Deref, Range},
+    path::Path,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -84,13 +85,44 @@ pub enum BlockDisposition {
 #[derive(Clone, Debug)]
 struct Transform {
     summary: TransformSummary,
-    block: Option<AlignedBlock>,
+    block: Option<TransformBlock>,
 }
 
-#[derive(Clone, Debug)]
-pub struct AlignedBlock {
-    block: Arc<Block>,
-    column: u32,
+#[derive(Clone)]
+enum TransformBlock {
+    Custom {
+        block: Arc<Block>,
+        column: u32,
+    },
+    ExcerptHeader {
+        buffer: BufferSnapshot,
+        range: Range<text::Anchor>,
+        path: Option<Arc<Path>>,
+    },
+}
+
+impl TransformBlock {
+    fn disposition(&self) -> BlockDisposition {
+        match self {
+            TransformBlock::Custom { block, column } => block.disposition,
+            TransformBlock::ExcerptHeader { .. } => BlockDisposition::Above,
+        }
+    }
+}
+
+impl Debug for TransformBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Custom { block, column } => f
+                .debug_struct("Custom")
+                .field("block", block)
+                .field("column", column)
+                .finish(),
+            Self::ExcerptHeader { buffer, path, .. } => {
+                f.debug_struct("ExcerptHeader").field("path", path).finish()
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -244,12 +276,14 @@ impl BlockMap {
                 Ok(ix) | Err(ix) => last_block_ix + ix,
             };
 
+            let end_anchor;
             let end_block_ix = if new_end.0 > wrap_snapshot.max_point().row() {
+                end_anchor = Anchor::max();
                 self.blocks.len()
             } else {
                 let new_buffer_end =
                     wrap_snapshot.to_point(WrapPoint::new(new_end.0, 0), Bias::Left);
-                let end_anchor = buffer.anchor_before(new_buffer_end);
+                end_anchor = buffer.anchor_before(new_buffer_end);
                 match self.blocks[start_block_ix..].binary_search_by(|probe| {
                     probe
                         .position
@@ -276,25 +310,44 @@ impl BlockMap {
                             }
                         }
                         let position = wrap_snapshot.from_point(position, Bias::Left);
-                        (position.row(), column, block.clone())
+                        (
+                            position.row(),
+                            TransformBlock::Custom {
+                                block: block.clone(),
+                                column,
+                            },
+                        )
+                    }),
+            );
+            blocks_in_edit.extend(
+                buffer
+                    .excerpt_boundaries_in_range(start_anchor..end_anchor)
+                    .map(|excerpt_boundary| {
+                        (
+                            excerpt_boundary.row,
+                            TransformBlock::ExcerptHeader {
+                                buffer: excerpt_boundary.buffer,
+                                range: excerpt_boundary.range,
+                                path: excerpt_boundary.path,
+                            },
+                        )
                     }),
             );
 
             // When multiple blocks are on the same row, newer blocks appear above older
             // blocks. This is arbitrary, but we currently rely on it in ProjectDiagnosticsEditor.
-            blocks_in_edit
-                .sort_by_key(|(row, _, block)| (*row, block.disposition, Reverse(block.id)));
+            blocks_in_edit.sort();
 
             // For each of these blocks, insert a new isomorphic transform preceding the block,
             // and then insert the block itself.
-            for (block_row, column, block) in blocks_in_edit.drain(..) {
-                let insertion_row = match block.disposition {
+            for (block_row, block) in blocks_in_edit.drain(..) {
+                let insertion_row = match block.disposition() {
                     BlockDisposition::Above => block_row,
                     BlockDisposition::Below => block_row + 1,
                 };
                 let extent_before_block = insertion_row - new_transforms.summary().input_rows;
                 push_isomorphic(&mut new_transforms, extent_before_block);
-                new_transforms.push(Transform::block(block, column), &());
+                new_transforms.push(Transform::block(block), &());
             }
 
             old_end = WrapRow(old_end.0.min(old_row_count));

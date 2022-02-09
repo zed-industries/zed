@@ -15,6 +15,7 @@ use std::{
     cmp, fmt, io,
     iter::{self, FromIterator},
     ops::{Range, Sub},
+    path::Path,
     str,
     sync::Arc,
     time::{Duration, Instant},
@@ -99,6 +100,14 @@ pub struct MultiBufferSnapshot {
 pub struct ExcerptProperties<'a, T> {
     pub buffer: &'a ModelHandle<Buffer>,
     pub range: Range<T>,
+}
+
+pub struct ExcerptBoundary {
+    pub row: u32,
+    pub buffer: BufferSnapshot,
+    pub path: Option<Arc<Path>>,
+    pub range: Range<text::Anchor>,
+    pub starts_new_buffer: bool,
 }
 
 #[derive(Clone)]
@@ -1769,6 +1778,24 @@ impl MultiBufferSnapshot {
         start_id != end_id
     }
 
+    pub fn excerpt_boundaries_in_range<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = ExcerptBoundary> + 'a {
+        let start = range.start.to_offset(self);
+        let end = range.end.to_offset(self);
+        let mut cursor = self.excerpts.cursor::<(usize, Option<&ExcerptId>)>();
+        cursor.seek(&start, Bias::Right, &());
+
+        let prev_buffer_id = cursor.prev_item().map(|excerpt| excerpt.buffer_id);
+
+        std::iter::from_fn(move || {
+            let excerpt = cursor.item()?;
+            let starts_new_buffer = Some(excerpt.buffer_id) != prev_buffer_id;
+            todo!()
+        })
+    }
+
     pub fn parse_count(&self) -> usize {
         self.parse_count
     }
@@ -2627,6 +2654,17 @@ mod tests {
         assert!(!snapshot.range_contains_excerpt_boundary(Point::new(2, 0)..Point::new(3, 0)));
         assert!(!snapshot.range_contains_excerpt_boundary(Point::new(4, 0)..Point::new(4, 2)));
         assert!(!snapshot.range_contains_excerpt_boundary(Point::new(4, 2)..Point::new(4, 2)));
+
+        assert_eq!(
+            snapshot
+                .excerpt_boundaries_in_range(Point::new(0, 0)..Point::new(4, 2))
+                .collect::<Vec<_>>(),
+            &[
+                (Some(buffer_1.clone()), true),
+                (Some(buffer_1.clone()), false),
+                (Some(buffer_2.clone()), false),
+            ]
+        );
 
         buffer_1.update(cx, |buffer, cx| {
             buffer.edit(

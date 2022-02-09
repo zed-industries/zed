@@ -3,6 +3,7 @@ mod element;
 pub mod items;
 pub mod movement;
 mod multi_buffer;
+mod multi_editor;
 
 #[cfg(test)]
 mod test;
