@@ -14,7 +14,6 @@ use std::{
     collections::HashMap,
     future::Future,
     io::Write,
-    rc::Rc,
     str::FromStr,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -473,7 +472,7 @@ pub struct FakeLanguageServer {
     buffer: Vec<u8>,
     stdin: smol::io::BufReader<async_pipe::PipeReader>,
     stdout: smol::io::BufWriter<async_pipe::PipeWriter>,
-    executor: Rc<executor::Foreground>,
+    executor: std::rc::Rc<executor::Foreground>,
     pub started: Arc<std::sync::atomic::AtomicBool>,
 }
 

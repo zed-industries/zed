@@ -951,10 +951,6 @@ impl WrapPoint {
     pub fn column_mut(&mut self) -> &mut u32 {
         &mut self.0.column
     }
-
-    pub fn is_zero(&self) -> bool {
-        self.0.is_zero()
-    }
 }
 
 impl sum_tree::Summary for TransformSummary {
