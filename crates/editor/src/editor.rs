@@ -10,7 +10,7 @@ mod test;
 use aho_corasick::AhoCorasick;
 use anyhow::Result;
 use clock::ReplicaId;
-use collections::{BTreeMap, HashMap, HashSet};
+use collections::{BTreeMap, Bound, HashMap, HashSet};
 pub use display_map::DisplayPoint;
 use display_map::*;
 pub use element::*;
@@ -2605,7 +2605,10 @@ impl Editor {
 
                 // Don't move lines across excerpts
                 if buffer
-                    .excerpt_boundaries_in_range(insertion_point..range_to_move.end)
+                    .excerpt_boundaries_in_range((
+                        Bound::Excluded(insertion_point),
+                        Bound::Included(range_to_move.end),
+                    ))
                     .next()
                     .is_none()
                 {
@@ -2709,7 +2712,10 @@ impl Editor {
 
                 // Don't move lines across excerpt boundaries
                 if buffer
-                    .excerpt_boundaries_in_range(range_to_move.start..insertion_point)
+                    .excerpt_boundaries_in_range((
+                        Bound::Excluded(range_to_move.start),
+                        Bound::Included(insertion_point),
+                    ))
                     .next()
                     .is_none()
                 {

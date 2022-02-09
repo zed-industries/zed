@@ -1,6 +1,6 @@
 use super::wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot};
 use crate::{Anchor, ToPoint as _};
-use collections::{HashMap, HashSet};
+use collections::{Bound, HashMap, HashSet};
 use gpui::{AppContext, ElementBox};
 use language::{BufferSnapshot, Chunk};
 use parking_lot::Mutex;
@@ -156,16 +156,22 @@ pub struct BlockBufferRows<'a> {
 
 impl BlockMap {
     pub fn new(wrap_snapshot: WrapSnapshot, excerpt_header_height: u8) -> Self {
-        Self {
+        let row_count = wrap_snapshot.max_point().row() + 1;
+        let map = Self {
             next_block_id: AtomicUsize::new(0),
             blocks: Vec::new(),
-            transforms: Mutex::new(SumTree::from_item(
-                Transform::isomorphic(wrap_snapshot.text_summary().lines.row + 1),
-                &(),
-            )),
-            wrap_snapshot: Mutex::new(wrap_snapshot),
+            transforms: Mutex::new(SumTree::from_item(Transform::isomorphic(row_count), &())),
+            wrap_snapshot: Mutex::new(wrap_snapshot.clone()),
             excerpt_header_height,
-        }
+        };
+        map.sync(
+            &wrap_snapshot,
+            vec![Edit {
+                old: 0..row_count,
+                new: 0..row_count,
+            }],
+        );
+        map
     }
 
     pub fn read(&self, wrap_snapshot: WrapSnapshot, edits: Vec<WrapEdit>) -> BlockSnapshot {
@@ -275,6 +281,7 @@ impl BlockMap {
             let new_buffer_start =
                 wrap_snapshot.to_point(WrapPoint::new(new_start.0, 0), Bias::Left);
             let start_anchor = buffer.anchor_before(new_buffer_start);
+            let start_bound = Bound::Included(start_anchor.clone());
             let start_block_ix = match self.blocks[last_block_ix..].binary_search_by(|probe| {
                 probe
                     .position
@@ -285,14 +292,15 @@ impl BlockMap {
                 Ok(ix) | Err(ix) => last_block_ix + ix,
             };
 
-            let end_anchor;
+            let end_bound;
             let end_block_ix = if new_end.0 > wrap_snapshot.max_point().row() {
-                end_anchor = Anchor::max();
+                end_bound = Bound::Unbounded;
                 self.blocks.len()
             } else {
                 let new_buffer_end =
                     wrap_snapshot.to_point(WrapPoint::new(new_end.0, 0), Bias::Left);
-                end_anchor = buffer.anchor_before(new_buffer_end);
+                let end_anchor = buffer.anchor_before(new_buffer_end);
+                end_bound = Bound::Excluded(end_anchor.clone());
                 match self.blocks[start_block_ix..].binary_search_by(|probe| {
                     probe
                         .position
@@ -330,10 +338,12 @@ impl BlockMap {
             );
             blocks_in_edit.extend(
                 buffer
-                    .excerpt_boundaries_in_range(start_anchor..end_anchor)
+                    .excerpt_boundaries_in_range((start_bound, end_bound))
                     .map(|excerpt_boundary| {
                         (
-                            excerpt_boundary.row,
+                            wrap_snapshot
+                                .from_point(Point::new(excerpt_boundary.row, 0), Bias::Left)
+                                .row(),
                             TransformBlock::ExcerptHeader {
                                 buffer: excerpt_boundary.buffer,
                                 range: excerpt_boundary.range,
@@ -343,8 +353,7 @@ impl BlockMap {
                     }),
             );
 
-            // When multiple blocks are on the same row, newer blocks appear above older
-            // blocks. This is arbitrary, but we currently rely on it in ProjectDiagnosticsEditor.
+            // Place excerpt headers above custom blocks on the same row.
             blocks_in_edit.sort_unstable_by(|(row_a, block_a), (row_b, block_b)| {
                 row_a.cmp(&row_b).then_with(|| match (block_a, block_b) {
                     (
@@ -359,7 +368,7 @@ impl BlockMap {
                     ) => block_a
                         .disposition
                         .cmp(&block_b.disposition)
-                        .then_with(|| block_a.id.cmp(&block_b.id).reverse()),
+                        .then_with(|| block_a.id.cmp(&block_b.id)),
                 })
             });
 
@@ -936,7 +945,6 @@ mod tests {
     use crate::multi_buffer::MultiBuffer;
     use gpui::{elements::Empty, Element};
     use rand::prelude::*;
-    use std::cmp::Reverse;
     use std::env;
     use text::RandomCharIter;
 
@@ -1213,7 +1221,7 @@ mod tests {
         let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
         let (wrap_map, wraps_snapshot) =
             WrapMap::new(tabs_snapshot, font_id, font_size, wrap_width, cx);
-        let mut block_map = BlockMap::new(wraps_snapshot, excerpt_header_height);
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), excerpt_header_height);
         let mut custom_blocks = Vec::new();
 
         for _ in 0..operations {
@@ -1326,25 +1334,22 @@ mod tests {
                     }
                 };
                 let row = wraps_snapshot.from_point(position, Bias::Left).row();
-                (row, block.disposition, *id, block.height)
+                (row, block.disposition, Some(*id), block.height)
             }));
-            expected_blocks.extend(
-                buffer_snapshot
-                    .excerpt_boundaries_in_range(0..buffer_snapshot.len())
-                    .map(|boundary| {
-                        let position =
-                            wraps_snapshot.from_point(Point::new(boundary.row, 0), Bias::Left);
-                        (
-                            position.row(),
-                            BlockDisposition::Above,
-                            BlockId(usize::MAX),
-                            excerpt_header_height,
-                        )
-                    }),
-            );
-            expected_blocks.sort_unstable_by_key(|(row, disposition, id, _)| {
-                (*row, *disposition, Reverse(*id))
-            });
+            expected_blocks.extend(buffer_snapshot.excerpt_boundaries_in_range(0..).map(
+                |boundary| {
+                    let position =
+                        wraps_snapshot.from_point(Point::new(boundary.row, 0), Bias::Left);
+                    (
+                        position.row(),
+                        BlockDisposition::Above,
+                        None,
+                        excerpt_header_height,
+                    )
+                },
+            ));
+            expected_blocks
+                .sort_unstable_by_key(|(row, disposition, id, _)| (*row, *disposition, *id));
             let mut sorted_blocks_iter = expected_blocks.iter().peekable();
 
             let input_buffer_rows = buffer_snapshot.buffer_rows(0).collect::<Vec<_>>();
@@ -1421,14 +1426,7 @@ mod tests {
             assert_eq!(
                 blocks_snapshot
                     .blocks_in_range(0..(expected_row_count as u32))
-                    .map(|(row, block)| (
-                        row,
-                        if let Some((block, _)) = block.as_custom() {
-                            block.id
-                        } else {
-                            BlockId(usize::MAX)
-                        }
-                    ))
+                    .map(|(row, block)| (row, block.as_custom().map(|(b, _)| b.id)))
                     .collect::<Vec<_>>(),
                 expected_block_positions
             );

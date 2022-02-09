@@ -3,7 +3,7 @@ mod anchor;
 pub use anchor::{Anchor, AnchorRangeExt};
 use anyhow::Result;
 use clock::ReplicaId;
-use collections::{HashMap, HashSet};
+use collections::{Bound, HashMap, HashSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
@@ -14,7 +14,7 @@ use std::{
     cell::{Ref, RefCell},
     cmp, fmt, io,
     iter::{self, FromIterator},
-    ops::{Range, Sub},
+    ops::{Range, RangeBounds, Sub},
     str,
     sync::Arc,
     time::{Duration, Instant},
@@ -229,11 +229,9 @@ impl MultiBuffer {
                 let buffer = buffer_handle.read(cx);
                 let end_ix = buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Right);
                 let start_ix = buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
-                let header_height = rng.gen_range(0..=5);
                 log::info!(
-                    "Inserting excerpt from buffer {} with header height {} and range {:?}: {:?}",
+                    "Inserting excerpt from buffer {} and range {:?}: {:?}",
                     buffer_handle.id(),
-                    header_height,
                     start_ix..end_ix,
                     &buffer.text()[start_ix..end_ix]
                 );
@@ -1765,24 +1763,54 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn excerpt_boundaries_in_range<'a, T: ToOffset>(
+    pub fn excerpt_boundaries_in_range<'a, R, T>(
         &'a self,
-        range: Range<T>,
-    ) -> impl Iterator<Item = ExcerptBoundary> + 'a {
-        let start = range.start.to_offset(self);
-        let end = range.end.to_offset(self);
-        let mut cursor = self
-            .excerpts
-            .cursor::<(usize, (Option<&ExcerptId>, Point))>();
-        cursor.seek(&start, Bias::Right, &());
+        range: R,
+    ) -> impl Iterator<Item = ExcerptBoundary> + 'a
+    where
+        R: RangeBounds<T>,
+        T: ToOffset,
+    {
+        let start_offset;
+        let start = match range.start_bound() {
+            Bound::Included(start) => {
+                start_offset = start.to_offset(self);
+                Bound::Included(start_offset)
+            }
+            Bound::Excluded(start) => {
+                start_offset = start.to_offset(self);
+                Bound::Excluded(start_offset)
+            }
+            Bound::Unbounded => {
+                start_offset = 0;
+                Bound::Unbounded
+            }
+        };
+        let end = match range.end_bound() {
+            Bound::Included(end) => Bound::Included(end.to_offset(self)),
+            Bound::Excluded(end) => Bound::Excluded(end.to_offset(self)),
+            Bound::Unbounded => Bound::Unbounded,
+        };
+        let bounds = (start, end);
+
+        let mut cursor = self.excerpts.cursor::<(usize, Point)>();
+        cursor.seek(&start_offset, Bias::Right, &());
+        if cursor.item().is_none() {
+            cursor.prev(&());
+        }
+        if !bounds.contains(&cursor.start().0) {
+            cursor.next(&());
+        }
 
         let mut prev_buffer_id = cursor.prev_item().map(|excerpt| excerpt.buffer_id);
         std::iter::from_fn(move || {
-            if start <= cursor.start().0 && end > cursor.start().0 {
+            if self.singleton {
+                None
+            } else if bounds.contains(&cursor.start().0) {
                 let excerpt = cursor.item()?;
                 let starts_new_buffer = Some(excerpt.buffer_id) != prev_buffer_id;
                 let boundary = ExcerptBoundary {
-                    row: cursor.start().1 .1.row,
+                    row: cursor.start().1.row,
                     buffer: excerpt.buffer.clone(),
                     range: excerpt.range.clone(),
                     starts_new_buffer,
@@ -2649,51 +2677,46 @@ mod tests {
         );
         assert_eq!(snapshot.buffer_rows(4).collect::<Vec<_>>(), [Some(3)]);
         assert_eq!(snapshot.buffer_rows(5).collect::<Vec<_>>(), []);
-        assert!(snapshot
-            .excerpt_boundaries_in_range(Point::new(1, 0)..Point::new(1, 5))
-            .next()
-            .is_none());
-        assert!(snapshot
-            .excerpt_boundaries_in_range(Point::new(1, 0)..Point::new(2, 0))
-            .next()
-            .is_some());
-        assert!(snapshot
-            .excerpt_boundaries_in_range(Point::new(1, 0)..Point::new(4, 0))
-            .next()
-            .is_some());
-        assert!(snapshot
-            .excerpt_boundaries_in_range(Point::new(2, 0)..Point::new(3, 0))
-            .next()
-            .is_none());
-        assert!(snapshot
-            .excerpt_boundaries_in_range(Point::new(4, 0)..Point::new(4, 2))
-            .next()
-            .is_none());
-        assert!(snapshot
-            .excerpt_boundaries_in_range(Point::new(4, 2)..Point::new(4, 2))
-            .next()
-            .is_none());
 
         assert_eq!(
-            snapshot
-                .excerpt_boundaries_in_range(Point::new(0, 0)..Point::new(4, 2))
-                .map(|boundary| (
-                    boundary.row,
-                    boundary
-                        .buffer
-                        .text_for_range(boundary.range)
-                        .collect::<String>(),
-                    boundary.starts_new_buffer
-                ))
-                .collect::<Vec<_>>(),
+            boundaries_in_range(Point::new(0, 0)..Point::new(4, 2), &snapshot),
             &[
-                (0, "".to_string(), true),
-                (0, "".to_string(), true),
-                (0, "".to_string(), true),
-                (0, "".to_string(), true),
-                (0, "".to_string(), true),
-                (0, "".to_string(), true),
+                (0, "bbbb\nccccc".to_string(), true),
+                (2, "ddd\neeee".to_string(), false),
+                (4, "jj".to_string(), true),
             ]
+        );
+        assert_eq!(
+            boundaries_in_range(Point::new(0, 0)..Point::new(2, 0), &snapshot),
+            &[(0, "bbbb\nccccc".to_string(), true)]
+        );
+        assert_eq!(
+            boundaries_in_range(Point::new(1, 0)..Point::new(1, 5), &snapshot),
+            &[]
+        );
+        assert_eq!(
+            boundaries_in_range(Point::new(1, 0)..Point::new(2, 0), &snapshot),
+            &[]
+        );
+        assert_eq!(
+            boundaries_in_range(Point::new(1, 0)..Point::new(4, 0), &snapshot),
+            &[(2, "ddd\neeee".to_string(), false)]
+        );
+        assert_eq!(
+            boundaries_in_range(Point::new(1, 0)..Point::new(4, 0), &snapshot),
+            &[(2, "ddd\neeee".to_string(), false)]
+        );
+        assert_eq!(
+            boundaries_in_range(Point::new(2, 0)..Point::new(3, 0), &snapshot),
+            &[(2, "ddd\neeee".to_string(), false)]
+        );
+        assert_eq!(
+            boundaries_in_range(Point::new(4, 0)..Point::new(4, 2), &snapshot),
+            &[(4, "jj".to_string(), true)]
+        );
+        assert_eq!(
+            boundaries_in_range(Point::new(4, 2)..Point::new(4, 2), &snapshot),
+            &[]
         );
 
         buffer_1.update(cx, |buffer, cx| {
@@ -2766,6 +2789,25 @@ mod tests {
                 "eeee",   //
             )
         );
+
+        fn boundaries_in_range(
+            range: Range<Point>,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<(u32, String, bool)> {
+            snapshot
+                .excerpt_boundaries_in_range(range)
+                .map(|boundary| {
+                    (
+                        boundary.row,
+                        boundary
+                            .buffer
+                            .text_for_range(boundary.range)
+                            .collect::<String>(),
+                        boundary.starts_new_buffer,
+                    )
+                })
+                .collect::<Vec<_>>()
+        }
     }
 
     #[gpui::test]
