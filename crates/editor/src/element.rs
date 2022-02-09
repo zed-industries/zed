@@ -679,42 +679,59 @@ impl EditorElement {
                             em_width,
                         })
                     }
-                    TransformBlock::ExcerptHeader { buffer, .. } => {
-                        let style = &self.settings.style.diagnostic_path_header;
-                        let font_size =
-                            (style.text_scale_factor * self.settings.style.text.font_size).round();
+                    TransformBlock::ExcerptHeader {
+                        buffer,
+                        starts_new_buffer,
+                        ..
+                    } => {
+                        if *starts_new_buffer {
+                            let style = &self.settings.style.diagnostic_path_header;
+                            let font_size = (style.text_scale_factor
+                                * self.settings.style.text.font_size)
+                                .round();
 
-                        let mut filename = None;
-                        let mut parent_path = None;
-                        if let Some(path) = buffer.path() {
-                            filename = path.file_name().map(|f| f.to_string_lossy().to_string());
-                            parent_path =
-                                path.parent().map(|p| p.to_string_lossy().to_string() + "/");
-                        }
+                            let mut filename = None;
+                            let mut parent_path = None;
+                            if let Some(path) = buffer.path() {
+                                filename =
+                                    path.file_name().map(|f| f.to_string_lossy().to_string());
+                                parent_path =
+                                    path.parent().map(|p| p.to_string_lossy().to_string() + "/");
+                            }
 
-                        Flex::row()
-                            .with_child(
-                                Label::new(
-                                    filename.unwrap_or_else(|| "untitled".to_string()),
-                                    style.filename.text.clone().with_font_size(font_size),
+                            Flex::row()
+                                .with_child(
+                                    Label::new(
+                                        filename.unwrap_or_else(|| "untitled".to_string()),
+                                        style.filename.text.clone().with_font_size(font_size),
+                                    )
+                                    .contained()
+                                    .with_style(style.filename.container)
+                                    .boxed(),
                                 )
-                                .contained()
-                                .with_style(style.filename.container)
-                                .boxed(),
-                            )
-                            .with_children(parent_path.map(|path| {
-                                Label::new(path, style.path.text.clone().with_font_size(font_size))
+                                .with_children(parent_path.map(|path| {
+                                    Label::new(
+                                        path,
+                                        style.path.text.clone().with_font_size(font_size),
+                                    )
                                     .contained()
                                     .with_style(style.path.container)
                                     .boxed()
-                            }))
-                            .aligned()
-                            .left()
-                            .contained()
-                            .with_style(style.container)
-                            .with_padding_left(gutter_padding + scroll_x * em_width)
-                            .expanded()
-                            .named("path header block")
+                                }))
+                                .aligned()
+                                .left()
+                                .contained()
+                                .with_style(style.container)
+                                .with_padding_left(gutter_padding + scroll_x * em_width)
+                                .expanded()
+                                .named("path header block")
+                        } else {
+                            let text_style = self.settings.style.text.clone();
+                            Label::new("…".to_string(), text_style)
+                                .contained()
+                                .with_padding_left(gutter_padding + scroll_x * em_width)
+                                .named("collapsed context")
+                        }
                     }
                 };
 

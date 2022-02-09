@@ -810,6 +810,7 @@ impl Editor {
                 settings.style.text.font_size,
                 None,
                 2,
+                1,
                 cx,
             )
         });
@@ -7892,21 +7893,23 @@ mod tests {
             build_editor(multibuffer, settings, cx)
         });
         view.update(cx, |view, cx| {
-            view.select_display_ranges(
-                &[
-                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-                    DisplayPoint::new(1, 0)..DisplayPoint::new(1, 0),
+            assert_eq!(view.text(cx), "aaaa\nbbbb");
+            view.select_ranges(
+                [
+                    Point::new(0, 0)..Point::new(0, 0),
+                    Point::new(1, 0)..Point::new(1, 0),
                 ],
+                None,
                 cx,
             );
 
             view.handle_input(&Input("X".to_string()), cx);
             assert_eq!(view.text(cx), "Xaaaa\nXbbbb");
             assert_eq!(
-                view.selected_display_ranges(cx),
-                &[
-                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
+                view.selected_ranges(cx),
+                [
+                    Point::new(0, 1)..Point::new(0, 1),
+                    Point::new(1, 1)..Point::new(1, 1),
                 ]
             )
         });
@@ -7944,31 +7947,32 @@ mod tests {
             build_editor(multibuffer, settings, cx)
         });
         view.update(cx, |view, cx| {
-            view.select_display_ranges(
-                &[
-                    DisplayPoint::new(1, 1)..DisplayPoint::new(1, 1),
-                    DisplayPoint::new(2, 3)..DisplayPoint::new(2, 3),
+            view.select_ranges(
+                [
+                    Point::new(1, 1)..Point::new(1, 1),
+                    Point::new(2, 3)..Point::new(2, 3),
                 ],
+                None,
                 cx,
             );
 
             view.handle_input(&Input("X".to_string()), cx);
             assert_eq!(view.text(cx), "aaaa\nbXbbXb\nbXbbXb\ncccc");
             assert_eq!(
-                view.selected_display_ranges(cx),
-                &[
-                    DisplayPoint::new(1, 2)..DisplayPoint::new(1, 2),
-                    DisplayPoint::new(2, 5)..DisplayPoint::new(2, 5),
+                view.selected_ranges(cx),
+                [
+                    Point::new(1, 2)..Point::new(1, 2),
+                    Point::new(2, 5)..Point::new(2, 5),
                 ]
             );
 
             view.newline(&Newline, cx);
             assert_eq!(view.text(cx), "aaaa\nbX\nbbX\nb\nbX\nbbX\nb\ncccc");
             assert_eq!(
-                view.selected_display_ranges(cx),
-                &[
-                    DisplayPoint::new(2, 0)..DisplayPoint::new(2, 0),
-                    DisplayPoint::new(6, 0)..DisplayPoint::new(6, 0),
+                view.selected_ranges(cx),
+                [
+                    Point::new(2, 0)..Point::new(2, 0),
+                    Point::new(6, 0)..Point::new(6, 0),
                 ]
             );
         });
@@ -8003,11 +8007,12 @@ mod tests {
         );
         let (_, editor) = cx.add_window(Default::default(), |cx| {
             let mut editor = build_editor(multibuffer.clone(), settings, cx);
-            editor.select_display_ranges(
-                &[
-                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
-                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+            editor.select_ranges(
+                [
+                    Point::new(1, 3)..Point::new(1, 3),
+                    Point::new(2, 1)..Point::new(2, 1),
                 ],
+                None,
                 cx,
             );
             editor
@@ -8017,10 +8022,10 @@ mod tests {
         editor.update(cx, |editor, cx| {
             editor.refresh_selections(cx);
             assert_eq!(
-                editor.selected_display_ranges(cx),
+                editor.selected_ranges(cx),
                 [
-                    DisplayPoint::new(1, 3)..DisplayPoint::new(1, 3),
-                    DisplayPoint::new(2, 1)..DisplayPoint::new(2, 1),
+                    Point::new(1, 3)..Point::new(1, 3),
+                    Point::new(2, 1)..Point::new(2, 1),
                 ]
             );
         });
@@ -8031,10 +8036,10 @@ mod tests {
         editor.update(cx, |editor, cx| {
             // Removing an excerpt causes the first selection to become degenerate.
             assert_eq!(
-                editor.selected_display_ranges(cx),
+                editor.selected_ranges(cx),
                 [
-                    DisplayPoint::new(0, 0)..DisplayPoint::new(0, 0),
-                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1)
+                    Point::new(0, 0)..Point::new(0, 0),
+                    Point::new(0, 1)..Point::new(0, 1)
                 ]
             );
 
@@ -8042,10 +8047,10 @@ mod tests {
             // location.
             editor.refresh_selections(cx);
             assert_eq!(
-                editor.selected_display_ranges(cx),
+                editor.selected_ranges(cx),
                 [
-                    DisplayPoint::new(0, 1)..DisplayPoint::new(0, 1),
-                    DisplayPoint::new(0, 3)..DisplayPoint::new(0, 3)
+                    Point::new(0, 1)..Point::new(0, 1),
+                    Point::new(0, 3)..Point::new(0, 3)
                 ]
             );
         });

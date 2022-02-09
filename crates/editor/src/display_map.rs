@@ -43,6 +43,7 @@ impl DisplayMap {
         font_id: FontId,
         font_size: f32,
         wrap_width: Option<f32>,
+        buffer_header_height: u8,
         excerpt_header_height: u8,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -50,7 +51,7 @@ impl DisplayMap {
         let (fold_map, snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font_id, font_size, wrap_width, cx);
-        let block_map = BlockMap::new(snapshot, excerpt_header_height);
+        let block_map = BlockMap::new(snapshot, buffer_header_height, excerpt_header_height);
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
         DisplayMap {
             buffer,
@@ -472,6 +473,7 @@ mod tests {
 
         let font_cache = cx.font_cache().clone();
         let tab_size = rng.gen_range(1..=4);
+        let buffer_start_excerpt_header_height = rng.gen_range(1..=5);
         let excerpt_header_height = rng.gen_range(1..=5);
         let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
         let font_id = font_cache
@@ -505,6 +507,7 @@ mod tests {
                 font_id,
                 font_size,
                 wrap_width,
+                buffer_start_excerpt_header_height,
                 excerpt_header_height,
                 cx,
             )
@@ -728,6 +731,7 @@ mod tests {
                 font_size,
                 wrap_width,
                 1,
+                1,
                 cx,
             )
         });
@@ -809,7 +813,7 @@ mod tests {
             .unwrap();
         let font_size = 14.0;
         let map = cx.add_model(|cx| {
-            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, 1, cx)
+            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, 1, 1, cx)
         });
         buffer.update(cx, |buffer, cx| {
             buffer.edit(
@@ -888,8 +892,8 @@ mod tests {
             .unwrap();
         let font_size = 14.0;
 
-        let map =
-            cx.add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, cx));
+        let map = cx
+            .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
         assert_eq!(
             cx.update(|cx| chunks(0..5, &map, &theme, cx)),
             vec![
@@ -977,7 +981,7 @@ mod tests {
         let font_size = 16.0;
 
         let map = cx.add_model(|cx| {
-            DisplayMap::new(buffer, tab_size, font_id, font_size, Some(40.0), 1, cx)
+            DisplayMap::new(buffer, tab_size, font_id, font_size, Some(40.0), 1, 1, cx)
         });
         assert_eq!(
             cx.update(|cx| chunks(0..5, &map, &theme, cx)),
@@ -1022,7 +1026,7 @@ mod tests {
             .unwrap();
         let font_size = 14.0;
         let map = cx.add_model(|cx| {
-            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, 1, cx)
+            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, 1, 1, cx)
         });
         let map = map.update(cx, |map, cx| map.snapshot(cx));
 
@@ -1066,7 +1070,7 @@ mod tests {
         let font_size = 14.0;
 
         let map = cx.add_model(|cx| {
-            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, 1, cx)
+            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, 1, 1, cx)
         });
         let map = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(map.text(), "✅       α\nβ   \n🏀β      γ");
@@ -1124,7 +1128,7 @@ mod tests {
             .unwrap();
         let font_size = 14.0;
         let map = cx.add_model(|cx| {
-            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, 1, cx)
+            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, 1, 1, cx)
         });
         assert_eq!(
             map.update(cx, |map, cx| map.snapshot(cx)).max_point(),

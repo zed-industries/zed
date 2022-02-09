@@ -68,7 +68,6 @@ struct ProjectDiagnosticsEditor {
 
 struct PathState {
     path: ProjectPath,
-    header: Option<BlockId>,
     diagnostic_groups: Vec<DiagnosticGroupState>,
 }
 
@@ -258,7 +257,6 @@ impl ProjectDiagnosticsEditor {
                     ix,
                     PathState {
                         path: path.clone(),
-                        header: None,
                         diagnostic_groups: Default::default(),
                     },
                 );
@@ -365,14 +363,6 @@ impl ProjectDiagnosticsEditor {
                                     ),
                                     disposition: BlockDisposition::Above,
                                 });
-                            } else {
-                                group_state.block_count += 1;
-                                blocks_to_add.push(BlockProperties {
-                                    position: header_position,
-                                    height: 1,
-                                    render: context_header_renderer(self.build_settings.clone()),
-                                    disposition: BlockDisposition::Above,
-                                });
                             }
 
                             for entry in &group.entries[*start_ix..ix] {
@@ -421,7 +411,6 @@ impl ProjectDiagnosticsEditor {
         });
 
         self.editor.update(cx, |editor, cx| {
-            blocks_to_remove.extend(path_state.header);
             editor.remove_blocks(blocks_to_remove, cx);
             let block_ids = editor.insert_blocks(
                 blocks_to_add.into_iter().map(|block| {
@@ -440,7 +429,6 @@ impl ProjectDiagnosticsEditor {
             for group_state in &mut groups_to_add {
                 group_state.blocks = block_ids.by_ref().take(group_state.block_count).collect();
             }
-            path_state.header = block_ids.next();
         });
 
         for ix in group_ixs_to_remove.into_iter().rev() {
@@ -704,17 +692,6 @@ fn diagnostic_header_renderer(
     })
 }
 
-fn context_header_renderer(build_settings: BuildSettings) -> RenderBlock {
-    Arc::new(move |cx| {
-        let settings = build_settings(cx);
-        let text_style = settings.style.text.clone();
-        Label::new("…".to_string(), text_style)
-            .contained()
-            .with_padding_left(cx.gutter_padding + cx.scroll_x * cx.em_width)
-            .named("collapsed context")
-    })
-}
-
 pub(crate) fn render_summary(
     summary: &DiagnosticSummary,
     text_style: &TextStyle,
@@ -939,8 +916,9 @@ mod tests {
                 [
                     (0, "path header block".into()),
                     (2, "diagnostic header".into()),
-                    (15, "diagnostic header".into()),
-                    (24, "collapsed context".into()),
+                    (15, "collapsed context".into()),
+                    (16, "diagnostic header".into()),
+                    (25, "collapsed context".into()),
                 ]
             );
             assert_eq!(
@@ -965,6 +943,7 @@ mod tests {
                     "    c(y);\n",
                     "\n", // supporting diagnostic
                     "    d(x);\n",
+                    "\n", // context ellipsis
                     // diagnostic group 2
                     "\n", // primary message
                     "\n", // padding
@@ -1027,8 +1006,9 @@ mod tests {
                     (2, "diagnostic header".into()),
                     (7, "path header block".into()),
                     (9, "diagnostic header".into()),
-                    (22, "diagnostic header".into()),
-                    (31, "collapsed context".into()),
+                    (22, "collapsed context".into()),
+                    (23, "diagnostic header".into()),
+                    (32, "collapsed context".into()),
                 ]
             );
             assert_eq!(
@@ -1064,6 +1044,7 @@ mod tests {
                     "    c(y);\n",
                     "\n", // supporting diagnostic
                     "    d(x);\n",
+                    "\n", // collapsed context
                     // diagnostic group 2
                     "\n", // primary message
                     "\n", // filename
@@ -1138,11 +1119,13 @@ mod tests {
                 [
                     (0, "path header block".into()),
                     (2, "diagnostic header".into()),
-                    (7, "diagnostic header".into()),
-                    (12, "path header block".into()),
-                    (14, "diagnostic header".into()),
-                    (27, "diagnostic header".into()),
-                    (36, "collapsed context".into()),
+                    (7, "collapsed context".into()),
+                    (8, "diagnostic header".into()),
+                    (13, "path header block".into()),
+                    (15, "diagnostic header".into()),
+                    (28, "collapsed context".into()),
+                    (29, "diagnostic header".into()),
+                    (38, "collapsed context".into()),
                 ]
             );
             assert_eq!(
@@ -1159,6 +1142,7 @@ mod tests {
                     "const a: i32 = 'a';\n",
                     "\n", // supporting diagnostic
                     "const b: i32 = c;\n",
+                    "\n", // context ellipsis
                     // diagnostic group 2
                     "\n", // primary message
                     "\n", // padding
@@ -1184,6 +1168,7 @@ mod tests {
                     "    c(y);\n",
                     "\n", // supporting diagnostic
                     "    d(x);\n",
+                    "\n", // context ellipsis
                     // diagnostic group 2
                     "\n", // primary message
                     "\n", // filename
@@ -1221,7 +1206,15 @@ mod tests {
                         })
                         .name()?
                         .to_string(),
-                    TransformBlock::ExcerptHeader { .. } => "path header block".to_string(),
+                    TransformBlock::ExcerptHeader {
+                        starts_new_buffer, ..
+                    } => {
+                        if *starts_new_buffer {
+                            "path header block".to_string()
+                        } else {
+                            "collapsed context".to_string()
+                        }
+                    }
                 };
 
                 Some((row, name))

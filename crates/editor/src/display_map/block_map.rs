@@ -24,6 +24,7 @@ pub struct BlockMap {
     wrap_snapshot: RefCell<WrapSnapshot>,
     blocks: Vec<Arc<Block>>,
     transforms: RefCell<SumTree<Transform>>,
+    buffer_header_height: u8,
     excerpt_header_height: u8,
 }
 
@@ -150,13 +151,18 @@ pub struct BlockBufferRows<'a> {
 }
 
 impl BlockMap {
-    pub fn new(wrap_snapshot: WrapSnapshot, excerpt_header_height: u8) -> Self {
+    pub fn new(
+        wrap_snapshot: WrapSnapshot,
+        buffer_header_height: u8,
+        excerpt_header_height: u8,
+    ) -> Self {
         let row_count = wrap_snapshot.max_point().row() + 1;
         let map = Self {
             next_block_id: AtomicUsize::new(0),
             blocks: Vec::new(),
             transforms: RefCell::new(SumTree::from_item(Transform::isomorphic(row_count), &())),
             wrap_snapshot: RefCell::new(wrap_snapshot.clone()),
+            buffer_header_height,
             excerpt_header_height,
         };
         map.sync(
@@ -352,7 +358,11 @@ impl BlockMap {
                             TransformBlock::ExcerptHeader {
                                 buffer: excerpt_boundary.buffer,
                                 range: excerpt_boundary.range,
-                                height: self.excerpt_header_height,
+                                height: if excerpt_boundary.starts_new_buffer {
+                                    self.buffer_header_height
+                                } else {
+                                    self.excerpt_header_height
+                                },
                                 starts_new_buffer: excerpt_boundary.starts_new_buffer,
                             },
                         )
@@ -980,7 +990,7 @@ mod tests {
         let (fold_map, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), 1);
         let (wrap_map, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, None, cx);
-        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1);
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
         writer.insert(vec![
@@ -1158,7 +1168,7 @@ mod tests {
         let (_, folds_snapshot) = FoldMap::new(buffer_snapshot.clone());
         let (_, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), 1);
         let (_, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, Some(60.), cx);
-        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1);
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
         writer.insert(vec![
@@ -1203,6 +1213,7 @@ mod tests {
             .select_font(family_id, &Default::default())
             .unwrap();
         let font_size = 14.0;
+        let buffer_start_header_height = rng.gen_range(1..=5);
         let excerpt_header_height = rng.gen_range(1..=5);
 
         log::info!("Wrap width: {:?}", wrap_width);
@@ -1222,7 +1233,11 @@ mod tests {
         let (tab_map, tabs_snapshot) = TabMap::new(folds_snapshot.clone(), tab_size);
         let (wrap_map, wraps_snapshot) =
             WrapMap::new(tabs_snapshot, font_id, font_size, wrap_width, cx);
-        let mut block_map = BlockMap::new(wraps_snapshot.clone(), excerpt_header_height);
+        let mut block_map = BlockMap::new(
+            wraps_snapshot.clone(),
+            buffer_start_header_height,
+            excerpt_header_height,
+        );
         let mut custom_blocks = Vec::new();
 
         for _ in 0..operations {
@@ -1350,7 +1365,11 @@ mod tests {
                     (
                         position.row(),
                         ExpectedBlock::ExcerptHeader {
-                            height: excerpt_header_height,
+                            height: if boundary.starts_new_buffer {
+                                buffer_start_header_height
+                            } else {
+                                excerpt_header_height
+                            },
                             starts_new_buffer: boundary.starts_new_buffer,
                         },
                     )

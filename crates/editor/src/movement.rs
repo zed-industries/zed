@@ -257,10 +257,10 @@ mod tests {
         });
 
         let display_map =
-            cx.add_model(|cx| DisplayMap::new(multibuffer, 2, font_id, 14.0, None, 2, cx));
+            cx.add_model(|cx| DisplayMap::new(multibuffer, 2, font_id, 14.0, None, 2, 2, cx));
 
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
-        assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\n\nhijkl\nmn");
+        assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\nhijkl\nmn");
 
         // Can't move up into the first excerpt's header
         assert_eq!(
@@ -284,22 +284,22 @@ mod tests {
 
         // Move up and down across second excerpt's header
         assert_eq!(
-            up(&snapshot, DisplayPoint::new(7, 5), SelectionGoal::Column(5)).unwrap(),
+            up(&snapshot, DisplayPoint::new(6, 5), SelectionGoal::Column(5)).unwrap(),
             (DisplayPoint::new(3, 4), SelectionGoal::Column(5)),
         );
         assert_eq!(
             down(&snapshot, DisplayPoint::new(3, 4), SelectionGoal::Column(5)).unwrap(),
-            (DisplayPoint::new(7, 5), SelectionGoal::Column(5)),
+            (DisplayPoint::new(6, 5), SelectionGoal::Column(5)),
         );
 
         // Can't move down off the end
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(8, 0), SelectionGoal::Column(0)).unwrap(),
-            (DisplayPoint::new(8, 2), SelectionGoal::Column(2)),
+            down(&snapshot, DisplayPoint::new(7, 0), SelectionGoal::Column(0)).unwrap(),
+            (DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
         );
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(8, 2), SelectionGoal::Column(2)).unwrap(),
-            (DisplayPoint::new(8, 2), SelectionGoal::Column(2)),
+            down(&snapshot, DisplayPoint::new(7, 2), SelectionGoal::Column(2)).unwrap(),
+            (DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
         );
     }
 
@@ -314,8 +314,8 @@ mod tests {
         let font_size = 14.0;
 
         let buffer = MultiBuffer::build_simple("a bcΔ defγ hi—jk", cx);
-        let display_map =
-            cx.add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, cx));
+        let display_map = cx
+            .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(
             prev_word_boundary(&snapshot, DisplayPoint::new(0, 12)),
@@ -370,8 +370,8 @@ mod tests {
             .unwrap();
         let font_size = 14.0;
         let buffer = MultiBuffer::build_simple("lorem ipsum   dolor\n    sit", cx);
-        let display_map =
-            cx.add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, cx));
+        let display_map = cx
+            .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
 
         assert_eq!(
