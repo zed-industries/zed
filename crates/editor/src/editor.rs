@@ -57,7 +57,7 @@ pub use sum_tree::Bias;
 use text::rope::TextDimension;
 use theme::{DiagnosticStyle, EditorStyle};
 use util::{post_inc, ResultExt, TryFutureExt};
-use workspace::{ItemNavHistory, PathOpener, Workspace};
+use workspace::{ItemNavHistory, PathHandler, Workspace};
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LINE_LEN: usize = 1024;
@@ -126,7 +126,7 @@ action!(Select, SelectPhase);
 action!(ShowCompletions);
 action!(ConfirmCompletion, Option<usize>);
 
-pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpener>>) {
+pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathHandler>>) {
     path_openers.push(Box::new(items::BufferOpener));
     cx.add_bindings(vec![
         Binding::new("escape", Cancel, Some("Editor")),

@@ -3537,6 +3537,7 @@ dependencies = [
 name = "project_panel"
 version = "0.1.0"
 dependencies = [
+ "editor",
  "gpui",
  "postage",
  "project",

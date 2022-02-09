@@ -6,14 +6,14 @@ use gpui::{
 };
 use language::{Bias, Buffer, Diagnostic, File as _};
 use postage::watch;
-use project::{File, Project, ProjectPath};
+use project::{File, OpenOptions, Project, ProjectPath};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::{cell::RefCell, fmt::Write};
 use text::{Point, Selection};
 use util::TryFutureExt;
 use workspace::{
-    ItemHandle, ItemNavHistory, ItemView, ItemViewHandle, NavHistory, PathOpener, Settings,
+    ItemHandle, ItemNavHistory, ItemView, ItemViewHandle, NavHistory, PathHandler, Settings,
     StatusItemView, WeakItemHandle, Workspace,
 };
 
@@ -25,17 +25,46 @@ pub struct BufferItemHandle(pub ModelHandle<Buffer>);
 #[derive(Clone)]
 struct WeakBufferItemHandle(WeakModelHandle<Buffer>);
 
-impl PathOpener for BufferOpener {
-    fn open(
+impl PathHandler for BufferOpener {
+    fn open_with_options(
+        &self,
+        project: &mut Project,
+        project_path: ProjectPath,
+        options: OpenOptions,
+        cx: &mut ModelContext<Project>,
+    ) -> Option<Task<Result<Box<dyn ItemHandle>>>> {
+        let buffer = project.open_buffer_with_options(project_path, options, cx);
+        let task = cx.spawn(|_, _| async move {
+            let buffer = buffer.await?;
+            Ok(Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)
+        });
+        Some(task)
+    }
+
+    fn create_dir(
         &self,
         project: &mut Project,
         project_path: ProjectPath,
         cx: &mut ModelContext<Project>,
-    ) -> Option<Task<Result<Box<dyn ItemHandle>>>> {
-        let buffer = project.open_buffer(project_path, cx);
+    ) -> Option<Task<Result<()>>> {
+        let dir = project.create_dir(project_path, cx);
         let task = cx.spawn(|_, _| async move {
-            let buffer = buffer.await?;
-            Ok(Box::new(BufferItemHandle(buffer)) as Box<dyn ItemHandle>)
+            dir.await?;
+            Ok(())
+        });
+        Some(task)
+    }
+
+    fn remove(
+        &self,
+        project: &mut Project,
+        project_path: ProjectPath,
+        cx: &mut ModelContext<Project>,
+    ) -> Option<Task<Result<()>>> {
+        let remove_task = project.remove_path(project_path, cx);
+        let task = cx.spawn(|_, _| async move {
+            remove_task.await?;
+            Ok(())
         });
         Some(task)
     }

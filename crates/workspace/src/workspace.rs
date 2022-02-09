@@ -27,7 +27,7 @@ pub use pane::*;
 pub use pane_group::*;
 use parking_lot::Mutex;
 use postage::{prelude::Stream, watch};
-use project::{fs, Fs, Project, ProjectPath, Worktree};
+use project::{fs, Fs, OpenOptions, Project, ProjectPath, Worktree};
 pub use settings::Settings;
 use sidebar::{Side, Sidebar, SidebarItemId, ToggleSidebarItem, ToggleSidebarItemFocus};
 use status_bar::StatusBar;
@@ -106,7 +106,7 @@ pub struct AppState {
     pub user_store: ModelHandle<client::UserStore>,
     pub fs: Arc<dyn fs::Fs>,
     pub channel_list: ModelHandle<client::ChannelList>,
-    pub path_openers: Arc<[Box<dyn PathOpener>]>,
+    pub path_openers: Arc<[Box<dyn PathHandler>]>,
     pub build_window_options: &'static dyn Fn() -> WindowOptions<'static>,
     pub build_workspace: &'static dyn Fn(
         ModelHandle<Project>,
@@ -127,13 +127,37 @@ pub struct JoinProjectParams {
     pub app_state: Arc<AppState>,
 }
 
-pub trait PathOpener {
+pub trait PathHandler {
     fn open(
         &self,
         project: &mut Project,
         path: ProjectPath,
         cx: &mut ModelContext<Project>,
+    ) -> Option<Task<Result<Box<dyn ItemHandle>>>> {
+        self.open_with_options(project, path, OpenOptions::default(), cx)
+    }
+
+    fn open_with_options(
+        &self,
+        project: &mut Project,
+        path: ProjectPath,
+        options: OpenOptions,
+        cx: &mut ModelContext<Project>,
     ) -> Option<Task<Result<Box<dyn ItemHandle>>>>;
+
+    fn create_dir(
+        &self,
+        project: &mut Project,
+        path: ProjectPath,
+        cx: &mut ModelContext<Project>,
+    ) -> Option<Task<Result<()>>>;
+
+    fn remove(
+        &self,
+        project: &mut Project,
+        path: ProjectPath,
+        cx: &mut ModelContext<Project>,
+    ) -> Option<Task<Result<()>>>;
 }
 
 pub trait Item: Entity + Sized {
@@ -484,7 +508,7 @@ pub struct WorkspaceParams {
     pub settings: watch::Receiver<Settings>,
     pub user_store: ModelHandle<UserStore>,
     pub channel_list: ModelHandle<ChannelList>,
-    pub path_openers: Arc<[Box<dyn PathOpener>]>,
+    pub path_openers: Arc<[Box<dyn PathHandler>]>,
 }
 
 impl WorkspaceParams {
@@ -555,7 +579,7 @@ pub struct Workspace {
     active_pane: ViewHandle<Pane>,
     status_bar: ViewHandle<StatusBar>,
     project: ModelHandle<Project>,
-    path_openers: Arc<[Box<dyn PathOpener>]>,
+    path_handlers: Arc<[Box<dyn PathHandler>]>,
     items: HashSet<Box<dyn WeakItemHandle>>,
     _observe_current_user: Task<()>,
 }
@@ -610,7 +634,7 @@ impl Workspace {
             left_sidebar: Sidebar::new(Side::Left),
             right_sidebar: Sidebar::new(Side::Right),
             project: params.project.clone(),
-            path_openers: params.path_openers.clone(),
+            path_handlers: params.path_openers.clone(),
             items: Default::default(),
             _observe_current_user,
         }
@@ -761,12 +785,44 @@ impl Workspace {
         }
     }
 
+    pub fn create_path(
+        &mut self,
+        path: ProjectPath,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>> {
+        self.open_path_with_options(path, OpenOptions::create_new(), cx)
+    }
+
+    pub fn create_dir(
+        &mut self,
+        path: ProjectPath,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<(), Arc<anyhow::Error>>> {
+        let create_task = self.create_dir_task(path, cx);
+        cx.spawn(|this, mut cx| async move {
+            create_task.await?;
+            this.update(&mut cx, |_, cx| {
+                cx.notify();
+                Ok(())
+            })
+        })
+    }
+
     pub fn open_path(
         &mut self,
         path: ProjectPath,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>> {
-        let load_task = self.load_path(path, cx);
+        self.open_path_with_options(path, OpenOptions::default(), cx)
+    }
+
+    pub fn open_path_with_options(
+        &mut self,
+        path: ProjectPath,
+        options: OpenOptions,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<Box<dyn ItemViewHandle>, Arc<anyhow::Error>>> {
+        let load_task = self.load_path_with_options(path, options, cx);
         let pane = self.active_pane().clone().downgrade();
         cx.spawn(|this, mut cx| async move {
             let item = load_task.await?;
@@ -779,20 +835,74 @@ impl Workspace {
         })
     }
 
+    pub fn remove_path(
+        &mut self,
+        path: ProjectPath,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<(), Arc<anyhow::Error>>> {
+        let project_path = path.clone();
+        let path_handlers = self.path_handlers.clone();
+        let remove_task = self.project.update(cx, |project, cx| {
+            for handler in path_handlers.iter() {
+                if let Some(task) = handler.remove(project, project_path.clone(), cx) {
+                    return task;
+                }
+            }
+            Task::ready(Err(anyhow!("no opener found for path {:?}", project_path)))
+        });
+        cx.spawn(|this, mut cx| async move {
+            remove_task.await?;
+            this.update(&mut cx, |this, cx| {
+                this.close_items_with_paths(path, cx);
+                Ok(())
+            })
+        })
+    }
+
     pub fn load_path(
         &mut self,
         path: ProjectPath,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Box<dyn ItemHandle>>> {
+        self.load_path_with_options(path, OpenOptions::default(), cx)
+    }
+
+    pub fn load_path_with_options(
+        &mut self,
+        path: ProjectPath,
+        options: OpenOptions,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<Box<dyn ItemHandle>>> {
         if let Some(existing_item) = self.item_for_path(&path, cx) {
             return Task::ready(Ok(existing_item));
         }
-
         let project_path = path.clone();
-        let path_openers = self.path_openers.clone();
+        let path_openers = self.path_handlers.clone();
         self.project.update(cx, |project, cx| {
             for opener in path_openers.iter() {
-                if let Some(task) = opener.open(project, project_path.clone(), cx) {
+                if let Some(task) =
+                    opener.open_with_options(project, project_path.clone(), options, cx)
+                {
+                    return task;
+                }
+            }
+            Task::ready(Err(anyhow!("no opener found for path {:?}", project_path)))
+        })
+    }
+
+    pub fn create_dir_task(
+        &mut self,
+        path: ProjectPath,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        if let Some(_) = self.item_for_path(&path, cx) {
+            return Task::ready(Ok(()));
+        }
+        let project_path = path.clone();
+        let path_openers = self.path_handlers.clone();
+        self.project.update(cx, |project, cx| {
+            for opener in path_openers.iter() {
+                if let Some(task) = opener.create_dir(project, project_path.clone(), cx) {
                     return task;
                 }
             }
@@ -991,6 +1101,12 @@ impl Workspace {
         } else {
             false
         }
+    }
+
+    pub fn close_items_with_paths(&mut self, path: ProjectPath, cx: &mut ViewContext<Self>) {
+        self.panes.iter().for_each(|pane| {
+            pane.update(cx, |pane, cx| pane.close_items_with_path(path.clone(), cx))
+        })
     }
 
     pub fn activate_next_pane(&mut self, cx: &mut ViewContext<Self>) {
