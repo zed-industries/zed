@@ -68,6 +68,7 @@ pub struct Buffer {
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     selections_update_count: usize,
     diagnostics_update_count: usize,
+    file_update_count: usize,
     language_server: Option<LanguageServerState>,
     completion_triggers: Vec<String>,
     deferred_ops: OperationQueue<Operation>,
@@ -78,8 +79,10 @@ pub struct Buffer {
 pub struct BufferSnapshot {
     text: text::BufferSnapshot,
     tree: Option<Tree>,
+    path: Option<Arc<Path>>,
     diagnostics: DiagnosticSet,
     diagnostics_update_count: usize,
+    file_update_count: usize,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     selections_update_count: usize,
     is_parsing: bool,
@@ -498,6 +501,7 @@ impl Buffer {
             selections_update_count: 0,
             diagnostics: Default::default(),
             diagnostics_update_count: 0,
+            file_update_count: 0,
             language_server: None,
             completion_triggers: Default::default(),
             deferred_ops: OperationQueue::new(),
@@ -510,9 +514,11 @@ impl Buffer {
         BufferSnapshot {
             text: self.text.snapshot(),
             tree: self.syntax_tree(),
+            path: self.file.as_ref().map(|f| f.path().clone()),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
             diagnostics_update_count: self.diagnostics_update_count,
+            file_update_count: self.file_update_count,
             is_parsing: self.parsing_in_background,
             language: self.language.clone(),
             parse_count: self.parse_count,
@@ -722,6 +728,7 @@ impl Buffer {
         self.saved_version = version;
         if let Some(new_file) = new_file {
             self.file = Some(new_file);
+            self.file_update_count += 1;
         }
         if let Some((state, local_file)) = &self
             .language_server
@@ -744,6 +751,7 @@ impl Buffer {
                 .detach()
         }
         cx.emit(Event::Saved);
+        cx.notify();
     }
 
     pub fn did_reload(
@@ -819,7 +827,9 @@ impl Buffer {
         }
 
         if file_changed {
+            self.file_update_count += 1;
             cx.emit(Event::FileHandleChanged);
+            cx.notify();
         }
         self.file = Some(new_file);
         task
@@ -847,6 +857,10 @@ impl Buffer {
 
     pub fn diagnostics_update_count(&self) -> usize {
         self.diagnostics_update_count
+    }
+
+    pub fn file_update_count(&self) -> usize {
+        self.file_update_count
     }
 
     pub(crate) fn syntax_tree(&self) -> Option<Tree> {
@@ -2231,6 +2245,14 @@ impl BufferSnapshot {
     pub fn selections_update_count(&self) -> usize {
         self.selections_update_count
     }
+
+    pub fn path(&self) -> Option<&Arc<Path>> {
+        self.path.as_ref()
+    }
+
+    pub fn file_update_count(&self) -> usize {
+        self.file_update_count
+    }
 }
 
 impl Clone for BufferSnapshot {
@@ -2238,10 +2260,12 @@ impl Clone for BufferSnapshot {
         Self {
             text: self.text.clone(),
             tree: self.tree.clone(),
+            path: self.path.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
             selections_update_count: self.selections_update_count,
             diagnostics_update_count: self.diagnostics_update_count,
+            file_update_count: self.file_update_count,
             is_parsing: self.is_parsing,
             language: self.language.clone(),
             parse_count: self.parse_count,

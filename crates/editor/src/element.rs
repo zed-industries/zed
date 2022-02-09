@@ -649,43 +649,44 @@ impl EditorElement {
         line_layouts: &[text_layout::Line],
         cx: &mut LayoutContext,
     ) -> Vec<(u32, ElementBox)> {
-        snapshot
-            .blocks_in_range(rows.clone())
-            .map(|(start_row, block)| {
-                let anchor_row = block
-                    .position()
-                    .to_point(&snapshot.buffer_snapshot)
-                    .to_display_point(snapshot)
-                    .row();
+        Default::default()
+        // snapshot
+        //     .blocks_in_range(rows.clone())
+        //     .map(|(start_row, block)| {
+        //         let anchor_row = block
+        //             .position()
+        //             .to_point(&snapshot.buffer_snapshot)
+        //             .to_display_point(snapshot)
+        //             .row();
 
-                let anchor_x = text_x
-                    + if rows.contains(&anchor_row) {
-                        line_layouts[(anchor_row - rows.start) as usize]
-                            .x_for_index(block.column() as usize)
-                    } else {
-                        layout_line(anchor_row, snapshot, style, cx.text_layout_cache)
-                            .x_for_index(block.column() as usize)
-                    };
+        //         let anchor_x = text_x
+        //             + if rows.contains(&anchor_row) {
+        //                 line_layouts[(anchor_row - rows.start) as usize]
+        //                     .x_for_index(block.column() as usize)
+        //             } else {
+        //                 layout_line(anchor_row, snapshot, style, cx.text_layout_cache)
+        //                     .x_for_index(block.column() as usize)
+        //             };
 
-                let mut element = block.render(&BlockContext {
-                    cx,
-                    anchor_x,
-                    gutter_padding,
-                    line_height,
-                    scroll_x: snapshot.scroll_position.x(),
-                    gutter_width,
-                    em_width,
-                });
-                element.layout(
-                    SizeConstraint {
-                        min: Vector2F::zero(),
-                        max: vec2f(width, block.height() as f32 * line_height),
-                    },
-                    cx,
-                );
-                (start_row, element)
-            })
-            .collect()
+        //         let mut element = block.render(&BlockContext {
+        //             cx,
+        //             anchor_x,
+        //             gutter_padding,
+        //             line_height,
+        //             scroll_x: snapshot.scroll_position.x(),
+        //             gutter_width,
+        //             em_width,
+        //         });
+        //         element.layout(
+        //             SizeConstraint {
+        //                 min: Vector2F::zero(),
+        //                 max: vec2f(width, block.height() as f32 * line_height),
+        //             },
+        //             cx,
+        //         );
+        //         (start_row, element)
+        //     })
+        //     .collect()
     }
 }
 

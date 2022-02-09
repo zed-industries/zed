@@ -3,7 +3,6 @@ mod element;
 pub mod items;
 pub mod movement;
 mod multi_buffer;
-mod multi_editor;
 
 #[cfg(test)]
 mod test;
@@ -810,6 +809,7 @@ impl Editor {
                 settings.style.text.font_id,
                 settings.style.text.font_size,
                 None,
+                2,
                 cx,
             )
         });
@@ -2604,7 +2604,11 @@ impl Editor {
                     .0;
 
                 // Don't move lines across excerpts
-                if !buffer.range_contains_excerpt_boundary(insertion_point..range_to_move.end) {
+                if buffer
+                    .excerpt_boundaries_in_range(insertion_point..range_to_move.end)
+                    .next()
+                    .is_none()
+                {
                     let text = buffer
                         .text_for_range(range_to_move.clone())
                         .flat_map(|s| s.chars())
@@ -2704,7 +2708,11 @@ impl Editor {
                 let insertion_point = display_map.next_line_boundary(Point::new(end_row, 0)).0;
 
                 // Don't move lines across excerpt boundaries
-                if !buffer.range_contains_excerpt_boundary(range_to_move.start..insertion_point) {
+                if buffer
+                    .excerpt_boundaries_in_range(range_to_move.start..insertion_point)
+                    .next()
+                    .is_none()
+                {
                     let mut text = String::from("\n");
                     text.extend(buffer.text_for_range(range_to_move.clone()));
                     text.pop(); // Drop trailing newline

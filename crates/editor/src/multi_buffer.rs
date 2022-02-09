@@ -15,7 +15,6 @@ use std::{
     cmp, fmt, io,
     iter::{self, FromIterator},
     ops::{Range, Sub},
-    path::Path,
     str,
     sync::Arc,
     time::{Duration, Instant},
@@ -83,6 +82,7 @@ struct BufferState {
     last_parse_count: usize,
     last_selections_update_count: usize,
     last_diagnostics_update_count: usize,
+    last_file_update_count: usize,
     excerpts: Vec<ExcerptId>,
     _subscriptions: [gpui::Subscription; 2],
 }
@@ -105,7 +105,6 @@ pub struct ExcerptProperties<'a, T> {
 pub struct ExcerptBoundary {
     pub row: u32,
     pub buffer: BufferSnapshot,
-    pub path: Option<Arc<Path>>,
     pub range: Range<text::Anchor>,
     pub starts_new_buffer: bool,
 }
@@ -679,6 +678,7 @@ impl MultiBuffer {
                 last_parse_count: buffer_snapshot.parse_count(),
                 last_selections_update_count: buffer_snapshot.selections_update_count(),
                 last_diagnostics_update_count: buffer_snapshot.diagnostics_update_count(),
+                last_file_update_count: buffer_snapshot.file_update_count(),
                 excerpts: Default::default(),
                 _subscriptions: [
                     cx.observe(&props.buffer, |_, _, cx| cx.notify()),
@@ -929,6 +929,7 @@ impl MultiBuffer {
             let parse_count = buffer.parse_count();
             let selections_update_count = buffer.selections_update_count();
             let diagnostics_update_count = buffer.diagnostics_update_count();
+            let file_update_count = buffer.file_update_count();
 
             let buffer_edited = version.changed_since(&buffer_state.last_version);
             let buffer_reparsed = parse_count > buffer_state.last_parse_count;
@@ -936,15 +937,18 @@ impl MultiBuffer {
                 selections_update_count > buffer_state.last_selections_update_count;
             let buffer_diagnostics_updated =
                 diagnostics_update_count > buffer_state.last_diagnostics_update_count;
+            let buffer_file_updated = file_update_count > buffer_state.last_file_update_count;
             if buffer_edited
                 || buffer_reparsed
                 || buffer_selections_updated
                 || buffer_diagnostics_updated
+                || buffer_file_updated
             {
                 buffer_state.last_version = version;
                 buffer_state.last_parse_count = parse_count;
                 buffer_state.last_selections_update_count = selections_update_count;
                 buffer_state.last_diagnostics_update_count = diagnostics_update_count;
+                buffer_state.last_file_update_count = file_update_count;
                 excerpts_to_edit.extend(
                     buffer_state
                         .excerpts
@@ -1761,38 +1765,35 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn range_contains_excerpt_boundary<T: ToOffset>(&self, range: Range<T>) -> bool {
-        let start = range.start.to_offset(self);
-        let end = range.end.to_offset(self);
-        let mut cursor = self.excerpts.cursor::<(usize, Option<&ExcerptId>)>();
-        cursor.seek(&start, Bias::Right, &());
-        let start_id = cursor
-            .item()
-            .or_else(|| cursor.prev_item())
-            .map(|excerpt| &excerpt.id);
-        cursor.seek_forward(&end, Bias::Right, &());
-        let end_id = cursor
-            .item()
-            .or_else(|| cursor.prev_item())
-            .map(|excerpt| &excerpt.id);
-        start_id != end_id
-    }
-
     pub fn excerpt_boundaries_in_range<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
     ) -> impl Iterator<Item = ExcerptBoundary> + 'a {
         let start = range.start.to_offset(self);
         let end = range.end.to_offset(self);
-        let mut cursor = self.excerpts.cursor::<(usize, Option<&ExcerptId>)>();
+        let mut cursor = self
+            .excerpts
+            .cursor::<(usize, (Option<&ExcerptId>, Point))>();
         cursor.seek(&start, Bias::Right, &());
 
-        let prev_buffer_id = cursor.prev_item().map(|excerpt| excerpt.buffer_id);
-
+        let mut prev_buffer_id = cursor.prev_item().map(|excerpt| excerpt.buffer_id);
         std::iter::from_fn(move || {
-            let excerpt = cursor.item()?;
-            let starts_new_buffer = Some(excerpt.buffer_id) != prev_buffer_id;
-            todo!()
+            if start <= cursor.start().0 && end > cursor.start().0 {
+                let excerpt = cursor.item()?;
+                let starts_new_buffer = Some(excerpt.buffer_id) != prev_buffer_id;
+                let boundary = ExcerptBoundary {
+                    row: cursor.start().1 .1.row,
+                    buffer: excerpt.buffer.clone(),
+                    range: excerpt.range.clone(),
+                    starts_new_buffer,
+                };
+
+                prev_buffer_id = Some(excerpt.buffer_id);
+                cursor.next(&());
+                Some(boundary)
+            } else {
+                None
+            }
         })
     }
 
@@ -2648,21 +2649,50 @@ mod tests {
         );
         assert_eq!(snapshot.buffer_rows(4).collect::<Vec<_>>(), [Some(3)]);
         assert_eq!(snapshot.buffer_rows(5).collect::<Vec<_>>(), []);
-        assert!(!snapshot.range_contains_excerpt_boundary(Point::new(1, 0)..Point::new(1, 5)));
-        assert!(snapshot.range_contains_excerpt_boundary(Point::new(1, 0)..Point::new(2, 0)));
-        assert!(snapshot.range_contains_excerpt_boundary(Point::new(1, 0)..Point::new(4, 0)));
-        assert!(!snapshot.range_contains_excerpt_boundary(Point::new(2, 0)..Point::new(3, 0)));
-        assert!(!snapshot.range_contains_excerpt_boundary(Point::new(4, 0)..Point::new(4, 2)));
-        assert!(!snapshot.range_contains_excerpt_boundary(Point::new(4, 2)..Point::new(4, 2)));
+        assert!(snapshot
+            .excerpt_boundaries_in_range(Point::new(1, 0)..Point::new(1, 5))
+            .next()
+            .is_none());
+        assert!(snapshot
+            .excerpt_boundaries_in_range(Point::new(1, 0)..Point::new(2, 0))
+            .next()
+            .is_some());
+        assert!(snapshot
+            .excerpt_boundaries_in_range(Point::new(1, 0)..Point::new(4, 0))
+            .next()
+            .is_some());
+        assert!(snapshot
+            .excerpt_boundaries_in_range(Point::new(2, 0)..Point::new(3, 0))
+            .next()
+            .is_none());
+        assert!(snapshot
+            .excerpt_boundaries_in_range(Point::new(4, 0)..Point::new(4, 2))
+            .next()
+            .is_none());
+        assert!(snapshot
+            .excerpt_boundaries_in_range(Point::new(4, 2)..Point::new(4, 2))
+            .next()
+            .is_none());
 
         assert_eq!(
             snapshot
                 .excerpt_boundaries_in_range(Point::new(0, 0)..Point::new(4, 2))
+                .map(|boundary| (
+                    boundary.row,
+                    boundary
+                        .buffer
+                        .text_for_range(boundary.range)
+                        .collect::<String>(),
+                    boundary.starts_new_buffer
+                ))
                 .collect::<Vec<_>>(),
             &[
-                (Some(buffer_1.clone()), true),
-                (Some(buffer_1.clone()), false),
-                (Some(buffer_2.clone()), false),
+                (0, "".to_string(), true),
+                (0, "".to_string(), true),
+                (0, "".to_string(), true),
+                (0, "".to_string(), true),
+                (0, "".to_string(), true),
+                (0, "".to_string(), true),
             ]
         );
 
