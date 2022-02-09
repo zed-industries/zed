@@ -268,7 +268,8 @@ impl FoldMap {
             let mut buffer = self.buffer.lock();
             if buffer.parse_count() != new_buffer.parse_count()
                 || buffer.diagnostics_update_count() != new_buffer.diagnostics_update_count()
-                || buffer.excerpt_update_count() != new_buffer.excerpt_update_count()
+                || buffer.trailing_excerpt_update_count()
+                    != new_buffer.trailing_excerpt_update_count()
             {
                 self.version.fetch_add(1, SeqCst);
             }

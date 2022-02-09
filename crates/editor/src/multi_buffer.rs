@@ -93,7 +93,7 @@ pub struct MultiBufferSnapshot {
     excerpts: SumTree<Excerpt>,
     parse_count: usize,
     diagnostics_update_count: usize,
-    excerpt_update_count: usize,
+    trailing_excerpt_update_count: usize,
     is_dirty: bool,
     has_conflict: bool,
 }
@@ -662,10 +662,14 @@ impl MultiBuffer {
         new_excerpts.push(excerpt, &());
         let edit_end = new_excerpts.summary().text.bytes;
 
-        new_excerpts.push_tree(cursor.suffix(&()), &());
+        let suffix = cursor.suffix(&());
+        let changed_trailing_excerpt = suffix.is_empty();
+        new_excerpts.push_tree(suffix, &());
         drop(cursor);
         snapshot.excerpts = new_excerpts;
-        snapshot.excerpt_update_count += 1;
+        if changed_trailing_excerpt {
+            snapshot.trailing_excerpt_update_count += 1;
+        }
 
         self.subscriptions.publish_mut([Edit {
             old: edit_start..edit_start,
@@ -776,10 +780,15 @@ impl MultiBuffer {
                 });
             }
         }
-        new_excerpts.push_tree(cursor.suffix(&()), &());
+        let suffix = cursor.suffix(&());
+        let changed_trailing_excerpt = suffix.is_empty();
+        new_excerpts.push_tree(suffix, &());
         drop(cursor);
         snapshot.excerpts = new_excerpts;
-        snapshot.excerpt_update_count += 1;
+        if changed_trailing_excerpt {
+            snapshot.trailing_excerpt_update_count += 1;
+        }
+
         self.subscriptions.publish_mut(edits);
         cx.notify();
     }
@@ -1937,8 +1946,8 @@ impl MultiBufferSnapshot {
         self.diagnostics_update_count
     }
 
-    pub fn excerpt_update_count(&self) -> usize {
-        self.excerpt_update_count
+    pub fn trailing_excerpt_update_count(&self) -> usize {
+        self.trailing_excerpt_update_count
     }
 
     pub fn language(&self) -> Option<&Arc<Language>> {

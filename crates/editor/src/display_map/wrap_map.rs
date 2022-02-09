@@ -106,7 +106,7 @@ impl WrapMap {
         tab_snapshot: TabSnapshot,
         edits: Vec<TabEdit>,
         cx: &mut ModelContext<Self>,
-    ) -> (WrapSnapshot, Vec<WrapEdit>) {
+    ) -> (WrapSnapshot, Patch<u32>) {
         if self.wrap_width.is_some() {
             self.pending_edits.push_back((tab_snapshot, edits));
             self.flush_edits(cx);
@@ -117,10 +117,7 @@ impl WrapMap {
             self.snapshot.interpolated = false;
         }
 
-        (
-            self.snapshot.clone(),
-            mem::take(&mut self.edits_since_sync).into_inner(),
-        )
+        (self.snapshot.clone(), mem::take(&mut self.edits_since_sync))
     }
 
     pub fn set_font(&mut self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) {

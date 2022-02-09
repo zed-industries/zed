@@ -2,9 +2,10 @@ use super::wrap_map::{self, WrapEdit, WrapPoint, WrapSnapshot};
 use crate::{Anchor, ToPoint as _};
 use collections::{Bound, HashMap, HashSet};
 use gpui::{AppContext, ElementBox};
-use language::{BufferSnapshot, Chunk};
+use language::{BufferSnapshot, Chunk, Patch};
 use parking_lot::Mutex;
 use std::{
+    cell::RefCell,
     cmp::{self, Ordering},
     fmt::Debug,
     ops::{Deref, Range},
@@ -20,9 +21,9 @@ const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
 
 pub struct BlockMap {
     next_block_id: AtomicUsize,
-    wrap_snapshot: Mutex<WrapSnapshot>,
+    wrap_snapshot: RefCell<WrapSnapshot>,
     blocks: Vec<Arc<Block>>,
-    transforms: Mutex<SumTree<Transform>>,
+    transforms: RefCell<SumTree<Transform>>,
     excerpt_header_height: u8,
 }
 
@@ -154,61 +155,61 @@ impl BlockMap {
         let map = Self {
             next_block_id: AtomicUsize::new(0),
             blocks: Vec::new(),
-            transforms: Mutex::new(SumTree::from_item(Transform::isomorphic(row_count), &())),
-            wrap_snapshot: Mutex::new(wrap_snapshot.clone()),
+            transforms: RefCell::new(SumTree::from_item(Transform::isomorphic(row_count), &())),
+            wrap_snapshot: RefCell::new(wrap_snapshot.clone()),
             excerpt_header_height,
         };
         map.sync(
             &wrap_snapshot,
-            vec![Edit {
+            Patch::new(vec![Edit {
                 old: 0..row_count,
                 new: 0..row_count,
-            }],
+            }]),
         );
         map
     }
 
-    pub fn read(&self, wrap_snapshot: WrapSnapshot, edits: Vec<WrapEdit>) -> BlockSnapshot {
+    pub fn read(&self, wrap_snapshot: WrapSnapshot, edits: Patch<u32>) -> BlockSnapshot {
         self.sync(&wrap_snapshot, edits);
-        *self.wrap_snapshot.lock() = wrap_snapshot.clone();
+        *self.wrap_snapshot.borrow_mut() = wrap_snapshot.clone();
         BlockSnapshot {
             wrap_snapshot,
-            transforms: self.transforms.lock().clone(),
+            transforms: self.transforms.borrow().clone(),
         }
     }
 
-    pub fn write(&mut self, wrap_snapshot: WrapSnapshot, edits: Vec<WrapEdit>) -> BlockMapWriter {
+    pub fn write(&mut self, wrap_snapshot: WrapSnapshot, edits: Patch<u32>) -> BlockMapWriter {
         self.sync(&wrap_snapshot, edits);
-        *self.wrap_snapshot.lock() = wrap_snapshot;
+        *self.wrap_snapshot.borrow_mut() = wrap_snapshot;
         BlockMapWriter(self)
     }
 
-    fn sync(&self, wrap_snapshot: &WrapSnapshot, mut edits: Vec<WrapEdit>) {
+    fn sync(&self, wrap_snapshot: &WrapSnapshot, mut edits: Patch<u32>) {
         let buffer = wrap_snapshot.buffer_snapshot();
 
-        if edits.is_empty() {
-            // Handle removing the last excerpt or inserting the first excerpt when the excerpt is
-            // empty.
-            if buffer.excerpt_update_count()
-                != self
-                    .wrap_snapshot
-                    .lock()
-                    .buffer_snapshot()
-                    .excerpt_update_count()
-            {
-                let max_point = wrap_snapshot.max_point();
-                let edit_start = wrap_snapshot.prev_row_boundary(max_point);
-                let edit_end = max_point.row() + 1;
-                edits.push(WrapEdit {
-                    old: edit_start..edit_end,
-                    new: edit_start..edit_end,
-                });
-            } else {
-                return;
-            }
+        // Handle changing the last excerpt if it is empty.
+        if buffer.trailing_excerpt_update_count()
+            != self
+                .wrap_snapshot
+                .borrow()
+                .buffer_snapshot()
+                .trailing_excerpt_update_count()
+        {
+            let max_point = wrap_snapshot.max_point();
+            let edit_start = wrap_snapshot.prev_row_boundary(max_point);
+            let edit_end = max_point.row() + 1;
+            edits = edits.compose([WrapEdit {
+                old: edit_start..edit_end,
+                new: edit_start..edit_end,
+            }]);
         }
 
-        let mut transforms = self.transforms.lock();
+        let edits = edits.into_inner();
+        if edits.is_empty() {
+            return;
+        }
+
+        let mut transforms = self.transforms.borrow_mut();
         let mut new_transforms = SumTree::new();
         let old_row_count = transforms.summary().input_rows;
         let new_row_count = wrap_snapshot.max_point().row() + 1;
@@ -464,8 +465,8 @@ impl<'a> BlockMapWriter<'a> {
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
     ) -> Vec<BlockId> {
         let mut ids = Vec::new();
-        let mut edits = Vec::<Edit<u32>>::new();
-        let wrap_snapshot = &*self.0.wrap_snapshot.lock();
+        let mut edits = Patch::default();
+        let wrap_snapshot = &*self.0.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
 
         for block in blocks {
@@ -500,15 +501,10 @@ impl<'a> BlockMapWriter<'a> {
                 }),
             );
 
-            if let Err(edit_ix) = edits.binary_search_by_key(&start_row, |edit| edit.old.start) {
-                edits.insert(
-                    edit_ix,
-                    Edit {
-                        old: start_row..end_row,
-                        new: start_row..end_row,
-                    },
-                );
-            }
+            edits = edits.compose([Edit {
+                old: start_row..end_row,
+                new: start_row..end_row,
+            }]);
         }
 
         self.0.sync(wrap_snapshot, edits);
@@ -516,9 +512,9 @@ impl<'a> BlockMapWriter<'a> {
     }
 
     pub fn remove(&mut self, block_ids: HashSet<BlockId>) {
-        let wrap_snapshot = &*self.0.wrap_snapshot.lock();
+        let wrap_snapshot = &*self.0.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
-        let mut edits = Vec::new();
+        let mut edits = Patch::default();
         let mut last_block_buffer_row = None;
         self.0.blocks.retain(|block| {
             if block_ids.contains(&block.id) {
@@ -986,7 +982,7 @@ mod tests {
         let (wrap_map, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, None, cx);
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1);
 
-        let mut writer = block_map.write(wraps_snapshot.clone(), vec![]);
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
         writer.insert(vec![
             BlockProperties {
                 position: buffer_snapshot.anchor_after(Point::new(1, 0)),
@@ -1008,7 +1004,7 @@ mod tests {
             },
         ]);
 
-        let snapshot = block_map.read(wraps_snapshot, vec![]);
+        let snapshot = block_map.read(wraps_snapshot, Default::default());
         assert_eq!(snapshot.text(), "aaa\n\n\n\nbbb\nccc\nddd\n\n\n");
 
         let blocks = snapshot
@@ -1164,7 +1160,7 @@ mod tests {
         let (_, wraps_snapshot) = WrapMap::new(tabs_snapshot, font_id, 14.0, Some(60.), cx);
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1);
 
-        let mut writer = block_map.write(wraps_snapshot.clone(), vec![]);
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
         writer.insert(vec![
             BlockProperties {
                 position: buffer_snapshot.anchor_after(Point::new(1, 12)),
@@ -1182,7 +1178,7 @@ mod tests {
 
         // Blocks with an 'above' disposition go above their corresponding buffer line.
         // Blocks with a 'below' disposition go below their corresponding buffer line.
-        let snapshot = block_map.read(wraps_snapshot, vec![]);
+        let snapshot = block_map.read(wraps_snapshot, Default::default());
         assert_eq!(
             snapshot.text(),
             "one two \nthree\n\nfour five \nsix\n\nseven \neight"
