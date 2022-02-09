@@ -184,20 +184,30 @@ impl BlockMap {
     }
 
     fn sync(&self, wrap_snapshot: &WrapSnapshot, mut edits: Vec<WrapEdit>) {
+        let buffer = wrap_snapshot.buffer_snapshot();
+
         if edits.is_empty() {
             // Handle removing the last excerpt or inserting the first excerpt when the excerpt is
             // empty.
-            if wrap_snapshot.max_point().is_zero() {
+            if buffer.excerpt_update_count()
+                != self
+                    .wrap_snapshot
+                    .lock()
+                    .buffer_snapshot()
+                    .excerpt_update_count()
+            {
+                let max_point = wrap_snapshot.max_point();
+                let edit_start = wrap_snapshot.prev_row_boundary(max_point);
+                let edit_end = max_point.row() + 1;
                 edits.push(WrapEdit {
-                    old: 0..1,
-                    new: 0..1,
+                    old: edit_start..edit_end,
+                    new: edit_start..edit_end,
                 });
             } else {
                 return;
             }
         }
 
-        let buffer = wrap_snapshot.buffer_snapshot();
         let mut transforms = self.transforms.lock();
         let mut new_transforms = SumTree::new();
         let old_row_count = transforms.summary().input_rows;
