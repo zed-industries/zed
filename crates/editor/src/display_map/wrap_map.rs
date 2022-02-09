@@ -1107,7 +1107,7 @@ mod tests {
                     buffer.update(&mut cx, |buffer, cx| {
                         let subscription = buffer.subscribe();
                         let edit_count = rng.gen_range(1..=5);
-                        buffer.randomly_edit(&mut rng, edit_count, cx);
+                        buffer.randomly_mutate(&mut rng, edit_count, cx);
                         buffer_snapshot = buffer.snapshot(cx);
                         buffer_edits.extend(subscription.consume());
                     });
