@@ -2121,6 +2121,7 @@ impl Editor {
         let action_ix = action_ix.unwrap_or(actions_menu.selected_item);
         let action = actions_menu.actions.get(action_ix)?.clone();
         let buffer = actions_menu.buffer;
+        let replica_id = editor.read(cx).replica_id(cx);
 
         let apply_code_actions = workspace.project().clone().update(cx, |project, cx| {
             project.apply_code_action(buffer, action, true, cx)
@@ -2128,10 +2129,31 @@ impl Editor {
         Some(cx.spawn(|workspace, mut cx| async move {
             let project_transaction = apply_code_actions.await?;
 
-            // TODO: replace this with opening a single tab that is a multibuffer
+            let mut ranges_to_highlight = Vec::new();
+            let excerpt_buffer = cx.add_model(|cx| {
+                let mut multibuffer = MultiBuffer::new(replica_id);
+                for (buffer, transaction) in &project_transaction.0 {
+                    let snapshot = buffer.read(cx).snapshot();
+                    ranges_to_highlight.extend(
+                        multibuffer.push_excerpts_with_context_lines(
+                            buffer.clone(),
+                            snapshot
+                                .edited_ranges_for_transaction::<usize>(transaction)
+                                .collect(),
+                            1,
+                            cx,
+                        ),
+                    );
+                }
+                multibuffer
+            });
+
             workspace.update(&mut cx, |workspace, cx| {
-                for (buffer, _) in project_transaction.0 {
-                    workspace.open_item(BufferItemHandle(buffer), cx);
+                let editor = workspace.open_item(MultiBufferItemHandle(excerpt_buffer), cx);
+                if let Some(editor) = editor.act_as::<Self>(cx) {
+                    editor.update(cx, |editor, cx| {
+                        editor.highlight_ranges::<Self>(ranges_to_highlight, Color::blue(), cx);
+                    });
                 }
             });
 

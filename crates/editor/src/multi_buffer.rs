@@ -586,6 +586,71 @@ impl MultiBuffer {
         self.insert_excerpts_after(&ExcerptId::max(), buffer, ranges, cx)
     }
 
+    pub fn push_excerpts_with_context_lines<O>(
+        &mut self,
+        buffer: ModelHandle<Buffer>,
+        ranges: Vec<Range<O>>,
+        context_line_count: u32,
+        cx: &mut ModelContext<Self>,
+    ) -> Vec<Range<Anchor>>
+    where
+        O: text::ToPoint + text::ToOffset,
+    {
+        let buffer_id = buffer.id();
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let max_point = buffer_snapshot.max_point();
+
+        let mut range_counts = Vec::new();
+        let mut excerpt_ranges = Vec::new();
+        let mut range_iter = ranges
+            .iter()
+            .map(|range| {
+                range.start.to_point(&buffer_snapshot)..range.end.to_point(&buffer_snapshot)
+            })
+            .peekable();
+        while let Some(range) = range_iter.next() {
+            let excerpt_start = Point::new(range.start.row.saturating_sub(context_line_count), 0);
+            let mut excerpt_end =
+                Point::new(range.end.row + 1 + context_line_count, 0).min(max_point);
+            let mut ranges_in_excerpt = 1;
+
+            while let Some(next_range) = range_iter.peek() {
+                if next_range.start.row <= excerpt_end.row + context_line_count {
+                    excerpt_end =
+                        Point::new(range.end.row + 1 + context_line_count, 0).min(max_point);
+                    ranges_in_excerpt += 1;
+                    range_iter.next();
+                } else {
+                    break;
+                }
+            }
+
+            excerpt_ranges.push(excerpt_start..excerpt_end);
+            range_counts.push(ranges_in_excerpt);
+        }
+
+        let excerpt_ids = self.push_excerpts(buffer, excerpt_ranges, cx);
+
+        let mut anchor_ranges = Vec::new();
+        let mut ranges = ranges.into_iter();
+        for (excerpt_id, range_count) in excerpt_ids.into_iter().zip(range_counts.into_iter()) {
+            anchor_ranges.extend(ranges.by_ref().take(range_count).map(|range| {
+                let start = Anchor {
+                    buffer_id,
+                    excerpt_id: excerpt_id.clone(),
+                    text_anchor: buffer_snapshot.anchor_after(range.start),
+                };
+                let end = Anchor {
+                    buffer_id,
+                    excerpt_id: excerpt_id.clone(),
+                    text_anchor: buffer_snapshot.anchor_after(range.end),
+                };
+                start..end
+            }))
+        }
+        anchor_ranges
+    }
+
     pub fn insert_excerpts_after<O>(
         &mut self,
         prev_excerpt_id: &ExcerptId,
@@ -2848,6 +2913,31 @@ mod tests {
                 })
                 .collect::<Vec<_>>()
         }
+    }
+
+    #[gpui::test]
+    fn test_excerpts_with_context_lines(cx: &mut MutableAppContext) {
+        let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(20, 3, 'a'), cx));
+
+        let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
+        let anchor_ranges = multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.push_excerpts_with_context_lines(
+                buffer.clone(),
+                vec![
+                    Point::new(3, 2)..Point::new(4, 2),
+                    Point::new(7, 3)..Point::new(7, 1),
+                    Point::new(15, 0)..Point::new(15, 0),
+                ],
+                2,
+                cx,
+            )
+        });
+
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+        assert_eq!(
+            snapshot.text(),
+            "bbb\nccc\nddd\neee\nfff\nggg\n\nnnn\nooo\nppp\nqqq\nrrr\n"
+        );
     }
 
     #[gpui::test]
