@@ -1695,7 +1695,7 @@ impl Buffer {
         }
     }
 
-    pub fn undo_transaction(
+    pub fn undo_to_transaction(
         &mut self,
         transaction_id: TransactionId,
         cx: &mut ModelContext<Self>,
@@ -1703,13 +1703,15 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
-        if let Some(operation) = self.text.undo_transaction(transaction_id) {
+        let operations = self.text.undo_to_transaction(transaction_id);
+        let undone = !operations.is_empty();
+        for operation in operations {
             self.send_operation(Operation::Buffer(operation), cx);
-            self.did_edit(&old_version, was_dirty, cx);
-            true
-        } else {
-            false
         }
+        if undone {
+            self.did_edit(&old_version, was_dirty, cx)
+        }
+        undone
     }
 
     pub fn redo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
@@ -1725,7 +1727,7 @@ impl Buffer {
         }
     }
 
-    pub fn redo_transaction(
+    pub fn redo_to_transaction(
         &mut self,
         transaction_id: TransactionId,
         cx: &mut ModelContext<Self>,
@@ -1733,13 +1735,15 @@ impl Buffer {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
-        if let Some(operation) = self.text.redo_transaction(transaction_id) {
+        let operations = self.text.redo_to_transaction(transaction_id);
+        let redone = !operations.is_empty();
+        for operation in operations {
             self.send_operation(Operation::Buffer(operation), cx);
-            self.did_edit(&old_version, was_dirty, cx);
-            true
-        } else {
-            false
         }
+        if redone {
+            self.did_edit(&old_version, was_dirty, cx)
+        }
+        redone
     }
 
     pub fn completion_triggers(&self) -> &[String] {

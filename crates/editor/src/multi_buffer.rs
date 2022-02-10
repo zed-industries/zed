@@ -560,7 +560,7 @@ impl MultiBuffer {
             for (buffer_id, buffer_transaction_id) in &transaction.buffer_transactions {
                 if let Some(BufferState { buffer, .. }) = self.buffers.borrow().get(&buffer_id) {
                     undone |= buffer.update(cx, |buf, cx| {
-                        buf.undo_transaction(*buffer_transaction_id, cx)
+                        buf.undo_to_transaction(*buffer_transaction_id, cx)
                     });
                 }
             }
@@ -583,7 +583,7 @@ impl MultiBuffer {
             for (buffer_id, buffer_transaction_id) in &transaction.buffer_transactions {
                 if let Some(BufferState { buffer, .. }) = self.buffers.borrow().get(&buffer_id) {
                     redone |= buffer.update(cx, |buf, cx| {
-                        buf.redo_transaction(*buffer_transaction_id, cx)
+                        buf.redo_to_transaction(*buffer_transaction_id, cx)
                     });
                 }
             }

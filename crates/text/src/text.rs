@@ -280,19 +280,19 @@ impl History {
         }
     }
 
-    fn remove_from_undo(&mut self, transaction_id: TransactionId) -> Option<&HistoryEntry> {
+    fn remove_from_undo(&mut self, transaction_id: TransactionId) -> &[HistoryEntry] {
         assert_eq!(self.transaction_depth, 0);
+
+        let redo_stack_start_len = self.redo_stack.len();
         if let Some(entry_ix) = self
             .undo_stack
             .iter()
             .rposition(|entry| entry.transaction.id == transaction_id)
         {
-            let entry = self.undo_stack.remove(entry_ix);
-            self.redo_stack.push(entry);
-            self.redo_stack.last()
-        } else {
-            None
+            self.redo_stack
+                .extend(self.undo_stack.drain(entry_ix..).rev());
         }
+        &self.redo_stack[redo_stack_start_len..]
     }
 
     fn forget(&mut self, transaction_id: TransactionId) {
@@ -322,19 +322,19 @@ impl History {
         }
     }
 
-    fn remove_from_redo(&mut self, transaction_id: TransactionId) -> Option<&HistoryEntry> {
+    fn remove_from_redo(&mut self, transaction_id: TransactionId) -> &[HistoryEntry] {
         assert_eq!(self.transaction_depth, 0);
+
+        let undo_stack_start_len = self.undo_stack.len();
         if let Some(entry_ix) = self
             .redo_stack
             .iter()
             .rposition(|entry| entry.transaction.id == transaction_id)
         {
-            let entry = self.redo_stack.remove(entry_ix);
-            self.undo_stack.push(entry);
-            self.undo_stack.last()
-        } else {
-            None
+            self.undo_stack
+                .extend(self.redo_stack.drain(entry_ix..).rev());
         }
+        &self.undo_stack[undo_stack_start_len..]
     }
 }
 
@@ -1203,14 +1203,18 @@ impl Buffer {
         }
     }
 
-    pub fn undo_transaction(&mut self, transaction_id: TransactionId) -> Option<Operation> {
-        if let Some(entry) = self.history.remove_from_undo(transaction_id) {
-            let transaction = entry.transaction.clone();
-            let op = self.undo_or_redo(transaction).unwrap();
-            Some(op)
-        } else {
-            None
-        }
+    pub fn undo_to_transaction(&mut self, transaction_id: TransactionId) -> Vec<Operation> {
+        let transactions = self
+            .history
+            .remove_from_undo(transaction_id)
+            .iter()
+            .map(|entry| entry.transaction.clone())
+            .collect::<Vec<_>>();
+
+        transactions
+            .into_iter()
+            .map(|transaction| self.undo_or_redo(transaction).unwrap())
+            .collect()
     }
 
     pub fn forget_transaction(&mut self, transaction_id: TransactionId) {
@@ -1228,14 +1232,18 @@ impl Buffer {
         }
     }
 
-    pub fn redo_transaction(&mut self, transaction_id: TransactionId) -> Option<Operation> {
-        if let Some(entry) = self.history.remove_from_redo(transaction_id) {
-            let transaction = entry.transaction.clone();
-            let op = self.undo_or_redo(transaction).unwrap();
-            Some(op)
-        } else {
-            None
-        }
+    pub fn redo_to_transaction(&mut self, transaction_id: TransactionId) -> Vec<Operation> {
+        let transactions = self
+            .history
+            .remove_from_redo(transaction_id)
+            .iter()
+            .map(|entry| entry.transaction.clone())
+            .collect::<Vec<_>>();
+
+        transactions
+            .into_iter()
+            .map(|transaction| self.undo_or_redo(transaction).unwrap())
+            .collect()
     }
 
     fn undo_or_redo(&mut self, transaction: Transaction) -> Result<Operation> {
