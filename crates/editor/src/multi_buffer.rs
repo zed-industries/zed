@@ -617,7 +617,7 @@ impl MultiBuffer {
             while let Some(next_range) = range_iter.peek() {
                 if next_range.start.row <= excerpt_end.row + context_line_count {
                     excerpt_end =
-                        Point::new(range.end.row + 1 + context_line_count, 0).min(max_point);
+                        Point::new(next_range.end.row + 1 + context_line_count, 0).min(max_point);
                     ranges_in_excerpt += 1;
                     range_iter.next();
                 } else {
@@ -2918,14 +2918,13 @@ mod tests {
     #[gpui::test]
     fn test_excerpts_with_context_lines(cx: &mut MutableAppContext) {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(20, 3, 'a'), cx));
-
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
         let anchor_ranges = multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.push_excerpts_with_context_lines(
                 buffer.clone(),
                 vec![
                     Point::new(3, 2)..Point::new(4, 2),
-                    Point::new(7, 3)..Point::new(7, 1),
+                    Point::new(7, 1)..Point::new(7, 3),
                     Point::new(15, 0)..Point::new(15, 0),
                 ],
                 2,
@@ -2936,7 +2935,19 @@ mod tests {
         let snapshot = multibuffer.read(cx).snapshot(cx);
         assert_eq!(
             snapshot.text(),
-            "bbb\nccc\nddd\neee\nfff\nggg\n\nnnn\nooo\nppp\nqqq\nrrr\n"
+            "bbb\nccc\nddd\neee\nfff\nggg\nhhh\niii\njjj\n\nnnn\nooo\nppp\nqqq\nrrr\n"
+        );
+
+        assert_eq!(
+            anchor_ranges
+                .iter()
+                .map(|range| range.to_point(&snapshot))
+                .collect::<Vec<_>>(),
+            vec![
+                Point::new(2, 2)..Point::new(3, 2),
+                Point::new(6, 1)..Point::new(6, 3),
+                Point::new(12, 0)..Point::new(12, 0)
+            ]
         );
     }
 
