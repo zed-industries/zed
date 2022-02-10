@@ -349,10 +349,11 @@ pub struct Chunk<'a> {
     pub diagnostic: Option<DiagnosticSeverity>,
 }
 
-pub(crate) struct Diff {
+pub struct Diff {
     base_version: clock::Global,
     new_text: Arc<str>,
     changes: Vec<(ChangeTag, usize)>,
+    start_offset: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -1230,23 +1231,29 @@ impl Buffer {
                 base_version,
                 new_text,
                 changes,
+                start_offset: 0,
             }
         })
     }
 
-    pub(crate) fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> bool {
+    pub fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> bool {
         if self.version == diff.base_version {
             self.start_transaction();
-            let mut offset = 0;
+            let mut offset = diff.start_offset;
             for (tag, len) in diff.changes {
                 let range = offset..(offset + len);
                 match tag {
                     ChangeTag::Equal => offset += len,
                     ChangeTag::Delete => {
-                        self.edit(Some(range), "", cx);
+                        self.edit([range], "", cx);
                     }
                     ChangeTag::Insert => {
-                        self.edit(Some(offset..offset), &diff.new_text[range], cx);
+                        self.edit(
+                            [offset..offset],
+                            &diff.new_text
+                                [range.start - diff.start_offset..range.end - diff.start_offset],
+                            cx,
+                        );
                         offset += len;
                     }
                 }
@@ -1489,12 +1496,84 @@ impl Buffer {
         Some(edit_id)
     }
 
-    pub fn apply_lsp_edits(
+    pub fn diff_for_lsp_edits(
         &mut self,
-        edits: impl IntoIterator<Item = lsp::TextEdit>,
+        lsp_edits: impl 'static + Send + IntoIterator<Item = lsp::TextEdit>,
         version: Option<i32>,
         cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
+    ) -> Task<Result<Diff>> {
+        let snapshot = TextBuffer::deref(self).clone();
+        let lsp_snapshot =
+            if let Some((version, language_server)) = version.zip(self.language_server.as_mut()) {
+                language_server
+                    .snapshot_for_version(version as usize)
+                    .map(|s| s.clone())
+            } else {
+                Ok(snapshot.clone())
+            };
+
+        cx.background().spawn(async move {
+            let lsp_snapshot = lsp_snapshot?;
+
+            // Convert LSP ranges into offsets in the current snapshot.
+            let mut edits = Vec::new();
+            for edit in lsp_edits.into_iter() {
+                let range = range_from_lsp(edit.range);
+                if lsp_snapshot.clip_point_utf16(range.start, Bias::Left) != range.start
+                    || lsp_snapshot.clip_point_utf16(range.end, Bias::Left) != range.end
+                {
+                    return Err(anyhow!("invalid edits received from language server"));
+                }
+                let edit_start = lsp_snapshot.anchor_before(range.start).to_offset(&snapshot);
+                let edit_end = lsp_snapshot.anchor_before(range.end).to_offset(&snapshot);
+                edits.push((edit_start..edit_end, edit.new_text));
+            }
+
+            if edits.is_empty() {
+                return Ok(Diff {
+                    base_version: snapshot.version().clone(),
+                    new_text: "".into(),
+                    changes: Default::default(),
+                    start_offset: Default::default(),
+                });
+            }
+
+            let slice_start = edits.first().unwrap().0.start;
+            let slice_end = edits.last().unwrap().0.end;
+            let mut cursor = snapshot.as_rope().cursor(slice_start);
+            let mut slice = cursor.slice(slice_end);
+            let old_text = slice.to_string();
+            for (range, new_text) in edits.into_iter().rev() {
+                slice.replace(
+                    range.start - slice_start..range.end - slice_start,
+                    &new_text,
+                );
+            }
+
+            let new_text = Arc::from(slice.to_string());
+            let changes = TextDiff::from_words(old_text.as_str(), &new_text)
+                .iter_all_changes()
+                .map(|c| (c.tag(), c.value().len()))
+                .collect::<Vec<_>>();
+            Ok(Diff {
+                base_version: snapshot.version().clone(),
+                new_text,
+                changes,
+                start_offset: slice_start,
+            })
+        })
+    }
+
+    pub fn apply_lsp_edits<I, T>(
+        &mut self,
+        edits: I,
+        version: Option<i32>,
+        cx: &mut ModelContext<Self>,
+    ) -> Result<()>
+    where
+        I: IntoIterator<IntoIter = T>,
+        T: DoubleEndedIterator<Item = lsp::TextEdit>,
+    {
         let mut anchored_edits = Vec::new();
         let snapshot =
             if let Some((version, language_server)) = version.zip(self.language_server.as_mut()) {
