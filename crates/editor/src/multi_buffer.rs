@@ -779,12 +779,35 @@ impl MultiBuffer {
             .map_or(Vec::new(), |state| state.excerpts.clone())
     }
 
-    pub fn excerpted_buffers<'a, T: ToOffset>(
+    pub fn excerpt_containing(
+        &self,
+        position: impl ToOffset,
+        cx: &AppContext,
+    ) -> Option<(ModelHandle<Buffer>, Range<text::Anchor>)> {
+        let snapshot = self.read(cx);
+        let position = position.to_offset(&snapshot);
+
+        let mut cursor = snapshot.excerpts.cursor::<usize>();
+        cursor.seek(&position, Bias::Right, &());
+        cursor.item().map(|excerpt| {
+            (
+                self.buffers
+                    .borrow()
+                    .get(&excerpt.buffer_id)
+                    .unwrap()
+                    .buffer
+                    .clone(),
+                excerpt.range.clone(),
+            )
+        })
+    }
+
+    pub fn range_to_buffer_ranges<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
         cx: &AppContext,
     ) -> Vec<(ModelHandle<Buffer>, Range<usize>)> {
-        let snapshot = self.snapshot(cx);
+        let snapshot = self.read(cx);
         let start = range.start.to_offset(&snapshot);
         let end = range.end.to_offset(&snapshot);
 
@@ -3538,8 +3561,9 @@ mod tests {
                     start_ix..end_ix
                 );
 
-                let excerpted_buffer_ranges =
-                    multibuffer.read(cx).excerpted_buffers(start_ix..end_ix, cx);
+                let excerpted_buffer_ranges = multibuffer
+                    .read(cx)
+                    .range_to_buffer_ranges(start_ix..end_ix, cx);
                 let excerpted_buffers_text = excerpted_buffer_ranges
                     .into_iter()
                     .map(|(buffer, buffer_range)| {

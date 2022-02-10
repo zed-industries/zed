@@ -191,7 +191,7 @@ impl ProjectDiagnosticsEditor {
 
             for selection in editor.local_selections::<usize>(cx) {
                 for (buffer, mut range) in
-                    excerpts.excerpted_buffers(selection.start..selection.end, cx)
+                    excerpts.range_to_buffer_ranges(selection.start..selection.end, cx)
                 {
                     if selection.reversed {
                         mem::swap(&mut range.start, &mut range.end);

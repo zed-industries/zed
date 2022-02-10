@@ -2114,6 +2114,35 @@ impl Editor {
         Some(cx.spawn(|workspace, mut cx| async move {
             let project_transaction = apply_code_actions.await?;
 
+            // If the code action's edits are all contained within this editor, then
+            // avoid opening a new editor to display them.
+            let mut entries = project_transaction.0.iter();
+            if let Some((buffer, transaction)) = entries.next() {
+                if entries.next().is_none() {
+                    let excerpt = editor.read_with(&cx, |editor, cx| {
+                        editor
+                            .buffer()
+                            .read(cx)
+                            .excerpt_containing(editor.newest_anchor_selection().head(), cx)
+                    });
+                    if let Some((excerpted_buffer, excerpt_range)) = excerpt {
+                        if excerpted_buffer == *buffer {
+                            let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+                            let excerpt_range = excerpt_range.to_offset(&snapshot);
+                            if snapshot
+                                .edited_ranges_for_transaction(transaction)
+                                .all(|range| {
+                                    excerpt_range.start <= range.start
+                                        && excerpt_range.end >= range.end
+                                })
+                            {
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            }
+
             let mut ranges_to_highlight = Vec::new();
             let excerpt_buffer = cx.add_model(|cx| {
                 let mut multibuffer = MultiBuffer::new(replica_id).with_title(title);
