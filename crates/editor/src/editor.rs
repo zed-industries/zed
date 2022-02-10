@@ -824,9 +824,18 @@ impl Editor {
             buffer,
             display_map,
             selections: Arc::from([]),
-            pending_selection: None,
+            pending_selection: Some(PendingSelection {
+                selection: Selection {
+                    id: 0,
+                    start: Anchor::min(),
+                    end: Anchor::min(),
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                },
+                mode: SelectMode::Character,
+            }),
             columnar_selection_tail: None,
-            next_selection_id: 0,
+            next_selection_id: 1,
             add_selections_state: None,
             select_next_state: None,
             selection_history: Default::default(),
@@ -853,14 +862,7 @@ impl Editor {
             completion_tasks: Default::default(),
             next_completion_id: 0,
         };
-        let selection = Selection {
-            id: post_inc(&mut this.next_selection_id),
-            start: 0,
-            end: 0,
-            reversed: false,
-            goal: SelectionGoal::None,
-        };
-        this.update_selections(vec![selection], None, cx);
+        this.end_selection(cx);
         this
     }
 
@@ -1170,7 +1172,7 @@ impl Editor {
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
-        let newest_selection = self.newest_anchor_selection().unwrap().clone();
+        let newest_selection = self.newest_anchor_selection().clone();
 
         let start;
         let end;
@@ -1722,16 +1724,15 @@ impl Editor {
     }
 
     fn trigger_completion_on_input(&mut self, text: &str, cx: &mut ViewContext<Self>) {
-        if let Some(selection) = self.newest_anchor_selection() {
-            if self
-                .buffer
-                .read(cx)
-                .is_completion_trigger(selection.head(), text, cx)
-            {
-                self.show_completions(&ShowCompletions, cx);
-            } else {
-                self.hide_context_menu(cx);
-            }
+        let selection = self.newest_anchor_selection();
+        if self
+            .buffer
+            .read(cx)
+            .is_completion_trigger(selection.head(), text, cx)
+        {
+            self.show_completions(&ShowCompletions, cx);
+        } else {
+            self.hide_context_menu(cx);
         }
     }
 
@@ -1882,11 +1883,7 @@ impl Editor {
             return;
         };
 
-        let position = if let Some(selection) = self.newest_anchor_selection() {
-            selection.head()
-        } else {
-            return;
-        };
+        let position = self.newest_anchor_selection().head();
         let (buffer, buffer_position) = self
             .buffer
             .read(cx)
@@ -1987,7 +1984,7 @@ impl Editor {
         let old_text = buffer.text_for_range(old_range.clone()).collect::<String>();
 
         let selections = self.local_selections::<usize>(cx);
-        let newest_selection = self.newest_anchor_selection()?;
+        let newest_selection = self.newest_anchor_selection();
         if newest_selection.start.buffer_id != buffer_handle.id() {
             return None;
         }
@@ -2060,11 +2057,7 @@ impl Editor {
     }
 
     fn show_code_actions(&mut self, _: &ShowCodeActions, cx: &mut ViewContext<Self>) {
-        let head = if let Some(selection) = self.newest_anchor_selection() {
-            selection.head()
-        } else {
-            return;
-        };
+        let head = self.newest_anchor_selection().head();
         let project = if let Some(project) = self.project.clone() {
             project
         } else {
@@ -4203,14 +4196,15 @@ impl Editor {
         &self,
         snapshot: &MultiBufferSnapshot,
     ) -> Selection<D> {
-        self.resolve_selection(self.newest_anchor_selection().unwrap(), snapshot)
+        self.resolve_selection(self.newest_anchor_selection(), snapshot)
     }
 
-    pub fn newest_anchor_selection(&self) -> Option<&Selection<Anchor>> {
+    pub fn newest_anchor_selection(&self) -> &Selection<Anchor> {
         self.pending_selection
             .as_ref()
             .map(|s| &s.selection)
             .or_else(|| self.selections.iter().max_by_key(|s| s.id))
+            .unwrap()
     }
 
     pub fn update_selections<T>(
@@ -4313,7 +4307,8 @@ impl Editor {
     }
 
     fn set_selections(&mut self, selections: Arc<[Selection<Anchor>]>, cx: &mut ViewContext<Self>) {
-        let old_cursor_position = self.newest_anchor_selection().map(|s| s.head());
+        let old_cursor_position = self.newest_anchor_selection().head();
+
         self.selections = selections;
         if self.focused {
             self.buffer.update(cx, |buffer, cx| {
@@ -4334,14 +4329,13 @@ impl Editor {
             .iter()
             .max_by_key(|s| s.id)
             .map(|s| s.head());
-        if let Some(old_cursor_position) = old_cursor_position {
-            if let Some(new_cursor_position) = new_cursor_position.as_ref() {
-                self.push_to_nav_history(
-                    old_cursor_position,
-                    Some(new_cursor_position.to_point(&buffer)),
-                    cx,
-                );
-            }
+
+        if let Some(new_cursor_position) = new_cursor_position.as_ref() {
+            self.push_to_nav_history(
+                old_cursor_position,
+                Some(new_cursor_position.to_point(&buffer)),
+                cx,
+            );
         }
 
         let completion_menu = match self.context_menu.as_mut() {

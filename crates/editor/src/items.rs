@@ -204,9 +204,8 @@ impl ItemView for Editor {
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(selection) = self.newest_anchor_selection() {
-            self.push_to_nav_history(selection.head(), None, cx);
-        }
+        let selection = self.newest_anchor_selection();
+        self.push_to_nav_history(selection.head(), None, cx);
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {

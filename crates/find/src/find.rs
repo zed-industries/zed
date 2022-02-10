@@ -355,11 +355,8 @@ impl FindBar {
         if let Some(mut index) = self.active_match_index {
             if let Some(editor) = self.active_editor.as_ref() {
                 editor.update(cx, |editor, cx| {
-                    let newest_selection = editor.newest_anchor_selection().cloned();
-                    if let Some(((_, ranges), newest_selection)) = editor
-                        .highlighted_ranges_for_type::<Self>()
-                        .zip(newest_selection)
-                    {
+                    let newest_selection = editor.newest_anchor_selection().clone();
+                    if let Some((_, ranges)) = editor.highlighted_ranges_for_type::<Self>() {
                         let position = newest_selection.head();
                         let buffer = editor.buffer().read(cx).read(cx);
                         if ranges[index].start.cmp(&position, &buffer).unwrap().is_gt() {
@@ -502,7 +499,7 @@ impl FindBar {
     fn active_match_index(&mut self, cx: &mut ViewContext<Self>) -> Option<usize> {
         let editor = self.active_editor.as_ref()?;
         let editor = editor.read(cx);
-        let position = editor.newest_anchor_selection()?.head();
+        let position = editor.newest_anchor_selection().head();
         let ranges = editor.highlighted_ranges_for_type::<Self>()?.1;
         if ranges.is_empty() {
             None
