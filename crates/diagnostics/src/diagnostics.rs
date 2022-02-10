@@ -7,7 +7,7 @@ use editor::{
     display_map::{BlockDisposition, BlockId, BlockProperties, RenderBlock},
     highlight_diagnostic_message,
     items::BufferItemHandle,
-    Autoscroll, BuildSettings, Editor, ExcerptId, ExcerptProperties, MultiBuffer, ToOffset,
+    Autoscroll, BuildSettings, Editor, ExcerptId, MultiBuffer, ToOffset,
 };
 use gpui::{
     action, elements::*, fonts::TextStyle, keymap::Binding, AnyViewHandle, AppContext, Entity,
@@ -335,10 +335,8 @@ impl ProjectDiagnosticsEditor {
                             );
                             let excerpt_id = excerpts.insert_excerpt_after(
                                 &prev_excerpt_id,
-                                ExcerptProperties {
-                                    buffer: &buffer,
-                                    range: excerpt_start..excerpt_end,
-                                },
+                                buffer.clone(),
+                                excerpt_start..excerpt_end,
                                 excerpts_cx,
                             );
 

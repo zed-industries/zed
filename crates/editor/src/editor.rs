@@ -35,8 +35,8 @@ use language::{
 };
 use multi_buffer::MultiBufferChunks;
 pub use multi_buffer::{
-    char_kind, Anchor, AnchorRangeExt, CharKind, ExcerptId, ExcerptProperties, MultiBuffer,
-    MultiBufferSnapshot, ToOffset, ToPoint,
+    char_kind, Anchor, AnchorRangeExt, CharKind, ExcerptId, MultiBuffer, MultiBufferSnapshot,
+    ToOffset, ToPoint,
 };
 use ordered_float::OrderedFloat;
 use postage::watch;
@@ -7870,20 +7870,8 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
-            multibuffer.push_excerpt(
-                ExcerptProperties {
-                    buffer: &buffer,
-                    range: Point::new(0, 0)..Point::new(0, 4),
-                },
-                cx,
-            );
-            multibuffer.push_excerpt(
-                ExcerptProperties {
-                    buffer: &buffer,
-                    range: Point::new(1, 0)..Point::new(1, 4),
-                },
-                cx,
-            );
+            multibuffer.push_excerpt(buffer.clone(), Point::new(0, 0)..Point::new(0, 4), cx);
+            multibuffer.push_excerpt(buffer.clone(), Point::new(1, 0)..Point::new(1, 4), cx);
             multibuffer
         });
 
@@ -7921,20 +7909,8 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
-            multibuffer.push_excerpt(
-                ExcerptProperties {
-                    buffer: &buffer,
-                    range: Point::new(0, 0)..Point::new(1, 4),
-                },
-                cx,
-            );
-            multibuffer.push_excerpt(
-                ExcerptProperties {
-                    buffer: &buffer,
-                    range: Point::new(1, 0)..Point::new(2, 4),
-                },
-                cx,
-            );
+            multibuffer.push_excerpt(buffer, Point::new(0, 0)..Point::new(1, 4), cx);
+            multibuffer.push_excerpt(buffer, Point::new(1, 0)..Point::new(2, 4), cx);
             multibuffer
         });
 
@@ -7986,19 +7962,11 @@ mod tests {
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
             excerpt1_id = Some(multibuffer.push_excerpt(
-                ExcerptProperties {
-                    buffer: &buffer,
-                    range: Point::new(0, 0)..Point::new(1, 4),
-                },
+                buffer.clone(),
+                Point::new(0, 0)..Point::new(1, 4),
                 cx,
             ));
-            multibuffer.push_excerpt(
-                ExcerptProperties {
-                    buffer: &buffer,
-                    range: Point::new(1, 0)..Point::new(2, 4),
-                },
-                cx,
-            );
+            multibuffer.push_excerpt(buffer.clone(), Point::new(1, 0)..Point::new(2, 4), cx);
             multibuffer
         });
         assert_eq!(
