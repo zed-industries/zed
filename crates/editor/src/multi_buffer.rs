@@ -3,7 +3,7 @@ mod anchor;
 pub use anchor::{Anchor, AnchorRangeExt};
 use anyhow::Result;
 use clock::ReplicaId;
-use collections::{Bound, HashMap, HashSet};
+use collections::{Bound, HashMap};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
@@ -60,7 +60,7 @@ pub enum CharKind {
 
 struct Transaction {
     id: TransactionId,
-    buffer_transactions: HashSet<(usize, text::TransactionId)>,
+    buffer_transactions: HashMap<usize, text::TransactionId>,
     first_edit_at: Instant,
     last_edit_at: Instant,
     suppress_grouping: bool,
@@ -425,12 +425,12 @@ impl MultiBuffer {
             return buffer.update(cx, |buffer, cx| buffer.end_transaction_at(now, cx));
         }
 
-        let mut buffer_transactions = HashSet::default();
+        let mut buffer_transactions = HashMap::default();
         for BufferState { buffer, .. } in self.buffers.borrow().values() {
             if let Some(transaction_id) =
                 buffer.update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
             {
-                buffer_transactions.insert((buffer.id(), transaction_id));
+                buffer_transactions.insert(buffer.id(), transaction_id);
             }
         }
 
@@ -2227,7 +2227,7 @@ impl History {
     fn end_transaction(
         &mut self,
         now: Instant,
-        buffer_transactions: HashSet<(usize, TransactionId)>,
+        buffer_transactions: HashMap<usize, TransactionId>,
     ) -> bool {
         assert_ne!(self.transaction_depth, 0);
         self.transaction_depth -= 1;
@@ -2238,7 +2238,12 @@ impl History {
             } else {
                 let transaction = self.undo_stack.last_mut().unwrap();
                 transaction.last_edit_at = now;
-                transaction.buffer_transactions.extend(buffer_transactions);
+                for (buffer_id, transaction_id) in buffer_transactions {
+                    transaction
+                        .buffer_transactions
+                        .entry(buffer_id)
+                        .or_insert(transaction_id);
+                }
                 true
             }
         } else {
@@ -2311,6 +2316,14 @@ impl History {
         if let Some(last_transaction) = transactions_to_keep.last_mut() {
             if let Some(transaction) = transactions_to_merge.last() {
                 last_transaction.last_edit_at = transaction.last_edit_at;
+            }
+            for to_merge in transactions_to_merge {
+                for (buffer_id, transaction_id) in &to_merge.buffer_transactions {
+                    last_transaction
+                        .buffer_transactions
+                        .entry(*buffer_id)
+                        .or_insert(*transaction_id);
+                }
             }
         }
 
