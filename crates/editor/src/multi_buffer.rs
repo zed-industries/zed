@@ -557,10 +557,14 @@ impl MultiBuffer {
 
         while let Some(transaction) = self.history.pop_undo() {
             let mut undone = false;
-            for (buffer_id, buffer_transaction_id) in &transaction.buffer_transactions {
+            for (buffer_id, buffer_transaction_id) in &mut transaction.buffer_transactions {
                 if let Some(BufferState { buffer, .. }) = self.buffers.borrow().get(&buffer_id) {
-                    undone |= buffer.update(cx, |buf, cx| {
-                        buf.undo_to_transaction(*buffer_transaction_id, cx)
+                    undone |= buffer.update(cx, |buffer, cx| {
+                        let undo_to = *buffer_transaction_id;
+                        if let Some(entry) = buffer.peek_undo_stack() {
+                            *buffer_transaction_id = entry.transaction_id();
+                        }
+                        buffer.undo_to_transaction(undo_to, cx)
                     });
                 }
             }
@@ -580,10 +584,14 @@ impl MultiBuffer {
 
         while let Some(transaction) = self.history.pop_redo() {
             let mut redone = false;
-            for (buffer_id, buffer_transaction_id) in &transaction.buffer_transactions {
+            for (buffer_id, buffer_transaction_id) in &mut transaction.buffer_transactions {
                 if let Some(BufferState { buffer, .. }) = self.buffers.borrow().get(&buffer_id) {
-                    redone |= buffer.update(cx, |buf, cx| {
-                        buf.redo_to_transaction(*buffer_transaction_id, cx)
+                    redone |= buffer.update(cx, |buffer, cx| {
+                        let redo_to = *buffer_transaction_id;
+                        if let Some(entry) = buffer.peek_redo_stack() {
+                            *buffer_transaction_id = entry.transaction_id();
+                        }
+                        buffer.redo_to_transaction(redo_to, cx)
                     });
                 }
             }
@@ -2274,21 +2282,21 @@ impl History {
         }
     }
 
-    fn pop_undo(&mut self) -> Option<&Transaction> {
+    fn pop_undo(&mut self) -> Option<&mut Transaction> {
         assert_eq!(self.transaction_depth, 0);
         if let Some(transaction) = self.undo_stack.pop() {
             self.redo_stack.push(transaction);
-            self.redo_stack.last()
+            self.redo_stack.last_mut()
         } else {
             None
         }
     }
 
-    fn pop_redo(&mut self) -> Option<&Transaction> {
+    fn pop_redo(&mut self) -> Option<&mut Transaction> {
         assert_eq!(self.transaction_depth, 0);
         if let Some(transaction) = self.redo_stack.pop() {
             self.undo_stack.push(transaction);
-            self.undo_stack.last()
+            self.undo_stack.last_mut()
         } else {
             None
         }

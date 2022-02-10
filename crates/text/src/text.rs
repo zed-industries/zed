@@ -84,6 +84,10 @@ pub struct Transaction {
 }
 
 impl HistoryEntry {
+    pub fn transaction_id(&self) -> TransactionId {
+        self.transaction.id
+    }
+
     fn push_edit(&mut self, edit: &EditOperation) {
         self.transaction.edit_ids.push(edit.timestamp.local());
         self.transaction.end.observe(edit.timestamp.local());
@@ -1148,6 +1152,10 @@ impl Buffer {
 
     pub fn peek_undo_stack(&self) -> Option<&HistoryEntry> {
         self.history.undo_stack.last()
+    }
+
+    pub fn peek_redo_stack(&self) -> Option<&HistoryEntry> {
+        self.history.redo_stack.last()
     }
 
     pub fn start_transaction(&mut self) -> Option<TransactionId> {
