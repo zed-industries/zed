@@ -63,6 +63,7 @@ struct Transaction {
     buffer_transactions: HashSet<(usize, text::TransactionId)>,
     first_edit_at: Instant,
     last_edit_at: Instant,
+    suppress_grouping: bool,
 }
 
 pub trait ToOffset: 'static + fmt::Debug {
@@ -442,11 +443,21 @@ impl MultiBuffer {
     }
 
     pub fn finalize_last_transaction(&mut self, cx: &mut ModelContext<Self>) {
+        self.history.finalize_last_transaction();
         for BufferState { buffer, .. } in self.buffers.borrow().values() {
             buffer.update(cx, |buffer, _| {
                 buffer.finalize_last_transaction();
             });
         }
+    }
+
+    pub fn push_transaction<'a, T>(&mut self, buffer_transactions: T)
+    where
+        T: IntoIterator<Item = (&'a ModelHandle<Buffer>, &'a language::Transaction)>,
+    {
+        self.history
+            .push_transaction(buffer_transactions, Instant::now());
+        self.history.finalize_last_transaction();
     }
 
     pub fn set_active_selections(
@@ -2205,6 +2216,7 @@ impl History {
                 buffer_transactions: Default::default(),
                 first_edit_at: now,
                 last_edit_at: now,
+                suppress_grouping: false,
             });
             Some(id)
         } else {
@@ -2234,6 +2246,29 @@ impl History {
         }
     }
 
+    fn push_transaction<'a, T>(&mut self, buffer_transactions: T, now: Instant)
+    where
+        T: IntoIterator<Item = (&'a ModelHandle<Buffer>, &'a language::Transaction)>,
+    {
+        assert_eq!(self.transaction_depth, 0);
+        self.undo_stack.push(Transaction {
+            id: self.next_transaction_id.tick(),
+            buffer_transactions: buffer_transactions
+                .into_iter()
+                .map(|(buffer, transaction)| (buffer.id(), transaction.id))
+                .collect(),
+            first_edit_at: now,
+            last_edit_at: now,
+            suppress_grouping: false,
+        });
+    }
+
+    fn finalize_last_transaction(&mut self) {
+        if let Some(transaction) = self.undo_stack.last_mut() {
+            transaction.suppress_grouping = true;
+        }
+    }
+
     fn pop_undo(&mut self) -> Option<&Transaction> {
         assert_eq!(self.transaction_depth, 0);
         if let Some(transaction) = self.undo_stack.pop() {
@@ -2260,7 +2295,9 @@ impl History {
 
         if let Some(mut transaction) = transactions.next_back() {
             while let Some(prev_transaction) = transactions.next_back() {
-                if transaction.first_edit_at - prev_transaction.last_edit_at <= self.group_interval
+                if !prev_transaction.suppress_grouping
+                    && transaction.first_edit_at - prev_transaction.last_edit_at
+                        <= self.group_interval
                 {
                     transaction = prev_transaction;
                     new_len -= 1;

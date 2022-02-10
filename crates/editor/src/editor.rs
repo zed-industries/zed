@@ -2137,6 +2137,7 @@ impl Editor {
                         ),
                     );
                 }
+                multibuffer.push_transaction(&project_transaction.0);
                 multibuffer
             });
 
