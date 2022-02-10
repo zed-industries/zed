@@ -1730,14 +1730,6 @@ impl BufferSnapshot {
         self.visible_text.clip_point_utf16(point, bias)
     }
 
-    // pub fn point_for_offset(&self, offset: usize) -> Result<Point> {
-    //     if offset <= self.len() {
-    //         Ok(self.text_summary_for_range(0..offset))
-    //     } else {
-    //         Err(anyhow!("offset out of bounds"))
-    //     }
-    // }
-
     pub fn edits_since<'a, D>(
         &'a self,
         since: &'a clock::Global,
@@ -1746,6 +1738,42 @@ impl BufferSnapshot {
         D: TextDimension + Ord,
     {
         self.edits_since_in_range(since, Anchor::min()..Anchor::max())
+    }
+
+    pub fn edited_ranges_for_transaction<'a, D>(
+        &'a self,
+        transaction: &'a Transaction,
+    ) -> impl 'a + Iterator<Item = Range<D>>
+    where
+        D: TextDimension,
+    {
+        let mut cursor = self.fragments.cursor::<(VersionedFullOffset, usize)>();
+        let mut rope_cursor = self.visible_text.cursor(0);
+        let cx = Some(transaction.end.clone());
+        let mut position = D::default();
+        transaction.ranges.iter().map(move |range| {
+            cursor.seek_forward(&VersionedFullOffset::Offset(range.start), Bias::Right, &cx);
+            let mut start_offset = cursor.start().1;
+            if cursor
+                .item()
+                .map_or(false, |fragment| fragment.is_visible(&self.undo_map))
+            {
+                start_offset += range.start - cursor.start().0.full_offset()
+            }
+            position.add_assign(&rope_cursor.summary(start_offset));
+            let start = position.clone();
+
+            cursor.seek_forward(&VersionedFullOffset::Offset(range.end), Bias::Left, &cx);
+            let mut end_offset = cursor.start().1;
+            if cursor
+                .item()
+                .map_or(false, |fragment| fragment.is_visible(&self.undo_map))
+            {
+                end_offset += range.end - cursor.start().0.full_offset();
+            }
+            position.add_assign(&rope_cursor.summary(end_offset));
+            start..position.clone()
+        })
     }
 
     pub fn edits_since_in_range<'a, D>(

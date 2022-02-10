@@ -502,7 +502,7 @@ fn test_history() {
 }
 
 #[test]
-fn test_avoid_grouping_next_transaction() {
+fn test_finalize_last_transaction() {
     let now = Instant::now();
     let mut buffer = Buffer::new(0, 0, History::new("123456".into()));
 
@@ -534,6 +534,44 @@ fn test_avoid_grouping_next_transaction() {
 
     buffer.redo();
     assert_eq!(buffer.text(), "ab2cde6");
+}
+
+#[test]
+fn test_edited_ranges_for_transaction() {
+    let now = Instant::now();
+    let mut buffer = Buffer::new(0, 0, History::new("1234567".into()));
+
+    buffer.start_transaction_at(now);
+    buffer.edit(vec![2..4], "cd");
+    buffer.edit(vec![6..6], "efg");
+    buffer.end_transaction_at(now);
+    assert_eq!(buffer.text(), "12cd56efg7");
+
+    let tx = buffer.finalize_last_transaction().unwrap().clone();
+    assert_eq!(
+        buffer
+            .edited_ranges_for_transaction::<usize>(&tx)
+            .collect::<Vec<_>>(),
+        [2..4, 6..9]
+    );
+
+    buffer.edit(vec![5..5], "hijk");
+    assert_eq!(buffer.text(), "12cd5hijk6efg7");
+    assert_eq!(
+        buffer
+            .edited_ranges_for_transaction::<usize>(&tx)
+            .collect::<Vec<_>>(),
+        [2..4, 10..13]
+    );
+
+    buffer.edit(vec![4..4], "l");
+    assert_eq!(buffer.text(), "12cdl5hijk6efg7");
+    assert_eq!(
+        buffer
+            .edited_ranges_for_transaction::<usize>(&tx)
+            .collect::<Vec<_>>(),
+        [2..4, 11..14]
+    );
 }
 
 #[test]
