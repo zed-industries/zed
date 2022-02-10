@@ -333,12 +333,15 @@ impl ProjectDiagnosticsEditor {
                                 Point::new(range.end.row + CONTEXT_LINE_COUNT, u32::MAX),
                                 Bias::Left,
                             );
-                            let excerpt_id = excerpts.insert_excerpt_after(
-                                &prev_excerpt_id,
-                                buffer.clone(),
-                                excerpt_start..excerpt_end,
-                                excerpts_cx,
-                            );
+                            let excerpt_id = excerpts
+                                .insert_excerpts_after(
+                                    &prev_excerpt_id,
+                                    buffer.clone(),
+                                    [excerpt_start..excerpt_end],
+                                    excerpts_cx,
+                                )
+                                .pop()
+                                .unwrap();
 
                             prev_excerpt_id = excerpt_id.clone();
                             first_excerpt_id.get_or_insert_with(|| prev_excerpt_id.clone());

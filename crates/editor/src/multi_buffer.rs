@@ -173,7 +173,7 @@ impl MultiBuffer {
     pub fn singleton(buffer: ModelHandle<Buffer>, cx: &mut ModelContext<Self>) -> Self {
         let mut this = Self::new(buffer.read(cx).replica_id());
         this.singleton = true;
-        this.push_excerpt(buffer, text::Anchor::min()..text::Anchor::max(), cx);
+        this.push_excerpts(buffer, [text::Anchor::min()..text::Anchor::max()], cx);
         this.snapshot.borrow_mut().singleton = true;
         this
     }
@@ -574,25 +574,25 @@ impl MultiBuffer {
         None
     }
 
-    pub fn push_excerpt<O>(
+    pub fn push_excerpts<O>(
         &mut self,
         buffer: ModelHandle<Buffer>,
-        range: Range<O>,
+        ranges: impl IntoIterator<Item = Range<O>>,
         cx: &mut ModelContext<Self>,
-    ) -> ExcerptId
+    ) -> Vec<ExcerptId>
     where
         O: text::ToOffset,
     {
-        self.insert_excerpt_after(&ExcerptId::max(), buffer, range, cx)
+        self.insert_excerpts_after(&ExcerptId::max(), buffer, ranges, cx)
     }
 
-    pub fn insert_excerpt_after<O>(
+    pub fn insert_excerpts_after<O>(
         &mut self,
         prev_excerpt_id: &ExcerptId,
         buffer: ModelHandle<Buffer>,
-        range: Range<O>,
+        ranges: impl IntoIterator<Item = Range<O>>,
         cx: &mut ModelContext<Self>,
-    ) -> ExcerptId
+    ) -> Vec<ExcerptId>
     where
         O: text::ToOffset,
     {
@@ -601,8 +601,22 @@ impl MultiBuffer {
 
         let buffer_id = buffer.id();
         let buffer_snapshot = buffer.read(cx).snapshot();
-        let range =
-            buffer_snapshot.anchor_before(&range.start)..buffer_snapshot.anchor_after(&range.end);
+
+        let mut buffers = self.buffers.borrow_mut();
+        let buffer_state = buffers.entry(buffer_id).or_insert_with(|| BufferState {
+            last_version: buffer_snapshot.version().clone(),
+            last_parse_count: buffer_snapshot.parse_count(),
+            last_selections_update_count: buffer_snapshot.selections_update_count(),
+            last_diagnostics_update_count: buffer_snapshot.diagnostics_update_count(),
+            last_file_update_count: buffer_snapshot.file_update_count(),
+            excerpts: Default::default(),
+            _subscriptions: [
+                cx.observe(&buffer, |_, _, cx| cx.notify()),
+                cx.subscribe(&buffer, Self::on_buffer_event),
+            ],
+            buffer,
+        });
+
         let mut snapshot = self.snapshot.borrow_mut();
         let mut cursor = snapshot.excerpts.cursor::<Option<&ExcerptId>>();
         let mut new_excerpts = cursor.slice(&Some(prev_excerpt_id), Bias::Right, &());
@@ -622,34 +636,27 @@ impl MultiBuffer {
             next_id = next_excerpt.id.clone();
         }
 
-        let id = ExcerptId::between(&prev_id, &next_id);
-
-        let mut buffers = self.buffers.borrow_mut();
-        let buffer_state = buffers.entry(buffer_id).or_insert_with(|| BufferState {
-            last_version: buffer_snapshot.version().clone(),
-            last_parse_count: buffer_snapshot.parse_count(),
-            last_selections_update_count: buffer_snapshot.selections_update_count(),
-            last_diagnostics_update_count: buffer_snapshot.diagnostics_update_count(),
-            last_file_update_count: buffer_snapshot.file_update_count(),
-            excerpts: Default::default(),
-            _subscriptions: [
-                cx.observe(&buffer, |_, _, cx| cx.notify()),
-                cx.subscribe(&buffer, Self::on_buffer_event),
-            ],
-            buffer,
-        });
-        if let Err(ix) = buffer_state.excerpts.binary_search(&id) {
-            buffer_state.excerpts.insert(ix, id.clone());
+        let mut ids = Vec::new();
+        let mut ranges = ranges.into_iter().peekable();
+        while let Some(range) = ranges.next() {
+            let id = ExcerptId::between(&prev_id, &next_id);
+            if let Err(ix) = buffer_state.excerpts.binary_search(&id) {
+                buffer_state.excerpts.insert(ix, id.clone());
+            }
+            let range = buffer_snapshot.anchor_before(&range.start)
+                ..buffer_snapshot.anchor_after(&range.end);
+            let excerpt = Excerpt::new(
+                id.clone(),
+                buffer_id,
+                buffer_snapshot.clone(),
+                range,
+                ranges.peek().is_some() || cursor.item().is_some(),
+            );
+            new_excerpts.push(excerpt, &());
+            prev_id = id.clone();
+            ids.push(id);
         }
 
-        let excerpt = Excerpt::new(
-            id.clone(),
-            buffer_id,
-            buffer_snapshot,
-            range,
-            cursor.item().is_some(),
-        );
-        new_excerpts.push(excerpt, &());
         let edit_end = new_excerpts.summary().text.bytes;
 
         let suffix = cursor.suffix(&());
@@ -667,7 +674,7 @@ impl MultiBuffer {
         }]);
 
         cx.notify();
-        id
+        ids
     }
 
     pub fn excerpt_ids_for_buffer(&self, buffer: &ModelHandle<Buffer>) -> Vec<ExcerptId> {
@@ -1072,7 +1079,7 @@ impl MultiBuffer {
                     &buffer.text()[start_ix..end_ix]
                 );
 
-                let excerpt_id = self.push_excerpt(buffer_handle.clone(), start_ix..end_ix, cx);
+                let excerpt_id = self.push_excerpts(buffer_handle.clone(), [start_ix..end_ix], cx);
                 log::info!("Inserted with id: {:?}", excerpt_id);
             } else {
                 let remove_count = rng.gen_range(1..=excerpt_ids.len());
@@ -2667,7 +2674,7 @@ mod tests {
 
         let subscription = multibuffer.update(cx, |multibuffer, cx| {
             let subscription = multibuffer.subscribe();
-            multibuffer.push_excerpt(buffer_1.clone(), Point::new(1, 2)..Point::new(2, 5), cx);
+            multibuffer.push_excerpts(buffer_1.clone(), [Point::new(1, 2)..Point::new(2, 5)], cx);
             assert_eq!(
                 subscription.consume().into_inner(),
                 [Edit {
@@ -2676,8 +2683,8 @@ mod tests {
                 }]
             );
 
-            multibuffer.push_excerpt(buffer_1.clone(), Point::new(3, 3)..Point::new(4, 4), cx);
-            multibuffer.push_excerpt(buffer_2.clone(), Point::new(3, 1)..Point::new(3, 3), cx);
+            multibuffer.push_excerpts(buffer_1.clone(), [Point::new(3, 3)..Point::new(4, 4)], cx);
+            multibuffer.push_excerpts(buffer_2.clone(), [Point::new(3, 1)..Point::new(3, 3)], cx);
             assert_eq!(
                 subscription.consume().into_inner(),
                 [Edit {
@@ -2879,8 +2886,8 @@ mod tests {
         let buffer_2 = cx.add_model(|cx| Buffer::new(0, "efghi", cx));
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
-            multibuffer.push_excerpt(buffer_1.clone(), 0..4, cx);
-            multibuffer.push_excerpt(buffer_2.clone(), 0..5, cx);
+            multibuffer.push_excerpts(buffer_1.clone(), [0..4], cx);
+            multibuffer.push_excerpts(buffer_2.clone(), [0..5], cx);
             multibuffer
         });
         let old_snapshot = multibuffer.read(cx).snapshot(cx);
@@ -2929,20 +2936,22 @@ mod tests {
         // Add an excerpt from buffer 1 that spans this new insertion.
         buffer_1.update(cx, |buffer, cx| buffer.edit([4..4], "123", cx));
         let excerpt_id_1 = multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.push_excerpt(buffer_1.clone(), 0..7, cx)
+            multibuffer
+                .push_excerpts(buffer_1.clone(), [0..7], cx)
+                .pop()
+                .unwrap()
         });
 
         let snapshot_1 = multibuffer.read(cx).snapshot(cx);
         assert_eq!(snapshot_1.text(), "abcd123");
 
         // Replace the buffer 1 excerpt with new excerpts from buffer 2.
-        let (excerpt_id_2, excerpt_id_3, _) = multibuffer.update(cx, |multibuffer, cx| {
+        let (excerpt_id_2, excerpt_id_3) = multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.remove_excerpts([&excerpt_id_1], cx);
-            (
-                multibuffer.push_excerpt(buffer_2.clone(), 0..4, cx),
-                multibuffer.push_excerpt(buffer_2.clone(), 6..10, cx),
-                multibuffer.push_excerpt(buffer_2.clone(), 12..16, cx),
-            )
+            let mut ids = multibuffer
+                .push_excerpts(buffer_2.clone(), [0..4, 6..10, 12..16], cx)
+                .into_iter();
+            (ids.next().unwrap(), ids.next().unwrap())
         });
         let snapshot_2 = multibuffer.read(cx).snapshot(cx);
         assert_eq!(snapshot_2.text(), "ABCD\nGHIJ\nMNOP");
@@ -2979,7 +2988,10 @@ mod tests {
         // that intersects the old excerpt.
         let excerpt_id_5 = multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.remove_excerpts([&excerpt_id_3], cx);
-            multibuffer.insert_excerpt_after(&excerpt_id_3, buffer_2.clone(), 5..8, cx)
+            multibuffer
+                .insert_excerpts_after(&excerpt_id_3, buffer_2.clone(), [5..8], cx)
+                .pop()
+                .unwrap()
         });
 
         let snapshot_3 = multibuffer.read(cx).snapshot(cx);
@@ -3119,12 +3131,15 @@ mod tests {
                     );
 
                     let excerpt_id = multibuffer.update(cx, |multibuffer, cx| {
-                        multibuffer.insert_excerpt_after(
-                            &prev_excerpt_id,
-                            buffer_handle.clone(),
-                            start_ix..end_ix,
-                            cx,
-                        )
+                        multibuffer
+                            .insert_excerpts_after(
+                                &prev_excerpt_id,
+                                buffer_handle.clone(),
+                                [start_ix..end_ix],
+                                cx,
+                            )
+                            .pop()
+                            .unwrap()
                     });
 
                     excerpt_ids.insert(excerpt_ix, excerpt_id);
@@ -3428,8 +3443,8 @@ mod tests {
         let multibuffer = cx.add_model(|_| MultiBuffer::new(0));
         let group_interval = multibuffer.read(cx).history.group_interval;
         multibuffer.update(cx, |multibuffer, cx| {
-            multibuffer.push_excerpt(buffer_1.clone(), 0..buffer_1.read(cx).len(), cx);
-            multibuffer.push_excerpt(buffer_2.clone(), 0..buffer_2.read(cx).len(), cx);
+            multibuffer.push_excerpts(buffer_1.clone(), [0..buffer_1.read(cx).len()], cx);
+            multibuffer.push_excerpts(buffer_2.clone(), [0..buffer_2.read(cx).len()], cx);
         });
 
         let mut now = Instant::now();

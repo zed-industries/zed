@@ -239,8 +239,14 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndefg\nhijkl\nmn", cx));
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
-            multibuffer.push_excerpt(buffer.clone(), Point::new(0, 0)..Point::new(1, 4), cx);
-            multibuffer.push_excerpt(buffer.clone(), Point::new(2, 0)..Point::new(3, 2), cx);
+            multibuffer.push_excerpts(
+                buffer.clone(),
+                [
+                    Point::new(0, 0)..Point::new(1, 4),
+                    Point::new(2, 0)..Point::new(3, 2),
+                ],
+                cx,
+            );
             multibuffer
         });
 

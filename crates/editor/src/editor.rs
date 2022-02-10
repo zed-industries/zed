@@ -7870,8 +7870,14 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
-            multibuffer.push_excerpt(buffer.clone(), Point::new(0, 0)..Point::new(0, 4), cx);
-            multibuffer.push_excerpt(buffer.clone(), Point::new(1, 0)..Point::new(1, 4), cx);
+            multibuffer.push_excerpts(
+                buffer.clone(),
+                [
+                    Point::new(0, 0)..Point::new(0, 4),
+                    Point::new(1, 0)..Point::new(1, 4),
+                ],
+                cx,
+            );
             multibuffer
         });
 
@@ -7909,8 +7915,14 @@ mod tests {
         let buffer = cx.add_model(|cx| Buffer::new(0, sample_text(3, 4, 'a'), cx));
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
-            multibuffer.push_excerpt(buffer, Point::new(0, 0)..Point::new(1, 4), cx);
-            multibuffer.push_excerpt(buffer, Point::new(1, 0)..Point::new(2, 4), cx);
+            multibuffer.push_excerpts(
+                buffer,
+                [
+                    Point::new(0, 0)..Point::new(1, 4),
+                    Point::new(1, 0)..Point::new(2, 4),
+                ],
+                cx,
+            );
             multibuffer
         });
 
@@ -7961,12 +7973,17 @@ mod tests {
         let mut excerpt1_id = None;
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
-            excerpt1_id = Some(multibuffer.push_excerpt(
-                buffer.clone(),
-                Point::new(0, 0)..Point::new(1, 4),
-                cx,
-            ));
-            multibuffer.push_excerpt(buffer.clone(), Point::new(1, 0)..Point::new(2, 4), cx);
+            excerpt1_id = multibuffer
+                .push_excerpts(
+                    buffer.clone(),
+                    [
+                        Point::new(0, 0)..Point::new(1, 4),
+                        Point::new(1, 0)..Point::new(2, 4),
+                    ],
+                    cx,
+                )
+                .into_iter()
+                .next();
             multibuffer
         });
         assert_eq!(
