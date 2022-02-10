@@ -28,7 +28,7 @@ use std::{
     sync::Arc,
 };
 use util::TryFutureExt;
-use workspace::{ItemNavHistory, Workspace};
+use workspace::{ItemNavHistory, ItemViewHandle as _, Workspace};
 
 action!(Deploy);
 action!(OpenExcerpts);
@@ -573,7 +573,7 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
     }
 
     fn save(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        self.excerpts.update(cx, |excerpts, cx| excerpts.save(cx))
+        self.editor.save(cx)
     }
 
     fn can_save_as(&self, _: &AppContext) -> bool {

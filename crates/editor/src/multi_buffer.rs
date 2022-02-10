@@ -39,6 +39,7 @@ pub struct MultiBuffer {
     singleton: bool,
     replica_id: ReplicaId,
     history: History,
+    title: Option<String>,
 }
 
 struct History {
@@ -167,7 +168,13 @@ impl MultiBuffer {
                 transaction_depth: 0,
                 group_interval: Duration::from_millis(300),
             },
+            title: Default::default(),
         }
+    }
+
+    pub fn with_title(mut self, title: String) -> Self {
+        self.title = Some(title);
+        self
     }
 
     pub fn singleton(buffer: ModelHandle<Buffer>, cx: &mut ModelContext<Self>) -> Self {
@@ -225,6 +232,10 @@ impl MultiBuffer {
         } else {
             None
         }
+    }
+
+    pub fn is_singleton(&self) -> bool {
+        self.singleton
     }
 
     pub fn subscribe(&mut self) -> Subscription {
@@ -943,6 +954,16 @@ impl MultiBuffer {
 
     pub fn file<'a>(&self, cx: &'a AppContext) -> Option<&'a dyn File> {
         self.as_singleton()?.read(cx).file()
+    }
+
+    pub fn title(&self, cx: &AppContext) -> String {
+        if let Some(title) = self.title.clone() {
+            title
+        } else if let Some(file) = self.file(cx) {
+            file.file_name(cx).to_string_lossy().into()
+        } else {
+            "untitled".into()
+        }
     }
 
     #[cfg(test)]

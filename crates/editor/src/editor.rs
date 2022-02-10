@@ -883,16 +883,7 @@ impl Editor {
     }
 
     pub fn title(&self, cx: &AppContext) -> String {
-        let filename = self
-            .buffer()
-            .read(cx)
-            .file(cx)
-            .map(|file| file.file_name(cx));
-        if let Some(name) = filename {
-            name.to_string_lossy().into()
-        } else {
-            "untitled".into()
-        }
+        self.buffer().read(cx).title(cx)
     }
 
     pub fn snapshot(&mut self, cx: &mut MutableAppContext) -> EditorSnapshot {
@@ -2120,6 +2111,7 @@ impl Editor {
         };
         let action_ix = action_ix.unwrap_or(actions_menu.selected_item);
         let action = actions_menu.actions.get(action_ix)?.clone();
+        let title = action.lsp_action.title.clone();
         let buffer = actions_menu.buffer;
         let replica_id = editor.read(cx).replica_id(cx);
 
@@ -2131,7 +2123,7 @@ impl Editor {
 
             let mut ranges_to_highlight = Vec::new();
             let excerpt_buffer = cx.add_model(|cx| {
-                let mut multibuffer = MultiBuffer::new(replica_id);
+                let mut multibuffer = MultiBuffer::new(replica_id).with_title(title);
                 for (buffer, transaction) in &project_transaction.0 {
                     let snapshot = buffer.read(cx).snapshot();
                     ranges_to_highlight.extend(
@@ -2152,7 +2144,12 @@ impl Editor {
                 let editor = workspace.open_item(MultiBufferItemHandle(excerpt_buffer), cx);
                 if let Some(editor) = editor.act_as::<Self>(cx) {
                     editor.update(cx, |editor, cx| {
-                        editor.highlight_ranges::<Self>(ranges_to_highlight, Color::blue(), cx);
+                        let settings = (editor.build_settings)(cx);
+                        editor.highlight_ranges::<Self>(
+                            ranges_to_highlight,
+                            settings.style.highlighted_line_background,
+                            cx,
+                        );
                     });
                 }
             });

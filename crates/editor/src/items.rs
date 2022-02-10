@@ -218,7 +218,7 @@ impl ItemView for Editor {
     }
 
     fn can_save(&self, cx: &AppContext) -> bool {
-        self.project_path(cx).is_some()
+        !self.buffer().read(cx).is_singleton() || self.project_path(cx).is_some()
     }
 
     fn save(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
@@ -235,8 +235,8 @@ impl ItemView for Editor {
         })
     }
 
-    fn can_save_as(&self, _: &AppContext) -> bool {
-        true
+    fn can_save_as(&self, cx: &AppContext) -> bool {
+        self.buffer().read(cx).is_singleton()
     }
 
     fn save_as(
