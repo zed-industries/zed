@@ -25,6 +25,12 @@ pub struct BufferItemHandle(pub ModelHandle<Buffer>);
 #[derive(Clone)]
 struct WeakBufferItemHandle(WeakModelHandle<Buffer>);
 
+#[derive(Clone)]
+pub struct MultiBufferItemHandle(pub ModelHandle<MultiBuffer>);
+
+#[derive(Clone)]
+struct WeakMultiBufferItemHandle(WeakModelHandle<MultiBuffer>);
+
 impl PathOpener for BufferOpener {
     fn open(
         &self,
@@ -87,6 +93,48 @@ impl ItemHandle for BufferItemHandle {
     }
 }
 
+impl ItemHandle for MultiBufferItemHandle {
+    fn add_view(
+        &self,
+        window_id: usize,
+        workspace: &Workspace,
+        nav_history: Rc<RefCell<NavHistory>>,
+        cx: &mut MutableAppContext,
+    ) -> Box<dyn ItemViewHandle> {
+        let weak_buffer = self.0.downgrade();
+        Box::new(cx.add_view(window_id, |cx| {
+            let mut editor = Editor::for_buffer(
+                self.0.clone(),
+                crate::settings_builder(weak_buffer, workspace.settings()),
+                Some(workspace.project().clone()),
+                cx,
+            );
+            editor.nav_history = Some(ItemNavHistory::new(nav_history, &cx.handle()));
+            editor
+        }))
+    }
+
+    fn boxed_clone(&self) -> Box<dyn ItemHandle> {
+        Box::new(self.clone())
+    }
+
+    fn to_any(&self) -> gpui::AnyModelHandle {
+        self.0.clone().into()
+    }
+
+    fn downgrade(&self) -> Box<dyn WeakItemHandle> {
+        Box::new(WeakMultiBufferItemHandle(self.0.downgrade()))
+    }
+
+    fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
+        None
+    }
+
+    fn id(&self) -> usize {
+        self.0.id()
+    }
+}
+
 impl WeakItemHandle for WeakBufferItemHandle {
     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
         self.0
@@ -99,11 +147,25 @@ impl WeakItemHandle for WeakBufferItemHandle {
     }
 }
 
-impl ItemView for Editor {
-    type ItemHandle = BufferItemHandle;
+impl WeakItemHandle for WeakMultiBufferItemHandle {
+    fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
+        self.0
+            .upgrade(cx)
+            .map(|buffer| Box::new(MultiBufferItemHandle(buffer)) as Box<dyn ItemHandle>)
+    }
 
-    fn item_handle(&self, cx: &AppContext) -> Self::ItemHandle {
-        BufferItemHandle(self.buffer.read(cx).as_singleton().unwrap())
+    fn id(&self) -> usize {
+        self.0.id()
+    }
+}
+
+impl ItemView for Editor {
+    fn item_id(&self, cx: &AppContext) -> usize {
+        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+            buffer.id()
+        } else {
+            self.buffer.id()
+        }
     }
 
     fn navigate(&mut self, data: Box<dyn std::any::Any>, cx: &mut ViewContext<Self>) {

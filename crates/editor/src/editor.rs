@@ -27,7 +27,7 @@ use gpui::{
     text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
     MutableAppContext, RenderContext, Task, View, ViewContext, WeakModelHandle, WeakViewHandle,
 };
-use items::BufferItemHandle;
+use items::{BufferItemHandle, MultiBufferItemHandle};
 use itertools::Itertools as _;
 use language::{
     AnchorRangeExt as _, BracketPair, Buffer, CodeAction, Completion, CompletionLabel, Diagnostic,

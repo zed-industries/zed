@@ -150,11 +150,9 @@ pub trait Item: Entity + Sized {
 }
 
 pub trait ItemView: View {
-    type ItemHandle: ItemHandle;
-
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) {}
-    fn item_handle(&self, cx: &AppContext) -> Self::ItemHandle;
+    fn item_id(&self, cx: &AppContext) -> usize;
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
@@ -222,7 +220,7 @@ pub trait WeakItemHandle {
 }
 
 pub trait ItemViewHandle: 'static {
-    fn item_handle(&self, cx: &AppContext) -> Box<dyn ItemHandle>;
+    fn item_id(&self, cx: &AppContext) -> usize;
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle>;
@@ -354,8 +352,8 @@ impl dyn ItemViewHandle {
 }
 
 impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
-    fn item_handle(&self, cx: &AppContext) -> Box<dyn ItemHandle> {
-        Box::new(self.read(cx).item_handle(cx))
+    fn item_id(&self, cx: &AppContext) -> usize {
+        self.read(cx).item_id(cx)
     }
 
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox {

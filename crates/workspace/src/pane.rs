@@ -279,7 +279,7 @@ impl Pane {
         item_view.added_to_pane(cx);
         let item_idx = cmp::min(self.active_item_index + 1, self.item_views.len());
         self.item_views
-            .insert(item_idx, (item_view.item_handle(cx).id(), item_view));
+            .insert(item_idx, (item_view.item_id(cx), item_view));
         self.activate_item(item_idx, cx);
         cx.notify();
     }

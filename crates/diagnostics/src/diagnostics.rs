@@ -538,10 +538,8 @@ impl workspace::Item for ProjectDiagnostics {
 }
 
 impl workspace::ItemView for ProjectDiagnosticsEditor {
-    type ItemHandle = ModelHandle<ProjectDiagnostics>;
-
-    fn item_handle(&self, _: &AppContext) -> Self::ItemHandle {
-        self.model.clone()
+    fn item_id(&self, _: &AppContext) -> usize {
+        self.model.id()
     }
 
     fn tab_content(&self, style: &theme::Tab, _: &AppContext) -> ElementBox {
