@@ -464,7 +464,7 @@ impl FindBar {
                 self.pending_search = Some(cx.spawn(|this, mut cx| async move {
                     match ranges.await {
                         Ok(ranges) => {
-                            if let Some(editor) = cx.read(|cx| editor.upgrade(cx)) {
+                            if let Some(editor) = editor.upgrade(&cx) {
                                 this.update(&mut cx, |this, cx| {
                                     this.highlighted_editors.insert(editor.downgrade());
                                     editor.update(cx, |editor, cx| {

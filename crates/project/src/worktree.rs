@@ -291,7 +291,7 @@ impl Worktree {
                     let this = worktree_handle.downgrade();
                     cx.spawn(|mut cx| async move {
                         while let Some(_) = snapshot_rx.recv().await {
-                            if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
+                            if let Some(this) = this.upgrade(&cx) {
                                 this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
                             } else {
                                 break;
@@ -516,7 +516,7 @@ impl LocalWorktree {
 
             cx.spawn_weak(|this, mut cx| async move {
                 while let Ok(scan_state) = scan_states_rx.recv().await {
-                    if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
+                    if let Some(handle) = this.upgrade(&cx) {
                         let to_send = handle.update(&mut cx, |this, cx| {
                             last_scan_state_tx.blocking_send(scan_state).ok();
                             this.poll_snapshot(cx);

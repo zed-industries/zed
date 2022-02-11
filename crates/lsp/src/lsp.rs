@@ -664,14 +664,9 @@ mod tests {
         }));
         let lib_file_uri = Url::from_file_path(root_dir.path().join("src/lib.rs")).unwrap();
 
-        let server = cx.read(|cx| {
-            LanguageServer::new(
-                Path::new("rust-analyzer"),
-                root_dir.path(),
-                cx.background().clone(),
-            )
-            .unwrap()
-        });
+        let server =
+            LanguageServer::new(Path::new("rust-analyzer"), root_dir.path(), cx.background())
+                .unwrap();
         server.next_idle_notification().await;
 
         server

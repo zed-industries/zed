@@ -326,7 +326,7 @@ impl<T: Item> WeakItemHandle for WeakModelHandle<T> {
     }
 
     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
-        WeakModelHandle::<T>::upgrade(*self, cx).map(|i| Box::new(i) as Box<dyn ItemHandle>)
+        WeakModelHandle::<T>::upgrade(self, cx).map(|i| Box::new(i) as Box<dyn ItemHandle>)
     }
 }
 
@@ -591,7 +591,7 @@ impl Workspace {
 
             while stream.recv().await.is_some() {
                 cx.update(|cx| {
-                    if let Some(this) = this.upgrade(&cx) {
+                    if let Some(this) = this.upgrade(cx) {
                         this.update(cx, |_, cx| cx.notify());
                     }
                 })
@@ -774,7 +774,7 @@ impl Workspace {
             let item = load_task.await?;
             this.update(&mut cx, |this, cx| {
                 let pane = pane
-                    .upgrade(&cx)
+                    .upgrade(cx)
                     .ok_or_else(|| anyhow!("could not upgrade pane reference"))?;
                 Ok(this.open_item_in_pane(item, &pane, cx))
             })

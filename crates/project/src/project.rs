@@ -867,7 +867,7 @@ impl Project {
         // Process all the LSP events.
         cx.spawn_weak(|this, mut cx| async move {
             while let Ok(message) = diagnostics_rx.recv().await {
-                let this = cx.read(|cx| this.upgrade(cx))?;
+                let this = this.upgrade(&cx)?;
                 match message {
                     LspEvent::DiagnosticsStart => {
                         this.update(&mut cx, |this, cx| {

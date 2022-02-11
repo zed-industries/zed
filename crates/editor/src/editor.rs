@@ -430,6 +430,8 @@ pub struct Editor {
     context_menu: Option<ContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     next_completion_id: CompletionId,
+    available_code_actions: Option<CodeActionsMenu>,
+    code_actions_task: Option<Task<()>>,
 }
 
 pub struct EditorSnapshot {
@@ -656,6 +658,7 @@ impl CompletionsMenu {
     }
 }
 
+#[derive(Clone)]
 struct CodeActionsMenu {
     actions: Arc<[CodeAction]>,
     buffer: ModelHandle<Buffer>,
@@ -861,6 +864,8 @@ impl Editor {
             context_menu: None,
             completion_tasks: Default::default(),
             next_completion_id: 0,
+            available_code_actions: Default::default(),
+            code_actions_task: Default::default(),
         };
         this.end_selection(cx);
         this
@@ -1924,7 +1929,7 @@ impl Editor {
 
                 menu.filter(query.as_deref(), cx.background()).await;
 
-                if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
+                if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| {
                         match this.context_menu.as_ref() {
                             None => {}
@@ -2057,32 +2062,23 @@ impl Editor {
     }
 
     fn show_code_actions(&mut self, _: &ShowCodeActions, cx: &mut ViewContext<Self>) {
-        let head = self.newest_anchor_selection().head();
-        let project = if let Some(project) = self.project.clone() {
-            project
-        } else {
-            return;
-        };
+        let mut task = self.code_actions_task.take();
+        cx.spawn_weak(|this, mut cx| async move {
+            while let Some(prev_task) = task {
+                prev_task.await;
+                task = this
+                    .upgrade(&cx)
+                    .and_then(|this| this.update(&mut cx, |this, _| this.code_actions_task.take()));
+            }
 
-        let (buffer, head) = self.buffer.read(cx).text_anchor_for_position(head, cx);
-        let actions = project.update(cx, |project, cx| project.code_actions(&buffer, head, cx));
-
-        cx.spawn(|this, mut cx| async move {
-            let actions = actions.await?;
-            if !actions.is_empty() {
+            if let Some(this) = this.upgrade(&cx) {
                 this.update(&mut cx, |this, cx| {
                     if this.focused {
-                        this.show_context_menu(
-                            ContextMenu::CodeActions(CodeActionsMenu {
-                                buffer,
-                                actions: actions.into(),
-                                selected_item: 0,
-                                list: UniformListState::default(),
-                            }),
-                            cx,
-                        );
+                        if let Some(menu) = this.available_code_actions.clone() {
+                            this.show_context_menu(ContextMenu::CodeActions(menu), cx);
+                        }
                     }
-                });
+                })
             }
             Ok::<_, anyhow::Error>(())
         })
@@ -4357,15 +4353,14 @@ impl Editor {
             .selections
             .iter()
             .max_by_key(|s| s.id)
-            .map(|s| s.head());
+            .map(|s| s.head())
+            .unwrap();
 
-        if let Some(new_cursor_position) = new_cursor_position.as_ref() {
-            self.push_to_nav_history(
-                old_cursor_position,
-                Some(new_cursor_position.to_point(&buffer)),
-                cx,
-            );
-        }
+        self.push_to_nav_history(
+            old_cursor_position,
+            Some(new_cursor_position.to_point(&buffer)),
+            cx,
+        );
 
         let completion_menu = match self.context_menu.as_mut() {
             Some(ContextMenu::Completions(menu)) => Some(menu),
@@ -4375,8 +4370,8 @@ impl Editor {
             }
         };
 
-        if let Some((completion_menu, cursor_position)) = completion_menu.zip(new_cursor_position) {
-            let cursor_position = cursor_position.to_offset(&buffer);
+        if let Some(completion_menu) = completion_menu {
+            let cursor_position = new_cursor_position.to_offset(&buffer);
             let (word_range, kind) =
                 buffer.surrounding_word(completion_menu.initial_position.clone());
             if kind == Some(CharKind::Word) && word_range.to_inclusive().contains(&cursor_position)
@@ -4388,6 +4383,34 @@ impl Editor {
             } else {
                 self.hide_context_menu(cx);
             }
+        }
+
+        if let Some(project) = self.project.as_ref() {
+            let (buffer, head) = self
+                .buffer
+                .read(cx)
+                .text_anchor_for_position(new_cursor_position, cx);
+            let actions = project.update(cx, |project, cx| project.code_actions(&buffer, head, cx));
+            self.code_actions_task = Some(cx.spawn_weak(|this, mut cx| async move {
+                let actions = actions.await;
+                if let Some(this) = this.upgrade(&cx) {
+                    this.update(&mut cx, |this, cx| {
+                        this.available_code_actions = actions.log_err().and_then(|actions| {
+                            if actions.is_empty() {
+                                None
+                            } else {
+                                Some(CodeActionsMenu {
+                                    actions: actions.into(),
+                                    buffer,
+                                    selected_item: 0,
+                                    list: Default::default(),
+                                })
+                            }
+                        });
+                        cx.notify();
+                    })
+                }
+            }));
         }
 
         self.pause_cursor_blinking(cx);
@@ -4703,7 +4726,7 @@ impl Editor {
             let this = this.downgrade();
             async move {
                 Timer::after(CURSOR_BLINK_INTERVAL).await;
-                if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
+                if let Some(this) = this.upgrade(&cx) {
                     this.update(&mut cx, |this, cx| this.resume_cursor_blinking(epoch, cx))
                 }
             }
@@ -4728,7 +4751,7 @@ impl Editor {
                 let this = this.downgrade();
                 async move {
                     Timer::after(CURSOR_BLINK_INTERVAL).await;
-                    if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
+                    if let Some(this) = this.upgrade(&cx) {
                         this.update(&mut cx, |this, cx| this.blink_cursors(epoch, cx));
                     }
                 }

@@ -80,8 +80,14 @@ pub trait UpdateModel {
 }
 
 pub trait UpgradeModelHandle {
-    fn upgrade_model_handle<T: Entity>(&self, handle: WeakModelHandle<T>)
-        -> Option<ModelHandle<T>>;
+    fn upgrade_model_handle<T: Entity>(
+        &self,
+        handle: &WeakModelHandle<T>,
+    ) -> Option<ModelHandle<T>>;
+}
+
+pub trait UpgradeViewHandle {
+    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>>;
 }
 
 pub trait ReadView {
@@ -558,9 +564,15 @@ impl UpdateModel for AsyncAppContext {
 impl UpgradeModelHandle for AsyncAppContext {
     fn upgrade_model_handle<T: Entity>(
         &self,
-        handle: WeakModelHandle<T>,
+        handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>> {
         self.0.borrow_mut().upgrade_model_handle(handle)
+    }
+}
+
+impl UpgradeViewHandle for AsyncAppContext {
+    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
+        self.0.borrow_mut().upgrade_view_handle(handle)
     }
 }
 
@@ -1732,9 +1744,15 @@ impl UpdateModel for MutableAppContext {
 impl UpgradeModelHandle for MutableAppContext {
     fn upgrade_model_handle<T: Entity>(
         &self,
-        handle: WeakModelHandle<T>,
+        handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>> {
         self.cx.upgrade_model_handle(handle)
+    }
+}
+
+impl UpgradeViewHandle for MutableAppContext {
+    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
+        self.cx.upgrade_view_handle(handle)
     }
 }
 
@@ -1846,10 +1864,24 @@ impl ReadModel for AppContext {
 impl UpgradeModelHandle for AppContext {
     fn upgrade_model_handle<T: Entity>(
         &self,
-        handle: WeakModelHandle<T>,
+        handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>> {
         if self.models.contains_key(&handle.model_id) {
             Some(ModelHandle::new(handle.model_id, &self.ref_counts))
+        } else {
+            None
+        }
+    }
+}
+
+impl UpgradeViewHandle for AppContext {
+    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
+        if self.ref_counts.lock().is_entity_alive(handle.view_id) {
+            Some(ViewHandle::new(
+                handle.window_id,
+                handle.view_id,
+                &self.ref_counts,
+            ))
         } else {
             None
         }
@@ -2228,7 +2260,7 @@ impl<M> UpdateModel for ModelContext<'_, M> {
 impl<M> UpgradeModelHandle for ModelContext<'_, M> {
     fn upgrade_model_handle<T: Entity>(
         &self,
-        handle: WeakModelHandle<T>,
+        handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>> {
         self.cx.upgrade_model_handle(handle)
     }
@@ -2558,9 +2590,15 @@ impl<V> ReadModel for ViewContext<'_, V> {
 impl<V> UpgradeModelHandle for ViewContext<'_, V> {
     fn upgrade_model_handle<T: Entity>(
         &self,
-        handle: WeakModelHandle<T>,
+        handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>> {
         self.cx.upgrade_model_handle(handle)
+    }
+}
+
+impl<V> UpgradeViewHandle for ViewContext<'_, V> {
+    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
+        self.cx.upgrade_view_handle(handle)
     }
 }
 
@@ -2861,7 +2899,7 @@ impl<T: Entity> WeakModelHandle<T> {
         self.model_id
     }
 
-    pub fn upgrade(self, cx: &impl UpgradeModelHandle) -> Option<ModelHandle<T>> {
+    pub fn upgrade(&self, cx: &impl UpgradeModelHandle) -> Option<ModelHandle<T>> {
         cx.upgrade_model_handle(self)
     }
 }
@@ -3277,16 +3315,8 @@ impl<T: View> WeakViewHandle<T> {
         self.view_id
     }
 
-    pub fn upgrade(&self, cx: &AppContext) -> Option<ViewHandle<T>> {
-        if cx.ref_counts.lock().is_entity_alive(self.view_id) {
-            Some(ViewHandle::new(
-                self.window_id,
-                self.view_id,
-                &cx.ref_counts,
-            ))
-        } else {
-            None
-        }
+    pub fn upgrade(&self, cx: &impl UpgradeViewHandle) -> Option<ViewHandle<T>> {
+        cx.upgrade_view_handle(self)
     }
 }
 

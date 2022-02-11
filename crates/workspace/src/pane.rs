@@ -221,7 +221,7 @@ impl Pane {
             let task = workspace.load_path(project_path, cx);
             cx.spawn(|workspace, mut cx| async move {
                 let item = task.await;
-                if let Some(pane) = cx.read(|cx| pane.upgrade(cx)) {
+                if let Some(pane) = pane.upgrade(&cx) {
                     if let Some(item) = item.log_err() {
                         workspace.update(&mut cx, |workspace, cx| {
                             pane.update(cx, |p, _| p.nav_history.borrow_mut().set_mode(mode));
