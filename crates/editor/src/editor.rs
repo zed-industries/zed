@@ -1453,18 +1453,13 @@ impl Editor {
 
         if self.active_diagnostics.is_some() {
             self.dismiss_diagnostics(cx);
-        } else if let Some(PendingSelection { selection, .. }) = self.pending_selection.take() {
-            let buffer = self.buffer.read(cx).snapshot(cx);
-            let selection = Selection {
-                id: selection.id,
-                start: selection.start.to_point(&buffer),
-                end: selection.end.to_point(&buffer),
-                reversed: selection.reversed,
-                goal: selection.goal,
-            };
-            if self.local_selections::<Point>(cx).is_empty() {
-                self.update_selections(vec![selection], Some(Autoscroll::Fit), cx);
+        } else if let Some(pending) = self.pending_selection.clone() {
+            let mut selections = self.selections.clone();
+            if selections.is_empty() {
+                selections = Arc::from([pending.selection]);
             }
+            self.set_selections(selections, None, cx);
+            self.request_autoscroll(Autoscroll::Fit, cx);
         } else {
             let buffer = self.buffer.read(cx).snapshot(cx);
             let mut oldest_selection = self.oldest_selection::<usize>(&buffer);
