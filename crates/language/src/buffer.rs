@@ -234,6 +234,15 @@ pub struct FakeFile {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+impl FakeFile {
+    pub fn new(path: impl AsRef<Path>) -> Self {
+        Self {
+            path: path.as_ref().into(),
+        }
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
 impl File for FakeFile {
     fn as_local(&self) -> Option<&dyn LocalFile> {
         Some(self)
@@ -349,7 +358,7 @@ pub struct Chunk<'a> {
     pub diagnostic: Option<DiagnosticSeverity>,
 }
 
-pub struct Diff {
+pub(crate) struct Diff {
     base_version: clock::Global,
     new_text: Arc<str>,
     changes: Vec<(ChangeTag, usize)>,
@@ -1236,7 +1245,7 @@ impl Buffer {
         })
     }
 
-    pub fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> bool {
+    pub(crate) fn apply_diff(&mut self, diff: Diff, cx: &mut ModelContext<Self>) -> bool {
         if self.version == diff.base_version {
             self.start_transaction();
             let mut offset = diff.start_offset;
@@ -1496,71 +1505,112 @@ impl Buffer {
         Some(edit_id)
     }
 
-    pub fn diff_for_lsp_edits(
+    pub fn edits_from_lsp(
         &mut self,
         lsp_edits: impl 'static + Send + IntoIterator<Item = lsp::TextEdit>,
         version: Option<i32>,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Diff>> {
-        let snapshot = TextBuffer::deref(self).clone();
-        let lsp_snapshot =
-            if let Some((version, language_server)) = version.zip(self.language_server.as_mut()) {
-                language_server
-                    .snapshot_for_version(version as usize)
-                    .map(|s| s.clone())
-            } else {
-                Ok(snapshot.clone())
-            };
+    ) -> Task<Result<Vec<(Range<Anchor>, String)>>> {
+        let snapshot = if let Some((version, state)) = version.zip(self.language_server.as_mut()) {
+            state
+                .snapshot_for_version(version as usize)
+                .map(Clone::clone)
+        } else {
+            Ok(TextBuffer::deref(self).clone())
+        };
 
         cx.background().spawn(async move {
-            let lsp_snapshot = lsp_snapshot?;
+            let snapshot = snapshot?;
+            let mut lsp_edits = lsp_edits
+                .into_iter()
+                .map(|edit| (range_from_lsp(edit.range), edit.new_text))
+                .peekable();
 
-            // Convert LSP ranges into offsets in the current snapshot.
             let mut edits = Vec::new();
-            for edit in lsp_edits.into_iter() {
-                let range = range_from_lsp(edit.range);
-                if lsp_snapshot.clip_point_utf16(range.start, Bias::Left) != range.start
-                    || lsp_snapshot.clip_point_utf16(range.end, Bias::Left) != range.end
+            while let Some((mut range, mut new_text)) = lsp_edits.next() {
+                // Combine any LSP edits that are adjacent.
+                //
+                // Also, combine LSP edits that are separated from each other by only
+                // a newline. This is important because for some code actions,
+                // Rust-analyzer rewrites the entire buffer via a series of edits that
+                // are separated by unchanged newline characters.
+                //
+                // In order for the diffing logic below to work properly, any edits that
+                // cancel each other out must be combined into one.
+                while let Some((next_range, next_text)) = lsp_edits.peek() {
+                    if next_range.start > range.end {
+                        if next_range.start.row > range.end.row + 1
+                            || next_range.start.column > 0
+                            || snapshot.clip_point_utf16(
+                                PointUtf16::new(range.end.row, u32::MAX),
+                                Bias::Left,
+                            ) > range.end
+                        {
+                            break;
+                        }
+                        new_text.push('\n');
+                    }
+                    range.end = next_range.end;
+                    new_text.push_str(&next_text);
+                    lsp_edits.next();
+                }
+
+                if snapshot.clip_point_utf16(range.start, Bias::Left) != range.start
+                    || snapshot.clip_point_utf16(range.end, Bias::Left) != range.end
                 {
                     return Err(anyhow!("invalid edits received from language server"));
                 }
-                let edit_start = lsp_snapshot.anchor_before(range.start).to_offset(&snapshot);
-                let edit_end = lsp_snapshot.anchor_before(range.end).to_offset(&snapshot);
-                edits.push((edit_start..edit_end, edit.new_text));
+
+                // For multiline edits, perform a diff of the old and new text so that
+                // we can identify the changes more precisely, preserving the locations
+                // of any anchors positioned in the unchanged regions.
+                if range.end.row > range.start.row {
+                    let mut offset = range.start.to_offset(&snapshot);
+                    let old_text = snapshot.text_for_range(range).collect::<String>();
+
+                    let diff = TextDiff::from_lines(old_text.as_str(), &new_text);
+                    let mut moved_since_edit = true;
+                    for change in diff.iter_all_changes() {
+                        let tag = change.tag();
+                        let value = change.value();
+                        match tag {
+                            ChangeTag::Equal => {
+                                offset += value.len();
+                                moved_since_edit = true;
+                            }
+                            ChangeTag::Delete => {
+                                let start = snapshot.anchor_after(offset);
+                                let end = snapshot.anchor_before(offset + value.len());
+                                if moved_since_edit {
+                                    edits.push((start..end, String::new()));
+                                } else {
+                                    edits.last_mut().unwrap().0.end = end;
+                                }
+                                offset += value.len();
+                                moved_since_edit = false;
+                            }
+                            ChangeTag::Insert => {
+                                if moved_since_edit {
+                                    let anchor = snapshot.anchor_after(offset);
+                                    edits.push((anchor.clone()..anchor, value.to_string()));
+                                } else {
+                                    edits.last_mut().unwrap().1.push_str(value);
+                                }
+                                moved_since_edit = false;
+                            }
+                        }
+                    }
+                } else if range.end == range.start {
+                    let anchor = snapshot.anchor_after(range.start);
+                    edits.push((anchor.clone()..anchor, new_text));
+                } else {
+                    let edit_start = snapshot.anchor_after(range.start);
+                    let edit_end = snapshot.anchor_before(range.end);
+                    edits.push((edit_start..edit_end, new_text));
+                }
             }
 
-            if edits.is_empty() {
-                return Ok(Diff {
-                    base_version: snapshot.version().clone(),
-                    new_text: "".into(),
-                    changes: Default::default(),
-                    start_offset: Default::default(),
-                });
-            }
-
-            let slice_start = edits.first().unwrap().0.start;
-            let slice_end = edits.last().unwrap().0.end;
-            let mut cursor = snapshot.as_rope().cursor(slice_start);
-            let mut slice = cursor.slice(slice_end);
-            let old_text = slice.to_string();
-            for (range, new_text) in edits.into_iter().rev() {
-                slice.replace(
-                    range.start - slice_start..range.end - slice_start,
-                    &new_text,
-                );
-            }
-
-            let new_text = Arc::from(slice.to_string());
-            let changes = TextDiff::from_words(old_text.as_str(), &new_text)
-                .iter_all_changes()
-                .map(|c| (c.tag(), c.value().len()))
-                .collect::<Vec<_>>();
-            Ok(Diff {
-                base_version: snapshot.version().clone(),
-                new_text,
-                changes,
-                start_offset: slice_start,
-            })
+            Ok(edits)
         })
     }
 

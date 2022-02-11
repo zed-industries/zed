@@ -571,11 +571,8 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
     "
     .unindent();
 
-    let file = Box::new(FakeFile {
-        path: Path::new("/some/path").into(),
-    }) as Box<dyn File>;
     let buffer = cx.add_model(|cx| {
-        Buffer::from_file(0, text, file, cx)
+        Buffer::from_file(0, text, Box::new(FakeFile::new("/some/path")), cx)
             .with_language(Arc::new(rust_lang), cx)
             .with_language_server(language_server, cx)
     });
@@ -837,6 +834,223 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                     },
                 }
             ]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_edits_from_lsp_with_past_version(mut cx: gpui::TestAppContext) {
+    let (language_server, mut fake) = lsp::LanguageServer::fake(&cx).await;
+
+    let text = "
+        fn a() {
+            f1();
+        }
+        fn b() {
+            f2();
+        }
+        fn c() {
+            f3();
+        }
+    "
+    .unindent();
+
+    let buffer = cx.add_model(|cx| {
+        Buffer::from_file(0, text, Box::new(FakeFile::new("/some/path")), cx)
+            .with_language(Arc::new(rust_lang()), cx)
+            .with_language_server(language_server, cx)
+    });
+
+    let lsp_document_version = fake
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await
+        .text_document
+        .version;
+
+    // Simulate editing the buffer after the language server computes some edits.
+    buffer.update(&mut cx, |buffer, cx| {
+        buffer.edit(
+            [Point::new(0, 0)..Point::new(0, 0)],
+            "// above first function\n",
+            cx,
+        );
+        buffer.edit(
+            [Point::new(2, 0)..Point::new(2, 0)],
+            "    // inside first function\n",
+            cx,
+        );
+        buffer.edit(
+            [Point::new(6, 4)..Point::new(6, 4)],
+            "// inside second function ",
+            cx,
+        );
+
+        assert_eq!(
+            buffer.text(),
+            "
+                // above first function
+                fn a() {
+                    // inside first function
+                    f1();
+                }
+                fn b() {
+                    // inside second function f2();
+                }
+                fn c() {
+                    f3();
+                }
+            "
+            .unindent()
+        );
+    });
+
+    let edits = buffer
+        .update(&mut cx, |buffer, cx| {
+            buffer.edits_from_lsp(
+                vec![
+                    // replace body of first function
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(3, 0)),
+                        new_text: "
+                            fn a() {
+                                f10();
+                            }
+                        "
+                        .unindent(),
+                    },
+                    // edit inside second function
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(4, 6), lsp::Position::new(4, 6)),
+                        new_text: "00".into(),
+                    },
+                    // edit inside third function via two distinct edits
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(7, 5), lsp::Position::new(7, 5)),
+                        new_text: "4000".into(),
+                    },
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(7, 5), lsp::Position::new(7, 6)),
+                        new_text: "".into(),
+                    },
+                ],
+                Some(lsp_document_version),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    buffer.update(&mut cx, |buffer, cx| {
+        for (range, new_text) in edits {
+            buffer.edit([range], new_text, cx);
+        }
+        assert_eq!(
+            buffer.text(),
+            "
+                // above first function
+                fn a() {
+                    // inside first function
+                    f10();
+                }
+                fn b() {
+                    // inside second function f200();
+                }
+                fn c() {
+                    f4000();
+                }
+            "
+            .unindent()
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_edits_from_lsp_with_edits_on_adjacent_lines(mut cx: gpui::TestAppContext) {
+    let text = "
+        use a::b;
+        use a::c;
+
+        fn f() {
+            b();
+            c();
+        }
+    "
+    .unindent();
+
+    let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+
+    // Simulate the language server sending us a small edit in the form of a very large diff.
+    // Rust-analyzer does this when performing a merge-imports code action.
+    let edits = buffer
+        .update(&mut cx, |buffer, cx| {
+            buffer.edits_from_lsp(
+                [
+                    // Replace the first use statement without editing the semicolon.
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 8)),
+                        new_text: "a::{b, c}".into(),
+                    },
+                    // Reinsert the remainder of the file between the semicolon and the final
+                    // newline of the file.
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 9)),
+                        new_text: "\n\n".into(),
+                    },
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 9)),
+                        new_text: "
+                            fn f() {
+                                b();
+                                c();
+                            }"
+                        .unindent(),
+                    },
+                    // Delete everything after the first newline of the file.
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(7, 0)),
+                        new_text: "".into(),
+                    },
+                ],
+                None,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    buffer.update(&mut cx, |buffer, cx| {
+        let edits = edits
+            .into_iter()
+            .map(|(range, text)| {
+                (
+                    range.start.to_point(&buffer)..range.end.to_point(&buffer),
+                    text,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            edits,
+            [
+                (Point::new(0, 4)..Point::new(0, 8), "a::{b, c}".into()),
+                (Point::new(1, 0)..Point::new(2, 0), "".into())
+            ]
+        );
+
+        for (range, new_text) in edits {
+            buffer.edit([range], new_text, cx);
+        }
+        assert_eq!(
+            dbg!(buffer.text()),
+            "
+                use a::{b, c};
+        
+                fn f() {
+                    b();
+                    c();
+                }
+            "
+            .unindent()
         );
     });
 }

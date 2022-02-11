@@ -1586,21 +1586,21 @@ impl Project {
                                 })
                                 .await?;
 
-                            let diff = buffer_to_edit
+                            let edits = buffer_to_edit
                                 .update(&mut cx, |buffer, cx| {
                                     let edits = op.edits.into_iter().map(|edit| match edit {
                                         lsp::OneOf::Left(edit) => edit,
                                         lsp::OneOf::Right(edit) => edit.text_edit,
                                     });
-                                    buffer.diff_for_lsp_edits(edits, op.text_document.version, cx)
+                                    buffer.edits_from_lsp(edits, op.text_document.version, cx)
                                 })
                                 .await?;
 
                             let transaction = buffer_to_edit.update(&mut cx, |buffer, cx| {
                                 buffer.finalize_last_transaction();
                                 buffer.start_transaction();
-                                if !buffer.apply_diff(diff, cx) {
-                                    log::info!("buffer has changed since computing code action");
+                                for (range, text) in edits {
+                                    buffer.edit([range], text, cx);
                                 }
                                 let transaction = if buffer.end_transaction(cx).is_some() {
                                     let transaction =
