@@ -253,6 +253,7 @@ line_number_active = "$text.0.color"
 selection = "$selection.host"
 guest_selections = "$selection.guests"
 error_color = "$status.bad"
+code_actions_indicator = "$text.3.color"
 
 [editor.diagnostic_path_header]
 background = "$state.active_line"

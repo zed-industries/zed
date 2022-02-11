@@ -2177,7 +2177,21 @@ impl Editor {
         }))
     }
 
-    pub fn showing_context_menu(&self) -> bool {
+    pub fn render_code_actions_indicator(&self, cx: &AppContext) -> Option<ElementBox> {
+        if self.available_code_actions.is_some() {
+            let style = (self.build_settings)(cx).style;
+            Some(
+                Svg::new("icons/zap.svg")
+                    .with_color(style.code_actions_indicator)
+                    .aligned()
+                    .boxed(),
+            )
+        } else {
+            None
+        }
+    }
+
+    pub fn context_menu_visible(&self) -> bool {
         self.context_menu
             .as_ref()
             .map_or(false, |menu| menu.visible())
@@ -4341,7 +4355,10 @@ impl Editor {
             });
         }
 
-        let buffer = self.buffer.read(cx).snapshot(cx);
+        let display_map = self
+            .display_map
+            .update(cx, |display_map, cx| display_map.snapshot(cx));
+        let buffer = &display_map.buffer_snapshot;
         self.pending_selection = None;
         self.add_selections_state = None;
         self.select_next_state = None;
@@ -4357,7 +4374,7 @@ impl Editor {
             .unwrap();
 
         self.push_to_nav_history(
-            old_cursor_position,
+            old_cursor_position.clone(),
             Some(new_cursor_position.to_point(&buffer)),
             cx,
         );
@@ -4386,6 +4403,12 @@ impl Editor {
         }
 
         if let Some(project) = self.project.as_ref() {
+            if old_cursor_position.to_display_point(&display_map).row()
+                != new_cursor_position.to_display_point(&display_map).row()
+            {
+                self.available_code_actions.take();
+            }
+
             let (buffer, head) = self
                 .buffer
                 .read(cx)
@@ -4894,6 +4917,7 @@ impl EditorSettings {
                     hint_diagnostic: default_diagnostic_style.clone(),
                     invalid_hint_diagnostic: default_diagnostic_style.clone(),
                     autocomplete: Default::default(),
+                    code_actions_indicator: Default::default(),
                 }
             },
         }
