@@ -1242,7 +1242,6 @@ impl Editor {
             goal: SelectionGoal::None,
         };
 
-        self.pending_selection = Some(PendingSelection { selection, mode });
         if !add {
             self.update_selections::<usize>(Vec::new(), None, cx);
         } else if click_count > 1 {
@@ -1251,6 +1250,8 @@ impl Editor {
             selections.retain(|selection| selection.id != newest_selection.id);
             self.update_selections::<usize>(selections, None, cx)
         }
+
+        self.pending_selection = Some(PendingSelection { selection, mode });
 
         cx.notify();
     }
@@ -4436,16 +4437,19 @@ impl Editor {
             .display_map
             .update(cx, |display_map, cx| display_map.snapshot(cx));
         let buffer = &display_map.buffer_snapshot;
-        if !self.selections.is_empty() {
-            self.pending_selection = None;
-        }
+        self.pending_selection = None;
         self.add_selections_state = None;
         self.select_next_state = None;
         self.select_larger_syntax_node_stack.clear();
         self.autoclose_stack.invalidate(&self.selections, &buffer);
         self.snippet_stack.invalidate(&self.selections, &buffer);
 
-        let new_cursor_position = self.newest_anchor_selection().head();
+        let new_cursor_position = self
+            .selections
+            .iter()
+            .max_by_key(|s| s.id)
+            .map(|s| s.head())
+            .unwrap();
 
         self.push_to_nav_history(
             old_cursor_position.clone(),
