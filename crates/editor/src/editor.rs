@@ -5442,6 +5442,7 @@ mod tests {
     use super::*;
     use language::LanguageConfig;
     use lsp::FakeLanguageServer;
+    use postage::prelude::Stream;
     use project::{FakeFs, ProjectPath};
     use std::{cell::RefCell, rc::Rc, time::Instant};
     use text::Point;
@@ -7780,7 +7781,7 @@ mod tests {
             &mut fake,
             "/file",
             Point::new(0, 4),
-            &[
+            vec![
                 (Point::new(0, 4)..Point::new(0, 4), "first_completion"),
                 (Point::new(0, 4)..Point::new(0, 4), "second_completion"),
             ],
@@ -7842,7 +7843,7 @@ mod tests {
             &mut fake,
             "/file",
             Point::new(2, 7),
-            &[
+            vec![
                 (Point::new(2, 6)..Point::new(2, 7), "fourth_completion"),
                 (Point::new(2, 6)..Point::new(2, 7), "fifth_completion"),
                 (Point::new(2, 6)..Point::new(2, 7), "sixth_completion"),
@@ -7861,7 +7862,7 @@ mod tests {
             &mut fake,
             "/file",
             Point::new(2, 8),
-            &[
+            vec![
                 (Point::new(2, 6)..Point::new(2, 8), "fourth_completion"),
                 (Point::new(2, 6)..Point::new(2, 8), "fifth_completion"),
                 (Point::new(2, 6)..Point::new(2, 8), "sixth_completion"),
@@ -7891,47 +7892,45 @@ mod tests {
 
         async fn handle_completion_request(
             fake: &mut FakeLanguageServer,
-            path: &str,
+            path: &'static str,
             position: Point,
-            completions: &[(Range<Point>, &str)],
+            completions: Vec<(Range<Point>, &'static str)>,
         ) {
-            let (id, params) = fake.receive_request::<lsp::request::Completion>().await;
-            assert_eq!(
-                params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path(path).unwrap()
-            );
-            assert_eq!(
-                params.text_document_position.position,
-                lsp::Position::new(position.row, position.column)
-            );
-
-            let completions = completions
-                .iter()
-                .map(|(range, new_text)| lsp::CompletionItem {
-                    label: new_text.to_string(),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        range: lsp::Range::new(
-                            lsp::Position::new(range.start.row, range.start.column),
-                            lsp::Position::new(range.start.row, range.start.column),
-                        ),
-                        new_text: new_text.to_string(),
-                    })),
-                    ..Default::default()
-                })
-                .collect();
-            fake.respond(id, Some(lsp::CompletionResponse::Array(completions)))
-                .await;
+            fake.handle_request::<lsp::request::Completion, _>(move |params| {
+                assert_eq!(
+                    params.text_document_position.text_document.uri,
+                    lsp::Url::from_file_path(path).unwrap()
+                );
+                assert_eq!(
+                    params.text_document_position.position,
+                    lsp::Position::new(position.row, position.column)
+                );
+                Some(lsp::CompletionResponse::Array(
+                    completions
+                        .into_iter()
+                        .map(|(range, new_text)| lsp::CompletionItem {
+                            label: new_text.to_string(),
+                            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                                range: lsp::Range::new(
+                                    lsp::Position::new(range.start.row, range.start.column),
+                                    lsp::Position::new(range.start.row, range.start.column),
+                                ),
+                                new_text: new_text.to_string(),
+                            })),
+                            ..Default::default()
+                        })
+                        .collect(),
+                ))
+            })
+            .recv()
+            .await;
         }
 
         async fn handle_resolve_completion_request(
             fake: &mut FakeLanguageServer,
-            edit: Option<(Range<Point>, &str)>,
+            edit: Option<(Range<Point>, &'static str)>,
         ) {
-            let (id, _) = fake
-                .receive_request::<lsp::request::ResolveCompletionItem>()
-                .await;
-            fake.respond(
-                id,
+            fake.handle_request::<lsp::request::ResolveCompletionItem, _>(move |_| {
                 lsp::CompletionItem {
                     additional_text_edits: edit.map(|(range, new_text)| {
                         vec![lsp::TextEdit::new(
@@ -7943,8 +7942,9 @@ mod tests {
                         )]
                     }),
                     ..Default::default()
-                },
-            )
+                }
+            })
+            .recv()
             .await;
         }
     }

@@ -2368,6 +2368,7 @@ impl Project {
                 .ok_or_else(|| anyhow!("invalid completion"))?,
             language,
         )?;
+        dbg!(&completion);
         cx.spawn(|this, mut cx| async move {
             match this
                 .update(&mut cx, |this, cx| {
@@ -2414,14 +2415,15 @@ impl Project {
             .and_then(language::proto::deserialize_anchor)
             .ok_or_else(|| anyhow!("invalid position"))?;
         cx.spawn(|this, mut cx| async move {
+            eprintln!("getting code actions");
             match this
                 .update(&mut cx, |this, cx| this.code_actions(&buffer, position, cx))
                 .await
             {
-                Ok(completions) => rpc.respond(
+                Ok(actions) => rpc.respond(
                     receipt,
                     proto::GetCodeActionsResponse {
-                        actions: completions
+                        actions: dbg!(actions)
                             .iter()
                             .map(language::proto::serialize_code_action)
                             .collect(),
@@ -2430,7 +2432,7 @@ impl Project {
                 Err(error) => rpc.respond_with_error(
                     receipt,
                     proto::Error {
-                        message: error.to_string(),
+                        message: dbg!(error.to_string()),
                     },
                 ),
             }
@@ -3205,6 +3207,7 @@ mod tests {
             "a.rs": "const fn a() { A }",
             "b.rs": "const y: i32 = crate::a()",
         }));
+        let dir_path = dir.path().to_path_buf();
 
         let http_client = FakeHttpClient::with_404_response();
         let client = Client::new(http_client.clone());
@@ -3229,7 +3232,6 @@ mod tests {
         cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
             .await;
 
-        // Cause worktree to start the fake language server
         let buffer = project
             .update(&mut cx, |project, cx| {
                 project.open_buffer(
@@ -3242,28 +3244,26 @@ mod tests {
             })
             .await
             .unwrap();
-        let definitions =
-            project.update(&mut cx, |project, cx| project.definition(&buffer, 22, cx));
-        let (request_id, request) = fake_server
-            .receive_request::<lsp::request::GotoDefinition>()
-            .await;
-        let request_params = request.text_document_position_params;
-        assert_eq!(
-            request_params.text_document.uri.to_file_path().unwrap(),
-            dir.path().join("b.rs")
-        );
-        assert_eq!(request_params.position, lsp::Position::new(0, 22));
 
-        fake_server
-            .respond(
-                request_id,
-                Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
-                    lsp::Url::from_file_path(dir.path().join("a.rs")).unwrap(),
-                    lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
-                ))),
-            )
-            .await;
-        let mut definitions = definitions.await.unwrap();
+        fake_server.handle_request::<lsp::request::GotoDefinition, _>(move |params| {
+            let params = params.text_document_position_params;
+            assert_eq!(
+                params.text_document.uri.to_file_path().unwrap(),
+                dir_path.join("b.rs")
+            );
+            assert_eq!(params.position, lsp::Position::new(0, 22));
+
+            Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
+                lsp::Url::from_file_path(dir_path.join("a.rs")).unwrap(),
+                lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
+            )))
+        });
+
+        let mut definitions = project
+            .update(&mut cx, |project, cx| project.definition(&buffer, 22, cx))
+            .await
+            .unwrap();
+
         assert_eq!(definitions.len(), 1);
         let definition = definitions.pop().unwrap();
         cx.update(|cx| {

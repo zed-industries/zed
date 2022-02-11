@@ -2414,52 +2414,46 @@ mod tests {
         });
 
         // Receive a completion request as the host's language server.
-        let (request_id, params) = fake_language_server
-            .receive_request::<lsp::request::Completion>()
-            .await;
-        assert_eq!(
-            params.text_document_position.text_document.uri,
-            lsp::Url::from_file_path("/a/main.rs").unwrap(),
-        );
-        assert_eq!(
-            params.text_document_position.position,
-            lsp::Position::new(0, 14),
-        );
-
         // Return some completions from the host's language server.
-        fake_language_server
-            .respond(
-                request_id,
-                Some(lsp::CompletionResponse::Array(vec![
-                    lsp::CompletionItem {
-                        label: "first_method(…)".into(),
-                        detail: Some("fn(&mut self, B) -> C".into()),
-                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                            new_text: "first_method($1)".to_string(),
-                            range: lsp::Range::new(
-                                lsp::Position::new(0, 14),
-                                lsp::Position::new(0, 14),
-                            ),
-                        })),
-                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                    lsp::CompletionItem {
-                        label: "second_method(…)".into(),
-                        detail: Some("fn(&mut self, C) -> D<E>".into()),
-                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                            new_text: "second_method()".to_string(),
-                            range: lsp::Range::new(
-                                lsp::Position::new(0, 14),
-                                lsp::Position::new(0, 14),
-                            ),
-                        })),
-                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                ])),
-            )
-            .await;
+        fake_language_server.handle_request::<lsp::request::Completion, _>(|params| {
+            assert_eq!(
+                params.text_document_position.text_document.uri,
+                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+            );
+            assert_eq!(
+                params.text_document_position.position,
+                lsp::Position::new(0, 14),
+            );
+
+            Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "first_method(…)".into(),
+                    detail: Some("fn(&mut self, B) -> C".into()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        new_text: "first_method($1)".to_string(),
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 14),
+                            lsp::Position::new(0, 14),
+                        ),
+                    })),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "second_method(…)".into(),
+                    detail: Some("fn(&mut self, C) -> D<E>".into()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        new_text: "second_method()".to_string(),
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 14),
+                            lsp::Position::new(0, 14),
+                        ),
+                    })),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    ..Default::default()
+                },
+            ]))
+        });
 
         // Open the buffer on the host.
         let buffer_a = project_a
@@ -2480,41 +2474,30 @@ mod tests {
             assert_eq!(editor.text(cx), "fn main() { a.first_method() }");
         });
 
+        // Return a resolved completion from the host's language server.
+        // The resolved completion has an additional text edit.
+        fake_language_server.handle_request::<lsp::request::ResolveCompletionItem, _>(|params| {
+            assert_eq!(params.label, "first_method(…)");
+            lsp::CompletionItem {
+                label: "first_method(…)".into(),
+                detail: Some("fn(&mut self, B) -> C".into()),
+                text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                    new_text: "first_method($1)".to_string(),
+                    range: lsp::Range::new(lsp::Position::new(0, 14), lsp::Position::new(0, 14)),
+                })),
+                additional_text_edits: Some(vec![lsp::TextEdit {
+                    new_text: "use d::SomeTrait;\n".to_string(),
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                }]),
+                insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                ..Default::default()
+            }
+        });
+
         buffer_a
             .condition(&cx_a, |buffer, _| {
                 buffer.text() == "fn main() { a.first_method() }"
             })
-            .await;
-
-        // Receive a request resolve the selected completion on the host's language server.
-        let (request_id, params) = fake_language_server
-            .receive_request::<lsp::request::ResolveCompletionItem>()
-            .await;
-        assert_eq!(params.label, "first_method(…)");
-
-        // Return a resolved completion from the host's language server.
-        // The resolved completion has an additional text edit.
-        fake_language_server
-            .respond(
-                request_id,
-                lsp::CompletionItem {
-                    label: "first_method(…)".into(),
-                    detail: Some("fn(&mut self, B) -> C".into()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        new_text: "first_method($1)".to_string(),
-                        range: lsp::Range::new(
-                            lsp::Position::new(0, 14),
-                            lsp::Position::new(0, 14),
-                        ),
-                    })),
-                    additional_text_edits: Some(vec![lsp::TextEdit {
-                        new_text: "use d::SomeTrait;\n".to_string(),
-                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
-                    }]),
-                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                    ..Default::default()
-                },
-            )
             .await;
 
         // The additional edit is applied.
@@ -2610,24 +2593,20 @@ mod tests {
         let format = project_b.update(&mut cx_b, |project, cx| {
             project.format(HashSet::from_iter([buffer_b.clone()]), true, cx)
         });
-        let (request_id, _) = fake_language_server
-            .receive_request::<lsp::request::Formatting>()
-            .await;
-        fake_language_server
-            .respond(
-                request_id,
-                Some(vec![
-                    lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 4)),
-                        new_text: "h".to_string(),
-                    },
-                    lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(0, 7), lsp::Position::new(0, 7)),
-                        new_text: "y".to_string(),
-                    },
-                ]),
-            )
-            .await;
+
+        fake_language_server.handle_request::<lsp::request::Formatting, _>(|_| {
+            Some(vec![
+                lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 4)),
+                    new_text: "h".to_string(),
+                },
+                lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 7), lsp::Position::new(0, 7)),
+                    new_text: "y".to_string(),
+                },
+            ])
+        });
+
         format.await.unwrap();
         assert_eq!(
             buffer_b.read_with(&cx_b, |buffer, _| buffer.text()),
@@ -2714,26 +2693,22 @@ mod tests {
         .await
         .unwrap();
 
-        // Open the file to be formatted on client B.
+        // Open the file on client B.
         let buffer_b = cx_b
             .background()
             .spawn(project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
             .await
             .unwrap();
 
+        // Request the definition of a symbol as the guest.
         let definitions_1 = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b, 23, cx));
-        let (request_id, _) = fake_language_server
-            .receive_request::<lsp::request::GotoDefinition>()
-            .await;
-        fake_language_server
-            .respond(
-                request_id,
-                Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
-                    lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
-                    lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
-                ))),
-            )
-            .await;
+        fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_| {
+            Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
+                lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
+                lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+            )))
+        });
+
         let definitions_1 = definitions_1.await.unwrap();
         cx_b.read(|cx| {
             assert_eq!(definitions_1.len(), 1);
@@ -2752,18 +2727,13 @@ mod tests {
         // Try getting more definitions for the same buffer, ensuring the buffer gets reused from
         // the previous call to `definition`.
         let definitions_2 = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b, 33, cx));
-        let (request_id, _) = fake_language_server
-            .receive_request::<lsp::request::GotoDefinition>()
-            .await;
-        fake_language_server
-            .respond(
-                request_id,
-                Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
-                    lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
-                    lsp::Range::new(lsp::Position::new(1, 6), lsp::Position::new(1, 11)),
-                ))),
-            )
-            .await;
+        fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_| {
+            Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
+                lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
+                lsp::Range::new(lsp::Position::new(1, 6), lsp::Position::new(1, 11)),
+            )))
+        });
+
         let definitions_2 = definitions_2.await.unwrap();
         cx_b.read(|cx| {
             assert_eq!(definitions_2.len(), 1);
@@ -2887,18 +2857,12 @@ mod tests {
             definitions = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
         }
 
-        let (request_id, _) = fake_language_server
-            .receive_request::<lsp::request::GotoDefinition>()
-            .await;
-        fake_language_server
-            .respond(
-                request_id,
-                Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
-                    lsp::Url::from_file_path("/root/b.rs").unwrap(),
-                    lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
-                ))),
-            )
-            .await;
+        fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_| {
+            Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
+                lsp::Url::from_file_path("/root/b.rs").unwrap(),
+                lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+            )))
+        });
 
         let buffer_b2 = buffer_b2.await.unwrap();
         let definitions = definitions.await.unwrap();
