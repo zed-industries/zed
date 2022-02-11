@@ -1911,10 +1911,15 @@ impl Editor {
         };
 
         let position = self.newest_anchor_selection().head();
-        let (buffer, buffer_position) = self
+        let (buffer, buffer_position) = if let Some(output) = self
             .buffer
             .read(cx)
-            .text_anchor_for_position(position.clone(), cx);
+            .text_anchor_for_position(position.clone(), cx)
+        {
+            output
+        } else {
+            return;
+        };
 
         let query = Self::completion_query(&self.buffer.read(cx).read(cx), position.clone());
         let completions = project.update(cx, |project, cx| {
@@ -2012,7 +2017,7 @@ impl Editor {
 
         let selections = self.local_selections::<usize>(cx);
         let newest_selection = self.newest_anchor_selection();
-        if newest_selection.start.buffer_id != buffer_handle.id() {
+        if newest_selection.start.buffer_id != Some(buffer_handle.id()) {
             return None;
         }
 
@@ -2221,30 +2226,30 @@ impl Editor {
         }))
     }
 
-    fn refresh_code_actions(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(project) = self.project.as_ref() {
-            let new_cursor_position = self.newest_anchor_selection().head();
-            let (buffer, head) = self
-                .buffer
-                .read(cx)
-                .text_anchor_for_position(new_cursor_position, cx);
-            let actions = project.update(cx, |project, cx| project.code_actions(&buffer, head, cx));
-            self.code_actions_task = Some(cx.spawn_weak(|this, mut cx| async move {
-                let actions = actions.await;
-                if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, cx| {
-                        this.available_code_actions = actions.log_err().and_then(|actions| {
-                            if actions.is_empty() {
-                                None
-                            } else {
-                                Some((buffer, actions.into()))
-                            }
-                        });
-                        cx.notify();
-                    })
-                }
-            }));
-        }
+    fn refresh_code_actions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
+        let project = self.project.as_ref()?;
+        let new_cursor_position = self.newest_anchor_selection().head();
+        let (buffer, head) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(new_cursor_position, cx)?;
+        let actions = project.update(cx, |project, cx| project.code_actions(&buffer, head, cx));
+        self.code_actions_task = Some(cx.spawn_weak(|this, mut cx| async move {
+            let actions = actions.await;
+            if let Some(this) = this.upgrade(&cx) {
+                this.update(&mut cx, |this, cx| {
+                    this.available_code_actions = actions.log_err().and_then(|actions| {
+                        if actions.is_empty() {
+                            None
+                        } else {
+                            Some((buffer, actions.into()))
+                        }
+                    });
+                    cx.notify();
+                })
+            }
+        }));
+        None
     }
 
     pub fn render_code_actions_indicator(&self, cx: &mut ViewContext<Self>) -> Option<ElementBox> {
@@ -4007,7 +4012,13 @@ impl Editor {
         let editor = editor_handle.read(cx);
         let buffer = editor.buffer.read(cx);
         let head = editor.newest_selection::<usize>(&buffer.read(cx)).head();
-        let (buffer, head) = editor.buffer.read(cx).text_anchor_for_position(head, cx);
+        let (buffer, head) =
+            if let Some(text_anchor) = editor.buffer.read(cx).text_anchor_for_position(head, cx) {
+                text_anchor
+            } else {
+                return;
+            };
+
         let definitions = workspace
             .project()
             .update(cx, |project, cx| project.definition(&buffer, head, cx));

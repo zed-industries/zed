@@ -667,12 +667,12 @@ impl MultiBuffer {
         for (excerpt_id, range_count) in excerpt_ids.into_iter().zip(range_counts.into_iter()) {
             anchor_ranges.extend(ranges.by_ref().take(range_count).map(|range| {
                 let start = Anchor {
-                    buffer_id,
+                    buffer_id: Some(buffer_id),
                     excerpt_id: excerpt_id.clone(),
                     text_anchor: buffer_snapshot.anchor_after(range.start),
                 };
                 let end = Anchor {
-                    buffer_id,
+                    buffer_id: Some(buffer_id),
                     excerpt_id: excerpt_id.clone(),
                     text_anchor: buffer_snapshot.anchor_after(range.end),
                 };
@@ -913,13 +913,13 @@ impl MultiBuffer {
         &'a self,
         position: T,
         cx: &AppContext,
-    ) -> (ModelHandle<Buffer>, language::Anchor) {
+    ) -> Option<(ModelHandle<Buffer>, language::Anchor)> {
         let snapshot = self.read(cx);
         let anchor = snapshot.anchor_before(position);
-        (
-            self.buffers.borrow()[&anchor.buffer_id].buffer.clone(),
+        Some((
+            self.buffers.borrow()[&anchor.buffer_id?].buffer.clone(),
             anchor.text_anchor,
-        )
+        ))
     }
 
     fn on_buffer_event(
@@ -988,12 +988,14 @@ impl MultiBuffer {
 
         let snapshot = self.snapshot(cx);
         let anchor = snapshot.anchor_before(position);
-        let buffer = self.buffers.borrow()[&anchor.buffer_id].buffer.clone();
-        buffer
-            .read(cx)
-            .completion_triggers()
-            .iter()
-            .any(|string| string == text)
+        anchor.buffer_id.map_or(false, |buffer_id| {
+            let buffer = self.buffers.borrow()[&buffer_id].buffer.clone();
+            buffer
+                .read(cx)
+                .completion_triggers()
+                .iter()
+                .any(|string| string == text)
+        })
     }
 
     pub fn language<'a>(&self, cx: &'a AppContext) -> Option<&'a Arc<Language>> {
@@ -1704,7 +1706,7 @@ impl MultiBufferSnapshot {
 
         let mut position = D::from_text_summary(&cursor.start().text);
         if let Some(excerpt) = cursor.item() {
-            if excerpt.id == anchor.excerpt_id && excerpt.buffer_id == anchor.buffer_id {
+            if excerpt.id == anchor.excerpt_id && Some(excerpt.buffer_id) == anchor.buffer_id {
                 let excerpt_buffer_start = excerpt.range.start.summary::<D>(&excerpt.buffer);
                 let excerpt_buffer_end = excerpt.range.end.summary::<D>(&excerpt.buffer);
                 let buffer_position = cmp::min(
@@ -1753,7 +1755,7 @@ impl MultiBufferSnapshot {
 
             let position = D::from_text_summary(&cursor.start().text);
             if let Some(excerpt) = cursor.item() {
-                if excerpt.id == *excerpt_id && excerpt.buffer_id == buffer_id {
+                if excerpt.id == *excerpt_id && Some(excerpt.buffer_id) == buffer_id {
                     let excerpt_buffer_start = excerpt.range.start.summary::<D>(&excerpt.buffer);
                     let excerpt_buffer_end = excerpt.range.end.summary::<D>(&excerpt.buffer);
                     summaries.extend(
@@ -1846,7 +1848,7 @@ impl MultiBufferSnapshot {
                             text_anchor = excerpt.range.end.clone();
                         }
                         Anchor {
-                            buffer_id: excerpt.buffer_id,
+                            buffer_id: Some(excerpt.buffer_id),
                             excerpt_id: excerpt.id.clone(),
                             text_anchor,
                         }
@@ -1863,7 +1865,7 @@ impl MultiBufferSnapshot {
                             text_anchor = excerpt.range.start.clone();
                         }
                         Anchor {
-                            buffer_id: excerpt.buffer_id,
+                            buffer_id: Some(excerpt.buffer_id),
                             excerpt_id: excerpt.id.clone(),
                             text_anchor,
                         }
@@ -1893,7 +1895,7 @@ impl MultiBufferSnapshot {
         let offset = position.to_offset(self);
         if let Some(excerpt) = self.as_singleton() {
             return Anchor {
-                buffer_id: excerpt.buffer_id,
+                buffer_id: Some(excerpt.buffer_id),
                 excerpt_id: excerpt.id.clone(),
                 text_anchor: excerpt.buffer.anchor_at(offset, bias),
             };
@@ -1915,7 +1917,7 @@ impl MultiBufferSnapshot {
             let text_anchor =
                 excerpt.clip_anchor(excerpt.buffer.anchor_at(buffer_start + overshoot, bias));
             Anchor {
-                buffer_id: excerpt.buffer_id,
+                buffer_id: Some(excerpt.buffer_id),
                 excerpt_id: excerpt.id.clone(),
                 text_anchor,
             }
@@ -1934,7 +1936,7 @@ impl MultiBufferSnapshot {
                 let text_anchor = excerpt.clip_anchor(text_anchor);
                 drop(cursor);
                 return Anchor {
-                    buffer_id: excerpt.buffer_id,
+                    buffer_id: Some(excerpt.buffer_id),
                     excerpt_id,
                     text_anchor,
                 };
@@ -1949,7 +1951,7 @@ impl MultiBufferSnapshot {
         } else if let Some((buffer_id, buffer_snapshot)) =
             self.buffer_snapshot_for_excerpt(&anchor.excerpt_id)
         {
-            anchor.buffer_id == buffer_id && buffer_snapshot.can_resolve(&anchor.text_anchor)
+            anchor.buffer_id == Some(buffer_id) && buffer_snapshot.can_resolve(&anchor.text_anchor)
         } else {
             false
         }
@@ -2215,12 +2217,12 @@ impl MultiBufferSnapshot {
                     .flat_map(move |(replica_id, selections)| {
                         selections.map(move |selection| {
                             let mut start = Anchor {
-                                buffer_id: excerpt.buffer_id,
+                                buffer_id: Some(excerpt.buffer_id),
                                 excerpt_id: excerpt.id.clone(),
                                 text_anchor: selection.start.clone(),
                             };
                             let mut end = Anchor {
-                                buffer_id: excerpt.buffer_id,
+                                buffer_id: Some(excerpt.buffer_id),
                                 excerpt_id: excerpt.id.clone(),
                                 text_anchor: selection.end.clone(),
                             };
@@ -2460,7 +2462,7 @@ impl Excerpt {
     }
 
     fn contains(&self, anchor: &Anchor) -> bool {
-        self.buffer_id == anchor.buffer_id
+        Some(self.buffer_id) == anchor.buffer_id
             && self
                 .range
                 .start
