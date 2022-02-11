@@ -2297,7 +2297,7 @@ impl History {
         T: IntoIterator<Item = (&'a ModelHandle<Buffer>, &'a language::Transaction)>,
     {
         assert_eq!(self.transaction_depth, 0);
-        self.undo_stack.push(Transaction {
+        let transaction = Transaction {
             id: self.next_transaction_id.tick(),
             buffer_transactions: buffer_transactions
                 .into_iter()
@@ -2306,7 +2306,10 @@ impl History {
             first_edit_at: now,
             last_edit_at: now,
             suppress_grouping: false,
-        });
+        };
+        if !transaction.buffer_transactions.is_empty() {
+            self.undo_stack.push(transaction);
+        }
     }
 
     fn finalize_last_transaction(&mut self) {

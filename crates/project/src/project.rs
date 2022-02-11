@@ -1065,13 +1065,10 @@ impl Project {
                         {
                             lang_server = server.clone();
                         } else {
-                            return Task::ready(Err(anyhow!(
-                                "buffer {} does not have a language server",
-                                buffer.remote_id()
-                            )));
+                            return Task::ready(Ok(Default::default()));
                         };
                     } else {
-                        return Task::ready(Err(anyhow!("buffer does not have a language")));
+                        return Task::ready(Ok(Default::default()));
                     }
 
                     local_buffers.push((buffer_handle, buffer_abs_path, lang_server));
@@ -1079,10 +1076,7 @@ impl Project {
                     remote_buffers.get_or_insert(Vec::new()).push(buffer_handle);
                 }
             } else {
-                return Task::ready(Err(anyhow!(
-                    "buffer {} does not belong to any worktree",
-                    buffer.remote_id()
-                )));
+                return Task::ready(Ok(Default::default()));
             }
         }
 
@@ -1163,7 +1157,7 @@ impl Project {
             worktree = file.worktree.clone();
             buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
         } else {
-            return Task::ready(Err(anyhow!("buffer does not belong to any worktree")));
+            return Task::ready(Ok(Default::default()));
         };
 
         let position = position.to_point_utf16(source_buffer);
@@ -1180,10 +1174,10 @@ impl Project {
                 {
                     lang_server = server.clone();
                 } else {
-                    return Task::ready(Err(anyhow!("buffer does not have a language server")));
+                    return Task::ready(Ok(Default::default()));
                 };
             } else {
-                return Task::ready(Err(anyhow!("buffer does not have a language")));
+                return Task::ready(Ok(Default::default()));
             }
 
             cx.spawn(|this, mut cx| async move {
@@ -1282,7 +1276,7 @@ impl Project {
                 })
             })
         } else {
-            Task::ready(Err(anyhow!("project does not have a remote id")))
+            Task::ready(Ok(Default::default()))
         }
     }
 
@@ -1302,7 +1296,7 @@ impl Project {
             worktree = file.worktree.clone();
             buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
         } else {
-            return Task::ready(Err(anyhow!("buffer does not belong to any worktree")));
+            return Task::ready(Ok(Default::default()));
         };
 
         let position = position.to_point_utf16(source_buffer);
@@ -1313,7 +1307,7 @@ impl Project {
             let lang_server = if let Some(server) = source_buffer.language_server().cloned() {
                 server
             } else {
-                return Task::ready(Err(anyhow!("buffer does not have a language server")));
+                return Task::ready(Ok(Default::default()));
             };
 
             cx.spawn(|_, cx| async move {
@@ -1385,7 +1379,7 @@ impl Project {
                     .collect()
             })
         } else {
-            Task::ready(Err(anyhow!("project does not have a remote id")))
+            Task::ready(Ok(Default::default()))
         }
     }
 
@@ -1403,7 +1397,7 @@ impl Project {
             let lang_server = if let Some(language_server) = buffer.language_server() {
                 language_server.clone()
             } else {
-                return Task::ready(Ok(Default::default()));
+                return Task::ready(Err(anyhow!("buffer does not have a language server")));
             };
 
             cx.spawn(|_, mut cx| async move {
@@ -1478,7 +1472,7 @@ impl Project {
             worktree = file.worktree.clone();
             buffer_abs_path = file.as_local().map(|f| f.abs_path(cx));
         } else {
-            return Task::ready(Err(anyhow!("buffer does not belong to any worktree")));
+            return Task::ready(Ok(Default::default()));
         };
 
         let position = position.to_point_utf16(source_buffer);
@@ -1496,10 +1490,10 @@ impl Project {
                 {
                     lang_server = server.clone();
                 } else {
-                    return Task::ready(Err(anyhow!("buffer does not have a language server")));
+                    return Task::ready(Ok(Default::default()));
                 };
             } else {
-                return Task::ready(Err(anyhow!("buffer does not have a language")));
+                return Task::ready(Ok(Default::default()));
             }
 
             cx.foreground().spawn(async move {
@@ -1556,7 +1550,7 @@ impl Project {
                     .collect()
             })
         } else {
-            Task::ready(Err(anyhow!("project does not have a remote id")))
+            Task::ready(Ok(Default::default()))
         }
     }
 
@@ -1577,7 +1571,7 @@ impl Project {
             let lang_server = if let Some(language_server) = buffer.language_server() {
                 language_server.clone()
             } else {
-                return Task::ready(Ok(Default::default()));
+                return Task::ready(Err(anyhow!("buffer does not have a language server")));
             };
             let position = action.position.to_point_utf16(buffer).to_lsp_position();
             let fs = self.fs.clone();
