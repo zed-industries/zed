@@ -201,9 +201,6 @@ pub trait File {
         cx: &mut MutableAppContext,
     ) -> Task<Result<(clock::Global, SystemTime)>>;
 
-    fn format_remote(&self, buffer_id: u64, cx: &mut MutableAppContext)
-        -> Option<Task<Result<()>>>;
-
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext);
 
     fn buffer_removed(&self, buffer_id: u64, cx: &mut MutableAppContext);
@@ -276,10 +273,6 @@ impl File for FakeFile {
         cx: &mut MutableAppContext,
     ) -> Task<Result<(clock::Global, SystemTime)>> {
         cx.spawn(|_| async move { Ok((Default::default(), SystemTime::UNIX_EPOCH)) })
-    }
-
-    fn format_remote(&self, _: u64, _: &mut MutableAppContext) -> Option<Task<Result<()>>> {
-        None
     }
 
     fn buffer_updated(&self, _: u64, _: Operation, _: &mut MutableAppContext) {}
@@ -538,52 +531,6 @@ impl Buffer {
 
     pub fn file(&self) -> Option<&dyn File> {
         self.file.as_deref()
-    }
-
-    pub fn format(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        let file = if let Some(file) = self.file.as_ref() {
-            file
-        } else {
-            return Task::ready(Err(anyhow!("buffer has no file")));
-        };
-
-        if let Some(LanguageServerState { server, .. }) = self.language_server.as_ref() {
-            let server = server.clone();
-            let abs_path = file.as_local().unwrap().abs_path(cx);
-            let version = self.version();
-            cx.spawn(|this, mut cx| async move {
-                let edits = server
-                    .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
-                        text_document: lsp::TextDocumentIdentifier::new(
-                            lsp::Url::from_file_path(&abs_path).unwrap(),
-                        ),
-                        options: Default::default(),
-                        work_done_progress_params: Default::default(),
-                    })
-                    .await?;
-
-                if let Some(edits) = edits {
-                    this.update(&mut cx, |this, cx| {
-                        if this.version == version {
-                            this.apply_lsp_edits(edits, None, cx)?;
-                            Ok(())
-                        } else {
-                            Err(anyhow!("buffer edited since starting to format"))
-                        }
-                    })
-                } else {
-                    Ok(())
-                }
-            })
-        } else {
-            let format = file.format_remote(self.remote_id(), cx.as_mut());
-            cx.spawn(|_, _| async move {
-                if let Some(format) = format {
-                    format.await?;
-                }
-                Ok(())
-            })
-        }
     }
 
     pub fn save(

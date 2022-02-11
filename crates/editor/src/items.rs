@@ -220,11 +220,15 @@ impl ItemView for Editor {
         !self.buffer().read(cx).is_singleton() || self.project_path(cx).is_some()
     }
 
-    fn save(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+    fn save(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
         let buffer = self.buffer().clone();
         cx.spawn(|editor, mut cx| async move {
             buffer
-                .update(&mut cx, |buffer, cx| buffer.format(cx).log_err())
+                .update(&mut cx, |buffer, cx| buffer.format(project, cx).log_err())
                 .await;
             editor.update(&mut cx, |editor, cx| {
                 editor.request_autoscroll(Autoscroll::Fit, cx)

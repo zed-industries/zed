@@ -168,7 +168,11 @@ pub trait ItemView: View {
         false
     }
     fn can_save(&self, cx: &AppContext) -> bool;
-    fn save(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>>;
+    fn save(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>>;
     fn can_save_as(&self, cx: &AppContext) -> bool;
     fn save_as(
         &mut self,
@@ -234,7 +238,7 @@ pub trait ItemViewHandle: 'static {
     fn has_conflict(&self, cx: &AppContext) -> bool;
     fn can_save(&self, cx: &AppContext) -> bool;
     fn can_save_as(&self, cx: &AppContext) -> bool;
-    fn save(&self, cx: &mut MutableAppContext) -> Task<Result<()>>;
+    fn save(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext) -> Task<Result<()>>;
     fn save_as(
         &self,
         project: ModelHandle<Project>,
@@ -402,8 +406,8 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         self.update(cx, |this, cx| this.navigate(data, cx));
     }
 
-    fn save(&self, cx: &mut MutableAppContext) -> Task<Result<()>> {
-        self.update(cx, |item, cx| item.save(cx))
+    fn save(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext) -> Task<Result<()>> {
+        self.update(cx, |item, cx| item.save(project, cx))
     }
 
     fn save_as(
@@ -820,6 +824,7 @@ impl Workspace {
     }
 
     pub fn save_active_item(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+        let project = self.project.clone();
         if let Some(item) = self.active_item(cx) {
             if item.can_save(cx) {
                 if item.has_conflict(cx.as_ref()) {
@@ -833,12 +838,12 @@ impl Workspace {
                     cx.spawn(|_, mut cx| async move {
                         let answer = answer.recv().await;
                         if answer == Some(0) {
-                            cx.update(|cx| item.save(cx)).await?;
+                            cx.update(|cx| item.save(project, cx)).await?;
                         }
                         Ok(())
                     })
                 } else {
-                    item.save(cx)
+                    item.save(project, cx)
                 }
             } else if item.can_save_as(cx) {
                 let worktree = self.worktrees(cx).next();
@@ -847,9 +852,8 @@ impl Workspace {
                     .map_or(Path::new(""), |w| w.abs_path())
                     .to_path_buf();
                 let mut abs_path = cx.prompt_for_new_path(&start_abs_path);
-                cx.spawn(|this, mut cx| async move {
+                cx.spawn(|_, mut cx| async move {
                     if let Some(abs_path) = abs_path.recv().await.flatten() {
-                        let project = this.read_with(&cx, |this, _| this.project().clone());
                         cx.update(|cx| item.save_as(project, abs_path, cx)).await?;
                     }
                     Ok(())

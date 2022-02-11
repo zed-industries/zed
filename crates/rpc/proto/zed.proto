@@ -39,31 +39,32 @@ message Envelope {
         SaveBuffer save_buffer = 31;
         BufferSaved buffer_saved = 32;
         BufferReloaded buffer_reloaded = 33;
-        FormatBuffer format_buffer = 34;
-        GetCompletions get_completions = 35;
-        GetCompletionsResponse get_completions_response = 36;
-        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 37;
-        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 38;
-        GetCodeActions get_code_actions = 39;
-        GetCodeActionsResponse get_code_actions_response = 40;
-        ApplyCodeAction apply_code_action = 41;
-        ApplyCodeActionResponse apply_code_action_response = 42;
+        FormatBuffers format_buffers = 34;
+        FormatBuffersResponse format_buffers_response = 35;
+        GetCompletions get_completions = 36;
+        GetCompletionsResponse get_completions_response = 37;
+        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 38;
+        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 39;
+        GetCodeActions get_code_actions = 40;
+        GetCodeActionsResponse get_code_actions_response = 41;
+        ApplyCodeAction apply_code_action = 42;
+        ApplyCodeActionResponse apply_code_action_response = 43;
 
-        GetChannels get_channels = 43;
-        GetChannelsResponse get_channels_response = 44;
-        JoinChannel join_channel = 45;
-        JoinChannelResponse join_channel_response = 46;
-        LeaveChannel leave_channel = 47;
-        SendChannelMessage send_channel_message = 48;
-        SendChannelMessageResponse send_channel_message_response = 49;
-        ChannelMessageSent channel_message_sent = 50;
-        GetChannelMessages get_channel_messages = 51;
-        GetChannelMessagesResponse get_channel_messages_response = 52;
+        GetChannels get_channels = 44;
+        GetChannelsResponse get_channels_response = 45;
+        JoinChannel join_channel = 46;
+        JoinChannelResponse join_channel_response = 47;
+        LeaveChannel leave_channel = 48;
+        SendChannelMessage send_channel_message = 49;
+        SendChannelMessageResponse send_channel_message_response = 50;
+        ChannelMessageSent channel_message_sent = 51;
+        GetChannelMessages get_channel_messages = 52;
+        GetChannelMessagesResponse get_channel_messages_response = 53;
 
-        UpdateContacts update_contacts = 53;
+        UpdateContacts update_contacts = 54;
 
-        GetUsers get_users = 54;
-        GetUsersResponse get_users_response = 55;
+        GetUsers get_users = 55;
+        GetUsersResponse get_users_response = 56;
     }
 }
 
@@ -206,9 +207,13 @@ message BufferReloaded {
     Timestamp mtime = 4;
 }
 
-message FormatBuffer {
+message FormatBuffers {
     uint64 project_id = 1;
-    uint64 buffer_id = 2;
+    repeated uint64 buffer_ids = 2;
+}
+
+message FormatBuffersResponse {
+    ProjectTransaction transaction = 1;
 }
 
 message GetCompletions {

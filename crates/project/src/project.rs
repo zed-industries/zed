@@ -348,7 +348,7 @@ impl Project {
                 client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_save_buffer),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_format_buffer),
+                client.subscribe_to_entity(remote_id, cx, Self::handle_format_buffers),
                 client.subscribe_to_entity(remote_id, cx, Self::handle_get_completions),
                 client.subscribe_to_entity(
                     remote_id,
@@ -613,9 +613,7 @@ impl Project {
                 })
                 .await?;
             let buffer = response.buffer.ok_or_else(|| anyhow!("missing buffer"))?;
-            this.update(&mut cx, |this, cx| {
-                this.deserialize_remote_buffer(buffer, cx)
-            })
+            this.update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
         })
     }
 
@@ -1045,6 +1043,112 @@ impl Project {
         Ok(())
     }
 
+    pub fn format(
+        &self,
+        buffers: HashSet<ModelHandle<Buffer>>,
+        push_to_history: bool,
+        cx: &mut ModelContext<Project>,
+    ) -> Task<Result<ProjectTransaction>> {
+        let mut local_buffers = Vec::new();
+        let mut remote_buffers = None;
+        for buffer_handle in buffers {
+            let buffer = buffer_handle.read(cx);
+            let worktree;
+            if let Some(file) = File::from_dyn(buffer.file()) {
+                worktree = file.worktree.clone();
+                if let Some(buffer_abs_path) = file.as_local().map(|f| f.abs_path(cx)) {
+                    let lang_server;
+                    if let Some(lang) = buffer.language() {
+                        if let Some(server) = self
+                            .language_servers
+                            .get(&(worktree.read(cx).id(), lang.name().to_string()))
+                        {
+                            lang_server = server.clone();
+                        } else {
+                            return Task::ready(Err(anyhow!(
+                                "buffer {} does not have a language server",
+                                buffer.remote_id()
+                            )));
+                        };
+                    } else {
+                        return Task::ready(Err(anyhow!("buffer does not have a language")));
+                    }
+
+                    local_buffers.push((buffer_handle, buffer_abs_path, lang_server));
+                } else {
+                    remote_buffers.get_or_insert(Vec::new()).push(buffer_handle);
+                }
+            } else {
+                return Task::ready(Err(anyhow!(
+                    "buffer {} does not belong to any worktree",
+                    buffer.remote_id()
+                )));
+            }
+        }
+
+        let remote_buffers = self.remote_id().zip(remote_buffers);
+        let client = self.client.clone();
+
+        cx.spawn(|this, mut cx| async move {
+            let mut project_transaction = ProjectTransaction::default();
+
+            if let Some((project_id, remote_buffers)) = remote_buffers {
+                let response = client
+                    .request(proto::FormatBuffers {
+                        project_id,
+                        buffer_ids: remote_buffers
+                            .iter()
+                            .map(|buffer| buffer.read_with(&cx, |buffer, _| buffer.remote_id()))
+                            .collect(),
+                    })
+                    .await?
+                    .transaction
+                    .ok_or_else(|| anyhow!("missing transaction"))?;
+                project_transaction = this
+                    .update(&mut cx, |this, cx| {
+                        this.deserialize_project_transaction(response, push_to_history, cx)
+                    })
+                    .await?;
+            }
+
+            for (buffer, buffer_abs_path, lang_server) in local_buffers {
+                let lsp_edits = lang_server
+                    .request::<lsp::request::Formatting>(lsp::DocumentFormattingParams {
+                        text_document: lsp::TextDocumentIdentifier::new(
+                            lsp::Url::from_file_path(&buffer_abs_path).unwrap(),
+                        ),
+                        options: Default::default(),
+                        work_done_progress_params: Default::default(),
+                    })
+                    .await?;
+
+                if let Some(lsp_edits) = lsp_edits {
+                    let edits = buffer
+                        .update(&mut cx, |buffer, cx| {
+                            buffer.edits_from_lsp(lsp_edits, None, cx)
+                        })
+                        .await?;
+                    buffer.update(&mut cx, |buffer, cx| {
+                        buffer.finalize_last_transaction();
+                        buffer.start_transaction();
+                        for (range, text) in edits {
+                            buffer.edit([range], text, cx);
+                        }
+                        if buffer.end_transaction(cx).is_some() {
+                            let transaction = buffer.finalize_last_transaction().unwrap().clone();
+                            if !push_to_history {
+                                buffer.forget_transaction(transaction.id);
+                            }
+                            project_transaction.0.insert(cx.handle(), transaction);
+                        }
+                    });
+                }
+            }
+
+            Ok(project_transaction)
+        })
+    }
+
     pub fn definition<T: ToPointUtf16>(
         &self,
         source_buffer_handle: &ModelHandle<Buffer>,
@@ -1156,7 +1260,7 @@ impl Project {
                 this.update(&mut cx, |this, cx| {
                     let mut definitions = Vec::new();
                     for definition in response.definitions {
-                        let target_buffer = this.deserialize_remote_buffer(
+                        let target_buffer = this.deserialize_buffer(
                             definition.buffer.ok_or_else(|| anyhow!("missing buffer"))?,
                             cx,
                         )?;
@@ -1637,29 +1741,10 @@ impl Project {
                     .await?
                     .transaction
                     .ok_or_else(|| anyhow!("missing transaction"))?;
-                let mut project_transaction = ProjectTransaction::default();
-                for (buffer, transaction) in response.buffers.into_iter().zip(response.transactions)
-                {
-                    let buffer = this.update(&mut cx, |this, cx| {
-                        this.deserialize_remote_buffer(buffer, cx)
-                    })?;
-                    let transaction = language::proto::deserialize_transaction(transaction)?;
-
-                    buffer
-                        .update(&mut cx, |buffer, _| {
-                            buffer.wait_for_edits(transaction.edit_ids.iter().copied())
-                        })
-                        .await;
-
-                    if push_to_history {
-                        buffer.update(&mut cx, |buffer, _| {
-                            buffer.push_transaction(transaction.clone(), Instant::now());
-                        });
-                    }
-
-                    project_transaction.0.insert(buffer, transaction);
-                }
-                Ok(project_transaction)
+                this.update(&mut cx, |this, cx| {
+                    this.deserialize_project_transaction(response, push_to_history, cx)
+                })
+                .await
             })
         } else {
             Task::ready(Err(anyhow!("project does not have a remote id")))
@@ -2163,26 +2248,51 @@ impl Project {
         Ok(())
     }
 
-    pub fn handle_format_buffer(
+    pub fn handle_format_buffers(
         &mut self,
-        envelope: TypedEnvelope<proto::FormatBuffer>,
+        envelope: TypedEnvelope<proto::FormatBuffers>,
         rpc: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         let receipt = envelope.receipt();
         let sender_id = envelope.original_sender_id()?;
-        let buffer = self
+        let shared_buffers = self
             .shared_buffers
             .get(&sender_id)
-            .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
-            .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
-        cx.spawn(|_, mut cx| async move {
-            let format = buffer.update(&mut cx, |buffer, cx| buffer.format(cx)).await;
-            // We spawn here in order to enqueue the sending of `Ack` *after* transmission of edits
-            // associated with formatting.
+            .ok_or_else(|| anyhow!("peer has no buffers"))?;
+        let mut buffers = HashSet::default();
+        for buffer_id in envelope.payload.buffer_ids {
+            buffers.insert(
+                shared_buffers
+                    .get(&buffer_id)
+                    .cloned()
+                    .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?,
+            );
+        }
+        cx.spawn(|this, mut cx| async move {
+            dbg!("here!");
+            let project_transaction = this
+                .update(&mut cx, |this, cx| this.format(buffers, false, cx))
+                .await
+                .map(|project_transaction| {
+                    this.update(&mut cx, |this, cx| {
+                        this.serialize_project_transaction_for_peer(
+                            project_transaction,
+                            sender_id,
+                            cx,
+                        )
+                    })
+                });
+            // We spawn here in order to enqueue the sending of the response *after* transmission of
+            // edits associated with formatting.
             cx.spawn(|_| async move {
-                match format {
-                    Ok(()) => rpc.respond(receipt, proto::Ack {})?,
+                match project_transaction {
+                    Ok(transaction) => rpc.respond(
+                        receipt,
+                        proto::FormatBuffersResponse {
+                            transaction: Some(transaction),
+                        },
+                    )?,
                     Err(error) => rpc.respond_with_error(
                         receipt,
                         proto::Error {
@@ -2358,18 +2468,11 @@ impl Project {
         cx.spawn(|this, mut cx| async move {
             match apply_code_action.await {
                 Ok(project_transaction) => this.update(&mut cx, |this, cx| {
-                    let mut serialized_transaction = proto::ProjectTransaction {
-                        buffers: Default::default(),
-                        transactions: Default::default(),
-                    };
-                    for (buffer, transaction) in project_transaction.0 {
-                        serialized_transaction
-                            .buffers
-                            .push(this.serialize_buffer_for_peer(&buffer, sender_id, cx));
-                        serialized_transaction
-                            .transactions
-                            .push(language::proto::serialize_transaction(&transaction));
-                    }
+                    let serialized_transaction = this.serialize_project_transaction_for_peer(
+                        project_transaction,
+                        sender_id,
+                        cx,
+                    );
                     rpc.respond(
                         receipt,
                         proto::ApplyCodeActionResponse {
@@ -2471,6 +2574,58 @@ impl Project {
         Ok(())
     }
 
+    fn serialize_project_transaction_for_peer(
+        &mut self,
+        project_transaction: ProjectTransaction,
+        peer_id: PeerId,
+        cx: &AppContext,
+    ) -> proto::ProjectTransaction {
+        let mut serialized_transaction = proto::ProjectTransaction {
+            buffers: Default::default(),
+            transactions: Default::default(),
+        };
+        for (buffer, transaction) in project_transaction.0 {
+            serialized_transaction
+                .buffers
+                .push(self.serialize_buffer_for_peer(&buffer, peer_id, cx));
+            serialized_transaction
+                .transactions
+                .push(language::proto::serialize_transaction(&transaction));
+        }
+        serialized_transaction
+    }
+
+    fn deserialize_project_transaction(
+        &self,
+        message: proto::ProjectTransaction,
+        push_to_history: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ProjectTransaction>> {
+        cx.spawn(|this, mut cx| async move {
+            let mut project_transaction = ProjectTransaction::default();
+            for (buffer, transaction) in message.buffers.into_iter().zip(message.transactions) {
+                let buffer =
+                    this.update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))?;
+                let transaction = language::proto::deserialize_transaction(transaction)?;
+
+                buffer
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_edits(transaction.edit_ids.iter().copied())
+                    })
+                    .await;
+
+                if push_to_history {
+                    buffer.update(&mut cx, |buffer, _| {
+                        buffer.push_transaction(transaction.clone(), Instant::now());
+                    });
+                }
+
+                project_transaction.0.insert(buffer, transaction);
+            }
+            Ok(project_transaction)
+        })
+    }
+
     fn serialize_buffer_for_peer(
         &mut self,
         buffer: &ModelHandle<Buffer>,
@@ -2492,7 +2647,7 @@ impl Project {
         }
     }
 
-    fn deserialize_remote_buffer(
+    fn deserialize_buffer(
         &mut self,
         buffer: proto::Buffer,
         cx: &mut ModelContext<Self>,

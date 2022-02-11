@@ -1385,25 +1385,6 @@ impl language::File for File {
         })
     }
 
-    fn format_remote(
-        &self,
-        buffer_id: u64,
-        cx: &mut MutableAppContext,
-    ) -> Option<Task<Result<()>>> {
-        let worktree = self.worktree.read(cx);
-        let worktree = worktree.as_remote()?;
-        let rpc = worktree.client.clone();
-        let project_id = worktree.project_id;
-        Some(cx.foreground().spawn(async move {
-            rpc.request(proto::FormatBuffer {
-                project_id,
-                buffer_id,
-            })
-            .await?;
-            Ok(())
-        }))
-    }
-
     fn buffer_updated(&self, buffer_id: u64, operation: Operation, cx: &mut MutableAppContext) {
         self.worktree.update(cx, |worktree, cx| {
             worktree.send_buffer_update(buffer_id, operation, cx);

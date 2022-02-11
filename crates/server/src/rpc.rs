@@ -82,7 +82,7 @@ impl Server {
             .add_handler(Server::buffer_reloaded)
             .add_handler(Server::buffer_saved)
             .add_handler(Server::save_buffer)
-            .add_handler(Server::format_buffer)
+            .add_handler(Server::format_buffers)
             .add_handler(Server::get_completions)
             .add_handler(Server::apply_additional_edits_for_completion)
             .add_handler(Server::get_code_actions)
@@ -669,9 +669,9 @@ impl Server {
         Ok(())
     }
 
-    async fn format_buffer(
+    async fn format_buffers(
         self: Arc<Server>,
-        request: TypedEnvelope<proto::FormatBuffer>,
+        request: TypedEnvelope<proto::FormatBuffers>,
     ) -> tide::Result<()> {
         let host;
         {
@@ -2607,7 +2607,9 @@ mod tests {
             .await
             .unwrap();
 
-        let format = buffer_b.update(&mut cx_b, |buffer, cx| buffer.format(cx));
+        let format = project_b.update(&mut cx_b, |project, cx| {
+            project.format(HashSet::from_iter([buffer_b.clone()]), true, cx)
+        });
         let (request_id, _) = fake_language_server
             .receive_request::<lsp::request::Formatting>()
             .await;

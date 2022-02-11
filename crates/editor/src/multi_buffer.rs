@@ -10,6 +10,7 @@ use language::{
     Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Outline,
     OutlineItem, Selection, ToOffset as _, ToPoint as _, ToPointUtf16 as _, TransactionId,
 };
+use project::Project;
 use std::{
     cell::{Ref, RefCell},
     cmp, fmt, io,
@@ -930,16 +931,25 @@ impl MultiBuffer {
         cx.emit(event.clone());
     }
 
-    pub fn format(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        let mut format_tasks = Vec::new();
-        for BufferState { buffer, .. } in self.buffers.borrow().values() {
-            format_tasks.push(buffer.update(cx, |buffer, cx| buffer.format(cx)));
-        }
-
-        cx.spawn(|_, _| async move {
-            for format in format_tasks {
-                format.await?;
-            }
+    pub fn format(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let buffers = self
+            .buffers
+            .borrow()
+            .values()
+            .map(|state| state.buffer.clone())
+            .collect();
+        let transaction = project.update(cx, |project, cx| project.format(buffers, true, cx));
+        cx.spawn(|this, mut cx| async move {
+            let transaction = transaction.await?;
+            this.update(&mut cx, |this, _| {
+                if !this.singleton {
+                    this.push_transaction(&transaction.0);
+                }
+            });
             Ok(())
         })
     }

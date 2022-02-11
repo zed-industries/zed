@@ -572,8 +572,12 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         true
     }
 
-    fn save(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        self.editor.save(cx)
+    fn save(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        self.editor.save(project, cx)
     }
 
     fn can_save_as(&self, _: &AppContext) -> bool {
