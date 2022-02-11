@@ -125,7 +125,7 @@ action!(FoldSelectedRanges);
 action!(Scroll, Vector2F);
 action!(Select, SelectPhase);
 action!(ShowCompletions);
-action!(ShowCodeActions);
+action!(ShowCodeActions, bool);
 action!(ConfirmCompletion, Option<usize>);
 action!(ConfirmCodeAction, Option<usize>);
 
@@ -251,7 +251,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
         Binding::new("alt-cmd-]", Unfold, Some("Editor")),
         Binding::new("alt-cmd-f", FoldSelectedRanges, Some("Editor")),
         Binding::new("ctrl-space", ShowCompletions, Some("Editor")),
-        Binding::new("cmd-.", ShowCodeActions, Some("Editor")),
+        Binding::new("cmd-.", ShowCodeActions(false), Some("Editor")),
     ]);
 
     cx.add_action(Editor::open_new);
@@ -430,7 +430,7 @@ pub struct Editor {
     context_menu: Option<ContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     next_completion_id: CompletionId,
-    available_code_actions: Option<CodeActionsMenu>,
+    available_code_actions: Option<(ModelHandle<Buffer>, Arc<[CodeAction]>)>,
     code_actions_task: Option<Task<()>>,
 }
 
@@ -508,10 +508,15 @@ impl ContextMenu {
         }
     }
 
-    fn render(&self, build_settings: BuildSettings, cx: &AppContext) -> ElementBox {
+    fn render(
+        &self,
+        cursor_position: DisplayPoint,
+        build_settings: BuildSettings,
+        cx: &AppContext,
+    ) -> (DisplayPoint, ElementBox) {
         match self {
-            ContextMenu::Completions(menu) => menu.render(build_settings, cx),
-            ContextMenu::CodeActions(menu) => menu.render(build_settings, cx),
+            ContextMenu::Completions(menu) => (cursor_position, menu.render(build_settings, cx)),
+            ContextMenu::CodeActions(menu) => menu.render(cursor_position, build_settings, cx),
         }
     }
 }
@@ -664,6 +669,7 @@ struct CodeActionsMenu {
     buffer: ModelHandle<Buffer>,
     selected_item: usize,
     list: UniformListState,
+    deployed_from_indicator: bool,
 }
 
 impl CodeActionsMenu {
@@ -685,51 +691,63 @@ impl CodeActionsMenu {
         !self.actions.is_empty()
     }
 
-    fn render(&self, build_settings: BuildSettings, cx: &AppContext) -> ElementBox {
+    fn render(
+        &self,
+        mut cursor_position: DisplayPoint,
+        build_settings: BuildSettings,
+        cx: &AppContext,
+    ) -> (DisplayPoint, ElementBox) {
         enum ActionTag {}
 
         let settings = build_settings(cx);
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
-        UniformList::new(self.list.clone(), actions.len(), move |range, items, cx| {
-            let settings = build_settings(cx);
-            let start_ix = range.start;
-            for (ix, action) in actions[range].iter().enumerate() {
-                let item_ix = start_ix + ix;
-                items.push(
-                    MouseEventHandler::new::<ActionTag, _, _, _>(item_ix, cx, |state, _| {
-                        let item_style = if item_ix == selected_item {
-                            settings.style.autocomplete.selected_item
-                        } else if state.hovered {
-                            settings.style.autocomplete.hovered_item
-                        } else {
-                            settings.style.autocomplete.item
-                        };
+        let element =
+            UniformList::new(self.list.clone(), actions.len(), move |range, items, cx| {
+                let settings = build_settings(cx);
+                let start_ix = range.start;
+                for (ix, action) in actions[range].iter().enumerate() {
+                    let item_ix = start_ix + ix;
+                    items.push(
+                        MouseEventHandler::new::<ActionTag, _, _, _>(item_ix, cx, |state, _| {
+                            let item_style = if item_ix == selected_item {
+                                settings.style.autocomplete.selected_item
+                            } else if state.hovered {
+                                settings.style.autocomplete.hovered_item
+                            } else {
+                                settings.style.autocomplete.item
+                            };
 
-                        Text::new(action.lsp_action.title.clone(), settings.style.text.clone())
-                            .with_soft_wrap(false)
-                            .contained()
-                            .with_style(item_style)
-                            .boxed()
-                    })
-                    .with_cursor_style(CursorStyle::PointingHand)
-                    .on_mouse_down(move |cx| {
-                        cx.dispatch_action(ConfirmCodeAction(Some(item_ix)));
-                    })
-                    .boxed(),
-                );
-            }
-        })
-        .with_width_from_item(
-            self.actions
-                .iter()
-                .enumerate()
-                .max_by_key(|(_, action)| action.lsp_action.title.chars().count())
-                .map(|(ix, _)| ix),
-        )
-        .contained()
-        .with_style(settings.style.autocomplete.container)
-        .boxed()
+                            Text::new(action.lsp_action.title.clone(), settings.style.text.clone())
+                                .with_soft_wrap(false)
+                                .contained()
+                                .with_style(item_style)
+                                .boxed()
+                        })
+                        .with_cursor_style(CursorStyle::PointingHand)
+                        .on_mouse_down(move |cx| {
+                            cx.dispatch_action(ConfirmCodeAction(Some(item_ix)));
+                        })
+                        .boxed(),
+                    );
+                }
+            })
+            .with_width_from_item(
+                self.actions
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(_, action)| action.lsp_action.title.chars().count())
+                    .map(|(ix, _)| ix),
+            )
+            .contained()
+            .with_style(settings.style.autocomplete.container)
+            .boxed();
+
+        if self.deployed_from_indicator {
+            *cursor_position.column_mut() = 0;
+        }
+
+        (cursor_position, element)
     }
 }
 
@@ -2060,7 +2078,11 @@ impl Editor {
         }))
     }
 
-    fn show_code_actions(&mut self, _: &ShowCodeActions, cx: &mut ViewContext<Self>) {
+    fn show_code_actions(
+        &mut self,
+        &ShowCodeActions(deployed_from_indicator): &ShowCodeActions,
+        cx: &mut ViewContext<Self>,
+    ) {
         let mut task = self.code_actions_task.take();
         cx.spawn_weak(|this, mut cx| async move {
             while let Some(prev_task) = task {
@@ -2073,8 +2095,17 @@ impl Editor {
             if let Some(this) = this.upgrade(&cx) {
                 this.update(&mut cx, |this, cx| {
                     if this.focused {
-                        if let Some(menu) = this.available_code_actions.clone() {
-                            this.show_context_menu(ContextMenu::CodeActions(menu), cx);
+                        if let Some((buffer, actions)) = this.available_code_actions.clone() {
+                            this.show_context_menu(
+                                ContextMenu::CodeActions(CodeActionsMenu {
+                                    buffer,
+                                    actions,
+                                    selected_item: Default::default(),
+                                    list: Default::default(),
+                                    deployed_from_indicator,
+                                }),
+                                cx,
+                            );
                         }
                     }
                 })
@@ -2176,14 +2207,22 @@ impl Editor {
         }))
     }
 
-    pub fn render_code_actions_indicator(&self, cx: &AppContext) -> Option<ElementBox> {
+    pub fn render_code_actions_indicator(&self, cx: &mut ViewContext<Self>) -> Option<ElementBox> {
         if self.available_code_actions.is_some() {
+            enum Tag {}
             let style = (self.build_settings)(cx).style;
             Some(
-                Svg::new("icons/zap.svg")
-                    .with_color(style.code_actions_indicator)
-                    .aligned()
-                    .boxed(),
+                MouseEventHandler::new::<Tag, _, _, _>(0, cx, |_, _| {
+                    Svg::new("icons/zap.svg")
+                        .with_color(style.code_actions_indicator)
+                        .boxed()
+                })
+                .with_cursor_style(CursorStyle::PointingHand)
+                .with_padding(Padding::uniform(3.))
+                .on_mouse_down(|cx| {
+                    cx.dispatch_action(ShowCodeActions(true));
+                })
+                .boxed(),
             )
         } else {
             None
@@ -2196,10 +2235,14 @@ impl Editor {
             .map_or(false, |menu| menu.visible())
     }
 
-    pub fn render_context_menu(&self, cx: &AppContext) -> Option<ElementBox> {
+    pub fn render_context_menu(
+        &self,
+        cursor_position: DisplayPoint,
+        cx: &AppContext,
+    ) -> Option<(DisplayPoint, ElementBox)> {
         self.context_menu
             .as_ref()
-            .map(|menu| menu.render(self.build_settings.clone(), cx))
+            .map(|menu| menu.render(cursor_position, self.build_settings.clone(), cx))
     }
 
     fn show_context_menu(&mut self, menu: ContextMenu, cx: &mut ViewContext<Self>) {
@@ -4418,12 +4461,7 @@ impl Editor {
                             if actions.is_empty() {
                                 None
                             } else {
-                                Some(CodeActionsMenu {
-                                    actions: actions.into(),
-                                    buffer,
-                                    selected_item: 0,
-                                    list: Default::default(),
-                                })
+                                Some((buffer, actions.into()))
                             }
                         });
                         cx.notify();

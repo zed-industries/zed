@@ -955,8 +955,7 @@ impl Element for EditorElement {
 
             if (start_row..end_row).contains(&newest_selection_head.row()) {
                 if view.context_menu_visible() {
-                    let list = view.render_context_menu(cx).unwrap();
-                    context_menu = Some((newest_selection_head, list));
+                    context_menu = view.render_context_menu(newest_selection_head, cx);
                 }
 
                 code_actions_indicator = view
@@ -1071,6 +1070,12 @@ impl Element for EditorElement {
     ) -> bool {
         if let Some((_, context_menu)) = &mut layout.context_menu {
             if context_menu.dispatch_event(event, cx) {
+                return true;
+            }
+        }
+
+        if let Some((_, indicator)) = &mut layout.code_actions_indicator {
+            if indicator.dispatch_event(event, cx) {
                 return true;
             }
         }
