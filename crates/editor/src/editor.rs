@@ -125,7 +125,7 @@ action!(FoldSelectedRanges);
 action!(Scroll, Vector2F);
 action!(Select, SelectPhase);
 action!(ShowCompletions);
-action!(ShowCodeActions, bool);
+action!(ToggleCodeActions, bool);
 action!(ConfirmCompletion, Option<usize>);
 action!(ConfirmCodeAction, Option<usize>);
 
@@ -251,7 +251,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
         Binding::new("alt-cmd-]", Unfold, Some("Editor")),
         Binding::new("alt-cmd-f", FoldSelectedRanges, Some("Editor")),
         Binding::new("ctrl-space", ShowCompletions, Some("Editor")),
-        Binding::new("cmd-.", ShowCodeActions(false), Some("Editor")),
+        Binding::new("cmd-.", ToggleCodeActions(false), Some("Editor")),
     ]);
 
     cx.add_action(Editor::open_new);
@@ -316,7 +316,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_action(Editor::unfold);
     cx.add_action(Editor::fold_selected_ranges);
     cx.add_action(Editor::show_completions);
-    cx.add_action(Editor::show_code_actions);
+    cx.add_action(Editor::toggle_code_actions);
     cx.add_async_action(Editor::confirm_completion);
     cx.add_async_action(Editor::confirm_code_action);
 }
@@ -2078,11 +2078,20 @@ impl Editor {
         }))
     }
 
-    fn show_code_actions(
+    fn toggle_code_actions(
         &mut self,
-        &ShowCodeActions(deployed_from_indicator): &ShowCodeActions,
+        &ToggleCodeActions(deployed_from_indicator): &ToggleCodeActions,
         cx: &mut ViewContext<Self>,
     ) {
+        if matches!(
+            self.context_menu.as_ref(),
+            Some(ContextMenu::CodeActions(_))
+        ) {
+            self.context_menu.take();
+            cx.notify();
+            return;
+        }
+
         let mut task = self.code_actions_task.take();
         cx.spawn_weak(|this, mut cx| async move {
             while let Some(prev_task) = task {
@@ -2207,6 +2216,32 @@ impl Editor {
         }))
     }
 
+    fn refresh_code_actions(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(project) = self.project.as_ref() {
+            let new_cursor_position = self.newest_anchor_selection().head();
+            let (buffer, head) = self
+                .buffer
+                .read(cx)
+                .text_anchor_for_position(new_cursor_position, cx);
+            let actions = project.update(cx, |project, cx| project.code_actions(&buffer, head, cx));
+            self.code_actions_task = Some(cx.spawn_weak(|this, mut cx| async move {
+                let actions = actions.await;
+                if let Some(this) = this.upgrade(&cx) {
+                    this.update(&mut cx, |this, cx| {
+                        this.available_code_actions = actions.log_err().and_then(|actions| {
+                            if actions.is_empty() {
+                                None
+                            } else {
+                                Some((buffer, actions.into()))
+                            }
+                        });
+                        cx.notify();
+                    })
+                }
+            }));
+        }
+    }
+
     pub fn render_code_actions_indicator(&self, cx: &mut ViewContext<Self>) -> Option<ElementBox> {
         if self.available_code_actions.is_some() {
             enum Tag {}
@@ -2220,7 +2255,7 @@ impl Editor {
                 .with_cursor_style(CursorStyle::PointingHand)
                 .with_padding(Padding::uniform(3.))
                 .on_mouse_down(|cx| {
-                    cx.dispatch_action(ShowCodeActions(true));
+                    cx.dispatch_action(ToggleCodeActions(true));
                 })
                 .boxed(),
             )
@@ -4441,34 +4476,12 @@ impl Editor {
             }
         }
 
-        if let Some(project) = self.project.as_ref() {
-            if old_cursor_position.to_display_point(&display_map).row()
-                != new_cursor_position.to_display_point(&display_map).row()
-            {
-                self.available_code_actions.take();
-            }
-
-            let (buffer, head) = self
-                .buffer
-                .read(cx)
-                .text_anchor_for_position(new_cursor_position, cx);
-            let actions = project.update(cx, |project, cx| project.code_actions(&buffer, head, cx));
-            self.code_actions_task = Some(cx.spawn_weak(|this, mut cx| async move {
-                let actions = actions.await;
-                if let Some(this) = this.upgrade(&cx) {
-                    this.update(&mut cx, |this, cx| {
-                        this.available_code_actions = actions.log_err().and_then(|actions| {
-                            if actions.is_empty() {
-                                None
-                            } else {
-                                Some((buffer, actions.into()))
-                            }
-                        });
-                        cx.notify();
-                    })
-                }
-            }));
+        if old_cursor_position.to_display_point(&display_map).row()
+            != new_cursor_position.to_display_point(&display_map).row()
+        {
+            self.available_code_actions.take();
         }
+        self.refresh_code_actions(cx);
 
         self.pause_cursor_blinking(cx);
         cx.emit(Event::SelectionsChanged);
@@ -4823,6 +4836,7 @@ impl Editor {
 
     fn on_buffer_changed(&mut self, _: ModelHandle<MultiBuffer>, cx: &mut ViewContext<Self>) {
         self.refresh_active_diagnostics(cx);
+        self.refresh_code_actions(cx);
         cx.notify();
     }
 
