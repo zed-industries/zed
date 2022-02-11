@@ -490,7 +490,7 @@ impl ProjectDiagnosticsEditor {
                     }
                 }
             }
-            editor.update_selections(selections, None, None, cx);
+            editor.update_selections(selections, None, cx);
             Some(())
         });
 
