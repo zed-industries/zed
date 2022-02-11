@@ -397,7 +397,7 @@ impl View for DiagnosticMessage {
         if let Some(diagnostic) = &self.diagnostic {
             let theme = &self.settings.borrow().theme.workspace.status_bar;
             Label::new(
-                diagnostic.message.lines().next().unwrap().to_string(),
+                diagnostic.message.split('\n').next().unwrap().to_string(),
                 theme.diagnostic_message.clone(),
             )
             .contained()
