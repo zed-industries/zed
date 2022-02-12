@@ -11,7 +11,6 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::{cell::RefCell, fmt::Write};
 use text::{Point, Selection};
-use util::TryFutureExt;
 use workspace::{
     ItemHandle, ItemNavHistory, ItemView, ItemViewHandle, NavHistory, PathOpener, Settings,
     StatusItemView, WeakItemHandle, Workspace,
@@ -226,14 +225,21 @@ impl ItemView for Editor {
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let buffer = self.buffer().clone();
-        cx.spawn(|editor, mut cx| async move {
-            buffer
-                .update(&mut cx, |buffer, cx| buffer.format(project, cx).log_err())
-                .await;
-            editor.update(&mut cx, |editor, cx| {
+        let buffers = buffer.read(cx).all_buffers();
+        let transaction = project.update(cx, |project, cx| project.format(buffers, true, cx));
+        cx.spawn(|this, mut cx| async move {
+            let transaction = transaction.await?;
+            this.update(&mut cx, |editor, cx| {
                 editor.request_autoscroll(Autoscroll::Fit, cx)
             });
-            buffer.update(&mut cx, |buffer, cx| buffer.save(cx)).await?;
+            buffer
+                .update(&mut cx, |buffer, cx| {
+                    if !buffer.is_singleton() {
+                        buffer.push_transaction(&transaction.0);
+                    }
+                    buffer.save(cx)
+                })
+                .await?;
             Ok(())
         })
     }

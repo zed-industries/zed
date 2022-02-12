@@ -3,14 +3,13 @@ mod anchor;
 pub use anchor::{Anchor, AnchorRangeExt};
 use anyhow::Result;
 use clock::ReplicaId;
-use collections::{Bound, HashMap};
+use collections::{Bound, HashMap, HashSet};
 use gpui::{AppContext, Entity, ModelContext, ModelHandle, Task};
 pub use language::Completion;
 use language::{
     Buffer, BufferChunks, BufferSnapshot, Chunk, DiagnosticEntry, Event, File, Language, Outline,
     OutlineItem, Selection, ToOffset as _, ToPoint as _, ToPointUtf16 as _, TransactionId,
 };
-use project::Project;
 use std::{
     cell::{Ref, RefCell},
     cmp, fmt, io,
@@ -931,27 +930,12 @@ impl MultiBuffer {
         cx.emit(event.clone());
     }
 
-    pub fn format(
-        &mut self,
-        project: ModelHandle<Project>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
-        let buffers = self
-            .buffers
+    pub fn all_buffers(&self) -> HashSet<ModelHandle<Buffer>> {
+        self.buffers
             .borrow()
             .values()
             .map(|state| state.buffer.clone())
-            .collect();
-        let transaction = project.update(cx, |project, cx| project.format(buffers, true, cx));
-        cx.spawn(|this, mut cx| async move {
-            let transaction = transaction.await?;
-            this.update(&mut cx, |this, _| {
-                if !this.singleton {
-                    this.push_transaction(&transaction.0);
-                }
-            });
-            Ok(())
-        })
+            .collect()
     }
 
     pub fn save(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
