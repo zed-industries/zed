@@ -1629,38 +1629,29 @@ mod tests {
             .unwrap();
 
         worktree_a
-            .condition(&cx_a, |tree, _| tree.file_count() == 4)
+            .condition(&cx_a, |tree, _| {
+                tree.paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    == [".zed.toml", "file1-renamed", "file3", "file4"]
+            })
             .await;
         worktree_b
-            .condition(&cx_b, |tree, _| tree.file_count() == 4)
+            .condition(&cx_b, |tree, _| {
+                tree.paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    == [".zed.toml", "file1-renamed", "file3", "file4"]
+            })
             .await;
         worktree_c
-            .condition(&cx_c, |tree, _| tree.file_count() == 4)
+            .condition(&cx_c, |tree, _| {
+                tree.paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    == [".zed.toml", "file1-renamed", "file3", "file4"]
+            })
             .await;
-        worktree_a.read_with(&cx_a, |tree, _| {
-            assert_eq!(
-                tree.paths()
-                    .map(|p| p.to_string_lossy())
-                    .collect::<Vec<_>>(),
-                &[".zed.toml", "file1-renamed", "file3", "file4"]
-            )
-        });
-        worktree_b.read_with(&cx_b, |tree, _| {
-            assert_eq!(
-                tree.paths()
-                    .map(|p| p.to_string_lossy())
-                    .collect::<Vec<_>>(),
-                &[".zed.toml", "file1-renamed", "file3", "file4"]
-            )
-        });
-        worktree_c.read_with(&cx_c, |tree, _| {
-            assert_eq!(
-                tree.paths()
-                    .map(|p| p.to_string_lossy())
-                    .collect::<Vec<_>>(),
-                &[".zed.toml", "file1-renamed", "file3", "file4"]
-            )
-        });
 
         // Ensure buffer files are updated as well.
         buffer_a
