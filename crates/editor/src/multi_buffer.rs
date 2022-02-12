@@ -3673,12 +3673,29 @@ mod tests {
             multibuffer.end_transaction_at(now, cx);
             assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678");
 
+            // Edit buffer 1 through the multibuffer
             now += 2 * group_interval;
             multibuffer.start_transaction_at(now, cx);
             multibuffer.edit([2..2], "C", cx);
             multibuffer.end_transaction_at(now, cx);
             assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678");
 
+            // Edit buffer 1 independently
+            buffer_1.update(cx, |buffer_1, cx| {
+                buffer_1.start_transaction_at(now);
+                buffer_1.edit([3..3], "D", cx);
+                buffer_1.end_transaction_at(now, cx);
+
+                now += 2 * group_interval;
+                buffer_1.start_transaction_at(now);
+                buffer_1.edit([4..4], "E", cx);
+                buffer_1.end_transaction_at(now, cx);
+            });
+            assert_eq!(multibuffer.read(cx).text(), "ABCDE1234\nAB5678");
+
+            // An undo in the multibuffer undoes the multibuffer transaction
+            // and also any individual buffer edits that have occured since
+            // that transaction.
             multibuffer.undo(cx);
             assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678");
 
@@ -3689,28 +3706,28 @@ mod tests {
             assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678");
 
             multibuffer.redo(cx);
-            assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678");
+            assert_eq!(multibuffer.read(cx).text(), "ABCDE1234\nAB5678");
 
-            buffer_1.update(cx, |buffer_1, cx| buffer_1.undo(cx));
-            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678");
+            // Undo buffer 2 independently.
+            buffer_2.update(cx, |buffer_2, cx| buffer_2.undo(cx));
+            assert_eq!(multibuffer.read(cx).text(), "ABCDE1234\n5678");
+
+            // An undo in the multibuffer undoes the components of the
+            // the last multibuffer transaction that are not already undone.
+            multibuffer.undo(cx);
+            assert_eq!(multibuffer.read(cx).text(), "AB1234\n5678");
 
             multibuffer.undo(cx);
             assert_eq!(multibuffer.read(cx).text(), "1234\n5678");
 
             multibuffer.redo(cx);
-            assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678");
-
-            multibuffer.redo(cx);
-            assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678");
-
-            multibuffer.undo(cx);
             assert_eq!(multibuffer.read(cx).text(), "AB1234\nAB5678");
 
             buffer_1.update(cx, |buffer_1, cx| buffer_1.redo(cx));
-            assert_eq!(multibuffer.read(cx).text(), "ABC1234\nAB5678");
+            assert_eq!(multibuffer.read(cx).text(), "ABCD1234\nAB5678");
 
             multibuffer.undo(cx);
-            assert_eq!(multibuffer.read(cx).text(), "C1234\n5678");
+            assert_eq!(multibuffer.read(cx).text(), "1234\n5678");
         });
     }
 }
