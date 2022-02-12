@@ -818,7 +818,7 @@ impl RemoteWorktree {
     ) -> Result<()> {
         let mut tx = self.updates_tx.clone();
         let payload = envelope.payload.clone();
-        cx.background()
+        cx.foreground()
             .spawn(async move {
                 tx.send(payload).await.expect("receiver runs to completion");
             })
