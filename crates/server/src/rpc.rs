@@ -1238,7 +1238,7 @@ mod tests {
             LanguageConfig, LanguageRegistry, LanguageServerConfig, Point,
         },
         lsp,
-        project::{DiagnosticSummary, Project, ProjectPath},
+        project::{worktree::WorktreeHandle, DiagnosticSummary, Project, ProjectPath},
     };
 
     #[cfg(test)]
@@ -1607,6 +1607,11 @@ mod tests {
         buffer_a.read_with(&cx_a, |buf, _| assert!(!buf.is_dirty()));
         buffer_b.read_with(&cx_b, |buf, _| assert!(!buf.is_dirty()));
         buffer_c.condition(&cx_c, |buf, _| !buf.is_dirty()).await;
+
+        // Ensure worktree observes a/file1's change event *before* the rename occurs, otherwise
+        // when interpreting the change event it will mistakenly think that the file has been
+        // deleted (because its path has changed) and will subsequently fail to detect the rename.
+        worktree_a.flush_fs_events(&cx_a).await;
 
         // Make changes on host's file system, see those changes on guest worktrees.
         fs.rename(

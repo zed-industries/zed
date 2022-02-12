@@ -2124,7 +2124,7 @@ struct UpdateIgnoreStatusJob {
 }
 
 pub trait WorktreeHandle {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     fn flush_fs_events<'a>(
         &self,
         cx: &'a gpui::TestAppContext,
@@ -2138,7 +2138,7 @@ impl WorktreeHandle for ModelHandle<Worktree> {
     //
     // This function mutates the worktree's directory and waits for those mutations to be picked up,
     // to ensure that all redundant FS events have already been processed.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     fn flush_fs_events<'a>(
         &self,
         cx: &'a gpui::TestAppContext,
@@ -2146,14 +2146,22 @@ impl WorktreeHandle for ModelHandle<Worktree> {
         use smol::future::FutureExt;
 
         let filename = "fs-event-sentinel";
-        let root_path = cx.read(|cx| self.read(cx).as_local().unwrap().abs_path().clone());
         let tree = self.clone();
+        let (fs, root_path) = self.read_with(cx, |tree, _| {
+            let tree = tree.as_local().unwrap();
+            (tree.fs.clone(), tree.abs_path().clone())
+        });
+
         async move {
-            std::fs::write(root_path.join(filename), "").unwrap();
+            fs.create_file(&root_path.join(filename), Default::default())
+                .await
+                .unwrap();
             tree.condition(&cx, |tree, _| tree.entry_for_path(filename).is_some())
                 .await;
 
-            std::fs::remove_file(root_path.join(filename)).unwrap();
+            fs.remove_file(&root_path.join(filename), Default::default())
+                .await
+                .unwrap();
             tree.condition(&cx, |tree, _| tree.entry_for_path(filename).is_none())
                 .await;
 
