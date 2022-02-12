@@ -4857,8 +4857,6 @@ impl Editor {
     }
 
     fn on_buffer_changed(&mut self, _: ModelHandle<MultiBuffer>, cx: &mut ViewContext<Self>) {
-        self.refresh_active_diagnostics(cx);
-        self.refresh_code_actions(cx);
         cx.notify();
     }
 
@@ -4869,12 +4867,19 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            language::Event::Edited => cx.emit(Event::Edited),
+            language::Event::Edited => {
+                self.refresh_active_diagnostics(cx);
+                self.refresh_code_actions(cx);
+                cx.emit(Event::Edited);
+            }
             language::Event::Dirtied => cx.emit(Event::Dirtied),
             language::Event::Saved => cx.emit(Event::Saved),
             language::Event::FileHandleChanged => cx.emit(Event::TitleChanged),
             language::Event::Reloaded => cx.emit(Event::TitleChanged),
             language::Event::Closed => cx.emit(Event::Closed),
+            language::Event::DiagnosticsUpdated => {
+                self.refresh_active_diagnostics(cx);
+            }
             _ => {}
         }
     }
