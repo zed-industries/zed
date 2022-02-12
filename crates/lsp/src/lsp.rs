@@ -707,9 +707,15 @@ impl FakeLanguageServer {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use simplelog::SimpleLogger;
     use unindent::Unindent;
     use util::test::temp_tree;
+
+    #[ctor::ctor]
+    fn init_logger() {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::init();
+        }
+    }
 
     #[gpui::test]
     async fn test_rust_analyzer(cx: TestAppContext) {
@@ -771,8 +777,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_fake(cx: TestAppContext) {
-        SimpleLogger::init(log::LevelFilter::Info, Default::default()).unwrap();
-
         let (server, mut fake) = LanguageServer::fake(&cx).await;
 
         let (message_tx, message_rx) = channel::unbounded();

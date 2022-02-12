@@ -49,6 +49,5 @@ lsp = { path = "../lsp", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 rpc = { path = "../rpc", features = ["test-support"] }
 rand = "0.8.3"
-simplelog = "0.9"
 tempdir = { version = "0.3.7" }
 unindent = "0.1.7"
