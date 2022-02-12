@@ -684,11 +684,19 @@ impl Server {
 
         let sender = request.sender_id;
         let receipt = request.receipt();
-        let response = self
+        match self
             .peer
             .forward_request(sender, host, request.payload.clone())
-            .await?;
-        self.peer.respond(receipt, response)?;
+            .await
+        {
+            Ok(response) => self.peer.respond(receipt, response)?,
+            Err(error) => self.peer.respond_with_error(
+                receipt,
+                proto::Error {
+                    message: error.to_string(),
+                },
+            )?,
+        }
 
         Ok(())
     }
@@ -708,11 +716,19 @@ impl Server {
 
         let sender = request.sender_id;
         let receipt = request.receipt();
-        let response = self
+        match self
             .peer
             .forward_request(sender, host, request.payload.clone())
-            .await?;
-        self.peer.respond(receipt, response)?;
+            .await
+        {
+            Ok(response) => self.peer.respond(receipt, response)?,
+            Err(error) => self.peer.respond_with_error(
+                receipt,
+                proto::Error {
+                    message: error.to_string(),
+                },
+            )?,
+        }
         Ok(())
     }
 
@@ -731,11 +747,19 @@ impl Server {
 
         let sender = request.sender_id;
         let receipt = request.receipt();
-        let response = self
+        match self
             .peer
             .forward_request(sender, host, request.payload.clone())
-            .await?;
-        self.peer.respond(receipt, response)?;
+            .await
+        {
+            Ok(response) => self.peer.respond(receipt, response)?,
+            Err(error) => self.peer.respond_with_error(
+                receipt,
+                proto::Error {
+                    message: error.to_string(),
+                },
+            )?,
+        }
         Ok(())
     }
 
@@ -754,11 +778,19 @@ impl Server {
 
         let sender = request.sender_id;
         let receipt = request.receipt();
-        let response = self
+        match self
             .peer
             .forward_request(sender, host, request.payload.clone())
-            .await?;
-        self.peer.respond(receipt, response)?;
+            .await
+        {
+            Ok(response) => self.peer.respond(receipt, response)?,
+            Err(error) => self.peer.respond_with_error(
+                receipt,
+                proto::Error {
+                    message: error.to_string(),
+                },
+            )?,
+        }
         Ok(())
     }
 
@@ -777,11 +809,19 @@ impl Server {
 
         let sender = request.sender_id;
         let receipt = request.receipt();
-        let response = self
+        match self
             .peer
             .forward_request(sender, host, request.payload.clone())
-            .await?;
-        self.peer.respond(receipt, response)?;
+            .await
+        {
+            Ok(response) => self.peer.respond(receipt, response)?,
+            Err(error) => self.peer.respond_with_error(
+                receipt,
+                proto::Error {
+                    message: error.to_string(),
+                },
+            )?,
+        }
         Ok(())
     }
 
