@@ -1561,46 +1561,6 @@ impl Buffer {
         })
     }
 
-    pub fn apply_lsp_edits<I, T>(
-        &mut self,
-        edits: I,
-        version: Option<i32>,
-        cx: &mut ModelContext<Self>,
-    ) -> Result<()>
-    where
-        I: IntoIterator<IntoIter = T>,
-        T: DoubleEndedIterator<Item = lsp::TextEdit>,
-    {
-        let mut anchored_edits = Vec::new();
-        let snapshot =
-            if let Some((version, language_server)) = version.zip(self.language_server.as_mut()) {
-                language_server.snapshot_for_version(version as usize)?
-            } else {
-                self.deref()
-            };
-        for edit in edits {
-            let range = range_from_lsp(edit.range);
-            if snapshot.clip_point_utf16(range.start, Bias::Left) != range.start
-                || snapshot.clip_point_utf16(range.end, Bias::Left) != range.end
-            {
-                return Err(anyhow!(
-                    "invalid formatting edits received from language server"
-                ));
-            } else {
-                let start = snapshot.anchor_before(range.start);
-                let end = snapshot.anchor_before(range.end);
-                anchored_edits.push((start..end, edit.new_text));
-            }
-        }
-
-        self.start_transaction();
-        for (range, new_text) in anchored_edits.into_iter().rev() {
-            self.edit([range], new_text, cx);
-        }
-        self.end_transaction(cx);
-        Ok(())
-    }
-
     fn did_edit(
         &mut self,
         old_version: &clock::Global,

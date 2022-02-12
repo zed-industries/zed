@@ -1404,11 +1404,16 @@ impl Project {
                 let resolved_completion = lang_server
                     .request::<lsp::request::ResolveCompletionItem>(completion.lsp_completion)
                     .await?;
-                if let Some(additional_edits) = resolved_completion.additional_text_edits {
+                if let Some(edits) = resolved_completion.additional_text_edits {
+                    let edits = buffer_handle
+                        .update(&mut cx, |buffer, cx| buffer.edits_from_lsp(edits, None, cx))
+                        .await?;
                     buffer_handle.update(&mut cx, |buffer, cx| {
                         buffer.finalize_last_transaction();
                         buffer.start_transaction();
-                        buffer.apply_lsp_edits(additional_edits, None, cx).log_err();
+                        for (range, text) in edits {
+                            buffer.edit([range], text, cx);
+                        }
                         let transaction = if buffer.end_transaction(cx).is_some() {
                             let transaction = buffer.finalize_last_transaction().unwrap().clone();
                             if !push_to_history {
