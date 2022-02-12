@@ -2269,7 +2269,6 @@ impl Project {
             );
         }
         cx.spawn(|this, mut cx| async move {
-            dbg!("here!");
             let project_transaction = this
                 .update(&mut cx, |this, cx| this.format(buffers, false, cx))
                 .await
@@ -2373,7 +2372,6 @@ impl Project {
                 .ok_or_else(|| anyhow!("invalid completion"))?,
             language,
         )?;
-        dbg!(&completion);
         cx.spawn(|this, mut cx| async move {
             match this
                 .update(&mut cx, |this, cx| {
@@ -2420,7 +2418,6 @@ impl Project {
             .and_then(language::proto::deserialize_anchor)
             .ok_or_else(|| anyhow!("invalid position"))?;
         cx.spawn(|this, mut cx| async move {
-            eprintln!("getting code actions");
             match this
                 .update(&mut cx, |this, cx| this.code_actions(&buffer, position, cx))
                 .await
@@ -2428,7 +2425,7 @@ impl Project {
                 Ok(actions) => rpc.respond(
                     receipt,
                     proto::GetCodeActionsResponse {
-                        actions: dbg!(actions)
+                        actions: actions
                             .iter()
                             .map(language::proto::serialize_code_action)
                             .collect(),
@@ -2437,7 +2434,7 @@ impl Project {
                 Err(error) => rpc.respond_with_error(
                     receipt,
                     proto::Error {
-                        message: dbg!(error.to_string()),
+                        message: error.to_string(),
                     },
                 ),
             }

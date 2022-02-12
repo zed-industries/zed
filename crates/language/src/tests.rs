@@ -1041,10 +1041,10 @@ async fn test_edits_from_lsp_with_edits_on_adjacent_lines(mut cx: gpui::TestAppC
             buffer.edit([range], new_text, cx);
         }
         assert_eq!(
-            dbg!(buffer.text()),
+            buffer.text(),
             "
                 use a::{b, c};
-        
+
                 fn f() {
                     b();
                     c();
