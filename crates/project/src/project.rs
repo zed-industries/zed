@@ -2594,18 +2594,26 @@ impl Project {
     }
 
     fn deserialize_project_transaction(
-        &self,
+        &mut self,
         message: proto::ProjectTransaction,
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ProjectTransaction>> {
-        cx.spawn(|this, mut cx| async move {
-            let mut project_transaction = ProjectTransaction::default();
-            for (buffer, transaction) in message.buffers.into_iter().zip(message.transactions) {
-                let buffer =
-                    this.update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))?;
-                let transaction = language::proto::deserialize_transaction(transaction)?;
+        let mut project_transaction = ProjectTransaction::default();
+        for (buffer, transaction) in message.buffers.into_iter().zip(message.transactions) {
+            let buffer = match self.deserialize_buffer(buffer, cx) {
+                Ok(buffer) => buffer,
+                Err(error) => return Task::ready(Err(error)),
+            };
+            let transaction = match language::proto::deserialize_transaction(transaction) {
+                Ok(transaction) => transaction,
+                Err(error) => return Task::ready(Err(error)),
+            };
+            project_transaction.0.insert(buffer, transaction);
+        }
 
+        cx.spawn_weak(|_, mut cx| async move {
+            for (buffer, transaction) in &project_transaction.0 {
                 buffer
                     .update(&mut cx, |buffer, _| {
                         buffer.wait_for_edits(transaction.edit_ids.iter().copied())
@@ -2617,9 +2625,8 @@ impl Project {
                         buffer.push_transaction(transaction.clone(), Instant::now());
                     });
                 }
-
-                project_transaction.0.insert(buffer, transaction);
             }
+
             Ok(project_transaction)
         })
     }
