@@ -398,29 +398,23 @@ impl Channel {
         cursor
     }
 
-    fn handle_message_sent(
-        &mut self,
+    async fn handle_message_sent(
+        this: ModelHandle<Self>,
         message: TypedEnvelope<proto::ChannelMessageSent>,
         _: Arc<Client>,
-        cx: &mut ModelContext<Self>,
+        mut cx: AsyncAppContext,
     ) -> Result<()> {
-        let user_store = self.user_store.clone();
+        let user_store = this.read_with(&cx, |this, _| this.user_store.clone());
         let message = message
             .payload
             .message
             .ok_or_else(|| anyhow!("empty message"))?;
 
-        cx.spawn(|this, mut cx| {
-            async move {
-                let message = ChannelMessage::from_proto(message, &user_store, &mut cx).await?;
-                this.update(&mut cx, |this, cx| {
-                    this.insert_messages(SumTree::from_item(message, &()), cx)
-                });
-                Ok(())
-            }
-            .log_err()
-        })
-        .detach();
+        let message = ChannelMessage::from_proto(message, &user_store, &mut cx).await?;
+        this.update(&mut cx, |this, cx| {
+            this.insert_messages(SumTree::from_item(message, &()), cx)
+        });
+
         Ok(())
     }
 

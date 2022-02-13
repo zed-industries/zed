@@ -60,9 +60,9 @@ impl UserStore {
             watch::channel::<Option<proto::UpdateContacts>>();
         let update_contacts_subscription = client.subscribe(
             cx,
-            move |_: &mut Self, msg: TypedEnvelope<proto::UpdateContacts>, _, _| {
-                let _ = update_contacts_tx.blocking_send(Some(msg.payload));
-                Ok(())
+            move |_: ModelHandle<Self>, msg: TypedEnvelope<proto::UpdateContacts>, _, _| {
+                *update_contacts_tx.borrow_mut() = Some(msg.payload);
+                async move { Ok(()) }
             },
         );
         Self {
