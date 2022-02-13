@@ -122,10 +122,10 @@ impl Store {
 
         let mut result = RemovedConnectionState::default();
         for project_id in connection.projects.clone() {
-            if let Some(project) = self.unregister_project(project_id, connection_id) {
+            if let Ok(project) = self.unregister_project(project_id, connection_id) {
                 result.contact_ids.extend(project.authorized_user_ids());
                 result.hosted_projects.insert(project_id, project);
-            } else if let Some(project) = self.leave_project(connection_id, project_id) {
+            } else if let Ok(project) = self.leave_project(connection_id, project_id) {
                 result
                     .guest_project_ids
                     .insert(project_id, project.connection_ids);
@@ -254,9 +254,14 @@ impl Store {
         &mut self,
         project_id: u64,
         worktree_id: u64,
+        connection_id: ConnectionId,
         worktree: Worktree,
-    ) -> bool {
-        if let Some(project) = self.projects.get_mut(&project_id) {
+    ) -> tide::Result<()> {
+        let project = self
+            .projects
+            .get_mut(&project_id)
+            .ok_or_else(|| anyhow!("no such project"))?;
+        if project.host_connection_id == connection_id {
             for authorized_user_id in &worktree.authorized_user_ids {
                 self.visible_projects_by_user_id
                     .entry(*authorized_user_id)
@@ -270,9 +275,9 @@ impl Store {
 
             #[cfg(test)]
             self.check_invariants();
-            true
+            Ok(())
         } else {
-            false
+            Err(anyhow!("no such project"))?
         }
     }
 
@@ -280,7 +285,7 @@ impl Store {
         &mut self,
         project_id: u64,
         connection_id: ConnectionId,
-    ) -> Option<Project> {
+    ) -> tide::Result<Project> {
         match self.projects.entry(project_id) {
             hash_map::Entry::Occupied(e) => {
                 if e.get().host_connection_id == connection_id {
@@ -292,12 +297,12 @@ impl Store {
                         }
                     }
 
-                    Some(e.remove())
+                    Ok(e.remove())
                 } else {
-                    None
+                    Err(anyhow!("no such project"))?
                 }
             }
-            hash_map::Entry::Vacant(_) => None,
+            hash_map::Entry::Vacant(_) => Err(anyhow!("no such project"))?,
         }
     }
 
@@ -398,20 +403,26 @@ impl Store {
         connection_id: ConnectionId,
         entries: HashMap<u64, proto::Entry>,
         diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
-    ) -> Option<SharedWorktree> {
-        let project = self.projects.get_mut(&project_id)?;
-        let worktree = project.worktrees.get_mut(&worktree_id)?;
+    ) -> tide::Result<SharedWorktree> {
+        let project = self
+            .projects
+            .get_mut(&project_id)
+            .ok_or_else(|| anyhow!("no such project"))?;
+        let worktree = project
+            .worktrees
+            .get_mut(&worktree_id)
+            .ok_or_else(|| anyhow!("no such worktree"))?;
         if project.host_connection_id == connection_id && project.share.is_some() {
             worktree.share = Some(WorktreeShare {
                 entries,
                 diagnostic_summaries,
             });
-            Some(SharedWorktree {
+            Ok(SharedWorktree {
                 authorized_user_ids: project.authorized_user_ids(),
                 connection_ids: project.guest_connection_ids(),
             })
         } else {
-            None
+            Err(anyhow!("no such worktree"))?
         }
     }
 
@@ -421,19 +432,25 @@ impl Store {
         worktree_id: u64,
         connection_id: ConnectionId,
         summary: proto::DiagnosticSummary,
-    ) -> Option<Vec<ConnectionId>> {
-        let project = self.projects.get_mut(&project_id)?;
-        let worktree = project.worktrees.get_mut(&worktree_id)?;
+    ) -> tide::Result<Vec<ConnectionId>> {
+        let project = self
+            .projects
+            .get_mut(&project_id)
+            .ok_or_else(|| anyhow!("no such project"))?;
+        let worktree = project
+            .worktrees
+            .get_mut(&worktree_id)
+            .ok_or_else(|| anyhow!("no such worktree"))?;
         if project.host_connection_id == connection_id {
             if let Some(share) = worktree.share.as_mut() {
                 share
                     .diagnostic_summaries
                     .insert(summary.path.clone().into(), summary);
-                return Some(project.connection_ids());
+                return Ok(project.connection_ids());
             }
         }
 
-        None
+        Err(anyhow!("no such worktree"))?
     }
 
     pub fn join_project(
@@ -481,10 +498,19 @@ impl Store {
         &mut self,
         connection_id: ConnectionId,
         project_id: u64,
-    ) -> Option<LeftProject> {
-        let project = self.projects.get_mut(&project_id)?;
-        let share = project.share.as_mut()?;
-        let (replica_id, _) = share.guests.remove(&connection_id)?;
+    ) -> tide::Result<LeftProject> {
+        let project = self
+            .projects
+            .get_mut(&project_id)
+            .ok_or_else(|| anyhow!("no such project"))?;
+        let share = project
+            .share
+            .as_mut()
+            .ok_or_else(|| anyhow!("project is not shared"))?;
+        let (replica_id, _) = share
+            .guests
+            .remove(&connection_id)
+            .ok_or_else(|| anyhow!("cannot leave a project before joining it"))?;
         share.active_replica_ids.remove(&replica_id);
 
         if let Some(connection) = self.connections.get_mut(&connection_id) {
@@ -497,7 +523,7 @@ impl Store {
         #[cfg(test)]
         self.check_invariants();
 
-        Some(LeftProject {
+        Ok(LeftProject {
             connection_ids,
             authorized_user_ids,
         })
@@ -510,31 +536,40 @@ impl Store {
         worktree_id: u64,
         removed_entries: &[u64],
         updated_entries: &[proto::Entry],
-    ) -> Option<Vec<ConnectionId>> {
+    ) -> tide::Result<Vec<ConnectionId>> {
         let project = self.write_project(project_id, connection_id)?;
-        let share = project.worktrees.get_mut(&worktree_id)?.share.as_mut()?;
+        let share = project
+            .worktrees
+            .get_mut(&worktree_id)
+            .ok_or_else(|| anyhow!("no such worktree"))?
+            .share
+            .as_mut()
+            .ok_or_else(|| anyhow!("worktree is not shared"))?;
         for entry_id in removed_entries {
             share.entries.remove(&entry_id);
         }
         for entry in updated_entries {
             share.entries.insert(entry.id, entry.clone());
         }
-        Some(project.connection_ids())
+        Ok(project.connection_ids())
     }
 
     pub fn project_connection_ids(
         &self,
         project_id: u64,
         acting_connection_id: ConnectionId,
-    ) -> Option<Vec<ConnectionId>> {
-        Some(
-            self.read_project(project_id, acting_connection_id)?
-                .connection_ids(),
-        )
+    ) -> tide::Result<Vec<ConnectionId>> {
+        Ok(self
+            .read_project(project_id, acting_connection_id)?
+            .connection_ids())
     }
 
-    pub fn channel_connection_ids(&self, channel_id: ChannelId) -> Option<Vec<ConnectionId>> {
-        Some(self.channels.get(&channel_id)?.connection_ids())
+    pub fn channel_connection_ids(&self, channel_id: ChannelId) -> tide::Result<Vec<ConnectionId>> {
+        Ok(self
+            .channels
+            .get(&channel_id)
+            .ok_or_else(|| anyhow!("no such channel"))?
+            .connection_ids())
     }
 
     #[cfg(test)]
@@ -542,14 +577,26 @@ impl Store {
         self.projects.get(&project_id)
     }
 
-    pub fn read_project(&self, project_id: u64, connection_id: ConnectionId) -> Option<&Project> {
-        let project = self.projects.get(&project_id)?;
+    pub fn read_project(
+        &self,
+        project_id: u64,
+        connection_id: ConnectionId,
+    ) -> tide::Result<&Project> {
+        let project = self
+            .projects
+            .get(&project_id)
+            .ok_or_else(|| anyhow!("no such project"))?;
         if project.host_connection_id == connection_id
-            || project.share.as_ref()?.guests.contains_key(&connection_id)
+            || project
+                .share
+                .as_ref()
+                .ok_or_else(|| anyhow!("project is not shared"))?
+                .guests
+                .contains_key(&connection_id)
         {
-            Some(project)
+            Ok(project)
         } else {
-            None
+            Err(anyhow!("no such project"))?
         }
     }
 
@@ -557,14 +604,22 @@ impl Store {
         &mut self,
         project_id: u64,
         connection_id: ConnectionId,
-    ) -> Option<&mut Project> {
-        let project = self.projects.get_mut(&project_id)?;
+    ) -> tide::Result<&mut Project> {
+        let project = self
+            .projects
+            .get_mut(&project_id)
+            .ok_or_else(|| anyhow!("no such project"))?;
         if project.host_connection_id == connection_id
-            || project.share.as_ref()?.guests.contains_key(&connection_id)
+            || project
+                .share
+                .as_ref()
+                .ok_or_else(|| anyhow!("project is not shared"))?
+                .guests
+                .contains_key(&connection_id)
         {
-            Some(project)
+            Ok(project)
         } else {
-            None
+            Err(anyhow!("no such project"))?
         }
     }
 
