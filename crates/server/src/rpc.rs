@@ -1082,7 +1082,6 @@ mod tests {
         github, AppState, Config,
     };
     use ::rpc::Peer;
-    use async_std::task;
     use gpui::{executor, ModelHandle, TestAppContext};
     use parking_lot::Mutex;
     use postage::{mpsc, watch};

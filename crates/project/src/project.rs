@@ -16,8 +16,8 @@ use language::{
     point_from_lsp,
     proto::{deserialize_anchor, serialize_anchor},
     range_from_lsp, AnchorRangeExt, Bias, Buffer, CodeAction, Completion, CompletionLabel,
-    Diagnostic, DiagnosticEntry, File as _, Language, LanguageRegistry, PointUtf16, ToLspPosition,
-    ToOffset, ToPointUtf16, Transaction,
+    Diagnostic, DiagnosticEntry, File as _, Language, LanguageRegistry, Operation, PointUtf16,
+    ToLspPosition, ToOffset, ToPointUtf16, Transaction,
 };
 use lsp::{DiagnosticSeverity, LanguageServer};
 use postage::{prelude::Stream, watch};
@@ -46,12 +46,17 @@ pub struct Project {
     collaborators: HashMap<PeerId, Collaborator>,
     subscriptions: Vec<client::Subscription>,
     language_servers_with_diagnostics_running: isize,
-    open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
+    open_buffers: HashMap<usize, OpenBuffer>,
     loading_buffers: HashMap<
         ProjectPath,
         postage::watch::Receiver<Option<Result<ModelHandle<Buffer>, Arc<anyhow::Error>>>>,
     >,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
+}
+
+enum OpenBuffer {
+    Loaded(WeakModelHandle<Buffer>),
+    Operations(Vec<Operation>),
 }
 
 enum WorktreeHandle {
@@ -737,12 +742,15 @@ impl Project {
         worktree: Option<&ModelHandle<Worktree>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        if self
-            .open_buffers
-            .insert(buffer.read(cx).remote_id() as usize, buffer.downgrade())
-            .is_some()
-        {
-            return Err(anyhow!("registered the same buffer twice"));
+        match self.open_buffers.insert(
+            buffer.read(cx).remote_id() as usize,
+            OpenBuffer::Loaded(buffer.downgrade()),
+        ) {
+            None => {}
+            Some(OpenBuffer::Operations(operations)) => {
+                buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))?
+            }
+            Some(OpenBuffer::Loaded(_)) => Err(anyhow!("registered the same buffer twice"))?,
         }
         self.assign_language_to_buffer(&buffer, worktree, cx);
         Ok(())
@@ -2194,10 +2202,17 @@ impl Project {
                 .into_iter()
                 .map(|op| language::proto::deserialize_operation(op))
                 .collect::<Result<Vec<_>, _>>()?;
-            if let Some(buffer) = this.open_buffers.get_mut(&buffer_id) {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
+            let buffer = this
+                .open_buffers
+                .entry(buffer_id)
+                .or_insert_with(|| OpenBuffer::Operations(Vec::new()));
+            match buffer {
+                OpenBuffer::Loaded(buffer) => {
+                    if let Some(buffer) = buffer.upgrade(cx) {
+                        buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
+                    }
                 }
+                OpenBuffer::Operations(operations) => operations.extend_from_slice(&ops),
             }
             Ok(())
         })
@@ -2715,6 +2730,15 @@ impl WorktreeHandle {
         match self {
             WorktreeHandle::Strong(handle) => Some(handle.clone()),
             WorktreeHandle::Weak(handle) => handle.upgrade(cx),
+        }
+    }
+}
+
+impl OpenBuffer {
+    pub fn upgrade(&self, cx: &AppContext) -> Option<ModelHandle<Buffer>> {
+        match self {
+            OpenBuffer::Loaded(handle) => handle.upgrade(cx),
+            OpenBuffer::Operations(_) => None,
         }
     }
 }
