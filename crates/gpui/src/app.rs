@@ -2703,7 +2703,7 @@ impl<T: Entity> ModelHandle<T> {
         let (mut tx, mut rx) = mpsc::channel(1);
         let mut cx = cx.cx.borrow_mut();
         let subscription = cx.observe(self, move |_, _| {
-            tx.blocking_send(()).ok();
+            tx.try_send(()).ok();
         });
 
         let duration = if std::env::var("CI").is_ok() {
@@ -3007,7 +3007,7 @@ impl<T: View> ViewHandle<T> {
         let (mut tx, mut rx) = mpsc::channel(1);
         let mut cx = cx.cx.borrow_mut();
         let subscription = cx.observe(self, move |_, _| {
-            tx.blocking_send(()).ok();
+            tx.try_send(()).ok();
         });
 
         let duration = if std::env::var("CI").is_ok() {

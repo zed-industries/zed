@@ -179,7 +179,12 @@ impl Peer {
                     let channel = response_channels.lock().as_mut()?.remove(&responding_to);
                     if let Some(mut tx) = channel {
                         let mut requester_resumed = barrier::channel();
-                        tx.send((incoming, requester_resumed.0)).await.ok();
+                        if let Err(error) = tx.send((incoming, requester_resumed.0)).await {
+                            log::debug!(
+                                "received RPC but request future was dropped {:?}",
+                                error.0 .0
+                            );
+                        }
                         // Drop response channel before awaiting on the barrier. This allows the
                         // barrier to get dropped even if the request's future is dropped before it
                         // has a chance to observe the response.

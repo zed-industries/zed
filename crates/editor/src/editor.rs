@@ -2090,7 +2090,7 @@ impl Editor {
         }))
     }
 
-    fn toggle_code_actions(
+    pub fn toggle_code_actions(
         &mut self,
         &ToggleCodeActions(deployed_from_indicator): &ToggleCodeActions,
         cx: &mut ViewContext<Self>,
@@ -2136,7 +2136,7 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
-    fn confirm_code_action(
+    pub fn confirm_code_action(
         workspace: &mut Workspace,
         ConfirmCodeAction(action_ix): &ConfirmCodeAction,
         cx: &mut ViewContext<Workspace>,
@@ -2297,7 +2297,7 @@ impl Editor {
             self.completion_tasks.clear();
         }
         self.context_menu = Some(menu);
-        cx.notify()
+        cx.notify();
     }
 
     fn hide_context_menu(&mut self, cx: &mut ViewContext<Self>) -> Option<ContextMenu> {

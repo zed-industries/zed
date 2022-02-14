@@ -533,14 +533,14 @@ impl Client {
                                     match future.await {
                                         Ok(()) => {
                                             log::debug!(
-                                                "{}: rpc message '{}' handled",
+                                                "rpc message handled. client_id:{}, name:{}",
                                                 client_id,
                                                 type_name
                                             );
                                         }
                                         Err(error) => {
                                             log::error!(
-                                                "{}: error handling rpc message '{}', {}",
+                                                "error handling rpc message. client_id:{}, name:{}, error:{}",
                                                 client_id,
                                                 type_name,
                                                 error

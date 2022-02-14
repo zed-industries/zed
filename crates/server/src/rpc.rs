@@ -1089,7 +1089,10 @@ mod tests {
             self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Credentials,
             EstablishConnectionError, UserStore,
         },
-        editor::{ConfirmCompletion, Editor, EditorSettings, Input, MultiBuffer},
+        editor::{
+            self, ConfirmCodeAction, ConfirmCompletion, Editor, EditorSettings, Input, MultiBuffer,
+            Redo, ToggleCodeActions, Undo,
+        },
         fs::{FakeFs, Fs as _},
         language::{
             tree_sitter_rust, AnchorRangeExt, Diagnostic, DiagnosticEntry, Language,
@@ -1097,6 +1100,7 @@ mod tests {
         },
         lsp,
         project::{worktree::WorktreeHandle, DiagnosticSummary, Project, ProjectPath},
+        workspace::{Workspace, WorkspaceParams},
     };
 
     #[cfg(test)]
@@ -2722,6 +2726,247 @@ mod tests {
         let definitions = definitions.await.unwrap();
         assert_eq!(definitions.len(), 1);
         assert_eq!(definitions[0].target_buffer, buffer_b2);
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_collaborating_with_code_actions(
+        mut cx_a: TestAppContext,
+        mut cx_b: TestAppContext,
+    ) {
+        cx_a.foreground().forbid_parking();
+        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(FakeFs::new(cx_a.background()));
+        let mut path_openers_b = Vec::new();
+        cx_b.update(|cx| editor::init(cx, &mut path_openers_b));
+
+        // Set up a fake language server.
+        let (language_server_config, mut fake_language_server) =
+            LanguageServerConfig::fake_with_capabilities(
+                lsp::ServerCapabilities {
+                    ..Default::default()
+                },
+                &cx_a,
+            )
+            .await;
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Rust".to_string(),
+                    path_suffixes: vec!["rs".to_string()],
+                    language_server: Some(language_server_config),
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )));
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground()).await;
+        let client_a = server.create_client(&mut cx_a, "user_a").await;
+        let client_b = server.create_client(&mut cx_b, "user_b").await;
+
+        // Share a project as client A
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "main.rs": "mod other;\nfn main() { let foo = other::foo(); }",
+                "other.rs": "pub fn foo() -> usize { 4 }",
+            }),
+        )
+        .await;
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/a", false, cx)
+            })
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
+        project_a
+            .update(&mut cx_a, |p, cx| p.share(cx))
+            .await
+            .unwrap();
+
+        // Join the worktree as client B.
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+        let mut params = cx_b.update(WorkspaceParams::test);
+        params.languages = lang_registry.clone();
+        params.client = client_b.client.clone();
+        params.user_store = client_b.user_store.clone();
+        params.project = project_b;
+        params.path_openers = path_openers_b.into();
+
+        let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
+        let editor_b = workspace_b
+            .update(&mut cx_b, |workspace, cx| {
+                workspace.open_path((worktree_id, "main.rs").into(), cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        fake_language_server
+            .handle_request::<lsp::request::CodeActionRequest, _>(|params| {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                );
+                assert_eq!(params.range.start, lsp::Position::new(0, 0));
+                assert_eq!(params.range.end, lsp::Position::new(0, 0));
+                None
+            })
+            .next()
+            .await;
+
+        // Move cursor to a location that contains code actions.
+        editor_b.update(&mut cx_b, |editor, cx| {
+            editor.select_ranges([Point::new(1, 31)..Point::new(1, 31)], None, cx);
+            cx.focus(&editor_b);
+        });
+        fake_language_server.handle_request::<lsp::request::CodeActionRequest, _>(|params| {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+            );
+            assert_eq!(params.range.start, lsp::Position::new(1, 31));
+            assert_eq!(params.range.end, lsp::Position::new(1, 31));
+
+            Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                lsp::CodeAction {
+                    title: "Inline into all callers".to_string(),
+                    edit: Some(lsp::WorkspaceEdit {
+                        changes: Some(
+                            [
+                                (
+                                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                    vec![lsp::TextEdit::new(
+                                        lsp::Range::new(
+                                            lsp::Position::new(1, 22),
+                                            lsp::Position::new(1, 34),
+                                        ),
+                                        "4".to_string(),
+                                    )],
+                                ),
+                                (
+                                    lsp::Url::from_file_path("/a/other.rs").unwrap(),
+                                    vec![lsp::TextEdit::new(
+                                        lsp::Range::new(
+                                            lsp::Position::new(0, 0),
+                                            lsp::Position::new(0, 27),
+                                        ),
+                                        "".to_string(),
+                                    )],
+                                ),
+                            ]
+                            .into_iter()
+                            .collect(),
+                        ),
+                        ..Default::default()
+                    }),
+                    data: Some(json!({
+                        "codeActionParams": {
+                            "range": {
+                                "start": {"line": 1, "column": 31},
+                                "end": {"line": 1, "column": 31},
+                            }
+                        }
+                    })),
+                    ..Default::default()
+                },
+            )])
+        });
+
+        // Toggle code actions and wait for them to display.
+        editor_b.update(&mut cx_b, |editor, cx| {
+            editor.toggle_code_actions(&ToggleCodeActions(false), cx);
+        });
+        editor_b
+            .condition(&cx_b, |editor, _| editor.context_menu_visible())
+            .await;
+
+        // Confirming the code action will trigger a resolve request.
+        let confirm_action = workspace_b
+            .update(&mut cx_b, |workspace, cx| {
+                Editor::confirm_code_action(workspace, &ConfirmCodeAction(Some(0)), cx)
+            })
+            .unwrap();
+        fake_language_server.handle_request::<lsp::request::CodeActionResolveRequest, _>(|_| {
+            lsp::CodeAction {
+                title: "Inline into all callers".to_string(),
+                edit: Some(lsp::WorkspaceEdit {
+                    changes: Some(
+                        [
+                            (
+                                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                vec![lsp::TextEdit::new(
+                                    lsp::Range::new(
+                                        lsp::Position::new(1, 22),
+                                        lsp::Position::new(1, 34),
+                                    ),
+                                    "4".to_string(),
+                                )],
+                            ),
+                            (
+                                lsp::Url::from_file_path("/a/other.rs").unwrap(),
+                                vec![lsp::TextEdit::new(
+                                    lsp::Range::new(
+                                        lsp::Position::new(0, 0),
+                                        lsp::Position::new(0, 27),
+                                    ),
+                                    "".to_string(),
+                                )],
+                            ),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }
+        });
+
+        // After the action is confirmed, an editor containing both modified files is opened.
+        confirm_action.await.unwrap();
+        let code_action_editor = workspace_b.read_with(&cx_b, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .unwrap()
+                .downcast::<Editor>()
+                .unwrap()
+        });
+        code_action_editor.update(&mut cx_b, |editor, cx| {
+            assert_eq!(editor.text(cx), "\nmod other;\nfn main() { let foo = 4; }");
+            editor.undo(&Undo, cx);
+            assert_eq!(
+                editor.text(cx),
+                "pub fn foo() -> usize { 4 }\nmod other;\nfn main() { let foo = other::foo(); }"
+            );
+            editor.redo(&Redo, cx);
+            assert_eq!(editor.text(cx), "\nmod other;\nfn main() { let foo = 4; }");
+        });
     }
 
     #[gpui::test(iterations = 10)]
