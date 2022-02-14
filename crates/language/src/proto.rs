@@ -428,19 +428,24 @@ pub fn deserialize_completion(
 
 pub fn serialize_code_action(action: &CodeAction) -> proto::CodeAction {
     proto::CodeAction {
-        position: Some(serialize_anchor(&action.position)),
+        start: Some(serialize_anchor(&action.range.start)),
+        end: Some(serialize_anchor(&action.range.end)),
         lsp_action: serde_json::to_vec(&action.lsp_action).unwrap(),
     }
 }
 
 pub fn deserialize_code_action(action: proto::CodeAction) -> Result<CodeAction> {
-    let position = action
-        .position
+    let start = action
+        .start
         .and_then(deserialize_anchor)
-        .ok_or_else(|| anyhow!("invalid position"))?;
+        .ok_or_else(|| anyhow!("invalid start"))?;
+    let end = action
+        .end
+        .and_then(deserialize_anchor)
+        .ok_or_else(|| anyhow!("invalid end"))?;
     let lsp_action = serde_json::from_slice(&action.lsp_action)?;
     Ok(CodeAction {
-        position,
+        range: start..end,
         lsp_action,
     })
 }

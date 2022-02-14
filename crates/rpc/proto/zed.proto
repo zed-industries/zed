@@ -246,7 +246,8 @@ message Completion {
 message GetCodeActions {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
-    Anchor position = 3;
+    Anchor start = 3;
+    Anchor end = 4;
 }
 
 message GetCodeActionsResponse {
@@ -264,8 +265,9 @@ message ApplyCodeActionResponse {
 }
 
 message CodeAction {
-    Anchor position = 1;
-    bytes lsp_action = 2;
+    Anchor start = 1;
+    Anchor end = 2;
+    bytes lsp_action = 3;
 }
 
 message ProjectTransaction {

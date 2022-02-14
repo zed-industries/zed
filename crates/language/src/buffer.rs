@@ -123,7 +123,7 @@ pub struct Completion {
 
 #[derive(Clone, Debug)]
 pub struct CodeAction {
-    pub position: Anchor,
+    pub range: Range<Anchor>,
     pub lsp_action: lsp::CodeAction,
 }
 

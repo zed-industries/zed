@@ -2230,12 +2230,17 @@ impl Editor {
 
     fn refresh_code_actions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
         let project = self.project.as_ref()?;
-        let new_cursor_position = self.newest_anchor_selection().head();
-        let (buffer, head) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(new_cursor_position, cx)?;
-        let actions = project.update(cx, |project, cx| project.code_actions(&buffer, head, cx));
+        let buffer = self.buffer.read(cx);
+        let newest_selection = self.newest_anchor_selection().clone();
+        let (start_buffer, start) = buffer.text_anchor_for_position(newest_selection.start, cx)?;
+        let (end_buffer, end) = buffer.text_anchor_for_position(newest_selection.end, cx)?;
+        if start_buffer != end_buffer {
+            return None;
+        }
+
+        let actions = project.update(cx, |project, cx| {
+            project.code_actions(&start_buffer, start..end, cx)
+        });
         self.code_actions_task = Some(cx.spawn_weak(|this, mut cx| async move {
             let actions = actions.await;
             if let Some(this) = this.upgrade(&cx) {
@@ -2244,7 +2249,7 @@ impl Editor {
                         if actions.is_empty() {
                             None
                         } else {
-                            Some((buffer, actions.into()))
+                            Some((start_buffer, actions.into()))
                         }
                     });
                     cx.notify();
