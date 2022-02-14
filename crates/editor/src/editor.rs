@@ -2264,7 +2264,7 @@ impl Editor {
             enum Tag {}
             let style = (self.build_settings)(cx).style;
             Some(
-                MouseEventHandler::new::<Tag, _, _, _>(0, cx, |_, _| {
+                MouseEventHandler::new::<Tag, _, _, _>(cx.view_id(), cx, |_, _| {
                     Svg::new("icons/zap.svg")
                         .with_color(style.code_actions_indicator)
                         .boxed()
