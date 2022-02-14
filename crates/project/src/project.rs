@@ -1511,28 +1511,28 @@ impl Project {
                 return Task::ready(Ok(Default::default()));
             }
 
-            let actions =
-                lang_server.request::<lsp::request::CodeActionRequest>(lsp::CodeActionParams {
-                    text_document: lsp::TextDocumentIdentifier::new(
-                        lsp::Url::from_file_path(buffer_abs_path).unwrap(),
-                    ),
-                    range: lsp::Range::new(
-                        range.start.to_point_utf16(buffer).to_lsp_position(),
-                        range.end.to_point_utf16(buffer).to_lsp_position(),
-                    ),
-                    work_done_progress_params: Default::default(),
-                    partial_result_params: Default::default(),
-                    context: lsp::CodeActionContext {
-                        diagnostics: Default::default(),
-                        only: Some(vec![
-                            lsp::CodeActionKind::QUICKFIX,
-                            lsp::CodeActionKind::REFACTOR,
-                            lsp::CodeActionKind::REFACTOR_EXTRACT,
-                        ]),
-                    },
-                });
+            let lsp_range = lsp::Range::new(
+                range.start.to_point_utf16(buffer).to_lsp_position(),
+                range.end.to_point_utf16(buffer).to_lsp_position(),
+            );
             cx.foreground().spawn(async move {
-                Ok(actions
+                Ok(lang_server
+                    .request::<lsp::request::CodeActionRequest>(lsp::CodeActionParams {
+                        text_document: lsp::TextDocumentIdentifier::new(
+                            lsp::Url::from_file_path(buffer_abs_path).unwrap(),
+                        ),
+                        range: lsp_range,
+                        work_done_progress_params: Default::default(),
+                        partial_result_params: Default::default(),
+                        context: lsp::CodeActionContext {
+                            diagnostics: Default::default(),
+                            only: Some(vec![
+                                lsp::CodeActionKind::QUICKFIX,
+                                lsp::CodeActionKind::REFACTOR,
+                                lsp::CodeActionKind::REFACTOR_EXTRACT,
+                            ]),
+                        },
+                    })
                     .await?
                     .unwrap_or_default()
                     .into_iter()
