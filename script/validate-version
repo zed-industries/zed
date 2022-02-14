@@ -1,0 +1,16 @@
+#!/bin/bash
+
+set -e
+
+if [[ ! -f vendor/bin/jq ]]; then
+    curl -L https://github.com/stedolan/jq/releases/download/jq-1.6/jq-osx-amd64 > vendor/bin/jq
+    chmod +x vendor/bin/jq
+fi
+
+package_version="v$(cargo metadata --format-version=1 | vendor/bin/jq --raw-output '.packages[] | select(.name == "zed") | .version')"
+git_tag=$(git tag --points-at HEAD)
+
+if [[ $package_version != $git_tag ]]; then
+    echo "Version $package_version of zed package does not match git tag $git_tag"
+    exit 1
+fi

@@ -69,6 +69,10 @@ jobs:
         uses: actions/checkout@v2
         with:
           clean: false
+          
+      - name: Validate version
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: script/validate-version
 
       - name: Download rust-analyzer
         run: script/download-rust-analyzer
