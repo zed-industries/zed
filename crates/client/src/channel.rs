@@ -184,7 +184,8 @@ impl Channel {
         rpc: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let _subscription = rpc.subscribe_to_entity(details.id, cx, Self::handle_message_sent);
+        let _subscription =
+            rpc.add_entity_message_handler(details.id, cx, Self::handle_message_sent);
 
         {
             let user_store = user_store.clone();

@@ -280,31 +280,43 @@ impl Project {
                 user_store,
                 fs,
                 subscriptions: vec![
-                    client.subscribe_to_entity(remote_id, cx, Self::handle_unshare_project),
-                    client.subscribe_to_entity(remote_id, cx, Self::handle_add_collaborator),
-                    client.subscribe_to_entity(remote_id, cx, Self::handle_remove_collaborator),
-                    client.subscribe_to_entity(remote_id, cx, Self::handle_share_worktree),
-                    client.subscribe_to_entity(remote_id, cx, Self::handle_unregister_worktree),
-                    client.subscribe_to_entity(remote_id, cx, Self::handle_update_worktree),
-                    client.subscribe_to_entity(
+                    client.add_entity_message_handler(remote_id, cx, Self::handle_unshare_project),
+                    client.add_entity_message_handler(remote_id, cx, Self::handle_add_collaborator),
+                    client.add_entity_message_handler(
+                        remote_id,
+                        cx,
+                        Self::handle_remove_collaborator,
+                    ),
+                    client.add_entity_message_handler(remote_id, cx, Self::handle_share_worktree),
+                    client.add_entity_message_handler(
+                        remote_id,
+                        cx,
+                        Self::handle_unregister_worktree,
+                    ),
+                    client.add_entity_message_handler(remote_id, cx, Self::handle_update_worktree),
+                    client.add_entity_message_handler(
                         remote_id,
                         cx,
                         Self::handle_update_diagnostic_summary,
                     ),
-                    client.subscribe_to_entity(
+                    client.add_entity_message_handler(
                         remote_id,
                         cx,
                         Self::handle_disk_based_diagnostics_updating,
                     ),
-                    client.subscribe_to_entity(
+                    client.add_entity_message_handler(
                         remote_id,
                         cx,
                         Self::handle_disk_based_diagnostics_updated,
                     ),
-                    client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
-                    client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer_file),
-                    client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_reloaded),
-                    client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
+                    client.add_entity_message_handler(remote_id, cx, Self::handle_update_buffer),
+                    client.add_entity_message_handler(
+                        remote_id,
+                        cx,
+                        Self::handle_update_buffer_file,
+                    ),
+                    client.add_entity_message_handler(remote_id, cx, Self::handle_buffer_reloaded),
+                    client.add_entity_message_handler(remote_id, cx, Self::handle_buffer_saved),
                 ],
                 client,
                 client_state: ProjectClientState::Remote {
@@ -340,24 +352,24 @@ impl Project {
         if let Some(remote_id) = remote_id {
             let client = &self.client;
             self.subscriptions.extend([
-                client.subscribe_to_entity_request(remote_id, cx, Self::handle_open_buffer),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_close_buffer),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_add_collaborator),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_remove_collaborator),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_update_worktree),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_update_buffer),
-                client.subscribe_to_entity_request(remote_id, cx, Self::handle_save_buffer),
-                client.subscribe_to_entity(remote_id, cx, Self::handle_buffer_saved),
-                client.subscribe_to_entity_request(remote_id, cx, Self::handle_format_buffers),
-                client.subscribe_to_entity_request(remote_id, cx, Self::handle_get_completions),
-                client.subscribe_to_entity_request(
+                client.add_entity_request_handler(remote_id, cx, Self::handle_open_buffer),
+                client.add_entity_message_handler(remote_id, cx, Self::handle_close_buffer),
+                client.add_entity_message_handler(remote_id, cx, Self::handle_add_collaborator),
+                client.add_entity_message_handler(remote_id, cx, Self::handle_remove_collaborator),
+                client.add_entity_message_handler(remote_id, cx, Self::handle_update_worktree),
+                client.add_entity_message_handler(remote_id, cx, Self::handle_update_buffer),
+                client.add_entity_request_handler(remote_id, cx, Self::handle_save_buffer),
+                client.add_entity_message_handler(remote_id, cx, Self::handle_buffer_saved),
+                client.add_entity_request_handler(remote_id, cx, Self::handle_format_buffers),
+                client.add_entity_request_handler(remote_id, cx, Self::handle_get_completions),
+                client.add_entity_request_handler(
                     remote_id,
                     cx,
                     Self::handle_apply_additional_edits_for_completion,
                 ),
-                client.subscribe_to_entity_request(remote_id, cx, Self::handle_get_code_actions),
-                client.subscribe_to_entity_request(remote_id, cx, Self::handle_apply_code_action),
-                client.subscribe_to_entity_request(remote_id, cx, Self::handle_get_definition),
+                client.add_entity_request_handler(remote_id, cx, Self::handle_get_code_actions),
+                client.add_entity_request_handler(remote_id, cx, Self::handle_apply_code_action),
+                client.add_entity_request_handler(remote_id, cx, Self::handle_get_definition),
             ]);
         }
     }

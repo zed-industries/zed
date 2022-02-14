@@ -58,7 +58,7 @@ impl UserStore {
         let (mut current_user_tx, current_user_rx) = watch::channel();
         let (mut update_contacts_tx, mut update_contacts_rx) =
             watch::channel::<Option<proto::UpdateContacts>>();
-        let update_contacts_subscription = client.subscribe(
+        let update_contacts_subscription = client.add_message_handler(
             cx,
             move |_: ModelHandle<Self>, msg: TypedEnvelope<proto::UpdateContacts>, _, _| {
                 *update_contacts_tx.borrow_mut() = Some(msg.payload);

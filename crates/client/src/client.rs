@@ -266,7 +266,7 @@ impl Client {
         }
     }
 
-    pub fn subscribe<T, M, F, Fut>(
+    pub fn add_message_handler<T, M, F, Fut>(
         self: &Arc<Self>,
         cx: &mut ModelContext<M>,
         mut handler: F,
@@ -311,7 +311,7 @@ impl Client {
         }
     }
 
-    pub fn subscribe_to_entity<T, M, F, Fut>(
+    pub fn add_entity_message_handler<T, M, F, Fut>(
         self: &Arc<Self>,
         remote_id: u64,
         cx: &mut ModelContext<M>,
@@ -369,7 +369,7 @@ impl Client {
         }
     }
 
-    pub fn subscribe_to_entity_request<T, M, F, Fut>(
+    pub fn add_entity_request_handler<T, M, F, Fut>(
         self: &Arc<Self>,
         remote_id: u64,
         cx: &mut ModelContext<M>,
@@ -384,7 +384,7 @@ impl Client {
             + FnMut(ModelHandle<M>, TypedEnvelope<T>, Arc<Self>, AsyncAppContext) -> Fut,
         Fut: 'static + Future<Output = Result<T::Response>>,
     {
-        self.subscribe_to_entity(remote_id, cx, move |model, envelope, client, cx| {
+        self.add_entity_message_handler(remote_id, cx, move |model, envelope, client, cx| {
             let receipt = envelope.receipt();
             let response = handler(model, envelope, client.clone(), cx);
             async move {
@@ -927,7 +927,7 @@ mod tests {
         let (mut done_tx1, mut done_rx1) = postage::oneshot::channel();
         let (mut done_tx2, mut done_rx2) = postage::oneshot::channel();
         let _subscription1 = model.update(&mut cx, |_, cx| {
-            client.subscribe_to_entity(
+            client.add_entity_message_handler(
                 1,
                 cx,
                 move |_, _: TypedEnvelope<proto::UnshareProject>, _, _| {
@@ -937,7 +937,7 @@ mod tests {
             )
         });
         let _subscription2 = model.update(&mut cx, |_, cx| {
-            client.subscribe_to_entity(
+            client.add_entity_message_handler(
                 2,
                 cx,
                 move |_, _: TypedEnvelope<proto::UnshareProject>, _, _| {
@@ -950,7 +950,7 @@ mod tests {
         // Ensure dropping a subscription for the same entity type still allows receiving of
         // messages for other entity IDs of the same type.
         let subscription3 = model.update(&mut cx, |_, cx| {
-            client.subscribe_to_entity(
+            client.add_entity_message_handler(
                 3,
                 cx,
                 |_, _: TypedEnvelope<proto::UnshareProject>, _, _| async { Ok(()) },
@@ -976,14 +976,14 @@ mod tests {
         let (mut done_tx1, _done_rx1) = postage::oneshot::channel();
         let (mut done_tx2, mut done_rx2) = postage::oneshot::channel();
         let subscription1 = model.update(&mut cx, |_, cx| {
-            client.subscribe(cx, move |_, _: TypedEnvelope<proto::Ping>, _, _| {
+            client.add_message_handler(cx, move |_, _: TypedEnvelope<proto::Ping>, _, _| {
                 postage::sink::Sink::try_send(&mut done_tx1, ()).unwrap();
                 async { Ok(()) }
             })
         });
         drop(subscription1);
         let _subscription2 = model.update(&mut cx, |_, cx| {
-            client.subscribe(cx, move |_, _: TypedEnvelope<proto::Ping>, _, _| {
+            client.add_message_handler(cx, move |_, _: TypedEnvelope<proto::Ping>, _, _| {
                 postage::sink::Sink::try_send(&mut done_tx2, ()).unwrap();
                 async { Ok(()) }
             })
@@ -1003,7 +1003,7 @@ mod tests {
         let model = cx.add_model(|_| Model { subscription: None });
         let (mut done_tx, mut done_rx) = postage::oneshot::channel();
         model.update(&mut cx, |model, cx| {
-            model.subscription = Some(client.subscribe(
+            model.subscription = Some(client.add_message_handler(
                 cx,
                 move |model, _: TypedEnvelope<proto::Ping>, _, mut cx| {
                     model.update(&mut cx, |model, _| model.subscription.take());
