@@ -5,7 +5,7 @@ use futures::stream::BoxStream;
 use futures::{FutureExt as _, StreamExt};
 use parking_lot::{Mutex, RwLock};
 use postage::{
-    barrier, mpsc,
+    mpsc,
     prelude::{Sink as _, Stream as _},
 };
 use smol_timeout::TimeoutExt as _;
@@ -91,8 +91,7 @@ pub struct Peer {
 pub struct ConnectionState {
     outgoing_tx: futures::channel::mpsc::UnboundedSender<proto::Envelope>,
     next_message_id: Arc<AtomicU32>,
-    response_channels:
-        Arc<Mutex<Option<HashMap<u32, mpsc::Sender<(proto::Envelope, barrier::Sender)>>>>>,
+    response_channels: Arc<Mutex<Option<HashMap<u32, mpsc::Sender<proto::Envelope>>>>>,
 }
 
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -178,18 +177,12 @@ impl Peer {
                 if let Some(responding_to) = incoming.responding_to {
                     let channel = response_channels.lock().as_mut()?.remove(&responding_to);
                     if let Some(mut tx) = channel {
-                        let mut requester_resumed = barrier::channel();
-                        if let Err(error) = tx.send((incoming, requester_resumed.0)).await {
+                        if let Err(error) = tx.send(incoming).await {
                             log::debug!(
                                 "received RPC but request future was dropped {:?}",
-                                error.0 .0
+                                error.0
                             );
                         }
-                        // Drop response channel before awaiting on the barrier. This allows the
-                        // barrier to get dropped even if the request's future is dropped before it
-                        // has a chance to observe the response.
-                        drop(tx);
-                        requester_resumed.1.recv().await;
                     } else {
                         log::warn!("received RPC response to unknown request {}", responding_to);
                     }
@@ -260,7 +253,7 @@ impl Peer {
         });
         async move {
             send?;
-            let (response, _barrier) = rx
+            let response = rx
                 .recv()
                 .await
                 .ok_or_else(|| anyhow!("connection was closed"))?;
