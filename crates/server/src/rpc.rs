@@ -121,36 +121,27 @@ impl Server {
         Fut: 'static + Send + Future<Output = tide::Result<M::Response>>,
         M: RequestMessage,
     {
-        let prev_handler = self.handlers.insert(
-            TypeId::of::<M>(),
-            Box::new(move |server, envelope| {
-                let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
-                let receipt = envelope.receipt();
-                let response = (handler)(server.clone(), *envelope);
-                async move {
-                    match response.await {
-                        Ok(response) => {
-                            server.peer.respond(receipt, response)?;
-                            Ok(())
-                        }
-                        Err(error) => {
-                            server.peer.respond_with_error(
-                                receipt,
-                                proto::Error {
-                                    message: error.to_string(),
-                                },
-                            )?;
-                            Err(error)
-                        }
+        self.add_message_handler(move |server, envelope| {
+            let receipt = envelope.receipt();
+            let response = (handler)(server.clone(), envelope);
+            async move {
+                match response.await {
+                    Ok(response) => {
+                        server.peer.respond(receipt, response)?;
+                        Ok(())
+                    }
+                    Err(error) => {
+                        server.peer.respond_with_error(
+                            receipt,
+                            proto::Error {
+                                message: error.to_string(),
+                            },
+                        )?;
+                        Err(error)
                     }
                 }
-                .boxed()
-            }),
-        );
-        if prev_handler.is_some() {
-            panic!("registered a handler for the same message twice");
-        }
-        self
+            }
+        })
     }
 
     pub fn handle_connection(
