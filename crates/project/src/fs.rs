@@ -73,7 +73,7 @@ impl Fs for RealFs {
 
     async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()> {
         let mut open_options = smol::fs::OpenOptions::new();
-        open_options.create(true);
+        open_options.write(true).create(true);
         if options.overwrite {
             open_options.truncate(true);
         } else if !options.ignore_if_exists {
