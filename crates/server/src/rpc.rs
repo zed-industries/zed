@@ -13,7 +13,7 @@ use futures::{future::BoxFuture, FutureExt, StreamExt};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use postage::{mpsc, prelude::Sink as _};
 use rpc::{
-    proto::{self, AnyTypedEnvelope, EnvelopedMessage},
+    proto::{self, AnyTypedEnvelope, EnvelopedMessage, RequestMessage},
     Connection, ConnectionId, Peer, TypedEnvelope,
 };
 use sha1::{Digest as _, Sha1};
@@ -43,7 +43,6 @@ pub struct Server {
 
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;
-const NO_SUCH_PROJECT: &'static str = "no such project";
 
 impl Server {
     pub fn new(
@@ -60,42 +59,44 @@ impl Server {
         };
 
         server
-            .add_handler(Server::ping)
-            .add_handler(Server::register_project)
-            .add_handler(Server::unregister_project)
-            .add_handler(Server::share_project)
-            .add_handler(Server::unshare_project)
-            .add_handler(Server::join_project)
-            .add_handler(Server::leave_project)
-            .add_handler(Server::register_worktree)
-            .add_handler(Server::unregister_worktree)
-            .add_handler(Server::share_worktree)
-            .add_handler(Server::update_worktree)
-            .add_handler(Server::update_diagnostic_summary)
-            .add_handler(Server::disk_based_diagnostics_updating)
-            .add_handler(Server::disk_based_diagnostics_updated)
-            .add_handler(Server::get_definition)
-            .add_handler(Server::open_buffer)
-            .add_handler(Server::close_buffer)
-            .add_handler(Server::update_buffer)
-            .add_handler(Server::update_buffer_file)
-            .add_handler(Server::buffer_reloaded)
-            .add_handler(Server::buffer_saved)
-            .add_handler(Server::save_buffer)
-            .add_handler(Server::format_buffer)
-            .add_handler(Server::get_completions)
-            .add_handler(Server::apply_additional_edits_for_completion)
-            .add_handler(Server::get_channels)
-            .add_handler(Server::get_users)
-            .add_handler(Server::join_channel)
-            .add_handler(Server::leave_channel)
-            .add_handler(Server::send_channel_message)
-            .add_handler(Server::get_channel_messages);
+            .add_request_handler(Server::ping)
+            .add_request_handler(Server::register_project)
+            .add_message_handler(Server::unregister_project)
+            .add_request_handler(Server::share_project)
+            .add_message_handler(Server::unshare_project)
+            .add_request_handler(Server::join_project)
+            .add_message_handler(Server::leave_project)
+            .add_request_handler(Server::register_worktree)
+            .add_message_handler(Server::unregister_worktree)
+            .add_request_handler(Server::share_worktree)
+            .add_message_handler(Server::update_worktree)
+            .add_message_handler(Server::update_diagnostic_summary)
+            .add_message_handler(Server::disk_based_diagnostics_updating)
+            .add_message_handler(Server::disk_based_diagnostics_updated)
+            .add_request_handler(Server::get_definition)
+            .add_request_handler(Server::open_buffer)
+            .add_message_handler(Server::close_buffer)
+            .add_request_handler(Server::update_buffer)
+            .add_message_handler(Server::update_buffer_file)
+            .add_message_handler(Server::buffer_reloaded)
+            .add_message_handler(Server::buffer_saved)
+            .add_request_handler(Server::save_buffer)
+            .add_request_handler(Server::format_buffers)
+            .add_request_handler(Server::get_completions)
+            .add_request_handler(Server::apply_additional_edits_for_completion)
+            .add_request_handler(Server::get_code_actions)
+            .add_request_handler(Server::apply_code_action)
+            .add_request_handler(Server::get_channels)
+            .add_request_handler(Server::get_users)
+            .add_request_handler(Server::join_channel)
+            .add_message_handler(Server::leave_channel)
+            .add_request_handler(Server::send_channel_message)
+            .add_request_handler(Server::get_channel_messages);
 
         Arc::new(server)
     }
 
-    fn add_handler<F, Fut, M>(&mut self, handler: F) -> &mut Self
+    fn add_message_handler<F, Fut, M>(&mut self, handler: F) -> &mut Self
     where
         F: 'static + Send + Sync + Fn(Arc<Self>, TypedEnvelope<M>) -> Fut,
         Fut: 'static + Send + Future<Output = tide::Result<()>>,
@@ -112,6 +113,35 @@ impl Server {
             panic!("registered a handler for the same message twice");
         }
         self
+    }
+
+    fn add_request_handler<F, Fut, M>(&mut self, handler: F) -> &mut Self
+    where
+        F: 'static + Send + Sync + Fn(Arc<Self>, TypedEnvelope<M>) -> Fut,
+        Fut: 'static + Send + Future<Output = tide::Result<M::Response>>,
+        M: RequestMessage,
+    {
+        self.add_message_handler(move |server, envelope| {
+            let receipt = envelope.receipt();
+            let response = (handler)(server.clone(), envelope);
+            async move {
+                match response.await {
+                    Ok(response) => {
+                        server.peer.respond(receipt, response)?;
+                        Ok(())
+                    }
+                    Err(error) => {
+                        server.peer.respond_with_error(
+                            receipt,
+                            proto::Error {
+                                message: error.to_string(),
+                            },
+                        )?;
+                        Err(error)
+                    }
+                }
+            }
+        })
     }
 
     pub fn handle_connection(
@@ -212,25 +242,20 @@ impl Server {
         Ok(())
     }
 
-    async fn ping(self: Arc<Server>, request: TypedEnvelope<proto::Ping>) -> tide::Result<()> {
-        self.peer.respond(request.receipt(), proto::Ack {})?;
-        Ok(())
+    async fn ping(self: Arc<Server>, _: TypedEnvelope<proto::Ping>) -> tide::Result<proto::Ack> {
+        Ok(proto::Ack {})
     }
 
     async fn register_project(
         mut self: Arc<Server>,
         request: TypedEnvelope<proto::RegisterProject>,
-    ) -> tide::Result<()> {
+    ) -> tide::Result<proto::RegisterProjectResponse> {
         let project_id = {
             let mut state = self.state_mut();
             let user_id = state.user_id_for_connection(request.sender_id)?;
             state.register_project(request.sender_id, user_id)
         };
-        self.peer.respond(
-            request.receipt(),
-            proto::RegisterProjectResponse { project_id },
-        )?;
-        Ok(())
+        Ok(proto::RegisterProjectResponse { project_id })
     }
 
     async fn unregister_project(
@@ -239,8 +264,7 @@ impl Server {
     ) -> tide::Result<()> {
         let project = self
             .state_mut()
-            .unregister_project(request.payload.project_id, request.sender_id)
-            .ok_or_else(|| anyhow!("no such project"))?;
+            .unregister_project(request.payload.project_id, request.sender_id)?;
         self.update_contacts_for_users(project.authorized_user_ids().iter())?;
         Ok(())
     }
@@ -248,11 +272,10 @@ impl Server {
     async fn share_project(
         mut self: Arc<Server>,
         request: TypedEnvelope<proto::ShareProject>,
-    ) -> tide::Result<()> {
+    ) -> tide::Result<proto::Ack> {
         self.state_mut()
             .share_project(request.payload.project_id, request.sender_id);
-        self.peer.respond(request.receipt(), proto::Ack {})?;
-        Ok(())
+        Ok(proto::Ack {})
     }
 
     async fn unshare_project(
@@ -275,11 +298,11 @@ impl Server {
     async fn join_project(
         mut self: Arc<Server>,
         request: TypedEnvelope<proto::JoinProject>,
-    ) -> tide::Result<()> {
+    ) -> tide::Result<proto::JoinProjectResponse> {
         let project_id = request.payload.project_id;
 
         let user_id = self.state().user_id_for_connection(request.sender_id)?;
-        let response_data = self
+        let (response, connection_ids, contact_user_ids) = self
             .state_mut()
             .join_project(request.sender_id, user_id, project_id)
             .and_then(|joined| {
@@ -326,37 +349,23 @@ impl Server {
                 let connection_ids = joined.project.connection_ids();
                 let contact_user_ids = joined.project.authorized_user_ids();
                 Ok((response, connection_ids, contact_user_ids))
-            });
+            })?;
 
-        match response_data {
-            Ok((response, connection_ids, contact_user_ids)) => {
-                broadcast(request.sender_id, connection_ids, |conn_id| {
-                    self.peer.send(
-                        conn_id,
-                        proto::AddProjectCollaborator {
-                            project_id,
-                            collaborator: Some(proto::Collaborator {
-                                peer_id: request.sender_id.0,
-                                replica_id: response.replica_id,
-                                user_id: user_id.to_proto(),
-                            }),
-                        },
-                    )
-                })?;
-                self.peer.respond(request.receipt(), response)?;
-                self.update_contacts_for_users(&contact_user_ids)?;
-            }
-            Err(error) => {
-                self.peer.respond_with_error(
-                    request.receipt(),
-                    proto::Error {
-                        message: error.to_string(),
-                    },
-                )?;
-            }
-        }
-
-        Ok(())
+        broadcast(request.sender_id, connection_ids, |conn_id| {
+            self.peer.send(
+                conn_id,
+                proto::AddProjectCollaborator {
+                    project_id,
+                    collaborator: Some(proto::Collaborator {
+                        peer_id: request.sender_id.0,
+                        replica_id: response.replica_id,
+                        user_id: user_id.to_proto(),
+                    }),
+                },
+            )
+        })?;
+        self.update_contacts_for_users(&contact_user_ids)?;
+        Ok(response)
     }
 
     async fn leave_project(
@@ -365,70 +374,49 @@ impl Server {
     ) -> tide::Result<()> {
         let sender_id = request.sender_id;
         let project_id = request.payload.project_id;
-        let worktree = self.state_mut().leave_project(sender_id, project_id);
-        if let Some(worktree) = worktree {
-            broadcast(sender_id, worktree.connection_ids, |conn_id| {
-                self.peer.send(
-                    conn_id,
-                    proto::RemoveProjectCollaborator {
-                        project_id,
-                        peer_id: sender_id.0,
-                    },
-                )
-            })?;
-            self.update_contacts_for_users(&worktree.authorized_user_ids)?;
-        }
+        let worktree = self.state_mut().leave_project(sender_id, project_id)?;
+
+        broadcast(sender_id, worktree.connection_ids, |conn_id| {
+            self.peer.send(
+                conn_id,
+                proto::RemoveProjectCollaborator {
+                    project_id,
+                    peer_id: sender_id.0,
+                },
+            )
+        })?;
+        self.update_contacts_for_users(&worktree.authorized_user_ids)?;
+
         Ok(())
     }
 
     async fn register_worktree(
         mut self: Arc<Server>,
         request: TypedEnvelope<proto::RegisterWorktree>,
-    ) -> tide::Result<()> {
-        let receipt = request.receipt();
+    ) -> tide::Result<proto::Ack> {
         let host_user_id = self.state().user_id_for_connection(request.sender_id)?;
 
         let mut contact_user_ids = HashSet::default();
         contact_user_ids.insert(host_user_id);
         for github_login in request.payload.authorized_logins {
-            match self.app_state.db.create_user(&github_login, false).await {
-                Ok(contact_user_id) => {
-                    contact_user_ids.insert(contact_user_id);
-                }
-                Err(err) => {
-                    let message = err.to_string();
-                    self.peer
-                        .respond_with_error(receipt, proto::Error { message })?;
-                    return Ok(());
-                }
-            }
+            let contact_user_id = self.app_state.db.create_user(&github_login, false).await?;
+            contact_user_ids.insert(contact_user_id);
         }
 
         let contact_user_ids = contact_user_ids.into_iter().collect::<Vec<_>>();
-        let ok = self.state_mut().register_worktree(
+        self.state_mut().register_worktree(
             request.payload.project_id,
             request.payload.worktree_id,
+            request.sender_id,
             Worktree {
                 authorized_user_ids: contact_user_ids.clone(),
                 root_name: request.payload.root_name,
                 share: None,
                 weak: false,
             },
-        );
-
-        if ok {
-            self.peer.respond(receipt, proto::Ack {})?;
-            self.update_contacts_for_users(&contact_user_ids)?;
-        } else {
-            self.peer.respond_with_error(
-                receipt,
-                proto::Error {
-                    message: NO_SUCH_PROJECT.to_string(),
-                },
-            )?;
-        }
-
-        Ok(())
+        )?;
+        self.update_contacts_for_users(&contact_user_ids)?;
+        Ok(proto::Ack {})
     }
 
     async fn unregister_worktree(
@@ -456,7 +444,7 @@ impl Server {
     async fn share_worktree(
         mut self: Arc<Server>,
         mut request: TypedEnvelope<proto::ShareWorktree>,
-    ) -> tide::Result<()> {
+    ) -> tide::Result<proto::Ack> {
         let worktree = request
             .payload
             .worktree
@@ -479,46 +467,32 @@ impl Server {
             request.sender_id,
             entries,
             diagnostic_summaries,
-        );
-        if let Some(shared_worktree) = shared_worktree {
-            broadcast(
-                request.sender_id,
-                shared_worktree.connection_ids,
-                |connection_id| {
-                    self.peer.forward_send(
-                        request.sender_id,
-                        connection_id,
-                        request.payload.clone(),
-                    )
-                },
-            )?;
-            self.peer.respond(request.receipt(), proto::Ack {})?;
-            self.update_contacts_for_users(&shared_worktree.authorized_user_ids)?;
-        } else {
-            self.peer.respond_with_error(
-                request.receipt(),
-                proto::Error {
-                    message: "no such worktree".to_string(),
-                },
-            )?;
-        }
-        Ok(())
+        )?;
+
+        broadcast(
+            request.sender_id,
+            shared_worktree.connection_ids,
+            |connection_id| {
+                self.peer
+                    .forward_send(request.sender_id, connection_id, request.payload.clone())
+            },
+        )?;
+        self.update_contacts_for_users(&shared_worktree.authorized_user_ids)?;
+
+        Ok(proto::Ack {})
     }
 
     async fn update_worktree(
         mut self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateWorktree>,
     ) -> tide::Result<()> {
-        let connection_ids = self
-            .state_mut()
-            .update_worktree(
-                request.sender_id,
-                request.payload.project_id,
-                request.payload.worktree_id,
-                &request.payload.removed_entries,
-                &request.payload.updated_entries,
-            )
-            .ok_or_else(|| anyhow!("no such worktree"))?;
+        let connection_ids = self.state_mut().update_worktree(
+            request.sender_id,
+            request.payload.project_id,
+            request.payload.worktree_id,
+            &request.payload.removed_entries,
+            &request.payload.updated_entries,
+        )?;
 
         broadcast(request.sender_id, connection_ids, |connection_id| {
             self.peer
@@ -532,19 +506,17 @@ impl Server {
         mut self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateDiagnosticSummary>,
     ) -> tide::Result<()> {
-        let receiver_ids = request
+        let summary = request
             .payload
             .summary
             .clone()
-            .and_then(|summary| {
-                self.state_mut().update_diagnostic_summary(
-                    request.payload.project_id,
-                    request.payload.worktree_id,
-                    request.sender_id,
-                    summary,
-                )
-            })
-            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+            .ok_or_else(|| anyhow!("invalid summary"))?;
+        let receiver_ids = self.state_mut().update_diagnostic_summary(
+            request.payload.project_id,
+            request.payload.worktree_id,
+            request.sender_id,
+            summary,
+        )?;
 
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
@@ -559,8 +531,7 @@ impl Server {
     ) -> tide::Result<()> {
         let receiver_ids = self
             .state()
-            .project_connection_ids(request.payload.project_id, request.sender_id)
-            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+            .project_connection_ids(request.payload.project_id, request.sender_id)?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
@@ -574,8 +545,7 @@ impl Server {
     ) -> tide::Result<()> {
         let receiver_ids = self
             .state()
-            .project_connection_ids(request.payload.project_id, request.sender_id)
-            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+            .project_connection_ids(request.payload.project_id, request.sender_id)?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
@@ -586,37 +556,29 @@ impl Server {
     async fn get_definition(
         self: Arc<Server>,
         request: TypedEnvelope<proto::GetDefinition>,
-    ) -> tide::Result<()> {
-        let receipt = request.receipt();
+    ) -> tide::Result<proto::GetDefinitionResponse> {
         let host_connection_id = self
             .state()
-            .read_project(request.payload.project_id, request.sender_id)
-            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?
+            .read_project(request.payload.project_id, request.sender_id)?
             .host_connection_id;
-        let response = self
+        Ok(self
             .peer
             .forward_request(request.sender_id, host_connection_id, request.payload)
-            .await?;
-        self.peer.respond(receipt, response)?;
-        Ok(())
+            .await?)
     }
 
     async fn open_buffer(
         self: Arc<Server>,
         request: TypedEnvelope<proto::OpenBuffer>,
-    ) -> tide::Result<()> {
-        let receipt = request.receipt();
+    ) -> tide::Result<proto::OpenBufferResponse> {
         let host_connection_id = self
             .state()
-            .read_project(request.payload.project_id, request.sender_id)
-            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?
+            .read_project(request.payload.project_id, request.sender_id)?
             .host_connection_id;
-        let response = self
+        Ok(self
             .peer
             .forward_request(request.sender_id, host_connection_id, request.payload)
-            .await?;
-        self.peer.respond(receipt, response)?;
-        Ok(())
+            .await?)
     }
 
     async fn close_buffer(
@@ -625,8 +587,7 @@ impl Server {
     ) -> tide::Result<()> {
         let host_connection_id = self
             .state()
-            .read_project(request.payload.project_id, request.sender_id)
-            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?
+            .read_project(request.payload.project_id, request.sender_id)?
             .host_connection_id;
         self.peer
             .forward_send(request.sender_id, host_connection_id, request.payload)?;
@@ -636,121 +597,111 @@ impl Server {
     async fn save_buffer(
         self: Arc<Server>,
         request: TypedEnvelope<proto::SaveBuffer>,
-    ) -> tide::Result<()> {
+    ) -> tide::Result<proto::BufferSaved> {
         let host;
-        let guests;
+        let mut guests;
         {
             let state = self.state();
-            let project = state
-                .read_project(request.payload.project_id, request.sender_id)
-                .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+            let project = state.read_project(request.payload.project_id, request.sender_id)?;
             host = project.host_connection_id;
             guests = project.guest_connection_ids()
         }
 
-        let sender = request.sender_id;
-        let receipt = request.receipt();
         let response = self
             .peer
-            .forward_request(sender, host, request.payload.clone())
+            .forward_request(request.sender_id, host, request.payload.clone())
             .await?;
 
+        guests.retain(|guest_connection_id| *guest_connection_id != request.sender_id);
         broadcast(host, guests, |conn_id| {
-            let response = response.clone();
-            if conn_id == sender {
-                self.peer.respond(receipt, response)
-            } else {
-                self.peer.forward_send(host, conn_id, response)
-            }
+            self.peer.forward_send(host, conn_id, response.clone())
         })?;
 
-        Ok(())
+        Ok(response)
     }
 
-    async fn format_buffer(
+    async fn format_buffers(
         self: Arc<Server>,
-        request: TypedEnvelope<proto::FormatBuffer>,
-    ) -> tide::Result<()> {
-        let host;
-        {
-            let state = self.state();
-            let project = state
-                .read_project(request.payload.project_id, request.sender_id)
-                .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
-            host = project.host_connection_id;
-        }
-
-        let sender = request.sender_id;
-        let receipt = request.receipt();
-        let response = self
+        request: TypedEnvelope<proto::FormatBuffers>,
+    ) -> tide::Result<proto::FormatBuffersResponse> {
+        let host = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)?
+            .host_connection_id;
+        Ok(self
             .peer
-            .forward_request(sender, host, request.payload.clone())
-            .await?;
-        self.peer.respond(receipt, response)?;
-
-        Ok(())
+            .forward_request(request.sender_id, host, request.payload.clone())
+            .await?)
     }
 
     async fn get_completions(
         self: Arc<Server>,
         request: TypedEnvelope<proto::GetCompletions>,
-    ) -> tide::Result<()> {
-        let host;
-        {
-            let state = self.state();
-            let project = state
-                .read_project(request.payload.project_id, request.sender_id)
-                .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
-            host = project.host_connection_id;
-        }
-
-        let sender = request.sender_id;
-        let receipt = request.receipt();
-        let response = self
+    ) -> tide::Result<proto::GetCompletionsResponse> {
+        let host = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)?
+            .host_connection_id;
+        Ok(self
             .peer
-            .forward_request(sender, host, request.payload.clone())
-            .await?;
-        self.peer.respond(receipt, response)?;
-        Ok(())
+            .forward_request(request.sender_id, host, request.payload.clone())
+            .await?)
     }
 
     async fn apply_additional_edits_for_completion(
         self: Arc<Server>,
         request: TypedEnvelope<proto::ApplyCompletionAdditionalEdits>,
-    ) -> tide::Result<()> {
-        let host;
-        {
-            let state = self.state();
-            let project = state
-                .read_project(request.payload.project_id, request.sender_id)
-                .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
-            host = project.host_connection_id;
-        }
-
-        let sender = request.sender_id;
-        let receipt = request.receipt();
-        let response = self
+    ) -> tide::Result<proto::ApplyCompletionAdditionalEditsResponse> {
+        let host = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)?
+            .host_connection_id;
+        Ok(self
             .peer
-            .forward_request(sender, host, request.payload.clone())
-            .await?;
-        self.peer.respond(receipt, response)?;
-        Ok(())
+            .forward_request(request.sender_id, host, request.payload.clone())
+            .await?)
+    }
+
+    async fn get_code_actions(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::GetCodeActions>,
+    ) -> tide::Result<proto::GetCodeActionsResponse> {
+        let host = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)?
+            .host_connection_id;
+        Ok(self
+            .peer
+            .forward_request(request.sender_id, host, request.payload.clone())
+            .await?)
+    }
+
+    async fn apply_code_action(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::ApplyCodeAction>,
+    ) -> tide::Result<proto::ApplyCodeActionResponse> {
+        let host = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)?
+            .host_connection_id;
+        Ok(self
+            .peer
+            .forward_request(request.sender_id, host, request.payload.clone())
+            .await?)
     }
 
     async fn update_buffer(
         self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateBuffer>,
-    ) -> tide::Result<()> {
+    ) -> tide::Result<proto::Ack> {
         let receiver_ids = self
             .state()
-            .project_connection_ids(request.payload.project_id, request.sender_id)
-            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+            .project_connection_ids(request.payload.project_id, request.sender_id)?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
         })?;
-        self.peer.respond(request.receipt(), proto::Ack {})?;
-        Ok(())
+        Ok(proto::Ack {})
     }
 
     async fn update_buffer_file(
@@ -759,8 +710,7 @@ impl Server {
     ) -> tide::Result<()> {
         let receiver_ids = self
             .state()
-            .project_connection_ids(request.payload.project_id, request.sender_id)
-            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+            .project_connection_ids(request.payload.project_id, request.sender_id)?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
@@ -774,8 +724,7 @@ impl Server {
     ) -> tide::Result<()> {
         let receiver_ids = self
             .state()
-            .project_connection_ids(request.payload.project_id, request.sender_id)
-            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+            .project_connection_ids(request.payload.project_id, request.sender_id)?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
@@ -789,8 +738,7 @@ impl Server {
     ) -> tide::Result<()> {
         let receiver_ids = self
             .state()
-            .project_connection_ids(request.payload.project_id, request.sender_id)
-            .ok_or_else(|| anyhow!(NO_SUCH_PROJECT))?;
+            .project_connection_ids(request.payload.project_id, request.sender_id)?;
         broadcast(request.sender_id, receiver_ids, |connection_id| {
             self.peer
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
@@ -801,29 +749,24 @@ impl Server {
     async fn get_channels(
         self: Arc<Server>,
         request: TypedEnvelope<proto::GetChannels>,
-    ) -> tide::Result<()> {
+    ) -> tide::Result<proto::GetChannelsResponse> {
         let user_id = self.state().user_id_for_connection(request.sender_id)?;
         let channels = self.app_state.db.get_accessible_channels(user_id).await?;
-        self.peer.respond(
-            request.receipt(),
-            proto::GetChannelsResponse {
-                channels: channels
-                    .into_iter()
-                    .map(|chan| proto::Channel {
-                        id: chan.id.to_proto(),
-                        name: chan.name,
-                    })
-                    .collect(),
-            },
-        )?;
-        Ok(())
+        Ok(proto::GetChannelsResponse {
+            channels: channels
+                .into_iter()
+                .map(|chan| proto::Channel {
+                    id: chan.id.to_proto(),
+                    name: chan.name,
+                })
+                .collect(),
+        })
     }
 
     async fn get_users(
         self: Arc<Server>,
         request: TypedEnvelope<proto::GetUsers>,
-    ) -> tide::Result<()> {
-        let receipt = request.receipt();
+    ) -> tide::Result<proto::GetUsersResponse> {
         let user_ids = request.payload.user_ids.into_iter().map(UserId::from_proto);
         let users = self
             .app_state
@@ -837,9 +780,7 @@ impl Server {
                 github_login: user.github_login,
             })
             .collect();
-        self.peer
-            .respond(receipt, proto::GetUsersResponse { users })?;
-        Ok(())
+        Ok(proto::GetUsersResponse { users })
     }
 
     fn update_contacts_for_users<'a>(
@@ -867,7 +808,7 @@ impl Server {
     async fn join_channel(
         mut self: Arc<Self>,
         request: TypedEnvelope<proto::JoinChannel>,
-    ) -> tide::Result<()> {
+    ) -> tide::Result<proto::JoinChannelResponse> {
         let user_id = self.state().user_id_for_connection(request.sender_id)?;
         let channel_id = ChannelId::from_proto(request.payload.channel_id);
         if !self
@@ -894,14 +835,10 @@ impl Server {
                 nonce: Some(msg.nonce.as_u128().into()),
             })
             .collect::<Vec<_>>();
-        self.peer.respond(
-            request.receipt(),
-            proto::JoinChannelResponse {
-                done: messages.len() < MESSAGE_COUNT_PER_PAGE,
-                messages,
-            },
-        )?;
-        Ok(())
+        Ok(proto::JoinChannelResponse {
+            done: messages.len() < MESSAGE_COUNT_PER_PAGE,
+            messages,
+        })
     }
 
     async fn leave_channel(
@@ -928,54 +865,30 @@ impl Server {
     async fn send_channel_message(
         self: Arc<Self>,
         request: TypedEnvelope<proto::SendChannelMessage>,
-    ) -> tide::Result<()> {
-        let receipt = request.receipt();
+    ) -> tide::Result<proto::SendChannelMessageResponse> {
         let channel_id = ChannelId::from_proto(request.payload.channel_id);
         let user_id;
         let connection_ids;
         {
             let state = self.state();
             user_id = state.user_id_for_connection(request.sender_id)?;
-            if let Some(ids) = state.channel_connection_ids(channel_id) {
-                connection_ids = ids;
-            } else {
-                return Ok(());
-            }
+            connection_ids = state.channel_connection_ids(channel_id)?;
         }
 
         // Validate the message body.
         let body = request.payload.body.trim().to_string();
         if body.len() > MAX_MESSAGE_LEN {
-            self.peer.respond_with_error(
-                receipt,
-                proto::Error {
-                    message: "message is too long".to_string(),
-                },
-            )?;
-            return Ok(());
+            return Err(anyhow!("message is too long"))?;
         }
         if body.is_empty() {
-            self.peer.respond_with_error(
-                receipt,
-                proto::Error {
-                    message: "message can't be blank".to_string(),
-                },
-            )?;
-            return Ok(());
+            return Err(anyhow!("message can't be blank"))?;
         }
 
         let timestamp = OffsetDateTime::now_utc();
-        let nonce = if let Some(nonce) = request.payload.nonce {
-            nonce
-        } else {
-            self.peer.respond_with_error(
-                receipt,
-                proto::Error {
-                    message: "nonce can't be blank".to_string(),
-                },
-            )?;
-            return Ok(());
-        };
+        let nonce = request
+            .payload
+            .nonce
+            .ok_or_else(|| anyhow!("nonce can't be blank"))?;
 
         let message_id = self
             .app_state
@@ -999,19 +912,15 @@ impl Server {
                 },
             )
         })?;
-        self.peer.respond(
-            receipt,
-            proto::SendChannelMessageResponse {
-                message: Some(message),
-            },
-        )?;
-        Ok(())
+        Ok(proto::SendChannelMessageResponse {
+            message: Some(message),
+        })
     }
 
     async fn get_channel_messages(
         self: Arc<Self>,
         request: TypedEnvelope<proto::GetChannelMessages>,
-    ) -> tide::Result<()> {
+    ) -> tide::Result<proto::GetChannelMessagesResponse> {
         let user_id = self.state().user_id_for_connection(request.sender_id)?;
         let channel_id = ChannelId::from_proto(request.payload.channel_id);
         if !self
@@ -1041,14 +950,11 @@ impl Server {
                 nonce: Some(msg.nonce.as_u128().into()),
             })
             .collect::<Vec<_>>();
-        self.peer.respond(
-            request.receipt(),
-            proto::GetChannelMessagesResponse {
-                done: messages.len() < MESSAGE_COUNT_PER_PAGE,
-                messages,
-            },
-        )?;
-        Ok(())
+
+        Ok(proto::GetChannelMessagesResponse {
+            done: messages.len() < MESSAGE_COUNT_PER_PAGE,
+            messages,
+        })
     }
 
     fn state<'a>(self: &'a Arc<Self>) -> RwLockReadGuard<'a, Store> {
@@ -1183,14 +1089,18 @@ mod tests {
             self, test::FakeHttpClient, Channel, ChannelDetails, ChannelList, Client, Credentials,
             EstablishConnectionError, UserStore,
         },
-        editor::{Editor, EditorSettings, Input, MultiBuffer},
+        editor::{
+            self, ConfirmCodeAction, ConfirmCompletion, Editor, EditorSettings, Input, MultiBuffer,
+            Redo, ToggleCodeActions, Undo,
+        },
         fs::{FakeFs, Fs as _},
         language::{
             tree_sitter_rust, AnchorRangeExt, Diagnostic, DiagnosticEntry, Language,
             LanguageConfig, LanguageRegistry, LanguageServerConfig, Point,
         },
         lsp,
-        project::{DiagnosticSummary, Project, ProjectPath},
+        project::{worktree::WorktreeHandle, DiagnosticSummary, Project, ProjectPath},
+        workspace::{Workspace, WorkspaceParams},
     };
 
     #[cfg(test)]
@@ -1301,7 +1211,7 @@ mod tests {
             .unwrap();
 
         let editor_b = cx_b.add_view(window_b, |cx| {
-            Editor::for_buffer(buffer_b, Arc::new(|cx| EditorSettings::test(cx)), cx)
+            Editor::for_buffer(buffer_b, Arc::new(|cx| EditorSettings::test(cx)), None, cx)
         });
 
         // TODO
@@ -1560,11 +1470,20 @@ mod tests {
         buffer_b.read_with(&cx_b, |buf, _| assert!(!buf.is_dirty()));
         buffer_c.condition(&cx_c, |buf, _| !buf.is_dirty()).await;
 
+        // Ensure worktree observes a/file1's change event *before* the rename occurs, otherwise
+        // when interpreting the change event it will mistakenly think that the file has been
+        // deleted (because its path has changed) and will subsequently fail to detect the rename.
+        worktree_a.flush_fs_events(&cx_a).await;
+
         // Make changes on host's file system, see those changes on guest worktrees.
-        fs.rename("/a/file1".as_ref(), "/a/file1-renamed".as_ref())
-            .await
-            .unwrap();
-        fs.rename("/a/file2".as_ref(), "/a/file3".as_ref())
+        fs.rename(
+            "/a/file1".as_ref(),
+            "/a/file1-renamed".as_ref(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+        fs.rename("/a/file2".as_ref(), "/a/file3".as_ref(), Default::default())
             .await
             .unwrap();
         fs.insert_file(Path::new("/a/file4"), "4".into())
@@ -1572,38 +1491,29 @@ mod tests {
             .unwrap();
 
         worktree_a
-            .condition(&cx_a, |tree, _| tree.file_count() == 4)
+            .condition(&cx_a, |tree, _| {
+                tree.paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    == [".zed.toml", "file1-renamed", "file3", "file4"]
+            })
             .await;
         worktree_b
-            .condition(&cx_b, |tree, _| tree.file_count() == 4)
+            .condition(&cx_b, |tree, _| {
+                tree.paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    == [".zed.toml", "file1-renamed", "file3", "file4"]
+            })
             .await;
         worktree_c
-            .condition(&cx_c, |tree, _| tree.file_count() == 4)
+            .condition(&cx_c, |tree, _| {
+                tree.paths()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    == [".zed.toml", "file1-renamed", "file3", "file4"]
+            })
             .await;
-        worktree_a.read_with(&cx_a, |tree, _| {
-            assert_eq!(
-                tree.paths()
-                    .map(|p| p.to_string_lossy())
-                    .collect::<Vec<_>>(),
-                &[".zed.toml", "file1-renamed", "file3", "file4"]
-            )
-        });
-        worktree_b.read_with(&cx_b, |tree, _| {
-            assert_eq!(
-                tree.paths()
-                    .map(|p| p.to_string_lossy())
-                    .collect::<Vec<_>>(),
-                &[".zed.toml", "file1-renamed", "file3", "file4"]
-            )
-        });
-        worktree_c.read_with(&cx_c, |tree, _| {
-            assert_eq!(
-                tree.paths()
-                    .map(|p| p.to_string_lossy())
-                    .collect::<Vec<_>>(),
-                &[".zed.toml", "file1-renamed", "file3", "file4"]
-            )
-        });
 
         // Ensure buffer files are updated as well.
         buffer_a
@@ -1798,7 +1708,7 @@ mod tests {
         });
     }
 
-    #[gpui::test(iterations = 100)]
+    #[gpui::test(iterations = 10)]
     async fn test_editing_while_guest_opens_buffer(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
@@ -2038,7 +1948,7 @@ mod tests {
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake(cx_a.background()).await;
+            LanguageServerConfig::fake(&cx_a).await;
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -2270,7 +2180,7 @@ mod tests {
                     }),
                     ..Default::default()
                 },
-                cx_a.background(),
+                &cx_a,
             )
             .await;
         Arc::get_mut(&mut lang_registry)
@@ -2349,6 +2259,7 @@ mod tests {
             Editor::for_buffer(
                 cx.add_model(|cx| MultiBuffer::singleton(buffer_b.clone(), cx)),
                 Arc::new(|cx| EditorSettings::test(cx)),
+                Some(project_b.clone()),
                 cx,
             )
         });
@@ -2361,52 +2272,46 @@ mod tests {
         });
 
         // Receive a completion request as the host's language server.
-        let (request_id, params) = fake_language_server
-            .receive_request::<lsp::request::Completion>()
-            .await;
-        assert_eq!(
-            params.text_document_position.text_document.uri,
-            lsp::Url::from_file_path("/a/main.rs").unwrap(),
-        );
-        assert_eq!(
-            params.text_document_position.position,
-            lsp::Position::new(0, 14),
-        );
-
         // Return some completions from the host's language server.
-        fake_language_server
-            .respond(
-                request_id,
-                Some(lsp::CompletionResponse::Array(vec![
-                    lsp::CompletionItem {
-                        label: "first_method(…)".into(),
-                        detail: Some("fn(&mut self, B) -> C".into()),
-                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                            new_text: "first_method($1)".to_string(),
-                            range: lsp::Range::new(
-                                lsp::Position::new(0, 14),
-                                lsp::Position::new(0, 14),
-                            ),
-                        })),
-                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                    lsp::CompletionItem {
-                        label: "second_method(…)".into(),
-                        detail: Some("fn(&mut self, C) -> D<E>".into()),
-                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                            new_text: "second_method()".to_string(),
-                            range: lsp::Range::new(
-                                lsp::Position::new(0, 14),
-                                lsp::Position::new(0, 14),
-                            ),
-                        })),
-                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    },
-                ])),
-            )
-            .await;
+        fake_language_server.handle_request::<lsp::request::Completion, _>(|params| {
+            assert_eq!(
+                params.text_document_position.text_document.uri,
+                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+            );
+            assert_eq!(
+                params.text_document_position.position,
+                lsp::Position::new(0, 14),
+            );
+
+            Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "first_method(…)".into(),
+                    detail: Some("fn(&mut self, B) -> C".into()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        new_text: "first_method($1)".to_string(),
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 14),
+                            lsp::Position::new(0, 14),
+                        ),
+                    })),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "second_method(…)".into(),
+                    detail: Some("fn(&mut self, C) -> D<E>".into()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        new_text: "second_method()".to_string(),
+                        range: lsp::Range::new(
+                            lsp::Position::new(0, 14),
+                            lsp::Position::new(0, 14),
+                        ),
+                    })),
+                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                    ..Default::default()
+                },
+            ]))
+        });
 
         // Open the buffer on the host.
         let buffer_a = project_a
@@ -2422,46 +2327,35 @@ mod tests {
         // Confirm a completion on the guest.
         editor_b.next_notification(&cx_b).await;
         editor_b.update(&mut cx_b, |editor, cx| {
-            assert!(editor.has_completions());
-            editor.confirm_completion(Some(0), cx);
+            assert!(editor.context_menu_visible());
+            editor.confirm_completion(&ConfirmCompletion(Some(0)), cx);
             assert_eq!(editor.text(cx), "fn main() { a.first_method() }");
+        });
+
+        // Return a resolved completion from the host's language server.
+        // The resolved completion has an additional text edit.
+        fake_language_server.handle_request::<lsp::request::ResolveCompletionItem, _>(|params| {
+            assert_eq!(params.label, "first_method(…)");
+            lsp::CompletionItem {
+                label: "first_method(…)".into(),
+                detail: Some("fn(&mut self, B) -> C".into()),
+                text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                    new_text: "first_method($1)".to_string(),
+                    range: lsp::Range::new(lsp::Position::new(0, 14), lsp::Position::new(0, 14)),
+                })),
+                additional_text_edits: Some(vec![lsp::TextEdit {
+                    new_text: "use d::SomeTrait;\n".to_string(),
+                    range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                }]),
+                insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                ..Default::default()
+            }
         });
 
         buffer_a
             .condition(&cx_a, |buffer, _| {
                 buffer.text() == "fn main() { a.first_method() }"
             })
-            .await;
-
-        // Receive a request resolve the selected completion on the host's language server.
-        let (request_id, params) = fake_language_server
-            .receive_request::<lsp::request::ResolveCompletionItem>()
-            .await;
-        assert_eq!(params.label, "first_method(…)");
-
-        // Return a resolved completion from the host's language server.
-        // The resolved completion has an additional text edit.
-        fake_language_server
-            .respond(
-                request_id,
-                lsp::CompletionItem {
-                    label: "first_method(…)".into(),
-                    detail: Some("fn(&mut self, B) -> C".into()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        new_text: "first_method($1)".to_string(),
-                        range: lsp::Range::new(
-                            lsp::Position::new(0, 14),
-                            lsp::Position::new(0, 14),
-                        ),
-                    })),
-                    additional_text_edits: Some(vec![lsp::TextEdit {
-                        new_text: "use d::SomeTrait;\n".to_string(),
-                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
-                    }]),
-                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                    ..Default::default()
-                },
-            )
             .await;
 
         // The additional edit is applied.
@@ -2484,7 +2378,7 @@ mod tests {
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake(cx_a.background()).await;
+            LanguageServerConfig::fake(&cx_a).await;
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -2554,25 +2448,23 @@ mod tests {
             .await
             .unwrap();
 
-        let format = buffer_b.update(&mut cx_b, |buffer, cx| buffer.format(cx));
-        let (request_id, _) = fake_language_server
-            .receive_request::<lsp::request::Formatting>()
-            .await;
-        fake_language_server
-            .respond(
-                request_id,
-                Some(vec![
-                    lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 4)),
-                        new_text: "h".to_string(),
-                    },
-                    lsp::TextEdit {
-                        range: lsp::Range::new(lsp::Position::new(0, 7), lsp::Position::new(0, 7)),
-                        new_text: "y".to_string(),
-                    },
-                ]),
-            )
-            .await;
+        let format = project_b.update(&mut cx_b, |project, cx| {
+            project.format(HashSet::from_iter([buffer_b.clone()]), true, cx)
+        });
+
+        fake_language_server.handle_request::<lsp::request::Formatting, _>(|_| {
+            Some(vec![
+                lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 4)),
+                    new_text: "h".to_string(),
+                },
+                lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 7), lsp::Position::new(0, 7)),
+                    new_text: "y".to_string(),
+                },
+            ])
+        });
+
         format.await.unwrap();
         assert_eq!(
             buffer_b.read_with(&cx_b, |buffer, _| buffer.text()),
@@ -2603,7 +2495,7 @@ mod tests {
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake(cx_a.background()).await;
+            LanguageServerConfig::fake(&cx_a).await;
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -2659,26 +2551,22 @@ mod tests {
         .await
         .unwrap();
 
-        // Open the file to be formatted on client B.
+        // Open the file on client B.
         let buffer_b = cx_b
             .background()
             .spawn(project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx)))
             .await
             .unwrap();
 
+        // Request the definition of a symbol as the guest.
         let definitions_1 = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b, 23, cx));
-        let (request_id, _) = fake_language_server
-            .receive_request::<lsp::request::GotoDefinition>()
-            .await;
-        fake_language_server
-            .respond(
-                request_id,
-                Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
-                    lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
-                    lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
-                ))),
-            )
-            .await;
+        fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_| {
+            Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
+                lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
+                lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+            )))
+        });
+
         let definitions_1 = definitions_1.await.unwrap();
         cx_b.read(|cx| {
             assert_eq!(definitions_1.len(), 1);
@@ -2697,18 +2585,13 @@ mod tests {
         // Try getting more definitions for the same buffer, ensuring the buffer gets reused from
         // the previous call to `definition`.
         let definitions_2 = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b, 33, cx));
-        let (request_id, _) = fake_language_server
-            .receive_request::<lsp::request::GotoDefinition>()
-            .await;
-        fake_language_server
-            .respond(
-                request_id,
-                Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
-                    lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
-                    lsp::Range::new(lsp::Position::new(1, 6), lsp::Position::new(1, 11)),
-                ))),
-            )
-            .await;
+        fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_| {
+            Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
+                lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
+                lsp::Range::new(lsp::Position::new(1, 6), lsp::Position::new(1, 11)),
+            )))
+        });
+
         let definitions_2 = definitions_2.await.unwrap();
         cx_b.read(|cx| {
             assert_eq!(definitions_2.len(), 1);
@@ -2758,7 +2641,7 @@ mod tests {
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake(cx_a.background()).await;
+            LanguageServerConfig::fake(&cx_a).await;
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -2832,23 +2715,258 @@ mod tests {
             definitions = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
         }
 
-        let (request_id, _) = fake_language_server
-            .receive_request::<lsp::request::GotoDefinition>()
-            .await;
-        fake_language_server
-            .respond(
-                request_id,
-                Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
-                    lsp::Url::from_file_path("/root/b.rs").unwrap(),
-                    lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
-                ))),
-            )
-            .await;
+        fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_| {
+            Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
+                lsp::Url::from_file_path("/root/b.rs").unwrap(),
+                lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+            )))
+        });
 
         let buffer_b2 = buffer_b2.await.unwrap();
         let definitions = definitions.await.unwrap();
         assert_eq!(definitions.len(), 1);
         assert_eq!(definitions[0].target_buffer, buffer_b2);
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_collaborating_with_code_actions(
+        mut cx_a: TestAppContext,
+        mut cx_b: TestAppContext,
+    ) {
+        cx_a.foreground().forbid_parking();
+        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(FakeFs::new(cx_a.background()));
+        let mut path_openers_b = Vec::new();
+        cx_b.update(|cx| editor::init(cx, &mut path_openers_b));
+
+        // Set up a fake language server.
+        let (language_server_config, mut fake_language_server) =
+            LanguageServerConfig::fake_with_capabilities(
+                lsp::ServerCapabilities {
+                    ..Default::default()
+                },
+                &cx_a,
+            )
+            .await;
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Rust".to_string(),
+                    path_suffixes: vec!["rs".to_string()],
+                    language_server: Some(language_server_config),
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )));
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground()).await;
+        let client_a = server.create_client(&mut cx_a, "user_a").await;
+        let client_b = server.create_client(&mut cx_b, "user_b").await;
+
+        // Share a project as client A
+        fs.insert_tree(
+            "/a",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "main.rs": "mod other;\nfn main() { let foo = other::foo(); }",
+                "other.rs": "pub fn foo() -> usize { 4 }",
+            }),
+        )
+        .await;
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/a", false, cx)
+            })
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
+        project_a
+            .update(&mut cx_a, |p, cx| p.share(cx))
+            .await
+            .unwrap();
+
+        // Join the worktree as client B.
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+        let mut params = cx_b.update(WorkspaceParams::test);
+        params.languages = lang_registry.clone();
+        params.client = client_b.client.clone();
+        params.user_store = client_b.user_store.clone();
+        params.project = project_b;
+        params.path_openers = path_openers_b.into();
+
+        let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
+        let editor_b = workspace_b
+            .update(&mut cx_b, |workspace, cx| {
+                workspace.open_path((worktree_id, "main.rs").into(), cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        fake_language_server
+            .handle_request::<lsp::request::CodeActionRequest, _>(|params| {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                );
+                assert_eq!(params.range.start, lsp::Position::new(0, 0));
+                assert_eq!(params.range.end, lsp::Position::new(0, 0));
+                None
+            })
+            .next()
+            .await;
+
+        // Move cursor to a location that contains code actions.
+        editor_b.update(&mut cx_b, |editor, cx| {
+            editor.select_ranges([Point::new(1, 31)..Point::new(1, 31)], None, cx);
+            cx.focus(&editor_b);
+        });
+        fake_language_server.handle_request::<lsp::request::CodeActionRequest, _>(|params| {
+            assert_eq!(
+                params.text_document.uri,
+                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+            );
+            assert_eq!(params.range.start, lsp::Position::new(1, 31));
+            assert_eq!(params.range.end, lsp::Position::new(1, 31));
+
+            Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                lsp::CodeAction {
+                    title: "Inline into all callers".to_string(),
+                    edit: Some(lsp::WorkspaceEdit {
+                        changes: Some(
+                            [
+                                (
+                                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                    vec![lsp::TextEdit::new(
+                                        lsp::Range::new(
+                                            lsp::Position::new(1, 22),
+                                            lsp::Position::new(1, 34),
+                                        ),
+                                        "4".to_string(),
+                                    )],
+                                ),
+                                (
+                                    lsp::Url::from_file_path("/a/other.rs").unwrap(),
+                                    vec![lsp::TextEdit::new(
+                                        lsp::Range::new(
+                                            lsp::Position::new(0, 0),
+                                            lsp::Position::new(0, 27),
+                                        ),
+                                        "".to_string(),
+                                    )],
+                                ),
+                            ]
+                            .into_iter()
+                            .collect(),
+                        ),
+                        ..Default::default()
+                    }),
+                    data: Some(json!({
+                        "codeActionParams": {
+                            "range": {
+                                "start": {"line": 1, "column": 31},
+                                "end": {"line": 1, "column": 31},
+                            }
+                        }
+                    })),
+                    ..Default::default()
+                },
+            )])
+        });
+
+        // Toggle code actions and wait for them to display.
+        editor_b.update(&mut cx_b, |editor, cx| {
+            editor.toggle_code_actions(&ToggleCodeActions(false), cx);
+        });
+        editor_b
+            .condition(&cx_b, |editor, _| editor.context_menu_visible())
+            .await;
+
+        // Confirming the code action will trigger a resolve request.
+        let confirm_action = workspace_b
+            .update(&mut cx_b, |workspace, cx| {
+                Editor::confirm_code_action(workspace, &ConfirmCodeAction(Some(0)), cx)
+            })
+            .unwrap();
+        fake_language_server.handle_request::<lsp::request::CodeActionResolveRequest, _>(|_| {
+            lsp::CodeAction {
+                title: "Inline into all callers".to_string(),
+                edit: Some(lsp::WorkspaceEdit {
+                    changes: Some(
+                        [
+                            (
+                                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                vec![lsp::TextEdit::new(
+                                    lsp::Range::new(
+                                        lsp::Position::new(1, 22),
+                                        lsp::Position::new(1, 34),
+                                    ),
+                                    "4".to_string(),
+                                )],
+                            ),
+                            (
+                                lsp::Url::from_file_path("/a/other.rs").unwrap(),
+                                vec![lsp::TextEdit::new(
+                                    lsp::Range::new(
+                                        lsp::Position::new(0, 0),
+                                        lsp::Position::new(0, 27),
+                                    ),
+                                    "".to_string(),
+                                )],
+                            ),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }
+        });
+
+        // After the action is confirmed, an editor containing both modified files is opened.
+        confirm_action.await.unwrap();
+        let code_action_editor = workspace_b.read_with(&cx_b, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .unwrap()
+                .downcast::<Editor>()
+                .unwrap()
+        });
+        code_action_editor.update(&mut cx_b, |editor, cx| {
+            assert_eq!(editor.text(cx), "\nmod other;\nfn main() { let foo = 4; }");
+            editor.undo(&Undo, cx);
+            assert_eq!(
+                editor.text(cx),
+                "pub fn foo() -> usize { 4 }\nmod other;\nfn main() { let foo = other::foo(); }"
+            );
+            editor.redo(&Redo, cx);
+            assert_eq!(editor.text(cx), "\nmod other;\nfn main() { let foo = 4; }");
+        });
     }
 
     #[gpui::test(iterations = 10)]

@@ -39,27 +39,32 @@ message Envelope {
         SaveBuffer save_buffer = 31;
         BufferSaved buffer_saved = 32;
         BufferReloaded buffer_reloaded = 33;
-        FormatBuffer format_buffer = 34;
-        GetCompletions get_completions = 35;
-        GetCompletionsResponse get_completions_response = 36;
-        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 37;
-        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 38;
+        FormatBuffers format_buffers = 34;
+        FormatBuffersResponse format_buffers_response = 35;
+        GetCompletions get_completions = 36;
+        GetCompletionsResponse get_completions_response = 37;
+        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 38;
+        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 39;
+        GetCodeActions get_code_actions = 40;
+        GetCodeActionsResponse get_code_actions_response = 41;
+        ApplyCodeAction apply_code_action = 42;
+        ApplyCodeActionResponse apply_code_action_response = 43;
 
-        GetChannels get_channels = 39;
-        GetChannelsResponse get_channels_response = 40;
-        JoinChannel join_channel = 41;
-        JoinChannelResponse join_channel_response = 42;
-        LeaveChannel leave_channel = 43;
-        SendChannelMessage send_channel_message = 44;
-        SendChannelMessageResponse send_channel_message_response = 45;
-        ChannelMessageSent channel_message_sent = 46;
-        GetChannelMessages get_channel_messages = 47;
-        GetChannelMessagesResponse get_channel_messages_response = 48;
+        GetChannels get_channels = 44;
+        GetChannelsResponse get_channels_response = 45;
+        JoinChannel join_channel = 46;
+        JoinChannelResponse join_channel_response = 47;
+        LeaveChannel leave_channel = 48;
+        SendChannelMessage send_channel_message = 49;
+        SendChannelMessageResponse send_channel_message_response = 50;
+        ChannelMessageSent channel_message_sent = 51;
+        GetChannelMessages get_channel_messages = 52;
+        GetChannelMessagesResponse get_channel_messages_response = 53;
 
-        UpdateContacts update_contacts = 49;
+        UpdateContacts update_contacts = 54;
 
-        GetUsers get_users = 50;
-        GetUsersResponse get_users_response = 51;
+        GetUsers get_users = 55;
+        GetUsersResponse get_users_response = 56;
     }
 }
 
@@ -202,9 +207,13 @@ message BufferReloaded {
     Timestamp mtime = 4;
 }
 
-message FormatBuffer {
+message FormatBuffers {
     uint64 project_id = 1;
-    uint64 buffer_id = 2;
+    repeated uint64 buffer_ids = 2;
+}
+
+message FormatBuffersResponse {
+    ProjectTransaction transaction = 1;
 }
 
 message GetCompletions {
@@ -224,12 +233,7 @@ message ApplyCompletionAdditionalEdits {
 }
 
 message ApplyCompletionAdditionalEditsResponse {
-    repeated AdditionalEdit additional_edits = 1;
-}
-
-message AdditionalEdit {
-    uint32 replica_id = 1;
-    uint32 local_timestamp = 2;
+    Transaction transaction = 1;
 }
 
 message Completion {
@@ -237,6 +241,51 @@ message Completion {
     Anchor old_end = 2;
     string new_text = 3;
     bytes lsp_completion = 4;
+}
+
+message GetCodeActions {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor start = 3;
+    Anchor end = 4;
+}
+
+message GetCodeActionsResponse {
+    repeated CodeAction actions = 1;
+}
+
+message ApplyCodeAction {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    CodeAction action = 3;
+}
+
+message ApplyCodeActionResponse {
+    ProjectTransaction transaction = 1;
+}
+
+message CodeAction {
+    Anchor start = 1;
+    Anchor end = 2;
+    bytes lsp_action = 3;
+}
+
+message ProjectTransaction {
+    repeated Buffer buffers = 1;
+    repeated Transaction transactions = 2;
+}
+
+message Transaction {
+    LocalTimestamp id = 1;
+    repeated LocalTimestamp edit_ids = 2;
+    repeated VectorClockEntry start = 3;
+    repeated VectorClockEntry end = 4;
+    repeated Range ranges = 5;
+}
+
+message LocalTimestamp {
+    uint32 replica_id = 1;
+    uint32 value = 2;
 }
 
 message UpdateDiagnosticSummary {
@@ -366,16 +415,11 @@ message Buffer {
 message BufferState {
     uint64 id = 1;
     optional File file = 2;
-    string visible_text = 3;
-    string deleted_text = 4;
-    repeated BufferFragment fragments = 5;
-    repeated UndoMapEntry undo_map = 6;
-    repeated VectorClockEntry version = 7;
-    repeated SelectionSet selections = 8;
-    repeated Diagnostic diagnostics = 9;
-    uint32 lamport_timestamp = 10;
-    repeated Operation deferred_operations = 11;
-    repeated string completion_triggers = 12;
+    string base_text = 3;
+    repeated Operation operations = 4;
+    repeated SelectionSet selections = 5;
+    repeated Diagnostic diagnostics = 6;
+    repeated string completion_triggers = 7;
 }
 
 message BufferFragment {
@@ -474,7 +518,9 @@ message Operation {
     }
 
     message UpdateCompletionTriggers {
-        repeated string triggers = 1;
+        uint32 replica_id = 1;
+        uint32 lamport_timestamp = 2;
+        repeated string triggers = 3;
     }
 }
 

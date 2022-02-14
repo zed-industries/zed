@@ -293,6 +293,7 @@ pub struct EditorStyle {
     pub hint_diagnostic: DiagnosticStyle,
     pub invalid_hint_diagnostic: DiagnosticStyle,
     pub autocomplete: AutocompleteStyle,
+    pub code_actions_indicator: Color,
 }
 
 #[derive(Clone, Deserialize, Default)]
@@ -420,6 +421,7 @@ impl InputEditorStyle {
             hint_diagnostic: default_diagnostic_style.clone(),
             invalid_hint_diagnostic: default_diagnostic_style.clone(),
             autocomplete: Default::default(),
+            code_actions_indicator: Default::default(),
         }
     }
 }

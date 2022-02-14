@@ -107,14 +107,23 @@ impl<'a> FoldMapWriter<'a> {
         let buffer = self.0.buffer.lock().clone();
         for range in ranges.into_iter() {
             let range = range.start.to_offset(&buffer)..range.end.to_offset(&buffer);
-            if range.start != range.end {
-                let fold = Fold(buffer.anchor_after(range.start)..buffer.anchor_before(range.end));
-                folds.push(fold);
-                edits.push(text::Edit {
-                    old: range.clone(),
-                    new: range,
-                });
+
+            // Ignore any empty ranges.
+            if range.start == range.end {
+                continue;
             }
+
+            // For now, ignore any ranges that span an excerpt boundary.
+            let fold = Fold(buffer.anchor_after(range.start)..buffer.anchor_before(range.end));
+            if fold.0.start.excerpt_id() != fold.0.end.excerpt_id() {
+                continue;
+            }
+
+            folds.push(fold);
+            edits.push(text::Edit {
+                old: range.clone(),
+                new: range,
+            });
         }
 
         folds.sort_unstable_by(|a, b| sum_tree::SeekTarget::cmp(a, b, &buffer));
@@ -268,6 +277,8 @@ impl FoldMap {
             let mut buffer = self.buffer.lock();
             if buffer.parse_count() != new_buffer.parse_count()
                 || buffer.diagnostics_update_count() != new_buffer.diagnostics_update_count()
+                || buffer.trailing_excerpt_update_count()
+                    != new_buffer.trailing_excerpt_update_count()
             {
                 self.version.fetch_add(1, SeqCst);
             }
@@ -1281,7 +1292,7 @@ mod tests {
                 _ => buffer.update(cx, |buffer, cx| {
                     let subscription = buffer.subscribe();
                     let edit_count = rng.gen_range(1..=5);
-                    buffer.randomly_edit(&mut rng, edit_count, cx);
+                    buffer.randomly_mutate(&mut rng, edit_count, cx);
                     buffer_snapshot = buffer.snapshot(cx);
                     let edits = subscription.consume().into_inner();
                     log::info!("editing {:?}", edits);
@@ -1407,7 +1418,6 @@ mod tests {
                 fold_row = snapshot
                     .clip_point(FoldPoint::new(fold_row, 0), Bias::Right)
                     .row();
-                eprintln!("fold_row: {} of {}", fold_row, expected_buffer_rows.len());
                 assert_eq!(
                     snapshot.buffer_rows(fold_row).collect::<Vec<_>>(),
                     expected_buffer_rows[(fold_row as usize)..],

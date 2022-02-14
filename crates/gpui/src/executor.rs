@@ -550,8 +550,11 @@ impl Background {
     pub async fn simulate_random_delay(&self) {
         match self {
             Self::Deterministic { executor, .. } => {
-                if executor.state.lock().rng.gen_range(0..100) < 20 {
-                    yield_now().await;
+                if executor.state.lock().rng.gen_bool(0.2) {
+                    let yields = executor.state.lock().rng.gen_range(1..=10);
+                    for _ in 0..yields {
+                        yield_now().await;
+                    }
                 }
             }
             _ => panic!("this method can only be called on a deterministic executor"),

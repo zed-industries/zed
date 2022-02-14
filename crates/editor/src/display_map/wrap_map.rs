@@ -106,7 +106,7 @@ impl WrapMap {
         tab_snapshot: TabSnapshot,
         edits: Vec<TabEdit>,
         cx: &mut ModelContext<Self>,
-    ) -> (WrapSnapshot, Vec<WrapEdit>) {
+    ) -> (WrapSnapshot, Patch<u32>) {
         if self.wrap_width.is_some() {
             self.pending_edits.push_back((tab_snapshot, edits));
             self.flush_edits(cx);
@@ -117,10 +117,7 @@ impl WrapMap {
             self.snapshot.interpolated = false;
         }
 
-        (
-            self.snapshot.clone(),
-            mem::take(&mut self.edits_since_sync).into_inner(),
-        )
+        (self.snapshot.clone(), mem::take(&mut self.edits_since_sync))
     }
 
     pub fn set_font(&mut self, font_id: FontId, font_size: f32, cx: &mut ModelContext<Self>) {
@@ -588,10 +585,6 @@ impl WrapSnapshot {
         }
     }
 
-    pub fn text_summary(&self) -> TextSummary {
-        self.transforms.summary().output
-    }
-
     pub fn max_point(&self) -> WrapPoint {
         WrapPoint(self.transforms.summary().output.lines)
     }
@@ -955,10 +948,6 @@ impl WrapPoint {
         &mut self.0.row
     }
 
-    pub fn column(&self) -> u32 {
-        self.0.column
-    }
-
     pub fn column_mut(&mut self) -> &mut u32 {
         &mut self.0.column
     }
@@ -1118,7 +1107,7 @@ mod tests {
                     buffer.update(&mut cx, |buffer, cx| {
                         let subscription = buffer.subscribe();
                         let edit_count = rng.gen_range(1..=5);
-                        buffer.randomly_edit(&mut rng, edit_count, cx);
+                        buffer.randomly_mutate(&mut rng, edit_count, cx);
                         buffer_snapshot = buffer.snapshot(cx);
                         buffer_edits.extend(subscription.consume());
                     });

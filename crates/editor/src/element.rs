@@ -3,11 +3,12 @@ use super::{
     Anchor, DisplayPoint, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle, Input,
     Scroll, Select, SelectPhase, SoftWrap, ToPoint, MAX_LINE_LEN,
 };
+use crate::display_map::TransformBlock;
 use clock::ReplicaId;
 use collections::{BTreeMap, HashMap};
 use gpui::{
     color::Color,
-    elements::layout_highlighted_chunks,
+    elements::*,
     fonts::{HighlightStyle, Underline},
     geometry::{
         rect::RectF,
@@ -280,7 +281,7 @@ impl EditorElement {
         &mut self,
         bounds: RectF,
         visible_bounds: RectF,
-        layout: &LayoutState,
+        layout: &mut LayoutState,
         cx: &mut PaintContext,
     ) {
         let scroll_top = layout.snapshot.scroll_position().y() * layout.line_height;
@@ -293,6 +294,14 @@ impl EditorElement {
                     );
                 line.paint(line_origin, visible_bounds, layout.line_height, cx);
             }
+        }
+
+        if let Some((row, indicator)) = layout.code_actions_indicator.as_mut() {
+            let mut x = bounds.width() - layout.gutter_padding;
+            let mut y = *row as f32 * layout.line_height - scroll_top;
+            x += ((layout.gutter_padding + layout.text_offset.x()) - indicator.size().x()) / 2.;
+            y += (layout.line_height - indicator.size().y()) / 2.;
+            indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, cx);
         }
     }
 
@@ -392,20 +401,20 @@ impl EditorElement {
         }
         cx.scene.pop_layer();
 
-        if let Some((position, completions_list)) = layout.completions.as_mut() {
+        if let Some((position, context_menu)) = layout.context_menu.as_mut() {
             cx.scene.push_stacking_context(None);
 
             let cursor_row_layout = &layout.line_layouts[(position.row() - start_row) as usize];
             let x = cursor_row_layout.x_for_index(position.column() as usize) - scroll_left;
             let y = (position.row() + 1) as f32 * layout.line_height - scroll_top;
             let mut list_origin = content_origin + vec2f(x, y);
-            let list_height = completions_list.size().y();
+            let list_height = context_menu.size().y();
 
             if list_origin.y() + list_height > bounds.lower_left().y() {
                 list_origin.set_y(list_origin.y() - layout.line_height - list_height);
             }
 
-            completions_list.paint(
+            context_menu.paint(
                 list_origin,
                 RectF::from_points(Vector2F::zero(), vec2f(f32::MAX, f32::MAX)), // Let content bleed outside of editor
                 cx,
@@ -649,33 +658,91 @@ impl EditorElement {
         line_layouts: &[text_layout::Line],
         cx: &mut LayoutContext,
     ) -> Vec<(u32, ElementBox)> {
+        let scroll_x = snapshot.scroll_position.x();
         snapshot
             .blocks_in_range(rows.clone())
-            .map(|(start_row, block)| {
-                let anchor_row = block
-                    .position()
-                    .to_point(&snapshot.buffer_snapshot)
-                    .to_display_point(snapshot)
-                    .row();
+            .map(|(block_row, block)| {
+                let mut element = match block {
+                    TransformBlock::Custom(block) => {
+                        let align_to = block
+                            .position()
+                            .to_point(&snapshot.buffer_snapshot)
+                            .to_display_point(snapshot);
+                        let anchor_x = text_x
+                            + if rows.contains(&align_to.row()) {
+                                line_layouts[(align_to.row() - rows.start) as usize]
+                                    .x_for_index(align_to.column() as usize)
+                            } else {
+                                layout_line(align_to.row(), snapshot, style, cx.text_layout_cache)
+                                    .x_for_index(align_to.column() as usize)
+                            };
 
-                let anchor_x = text_x
-                    + if rows.contains(&anchor_row) {
-                        line_layouts[(anchor_row - rows.start) as usize]
-                            .x_for_index(block.column() as usize)
-                    } else {
-                        layout_line(anchor_row, snapshot, style, cx.text_layout_cache)
-                            .x_for_index(block.column() as usize)
-                    };
+                        block.render(&BlockContext {
+                            cx,
+                            anchor_x,
+                            gutter_padding,
+                            line_height,
+                            scroll_x,
+                            gutter_width,
+                            em_width,
+                        })
+                    }
+                    TransformBlock::ExcerptHeader {
+                        buffer,
+                        starts_new_buffer,
+                        ..
+                    } => {
+                        if *starts_new_buffer {
+                            let style = &self.settings.style.diagnostic_path_header;
+                            let font_size = (style.text_scale_factor
+                                * self.settings.style.text.font_size)
+                                .round();
 
-                let mut element = block.render(&BlockContext {
-                    cx,
-                    anchor_x,
-                    gutter_padding,
-                    line_height,
-                    scroll_x: snapshot.scroll_position.x(),
-                    gutter_width,
-                    em_width,
-                });
+                            let mut filename = None;
+                            let mut parent_path = None;
+                            if let Some(path) = buffer.path() {
+                                filename =
+                                    path.file_name().map(|f| f.to_string_lossy().to_string());
+                                parent_path =
+                                    path.parent().map(|p| p.to_string_lossy().to_string() + "/");
+                            }
+
+                            Flex::row()
+                                .with_child(
+                                    Label::new(
+                                        filename.unwrap_or_else(|| "untitled".to_string()),
+                                        style.filename.text.clone().with_font_size(font_size),
+                                    )
+                                    .contained()
+                                    .with_style(style.filename.container)
+                                    .boxed(),
+                                )
+                                .with_children(parent_path.map(|path| {
+                                    Label::new(
+                                        path,
+                                        style.path.text.clone().with_font_size(font_size),
+                                    )
+                                    .contained()
+                                    .with_style(style.path.container)
+                                    .boxed()
+                                }))
+                                .aligned()
+                                .left()
+                                .contained()
+                                .with_style(style.container)
+                                .with_padding_left(gutter_padding + scroll_x * em_width)
+                                .expanded()
+                                .named("path header block")
+                        } else {
+                            let text_style = self.settings.style.text.clone();
+                            Label::new("…".to_string(), text_style)
+                                .contained()
+                                .with_padding_left(gutter_padding + scroll_x * em_width)
+                                .named("collapsed context")
+                        }
+                    }
+                };
+
                 element.layout(
                     SizeConstraint {
                         min: Vector2F::zero(),
@@ -683,7 +750,7 @@ impl EditorElement {
                     },
                     cx,
                 );
-                (start_row, element)
+                (block_row, element)
             })
             .collect()
     }
@@ -859,7 +926,8 @@ impl Element for EditorElement {
             max_row.saturating_sub(1) as f32,
         );
 
-        let mut completions = None;
+        let mut context_menu = None;
+        let mut code_actions_indicator = None;
         self.update_view(cx.app, |view, cx| {
             let clamped = view.clamp_scroll_left(scroll_max.x());
             let autoscrolled;
@@ -880,21 +948,24 @@ impl Element for EditorElement {
                 snapshot = view.snapshot(cx);
             }
 
-            if view.has_completions() {
-                let newest_selection_head = view
-                    .newest_selection::<usize>(&snapshot.buffer_snapshot)
-                    .head()
-                    .to_display_point(&snapshot);
+            let newest_selection_head = view
+                .newest_selection::<usize>(&snapshot.buffer_snapshot)
+                .head()
+                .to_display_point(&snapshot);
 
-                if (start_row..end_row).contains(&newest_selection_head.row()) {
-                    let list = view.render_completions(cx).unwrap();
-                    completions = Some((newest_selection_head, list));
+            if (start_row..end_row).contains(&newest_selection_head.row()) {
+                if view.context_menu_visible() {
+                    context_menu = view.render_context_menu(newest_selection_head, cx);
                 }
+
+                code_actions_indicator = view
+                    .render_code_actions_indicator(cx)
+                    .map(|indicator| (newest_selection_head.row(), indicator));
             }
         });
 
-        if let Some((_, completions_list)) = completions.as_mut() {
-            completions_list.layout(
+        if let Some((_, context_menu)) = context_menu.as_mut() {
+            context_menu.layout(
                 SizeConstraint {
                     min: Vector2F::zero(),
                     max: vec2f(
@@ -902,6 +973,13 @@ impl Element for EditorElement {
                         (12. * line_height).min((size.y() - line_height) / 2.),
                     ),
                 },
+                cx,
+            );
+        }
+
+        if let Some((_, indicator)) = code_actions_indicator.as_mut() {
+            indicator.layout(
+                SizeConstraint::strict_along(Axis::Vertical, line_height * 0.618),
                 cx,
             );
         }
@@ -940,7 +1018,8 @@ impl Element for EditorElement {
                 em_width,
                 em_advance,
                 selections,
-                completions,
+                context_menu,
+                code_actions_indicator,
             },
         )
     }
@@ -989,8 +1068,14 @@ impl Element for EditorElement {
         paint: &mut PaintState,
         cx: &mut EventContext,
     ) -> bool {
-        if let Some((_, completion_list)) = &mut layout.completions {
-            if completion_list.dispatch_event(event, cx) {
+        if let Some((_, context_menu)) = &mut layout.context_menu {
+            if context_menu.dispatch_event(event, cx) {
+                return true;
+            }
+        }
+
+        if let Some((_, indicator)) = &mut layout.code_actions_indicator {
+            if indicator.dispatch_event(event, cx) {
                 return true;
             }
         }
@@ -1051,7 +1136,8 @@ pub struct LayoutState {
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     selections: HashMap<ReplicaId, Vec<text::Selection<DisplayPoint>>>,
     text_offset: Vector2F,
-    completions: Option<(DisplayPoint, ElementBox)>,
+    context_menu: Option<(DisplayPoint, ElementBox)>,
+    code_actions_indicator: Option<(u32, ElementBox)>,
 }
 
 fn layout_line(
@@ -1298,6 +1384,7 @@ mod tests {
                     let settings = settings.clone();
                     Arc::new(move |_| settings.clone())
                 },
+                None,
                 cx,
             )
         });

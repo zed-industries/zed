@@ -14,9 +14,7 @@ use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
     Task,
 };
-use language::{
-    Anchor, Buffer, Completion, DiagnosticEntry, Language, Operation, PointUtf16, Rope,
-};
+use language::{Buffer, DiagnosticEntry, Operation, PointUtf16, Rope};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
@@ -293,7 +291,7 @@ impl Worktree {
                     let this = worktree_handle.downgrade();
                     cx.spawn(|mut cx| async move {
                         while let Some(_) = snapshot_rx.recv().await {
-                            if let Some(this) = cx.read(|cx| this.upgrade(cx)) {
+                            if let Some(this) = this.upgrade(&cx) {
                                 this.update(&mut cx, |this, cx| this.poll_snapshot(cx));
                             } else {
                                 break;
@@ -518,7 +516,7 @@ impl LocalWorktree {
 
             cx.spawn_weak(|this, mut cx| async move {
                 while let Ok(scan_state) = scan_states_rx.recv().await {
-                    if let Some(handle) = cx.read(|cx| this.upgrade(cx)) {
+                    if let Some(handle) = this.upgrade(&cx) {
                         let to_send = handle.update(&mut cx, |this, cx| {
                             last_scan_state_tx.blocking_send(scan_state).ok();
                             this.poll_snapshot(cx);
@@ -820,7 +818,7 @@ impl RemoteWorktree {
     ) -> Result<()> {
         let mut tx = self.updates_tx.clone();
         let payload = envelope.payload.clone();
-        cx.background()
+        cx.foreground()
             .spawn(async move {
                 tx.send(payload).await.expect("receiver runs to completion");
             })
@@ -1384,96 +1382,6 @@ impl language::File for File {
                     Ok((version, mtime))
                 })
             }
-        })
-    }
-
-    fn format_remote(
-        &self,
-        buffer_id: u64,
-        cx: &mut MutableAppContext,
-    ) -> Option<Task<Result<()>>> {
-        let worktree = self.worktree.read(cx);
-        let worktree = worktree.as_remote()?;
-        let rpc = worktree.client.clone();
-        let project_id = worktree.project_id;
-        Some(cx.foreground().spawn(async move {
-            rpc.request(proto::FormatBuffer {
-                project_id,
-                buffer_id,
-            })
-            .await?;
-            Ok(())
-        }))
-    }
-
-    fn completions(
-        &self,
-        buffer_id: u64,
-        position: Anchor,
-        language: Option<Arc<Language>>,
-        cx: &mut MutableAppContext,
-    ) -> Task<Result<Vec<Completion<Anchor>>>> {
-        let worktree = self.worktree.read(cx);
-        let worktree = if let Some(worktree) = worktree.as_remote() {
-            worktree
-        } else {
-            return Task::ready(Err(anyhow!(
-                "remote completions requested on a local worktree"
-            )));
-        };
-        let rpc = worktree.client.clone();
-        let project_id = worktree.project_id;
-        cx.foreground().spawn(async move {
-            let response = rpc
-                .request(proto::GetCompletions {
-                    project_id,
-                    buffer_id,
-                    position: Some(language::proto::serialize_anchor(&position)),
-                })
-                .await?;
-            response
-                .completions
-                .into_iter()
-                .map(|completion| {
-                    language::proto::deserialize_completion(completion, language.as_ref())
-                })
-                .collect()
-        })
-    }
-
-    fn apply_additional_edits_for_completion(
-        &self,
-        buffer_id: u64,
-        completion: Completion<Anchor>,
-        cx: &mut MutableAppContext,
-    ) -> Task<Result<Vec<clock::Local>>> {
-        let worktree = self.worktree.read(cx);
-        let worktree = if let Some(worktree) = worktree.as_remote() {
-            worktree
-        } else {
-            return Task::ready(Err(anyhow!(
-                "remote additional edits application requested on a local worktree"
-            )));
-        };
-        let rpc = worktree.client.clone();
-        let project_id = worktree.project_id;
-        cx.foreground().spawn(async move {
-            let response = rpc
-                .request(proto::ApplyCompletionAdditionalEdits {
-                    project_id,
-                    buffer_id,
-                    completion: Some(language::proto::serialize_completion(&completion)),
-                })
-                .await?;
-
-            Ok(response
-                .additional_edits
-                .into_iter()
-                .map(|edit| clock::Local {
-                    replica_id: edit.replica_id as ReplicaId,
-                    value: edit.local_timestamp,
-                })
-                .collect())
         })
     }
 
@@ -2216,7 +2124,7 @@ struct UpdateIgnoreStatusJob {
 }
 
 pub trait WorktreeHandle {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     fn flush_fs_events<'a>(
         &self,
         cx: &'a gpui::TestAppContext,
@@ -2230,7 +2138,7 @@ impl WorktreeHandle for ModelHandle<Worktree> {
     //
     // This function mutates the worktree's directory and waits for those mutations to be picked up,
     // to ensure that all redundant FS events have already been processed.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     fn flush_fs_events<'a>(
         &self,
         cx: &'a gpui::TestAppContext,
@@ -2238,14 +2146,22 @@ impl WorktreeHandle for ModelHandle<Worktree> {
         use smol::future::FutureExt;
 
         let filename = "fs-event-sentinel";
-        let root_path = cx.read(|cx| self.read(cx).as_local().unwrap().abs_path().clone());
         let tree = self.clone();
+        let (fs, root_path) = self.read_with(cx, |tree, _| {
+            let tree = tree.as_local().unwrap();
+            (tree.fs.clone(), tree.abs_path().clone())
+        });
+
         async move {
-            std::fs::write(root_path.join(filename), "").unwrap();
+            fs.create_file(&root_path.join(filename), Default::default())
+                .await
+                .unwrap();
             tree.condition(&cx, |tree, _| tree.entry_for_path(filename).is_some())
                 .await;
 
-            std::fs::remove_file(root_path.join(filename)).unwrap();
+            fs.remove_file(&root_path.join(filename), Default::default())
+                .await
+                .unwrap();
             tree.condition(&cx, |tree, _| tree.entry_for_path(filename).is_none())
                 .await;
 

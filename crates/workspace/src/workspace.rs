@@ -150,11 +150,9 @@ pub trait Item: Entity + Sized {
 }
 
 pub trait ItemView: View {
-    type ItemHandle: ItemHandle;
-
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) {}
-    fn item_handle(&self, cx: &AppContext) -> Self::ItemHandle;
+    fn item_id(&self, cx: &AppContext) -> usize;
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn clone_on_split(&self, _: &mut ViewContext<Self>) -> Option<Self>
@@ -170,7 +168,11 @@ pub trait ItemView: View {
         false
     }
     fn can_save(&self, cx: &AppContext) -> bool;
-    fn save(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>>;
+    fn save(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>>;
     fn can_save_as(&self, cx: &AppContext) -> bool;
     fn save_as(
         &mut self,
@@ -222,7 +224,7 @@ pub trait WeakItemHandle {
 }
 
 pub trait ItemViewHandle: 'static {
-    fn item_handle(&self, cx: &AppContext) -> Box<dyn ItemHandle>;
+    fn item_id(&self, cx: &AppContext) -> usize;
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn boxed_clone(&self) -> Box<dyn ItemViewHandle>;
@@ -236,7 +238,7 @@ pub trait ItemViewHandle: 'static {
     fn has_conflict(&self, cx: &AppContext) -> bool;
     fn can_save(&self, cx: &AppContext) -> bool;
     fn can_save_as(&self, cx: &AppContext) -> bool;
-    fn save(&self, cx: &mut MutableAppContext) -> Task<Result<()>>;
+    fn save(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext) -> Task<Result<()>>;
     fn save_as(
         &self,
         project: ModelHandle<Project>,
@@ -324,7 +326,7 @@ impl<T: Item> WeakItemHandle for WeakModelHandle<T> {
     }
 
     fn upgrade(&self, cx: &AppContext) -> Option<Box<dyn ItemHandle>> {
-        WeakModelHandle::<T>::upgrade(*self, cx).map(|i| Box::new(i) as Box<dyn ItemHandle>)
+        WeakModelHandle::<T>::upgrade(self, cx).map(|i| Box::new(i) as Box<dyn ItemHandle>)
     }
 }
 
@@ -354,8 +356,8 @@ impl dyn ItemViewHandle {
 }
 
 impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
-    fn item_handle(&self, cx: &AppContext) -> Box<dyn ItemHandle> {
-        Box::new(self.read(cx).item_handle(cx))
+    fn item_id(&self, cx: &AppContext) -> usize {
+        self.read(cx).item_id(cx)
     }
 
     fn tab_content(&self, style: &theme::Tab, cx: &AppContext) -> ElementBox {
@@ -404,8 +406,8 @@ impl<T: ItemView> ItemViewHandle for ViewHandle<T> {
         self.update(cx, |this, cx| this.navigate(data, cx));
     }
 
-    fn save(&self, cx: &mut MutableAppContext) -> Task<Result<()>> {
-        self.update(cx, |item, cx| item.save(cx))
+    fn save(&self, project: ModelHandle<Project>, cx: &mut MutableAppContext) -> Task<Result<()>> {
+        self.update(cx, |item, cx| item.save(project, cx))
     }
 
     fn save_as(
@@ -589,7 +591,7 @@ impl Workspace {
 
             while stream.recv().await.is_some() {
                 cx.update(|cx| {
-                    if let Some(this) = this.upgrade(&cx) {
+                    if let Some(this) = this.upgrade(cx) {
                         this.update(cx, |_, cx| cx.notify());
                     }
                 })
@@ -772,7 +774,7 @@ impl Workspace {
             let item = load_task.await?;
             this.update(&mut cx, |this, cx| {
                 let pane = pane
-                    .upgrade(&cx)
+                    .upgrade(cx)
                     .ok_or_else(|| anyhow!("could not upgrade pane reference"))?;
                 Ok(this.open_item_in_pane(item, &pane, cx))
             })
@@ -822,6 +824,7 @@ impl Workspace {
     }
 
     pub fn save_active_item(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
+        let project = self.project.clone();
         if let Some(item) = self.active_item(cx) {
             if item.can_save(cx) {
                 if item.has_conflict(cx.as_ref()) {
@@ -835,12 +838,12 @@ impl Workspace {
                     cx.spawn(|_, mut cx| async move {
                         let answer = answer.recv().await;
                         if answer == Some(0) {
-                            cx.update(|cx| item.save(cx)).await?;
+                            cx.update(|cx| item.save(project, cx)).await?;
                         }
                         Ok(())
                     })
                 } else {
-                    item.save(cx)
+                    item.save(project, cx)
                 }
             } else if item.can_save_as(cx) {
                 let worktree = self.worktrees(cx).next();
@@ -849,9 +852,8 @@ impl Workspace {
                     .map_or(Path::new(""), |w| w.abs_path())
                     .to_path_buf();
                 let mut abs_path = cx.prompt_for_new_path(&start_abs_path);
-                cx.spawn(|this, mut cx| async move {
+                cx.spawn(|_, mut cx| async move {
                     if let Some(abs_path) = abs_path.recv().await.flatten() {
-                        let project = this.read_with(&cx, |this, _| this.project().clone());
                         cx.update(|cx| item.save_as(project, abs_path, cx)).await?;
                     }
                     Ok(())

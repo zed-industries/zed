@@ -432,28 +432,28 @@ fn test_undo_redo() {
     buffer.edit(vec![3..5], "cd");
     assert_eq!(buffer.text(), "1abcdef234");
 
-    let transactions = buffer.history.undo_stack.clone();
-    assert_eq!(transactions.len(), 3);
+    let entries = buffer.history.undo_stack.clone();
+    assert_eq!(entries.len(), 3);
 
-    buffer.undo_or_redo(transactions[0].clone()).unwrap();
+    buffer.undo_or_redo(entries[0].transaction.clone()).unwrap();
     assert_eq!(buffer.text(), "1cdef234");
-    buffer.undo_or_redo(transactions[0].clone()).unwrap();
+    buffer.undo_or_redo(entries[0].transaction.clone()).unwrap();
     assert_eq!(buffer.text(), "1abcdef234");
 
-    buffer.undo_or_redo(transactions[1].clone()).unwrap();
+    buffer.undo_or_redo(entries[1].transaction.clone()).unwrap();
     assert_eq!(buffer.text(), "1abcdx234");
-    buffer.undo_or_redo(transactions[2].clone()).unwrap();
+    buffer.undo_or_redo(entries[2].transaction.clone()).unwrap();
     assert_eq!(buffer.text(), "1abx234");
-    buffer.undo_or_redo(transactions[1].clone()).unwrap();
+    buffer.undo_or_redo(entries[1].transaction.clone()).unwrap();
     assert_eq!(buffer.text(), "1abyzef234");
-    buffer.undo_or_redo(transactions[2].clone()).unwrap();
+    buffer.undo_or_redo(entries[2].transaction.clone()).unwrap();
     assert_eq!(buffer.text(), "1abcdef234");
 
-    buffer.undo_or_redo(transactions[2].clone()).unwrap();
+    buffer.undo_or_redo(entries[2].transaction.clone()).unwrap();
     assert_eq!(buffer.text(), "1abyzef234");
-    buffer.undo_or_redo(transactions[0].clone()).unwrap();
+    buffer.undo_or_redo(entries[0].transaction.clone()).unwrap();
     assert_eq!(buffer.text(), "1yzef234");
-    buffer.undo_or_redo(transactions[1].clone()).unwrap();
+    buffer.undo_or_redo(entries[1].transaction.clone()).unwrap();
     assert_eq!(buffer.text(), "1234");
 }
 
@@ -502,7 +502,7 @@ fn test_history() {
 }
 
 #[test]
-fn test_avoid_grouping_next_transaction() {
+fn test_finalize_last_transaction() {
     let now = Instant::now();
     let mut buffer = Buffer::new(0, 0, History::new("123456".into()));
 
@@ -511,7 +511,7 @@ fn test_avoid_grouping_next_transaction() {
     buffer.end_transaction_at(now);
     assert_eq!(buffer.text(), "12cd56");
 
-    buffer.avoid_grouping_next_transaction();
+    buffer.finalize_last_transaction();
     buffer.start_transaction_at(now);
     buffer.edit(vec![4..5], "e");
     buffer.end_transaction_at(now).unwrap();
@@ -537,6 +537,44 @@ fn test_avoid_grouping_next_transaction() {
 }
 
 #[test]
+fn test_edited_ranges_for_transaction() {
+    let now = Instant::now();
+    let mut buffer = Buffer::new(0, 0, History::new("1234567".into()));
+
+    buffer.start_transaction_at(now);
+    buffer.edit(vec![2..4], "cd");
+    buffer.edit(vec![6..6], "efg");
+    buffer.end_transaction_at(now);
+    assert_eq!(buffer.text(), "12cd56efg7");
+
+    let tx = buffer.finalize_last_transaction().unwrap().clone();
+    assert_eq!(
+        buffer
+            .edited_ranges_for_transaction::<usize>(&tx)
+            .collect::<Vec<_>>(),
+        [2..4, 6..9]
+    );
+
+    buffer.edit(vec![5..5], "hijk");
+    assert_eq!(buffer.text(), "12cd5hijk6efg7");
+    assert_eq!(
+        buffer
+            .edited_ranges_for_transaction::<usize>(&tx)
+            .collect::<Vec<_>>(),
+        [2..4, 10..13]
+    );
+
+    buffer.edit(vec![4..4], "l");
+    assert_eq!(buffer.text(), "12cdl5hijk6efg7");
+    assert_eq!(
+        buffer
+            .edited_ranges_for_transaction::<usize>(&tx)
+            .collect::<Vec<_>>(),
+        [2..4, 11..14]
+    );
+}
+
+#[test]
 fn test_concurrent_edits() {
     let text = "abcdef";
 
@@ -551,12 +589,12 @@ fn test_concurrent_edits() {
     let buf3_op = buffer3.edit(vec![5..6], "56");
     assert_eq!(buffer3.text(), "abcde56");
 
-    buffer1.apply_op(Operation::Edit(buf2_op.clone())).unwrap();
-    buffer1.apply_op(Operation::Edit(buf3_op.clone())).unwrap();
-    buffer2.apply_op(Operation::Edit(buf1_op.clone())).unwrap();
-    buffer2.apply_op(Operation::Edit(buf3_op.clone())).unwrap();
-    buffer3.apply_op(Operation::Edit(buf1_op.clone())).unwrap();
-    buffer3.apply_op(Operation::Edit(buf2_op.clone())).unwrap();
+    buffer1.apply_op(buf2_op.clone()).unwrap();
+    buffer1.apply_op(buf3_op.clone()).unwrap();
+    buffer2.apply_op(buf1_op.clone()).unwrap();
+    buffer2.apply_op(buf3_op.clone()).unwrap();
+    buffer3.apply_op(buf1_op.clone()).unwrap();
+    buffer3.apply_op(buf2_op.clone()).unwrap();
 
     assert_eq!(buffer1.text(), "a12c34e56");
     assert_eq!(buffer2.text(), "a12c34e56");

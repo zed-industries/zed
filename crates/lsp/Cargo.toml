@@ -27,5 +27,6 @@ smol = "1.2"
 gpui = { path = "../gpui", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
 async-pipe = { git = "https://github.com/routerify/async-pipe-rs", rev = "feeb77e83142a9ff837d0767652ae41bfc5d8e47" }
-simplelog = "0.9"
+ctor = "0.1"
+env_logger = "0.8"
 unindent = "0.1.7"

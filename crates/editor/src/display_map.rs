@@ -15,8 +15,8 @@ use tab_map::TabMap;
 use wrap_map::WrapMap;
 
 pub use block_map::{
-    AlignedBlock, BlockBufferRows as DisplayBufferRows, BlockChunks as DisplayChunks, BlockContext,
-    BlockDisposition, BlockId, BlockProperties, RenderBlock,
+    BlockBufferRows as DisplayBufferRows, BlockChunks as DisplayChunks, BlockContext,
+    BlockDisposition, BlockId, BlockProperties, RenderBlock, TransformBlock,
 };
 
 pub trait ToDisplayPoint {
@@ -43,13 +43,15 @@ impl DisplayMap {
         font_id: FontId,
         font_size: f32,
         wrap_width: Option<f32>,
+        buffer_header_height: u8,
+        excerpt_header_height: u8,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let buffer_subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let (fold_map, snapshot) = FoldMap::new(buffer.read(cx).snapshot(cx));
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font_id, font_size, wrap_width, cx);
-        let block_map = BlockMap::new(snapshot);
+        let block_map = BlockMap::new(snapshot, buffer_header_height, excerpt_header_height);
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
         DisplayMap {
             buffer,
@@ -318,7 +320,7 @@ impl DisplaySnapshot {
     pub fn blocks_in_range<'a>(
         &'a self,
         rows: Range<u32>,
-    ) -> impl Iterator<Item = (u32, &'a AlignedBlock)> {
+    ) -> impl Iterator<Item = (u32, &'a TransformBlock)> {
         self.blocks_snapshot.blocks_in_range(rows)
     }
 
@@ -471,6 +473,8 @@ mod tests {
 
         let font_cache = cx.font_cache().clone();
         let tab_size = rng.gen_range(1..=4);
+        let buffer_start_excerpt_header_height = rng.gen_range(1..=5);
+        let excerpt_header_height = rng.gen_range(1..=5);
         let family_id = font_cache.load_family(&["Helvetica"]).unwrap();
         let font_id = font_cache
             .select_font(family_id, &Default::default())
@@ -497,7 +501,16 @@ mod tests {
         });
 
         let map = cx.add_model(|cx| {
-            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, wrap_width, cx)
+            DisplayMap::new(
+                buffer.clone(),
+                tab_size,
+                font_id,
+                font_size,
+                wrap_width,
+                buffer_start_excerpt_header_height,
+                excerpt_header_height,
+                cx,
+            )
         });
         let mut notifications = observe(&map, &mut cx);
         let mut fold_count = 0;
@@ -711,7 +724,16 @@ mod tests {
         let text = "one two three four five\nsix seven eight";
         let buffer = MultiBuffer::build_simple(text, cx);
         let map = cx.add_model(|cx| {
-            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, wrap_width, cx)
+            DisplayMap::new(
+                buffer.clone(),
+                tab_size,
+                font_id,
+                font_size,
+                wrap_width,
+                1,
+                1,
+                cx,
+            )
         });
 
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
@@ -791,7 +813,7 @@ mod tests {
             .unwrap();
         let font_size = 14.0;
         let map = cx.add_model(|cx| {
-            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, cx)
+            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, 1, 1, cx)
         });
         buffer.update(cx, |buffer, cx| {
             buffer.edit(
@@ -870,8 +892,8 @@ mod tests {
             .unwrap();
         let font_size = 14.0;
 
-        let map =
-            cx.add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, cx));
+        let map = cx
+            .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
         assert_eq!(
             cx.update(|cx| chunks(0..5, &map, &theme, cx)),
             vec![
@@ -958,8 +980,9 @@ mod tests {
             .unwrap();
         let font_size = 16.0;
 
-        let map = cx
-            .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, Some(40.0), cx));
+        let map = cx.add_model(|cx| {
+            DisplayMap::new(buffer, tab_size, font_id, font_size, Some(40.0), 1, 1, cx)
+        });
         assert_eq!(
             cx.update(|cx| chunks(0..5, &map, &theme, cx)),
             [
@@ -1003,7 +1026,7 @@ mod tests {
             .unwrap();
         let font_size = 14.0;
         let map = cx.add_model(|cx| {
-            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, cx)
+            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, 1, 1, cx)
         });
         let map = map.update(cx, |map, cx| map.snapshot(cx));
 
@@ -1047,7 +1070,7 @@ mod tests {
         let font_size = 14.0;
 
         let map = cx.add_model(|cx| {
-            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, cx)
+            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, 1, 1, cx)
         });
         let map = map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(map.text(), "✅       α\nβ   \n🏀β      γ");
@@ -1105,7 +1128,7 @@ mod tests {
             .unwrap();
         let font_size = 14.0;
         let map = cx.add_model(|cx| {
-            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, cx)
+            DisplayMap::new(buffer.clone(), tab_size, font_id, font_size, None, 1, 1, cx)
         });
         assert_eq!(
             map.update(cx, |map, cx| map.snapshot(cx)).max_point(),

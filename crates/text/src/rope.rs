@@ -179,6 +179,19 @@ impl Rope {
             })
     }
 
+    pub fn point_to_point_utf16(&self, point: Point) -> PointUtf16 {
+        if point >= self.summary().lines {
+            return self.summary().lines_utf16;
+        }
+        let mut cursor = self.chunks.cursor::<(Point, PointUtf16)>();
+        cursor.seek(&point, Bias::Left, &());
+        let overshoot = point - cursor.start().0;
+        cursor.start().1
+            + cursor.item().map_or(PointUtf16::zero(), |chunk| {
+                chunk.point_to_point_utf16(overshoot)
+            })
+    }
+
     pub fn point_to_offset(&self, point: Point) -> usize {
         if point >= self.summary().lines {
             return self.summary().bytes;
@@ -578,6 +591,27 @@ impl Chunk {
             offset += ch.len_utf8();
         }
         offset
+    }
+
+    fn point_to_point_utf16(&self, target: Point) -> PointUtf16 {
+        let mut point = Point::zero();
+        let mut point_utf16 = PointUtf16::new(0, 0);
+        for ch in self.0.chars() {
+            if point >= target {
+                break;
+            }
+
+            if ch == '\n' {
+                point_utf16.row += 1;
+                point_utf16.column = 0;
+                point.row += 1;
+                point.column = 0;
+            } else {
+                point_utf16.column += ch.len_utf16() as u32;
+                point.column += ch.len_utf8() as u32;
+            }
+        }
+        point_utf16
     }
 
     fn point_utf16_to_offset(&self, target: PointUtf16) -> usize {

@@ -9,7 +9,7 @@ use text::{rope::TextDimension, Point};
 
 #[derive(Clone, Eq, PartialEq, Debug, Hash)]
 pub struct Anchor {
-    pub(crate) buffer_id: usize,
+    pub(crate) buffer_id: Option<usize>,
     pub(crate) excerpt_id: ExcerptId,
     pub(crate) text_anchor: text::Anchor,
 }
@@ -17,7 +17,7 @@ pub struct Anchor {
 impl Anchor {
     pub fn min() -> Self {
         Self {
-            buffer_id: 0,
+            buffer_id: None,
             excerpt_id: ExcerptId::min(),
             text_anchor: text::Anchor::min(),
         }
@@ -25,7 +25,7 @@ impl Anchor {
 
     pub fn max() -> Self {
         Self {
-            buffer_id: 0,
+            buffer_id: None,
             excerpt_id: ExcerptId::max(),
             text_anchor: text::Anchor::max(),
         }
@@ -46,11 +46,11 @@ impl Anchor {
                 // Even though the anchor refers to a valid excerpt the underlying buffer might have
                 // changed. In that case, treat the anchor as if it were at the start of that
                 // excerpt.
-                if self.buffer_id == buffer_id && other.buffer_id == buffer_id {
+                if self.buffer_id == Some(buffer_id) && other.buffer_id == Some(buffer_id) {
                     self.text_anchor.cmp(&other.text_anchor, buffer_snapshot)
-                } else if self.buffer_id == buffer_id {
+                } else if self.buffer_id == Some(buffer_id) {
                     Ok(Ordering::Greater)
-                } else if other.buffer_id == buffer_id {
+                } else if other.buffer_id == Some(buffer_id) {
                     Ok(Ordering::Less)
                 } else {
                     Ok(Ordering::Equal)
@@ -68,7 +68,7 @@ impl Anchor {
             if let Some((buffer_id, buffer_snapshot)) =
                 snapshot.buffer_snapshot_for_excerpt(&self.excerpt_id)
             {
-                if self.buffer_id == buffer_id {
+                if self.buffer_id == Some(buffer_id) {
                     return Self {
                         buffer_id: self.buffer_id,
                         excerpt_id: self.excerpt_id.clone(),
@@ -85,7 +85,7 @@ impl Anchor {
             if let Some((buffer_id, buffer_snapshot)) =
                 snapshot.buffer_snapshot_for_excerpt(&self.excerpt_id)
             {
-                if self.buffer_id == buffer_id {
+                if self.buffer_id == Some(buffer_id) {
                     return Self {
                         buffer_id: self.buffer_id,
                         excerpt_id: self.excerpt_id.clone(),

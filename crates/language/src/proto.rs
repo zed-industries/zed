@@ -1,12 +1,13 @@
 use crate::{
-    diagnostic_set::DiagnosticEntry, Completion, CompletionLabel, Diagnostic, Language, Operation,
+    diagnostic_set::DiagnosticEntry, CodeAction, Completion, CompletionLabel, Diagnostic, Language,
+    Operation,
 };
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::HashSet;
 use lsp::DiagnosticSeverity;
 use rpc::proto;
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 use text::*;
 
 pub use proto::{Buffer, BufferState, SelectionSet};
@@ -24,14 +25,7 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 replica_id: undo.id.replica_id as u32,
                 local_timestamp: undo.id.value,
                 lamport_timestamp: lamport_timestamp.value,
-                ranges: undo
-                    .ranges
-                    .iter()
-                    .map(|r| proto::Range {
-                        start: r.start.0 as u64,
-                        end: r.end.0 as u64,
-                    })
-                    .collect(),
+                ranges: undo.ranges.iter().map(serialize_range).collect(),
                 counts: undo
                     .counts
                     .iter()
@@ -44,11 +38,10 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 version: From::from(&undo.version),
             }),
             Operation::UpdateSelections {
-                replica_id,
                 selections,
                 lamport_timestamp,
             } => proto::operation::Variant::UpdateSelections(proto::operation::UpdateSelections {
-                replica_id: *replica_id as u32,
+                replica_id: lamport_timestamp.replica_id as u32,
                 lamport_timestamp: lamport_timestamp.value,
                 selections: serialize_selections(selections),
             }),
@@ -60,32 +53,27 @@ pub fn serialize_operation(operation: &Operation) -> proto::Operation {
                 lamport_timestamp: lamport_timestamp.value,
                 diagnostics: serialize_diagnostics(diagnostics.iter()),
             }),
-            Operation::UpdateCompletionTriggers { triggers } => {
-                proto::operation::Variant::UpdateCompletionTriggers(
-                    proto::operation::UpdateCompletionTriggers {
-                        triggers: triggers.clone(),
-                    },
-                )
-            }
+            Operation::UpdateCompletionTriggers {
+                triggers,
+                lamport_timestamp,
+            } => proto::operation::Variant::UpdateCompletionTriggers(
+                proto::operation::UpdateCompletionTriggers {
+                    replica_id: lamport_timestamp.replica_id as u32,
+                    lamport_timestamp: lamport_timestamp.value,
+                    triggers: triggers.clone(),
+                },
+            ),
         }),
     }
 }
 
 pub fn serialize_edit_operation(operation: &EditOperation) -> proto::operation::Edit {
-    let ranges = operation
-        .ranges
-        .iter()
-        .map(|range| proto::Range {
-            start: range.start.0 as u64,
-            end: range.end.0 as u64,
-        })
-        .collect();
     proto::operation::Edit {
         replica_id: operation.timestamp.replica_id as u32,
         local_timestamp: operation.timestamp.local,
         lamport_timestamp: operation.timestamp.lamport,
         version: From::from(&operation.version),
-        ranges,
+        ranges: operation.ranges.iter().map(serialize_range).collect(),
         new_text: operation.new_text.clone(),
     }
 }
@@ -208,11 +196,7 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                             )
                         })
                         .collect(),
-                    ranges: undo
-                        .ranges
-                        .into_iter()
-                        .map(|r| FullOffset(r.start as usize)..FullOffset(r.end as usize))
-                        .collect(),
+                    ranges: undo.ranges.into_iter().map(deserialize_range).collect(),
                     version: undo.version.into(),
                 },
             }),
@@ -232,7 +216,6 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
                     .collect::<Vec<_>>();
 
                 Operation::UpdateSelections {
-                    replica_id: message.replica_id as ReplicaId,
                     lamport_timestamp: clock::Lamport {
                         replica_id: message.replica_id as ReplicaId,
                         value: message.lamport_timestamp,
@@ -250,6 +233,10 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
             proto::operation::Variant::UpdateCompletionTriggers(message) => {
                 Operation::UpdateCompletionTriggers {
                     triggers: message.triggers,
+                    lamport_timestamp: clock::Lamport {
+                        replica_id: message.replica_id as ReplicaId,
+                        value: message.lamport_timestamp,
+                    },
                 }
             }
         },
@@ -257,11 +244,6 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<Operation> {
 }
 
 pub fn deserialize_edit_operation(edit: proto::operation::Edit) -> EditOperation {
-    let ranges = edit
-        .ranges
-        .into_iter()
-        .map(|range| FullOffset(range.start as usize)..FullOffset(range.end as usize))
-        .collect();
     EditOperation {
         timestamp: InsertionTimestamp {
             replica_id: edit.replica_id as ReplicaId,
@@ -269,7 +251,7 @@ pub fn deserialize_edit_operation(edit: proto::operation::Edit) -> EditOperation
             lamport: edit.lamport_timestamp,
         },
         version: edit.version.into(),
-        ranges,
+        ranges: edit.ranges.into_iter().map(deserialize_range).collect(),
         new_text: edit.new_text,
     }
 }
@@ -380,7 +362,39 @@ pub fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
     })
 }
 
-pub fn serialize_completion(completion: &Completion<Anchor>) -> proto::Completion {
+pub fn lamport_timestamp_for_operation(operation: &proto::Operation) -> Option<clock::Lamport> {
+    let replica_id;
+    let value;
+    match operation.variant.as_ref()? {
+        proto::operation::Variant::Edit(op) => {
+            replica_id = op.replica_id;
+            value = op.lamport_timestamp;
+        }
+        proto::operation::Variant::Undo(op) => {
+            replica_id = op.replica_id;
+            value = op.lamport_timestamp;
+        }
+        proto::operation::Variant::UpdateDiagnostics(op) => {
+            replica_id = op.replica_id;
+            value = op.lamport_timestamp;
+        }
+        proto::operation::Variant::UpdateSelections(op) => {
+            replica_id = op.replica_id;
+            value = op.lamport_timestamp;
+        }
+        proto::operation::Variant::UpdateCompletionTriggers(op) => {
+            replica_id = op.replica_id;
+            value = op.lamport_timestamp;
+        }
+    }
+
+    Some(clock::Lamport {
+        replica_id: replica_id as ReplicaId,
+        value,
+    })
+}
+
+pub fn serialize_completion(completion: &Completion) -> proto::Completion {
     proto::Completion {
         old_start: Some(serialize_anchor(&completion.old_range.start)),
         old_end: Some(serialize_anchor(&completion.old_range.end)),
@@ -392,7 +406,7 @@ pub fn serialize_completion(completion: &Completion<Anchor>) -> proto::Completio
 pub fn deserialize_completion(
     completion: proto::Completion,
     language: Option<&Arc<Language>>,
-) -> Result<Completion<Anchor>> {
+) -> Result<Completion> {
     let old_start = completion
         .old_start
         .and_then(deserialize_anchor)
@@ -410,4 +424,90 @@ pub fn deserialize_completion(
             .unwrap_or(CompletionLabel::plain(&lsp_completion)),
         lsp_completion,
     })
+}
+
+pub fn serialize_code_action(action: &CodeAction) -> proto::CodeAction {
+    proto::CodeAction {
+        start: Some(serialize_anchor(&action.range.start)),
+        end: Some(serialize_anchor(&action.range.end)),
+        lsp_action: serde_json::to_vec(&action.lsp_action).unwrap(),
+    }
+}
+
+pub fn deserialize_code_action(action: proto::CodeAction) -> Result<CodeAction> {
+    let start = action
+        .start
+        .and_then(deserialize_anchor)
+        .ok_or_else(|| anyhow!("invalid start"))?;
+    let end = action
+        .end
+        .and_then(deserialize_anchor)
+        .ok_or_else(|| anyhow!("invalid end"))?;
+    let lsp_action = serde_json::from_slice(&action.lsp_action)?;
+    Ok(CodeAction {
+        range: start..end,
+        lsp_action,
+    })
+}
+
+pub fn serialize_transaction(transaction: &Transaction) -> proto::Transaction {
+    proto::Transaction {
+        id: Some(serialize_local_timestamp(transaction.id)),
+        edit_ids: transaction
+            .edit_ids
+            .iter()
+            .copied()
+            .map(serialize_local_timestamp)
+            .collect(),
+        start: (&transaction.start).into(),
+        end: (&transaction.end).into(),
+        ranges: transaction.ranges.iter().map(serialize_range).collect(),
+    }
+}
+
+pub fn deserialize_transaction(transaction: proto::Transaction) -> Result<Transaction> {
+    Ok(Transaction {
+        id: deserialize_local_timestamp(
+            transaction
+                .id
+                .ok_or_else(|| anyhow!("missing transaction id"))?,
+        ),
+        edit_ids: transaction
+            .edit_ids
+            .into_iter()
+            .map(deserialize_local_timestamp)
+            .collect(),
+        start: transaction.start.into(),
+        end: transaction.end.into(),
+        ranges: transaction
+            .ranges
+            .into_iter()
+            .map(deserialize_range)
+            .collect(),
+    })
+}
+
+pub fn serialize_local_timestamp(timestamp: clock::Local) -> proto::LocalTimestamp {
+    proto::LocalTimestamp {
+        replica_id: timestamp.replica_id as u32,
+        value: timestamp.value,
+    }
+}
+
+pub fn deserialize_local_timestamp(timestamp: proto::LocalTimestamp) -> clock::Local {
+    clock::Local {
+        replica_id: timestamp.replica_id as ReplicaId,
+        value: timestamp.value,
+    }
+}
+
+pub fn serialize_range(range: &Range<FullOffset>) -> proto::Range {
+    proto::Range {
+        start: range.start.0 as u64,
+        end: range.end.0 as u64,
+    }
+}
+
+pub fn deserialize_range(range: proto::Range) -> Range<FullOffset> {
+    FullOffset(range.start as usize)..FullOffset(range.end as usize)
 }

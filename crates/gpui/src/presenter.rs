@@ -7,7 +7,8 @@ use crate::{
     platform::Event,
     text_layout::TextLayoutCache,
     Action, AnyAction, AnyViewHandle, AssetCache, ElementBox, Entity, FontSystem, ModelHandle,
-    ReadModel, ReadView, Scene, View, ViewHandle,
+    ReadModel, ReadView, Scene, UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle,
+    WeakModelHandle, WeakViewHandle,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
@@ -267,6 +268,21 @@ impl<'a> ReadView for LayoutContext<'a> {
 impl<'a> ReadModel for LayoutContext<'a> {
     fn read_model<T: Entity>(&self, handle: &ModelHandle<T>) -> &T {
         self.app.read_model(handle)
+    }
+}
+
+impl<'a> UpgradeModelHandle for LayoutContext<'a> {
+    fn upgrade_model_handle<T: Entity>(
+        &self,
+        handle: &WeakModelHandle<T>,
+    ) -> Option<ModelHandle<T>> {
+        self.app.upgrade_model_handle(handle)
+    }
+}
+
+impl<'a> UpgradeViewHandle for LayoutContext<'a> {
+    fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
+        self.app.upgrade_view_handle(handle)
     }
 }
 

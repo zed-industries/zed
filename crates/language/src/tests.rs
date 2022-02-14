@@ -557,7 +557,7 @@ fn test_autoindent_adjusts_lines_when_only_text_changes(cx: &mut MutableAppConte
 
 #[gpui::test]
 async fn test_diagnostics(mut cx: gpui::TestAppContext) {
-    let (language_server, mut fake) = lsp::LanguageServer::fake(cx.background()).await;
+    let (language_server, mut fake) = lsp::LanguageServer::fake(&cx).await;
     let mut rust_lang = rust_lang();
     rust_lang.config.language_server = Some(LanguageServerConfig {
         disk_based_diagnostic_sources: HashSet::from_iter(["disk".to_string()]),
@@ -572,7 +572,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
     .unindent();
 
     let buffer = cx.add_model(|cx| {
-        Buffer::new(0, text, cx)
+        Buffer::from_file(0, text, Box::new(FakeFile::new("/some/path")), cx)
             .with_language(Arc::new(rust_lang), cx)
             .with_language_server(language_server, cx)
     });
@@ -592,7 +592,6 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
         // Receive diagnostics for an earlier version of the buffer.
         buffer
             .update_diagnostics(
-                Some(open_notification.text_document.version),
                 vec![
                     DiagnosticEntry {
                         range: PointUtf16::new(0, 9)..PointUtf16::new(0, 10),
@@ -628,6 +627,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         },
                     },
                 ],
+                Some(open_notification.text_document.version),
                 cx,
             )
             .unwrap();
@@ -687,7 +687,6 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
         // Ensure overlapping diagnostics are highlighted correctly.
         buffer
             .update_diagnostics(
-                Some(open_notification.text_document.version),
                 vec![
                     DiagnosticEntry {
                         range: PointUtf16::new(0, 9)..PointUtf16::new(0, 10),
@@ -711,6 +710,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         },
                     },
                 ],
+                Some(open_notification.text_document.version),
                 cx,
             )
             .unwrap();
@@ -777,7 +777,6 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
     buffer.update(&mut cx, |buffer, cx| {
         buffer
             .update_diagnostics(
-                Some(change_notification_2.text_document.version),
                 vec![
                     DiagnosticEntry {
                         range: PointUtf16::new(1, 9)..PointUtf16::new(1, 11),
@@ -802,6 +801,7 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
                         },
                     },
                 ],
+                Some(change_notification_2.text_document.version),
                 cx,
             )
             .unwrap();
@@ -839,6 +839,223 @@ async fn test_diagnostics(mut cx: gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_edits_from_lsp_with_past_version(mut cx: gpui::TestAppContext) {
+    let (language_server, mut fake) = lsp::LanguageServer::fake(&cx).await;
+
+    let text = "
+        fn a() {
+            f1();
+        }
+        fn b() {
+            f2();
+        }
+        fn c() {
+            f3();
+        }
+    "
+    .unindent();
+
+    let buffer = cx.add_model(|cx| {
+        Buffer::from_file(0, text, Box::new(FakeFile::new("/some/path")), cx)
+            .with_language(Arc::new(rust_lang()), cx)
+            .with_language_server(language_server, cx)
+    });
+
+    let lsp_document_version = fake
+        .receive_notification::<lsp::notification::DidOpenTextDocument>()
+        .await
+        .text_document
+        .version;
+
+    // Simulate editing the buffer after the language server computes some edits.
+    buffer.update(&mut cx, |buffer, cx| {
+        buffer.edit(
+            [Point::new(0, 0)..Point::new(0, 0)],
+            "// above first function\n",
+            cx,
+        );
+        buffer.edit(
+            [Point::new(2, 0)..Point::new(2, 0)],
+            "    // inside first function\n",
+            cx,
+        );
+        buffer.edit(
+            [Point::new(6, 4)..Point::new(6, 4)],
+            "// inside second function ",
+            cx,
+        );
+
+        assert_eq!(
+            buffer.text(),
+            "
+                // above first function
+                fn a() {
+                    // inside first function
+                    f1();
+                }
+                fn b() {
+                    // inside second function f2();
+                }
+                fn c() {
+                    f3();
+                }
+            "
+            .unindent()
+        );
+    });
+
+    let edits = buffer
+        .update(&mut cx, |buffer, cx| {
+            buffer.edits_from_lsp(
+                vec![
+                    // replace body of first function
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(3, 0)),
+                        new_text: "
+                            fn a() {
+                                f10();
+                            }
+                        "
+                        .unindent(),
+                    },
+                    // edit inside second function
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(4, 6), lsp::Position::new(4, 6)),
+                        new_text: "00".into(),
+                    },
+                    // edit inside third function via two distinct edits
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(7, 5), lsp::Position::new(7, 5)),
+                        new_text: "4000".into(),
+                    },
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(7, 5), lsp::Position::new(7, 6)),
+                        new_text: "".into(),
+                    },
+                ],
+                Some(lsp_document_version),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    buffer.update(&mut cx, |buffer, cx| {
+        for (range, new_text) in edits {
+            buffer.edit([range], new_text, cx);
+        }
+        assert_eq!(
+            buffer.text(),
+            "
+                // above first function
+                fn a() {
+                    // inside first function
+                    f10();
+                }
+                fn b() {
+                    // inside second function f200();
+                }
+                fn c() {
+                    f4000();
+                }
+            "
+            .unindent()
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_edits_from_lsp_with_edits_on_adjacent_lines(mut cx: gpui::TestAppContext) {
+    let text = "
+        use a::b;
+        use a::c;
+
+        fn f() {
+            b();
+            c();
+        }
+    "
+    .unindent();
+
+    let buffer = cx.add_model(|cx| Buffer::new(0, text, cx));
+
+    // Simulate the language server sending us a small edit in the form of a very large diff.
+    // Rust-analyzer does this when performing a merge-imports code action.
+    let edits = buffer
+        .update(&mut cx, |buffer, cx| {
+            buffer.edits_from_lsp(
+                [
+                    // Replace the first use statement without editing the semicolon.
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 8)),
+                        new_text: "a::{b, c}".into(),
+                    },
+                    // Reinsert the remainder of the file between the semicolon and the final
+                    // newline of the file.
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 9)),
+                        new_text: "\n\n".into(),
+                    },
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 9)),
+                        new_text: "
+                            fn f() {
+                                b();
+                                c();
+                            }"
+                        .unindent(),
+                    },
+                    // Delete everything after the first newline of the file.
+                    lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(7, 0)),
+                        new_text: "".into(),
+                    },
+                ],
+                None,
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    buffer.update(&mut cx, |buffer, cx| {
+        let edits = edits
+            .into_iter()
+            .map(|(range, text)| {
+                (
+                    range.start.to_point(&buffer)..range.end.to_point(&buffer),
+                    text,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            edits,
+            [
+                (Point::new(0, 4)..Point::new(0, 8), "a::{b, c}".into()),
+                (Point::new(1, 0)..Point::new(2, 0), "".into())
+            ]
+        );
+
+        for (range, new_text) in edits {
+            buffer.edit([range], new_text, cx);
+        }
+        assert_eq!(
+            buffer.text(),
+            "
+                use a::{b, c};
+
+                fn f() {
+                    b();
+                    c();
+                }
+            "
+            .unindent()
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_empty_diagnostic_ranges(mut cx: gpui::TestAppContext) {
     cx.add_model(|cx| {
         let text = concat!(
@@ -851,7 +1068,6 @@ async fn test_empty_diagnostic_ranges(mut cx: gpui::TestAppContext) {
         buffer.set_language(Some(Arc::new(rust_lang())), cx);
         buffer
             .update_diagnostics(
-                None,
                 vec![
                     DiagnosticEntry {
                         range: PointUtf16::new(0, 10)..PointUtf16::new(0, 10),
@@ -870,6 +1086,7 @@ async fn test_empty_diagnostic_ranges(mut cx: gpui::TestAppContext) {
                         },
                     },
                 ],
+                None,
                 cx,
             )
             .unwrap();
@@ -1073,14 +1290,14 @@ fn test_random_collaboration(cx: &mut MutableAppContext, mut rng: StdRng) {
 
     for buffer in &buffers {
         let buffer = buffer.read(cx).snapshot();
+        let actual_remote_selections = buffer
+            .remote_selections_in_range(Anchor::min()..Anchor::max())
+            .map(|(replica_id, selections)| (replica_id, selections.collect::<Vec<_>>()))
+            .collect::<Vec<_>>();
         let expected_remote_selections = active_selections
             .iter()
             .filter(|(replica_id, _)| **replica_id != buffer.replica_id())
             .map(|(replica_id, selections)| (*replica_id, selections.iter().collect::<Vec<_>>()))
-            .collect::<Vec<_>>();
-        let actual_remote_selections = buffer
-            .remote_selections_in_range(Anchor::min()..Anchor::max())
-            .map(|(replica_id, selections)| (replica_id, selections.collect::<Vec<_>>()))
             .collect::<Vec<_>>();
         assert_eq!(actual_remote_selections, expected_remote_selections);
     }

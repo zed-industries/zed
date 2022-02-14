@@ -7,19 +7,20 @@ pub mod proto;
 mod tests;
 
 use anyhow::{anyhow, Result};
-pub use buffer::Operation;
-pub use buffer::*;
 use collections::HashSet;
-pub use diagnostic_set::DiagnosticEntry;
 use gpui::AppContext;
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
-pub use outline::{Outline, OutlineItem};
 use parking_lot::Mutex;
 use serde::Deserialize;
 use std::{cell::RefCell, ops::Range, path::Path, str, sync::Arc};
 use theme::SyntaxTheme;
 use tree_sitter::{self, Query};
+
+pub use buffer::Operation;
+pub use buffer::*;
+pub use diagnostic_set::DiagnosticEntry;
+pub use outline::{Outline, OutlineItem};
 pub use tree_sitter::{Parser, Tree};
 
 thread_local! {
@@ -37,10 +38,6 @@ lazy_static! {
         },
         None,
     ));
-}
-
-pub trait ToPointUtf16 {
-    fn to_point_utf16(self) -> PointUtf16;
 }
 
 pub trait ToLspPosition {
@@ -360,18 +357,15 @@ impl CompletionLabel {
 
 #[cfg(any(test, feature = "test-support"))]
 impl LanguageServerConfig {
-    pub async fn fake(
-        executor: Arc<gpui::executor::Background>,
-    ) -> (Self, lsp::FakeLanguageServer) {
-        Self::fake_with_capabilities(Default::default(), executor).await
+    pub async fn fake(cx: &gpui::TestAppContext) -> (Self, lsp::FakeLanguageServer) {
+        Self::fake_with_capabilities(Default::default(), cx).await
     }
 
     pub async fn fake_with_capabilities(
         capabilites: lsp::ServerCapabilities,
-        executor: Arc<gpui::executor::Background>,
+        cx: &gpui::TestAppContext,
     ) -> (Self, lsp::FakeLanguageServer) {
-        let (server, fake) =
-            lsp::LanguageServer::fake_with_capabilities(capabilites, executor).await;
+        let (server, fake) = lsp::LanguageServer::fake_with_capabilities(capabilites, cx).await;
         fake.started
             .store(false, std::sync::atomic::Ordering::SeqCst);
         let started = fake.started.clone();
@@ -386,16 +380,14 @@ impl LanguageServerConfig {
     }
 }
 
-impl ToPointUtf16 for lsp::Position {
-    fn to_point_utf16(self) -> PointUtf16 {
-        PointUtf16::new(self.line, self.character)
-    }
-}
-
 impl ToLspPosition for PointUtf16 {
     fn to_lsp_position(self) -> lsp::Position {
         lsp::Position::new(self.row, self.column)
     }
+}
+
+pub fn point_from_lsp(point: lsp::Position) -> PointUtf16 {
+    PointUtf16::new(point.line, point.character)
 }
 
 pub fn range_from_lsp(range: lsp::Range) -> Range<PointUtf16> {

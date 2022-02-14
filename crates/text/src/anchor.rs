@@ -1,5 +1,5 @@
 use super::{Point, ToOffset};
-use crate::{rope::TextDimension, BufferSnapshot};
+use crate::{rope::TextDimension, BufferSnapshot, PointUtf16, ToPointUtf16};
 use anyhow::Result;
 use std::{cmp::Ordering, fmt::Debug, ops::Range};
 use sum_tree::Bias;
@@ -78,6 +78,7 @@ pub trait AnchorRangeExt {
     fn cmp(&self, b: &Range<Anchor>, buffer: &BufferSnapshot) -> Result<Ordering>;
     fn to_offset(&self, content: &BufferSnapshot) -> Range<usize>;
     fn to_point(&self, content: &BufferSnapshot) -> Range<Point>;
+    fn to_point_utf16(&self, content: &BufferSnapshot) -> Range<PointUtf16>;
 }
 
 impl AnchorRangeExt for Range<Anchor> {
@@ -94,5 +95,9 @@ impl AnchorRangeExt for Range<Anchor> {
 
     fn to_point(&self, content: &BufferSnapshot) -> Range<Point> {
         self.start.summary::<Point>(&content)..self.end.summary::<Point>(&content)
+    }
+
+    fn to_point_utf16(&self, content: &BufferSnapshot) -> Range<PointUtf16> {
+        self.start.to_point_utf16(content)..self.end.to_point_utf16(content)
     }
 }

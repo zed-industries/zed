@@ -7,7 +7,7 @@ use editor::{
     display_map::{BlockDisposition, BlockId, BlockProperties, RenderBlock},
     highlight_diagnostic_message,
     items::BufferItemHandle,
-    Autoscroll, BuildSettings, Editor, ExcerptId, ExcerptProperties, MultiBuffer, ToOffset,
+    Autoscroll, BuildSettings, Editor, ExcerptId, MultiBuffer, ToOffset,
 };
 use gpui::{
     action, elements::*, fonts::TextStyle, keymap::Binding, AnyViewHandle, AppContext, Entity,
@@ -28,7 +28,7 @@ use std::{
     sync::Arc,
 };
 use util::TryFutureExt;
-use workspace::{ItemNavHistory, Workspace};
+use workspace::{ItemNavHistory, ItemViewHandle as _, Workspace};
 
 action!(Deploy);
 action!(OpenExcerpts);
@@ -68,7 +68,6 @@ struct ProjectDiagnosticsEditor {
 
 struct PathState {
     path: ProjectPath,
-    header: Option<BlockId>,
     diagnostic_groups: Vec<DiagnosticGroupState>,
 }
 
@@ -145,7 +144,12 @@ impl ProjectDiagnosticsEditor {
         let excerpts = cx.add_model(|cx| MultiBuffer::new(project.read(cx).replica_id()));
         let build_settings = editor::settings_builder(excerpts.downgrade(), settings.clone());
         let editor = cx.add_view(|cx| {
-            let mut editor = Editor::for_buffer(excerpts.clone(), build_settings.clone(), cx);
+            let mut editor = Editor::for_buffer(
+                excerpts.clone(),
+                build_settings.clone(),
+                Some(project.clone()),
+                cx,
+            );
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
@@ -187,7 +191,7 @@ impl ProjectDiagnosticsEditor {
 
             for selection in editor.local_selections::<usize>(cx) {
                 for (buffer, mut range) in
-                    excerpts.excerpted_buffers(selection.start..selection.end, cx)
+                    excerpts.range_to_buffer_ranges(selection.start..selection.end, cx)
                 {
                     if selection.reversed {
                         mem::swap(&mut range.start, &mut range.end);
@@ -253,7 +257,6 @@ impl ProjectDiagnosticsEditor {
                     ix,
                     PathState {
                         path: path.clone(),
-                        header: None,
                         diagnostic_groups: Default::default(),
                     },
                 );
@@ -330,14 +333,15 @@ impl ProjectDiagnosticsEditor {
                                 Point::new(range.end.row + CONTEXT_LINE_COUNT, u32::MAX),
                                 Bias::Left,
                             );
-                            let excerpt_id = excerpts.insert_excerpt_after(
-                                &prev_excerpt_id,
-                                ExcerptProperties {
-                                    buffer: &buffer,
-                                    range: excerpt_start..excerpt_end,
-                                },
-                                excerpts_cx,
-                            );
+                            let excerpt_id = excerpts
+                                .insert_excerpts_after(
+                                    &prev_excerpt_id,
+                                    buffer.clone(),
+                                    [excerpt_start..excerpt_end],
+                                    excerpts_cx,
+                                )
+                                .pop()
+                                .unwrap();
 
                             prev_excerpt_id = excerpt_id.clone();
                             first_excerpt_id.get_or_insert_with(|| prev_excerpt_id.clone());
@@ -358,14 +362,6 @@ impl ProjectDiagnosticsEditor {
                                         primary,
                                         self.build_settings.clone(),
                                     ),
-                                    disposition: BlockDisposition::Above,
-                                });
-                            } else {
-                                group_state.block_count += 1;
-                                blocks_to_add.push(BlockProperties {
-                                    position: header_position,
-                                    height: 1,
-                                    render: context_header_renderer(self.build_settings.clone()),
                                     disposition: BlockDisposition::Above,
                                 });
                             }
@@ -416,27 +412,17 @@ impl ProjectDiagnosticsEditor {
         });
 
         self.editor.update(cx, |editor, cx| {
-            blocks_to_remove.extend(path_state.header);
             editor.remove_blocks(blocks_to_remove, cx);
-            let header_block = first_excerpt_id.map(|excerpt_id| BlockProperties {
-                position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, language::Anchor::min()),
-                height: 2,
-                render: path_header_renderer(buffer, self.build_settings.clone()),
-                disposition: BlockDisposition::Above,
-            });
             let block_ids = editor.insert_blocks(
-                blocks_to_add
-                    .into_iter()
-                    .map(|block| {
-                        let (excerpt_id, text_anchor) = block.position;
-                        BlockProperties {
-                            position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor),
-                            height: block.height,
-                            render: block.render,
-                            disposition: block.disposition,
-                        }
-                    })
-                    .chain(header_block.into_iter()),
+                blocks_to_add.into_iter().map(|block| {
+                    let (excerpt_id, text_anchor) = block.position;
+                    BlockProperties {
+                        position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor),
+                        height: block.height,
+                        render: block.render,
+                        disposition: block.disposition,
+                    }
+                }),
                 cx,
             );
 
@@ -444,7 +430,6 @@ impl ProjectDiagnosticsEditor {
             for group_state in &mut groups_to_add {
                 group_state.blocks = block_ids.by_ref().take(group_state.block_count).collect();
             }
-            path_state.header = block_ids.next();
         });
 
         for ix in group_ixs_to_remove.into_iter().rev() {
@@ -554,10 +539,8 @@ impl workspace::Item for ProjectDiagnostics {
 }
 
 impl workspace::ItemView for ProjectDiagnosticsEditor {
-    type ItemHandle = ModelHandle<ProjectDiagnostics>;
-
-    fn item_handle(&self, _: &AppContext) -> Self::ItemHandle {
-        self.model.clone()
+    fn item_id(&self, _: &AppContext) -> usize {
+        self.model.id()
     }
 
     fn tab_content(&self, style: &theme::Tab, _: &AppContext) -> ElementBox {
@@ -589,8 +572,12 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
         true
     }
 
-    fn save(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        self.excerpts.update(cx, |excerpts, cx| excerpts.save(cx))
+    fn save(
+        &mut self,
+        project: ModelHandle<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        self.editor.save(project, cx)
     }
 
     fn can_save_as(&self, _: &AppContext) -> bool {
@@ -655,51 +642,6 @@ impl workspace::ItemView for ProjectDiagnosticsEditor {
     }
 }
 
-fn path_header_renderer(buffer: ModelHandle<Buffer>, build_settings: BuildSettings) -> RenderBlock {
-    Arc::new(move |cx| {
-        let settings = build_settings(cx);
-        let style = settings.style.diagnostic_path_header;
-        let font_size = (style.text_scale_factor * settings.style.text.font_size).round();
-
-        let mut filename = None;
-        let mut path = None;
-        if let Some(file) = buffer.read(&**cx).file() {
-            filename = file
-                .path()
-                .file_name()
-                .map(|f| f.to_string_lossy().to_string());
-            path = file
-                .path()
-                .parent()
-                .map(|p| p.to_string_lossy().to_string() + "/");
-        }
-
-        Flex::row()
-            .with_child(
-                Label::new(
-                    filename.unwrap_or_else(|| "untitled".to_string()),
-                    style.filename.text.clone().with_font_size(font_size),
-                )
-                .contained()
-                .with_style(style.filename.container)
-                .boxed(),
-            )
-            .with_children(path.map(|path| {
-                Label::new(path, style.path.text.clone().with_font_size(font_size))
-                    .contained()
-                    .with_style(style.path.container)
-                    .boxed()
-            }))
-            .aligned()
-            .left()
-            .contained()
-            .with_style(style.container)
-            .with_padding_left(cx.gutter_padding + cx.scroll_x * cx.em_width)
-            .expanded()
-            .named("path header block")
-    })
-}
-
 fn diagnostic_header_renderer(
     diagnostic: Diagnostic,
     build_settings: BuildSettings,
@@ -750,17 +692,6 @@ fn diagnostic_header_renderer(
             .with_padding_left(cx.gutter_padding + cx.scroll_x * cx.em_width)
             .expanded()
             .named("diagnostic header")
-    })
-}
-
-fn context_header_renderer(build_settings: BuildSettings) -> RenderBlock {
-    Arc::new(move |cx| {
-        let settings = build_settings(cx);
-        let text_style = settings.style.text.clone();
-        Label::new("…".to_string(), text_style)
-            .contained()
-            .with_padding_left(cx.gutter_padding + cx.scroll_x * cx.em_width)
-            .named("collapsed context")
     })
 }
 
@@ -838,7 +769,10 @@ fn compare_diagnostics<L: language::ToOffset, R: language::ToOffset>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use editor::{display_map::BlockContext, DisplayPoint, EditorSnapshot};
+    use editor::{
+        display_map::{BlockContext, TransformBlock},
+        DisplayPoint, EditorSnapshot,
+    };
     use gpui::TestAppContext;
     use language::{Diagnostic, DiagnosticEntry, DiagnosticSeverity, PointUtf16};
     use serde_json::json;
@@ -985,8 +919,9 @@ mod tests {
                 [
                     (0, "path header block".into()),
                     (2, "diagnostic header".into()),
-                    (15, "diagnostic header".into()),
-                    (24, "collapsed context".into()),
+                    (15, "collapsed context".into()),
+                    (16, "diagnostic header".into()),
+                    (25, "collapsed context".into()),
                 ]
             );
             assert_eq!(
@@ -1011,6 +946,7 @@ mod tests {
                     "    c(y);\n",
                     "\n", // supporting diagnostic
                     "    d(x);\n",
+                    "\n", // context ellipsis
                     // diagnostic group 2
                     "\n", // primary message
                     "\n", // padding
@@ -1073,8 +1009,9 @@ mod tests {
                     (2, "diagnostic header".into()),
                     (7, "path header block".into()),
                     (9, "diagnostic header".into()),
-                    (22, "diagnostic header".into()),
-                    (31, "collapsed context".into()),
+                    (22, "collapsed context".into()),
+                    (23, "diagnostic header".into()),
+                    (32, "collapsed context".into()),
                 ]
             );
             assert_eq!(
@@ -1110,6 +1047,7 @@ mod tests {
                     "    c(y);\n",
                     "\n", // supporting diagnostic
                     "    d(x);\n",
+                    "\n", // collapsed context
                     // diagnostic group 2
                     "\n", // primary message
                     "\n", // filename
@@ -1184,11 +1122,13 @@ mod tests {
                 [
                     (0, "path header block".into()),
                     (2, "diagnostic header".into()),
-                    (7, "diagnostic header".into()),
-                    (12, "path header block".into()),
-                    (14, "diagnostic header".into()),
-                    (27, "diagnostic header".into()),
-                    (36, "collapsed context".into()),
+                    (7, "collapsed context".into()),
+                    (8, "diagnostic header".into()),
+                    (13, "path header block".into()),
+                    (15, "diagnostic header".into()),
+                    (28, "collapsed context".into()),
+                    (29, "diagnostic header".into()),
+                    (38, "collapsed context".into()),
                 ]
             );
             assert_eq!(
@@ -1205,6 +1145,7 @@ mod tests {
                     "const a: i32 = 'a';\n",
                     "\n", // supporting diagnostic
                     "const b: i32 = c;\n",
+                    "\n", // context ellipsis
                     // diagnostic group 2
                     "\n", // primary message
                     "\n", // padding
@@ -1230,6 +1171,7 @@ mod tests {
                     "    c(y);\n",
                     "\n", // supporting diagnostic
                     "    d(x);\n",
+                    "\n", // context ellipsis
                     // diagnostic group 2
                     "\n", // primary message
                     "\n", // filename
@@ -1254,18 +1196,31 @@ mod tests {
         editor
             .blocks_in_range(0..editor.max_point().row())
             .filter_map(|(row, block)| {
-                block
-                    .render(&BlockContext {
-                        cx,
-                        anchor_x: 0.,
-                        scroll_x: 0.,
-                        gutter_padding: 0.,
-                        gutter_width: 0.,
-                        line_height: 0.,
-                        em_width: 0.,
-                    })
-                    .name()
-                    .map(|s| (row, s.to_string()))
+                let name = match block {
+                    TransformBlock::Custom(block) => block
+                        .render(&BlockContext {
+                            cx,
+                            anchor_x: 0.,
+                            scroll_x: 0.,
+                            gutter_padding: 0.,
+                            gutter_width: 0.,
+                            line_height: 0.,
+                            em_width: 0.,
+                        })
+                        .name()?
+                        .to_string(),
+                    TransformBlock::ExcerptHeader {
+                        starts_new_buffer, ..
+                    } => {
+                        if *starts_new_buffer {
+                            "path header block".to_string()
+                        } else {
+                            "collapsed context".to_string()
+                        }
+                    }
+                };
+
+                Some((row, name))
             })
             .collect()
     }

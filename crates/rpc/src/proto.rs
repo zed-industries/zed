@@ -122,6 +122,8 @@ macro_rules! entity_messages {
 messages!(
     Ack,
     AddProjectCollaborator,
+    ApplyCodeAction,
+    ApplyCodeActionResponse,
     ApplyCompletionAdditionalEdits,
     ApplyCompletionAdditionalEditsResponse,
     BufferReloaded,
@@ -131,11 +133,14 @@ messages!(
     DiskBasedDiagnosticsUpdated,
     DiskBasedDiagnosticsUpdating,
     Error,
-    FormatBuffer,
+    FormatBuffers,
+    FormatBuffersResponse,
     GetChannelMessages,
     GetChannelMessagesResponse,
     GetChannels,
     GetChannelsResponse,
+    GetCodeActions,
+    GetCodeActionsResponse,
     GetCompletions,
     GetCompletionsResponse,
     GetDefinition,
@@ -171,13 +176,15 @@ messages!(
 );
 
 request_messages!(
+    (ApplyCodeAction, ApplyCodeActionResponse),
     (
         ApplyCompletionAdditionalEdits,
         ApplyCompletionAdditionalEditsResponse
     ),
-    (FormatBuffer, Ack),
+    (FormatBuffers, FormatBuffersResponse),
     (GetChannelMessages, GetChannelMessagesResponse),
     (GetChannels, GetChannelsResponse),
+    (GetCodeActions, GetCodeActionsResponse),
     (GetCompletions, GetCompletionsResponse),
     (GetDefinition, GetDefinitionResponse),
     (GetUsers, GetUsersResponse),
@@ -197,13 +204,15 @@ request_messages!(
 entity_messages!(
     project_id,
     AddProjectCollaborator,
+    ApplyCodeAction,
     ApplyCompletionAdditionalEdits,
     BufferReloaded,
     BufferSaved,
     CloseBuffer,
     DiskBasedDiagnosticsUpdated,
     DiskBasedDiagnosticsUpdating,
-    FormatBuffer,
+    FormatBuffers,
+    GetCodeActions,
     GetCompletions,
     GetDefinition,
     JoinProject,

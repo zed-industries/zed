@@ -221,7 +221,7 @@ impl Pane {
             let task = workspace.load_path(project_path, cx);
             cx.spawn(|workspace, mut cx| async move {
                 let item = task.await;
-                if let Some(pane) = cx.read(|cx| pane.upgrade(cx)) {
+                if let Some(pane) = pane.upgrade(&cx) {
                     if let Some(item) = item.log_err() {
                         workspace.update(&mut cx, |workspace, cx| {
                             pane.update(cx, |p, _| p.nav_history.borrow_mut().set_mode(mode));
@@ -279,7 +279,7 @@ impl Pane {
         item_view.added_to_pane(cx);
         let item_idx = cmp::min(self.active_item_index + 1, self.item_views.len());
         self.item_views
-            .insert(item_idx, (item_view.item_handle(cx).id(), item_view));
+            .insert(item_idx, (item_view.item_id(cx), item_view));
         self.activate_item(item_idx, cx);
         cx.notify();
     }

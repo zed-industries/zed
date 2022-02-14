@@ -12,6 +12,7 @@ test-support = [
     "text/test-support",
     "language/test-support",
     "gpui/test-support",
+    "project/test-support",
     "util/test-support",
 ]
 
@@ -48,6 +49,7 @@ language = { path = "../language", features = ["test-support"] }
 lsp = { path = "../lsp", features = ["test-support"] }
 gpui = { path = "../gpui", features = ["test-support"] }
 util = { path = "../util", features = ["test-support"] }
+project = { path = "../project", features = ["test-support"] }
 ctor = "0.1"
 env_logger = "0.8"
 rand = "0.8"

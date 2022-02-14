@@ -13,6 +13,11 @@ use text::Rope;
 
 #[async_trait::async_trait]
 pub trait Fs: Send + Sync {
+    async fn create_dir(&self, path: &Path) -> Result<()>;
+    async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()>;
+    async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()>;
+    async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()>;
+    async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()>;
     async fn load(&self, path: &Path) -> Result<String>;
     async fn save(&self, path: &Path, text: &Rope) -> Result<()>;
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf>;
@@ -32,6 +37,24 @@ pub trait Fs: Send + Sync {
     fn as_fake(&self) -> &FakeFs;
 }
 
+#[derive(Copy, Clone, Default)]
+pub struct CreateOptions {
+    pub overwrite: bool,
+    pub ignore_if_exists: bool,
+}
+
+#[derive(Copy, Clone, Default)]
+pub struct RenameOptions {
+    pub overwrite: bool,
+    pub ignore_if_exists: bool,
+}
+
+#[derive(Copy, Clone, Default)]
+pub struct RemoveOptions {
+    pub recursive: bool,
+    pub ignore_if_not_exists: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct Metadata {
     pub inode: u64,
@@ -44,6 +67,60 @@ pub struct RealFs;
 
 #[async_trait::async_trait]
 impl Fs for RealFs {
+    async fn create_dir(&self, path: &Path) -> Result<()> {
+        Ok(smol::fs::create_dir_all(path).await?)
+    }
+
+    async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()> {
+        let mut open_options = smol::fs::OpenOptions::new();
+        open_options.write(true).create(true);
+        if options.overwrite {
+            open_options.truncate(true);
+        } else if !options.ignore_if_exists {
+            open_options.create_new(true);
+        }
+        open_options.open(path).await?;
+        Ok(())
+    }
+
+    async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()> {
+        if !options.overwrite && smol::fs::metadata(target).await.is_ok() {
+            if options.ignore_if_exists {
+                return Ok(());
+            } else {
+                return Err(anyhow!("{target:?} already exists"));
+            }
+        }
+
+        smol::fs::rename(source, target).await?;
+        Ok(())
+    }
+
+    async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        let result = if options.recursive {
+            smol::fs::remove_dir_all(path).await
+        } else {
+            smol::fs::remove_dir(path).await
+        };
+        match result {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound && options.ignore_if_not_exists => {
+                Ok(())
+            }
+            Err(err) => Err(err)?,
+        }
+    }
+
+    async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        match smol::fs::remove_file(path).await {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound && options.ignore_if_not_exists => {
+                Ok(())
+            }
+            Err(err) => Err(err)?,
+        }
+    }
+
     async fn load(&self, path: &Path) -> Result<String> {
         let mut file = smol::fs::File::open(path).await?;
         let mut text = String::new();
@@ -162,15 +239,19 @@ impl FakeFsState {
         }
     }
 
-    async fn emit_event(&mut self, paths: &[&Path]) {
+    async fn emit_event<I, T>(&mut self, paths: I)
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<PathBuf>,
+    {
         use postage::prelude::Sink as _;
 
         let events = paths
-            .iter()
+            .into_iter()
             .map(|path| fsevent::Event {
                 event_id: 0,
                 flags: fsevent::StreamFlags::empty(),
-                path: path.to_path_buf(),
+                path: path.into(),
             })
             .collect();
 
@@ -292,46 +373,163 @@ impl FakeFs {
         }
         .boxed()
     }
-
-    pub async fn remove(&self, path: &Path) -> Result<()> {
-        let mut state = self.state.lock().await;
-        state.validate_path(path)?;
-        state.entries.retain(|path, _| !path.starts_with(path));
-        state.emit_event(&[path]).await;
-        Ok(())
-    }
-
-    pub async fn rename(&self, source: &Path, target: &Path) -> Result<()> {
-        let mut state = self.state.lock().await;
-        state.validate_path(source)?;
-        state.validate_path(target)?;
-        if state.entries.contains_key(target) {
-            Err(anyhow!("target path already exists"))
-        } else {
-            let mut removed = Vec::new();
-            state.entries.retain(|path, entry| {
-                if let Ok(relative_path) = path.strip_prefix(source) {
-                    removed.push((relative_path.to_path_buf(), entry.clone()));
-                    false
-                } else {
-                    true
-                }
-            });
-
-            for (relative_path, entry) in removed {
-                let new_path = target.join(relative_path);
-                state.entries.insert(new_path, entry);
-            }
-
-            state.emit_event(&[source, target]).await;
-            Ok(())
-        }
-    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait::async_trait]
 impl Fs for FakeFs {
+    async fn create_dir(&self, path: &Path) -> Result<()> {
+        self.executor.simulate_random_delay().await;
+        let state = &mut *self.state.lock().await;
+        let mut ancestor_path = PathBuf::new();
+        let mut created_dir_paths = Vec::new();
+        for component in path.components() {
+            ancestor_path.push(component);
+            let entry = state
+                .entries
+                .entry(ancestor_path.clone())
+                .or_insert_with(|| {
+                    let inode = state.next_inode;
+                    state.next_inode += 1;
+                    created_dir_paths.push(ancestor_path.clone());
+                    FakeFsEntry {
+                        metadata: Metadata {
+                            inode,
+                            mtime: SystemTime::now(),
+                            is_dir: true,
+                            is_symlink: false,
+                        },
+                        content: None,
+                    }
+                });
+            if !entry.metadata.is_dir {
+                return Err(anyhow!(
+                    "cannot create directory because {:?} is a file",
+                    ancestor_path
+                ));
+            }
+        }
+        state.emit_event(&created_dir_paths).await;
+
+        Ok(())
+    }
+
+    async fn create_file(&self, path: &Path, options: CreateOptions) -> Result<()> {
+        self.executor.simulate_random_delay().await;
+        let mut state = self.state.lock().await;
+        state.validate_path(path)?;
+        if let Some(entry) = state.entries.get_mut(path) {
+            if entry.metadata.is_dir || entry.metadata.is_symlink {
+                return Err(anyhow!(
+                    "cannot create file because {:?} is a dir or a symlink",
+                    path
+                ));
+            }
+
+            if options.overwrite {
+                entry.metadata.mtime = SystemTime::now();
+                entry.content = Some(Default::default());
+            } else if !options.ignore_if_exists {
+                return Err(anyhow!(
+                    "cannot create file because {:?} already exists",
+                    path
+                ));
+            }
+        } else {
+            let inode = state.next_inode;
+            state.next_inode += 1;
+            let entry = FakeFsEntry {
+                metadata: Metadata {
+                    inode,
+                    mtime: SystemTime::now(),
+                    is_dir: false,
+                    is_symlink: false,
+                },
+                content: Some(Default::default()),
+            };
+            state.entries.insert(path.to_path_buf(), entry);
+        }
+        state.emit_event(&[path]).await;
+
+        Ok(())
+    }
+
+    async fn rename(&self, source: &Path, target: &Path, options: RenameOptions) -> Result<()> {
+        let mut state = self.state.lock().await;
+        state.validate_path(source)?;
+        state.validate_path(target)?;
+
+        if !options.overwrite && state.entries.contains_key(target) {
+            if options.ignore_if_exists {
+                return Ok(());
+            } else {
+                return Err(anyhow!("{target:?} already exists"));
+            }
+        }
+
+        let mut removed = Vec::new();
+        state.entries.retain(|path, entry| {
+            if let Ok(relative_path) = path.strip_prefix(source) {
+                removed.push((relative_path.to_path_buf(), entry.clone()));
+                false
+            } else {
+                true
+            }
+        });
+
+        for (relative_path, entry) in removed {
+            let new_path = target.join(relative_path);
+            state.entries.insert(new_path, entry);
+        }
+
+        state.emit_event(&[source, target]).await;
+        Ok(())
+    }
+
+    async fn remove_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        let mut state = self.state.lock().await;
+        state.validate_path(path)?;
+        if let Some(entry) = state.entries.get(path) {
+            if !entry.metadata.is_dir {
+                return Err(anyhow!("cannot remove {path:?} because it is not a dir"));
+            }
+
+            if !options.recursive {
+                let descendants = state
+                    .entries
+                    .keys()
+                    .filter(|path| path.starts_with(path))
+                    .count();
+                if descendants > 1 {
+                    return Err(anyhow!("{path:?} is not empty"));
+                }
+            }
+
+            state.entries.retain(|path, _| !path.starts_with(path));
+            state.emit_event(&[path]).await;
+        } else if !options.ignore_if_not_exists {
+            return Err(anyhow!("{path:?} does not exist"));
+        }
+
+        Ok(())
+    }
+
+    async fn remove_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
+        let mut state = self.state.lock().await;
+        state.validate_path(path)?;
+        if let Some(entry) = state.entries.get(path) {
+            if entry.metadata.is_dir {
+                return Err(anyhow!("cannot remove {path:?} because it is not a file"));
+            }
+
+            state.entries.remove(path);
+            state.emit_event(&[path]).await;
+        } else if !options.ignore_if_not_exists {
+            return Err(anyhow!("{path:?} does not exist"));
+        }
+        Ok(())
+    }
+
     async fn load(&self, path: &Path) -> Result<String> {
         self.executor.simulate_random_delay().await;
         let state = self.state.lock().await;

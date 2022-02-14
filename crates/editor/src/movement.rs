@@ -225,13 +225,8 @@ pub fn surrounding_word(map: &DisplaySnapshot, position: DisplayPoint) -> Range<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        display_map::{BlockDisposition, BlockProperties},
-        Buffer, DisplayMap, ExcerptProperties, MultiBuffer,
-    };
-    use gpui::{elements::Empty, Element};
+    use crate::{Buffer, DisplayMap, MultiBuffer};
     use language::Point;
-    use std::sync::Arc;
 
     #[gpui::test]
     fn test_move_up_and_down_with_excerpts(cx: &mut gpui::MutableAppContext) {
@@ -242,62 +237,24 @@ mod tests {
             .unwrap();
 
         let buffer = cx.add_model(|cx| Buffer::new(0, "abc\ndefg\nhijkl\nmn", cx));
-        let mut excerpt1_header_position = None;
-        let mut excerpt2_header_position = None;
         let multibuffer = cx.add_model(|cx| {
             let mut multibuffer = MultiBuffer::new(0);
-            let excerpt1_id = multibuffer.push_excerpt(
-                ExcerptProperties {
-                    buffer: &buffer,
-                    range: Point::new(0, 0)..Point::new(1, 4),
-                },
+            multibuffer.push_excerpts(
+                buffer.clone(),
+                [
+                    Point::new(0, 0)..Point::new(1, 4),
+                    Point::new(2, 0)..Point::new(3, 2),
+                ],
                 cx,
-            );
-            let excerpt2_id = multibuffer.push_excerpt(
-                ExcerptProperties {
-                    buffer: &buffer,
-                    range: Point::new(2, 0)..Point::new(3, 2),
-                },
-                cx,
-            );
-
-            excerpt1_header_position = Some(
-                multibuffer
-                    .read(cx)
-                    .anchor_in_excerpt(excerpt1_id, language::Anchor::min()),
-            );
-            excerpt2_header_position = Some(
-                multibuffer
-                    .read(cx)
-                    .anchor_in_excerpt(excerpt2_id, language::Anchor::min()),
             );
             multibuffer
         });
 
         let display_map =
-            cx.add_model(|cx| DisplayMap::new(multibuffer, 2, font_id, 14.0, None, cx));
-        display_map.update(cx, |display_map, cx| {
-            display_map.insert_blocks(
-                [
-                    BlockProperties {
-                        position: excerpt1_header_position.unwrap(),
-                        height: 2,
-                        render: Arc::new(|_| Empty::new().boxed()),
-                        disposition: BlockDisposition::Above,
-                    },
-                    BlockProperties {
-                        position: excerpt2_header_position.unwrap(),
-                        height: 3,
-                        render: Arc::new(|_| Empty::new().boxed()),
-                        disposition: BlockDisposition::Above,
-                    },
-                ],
-                cx,
-            )
-        });
+            cx.add_model(|cx| DisplayMap::new(multibuffer, 2, font_id, 14.0, None, 2, 2, cx));
 
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
-        assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\n\nhijkl\nmn");
+        assert_eq!(snapshot.text(), "\n\nabc\ndefg\n\n\nhijkl\nmn");
 
         // Can't move up into the first excerpt's header
         assert_eq!(
@@ -321,22 +278,22 @@ mod tests {
 
         // Move up and down across second excerpt's header
         assert_eq!(
-            up(&snapshot, DisplayPoint::new(7, 5), SelectionGoal::Column(5)).unwrap(),
+            up(&snapshot, DisplayPoint::new(6, 5), SelectionGoal::Column(5)).unwrap(),
             (DisplayPoint::new(3, 4), SelectionGoal::Column(5)),
         );
         assert_eq!(
             down(&snapshot, DisplayPoint::new(3, 4), SelectionGoal::Column(5)).unwrap(),
-            (DisplayPoint::new(7, 5), SelectionGoal::Column(5)),
+            (DisplayPoint::new(6, 5), SelectionGoal::Column(5)),
         );
 
         // Can't move down off the end
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(8, 0), SelectionGoal::Column(0)).unwrap(),
-            (DisplayPoint::new(8, 2), SelectionGoal::Column(2)),
+            down(&snapshot, DisplayPoint::new(7, 0), SelectionGoal::Column(0)).unwrap(),
+            (DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
         );
         assert_eq!(
-            down(&snapshot, DisplayPoint::new(8, 2), SelectionGoal::Column(2)).unwrap(),
-            (DisplayPoint::new(8, 2), SelectionGoal::Column(2)),
+            down(&snapshot, DisplayPoint::new(7, 2), SelectionGoal::Column(2)).unwrap(),
+            (DisplayPoint::new(7, 2), SelectionGoal::Column(2)),
         );
     }
 
@@ -351,8 +308,8 @@ mod tests {
         let font_size = 14.0;
 
         let buffer = MultiBuffer::build_simple("a bcΔ defγ hi—jk", cx);
-        let display_map =
-            cx.add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, cx));
+        let display_map = cx
+            .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
         assert_eq!(
             prev_word_boundary(&snapshot, DisplayPoint::new(0, 12)),
@@ -407,8 +364,8 @@ mod tests {
             .unwrap();
         let font_size = 14.0;
         let buffer = MultiBuffer::build_simple("lorem ipsum   dolor\n    sit", cx);
-        let display_map =
-            cx.add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, cx));
+        let display_map = cx
+            .add_model(|cx| DisplayMap::new(buffer, tab_size, font_id, font_size, None, 1, 1, cx));
         let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
 
         assert_eq!(
