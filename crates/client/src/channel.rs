@@ -4,6 +4,7 @@ use super::{
     Client, Status, Subscription, TypedEnvelope,
 };
 use anyhow::{anyhow, Context, Result};
+use futures::lock::Mutex;
 use gpui::{
     AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task, WeakModelHandle,
 };
@@ -40,6 +41,7 @@ pub struct Channel {
     next_pending_message_id: usize,
     user_store: ModelHandle<UserStore>,
     rpc: Arc<Client>,
+    outgoing_messages_lock: Arc<Mutex<()>>,
     rng: StdRng,
     _subscription: Subscription,
 }
@@ -214,6 +216,7 @@ impl Channel {
             details,
             user_store,
             rpc,
+            outgoing_messages_lock: Default::default(),
             messages: Default::default(),
             loaded_all_messages: false,
             next_pending_message_id: 0,
@@ -259,13 +262,16 @@ impl Channel {
         );
         let user_store = self.user_store.clone();
         let rpc = self.rpc.clone();
+        let outgoing_messages_lock = self.outgoing_messages_lock.clone();
         Ok(cx.spawn(|this, mut cx| async move {
+            let outgoing_message_guard = outgoing_messages_lock.lock().await;
             let request = rpc.request(proto::SendChannelMessage {
                 channel_id,
                 body,
                 nonce: Some(nonce.into()),
             });
             let response = request.await?;
+            drop(outgoing_message_guard);
             let message = ChannelMessage::from_proto(
                 response.message.ok_or_else(|| anyhow!("invalid message"))?,
                 &user_store,
