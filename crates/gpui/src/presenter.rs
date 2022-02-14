@@ -62,6 +62,7 @@ impl Presenter {
     }
 
     pub fn invalidate(&mut self, mut invalidation: WindowInvalidation, cx: &mut MutableAppContext) {
+        cx.start_frame();
         for view_id in invalidation.removed {
             invalidation.updated.remove(&view_id);
             self.rendered_views.remove(&view_id);
@@ -81,6 +82,7 @@ impl Presenter {
         invalidation: Option<WindowInvalidation>,
         cx: &mut MutableAppContext,
     ) {
+        cx.start_frame();
         if let Some(invalidation) = invalidation {
             for view_id in invalidation.removed {
                 self.rendered_views.remove(&view_id);

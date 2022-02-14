@@ -685,6 +685,7 @@ pub struct MutableAppContext {
     next_entity_id: usize,
     next_window_id: usize,
     next_subscription_id: usize,
+    frame_count: usize,
     subscriptions: Arc<Mutex<HashMap<usize, BTreeMap<usize, SubscriptionCallback>>>>,
     observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ObservationCallback>>>>,
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
@@ -729,6 +730,7 @@ impl MutableAppContext {
             next_entity_id: 0,
             next_window_id: 0,
             next_subscription_id: 0,
+            frame_count: 0,
             subscriptions: Default::default(),
             observations: Default::default(),
             release_observations: Default::default(),
@@ -920,6 +922,7 @@ impl MutableAppContext {
         window_id: usize,
         titlebar_height: f32,
     ) -> HashMap<usize, ElementBox> {
+        self.start_frame();
         let view_ids = self
             .views
             .keys()
@@ -941,6 +944,10 @@ impl MutableAppContext {
                 )
             })
             .collect()
+    }
+
+    pub(crate) fn start_frame(&mut self) {
+        self.frame_count += 1;
     }
 
     pub fn update<T, F: FnOnce(&mut Self) -> T>(&mut self, callback: F) -> T {
@@ -1397,7 +1404,12 @@ impl MutableAppContext {
             .element_states
             .entry(key)
             .or_insert_with(|| Box::new(T::default()));
-        ElementStateHandle::new(TypeId::of::<Tag>(), id, &self.cx.ref_counts)
+        ElementStateHandle::new(
+            TypeId::of::<Tag>(),
+            id,
+            self.frame_count,
+            &self.cx.ref_counts,
+        )
     }
 
     fn remove_dropped_entities(&mut self) {
@@ -3368,8 +3380,15 @@ pub struct ElementStateHandle<T> {
 }
 
 impl<T: 'static> ElementStateHandle<T> {
-    fn new(tag_type_id: TypeId, id: ElementStateId, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
-        ref_counts.lock().inc_element_state(tag_type_id, id);
+    fn new(
+        tag_type_id: TypeId,
+        id: ElementStateId,
+        frame_id: usize,
+        ref_counts: &Arc<Mutex<RefCounts>>,
+    ) -> Self {
+        ref_counts
+            .lock()
+            .inc_element_state(tag_type_id, id, frame_id);
         Self {
             value_type: PhantomData,
             tag_type_id,
@@ -3508,10 +3527,15 @@ impl Drop for Subscription {
 #[derive(Default)]
 struct RefCounts {
     entity_counts: HashMap<usize, usize>,
-    element_state_counts: HashMap<(TypeId, ElementStateId), usize>,
+    element_state_counts: HashMap<(TypeId, ElementStateId), ElementStateRefCount>,
     dropped_models: HashSet<usize>,
     dropped_views: HashSet<(usize, usize)>,
     dropped_element_states: HashSet<(TypeId, ElementStateId)>,
+}
+
+struct ElementStateRefCount {
+    ref_count: usize,
+    frame_id: usize,
 }
 
 impl RefCounts {
@@ -3537,11 +3561,21 @@ impl RefCounts {
         }
     }
 
-    fn inc_element_state(&mut self, tag_type_id: TypeId, id: ElementStateId) {
+    fn inc_element_state(&mut self, tag_type_id: TypeId, id: ElementStateId, frame_id: usize) {
         match self.element_state_counts.entry((tag_type_id, id)) {
-            Entry::Occupied(mut entry) => *entry.get_mut() += 1,
+            Entry::Occupied(mut entry) => {
+                let entry = entry.get_mut();
+                if entry.frame_id == frame_id || entry.ref_count >= 2 {
+                    panic!("used the same element state more than once in the same frame");
+                }
+                entry.ref_count += 1;
+                entry.frame_id = frame_id;
+            }
             Entry::Vacant(entry) => {
-                entry.insert(1);
+                entry.insert(ElementStateRefCount {
+                    ref_count: 1,
+                    frame_id,
+                });
                 self.dropped_element_states.remove(&(tag_type_id, id));
             }
         }
@@ -3567,9 +3601,9 @@ impl RefCounts {
 
     fn dec_element_state(&mut self, tag_type_id: TypeId, id: ElementStateId) {
         let key = (tag_type_id, id);
-        let count = self.element_state_counts.get_mut(&key).unwrap();
-        *count -= 1;
-        if *count == 0 {
+        let entry = self.element_state_counts.get_mut(&key).unwrap();
+        entry.ref_count -= 1;
+        if entry.ref_count == 0 {
             self.element_state_counts.remove(&key);
             self.dropped_element_states.insert(key);
         }
