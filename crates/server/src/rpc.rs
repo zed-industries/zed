@@ -2660,6 +2660,7 @@ mod tests {
         // Set up a fake language server.
         let (language_server_config, mut fake_language_server) =
             LanguageServerConfig::fake(&cx_a).await;
+
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -2687,6 +2688,7 @@ mod tests {
                 cx,
             )
         });
+
         let (worktree_a, _) = project_a
             .update(&mut cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/root", false, cx)
