@@ -514,39 +514,41 @@ impl Client {
                         if let Some(handler) = state.model_handlers.get_mut(&handler_key) {
                             let mut handler = handler.take().unwrap();
                             drop(state); // Avoid deadlocks if the handler interacts with rpc::Client
+                            let future = (handler)(message, &cx);
+                            {
+                                let mut state = this.state.write();
+                                if state.model_handlers.contains_key(&handler_key) {
+                                    state.model_handlers.insert(handler_key, Some(handler));
+                                }
+                            }
 
+                            let client_id = this.id;
                             log::debug!(
                                 "rpc message received. client_id:{}, name:{}",
-                                this.id,
+                                client_id,
                                 type_name
                             );
-
-                            let future = (handler)(message, &cx);
-                            let client_id = this.id;
                             cx.foreground()
                                 .spawn(async move {
                                     match future.await {
                                         Ok(()) => {
                                             log::debug!(
-                                                "rpc message handled. client_id:{}, name:{}",
+                                                "{}: rpc message '{}' handled",
                                                 client_id,
                                                 type_name
                                             );
                                         }
                                         Err(error) => {
                                             log::error!(
-                                                "error handling rpc message. client_id:{}, name:{}, error: {}",
-                                                client_id, type_name, error
+                                                "{}: error handling rpc message '{}', {}",
+                                                client_id,
+                                                type_name,
+                                                error
                                             );
                                         }
                                     }
                                 })
                                 .detach();
-
-                            let mut state = this.state.write();
-                            if state.model_handlers.contains_key(&handler_key) {
-                                state.model_handlers.insert(handler_key, Some(handler));
-                            }
                         } else {
                             log::info!("unhandled message {}", type_name);
                         }
