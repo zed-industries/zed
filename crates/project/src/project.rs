@@ -2134,9 +2134,9 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
             if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
-                worktree.update(cx, |worktree, cx| {
+                worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
-                    worktree.update_from_remote(envelope, cx)
+                    worktree.update_from_remote(envelope)
                 })?;
             }
             Ok(())
@@ -3419,7 +3419,7 @@ mod tests {
             .await;
 
         // Create a remote copy of this worktree.
-        let initial_snapshot = tree.read_with(&cx, |tree, _| tree.snapshot());
+        let initial_snapshot = tree.read_with(&cx, |tree, _| tree.as_local().unwrap().snapshot());
         let (remote, load_task) = cx.update(|cx| {
             Worktree::remote(
                 1,
@@ -3495,10 +3495,13 @@ mod tests {
         // Update the remote worktree. Check that it becomes consistent with the
         // local worktree.
         remote.update(&mut cx, |remote, cx| {
-            let update_message =
-                tree.read(cx)
-                    .snapshot()
-                    .build_update(&initial_snapshot, 1, 1, true);
+            let update_message = tree.read(cx).as_local().unwrap().snapshot().build_update(
+                &initial_snapshot,
+                1,
+                1,
+                0,
+                true,
+            );
             remote
                 .as_remote_mut()
                 .unwrap()

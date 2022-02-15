@@ -339,6 +339,7 @@ impl Server {
                                 .cloned()
                                 .collect(),
                             weak: worktree.weak,
+                            next_update_id: share.next_update_id as u64,
                         })
                     })
                     .collect();
@@ -477,6 +478,7 @@ impl Server {
             request.sender_id,
             entries,
             diagnostic_summaries,
+            worktree.next_update_id,
         )?;
 
         broadcast(
@@ -1115,7 +1117,7 @@ mod tests {
             LanguageConfig, LanguageRegistry, LanguageServerConfig, Point,
         },
         lsp,
-        project::{worktree::WorktreeHandle, DiagnosticSummary, Project, ProjectPath},
+        project::{DiagnosticSummary, Project, ProjectPath},
         workspace::{Workspace, WorkspaceParams},
     };
 
@@ -1486,11 +1488,6 @@ mod tests {
         buffer_b.read_with(&cx_b, |buf, _| assert!(!buf.is_dirty()));
         buffer_c.condition(&cx_c, |buf, _| !buf.is_dirty()).await;
 
-        // Ensure worktree observes a/file1's change event *before* the rename occurs, otherwise
-        // when interpreting the change event it will mistakenly think that the file has been
-        // deleted (because its path has changed) and will subsequently fail to detect the rename.
-        worktree_a.flush_fs_events(&cx_a).await;
-
         // Make changes on host's file system, see those changes on guest worktrees.
         fs.rename(
             "/a/file1".as_ref(),
@@ -1499,6 +1496,7 @@ mod tests {
         )
         .await
         .unwrap();
+
         fs.rename("/a/file2".as_ref(), "/a/file3".as_ref(), Default::default())
             .await
             .unwrap();

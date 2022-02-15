@@ -43,6 +43,7 @@ pub struct ProjectShare {
 pub struct WorktreeShare {
     pub entries: HashMap<u64, proto::Entry>,
     pub diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
+    pub next_update_id: u64,
 }
 
 #[derive(Default)]
@@ -403,6 +404,7 @@ impl Store {
         connection_id: ConnectionId,
         entries: HashMap<u64, proto::Entry>,
         diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
+        next_update_id: u64,
     ) -> tide::Result<SharedWorktree> {
         let project = self
             .projects
@@ -416,6 +418,7 @@ impl Store {
             worktree.share = Some(WorktreeShare {
                 entries,
                 diagnostic_summaries,
+                next_update_id,
             });
             Ok(SharedWorktree {
                 authorized_user_ids: project.authorized_user_ids(),
