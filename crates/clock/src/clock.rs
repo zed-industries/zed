@@ -216,6 +216,16 @@ impl Global {
     }
 }
 
+impl FromIterator<Local> for Global {
+    fn from_iter<T: IntoIterator<Item = Local>>(locals: T) -> Self {
+        let mut result = Self::new();
+        for local in locals {
+            result.observe(local);
+        }
+        result
+    }
+}
+
 impl Ord for Lamport {
     fn cmp(&self, other: &Self) -> Ordering {
         // Use the replica id to break ties between concurrent events.

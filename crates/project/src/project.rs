@@ -2395,12 +2395,18 @@ impl Project {
             .end
             .and_then(language::proto::deserialize_anchor)
             .ok_or_else(|| anyhow!("invalid end"))?;
-        let code_actions = this.update(&mut cx, |this, cx| {
-            let buffer = this
-                .shared_buffers
+        let buffer = this.update(&mut cx, |this, _| {
+            this.shared_buffers
                 .get(&sender_id)
                 .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
-                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
+                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
+        })?;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version([start.timestamp, end.timestamp].into_iter().collect())
+            })
+            .await;
+        let code_actions = this.update(&mut cx, |this, cx| {
             Ok::<_, anyhow::Error>(this.code_actions(&buffer, start..end, cx))
         })?;
 
