@@ -1093,6 +1093,8 @@ mod tests {
     use serde_json::json;
     use sqlx::types::time::OffsetDateTime;
     use std::{
+        cell::{Cell, RefCell},
+        env,
         ops::Deref,
         path::Path,
         rc::Rc,
@@ -3532,6 +3534,136 @@ mod tests {
         }
     }
 
+    #[gpui::test(iterations = 10)]
+    async fn test_random_collaboration(cx: TestAppContext, rng: StdRng) {
+        cx.foreground().forbid_parking();
+        let max_peers = env::var("MAX_PEERS")
+            .map(|i| i.parse().expect("invalid `MAX_PEERS` variable"))
+            .unwrap_or(5);
+        let max_operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10);
+
+        let rng = Rc::new(RefCell::new(rng));
+        let lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = Arc::new(FakeFs::new(cx.background()));
+        fs.insert_tree(
+            "/_collab",
+            json!({
+                ".zed.toml": r#"collaborators = ["guest-1", "guest-2", "guest-3", "guest-4", "guest-5"]"#
+            }),
+        )
+        .await;
+
+        let operations = Rc::new(Cell::new(0));
+        let mut server = TestServer::start(cx.foreground()).await;
+        let mut clients = Vec::new();
+
+        let mut next_entity_id = 100000;
+        let mut host_cx = TestAppContext::new(
+            cx.foreground_platform(),
+            cx.platform(),
+            cx.foreground(),
+            cx.background(),
+            cx.font_cache(),
+            next_entity_id,
+        );
+        let host = server.create_client(&mut host_cx, "host").await;
+        let host_project = host_cx.update(|cx| {
+            Project::local(
+                host.client.clone(),
+                host.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let host_project_id = host_project
+            .update(&mut host_cx, |p, _| p.next_remote_id())
+            .await;
+
+        let (collab_worktree, _) = host_project
+            .update(&mut host_cx, |project, cx| {
+                project.find_or_create_local_worktree("/_collab", false, cx)
+            })
+            .await
+            .unwrap();
+        collab_worktree
+            .read_with(&host_cx, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        host_project
+            .update(&mut host_cx, |project, cx| project.share(cx))
+            .await
+            .unwrap();
+
+        clients.push(cx.foreground().spawn(host.simulate_host(
+            host_project,
+            operations.clone(),
+            max_operations,
+            rng.clone(),
+            host_cx,
+        )));
+
+        while operations.get() < max_operations {
+            cx.background().simulate_random_delay().await;
+            if clients.len() < max_peers && rng.borrow_mut().gen_bool(0.05) {
+                operations.set(operations.get() + 1);
+
+                let guest_id = clients.len();
+                log::info!("Adding guest {}", guest_id);
+                next_entity_id += 100000;
+                let mut guest_cx = TestAppContext::new(
+                    cx.foreground_platform(),
+                    cx.platform(),
+                    cx.foreground(),
+                    cx.background(),
+                    cx.font_cache(),
+                    next_entity_id,
+                );
+                let guest = server
+                    .create_client(&mut guest_cx, &format!("guest-{}", guest_id))
+                    .await;
+                let guest_project = Project::remote(
+                    host_project_id,
+                    guest.client.clone(),
+                    guest.user_store.clone(),
+                    lang_registry.clone(),
+                    fs.clone(),
+                    &mut guest_cx.to_async(),
+                )
+                .await
+                .unwrap();
+                clients.push(cx.foreground().spawn(guest.simulate_guest(
+                    guest_id,
+                    guest_project,
+                    operations.clone(),
+                    max_operations,
+                    rng.clone(),
+                    guest_cx,
+                )));
+
+                log::info!("Guest {} added", guest_id);
+            }
+        }
+
+        let clients = futures::future::join_all(clients).await;
+        for (ix, (client_a, cx_a)) in clients.iter().enumerate() {
+            for buffer_a in &client_a.buffers {
+                let buffer_id = buffer_a.read_with(cx_a, |buffer, _| buffer.remote_id());
+                for (client_b, cx_b) in &clients[ix + 1..] {
+                    if let Some(buffer_b) = client_b.buffers.iter().find(|buffer| {
+                        buffer.read_with(cx_b, |buffer, _| buffer.remote_id() == buffer_id)
+                    }) {
+                        assert_eq!(
+                            buffer_a.read_with(cx_a, |buffer, _| buffer.text()),
+                            buffer_b.read_with(cx_b, |buffer, _| buffer.text())
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     struct TestServer {
         peer: Arc<Peer>,
         app_state: Arc<AppState>,
@@ -3630,6 +3762,8 @@ mod tests {
                 client,
                 peer_id,
                 user_store,
+                project: Default::default(),
+                buffers: Default::default(),
             }
         }
 
@@ -3692,6 +3826,8 @@ mod tests {
         client: Arc<Client>,
         pub peer_id: PeerId,
         pub user_store: ModelHandle<UserStore>,
+        project: Option<ModelHandle<Project>>,
+        buffers: HashSet<ModelHandle<zed::language::Buffer>>,
     }
 
     impl Deref for TestClient {
@@ -3708,6 +3844,168 @@ mod tests {
                 self.user_store
                     .read_with(cx, |user_store, _| user_store.current_user().unwrap().id),
             )
+        }
+
+        async fn simulate_host(
+            mut self,
+            project: ModelHandle<Project>,
+            operations: Rc<Cell<usize>>,
+            max_operations: usize,
+            rng: Rc<RefCell<StdRng>>,
+            mut cx: TestAppContext,
+        ) -> (Self, TestAppContext) {
+            let fs = project.read_with(&cx, |project, _| project.fs().clone());
+            let mut files: Vec<PathBuf> = Default::default();
+            while operations.get() < max_operations {
+                operations.set(operations.get() + 1);
+
+                let distribution = rng.borrow_mut().gen_range(0..100);
+                match distribution {
+                    0..=20 if !files.is_empty() => {
+                        let mut path = files.choose(&mut *rng.borrow_mut()).unwrap().as_path();
+                        while let Some(parent_path) = path.parent() {
+                            path = parent_path;
+                            if rng.borrow_mut().gen() {
+                                break;
+                            }
+                        }
+
+                        log::info!("Host: find/create local worktree {:?}", path);
+                        project
+                            .update(&mut cx, |project, cx| {
+                                project.find_or_create_local_worktree(path, false, cx)
+                            })
+                            .await
+                            .unwrap();
+                    }
+                    10..=80 if !files.is_empty() => {
+                        let buffer = if self.buffers.is_empty() || rng.borrow_mut().gen() {
+                            let file = files.choose(&mut *rng.borrow_mut()).unwrap();
+                            let (worktree, path) = project
+                                .update(&mut cx, |project, cx| {
+                                    project.find_or_create_local_worktree(file, false, cx)
+                                })
+                                .await
+                                .unwrap();
+                            let project_path =
+                                worktree.read_with(&cx, |worktree, _| (worktree.id(), path));
+                            log::info!("Host: opening path {:?}", project_path);
+                            let buffer = project
+                                .update(&mut cx, |project, cx| {
+                                    project.open_buffer(project_path, cx)
+                                })
+                                .await
+                                .unwrap();
+                            self.buffers.insert(buffer.clone());
+                            buffer
+                        } else {
+                            self.buffers
+                                .iter()
+                                .choose(&mut *rng.borrow_mut())
+                                .unwrap()
+                                .clone()
+                        };
+
+                        buffer.update(&mut cx, |buffer, cx| {
+                            log::info!(
+                                "Host: updating buffer {:?}",
+                                buffer.file().unwrap().full_path(cx)
+                            );
+                            buffer.randomly_edit(&mut *rng.borrow_mut(), 5, cx)
+                        });
+                    }
+                    _ => loop {
+                        let path_component_count = rng.borrow_mut().gen_range(1..=5);
+                        let mut path = PathBuf::new();
+                        path.push("/");
+                        for _ in 0..path_component_count {
+                            let letter = rng.borrow_mut().gen_range(b'a'..=b'z');
+                            path.push(std::str::from_utf8(&[letter]).unwrap());
+                        }
+                        let parent_path = path.parent().unwrap();
+
+                        log::info!("Host: creating file {:?}", path);
+                        if fs.create_dir(&parent_path).await.is_ok()
+                            && fs.create_file(&path, Default::default()).await.is_ok()
+                        {
+                            files.push(path);
+                            break;
+                        } else {
+                            log::info!("Host: cannot create file");
+                        }
+                    },
+                }
+
+                cx.background().simulate_random_delay().await;
+            }
+
+            self.project = Some(project);
+            (self, cx)
+        }
+
+        pub async fn simulate_guest(
+            mut self,
+            guest_id: usize,
+            project: ModelHandle<Project>,
+            operations: Rc<Cell<usize>>,
+            max_operations: usize,
+            rng: Rc<RefCell<StdRng>>,
+            mut cx: TestAppContext,
+        ) -> (Self, TestAppContext) {
+            while operations.get() < max_operations {
+                let buffer = if self.buffers.is_empty() || rng.borrow_mut().gen() {
+                    let worktree = if let Some(worktree) = project.read_with(&cx, |project, cx| {
+                        project
+                            .worktrees(&cx)
+                            .filter(|worktree| {
+                                worktree.read(cx).entries(false).any(|e| e.is_file())
+                            })
+                            .choose(&mut *rng.borrow_mut())
+                    }) {
+                        worktree
+                    } else {
+                        cx.background().simulate_random_delay().await;
+                        continue;
+                    };
+
+                    operations.set(operations.get() + 1);
+                    let project_path = worktree.read_with(&cx, |worktree, _| {
+                        let entry = worktree
+                            .entries(false)
+                            .filter(|e| e.is_file())
+                            .choose(&mut *rng.borrow_mut())
+                            .unwrap();
+                        (worktree.id(), entry.path.clone())
+                    });
+                    log::info!("Guest {}: opening path {:?}", guest_id, project_path);
+                    let buffer = project
+                        .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))
+                        .await
+                        .unwrap();
+                    self.buffers.insert(buffer.clone());
+                    buffer
+                } else {
+                    self.buffers
+                        .iter()
+                        .choose(&mut *rng.borrow_mut())
+                        .unwrap()
+                        .clone()
+                };
+
+                buffer.update(&mut cx, |buffer, cx| {
+                    log::info!(
+                        "Guest {}: updating buffer {:?}",
+                        guest_id,
+                        buffer.file().unwrap().full_path(cx)
+                    );
+                    buffer.randomly_edit(&mut *rng.borrow_mut(), 5, cx)
+                });
+
+                cx.background().simulate_random_delay().await;
+            }
+
+            self.project = Some(project);
+            (self, cx)
         }
     }
 

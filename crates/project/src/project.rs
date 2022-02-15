@@ -351,6 +351,10 @@ impl Project {
         cx.update(|cx| Project::local(client, user_store, languages, fs, cx))
     }
 
+    pub fn fs(&self) -> &Arc<dyn Fs> {
+        &self.fs
+    }
+
     fn set_remote_id(&mut self, remote_id: Option<u64>, cx: &mut ModelContext<Self>) {
         if let ProjectClientState::Local { remote_id_tx, .. } = &mut self.client_state {
             *remote_id_tx.borrow_mut() = remote_id;

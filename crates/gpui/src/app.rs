@@ -474,6 +474,10 @@ impl TestAppContext {
         self.cx.borrow().cx.font_cache.clone()
     }
 
+    pub fn foreground_platform(&self) -> Rc<platform::test::ForegroundPlatform> {
+        self.foreground_platform.clone()
+    }
+
     pub fn platform(&self) -> Arc<dyn platform::Platform> {
         self.cx.borrow().cx.platform.clone()
     }

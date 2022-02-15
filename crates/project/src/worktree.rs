@@ -1354,7 +1354,9 @@ impl language::File for File {
     fn full_path(&self, cx: &AppContext) -> PathBuf {
         let mut full_path = PathBuf::new();
         full_path.push(self.worktree.read(cx).root_name());
-        full_path.push(&self.path);
+        if self.path.components().next().is_some() {
+            full_path.push(&self.path);
+        }
         full_path
     }
 
