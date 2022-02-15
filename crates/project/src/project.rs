@@ -2254,21 +2254,29 @@ impl Project {
     ) -> Result<proto::BufferSaved> {
         let buffer_id = envelope.payload.buffer_id;
         let sender_id = envelope.original_sender_id()?;
-        let (project_id, save) = this.update(&mut cx, |this, cx| {
+        let requested_version = envelope.payload.version.try_into()?;
+
+        let (project_id, buffer) = this.update(&mut cx, |this, _| {
             let project_id = this.remote_id().ok_or_else(|| anyhow!("not connected"))?;
             let buffer = this
                 .shared_buffers
                 .get(&sender_id)
                 .and_then(|shared_buffers| shared_buffers.get(&buffer_id).cloned())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?;
-            Ok::<_, anyhow::Error>((project_id, buffer.update(cx, |buffer, cx| buffer.save(cx))))
+            Ok::<_, anyhow::Error>((project_id, buffer))
         })?;
 
-        let (version, mtime) = save.await?;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(requested_version)
+            })
+            .await;
+
+        let (saved_version, mtime) = buffer.update(&mut cx, |buffer, cx| buffer.save(cx)).await?;
         Ok(proto::BufferSaved {
             project_id,
             buffer_id,
-            version: (&version).into(),
+            version: (&saved_version).into(),
             mtime: Some(mtime.into()),
         })
     }

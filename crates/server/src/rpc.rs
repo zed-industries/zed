@@ -1604,14 +1604,12 @@ mod tests {
         )
         .await
         .unwrap();
-        let worktree_b = project_b.update(&mut cx_b, |p, cx| p.worktrees(cx).next().unwrap());
 
         // Open a buffer as client B
         let buffer_b = project_b
             .update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
             .unwrap();
-        let mtime = buffer_b.read_with(&cx_b, |buf, _| buf.file().unwrap().mtime());
 
         buffer_b.update(&mut cx_b, |buf, cx| buf.edit([0..0], "world ", cx));
         buffer_b.read_with(&cx_b, |buf, _| {
@@ -1623,13 +1621,10 @@ mod tests {
             .update(&mut cx_b, |buf, cx| buf.save(cx))
             .await
             .unwrap();
-        worktree_b
-            .condition(&cx_b, |_, cx| {
-                buffer_b.read(cx).file().unwrap().mtime() != mtime
-            })
+        buffer_b
+            .condition(&cx_b, |buffer_b, _| !buffer_b.is_dirty())
             .await;
         buffer_b.read_with(&cx_b, |buf, _| {
-            assert!(!buf.is_dirty());
             assert!(!buf.has_conflict());
         });
 

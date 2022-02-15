@@ -1404,6 +1404,7 @@ impl language::File for File {
                         .request(proto::SaveBuffer {
                             project_id,
                             buffer_id,
+                            version: (&version).into(),
                         })
                         .await?;
                     let version = response.version.try_into()?;
