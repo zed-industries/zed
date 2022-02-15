@@ -87,7 +87,7 @@ pub struct RemoteWorktree {
     pending_updates: VecDeque<proto::UpdateWorktree>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Snapshot {
     id: WorktreeId,
     root_name: String,
@@ -1315,13 +1315,29 @@ impl fmt::Debug for LocalWorktree {
 
 impl fmt::Debug for Snapshot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for entry in self.entries_by_path.cursor::<()>() {
-            for _ in entry.path.ancestors().skip(1) {
-                write!(f, " ")?;
+        struct EntriesById<'a>(&'a SumTree<PathEntry>);
+        struct EntriesByPath<'a>(&'a SumTree<Entry>);
+
+        impl<'a> fmt::Debug for EntriesByPath<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_map()
+                    .entries(self.0.iter().map(|entry| (&entry.path, entry.id)))
+                    .finish()
             }
-            writeln!(f, "{:?} (inode: {})", entry.path, entry.inode)?;
         }
-        Ok(())
+
+        impl<'a> fmt::Debug for EntriesById<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_list().entries(self.0.iter()).finish()
+            }
+        }
+
+        f.debug_struct("Snapshot")
+            .field("id", &self.id)
+            .field("root_name", &self.root_name)
+            .field("entries_by_path", &EntriesByPath(&self.entries_by_path))
+            .field("entries_by_id", &EntriesById(&self.entries_by_id))
+            .finish()
     }
 }
 
@@ -1528,7 +1544,7 @@ impl File {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub id: usize,
     pub kind: EntryKind,
@@ -1539,7 +1555,7 @@ pub struct Entry {
     pub is_ignored: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EntryKind {
     PendingDir,
     Dir,
@@ -1642,7 +1658,7 @@ impl sum_tree::Summary for EntrySummary {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct PathEntry {
     id: usize,
     path: Arc<Path>,

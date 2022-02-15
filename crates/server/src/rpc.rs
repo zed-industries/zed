@@ -1085,6 +1085,7 @@ mod tests {
         github, AppState, Config,
     };
     use ::rpc::Peer;
+    use collections::BTreeMap;
     use gpui::{executor, ModelHandle, TestAppContext};
     use parking_lot::Mutex;
     use postage::{mpsc, watch};
@@ -3597,11 +3598,11 @@ mod tests {
             .unwrap();
 
         clients.push(cx.foreground().spawn(host.simulate_host(
-            host_project,
+            host_project.clone(),
             operations.clone(),
             max_operations,
             rng.clone(),
-            host_cx,
+            host_cx.clone(),
         )));
 
         while operations.get() < max_operations {
@@ -3647,10 +3648,51 @@ mod tests {
         }
 
         let clients = futures::future::join_all(clients).await;
+        cx.foreground().run_until_parked();
+
+        let host_worktree_snapshots = host_project.read_with(&host_cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .map(|worktree| {
+                    let snapshot = worktree.read(cx).snapshot();
+                    (snapshot.id(), snapshot)
+                })
+                .collect::<BTreeMap<_, _>>()
+        });
+
         for (ix, (client_a, cx_a)) in clients.iter().enumerate() {
-            for buffer_a in &client_a.buffers {
-                let buffer_id = buffer_a.read_with(cx_a, |buffer, _| buffer.remote_id());
-                for (client_b, cx_b) in &clients[ix + 1..] {
+            let worktree_snapshots =
+                client_a
+                    .project
+                    .as_ref()
+                    .unwrap()
+                    .read_with(cx_a, |project, cx| {
+                        project
+                            .worktrees(cx)
+                            .map(|worktree| {
+                                let snapshot = worktree.read(cx).snapshot();
+                                (snapshot.id(), snapshot)
+                            })
+                            .collect::<BTreeMap<_, _>>()
+                    });
+
+            assert_eq!(
+                worktree_snapshots.keys().collect::<Vec<_>>(),
+                host_worktree_snapshots.keys().collect::<Vec<_>>(),
+                "guest {} has different worktrees than the host",
+                ix
+            );
+            for (id, snapshot) in &host_worktree_snapshots {
+                assert_eq!(
+                    worktree_snapshots[id], *snapshot,
+                    "guest {} has different snapshot than the host for worktree {}",
+                    ix, id
+                );
+            }
+
+            for (client_b, cx_b) in &clients[ix + 1..] {
+                for buffer_a in &client_a.buffers {
+                    let buffer_id = buffer_a.read_with(cx_a, |buffer, _| buffer.remote_id());
                     if let Some(buffer_b) = client_b.buffers.iter().find(|buffer| {
                         buffer.read_with(cx_b, |buffer, _| buffer.remote_id() == buffer_id)
                     }) {
