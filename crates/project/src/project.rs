@@ -1334,18 +1334,18 @@ impl Project {
 
             cx.spawn(|_, cx| async move {
                 let completions = lang_server
-                .request::<lsp::request::Completion>(lsp::CompletionParams {
-                    text_document_position: lsp::TextDocumentPositionParams::new(
-                        lsp::TextDocumentIdentifier::new(
-                            lsp::Url::from_file_path(buffer_abs_path).unwrap(),
+                    .request::<lsp::request::Completion>(lsp::CompletionParams {
+                        text_document_position: lsp::TextDocumentPositionParams::new(
+                            lsp::TextDocumentIdentifier::new(
+                                lsp::Url::from_file_path(buffer_abs_path).unwrap(),
+                            ),
+                            position.to_lsp_position(),
                         ),
-                        position.to_lsp_position(),
-                    ),
-                    context: Default::default(),
-                    work_done_progress_params: Default::default(),
-                    partial_result_params: Default::default(),
-                })
-                .await?;
+                        context: Default::default(),
+                        work_done_progress_params: Default::default(),
+                        partial_result_params: Default::default(),
+                    })
+                    .await?;
 
                 let completions = if let Some(completions) = completions {
                     match completions {
@@ -1357,41 +1357,54 @@ impl Project {
                 };
 
                 source_buffer_handle.read_with(&cx, |this, _| {
-                    Ok(completions.into_iter().filter_map(|lsp_completion| {
-                        let (old_range, new_text) = match lsp_completion.text_edit.as_ref()? {
-                            lsp::CompletionTextEdit::Edit(edit) => (range_from_lsp(edit.range), edit.new_text.clone()),
-                            lsp::CompletionTextEdit::InsertAndReplace(_) => {
-                                log::info!("received an insert and replace completion but we don't yet support that");
-                                return None
-                            },
-                        };
+                    Ok(completions
+                        .into_iter()
+                        .filter_map(|lsp_completion| {
+                            let (old_range, new_text) = match lsp_completion.text_edit.as_ref()? {
+                                lsp::CompletionTextEdit::Edit(edit) => {
+                                    (range_from_lsp(edit.range), edit.new_text.clone())
+                                }
+                                lsp::CompletionTextEdit::InsertAndReplace(_) => {
+                                    log::info!("unsupported insert/replace completion");
+                                    return None;
+                                }
+                            };
 
-                        let clipped_start = this.clip_point_utf16(old_range.start, Bias::Left);
-                        let clipped_end = this.clip_point_utf16(old_range.end, Bias::Left) ;
-                        if clipped_start == old_range.start && clipped_end == old_range.end {
-                            Some(Completion {
-                                old_range: this.anchor_before(old_range.start)..this.anchor_after(old_range.end),
-                                new_text,
-                                label: language.as_ref().and_then(|l| l.label_for_completion(&lsp_completion)).unwrap_or_else(|| CompletionLabel::plain(&lsp_completion)),
-                                lsp_completion,
-                            })
-                        } else {
-                            None
-                        }
-                    }).collect())
+                            let clipped_start = this.clip_point_utf16(old_range.start, Bias::Left);
+                            let clipped_end = this.clip_point_utf16(old_range.end, Bias::Left);
+                            if clipped_start == old_range.start && clipped_end == old_range.end {
+                                Some(Completion {
+                                    old_range: this.anchor_before(old_range.start)
+                                        ..this.anchor_after(old_range.end),
+                                    new_text,
+                                    label: language
+                                        .as_ref()
+                                        .and_then(|l| l.label_for_completion(&lsp_completion))
+                                        .unwrap_or_else(|| CompletionLabel::plain(&lsp_completion)),
+                                    lsp_completion,
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .collect())
                 })
-
             })
         } else if let Some(project_id) = self.remote_id() {
             let rpc = self.client.clone();
-            cx.foreground().spawn(async move {
-                let response = rpc
-                    .request(proto::GetCompletions {
-                        project_id,
-                        buffer_id,
-                        position: Some(language::proto::serialize_anchor(&anchor)),
+            let message = proto::GetCompletions {
+                project_id,
+                buffer_id,
+                position: Some(language::proto::serialize_anchor(&anchor)),
+                version: (&source_buffer.version()).into(),
+            };
+            cx.spawn_weak(|_, mut cx| async move {
+                let response = rpc.request(message).await?;
+                source_buffer_handle
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_version(response.version.into())
                     })
-                    .await?;
+                    .await;
                 response
                     .completions
                     .into_iter()
@@ -2326,21 +2339,27 @@ impl Project {
             .position
             .and_then(language::proto::deserialize_anchor)
             .ok_or_else(|| anyhow!("invalid position"))?;
-        let completions = this.update(&mut cx, |this, cx| {
-            let buffer = this
-                .shared_buffers
+        let version = clock::Global::from(envelope.payload.version);
+        let buffer = this.read_with(&cx, |this, _| {
+            this.shared_buffers
                 .get(&sender_id)
                 .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
-                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
-            Ok::<_, anyhow::Error>(this.completions(&buffer, position, cx))
+                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })?;
+        buffer
+            .update(&mut cx, |buffer, _| buffer.wait_for_version(version))
+            .await;
+        let version = buffer.read_with(&cx, |buffer, _| buffer.version());
+        let completions = this
+            .update(&mut cx, |this, cx| this.completions(&buffer, position, cx))
+            .await?;
 
         Ok(proto::GetCompletionsResponse {
             completions: completions
-                .await?
                 .iter()
                 .map(language::proto::serialize_completion)
                 .collect(),
+            version: (&version).into(),
         })
     }
 

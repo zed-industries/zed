@@ -2336,9 +2336,10 @@ mod tests {
             .await;
 
         // Confirm a completion on the guest.
-        editor_b.next_notification(&cx_b).await;
+        editor_b
+            .condition(&cx_b, |editor, _| editor.context_menu_visible())
+            .await;
         editor_b.update(&mut cx_b, |editor, cx| {
-            assert!(editor.context_menu_visible());
             editor.confirm_completion(&ConfirmCompletion(Some(0)), cx);
             assert_eq!(editor.text(cx), "fn main() { a.first_method() }");
         });
@@ -2363,22 +2364,17 @@ mod tests {
             }
         });
 
+        // The additional edit is applied.
         buffer_a
             .condition(&cx_a, |buffer, _| {
-                buffer.text() == "fn main() { a.first_method() }"
+                buffer.text() == "use d::SomeTrait;\nfn main() { a.first_method() }"
             })
             .await;
-
-        // The additional edit is applied.
         buffer_b
             .condition(&cx_b, |buffer, _| {
                 buffer.text() == "use d::SomeTrait;\nfn main() { a.first_method() }"
             })
             .await;
-        assert_eq!(
-            buffer_a.read_with(&cx_a, |buffer, _| buffer.text()),
-            buffer_b.read_with(&cx_b, |buffer, _| buffer.text()),
-        );
     }
 
     #[gpui::test(iterations = 10)]

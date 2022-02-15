@@ -222,10 +222,12 @@ message GetCompletions {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     Anchor position = 3;
+    repeated VectorClockEntry version = 4;
 }
 
 message GetCompletionsResponse {
     repeated Completion completions = 1;
+    repeated VectorClockEntry version = 2;
 }
 
 message ApplyCompletionAdditionalEdits {
