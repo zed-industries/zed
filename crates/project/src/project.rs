@@ -161,6 +161,31 @@ pub struct ProjectEntry {
 }
 
 impl Project {
+    pub fn init(client: &Arc<Client>) {
+        client.add_entity_message_handler(Self::handle_add_collaborator);
+        client.add_entity_message_handler(Self::handle_buffer_reloaded);
+        client.add_entity_message_handler(Self::handle_buffer_saved);
+        client.add_entity_message_handler(Self::handle_close_buffer);
+        client.add_entity_message_handler(Self::handle_disk_based_diagnostics_updated);
+        client.add_entity_message_handler(Self::handle_disk_based_diagnostics_updating);
+        client.add_entity_message_handler(Self::handle_remove_collaborator);
+        client.add_entity_message_handler(Self::handle_share_worktree);
+        client.add_entity_message_handler(Self::handle_unregister_worktree);
+        client.add_entity_message_handler(Self::handle_unshare_project);
+        client.add_entity_message_handler(Self::handle_update_buffer_file);
+        client.add_entity_message_handler(Self::handle_update_buffer);
+        client.add_entity_message_handler(Self::handle_update_diagnostic_summary);
+        client.add_entity_message_handler(Self::handle_update_worktree);
+        client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
+        client.add_entity_request_handler(Self::handle_apply_code_action);
+        client.add_entity_request_handler(Self::handle_format_buffers);
+        client.add_entity_request_handler(Self::handle_get_code_actions);
+        client.add_entity_request_handler(Self::handle_get_completions);
+        client.add_entity_request_handler(Self::handle_get_definition);
+        client.add_entity_request_handler(Self::handle_open_buffer);
+        client.add_entity_request_handler(Self::handle_save_buffer);
+    }
+
     pub fn local(
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
@@ -287,45 +312,7 @@ impl Project {
                 languages,
                 user_store,
                 fs,
-                subscriptions: vec![
-                    client.add_entity_message_handler(remote_id, cx, Self::handle_unshare_project),
-                    client.add_entity_message_handler(remote_id, cx, Self::handle_add_collaborator),
-                    client.add_entity_message_handler(
-                        remote_id,
-                        cx,
-                        Self::handle_remove_collaborator,
-                    ),
-                    client.add_entity_message_handler(remote_id, cx, Self::handle_share_worktree),
-                    client.add_entity_message_handler(
-                        remote_id,
-                        cx,
-                        Self::handle_unregister_worktree,
-                    ),
-                    client.add_entity_message_handler(remote_id, cx, Self::handle_update_worktree),
-                    client.add_entity_message_handler(
-                        remote_id,
-                        cx,
-                        Self::handle_update_diagnostic_summary,
-                    ),
-                    client.add_entity_message_handler(
-                        remote_id,
-                        cx,
-                        Self::handle_disk_based_diagnostics_updating,
-                    ),
-                    client.add_entity_message_handler(
-                        remote_id,
-                        cx,
-                        Self::handle_disk_based_diagnostics_updated,
-                    ),
-                    client.add_entity_message_handler(remote_id, cx, Self::handle_update_buffer),
-                    client.add_entity_message_handler(
-                        remote_id,
-                        cx,
-                        Self::handle_update_buffer_file,
-                    ),
-                    client.add_entity_message_handler(remote_id, cx, Self::handle_buffer_reloaded),
-                    client.add_entity_message_handler(remote_id, cx, Self::handle_buffer_saved),
-                ],
+                subscriptions: vec![client.add_model_for_remote_entity(cx.handle(), remote_id)],
                 client,
                 client_state: ProjectClientState::Remote {
                     sharing_has_stopped: false,
@@ -362,27 +349,10 @@ impl Project {
 
         self.subscriptions.clear();
         if let Some(remote_id) = remote_id {
-            let client = &self.client;
-            self.subscriptions.extend([
-                client.add_entity_request_handler(remote_id, cx, Self::handle_open_buffer),
-                client.add_entity_message_handler(remote_id, cx, Self::handle_close_buffer),
-                client.add_entity_message_handler(remote_id, cx, Self::handle_add_collaborator),
-                client.add_entity_message_handler(remote_id, cx, Self::handle_remove_collaborator),
-                client.add_entity_message_handler(remote_id, cx, Self::handle_update_worktree),
-                client.add_entity_message_handler(remote_id, cx, Self::handle_update_buffer),
-                client.add_entity_request_handler(remote_id, cx, Self::handle_save_buffer),
-                client.add_entity_message_handler(remote_id, cx, Self::handle_buffer_saved),
-                client.add_entity_request_handler(remote_id, cx, Self::handle_format_buffers),
-                client.add_entity_request_handler(remote_id, cx, Self::handle_get_completions),
-                client.add_entity_request_handler(
-                    remote_id,
-                    cx,
-                    Self::handle_apply_additional_edits_for_completion,
-                ),
-                client.add_entity_request_handler(remote_id, cx, Self::handle_get_code_actions),
-                client.add_entity_request_handler(remote_id, cx, Self::handle_apply_code_action),
-                client.add_entity_request_handler(remote_id, cx, Self::handle_get_definition),
-            ]);
+            self.subscriptions.push(
+                self.client
+                    .add_model_for_remote_entity(cx.handle(), remote_id),
+            );
         }
     }
 

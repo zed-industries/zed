@@ -3794,6 +3794,9 @@ mod tests {
                 .await
                 .unwrap();
 
+            Channel::init(&client);
+            Project::init(&client);
+
             let peer_id = PeerId(connection_id_rx.next().await.unwrap().0);
             let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
             let mut authed_user =

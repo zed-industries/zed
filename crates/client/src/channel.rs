@@ -180,14 +180,17 @@ impl Entity for Channel {
 }
 
 impl Channel {
+    pub fn init(rpc: &Arc<Client>) {
+        rpc.add_entity_message_handler(Self::handle_message_sent);
+    }
+
     pub fn new(
         details: ChannelDetails,
         user_store: ModelHandle<UserStore>,
         rpc: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let _subscription =
-            rpc.add_entity_message_handler(details.id, cx, Self::handle_message_sent);
+        let _subscription = rpc.add_model_for_remote_entity(cx.handle(), details.id);
 
         {
             let user_store = user_store.clone();
