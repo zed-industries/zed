@@ -99,7 +99,7 @@ pub fn run_test(
                     println!("retrying: attempt {}", retries);
                 } else {
                     if is_randomized {
-                        eprintln!("failing seed: {}", atomic_seed.load(SeqCst));
+                        eprintln!("failing seed: {}", atomic_seed.load(SeqCst) - 1);
                     }
                     panic::resume_unwind(error);
                 }
