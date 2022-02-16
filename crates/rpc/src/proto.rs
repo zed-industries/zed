@@ -199,6 +199,7 @@ request_messages!(
     (ShareProject, Ack),
     (ShareWorktree, Ack),
     (UpdateBuffer, Ack),
+    (UpdateWorktree, Ack),
 );
 
 entity_messages!(

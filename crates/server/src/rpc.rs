@@ -75,7 +75,7 @@ impl Server {
             .add_request_handler(Server::register_worktree)
             .add_message_handler(Server::unregister_worktree)
             .add_request_handler(Server::share_worktree)
-            .add_message_handler(Server::update_worktree)
+            .add_request_handler(Server::update_worktree)
             .add_message_handler(Server::update_diagnostic_summary)
             .add_message_handler(Server::disk_based_diagnostics_updating)
             .add_message_handler(Server::disk_based_diagnostics_updated)
@@ -497,11 +497,12 @@ impl Server {
     async fn update_worktree(
         mut self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateWorktree>,
-    ) -> tide::Result<()> {
+    ) -> tide::Result<proto::Ack> {
         let connection_ids = self.state_mut().update_worktree(
             request.sender_id,
             request.payload.project_id,
             request.payload.worktree_id,
+            request.payload.id,
             &request.payload.removed_entries,
             &request.payload.updated_entries,
         )?;
@@ -511,7 +512,7 @@ impl Server {
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
         })?;
 
-        Ok(())
+        Ok(proto::Ack {})
     }
 
     async fn update_diagnostic_summary(

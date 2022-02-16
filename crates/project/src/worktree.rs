@@ -43,7 +43,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use sum_tree::{Bias, Edit, SeekTarget, SumTree, TreeMap};
-use util::{post_inc, ResultExt};
+use util::ResultExt;
 
 lazy_static! {
     static ref GITIGNORE: &'static OsStr = OsStr::new(".gitignore");
@@ -796,11 +796,14 @@ impl LocalWorktree {
                         &prev_snapshot,
                         project_id,
                         worktree_id,
-                        post_inc(&mut update_id),
+                        update_id,
                         false,
                     );
-                    match rpc.send(message) {
-                        Ok(()) => prev_snapshot = snapshot,
+                    match rpc.request(message).await {
+                        Ok(_) => {
+                            prev_snapshot = snapshot;
+                            update_id += 1;
+                        }
                         Err(err) => log::error!("error sending snapshot diff {}", err),
                     }
                 }
@@ -2451,7 +2454,7 @@ mod tests {
         fmt::Write,
         time::{SystemTime, UNIX_EPOCH},
     };
-    use util::test::temp_tree;
+    use util::{post_inc, test::temp_tree};
 
     #[gpui::test]
     async fn test_traversal(cx: gpui::TestAppContext) {
