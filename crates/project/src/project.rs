@@ -57,7 +57,7 @@ pub struct Project {
 
 enum OpenBuffer {
     Loaded(WeakModelHandle<Buffer>),
-    Operations(Vec<Operation>),
+    Loading(Vec<Operation>),
 }
 
 enum WorktreeHandle {
@@ -346,7 +346,22 @@ impl Project {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn shared_buffer(&self, peer_id: PeerId, remote_id: u64) -> Option<ModelHandle<Buffer>> {
-        Some(self.shared_buffers.get(&peer_id)?.get(&remote_id)?.clone())
+        let result = self
+            .shared_buffers
+            .get(&peer_id)
+            .and_then(|buffers| buffers.get(&remote_id))
+            .cloned();
+        if result.is_none() {
+            dbg!(&self.shared_buffers);
+        }
+        result
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn has_buffered_operations(&self) -> bool {
+        self.open_buffers
+            .values()
+            .any(|buffer| matches!(buffer, OpenBuffer::Loading(_)))
     }
 
     pub fn fs(&self) -> &Arc<dyn Fs> {
@@ -512,6 +527,10 @@ impl Project {
         }
     }
 
+    pub fn is_remote(&self) -> bool {
+        !self.is_local()
+    }
+
     pub fn open_buffer(
         &mut self,
         path: impl Into<ProjectPath>,
@@ -551,6 +570,11 @@ impl Project {
                     *tx.borrow_mut() = Some(this.update(&mut cx, |this, _| {
                         // Record the fact that the buffer is no longer loading.
                         this.loading_buffers.remove(&project_path);
+                        if this.loading_buffers.is_empty() {
+                            this.open_buffers
+                                .retain(|_, buffer| matches!(buffer, OpenBuffer::Loaded(_)))
+                        }
+
                         let buffer = load_result.map_err(Arc::new)?;
                         Ok(buffer)
                     }));
@@ -734,7 +758,7 @@ impl Project {
             OpenBuffer::Loaded(buffer.downgrade()),
         ) {
             None => {}
-            Some(OpenBuffer::Operations(operations)) => {
+            Some(OpenBuffer::Loading(operations)) => {
                 buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))?
             }
             Some(OpenBuffer::Loaded(_)) => Err(anyhow!("registered the same buffer twice"))?,
@@ -2200,17 +2224,21 @@ impl Project {
                 .into_iter()
                 .map(|op| language::proto::deserialize_operation(op))
                 .collect::<Result<Vec<_>, _>>()?;
-            let buffer = this
-                .open_buffers
-                .entry(buffer_id)
-                .or_insert_with(|| OpenBuffer::Operations(Vec::new()));
-            match buffer {
-                OpenBuffer::Loaded(buffer) => {
-                    if let Some(buffer) = buffer.upgrade(cx) {
-                        buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
+            let is_remote = this.is_remote();
+            match this.open_buffers.entry(buffer_id) {
+                hash_map::Entry::Occupied(mut e) => match e.get_mut() {
+                    OpenBuffer::Loaded(buffer) => {
+                        if let Some(buffer) = buffer.upgrade(cx) {
+                            buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
+                        }
+                    }
+                    OpenBuffer::Loading(operations) => operations.extend_from_slice(&ops),
+                },
+                hash_map::Entry::Vacant(e) => {
+                    if is_remote && this.loading_buffers.len() > 0 {
+                        e.insert(OpenBuffer::Loading(ops));
                     }
                 }
-                OpenBuffer::Operations(operations) => operations.extend_from_slice(&ops),
             }
             Ok(())
         })
@@ -2778,7 +2806,7 @@ impl OpenBuffer {
     pub fn upgrade(&self, cx: &impl UpgradeModelHandle) -> Option<ModelHandle<Buffer>> {
         match self {
             OpenBuffer::Loaded(handle) => handle.upgrade(cx),
-            OpenBuffer::Operations(_) => None,
+            OpenBuffer::Loading(_) => None,
         }
     }
 }

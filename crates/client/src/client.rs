@@ -220,6 +220,10 @@ impl Client {
         })
     }
 
+    pub fn id(&self) -> usize {
+        self.id
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn override_authenticate<F>(&mut self, authenticate: F) -> &mut Self
     where
