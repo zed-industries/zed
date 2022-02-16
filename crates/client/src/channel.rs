@@ -190,7 +190,7 @@ impl Channel {
         rpc: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let _subscription = rpc.add_model_for_remote_entity(cx.handle(), details.id);
+        let _subscription = rpc.add_model_for_remote_entity(details.id, cx);
 
         {
             let user_store = user_store.clone();

@@ -312,7 +312,7 @@ impl Project {
                 languages,
                 user_store,
                 fs,
-                subscriptions: vec![client.add_model_for_remote_entity(cx.handle(), remote_id)],
+                subscriptions: vec![client.add_model_for_remote_entity(remote_id, cx)],
                 client,
                 client_state: ProjectClientState::Remote {
                     sharing_has_stopped: false,
@@ -349,10 +349,8 @@ impl Project {
 
         self.subscriptions.clear();
         if let Some(remote_id) = remote_id {
-            self.subscriptions.push(
-                self.client
-                    .add_model_for_remote_entity(cx.handle(), remote_id),
-            );
+            self.subscriptions
+                .push(self.client.add_model_for_remote_entity(remote_id, cx));
         }
     }
 
