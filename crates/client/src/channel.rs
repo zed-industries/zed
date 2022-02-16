@@ -598,10 +598,14 @@ mod tests {
 
     #[gpui::test]
     async fn test_channel_messages(mut cx: TestAppContext) {
+        cx.foreground().forbid_parking();
+
         let user_id = 5;
         let http_client = FakeHttpClient::new(|_| async move { Ok(Response::new(404)) });
         let mut client = Client::new(http_client.clone());
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
+
+        Channel::init(&client);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
 
         let channel_list = cx.add_model(|cx| ChannelList::new(user_store, client.clone(), cx));
