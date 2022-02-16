@@ -4007,13 +4007,24 @@ mod tests {
                                 .clone()
                         };
 
-                        buffer.update(&mut cx, |buffer, cx| {
-                            log::info!(
-                                "Host: updating buffer {:?}",
-                                buffer.file().unwrap().full_path(cx)
-                            );
-                            buffer.randomly_edit(&mut *rng.borrow_mut(), 5, cx)
-                        });
+                        if rng.borrow_mut().gen_bool(0.1) {
+                            cx.update(|cx| {
+                                log::info!(
+                                    "Host: dropping buffer {:?}",
+                                    buffer.read(cx).file().unwrap().full_path(cx)
+                                );
+                                self.buffers.remove(&buffer);
+                                drop(buffer);
+                            });
+                        } else {
+                            buffer.update(&mut cx, |buffer, cx| {
+                                log::info!(
+                                    "Host: updating buffer {:?}",
+                                    buffer.file().unwrap().full_path(cx)
+                                );
+                                buffer.randomly_edit(&mut *rng.borrow_mut(), 5, cx)
+                            });
+                        }
                     }
                     _ => loop {
                         let path_component_count = rng.borrow_mut().gen_range(1..=5);
@@ -4093,14 +4104,26 @@ mod tests {
                         .clone()
                 };
 
-                buffer.update(&mut cx, |buffer, cx| {
-                    log::info!(
-                        "Guest {}: updating buffer {:?}",
-                        guest_id,
-                        buffer.file().unwrap().full_path(cx)
-                    );
-                    buffer.randomly_edit(&mut *rng.borrow_mut(), 5, cx)
-                });
+                if rng.borrow_mut().gen_bool(0.1) {
+                    cx.update(|cx| {
+                        log::info!(
+                            "Guest {}: dropping buffer {:?}",
+                            guest_id,
+                            buffer.read(cx).file().unwrap().full_path(cx)
+                        );
+                        self.buffers.remove(&buffer);
+                        drop(buffer);
+                    });
+                } else {
+                    buffer.update(&mut cx, |buffer, cx| {
+                        log::info!(
+                            "Guest {}: updating buffer {:?}",
+                            guest_id,
+                            buffer.file().unwrap().full_path(cx)
+                        );
+                        buffer.randomly_edit(&mut *rng.borrow_mut(), 5, cx)
+                    });
+                }
 
                 cx.background().simulate_random_delay().await;
             }

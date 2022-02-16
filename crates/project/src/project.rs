@@ -46,7 +46,7 @@ pub struct Project {
     collaborators: HashMap<PeerId, Collaborator>,
     subscriptions: Vec<client::Subscription>,
     language_servers_with_diagnostics_running: isize,
-    open_buffers: HashMap<usize, OpenBuffer>,
+    open_buffers: HashMap<u64, OpenBuffer>,
     opened_buffer: broadcast::Sender<()>,
     loading_buffers: HashMap<
         ProjectPath,
@@ -719,7 +719,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
         match self.open_buffers.insert(
-            buffer.read(cx).remote_id() as usize,
+            buffer.read(cx).remote_id(),
             OpenBuffer::Loaded(buffer.downgrade()),
         ) {
             None => {}
@@ -2183,7 +2183,7 @@ impl Project {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let payload = envelope.payload.clone();
-            let buffer_id = payload.buffer_id as usize;
+            let buffer_id = payload.buffer_id;
             let ops = payload
                 .operations
                 .into_iter()
@@ -2213,7 +2213,7 @@ impl Project {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let payload = envelope.payload.clone();
-            let buffer_id = payload.buffer_id as usize;
+            let buffer_id = payload.buffer_id;
             let file = payload.file.ok_or_else(|| anyhow!("invalid file"))?;
             let worktree = this
                 .worktree_for_id(WorktreeId::from_proto(file.worktree_id), cx)
@@ -2601,7 +2601,7 @@ impl Project {
                     let buffer = loop {
                         let buffer = this.read_with(&cx, |this, cx| {
                             this.open_buffers
-                                .get(&(id as usize))
+                                .get(&id)
                                 .and_then(|buffer| buffer.upgrade(cx))
                         });
                         if let Some(buffer) = buffer {
@@ -2679,7 +2679,7 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             let buffer = this
                 .open_buffers
-                .get(&(envelope.payload.buffer_id as usize))
+                .get(&envelope.payload.buffer_id)
                 .and_then(|buffer| buffer.upgrade(cx));
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
@@ -2705,7 +2705,7 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             let buffer = this
                 .open_buffers
-                .get(&(payload.buffer_id as usize))
+                .get(&payload.buffer_id)
                 .and_then(|buffer| buffer.upgrade(cx));
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
