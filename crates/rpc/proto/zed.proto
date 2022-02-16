@@ -9,62 +9,63 @@ message Envelope {
         Ack ack = 4;
         Error error = 5;
         Ping ping = 6;
+        Test test = 7;
 
-        RegisterProject register_project = 7;
-        RegisterProjectResponse register_project_response = 8;
-        UnregisterProject unregister_project = 9;
-        ShareProject share_project = 10;
-        UnshareProject unshare_project = 11;
-        JoinProject join_project = 12;
-        JoinProjectResponse join_project_response = 13;
-        LeaveProject leave_project = 14;
-        AddProjectCollaborator add_project_collaborator = 15;
-        RemoveProjectCollaborator remove_project_collaborator = 16;
-        GetDefinition get_definition = 17;
-        GetDefinitionResponse get_definition_response = 18;
+        RegisterProject register_project = 8;
+        RegisterProjectResponse register_project_response = 9;
+        UnregisterProject unregister_project = 10;
+        ShareProject share_project = 11;
+        UnshareProject unshare_project = 12;
+        JoinProject join_project = 13;
+        JoinProjectResponse join_project_response = 14;
+        LeaveProject leave_project = 15;
+        AddProjectCollaborator add_project_collaborator = 16;
+        RemoveProjectCollaborator remove_project_collaborator = 17;
+        GetDefinition get_definition = 18;
+        GetDefinitionResponse get_definition_response = 19;
 
-        RegisterWorktree register_worktree = 19;
-        UnregisterWorktree unregister_worktree = 20;
-        ShareWorktree share_worktree = 21;
-        UpdateWorktree update_worktree = 22;
-        UpdateDiagnosticSummary update_diagnostic_summary = 23;
-        DiskBasedDiagnosticsUpdating disk_based_diagnostics_updating = 24;
-        DiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 25;
+        RegisterWorktree register_worktree = 20;
+        UnregisterWorktree unregister_worktree = 21;
+        ShareWorktree share_worktree = 22;
+        UpdateWorktree update_worktree = 23;
+        UpdateDiagnosticSummary update_diagnostic_summary = 24;
+        DiskBasedDiagnosticsUpdating disk_based_diagnostics_updating = 25;
+        DiskBasedDiagnosticsUpdated disk_based_diagnostics_updated = 26;
 
-        OpenBuffer open_buffer = 26;
-        OpenBufferResponse open_buffer_response = 27;
-        CloseBuffer close_buffer = 28;
-        UpdateBuffer update_buffer = 29;
-        UpdateBufferFile update_buffer_file = 30;
-        SaveBuffer save_buffer = 31;
-        BufferSaved buffer_saved = 32;
-        BufferReloaded buffer_reloaded = 33;
-        FormatBuffers format_buffers = 34;
-        FormatBuffersResponse format_buffers_response = 35;
-        GetCompletions get_completions = 36;
-        GetCompletionsResponse get_completions_response = 37;
-        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 38;
-        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 39;
-        GetCodeActions get_code_actions = 40;
-        GetCodeActionsResponse get_code_actions_response = 41;
-        ApplyCodeAction apply_code_action = 42;
-        ApplyCodeActionResponse apply_code_action_response = 43;
+        OpenBuffer open_buffer = 27;
+        OpenBufferResponse open_buffer_response = 28;
+        CloseBuffer close_buffer = 29;
+        UpdateBuffer update_buffer = 30;
+        UpdateBufferFile update_buffer_file = 31;
+        SaveBuffer save_buffer = 32;
+        BufferSaved buffer_saved = 33;
+        BufferReloaded buffer_reloaded = 34;
+        FormatBuffers format_buffers = 35;
+        FormatBuffersResponse format_buffers_response = 36;
+        GetCompletions get_completions = 37;
+        GetCompletionsResponse get_completions_response = 38;
+        ApplyCompletionAdditionalEdits apply_completion_additional_edits = 39;
+        ApplyCompletionAdditionalEditsResponse apply_completion_additional_edits_response = 40;
+        GetCodeActions get_code_actions = 41;
+        GetCodeActionsResponse get_code_actions_response = 42;
+        ApplyCodeAction apply_code_action = 43;
+        ApplyCodeActionResponse apply_code_action_response = 44;
 
-        GetChannels get_channels = 44;
-        GetChannelsResponse get_channels_response = 45;
-        JoinChannel join_channel = 46;
-        JoinChannelResponse join_channel_response = 47;
-        LeaveChannel leave_channel = 48;
-        SendChannelMessage send_channel_message = 49;
-        SendChannelMessageResponse send_channel_message_response = 50;
-        ChannelMessageSent channel_message_sent = 51;
-        GetChannelMessages get_channel_messages = 52;
-        GetChannelMessagesResponse get_channel_messages_response = 53;
+        GetChannels get_channels = 45;
+        GetChannelsResponse get_channels_response = 46;
+        JoinChannel join_channel = 47;
+        JoinChannelResponse join_channel_response = 48;
+        LeaveChannel leave_channel = 49;
+        SendChannelMessage send_channel_message = 50;
+        SendChannelMessageResponse send_channel_message_response = 51;
+        ChannelMessageSent channel_message_sent = 52;
+        GetChannelMessages get_channel_messages = 53;
+        GetChannelMessagesResponse get_channel_messages_response = 54;
 
-        UpdateContacts update_contacts = 54;
+        UpdateContacts update_contacts = 55;
 
-        GetUsers get_users = 55;
-        GetUsersResponse get_users_response = 56;
+        GetUsers get_users = 56;
+        GetUsersResponse get_users_response = 57;
     }
 }
 
@@ -76,6 +77,10 @@ message Ack {}
 
 message Error {
     string message = 1;
+}
+
+message Test {
+    uint64 id = 1;
 }
 
 message RegisterProject {}

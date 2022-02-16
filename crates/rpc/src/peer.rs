@@ -395,40 +395,18 @@ mod tests {
 
         assert_eq!(
             client1
-                .request(
-                    client1_conn_id,
-                    proto::OpenBuffer {
-                        project_id: 0,
-                        worktree_id: 1,
-                        path: "path/one".to_string(),
-                    },
-                )
+                .request(client1_conn_id, proto::Test { id: 1 },)
                 .await
                 .unwrap(),
-            proto::OpenBufferResponse {
-                buffer: Some(proto::Buffer {
-                    variant: Some(proto::buffer::Variant::Id(0))
-                }),
-            }
+            proto::Test { id: 1 }
         );
 
         assert_eq!(
             client2
-                .request(
-                    client2_conn_id,
-                    proto::OpenBuffer {
-                        project_id: 0,
-                        worktree_id: 2,
-                        path: "path/two".to_string(),
-                    },
-                )
+                .request(client2_conn_id, proto::Test { id: 2 })
                 .await
                 .unwrap(),
-            proto::OpenBufferResponse {
-                buffer: Some(proto::Buffer {
-                    variant: Some(proto::buffer::Variant::Id(1))
-                })
-            }
+            proto::Test { id: 2 }
         );
 
         client1.disconnect(client1_conn_id);
@@ -443,34 +421,9 @@ mod tests {
                 if let Some(envelope) = envelope.downcast_ref::<TypedEnvelope<proto::Ping>>() {
                     let receipt = envelope.receipt();
                     peer.respond(receipt, proto::Ack {})?
-                } else if let Some(envelope) =
-                    envelope.downcast_ref::<TypedEnvelope<proto::OpenBuffer>>()
+                } else if let Some(envelope) = envelope.downcast_ref::<TypedEnvelope<proto::Test>>()
                 {
-                    let message = &envelope.payload;
-                    let receipt = envelope.receipt();
-                    let response = match message.path.as_str() {
-                        "path/one" => {
-                            assert_eq!(message.worktree_id, 1);
-                            proto::OpenBufferResponse {
-                                buffer: Some(proto::Buffer {
-                                    variant: Some(proto::buffer::Variant::Id(0)),
-                                }),
-                            }
-                        }
-                        "path/two" => {
-                            assert_eq!(message.worktree_id, 2);
-                            proto::OpenBufferResponse {
-                                buffer: Some(proto::Buffer {
-                                    variant: Some(proto::buffer::Variant::Id(1)),
-                                }),
-                            }
-                        }
-                        _ => {
-                            panic!("unexpected path {}", message.path);
-                        }
-                    };
-
-                    peer.respond(receipt, response)?
+                    peer.respond(envelope.receipt(), envelope.payload.clone())?
                 } else {
                     panic!("unknown message type");
                 }

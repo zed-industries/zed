@@ -165,6 +165,7 @@ messages!(
     SendChannelMessageResponse,
     ShareProject,
     ShareWorktree,
+    Test,
     UnregisterProject,
     UnregisterWorktree,
     UnshareProject,
@@ -198,6 +199,7 @@ request_messages!(
     (SendChannelMessage, SendChannelMessageResponse),
     (ShareProject, Ack),
     (ShareWorktree, Ack),
+    (Test, Test),
     (UpdateBuffer, Ack),
     (UpdateWorktree, Ack),
 );
