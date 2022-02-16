@@ -84,6 +84,8 @@ pub trait UpgradeModelHandle {
         &self,
         handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>>;
+
+    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle>;
 }
 
 pub trait UpgradeViewHandle {
@@ -570,7 +572,11 @@ impl UpgradeModelHandle for AsyncAppContext {
         &self,
         handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>> {
-        self.0.borrow_mut().upgrade_model_handle(handle)
+        self.0.borrow().upgrade_model_handle(handle)
+    }
+
+    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
+        self.0.borrow().upgrade_any_model_handle(handle)
     }
 }
 
@@ -1764,6 +1770,10 @@ impl UpgradeModelHandle for MutableAppContext {
     ) -> Option<ModelHandle<T>> {
         self.cx.upgrade_model_handle(handle)
     }
+
+    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
+        self.cx.upgrade_any_model_handle(handle)
+    }
 }
 
 impl UpgradeViewHandle for MutableAppContext {
@@ -1884,6 +1894,19 @@ impl UpgradeModelHandle for AppContext {
     ) -> Option<ModelHandle<T>> {
         if self.models.contains_key(&handle.model_id) {
             Some(ModelHandle::new(handle.model_id, &self.ref_counts))
+        } else {
+            None
+        }
+    }
+
+    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
+        if self.models.contains_key(&handle.model_id) {
+            self.ref_counts.lock().inc_model(handle.model_id);
+            Some(AnyModelHandle {
+                model_id: handle.model_id,
+                model_type: handle.model_type,
+                ref_counts: self.ref_counts.clone(),
+            })
         } else {
             None
         }
@@ -2280,6 +2303,10 @@ impl<M> UpgradeModelHandle for ModelContext<'_, M> {
     ) -> Option<ModelHandle<T>> {
         self.cx.upgrade_model_handle(handle)
     }
+
+    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
+        self.cx.upgrade_any_model_handle(handle)
+    }
 }
 
 impl<M> Deref for ModelContext<'_, M> {
@@ -2609,6 +2636,10 @@ impl<V> UpgradeModelHandle for ViewContext<'_, V> {
         handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>> {
         self.cx.upgrade_model_handle(handle)
+    }
+
+    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
+        self.cx.upgrade_any_model_handle(handle)
     }
 }
 
@@ -3290,6 +3321,13 @@ impl AnyModelHandle {
         }
     }
 
+    pub fn downgrade(&self) -> AnyWeakModelHandle {
+        AnyWeakModelHandle {
+            model_id: self.model_id,
+            model_type: self.model_type,
+        }
+    }
+
     pub fn is<T: Entity>(&self) -> bool {
         self.model_type == TypeId::of::<T>()
     }
@@ -3306,9 +3344,31 @@ impl<T: Entity> From<ModelHandle<T>> for AnyModelHandle {
     }
 }
 
+impl Clone for AnyModelHandle {
+    fn clone(&self) -> Self {
+        self.ref_counts.lock().inc_model(self.model_id);
+        Self {
+            model_id: self.model_id,
+            model_type: self.model_type,
+            ref_counts: self.ref_counts.clone(),
+        }
+    }
+}
+
 impl Drop for AnyModelHandle {
     fn drop(&mut self) {
         self.ref_counts.lock().dec_model(self.model_id);
+    }
+}
+
+pub struct AnyWeakModelHandle {
+    model_id: usize,
+    model_type: TypeId,
+}
+
+impl AnyWeakModelHandle {
+    pub fn upgrade(&self, cx: &impl UpgradeModelHandle) -> Option<AnyModelHandle> {
+        cx.upgrade_any_model_handle(self)
     }
 }
 

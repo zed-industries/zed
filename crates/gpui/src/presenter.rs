@@ -6,9 +6,9 @@ use crate::{
     json::{self, ToJson},
     platform::Event,
     text_layout::TextLayoutCache,
-    Action, AnyAction, AnyViewHandle, AssetCache, ElementBox, Entity, FontSystem, ModelHandle,
-    ReadModel, ReadView, Scene, UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle,
-    WeakModelHandle, WeakViewHandle,
+    Action, AnyAction, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox,
+    Entity, FontSystem, ModelHandle, ReadModel, ReadView, Scene, UpgradeModelHandle,
+    UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
@@ -279,6 +279,10 @@ impl<'a> UpgradeModelHandle for LayoutContext<'a> {
         handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>> {
         self.app.upgrade_model_handle(handle)
+    }
+
+    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
+        self.app.upgrade_any_model_handle(handle)
     }
 }
 
