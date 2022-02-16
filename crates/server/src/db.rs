@@ -537,6 +537,7 @@ pub mod tests {
         mem,
         path::Path,
         sync::atomic::{AtomicUsize, Ordering::SeqCst},
+        thread,
     };
     use util::ResultExt as _;
 
@@ -544,6 +545,7 @@ pub mod tests {
         pub db: Option<Db>,
         pub name: String,
         pub url: String,
+        clean_pool_on_drop: bool,
     }
 
     lazy_static! {
@@ -578,8 +580,13 @@ pub mod tests {
                     db: Some(db),
                     name,
                     url,
+                    clean_pool_on_drop: false,
                 }
             }
+        }
+
+        pub fn set_clean_pool_on_drop(&mut self, delete_on_drop: bool) {
+            self.clean_pool_on_drop = delete_on_drop;
         }
 
         pub fn db(&self) -> &Db {
@@ -630,8 +637,11 @@ pub mod tests {
                     db: Some(db),
                     name: mem::take(&mut self.name),
                     url: mem::take(&mut self.url),
+                    clean_pool_on_drop: true,
                 });
-                if DB_COUNT.fetch_sub(1, SeqCst) == 1 {
+                if DB_COUNT.fetch_sub(1, SeqCst) == 1
+                    && (self.clean_pool_on_drop || thread::panicking())
+                {
                     block_on(async move {
                         let mut pool = DB_POOL.lock();
                         for db in pool.drain(..) {

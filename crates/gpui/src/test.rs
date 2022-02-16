@@ -33,6 +33,7 @@ pub fn run_test(
         Rc<platform::test::ForegroundPlatform>,
         Arc<executor::Deterministic>,
         u64,
+        bool,
     )),
 ) {
     let is_randomized = num_iterations > 1;
@@ -56,10 +57,8 @@ pub fn run_test(
             let font_cache = Arc::new(FontCache::new(font_system));
 
             loop {
-                let seed = atomic_seed.load(SeqCst);
-                if seed >= starting_seed + num_iterations {
-                    break;
-                }
+                let seed = atomic_seed.fetch_add(1, SeqCst);
+                let is_last_iteration = seed + 1 >= starting_seed + num_iterations;
 
                 if is_randomized {
                     dbg!(seed);
@@ -74,9 +73,19 @@ pub fn run_test(
                     font_cache.clone(),
                     0,
                 );
-                cx.update(|cx| test_fn(cx, foreground_platform.clone(), deterministic, seed));
+                cx.update(|cx| {
+                    test_fn(
+                        cx,
+                        foreground_platform.clone(),
+                        deterministic,
+                        seed,
+                        is_last_iteration,
+                    )
+                });
 
-                atomic_seed.fetch_add(1, SeqCst);
+                if is_last_iteration {
+                    break;
+                }
             }
         });
 
