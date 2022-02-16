@@ -134,7 +134,6 @@ struct ClientState {
     _maintain_connection: Option<Task<()>>,
     heartbeat_interval: Duration,
 
-    pending_messages: HashMap<(TypeId, u64), Vec<Box<dyn AnyTypedEnvelope>>>,
     models_by_entity_type_and_remote_id: HashMap<(TypeId, u64), AnyWeakModelHandle>,
     models_by_message_type: HashMap<TypeId, AnyModelHandle>,
     model_types_by_message_type: HashMap<TypeId, TypeId>,
@@ -169,7 +168,6 @@ impl Default for ClientState {
             models_by_message_type: Default::default(),
             models_by_entity_type_and_remote_id: Default::default(),
             model_types_by_message_type: Default::default(),
-            pending_messages: Default::default(),
             message_handlers: Default::default(),
         }
     }
@@ -311,46 +309,6 @@ impl Client {
         state
             .models_by_entity_type_and_remote_id
             .insert(id, handle.downgrade());
-        let pending_messages = state.pending_messages.remove(&id);
-        drop(state);
-
-        let client_id = self.id;
-        for message in pending_messages.into_iter().flatten() {
-            let type_id = message.payload_type_id();
-            let type_name = message.payload_type_name();
-            let state = self.state.read();
-            if let Some(handler) = state.message_handlers.get(&type_id).cloned() {
-                let future = (handler)(handle.clone(), message, cx.to_async());
-                drop(state);
-                log::debug!(
-                    "deferred rpc message received. client_id:{}, name:{}",
-                    client_id,
-                    type_name
-                );
-                cx.foreground()
-                    .spawn(async move {
-                        match future.await {
-                            Ok(()) => {
-                                log::debug!(
-                                    "deferred rpc message handled. client_id:{}, name:{}",
-                                    client_id,
-                                    type_name
-                                );
-                            }
-                            Err(error) => {
-                                log::error!(
-                                    "error handling deferred message. client_id:{}, name:{}, {}",
-                                    client_id,
-                                    type_name,
-                                    error
-                                );
-                            }
-                        }
-                    })
-                    .detach();
-            }
-        }
-
         Subscription::Entity {
             client: Arc::downgrade(self),
             id,
@@ -568,22 +526,20 @@ impl Client {
                         let mut state = this.state.write();
                         let payload_type_id = message.payload_type_id();
                         let type_name = message.payload_type_name();
-                        let model_type_id = state
-                            .model_types_by_message_type
-                            .get(&payload_type_id)
-                            .copied();
-                        let entity_id = state
-                            .entity_id_extractors
-                            .get(&message.payload_type_id())
-                            .map(|extract_entity_id| (extract_entity_id)(message.as_ref()));
 
                         let model = state
                             .models_by_message_type
                             .get(&payload_type_id)
                             .cloned()
                             .or_else(|| {
-                                let model_type_id = model_type_id?;
-                                let entity_id = entity_id?;
+                                let model_type_id =
+                                    *state.model_types_by_message_type.get(&payload_type_id)?;
+                                let entity_id = state
+                                    .entity_id_extractors
+                                    .get(&message.payload_type_id())
+                                    .map(|extract_entity_id| {
+                                        (extract_entity_id)(message.as_ref())
+                                    })?;
                                 let model = state
                                     .models_by_entity_type_and_remote_id
                                     .get(&(model_type_id, entity_id))?;
@@ -601,14 +557,6 @@ impl Client {
                             model
                         } else {
                             log::info!("unhandled message {}", type_name);
-                            if let Some((model_type_id, entity_id)) = model_type_id.zip(entity_id) {
-                                state
-                                    .pending_messages
-                                    .entry((model_type_id, entity_id))
-                                    .or_default()
-                                    .push(message);
-                            }
-
                             continue;
                         };
 

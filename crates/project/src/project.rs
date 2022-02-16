@@ -286,21 +286,7 @@ impl Project {
             load_task.detach();
         }
 
-        let user_ids = response
-            .collaborators
-            .iter()
-            .map(|peer| peer.user_id)
-            .collect();
-        user_store
-            .update(cx, |user_store, cx| user_store.load_users(user_ids, cx))
-            .await?;
-        let mut collaborators = HashMap::default();
-        for message in response.collaborators {
-            let collaborator = Collaborator::from_proto(message, &user_store, cx).await?;
-            collaborators.insert(collaborator.peer_id, collaborator);
-        }
-
-        Ok(cx.add_model(|cx| {
+        let this = cx.add_model(|cx| {
             let mut this = Self {
                 worktrees: Vec::new(),
                 open_buffers: Default::default(),
@@ -308,9 +294,9 @@ impl Project {
                 opened_buffer: broadcast::channel(1).0,
                 shared_buffers: Default::default(),
                 active_entry: None,
-                collaborators,
+                collaborators: Default::default(),
                 languages,
-                user_store,
+                user_store: user_store.clone(),
                 fs,
                 subscriptions: vec![client.add_model_for_remote_entity(remote_id, cx)],
                 client,
@@ -326,7 +312,27 @@ impl Project {
                 this.add_worktree(&worktree, cx);
             }
             this
-        }))
+        });
+
+        let user_ids = response
+            .collaborators
+            .iter()
+            .map(|peer| peer.user_id)
+            .collect();
+        user_store
+            .update(cx, |user_store, cx| user_store.load_users(user_ids, cx))
+            .await?;
+        let mut collaborators = HashMap::default();
+        for message in response.collaborators {
+            let collaborator = Collaborator::from_proto(message, &user_store, cx).await?;
+            collaborators.insert(collaborator.peer_id, collaborator);
+        }
+
+        this.update(cx, |this, _| {
+            this.collaborators = collaborators;
+        });
+
+        Ok(this)
     }
 
     #[cfg(any(test, feature = "test-support"))]
