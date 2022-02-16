@@ -21,6 +21,7 @@ use language::{Buffer, DiagnosticEntry, Operation, PointUtf16, Rope};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
+    oneshot,
     prelude::{Sink as _, Stream as _},
     watch,
 };
@@ -768,10 +769,26 @@ impl LocalWorktree {
         let worktree_id = cx.model_id() as u64;
         let (snapshots_to_send_tx, snapshots_to_send_rx) =
             smol::channel::unbounded::<LocalSnapshot>();
+        let (mut share_tx, mut share_rx) = oneshot::channel();
         let maintain_remote_snapshot = cx.background().spawn({
             let rpc = rpc.clone();
             let snapshot = snapshot.clone();
+            let diagnostic_summaries = self.diagnostic_summaries.clone();
+            let weak = self.weak;
             async move {
+                if let Err(error) = rpc
+                    .request(proto::ShareWorktree {
+                        project_id,
+                        worktree: Some(snapshot.to_proto(&diagnostic_summaries, weak)),
+                    })
+                    .await
+                {
+                    let _ = share_tx.try_send(Err(error));
+                    return;
+                } else {
+                    let _ = share_tx.try_send(Ok(()));
+                }
+
                 let mut update_id = 0;
                 let mut prev_snapshot = snapshot;
                 while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
@@ -795,18 +812,11 @@ impl LocalWorktree {
             _maintain_remote_snapshot: Some(maintain_remote_snapshot),
         });
 
-        let diagnostic_summaries = self.diagnostic_summaries.clone();
-        let weak = self.weak;
-        let share_message = cx.background().spawn(async move {
-            proto::ShareWorktree {
-                project_id,
-                worktree: Some(snapshot.to_proto(&diagnostic_summaries, weak)),
-            }
-        });
-
         cx.foreground().spawn(async move {
-            rpc.request(share_message.await).await?;
-            Ok(())
+            match share_rx.next().await {
+                Some(result) => result,
+                None => Err(anyhow!("unshared before sharing completed")),
+            }
         })
     }
 
