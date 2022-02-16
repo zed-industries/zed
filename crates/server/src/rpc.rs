@@ -3682,11 +3682,21 @@ mod tests {
                 "guest {} has different worktrees than the host",
                 ix
             );
-            for (id, snapshot) in &host_worktree_snapshots {
+            for (id, host_snapshot) in &host_worktree_snapshots {
+                let guest_snapshot = &worktree_snapshots[id];
                 assert_eq!(
-                    worktree_snapshots[id], *snapshot,
+                    guest_snapshot.root_name(),
+                    host_snapshot.root_name(),
+                    "guest {} has different root name than the host for worktree {}",
+                    ix,
+                    id
+                );
+                assert_eq!(
+                    guest_snapshot.entries(false).collect::<Vec<_>>(),
+                    host_snapshot.entries(false).collect::<Vec<_>>(),
                     "guest {} has different snapshot than the host for worktree {}",
-                    ix, id
+                    ix,
+                    id
                 );
             }
 

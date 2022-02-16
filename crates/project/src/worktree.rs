@@ -88,7 +88,7 @@ pub struct RemoteWorktree {
     pending_updates: VecDeque<proto::UpdateWorktree>,
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct Snapshot {
     id: WorktreeId,
     root_name: String,
@@ -1668,7 +1668,7 @@ impl sum_tree::Summary for EntrySummary {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 struct PathEntry {
     id: usize,
     path: Arc<Path>,
