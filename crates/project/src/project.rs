@@ -344,6 +344,11 @@ impl Project {
         cx.update(|cx| Project::local(client, user_store, languages, fs, cx))
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn shared_buffer(&self, peer_id: PeerId, remote_id: u64) -> Option<ModelHandle<Buffer>> {
+        Some(self.shared_buffers.get(&peer_id)?.get(&remote_id)?.clone())
+    }
+
     pub fn fs(&self) -> &Arc<dyn Fs> {
         &self.fs
     }

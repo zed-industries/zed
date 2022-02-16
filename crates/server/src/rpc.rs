@@ -3711,13 +3711,13 @@ mod tests {
                 .collect::<BTreeMap<_, _>>()
         });
 
-        for (ix, (client_a, cx_a)) in clients.iter().enumerate() {
+        for (guest_ix, (guest_client, guest_cx)) in clients.iter().enumerate() {
             let worktree_snapshots =
-                client_a
+                guest_client
                     .project
                     .as_ref()
                     .unwrap()
-                    .read_with(cx_a, |project, cx| {
+                    .read_with(guest_cx, |project, cx| {
                         project
                             .worktrees(cx)
                             .map(|worktree| {
@@ -3731,7 +3731,7 @@ mod tests {
                 worktree_snapshots.keys().collect::<Vec<_>>(),
                 host_worktree_snapshots.keys().collect::<Vec<_>>(),
                 "guest {} has different worktrees than the host",
-                ix
+                guest_ix
             );
             for (id, host_snapshot) in &host_worktree_snapshots {
                 let guest_snapshot = &worktree_snapshots[id];
@@ -3739,30 +3739,32 @@ mod tests {
                     guest_snapshot.root_name(),
                     host_snapshot.root_name(),
                     "guest {} has different root name than the host for worktree {}",
-                    ix,
+                    guest_ix,
                     id
                 );
                 assert_eq!(
                     guest_snapshot.entries(false).collect::<Vec<_>>(),
                     host_snapshot.entries(false).collect::<Vec<_>>(),
                     "guest {} has different snapshot than the host for worktree {}",
-                    ix,
+                    guest_ix,
                     id
                 );
             }
 
-            for (client_b, cx_b) in &clients[ix + 1..] {
-                for buffer_a in &client_a.buffers {
-                    let buffer_id = buffer_a.read_with(cx_a, |buffer, _| buffer.remote_id());
-                    if let Some(buffer_b) = client_b.buffers.iter().find(|buffer| {
-                        buffer.read_with(cx_b, |buffer, _| buffer.remote_id() == buffer_id)
-                    }) {
-                        assert_eq!(
-                            buffer_a.read_with(cx_a, |buffer, _| buffer.text()),
-                            buffer_b.read_with(cx_b, |buffer, _| buffer.text())
-                        );
-                    }
-                }
+            for guest_buffer in &guest_client.buffers {
+                let buffer_id = guest_buffer.read_with(guest_cx, |buffer, _| buffer.remote_id());
+                let host_buffer = host_project.read_with(&host_cx, |project, _| {
+                    project
+                        .shared_buffer(guest_client.peer_id, buffer_id)
+                        .unwrap()
+                });
+                assert_eq!(
+                    guest_buffer.read_with(guest_cx, |buffer, _| buffer.text()),
+                    host_buffer.read_with(&host_cx, |buffer, _| buffer.text()),
+                    "guest {} buffer {} differs from the host's buffer",
+                    guest_ix,
+                    buffer_id,
+                );
             }
         }
     }
