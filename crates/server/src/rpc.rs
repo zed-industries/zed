@@ -190,9 +190,10 @@ impl Server {
                             let type_name = message.payload_type_name();
                             log::info!("rpc message received. connection:{}, type:{}", connection_id, type_name);
                             if let Some(handler) = this.handlers.get(&message.payload_type_id()) {
-                                let handle_message = (handler)(this.clone(), message);
                                 let notifications = this.notifications.clone();
-                                executor.spawn_detached(async move {
+                                let is_background = message.is_background();
+                                let handle_message = (handler)(this.clone(), message);
+                                let handle_message = async move {
                                     if let Err(err) = handle_message.await {
                                         log::error!("rpc message error. connection:{}, type:{}, error:{:?}", connection_id, type_name, err);
                                     } else {
@@ -201,7 +202,12 @@ impl Server {
                                     if let Some(mut notifications) = notifications {
                                         let _ = notifications.send(()).await;
                                     }
-                                });
+                                };
+                                if is_background {
+                                    executor.spawn_detached(handle_message);
+                                } else {
+                                    handle_message.await;
+                                }
                             } else {
                                 log::warn!("unhandled message: {}", type_name);
                             }
