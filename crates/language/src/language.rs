@@ -11,9 +11,7 @@ use collections::HashSet;
 use gpui::AppContext;
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
-use lsp::FakeLanguageServer;
 use parking_lot::Mutex;
-use postage::prelude::Stream;
 use serde::Deserialize;
 use std::{cell::RefCell, ops::Range, path::Path, str, sync::Arc};
 use theme::SyntaxTheme;
@@ -237,6 +235,8 @@ impl Language {
         if let Some(config) = &self.config.language_server {
             #[cfg(any(test, feature = "test-support"))]
             if let Some(fake_config) = &config.fake_config {
+                use postage::prelude::Stream;
+
                 let (server, mut fake_server) = lsp::LanguageServer::fake_with_capabilities(
                     fake_config.capabilities.clone(),
                     cx.background().clone(),
@@ -408,7 +408,7 @@ impl LanguageServerConfig {
 
     pub fn set_fake_initializer(
         &mut self,
-        initializer: impl 'static + Send + Sync + Fn(&mut FakeLanguageServer),
+        initializer: impl 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer),
     ) {
         self.fake_config.as_mut().unwrap().initializer = Some(Box::new(initializer));
     }

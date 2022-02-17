@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use futures::{channel::mpsc, io::BufWriter, AsyncRead, AsyncWrite};
+use futures::{io::BufWriter, AsyncRead, AsyncWrite};
 use gpui::{executor, Task};
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, oneshot, prelude::Stream, sink::Sink, watch};
@@ -485,8 +485,8 @@ impl Drop for Subscription {
 pub struct FakeLanguageServer {
     handlers:
         Arc<Mutex<HashMap<&'static str, Box<dyn Send + Sync + FnMut(usize, &[u8]) -> Vec<u8>>>>>,
-    outgoing_tx: mpsc::UnboundedSender<Vec<u8>>,
-    incoming_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    outgoing_tx: futures::channel::mpsc::UnboundedSender<Vec<u8>>,
+    incoming_rx: futures::channel::mpsc::UnboundedReceiver<Vec<u8>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -527,8 +527,8 @@ impl FakeLanguageServer {
     ) -> Self {
         use futures::StreamExt as _;
 
-        let (incoming_tx, incoming_rx) = mpsc::unbounded();
-        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded();
+        let (incoming_tx, incoming_rx) = futures::channel::mpsc::unbounded();
+        let (outgoing_tx, mut outgoing_rx) = futures::channel::mpsc::unbounded();
         let this = Self {
             outgoing_tx: outgoing_tx.clone(),
             incoming_rx,
@@ -612,12 +612,15 @@ impl FakeLanguageServer {
         }
     }
 
-    pub fn handle_request<T, F>(&mut self, mut handler: F) -> mpsc::UnboundedReceiver<()>
+    pub fn handle_request<T, F>(
+        &mut self,
+        mut handler: F,
+    ) -> futures::channel::mpsc::UnboundedReceiver<()>
     where
         T: 'static + request::Request,
         F: 'static + Send + Sync + FnMut(T::Params) -> T::Result,
     {
-        let (responded_tx, responded_rx) = mpsc::unbounded();
+        let (responded_tx, responded_rx) = futures::channel::mpsc::unbounded();
         self.handlers.lock().insert(
             T::METHOD,
             Box::new(move |id, params| {
