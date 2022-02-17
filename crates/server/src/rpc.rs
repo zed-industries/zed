@@ -785,7 +785,12 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::GetUsers>,
     ) -> tide::Result<proto::GetUsersResponse> {
-        let user_ids = request.payload.user_ids.into_iter().map(UserId::from_proto);
+        let user_ids = request
+            .payload
+            .user_ids
+            .into_iter()
+            .map(UserId::from_proto)
+            .collect();
         let users = self
             .app_state
             .db
@@ -1139,18 +1144,14 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_share_project(
-        mut cx_a: TestAppContext,
-        mut cx_b: TestAppContext,
-        last_iteration: bool,
-    ) {
+    async fn test_share_project(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         let (window_b, _) = cx_b.add_window(|_| EmptyView);
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(FakeFs::new(cx_a.background()));
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1282,17 +1283,13 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_unshare_project(
-        mut cx_a: TestAppContext,
-        mut cx_b: TestAppContext,
-        last_iteration: bool,
-    ) {
+    async fn test_unshare_project(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(FakeFs::new(cx_a.background()));
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1387,14 +1384,13 @@ mod tests {
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
         mut cx_c: TestAppContext,
-        last_iteration: bool,
     ) {
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(FakeFs::new(cx_a.background()));
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 3 clients.
-        let mut server = TestServer::start(cx_a.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
         let client_c = server.create_client(&mut cx_c, "user_c").await;
@@ -1566,17 +1562,13 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_buffer_conflict_after_save(
-        mut cx_a: TestAppContext,
-        mut cx_b: TestAppContext,
-        last_iteration: bool,
-    ) {
+    async fn test_buffer_conflict_after_save(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1658,17 +1650,13 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_buffer_reloading(
-        mut cx_a: TestAppContext,
-        mut cx_b: TestAppContext,
-        last_iteration: bool,
-    ) {
+    async fn test_buffer_reloading(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1747,14 +1735,13 @@ mod tests {
     async fn test_editing_while_guest_opens_buffer(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
-        last_iteration: bool,
     ) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1830,14 +1817,13 @@ mod tests {
     async fn test_leaving_worktree_while_opening_buffer(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
-        last_iteration: bool,
     ) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1906,17 +1892,13 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_peer_disconnection(
-        mut cx_a: TestAppContext,
-        mut cx_b: TestAppContext,
-        last_iteration: bool,
-    ) {
+    async fn test_peer_disconnection(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1984,7 +1966,6 @@ mod tests {
     async fn test_collaborating_with_diagnostics(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
-        last_iteration: bool,
     ) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
@@ -2005,7 +1986,7 @@ mod tests {
             )));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -2209,7 +2190,6 @@ mod tests {
     async fn test_collaborating_with_completion(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
-        last_iteration: bool,
     ) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
@@ -2237,7 +2217,7 @@ mod tests {
             )));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -2419,11 +2399,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_formatting_buffer(
-        mut cx_a: TestAppContext,
-        mut cx_b: TestAppContext,
-        last_iteration: bool,
-    ) {
+    async fn test_formatting_buffer(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(FakeFs::new(cx_a.background()));
@@ -2443,7 +2419,7 @@ mod tests {
             )));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -2525,11 +2501,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_definition(
-        mut cx_a: TestAppContext,
-        mut cx_b: TestAppContext,
-        last_iteration: bool,
-    ) {
+    async fn test_definition(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(FakeFs::new(cx_a.background()));
@@ -2564,7 +2536,7 @@ mod tests {
             )));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -2682,7 +2654,6 @@ mod tests {
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
         mut rng: StdRng,
-        last_iteration: bool,
     ) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
@@ -2713,7 +2684,7 @@ mod tests {
             )));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -2792,7 +2763,6 @@ mod tests {
     async fn test_collaborating_with_code_actions(
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
-        last_iteration: bool,
     ) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
@@ -2815,7 +2785,7 @@ mod tests {
             )));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -3032,15 +3002,11 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_basic_chat(
-        mut cx_a: TestAppContext,
-        mut cx_b: TestAppContext,
-        last_iteration: bool,
-    ) {
+    async fn test_basic_chat(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -3176,10 +3142,10 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_chat_message_validation(mut cx_a: TestAppContext, last_iteration: bool) {
+    async fn test_chat_message_validation(mut cx_a: TestAppContext) {
         cx_a.foreground().forbid_parking();
 
-        let mut server = TestServer::start(cx_a.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
 
         let db = &server.app_state.db;
@@ -3236,15 +3202,11 @@ mod tests {
     }
 
     #[gpui::test(iterations = 10)]
-    async fn test_chat_reconnection(
-        mut cx_a: TestAppContext,
-        mut cx_b: TestAppContext,
-        last_iteration: bool,
-    ) {
+    async fn test_chat_reconnection(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
         let mut status_b = client_b.status();
@@ -3456,14 +3418,13 @@ mod tests {
         mut cx_a: TestAppContext,
         mut cx_b: TestAppContext,
         mut cx_c: TestAppContext,
-        last_iteration: bool,
     ) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Connect to a server as 3 clients.
-        let mut server = TestServer::start(cx_a.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
         let client_c = server.create_client(&mut cx_c, "user_c").await;
@@ -3595,7 +3556,7 @@ mod tests {
     }
 
     #[gpui::test(iterations = 100)]
-    async fn test_random_collaboration(cx: TestAppContext, rng: StdRng, last_iteration: bool) {
+    async fn test_random_collaboration(cx: TestAppContext, rng: StdRng) {
         cx.foreground().forbid_parking();
         let max_peers = env::var("MAX_PEERS")
             .map(|i| i.parse().expect("invalid `MAX_PEERS` variable"))
@@ -3654,7 +3615,7 @@ mod tests {
         .await;
 
         let operations = Rc::new(Cell::new(0));
-        let mut server = TestServer::start(cx.foreground(), last_iteration).await;
+        let mut server = TestServer::start(cx.foreground(), cx.background()).await;
         let mut clients = Vec::new();
 
         let mut next_entity_id = 100000;
@@ -3849,9 +3810,11 @@ mod tests {
     }
 
     impl TestServer {
-        async fn start(foreground: Rc<executor::Foreground>, clean_db_pool_on_drop: bool) -> Self {
-            let mut test_db = TestDb::new();
-            test_db.set_clean_pool_on_drop(clean_db_pool_on_drop);
+        async fn start(
+            foreground: Rc<executor::Foreground>,
+            background: Arc<executor::Background>,
+        ) -> Self {
+            let test_db = TestDb::fake(background);
             let app_state = Self::build_app_state(&test_db).await;
             let peer = Peer::new();
             let notifications = mpsc::unbounded();

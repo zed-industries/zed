@@ -20,7 +20,7 @@ use anyhow::Result;
 use async_std::net::TcpListener;
 use async_trait::async_trait;
 use auth::RequestExt as _;
-use db::Db;
+use db::{Db, PostgresDb};
 use handlebars::{Handlebars, TemplateRenderError};
 use parking_lot::RwLock;
 use rust_embed::RustEmbed;
@@ -49,7 +49,7 @@ pub struct Config {
 }
 
 pub struct AppState {
-    db: Db,
+    db: Arc<dyn Db>,
     handlebars: RwLock<Handlebars<'static>>,
     auth_client: auth::Client,
     github_client: Arc<github::AppClient>,
@@ -59,7 +59,7 @@ pub struct AppState {
 
 impl AppState {
     async fn new(config: Config) -> tide::Result<Arc<Self>> {
-        let db = Db::new(&config.database_url, 5).await?;
+        let db = PostgresDb::new(&config.database_url, 5).await?;
         let github_client =
             github::AppClient::new(config.github_app_id, config.github_private_key.clone());
         let repo_client = github_client
@@ -68,7 +68,7 @@ impl AppState {
             .context("failed to initialize github client")?;
 
         let this = Self {
-            db,
+            db: Arc::new(db),
             handlebars: Default::default(),
             auth_client: auth::build_client(&config.github_client_id, &config.github_client_secret),
             github_client,
@@ -112,7 +112,7 @@ impl AppState {
 #[async_trait]
 trait RequestExt {
     async fn layout_data(&mut self) -> tide::Result<Arc<LayoutData>>;
-    fn db(&self) -> &Db;
+    fn db(&self) -> &Arc<dyn Db>;
 }
 
 #[async_trait]
@@ -126,7 +126,7 @@ impl RequestExt for Request {
         Ok(self.ext::<Arc<LayoutData>>().unwrap().clone())
     }
 
-    fn db(&self) -> &Db {
+    fn db(&self) -> &Arc<dyn Db> {
         &self.state().db
     }
 }

@@ -111,7 +111,7 @@ async fn create_access_token(request: Request) -> tide::Result {
         .get_user_by_github_login(request.param("github_login")?)
         .await?
         .ok_or_else(|| surf::Error::from_str(StatusCode::NotFound, "user not found"))?;
-    let access_token = auth::create_access_token(request.db(), user.id).await?;
+    let access_token = auth::create_access_token(request.db().as_ref(), user.id).await?;
 
     #[derive(Deserialize)]
     struct QueryParams {
