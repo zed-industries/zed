@@ -492,6 +492,15 @@ impl TestAppContext {
         self.cx.borrow().background().clone()
     }
 
+    pub fn spawn<F, Fut, T>(&self, f: F) -> Task<T>
+    where
+        F: FnOnce(AsyncAppContext) -> Fut,
+        Fut: 'static + Future<Output = T>,
+        T: 'static,
+    {
+        self.cx.borrow_mut().spawn(f)
+    }
+
     pub fn simulate_new_path_selection(&self, result: impl FnOnce(PathBuf) -> Option<PathBuf>) {
         self.foreground_platform.simulate_new_path_selection(result);
     }

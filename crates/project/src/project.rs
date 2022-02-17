@@ -1580,6 +1580,7 @@ impl Project {
         } else if let Some(project_id) = self.remote_id() {
             let rpc = self.client.clone();
             cx.foreground().spawn(async move {
+                let _buffer = buffer_handle.clone();
                 let response = rpc
                     .request(proto::GetCodeActions {
                         project_id,

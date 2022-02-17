@@ -4169,6 +4169,8 @@ mod tests {
                     self.buffers.insert(buffer.clone());
                     buffer
                 } else {
+                    operations.set(operations.get() + 1);
+
                     self.buffers
                         .iter()
                         .choose(&mut *rng.borrow_mut())
@@ -4190,30 +4192,42 @@ mod tests {
                         });
                     }
                     10..=14 => {
-                        project
-                            .update(&mut cx, |project, cx| {
-                                log::info!(
-                                    "Guest {}: requesting completions for buffer {:?}",
-                                    guest_id,
-                                    buffer.read(cx).file().unwrap().full_path(cx)
-                                );
-                                project.completions(&buffer, 0, cx)
-                            })
-                            .await
-                            .expect("completion request failed");
+                        let completions = project.update(&mut cx, |project, cx| {
+                            log::info!(
+                                "Guest {}: requesting completions for buffer {:?}",
+                                guest_id,
+                                buffer.read(cx).file().unwrap().full_path(cx)
+                            );
+                            project.completions(&buffer, 0, cx)
+                        });
+                        let completions = cx.background().spawn(async move {
+                            completions.await.expect("code actions request failed");
+                        });
+                        if rng.borrow_mut().gen_bool(0.3) {
+                            log::info!("Guest {}: detaching completions request", guest_id);
+                            completions.detach();
+                        } else {
+                            completions.await;
+                        }
                     }
                     15..=19 => {
-                        project
-                            .update(&mut cx, |project, cx| {
-                                log::info!(
-                                    "Guest {}: requesting code actions for buffer {:?}",
-                                    guest_id,
-                                    buffer.read(cx).file().unwrap().full_path(cx)
-                                );
-                                project.code_actions(&buffer, 0..0, cx)
-                            })
-                            .await
-                            .expect("completion request failed");
+                        let code_actions = project.update(&mut cx, |project, cx| {
+                            log::info!(
+                                "Guest {}: requesting code actions for buffer {:?}",
+                                guest_id,
+                                buffer.read(cx).file().unwrap().full_path(cx)
+                            );
+                            project.code_actions(&buffer, 0..0, cx)
+                        });
+                        let code_actions = cx.background().spawn(async move {
+                            code_actions.await.expect("code actions request failed");
+                        });
+                        if rng.borrow_mut().gen_bool(0.3) {
+                            log::info!("Guest {}: detaching code actions request", guest_id);
+                            code_actions.detach();
+                        } else {
+                            code_actions.await;
+                        }
                     }
                     20..=29 if buffer.read_with(&cx, |buffer, _| buffer.is_dirty()) => {
                         let (requested_version, save) = buffer.update(&mut cx, |buffer, cx| {
@@ -4224,11 +4238,19 @@ mod tests {
                             );
                             (buffer.version(), buffer.save(cx))
                         });
-                        let (saved_version, _) = save.await.expect("completion request failed");
-                        buffer.read_with(&cx, |buffer, _| {
-                            assert!(buffer.version().observed_all(&saved_version));
-                            assert!(saved_version.observed_all(&requested_version));
+                        let save = cx.spawn(|cx| async move {
+                            let (saved_version, _) = save.await.expect("save request failed");
+                            buffer.read_with(&cx, |buffer, _| {
+                                assert!(buffer.version().observed_all(&saved_version));
+                                assert!(saved_version.observed_all(&requested_version));
+                            });
                         });
+                        if rng.borrow_mut().gen_bool(0.3) {
+                            log::info!("Guest {}: detaching save request", guest_id);
+                            save.detach();
+                        } else {
+                            save.await;
+                        }
                     }
                     _ => {
                         buffer.update(&mut cx, |buffer, cx| {
