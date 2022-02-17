@@ -12,10 +12,14 @@ use gpui::AppContext;
 use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
+use postage::prelude::Stream;
 use serde::Deserialize;
 use std::{cell::RefCell, ops::Range, path::Path, str, sync::Arc};
 use theme::SyntaxTheme;
 use tree_sitter::{self, Query};
+
+#[cfg(any(test, feature = "test-support"))]
+use futures::channel::mpsc;
 
 pub use buffer::Operation;
 pub use buffer::*;
@@ -79,7 +83,13 @@ pub struct LanguageServerConfig {
     pub disk_based_diagnostics_progress_token: Option<String>,
     #[cfg(any(test, feature = "test-support"))]
     #[serde(skip)]
-    pub fake_server: Option<(Arc<lsp::LanguageServer>, Arc<std::sync::atomic::AtomicBool>)>,
+    fake_config: Option<FakeLanguageServerConfig>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+struct FakeLanguageServerConfig {
+    servers_tx: mpsc::UnboundedSender<lsp::FakeLanguageServer>,
+    capabilities: lsp::ServerCapabilities,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -224,8 +234,21 @@ impl Language {
     ) -> Result<Option<Arc<lsp::LanguageServer>>> {
         if let Some(config) = &self.config.language_server {
             #[cfg(any(test, feature = "test-support"))]
-            if let Some((server, started)) = &config.fake_server {
-                started.store(true, std::sync::atomic::Ordering::SeqCst);
+            if let Some(fake_config) = &config.fake_config {
+                let (server, fake_server) = lsp::LanguageServer::fake_with_capabilities(
+                    fake_config.capabilities.clone(),
+                    cx.background().clone(),
+                );
+
+                let servers_tx = fake_config.servers_tx.clone();
+                let mut initialized = server.capabilities();
+                cx.background()
+                    .spawn(async move {
+                        while initialized.recv().await.is_none() {}
+                        servers_tx.unbounded_send(fake_server).ok();
+                    })
+                    .detach();
+
                 return Ok(Some(server.clone()));
             }
 
@@ -357,25 +380,24 @@ impl CompletionLabel {
 
 #[cfg(any(test, feature = "test-support"))]
 impl LanguageServerConfig {
-    pub async fn fake(cx: &gpui::TestAppContext) -> (Self, lsp::FakeLanguageServer) {
-        Self::fake_with_capabilities(Default::default(), cx).await
+    pub fn fake() -> (Self, mpsc::UnboundedReceiver<lsp::FakeLanguageServer>) {
+        Self::fake_with_capabilities(Default::default())
     }
 
-    pub async fn fake_with_capabilities(
-        capabilites: lsp::ServerCapabilities,
-        cx: &gpui::TestAppContext,
-    ) -> (Self, lsp::FakeLanguageServer) {
-        let (server, fake) = lsp::LanguageServer::fake_with_capabilities(capabilites, cx).await;
-        fake.started
-            .store(false, std::sync::atomic::Ordering::SeqCst);
-        let started = fake.started.clone();
+    pub fn fake_with_capabilities(
+        capabilities: lsp::ServerCapabilities,
+    ) -> (Self, mpsc::UnboundedReceiver<lsp::FakeLanguageServer>) {
+        let (servers_tx, servers_rx) = mpsc::unbounded();
         (
             Self {
-                fake_server: Some((server, started)),
+                fake_config: Some(FakeLanguageServerConfig {
+                    servers_tx,
+                    capabilities,
+                }),
                 disk_based_diagnostics_progress_token: Some("fakeServer/check".to_string()),
                 ..Default::default()
             },
-            fake,
+            servers_rx,
         )
     }
 }

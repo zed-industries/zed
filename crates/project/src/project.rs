@@ -346,15 +346,10 @@ impl Project {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn shared_buffer(&self, peer_id: PeerId, remote_id: u64) -> Option<ModelHandle<Buffer>> {
-        let result = self
-            .shared_buffers
+        self.shared_buffers
             .get(&peer_id)
             .and_then(|buffers| buffers.get(&remote_id))
-            .cloned();
-        if result.is_none() {
-            dbg!(&self.shared_buffers);
-        }
-        result
+            .cloned()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -3051,7 +3046,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_language_server_diagnostics(mut cx: gpui::TestAppContext) {
-        let (language_server_config, mut fake_server) = LanguageServerConfig::fake(&cx).await;
+        let (language_server_config, mut fake_servers) = LanguageServerConfig::fake();
         let progress_token = language_server_config
             .disk_based_diagnostics_progress_token
             .clone()
@@ -3114,6 +3109,7 @@ mod tests {
 
         let mut events = subscribe(&project, &mut cx);
 
+        let mut fake_server = fake_servers.next().await.unwrap();
         fake_server.start_progress(&progress_token).await;
         assert_eq!(
             events.next().await.unwrap(),
@@ -3215,7 +3211,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_definition(mut cx: gpui::TestAppContext) {
-        let (language_server_config, mut fake_server) = LanguageServerConfig::fake(&cx).await;
+        let (language_server_config, mut fake_servers) = LanguageServerConfig::fake();
 
         let mut languages = LanguageRegistry::new();
         languages.add(Arc::new(Language::new(
@@ -3270,6 +3266,7 @@ mod tests {
             .await
             .unwrap();
 
+        let mut fake_server = fake_servers.next().await.unwrap();
         fake_server.handle_request::<lsp::request::GotoDefinition, _>(move |params| {
             let params = params.text_document_position_params;
             assert_eq!(

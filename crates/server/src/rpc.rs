@@ -1992,8 +1992,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Set up a fake language server.
-        let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake(&cx_a).await;
+        let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -2062,6 +2061,7 @@ mod tests {
             .unwrap();
 
         // Simulate a language server reporting errors for a file.
+        let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server
             .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
                 uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
@@ -2217,18 +2217,14 @@ mod tests {
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Set up a fake language server.
-        let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake_with_capabilities(
-                lsp::ServerCapabilities {
-                    completion_provider: Some(lsp::CompletionOptions {
-                        trigger_characters: Some(vec![".".to_string()]),
-                        ..Default::default()
-                    }),
+        let (language_server_config, mut fake_language_servers) =
+            LanguageServerConfig::fake_with_capabilities(lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string()]),
                     ..Default::default()
-                },
-                &cx_a,
-            )
-            .await;
+                }),
+                ..Default::default()
+            });
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -2309,6 +2305,11 @@ mod tests {
                 cx,
             )
         });
+
+        let mut fake_language_server = fake_language_servers.next().await.unwrap();
+        buffer_b
+            .condition(&cx_b, |buffer, _| !buffer.completion_triggers().is_empty())
+            .await;
 
         // Type a completion trigger character as the guest.
         editor_b.update(&mut cx_b, |editor, cx| {
@@ -2423,8 +2424,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Set up a fake language server.
-        let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake(&cx_a).await;
+        let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -2498,6 +2498,7 @@ mod tests {
             project.format(HashSet::from_iter([buffer_b.clone()]), true, cx)
         });
 
+        let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::Formatting, _>(|_| {
             Some(vec![
                 lsp::TextEdit {
@@ -2544,8 +2545,7 @@ mod tests {
         .await;
 
         // Set up a fake language server.
-        let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake(&cx_a).await;
+        let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -2610,6 +2610,8 @@ mod tests {
 
         // Request the definition of a symbol as the guest.
         let definitions_1 = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b, 23, cx));
+
+        let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_| {
             Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
                 lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
@@ -2691,8 +2693,7 @@ mod tests {
         .await;
 
         // Set up a fake language server.
-        let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake(&cx_a).await;
+        let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
 
         Arc::get_mut(&mut lang_registry)
             .unwrap()
@@ -2768,6 +2769,7 @@ mod tests {
             definitions = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
         }
 
+        let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_| {
             Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
                 lsp::Url::from_file_path("/root/b.rs").unwrap(),
@@ -2794,14 +2796,7 @@ mod tests {
         cx_b.update(|cx| editor::init(cx, &mut path_openers_b));
 
         // Set up a fake language server.
-        let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake_with_capabilities(
-                lsp::ServerCapabilities {
-                    ..Default::default()
-                },
-                &cx_a,
-            )
-            .await;
+        let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -2881,6 +2876,8 @@ mod tests {
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
+
+        let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server
             .handle_request::<lsp::request::CodeActionRequest, _>(|params| {
                 assert_eq!(

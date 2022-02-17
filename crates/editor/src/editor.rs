@@ -7737,9 +7737,8 @@ mod tests {
                 }),
                 ..Default::default()
             },
-            &cx,
-        )
-        .await;
+            cx.background(),
+        );
 
         let text = "
             one

@@ -491,33 +491,31 @@ pub struct FakeLanguageServer {
     >,
     outgoing_tx: channel::Sender<Vec<u8>>,
     incoming_rx: channel::Receiver<Vec<u8>>,
-    pub started: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl LanguageServer {
-    pub async fn fake(cx: &gpui::TestAppContext) -> (Arc<Self>, FakeLanguageServer) {
-        Self::fake_with_capabilities(Default::default(), cx).await
+    pub fn fake(executor: Arc<gpui::executor::Background>) -> (Arc<Self>, FakeLanguageServer) {
+        Self::fake_with_capabilities(Default::default(), executor)
     }
 
-    pub async fn fake_with_capabilities(
+    pub fn fake_with_capabilities(
         capabilities: ServerCapabilities,
-        cx: &gpui::TestAppContext,
+        executor: Arc<gpui::executor::Background>,
     ) -> (Arc<Self>, FakeLanguageServer) {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
 
-        let mut fake = FakeLanguageServer::new(cx, stdin_reader, stdout_writer);
-        fake.handle_request::<request::Initialize, _>(move |_| InitializeResult {
-            capabilities,
-            ..Default::default()
+        let mut fake = FakeLanguageServer::new(executor.clone(), stdin_reader, stdout_writer);
+        fake.handle_request::<request::Initialize, _>({
+            move |_| InitializeResult {
+                capabilities,
+                ..Default::default()
+            }
         });
 
         let server =
-            Self::new_internal(stdin_writer, stdout_reader, Path::new("/"), cx.background())
-                .unwrap();
-        fake.receive_notification::<notification::Initialized>()
-            .await;
+            Self::new_internal(stdin_writer, stdout_reader, Path::new("/"), executor).unwrap();
 
         (server, fake)
     }
@@ -526,7 +524,7 @@ impl LanguageServer {
 #[cfg(any(test, feature = "test-support"))]
 impl FakeLanguageServer {
     fn new(
-        cx: &gpui::TestAppContext,
+        executor: Arc<gpui::executor::Background>,
         stdin: async_pipe::PipeReader,
         stdout: async_pipe::PipeWriter,
     ) -> Self {
@@ -538,12 +536,11 @@ impl FakeLanguageServer {
             outgoing_tx: outgoing_tx.clone(),
             incoming_rx,
             handlers: Default::default(),
-            started: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         };
 
         // Receive incoming messages
         let handlers = this.handlers.clone();
-        cx.background()
+        executor
             .spawn(async move {
                 let mut buffer = Vec::new();
                 let mut stdin = smol::io::BufReader::new(stdin);
@@ -582,7 +579,7 @@ impl FakeLanguageServer {
             .detach();
 
         // Send outgoing messages
-        cx.background()
+        executor
             .spawn(async move {
                 let mut stdout = smol::io::BufWriter::new(stdout);
                 while let Some(notification) = outgoing_rx.next().await {
@@ -595,9 +592,6 @@ impl FakeLanguageServer {
     }
 
     pub async fn notify<T: notification::Notification>(&mut self, params: T::Params) {
-        if !self.started.load(std::sync::atomic::Ordering::SeqCst) {
-            panic!("can't simulate an LSP notification before the server has been started");
-        }
         let message = serde_json::to_vec(&Notification {
             jsonrpc: JSON_RPC_VERSION,
             method: T::METHOD,
@@ -777,7 +771,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_fake(cx: TestAppContext) {
-        let (server, mut fake) = LanguageServer::fake(&cx).await;
+        let (server, mut fake) = LanguageServer::fake(cx.background());
 
         let (message_tx, message_rx) = channel::unbounded();
         let (diagnostics_tx, diagnostics_rx) = channel::unbounded();
