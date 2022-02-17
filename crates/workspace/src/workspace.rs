@@ -1191,7 +1191,7 @@ impl Workspace {
         if let Some(avatar) = user.and_then(|user| user.avatar.clone()) {
             self.render_avatar(avatar, replica_id, theme)
         } else {
-            MouseEventHandler::new::<Authenticate, _, _, _>(cx.view_id(), cx, |state, _| {
+            MouseEventHandler::new::<Authenticate, _, _>(0, cx, |state, _| {
                 let style = if state.hovered {
                     &theme.workspace.titlebar.hovered_sign_in_prompt
                 } else {
@@ -1252,7 +1252,7 @@ impl Workspace {
                 theme.workspace.titlebar.share_icon_color
             };
             Some(
-                MouseEventHandler::new::<Share, _, _, _>(cx.view_id(), cx, |_, _| {
+                MouseEventHandler::new::<Share, _, _>(0, cx, |_, _| {
                     Align::new(
                         ConstrainedBox::new(
                             Svg::new("icons/broadcast-24.svg").with_color(color).boxed(),

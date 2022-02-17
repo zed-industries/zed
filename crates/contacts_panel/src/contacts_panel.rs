@@ -27,7 +27,6 @@ impl ContactsPanel {
                 1000.,
                 {
                     let app_state = app_state.clone();
-                    let view_id = cx.view_id();
                     move |ix, cx| {
                         let user_store = app_state.user_store.read(cx);
                         let contacts = user_store.contacts().clone();
@@ -36,7 +35,6 @@ impl ContactsPanel {
                             &contacts[ix],
                             current_user_id,
                             app_state.clone(),
-                            view_id,
                             cx,
                         )
                     }
@@ -58,7 +56,6 @@ impl ContactsPanel {
         collaborator: &Contact,
         current_user_id: Option<u64>,
         app_state: Arc<AppState>,
-        view_id: usize,
         cx: &mut LayoutContext,
     ) -> ElementBox {
         let theme = &app_state.settings.borrow().theme.contacts_panel;
@@ -159,8 +156,8 @@ impl ContactsPanel {
                                 let is_shared = project.is_shared;
                                 let app_state = app_state.clone();
 
-                                MouseEventHandler::new::<ContactsPanel, _, _, _>(
-                                    (view_id, project_id as usize),
+                                MouseEventHandler::new::<ContactsPanel, _, _>(
+                                    project_id as usize,
                                     cx,
                                     |mouse_state, _| {
                                         let style = match (project.is_shared, mouse_state.hovered) {
