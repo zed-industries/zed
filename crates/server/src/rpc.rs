@@ -3641,7 +3641,7 @@ mod tests {
                     language_server: Some(language_server_config),
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                None,
             )));
 
         let fs = Arc::new(FakeFs::new(cx.background()));
