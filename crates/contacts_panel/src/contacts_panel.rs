@@ -160,7 +160,7 @@ impl ContactsPanel {
                                 let app_state = app_state.clone();
 
                                 MouseEventHandler::new::<ContactsPanel, _, _, _>(
-                                    view_id,
+                                    (view_id, project_id as usize),
                                     cx,
                                     |mouse_state, _| {
                                         let style = match (project.is_shared, mouse_state.hovered) {
