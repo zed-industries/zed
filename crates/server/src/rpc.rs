@@ -4196,17 +4196,18 @@ mod tests {
                             drop(buffer);
                         });
                     }
-                    10..=14 => {
+                    10..=19 => {
                         let completions = project.update(&mut cx, |project, cx| {
                             log::info!(
                                 "Guest {}: requesting completions for buffer {:?}",
                                 guest_id,
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
-                            project.completions(&buffer, 0, cx)
+                            let offset = rng.borrow_mut().gen_range(0..=buffer.read(cx).len());
+                            project.completions(&buffer, offset, cx)
                         });
                         let completions = cx.background().spawn(async move {
-                            completions.await.expect("code actions request failed");
+                            completions.await.expect("completions request failed");
                         });
                         if rng.borrow_mut().gen_bool(0.3) {
                             log::info!("Guest {}: detaching completions request", guest_id);
@@ -4215,14 +4216,16 @@ mod tests {
                             completions.await;
                         }
                     }
-                    15..=19 => {
+                    20..=29 => {
                         let code_actions = project.update(&mut cx, |project, cx| {
                             log::info!(
                                 "Guest {}: requesting code actions for buffer {:?}",
                                 guest_id,
                                 buffer.read(cx).file().unwrap().full_path(cx)
                             );
-                            project.code_actions(&buffer, 0..0, cx)
+                            let range =
+                                buffer.read(cx).random_byte_range(0, &mut *rng.borrow_mut());
+                            project.code_actions(&buffer, range, cx)
                         });
                         let code_actions = cx.background().spawn(async move {
                             code_actions.await.expect("code actions request failed");
@@ -4234,7 +4237,7 @@ mod tests {
                             code_actions.await;
                         }
                     }
-                    20..=29 if buffer.read_with(&cx, |buffer, _| buffer.is_dirty()) => {
+                    30..=39 if buffer.read_with(&cx, |buffer, _| buffer.is_dirty()) => {
                         let (requested_version, save) = buffer.update(&mut cx, |buffer, cx| {
                             log::info!(
                                 "Guest {}: saving buffer {:?}",

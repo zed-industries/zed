@@ -21,7 +21,7 @@ use operation_queue::OperationQueue;
 pub use patch::Patch;
 pub use point::*;
 pub use point_utf16::*;
-use postage::{oneshot, prelude::*};
+use postage::{barrier, oneshot, prelude::*};
 #[cfg(any(test, feature = "test-support"))]
 pub use random_char_iter::*;
 use rope::TextDimension;
@@ -53,6 +53,7 @@ pub struct Buffer {
     pub lamport_clock: clock::Lamport,
     subscriptions: Topic,
     edit_id_resolvers: HashMap<clock::Local, Vec<oneshot::Sender<()>>>,
+    version_barriers: Vec<(clock::Global, barrier::Sender)>,
 }
 
 #[derive(Clone, Debug)]
@@ -574,6 +575,7 @@ impl Buffer {
             lamport_clock,
             subscriptions: Default::default(),
             edit_id_resolvers: Default::default(),
+            version_barriers: Default::default(),
         }
     }
 
@@ -835,6 +837,8 @@ impl Buffer {
                 }
             }
         }
+        self.version_barriers
+            .retain(|(version, _)| !self.snapshot.version().observed_all(version));
         Ok(())
     }
 
@@ -1302,6 +1306,16 @@ impl Buffer {
             for mut future in futures {
                 future.recv().await;
             }
+        }
+    }
+
+    pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = ()> {
+        let (tx, mut rx) = barrier::channel();
+        if !self.snapshot.version.observed_all(&version) {
+            self.version_barriers.push((version, tx));
+        }
+        async move {
+            rx.recv().await;
         }
     }
 

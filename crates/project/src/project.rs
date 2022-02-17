@@ -1401,15 +1401,14 @@ impl Project {
                 position: Some(language::proto::serialize_anchor(&anchor)),
                 version: (&source_buffer.version()).into(),
             };
-            cx.spawn_weak(|_, cx| async move {
+            cx.spawn_weak(|_, mut cx| async move {
                 let response = rpc.request(message).await?;
 
-                if !source_buffer_handle
-                    .read_with(&cx, |buffer, _| buffer.version())
-                    .observed_all(&response.version.into())
-                {
-                    Err(anyhow!("completion response depends on unreceived edits"))?;
-                }
+                source_buffer_handle
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_version(response.version.into())
+                    })
+                    .await;
 
                 response
                     .completions
