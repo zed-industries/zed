@@ -2433,11 +2433,10 @@ impl Project {
                 .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })?;
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version([start.timestamp, end.timestamp].into_iter().collect())
-            })
-            .await;
+        let version = buffer.read_with(&cx, |buffer, _| buffer.version());
+        if !version.observed(start.timestamp) || !version.observed(end.timestamp) {
+            Err(anyhow!("code action request references unreceived edits"))?;
+        }
         let code_actions = this.update(&mut cx, |this, cx| {
             Ok::<_, anyhow::Error>(this.code_actions(&buffer, start..end, cx))
         })?;

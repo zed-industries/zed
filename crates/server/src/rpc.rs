@@ -3622,6 +3622,15 @@ mod tests {
                     ..Default::default()
                 }]))
             });
+
+            fake_server.handle_request::<lsp::request::CodeActionRequest, _>(|_| {
+                Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                    lsp::CodeAction {
+                        title: "the-code-action".to_string(),
+                        ..Default::default()
+                    },
+                )])
+            });
         });
 
         Arc::get_mut(&mut host_lang_registry)
@@ -4180,7 +4189,7 @@ mod tests {
                             drop(buffer);
                         });
                     }
-                    10..=19 => {
+                    10..=14 => {
                         project
                             .update(&mut cx, |project, cx| {
                                 log::info!(
@@ -4189,6 +4198,19 @@ mod tests {
                                     buffer.read(cx).file().unwrap().full_path(cx)
                                 );
                                 project.completions(&buffer, 0, cx)
+                            })
+                            .await
+                            .expect("completion request failed");
+                    }
+                    15..=19 => {
+                        project
+                            .update(&mut cx, |project, cx| {
+                                log::info!(
+                                    "Guest {}: requesting code actions for buffer {:?}",
+                                    guest_id,
+                                    buffer.read(cx).file().unwrap().full_path(cx)
+                                );
+                                project.code_actions(&buffer, 0..0, cx)
                             })
                             .await
                             .expect("completion request failed");
