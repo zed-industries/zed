@@ -5447,8 +5447,8 @@ mod tests {
     use super::*;
     use language::LanguageConfig;
     use lsp::FakeLanguageServer;
-    use postage::prelude::Stream;
     use project::{FakeFs, ProjectPath};
+    use smol::stream::StreamExt;
     use std::{cell::RefCell, rc::Rc, time::Instant};
     use text::Point;
     use unindent::Unindent;
@@ -7911,7 +7911,7 @@ mod tests {
                 );
                 Some(lsp::CompletionResponse::Array(
                     completions
-                        .into_iter()
+                        .iter()
                         .map(|(range, new_text)| lsp::CompletionItem {
                             label: new_text.to_string(),
                             text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
@@ -7926,7 +7926,7 @@ mod tests {
                         .collect(),
                 ))
             })
-            .recv()
+            .next()
             .await;
         }
 
@@ -7936,7 +7936,7 @@ mod tests {
         ) {
             fake.handle_request::<lsp::request::ResolveCompletionItem, _>(move |_| {
                 lsp::CompletionItem {
-                    additional_text_edits: edit.map(|(range, new_text)| {
+                    additional_text_edits: edit.clone().map(|(range, new_text)| {
                         vec![lsp::TextEdit::new(
                             lsp::Range::new(
                                 lsp::Position::new(range.start.row, range.start.column),
@@ -7948,7 +7948,7 @@ mod tests {
                     ..Default::default()
                 }
             })
-            .recv()
+            .next()
             .await;
         }
     }

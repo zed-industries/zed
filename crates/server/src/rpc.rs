@@ -1093,6 +1093,7 @@ mod tests {
     };
     use ::rpc::Peer;
     use collections::BTreeMap;
+    use futures::channel::mpsc::UnboundedReceiver;
     use gpui::{executor, ModelHandle, TestAppContext};
     use parking_lot::Mutex;
     use postage::{mpsc, watch};
@@ -1126,7 +1127,7 @@ mod tests {
             tree_sitter_rust, AnchorRangeExt, Diagnostic, DiagnosticEntry, Language,
             LanguageConfig, LanguageRegistry, LanguageServerConfig, Point,
         },
-        lsp,
+        lsp::{self, FakeLanguageServer},
         project::{DiagnosticSummary, Project, ProjectPath},
         workspace::{Workspace, WorkspaceParams},
     };
@@ -2320,45 +2321,51 @@ mod tests {
 
         // Receive a completion request as the host's language server.
         // Return some completions from the host's language server.
-        fake_language_server.handle_request::<lsp::request::Completion, _>(|params| {
-            assert_eq!(
-                params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
-            );
-            assert_eq!(
-                params.text_document_position.position,
-                lsp::Position::new(0, 14),
-            );
+        cx_a.foreground().start_waiting();
+        fake_language_server
+            .handle_request::<lsp::request::Completion, _>(|params| {
+                assert_eq!(
+                    params.text_document_position.text_document.uri,
+                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                );
+                assert_eq!(
+                    params.text_document_position.position,
+                    lsp::Position::new(0, 14),
+                );
 
-            Some(lsp::CompletionResponse::Array(vec![
-                lsp::CompletionItem {
-                    label: "first_method(…)".into(),
-                    detail: Some("fn(&mut self, B) -> C".into()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        new_text: "first_method($1)".to_string(),
-                        range: lsp::Range::new(
-                            lsp::Position::new(0, 14),
-                            lsp::Position::new(0, 14),
-                        ),
-                    })),
-                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                    ..Default::default()
-                },
-                lsp::CompletionItem {
-                    label: "second_method(…)".into(),
-                    detail: Some("fn(&mut self, C) -> D<E>".into()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        new_text: "second_method()".to_string(),
-                        range: lsp::Range::new(
-                            lsp::Position::new(0, 14),
-                            lsp::Position::new(0, 14),
-                        ),
-                    })),
-                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                    ..Default::default()
-                },
-            ]))
-        });
+                Some(lsp::CompletionResponse::Array(vec![
+                    lsp::CompletionItem {
+                        label: "first_method(…)".into(),
+                        detail: Some("fn(&mut self, B) -> C".into()),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            new_text: "first_method($1)".to_string(),
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 14),
+                                lsp::Position::new(0, 14),
+                            ),
+                        })),
+                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                        ..Default::default()
+                    },
+                    lsp::CompletionItem {
+                        label: "second_method(…)".into(),
+                        detail: Some("fn(&mut self, C) -> D<E>".into()),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            new_text: "second_method()".to_string(),
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 14),
+                                lsp::Position::new(0, 14),
+                            ),
+                        })),
+                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                        ..Default::default()
+                    },
+                ]))
+            })
+            .next()
+            .await
+            .unwrap();
+        cx_a.foreground().finish_waiting();
 
         // Open the buffer on the host.
         let buffer_a = project_a
@@ -2896,58 +2903,62 @@ mod tests {
             editor.select_ranges([Point::new(1, 31)..Point::new(1, 31)], None, cx);
             cx.focus(&editor_b);
         });
-        fake_language_server.handle_request::<lsp::request::CodeActionRequest, _>(|params| {
-            assert_eq!(
-                params.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
-            );
-            assert_eq!(params.range.start, lsp::Position::new(1, 31));
-            assert_eq!(params.range.end, lsp::Position::new(1, 31));
 
-            Some(vec![lsp::CodeActionOrCommand::CodeAction(
-                lsp::CodeAction {
-                    title: "Inline into all callers".to_string(),
-                    edit: Some(lsp::WorkspaceEdit {
-                        changes: Some(
-                            [
-                                (
-                                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
-                                    vec![lsp::TextEdit::new(
-                                        lsp::Range::new(
-                                            lsp::Position::new(1, 22),
-                                            lsp::Position::new(1, 34),
-                                        ),
-                                        "4".to_string(),
-                                    )],
-                                ),
-                                (
-                                    lsp::Url::from_file_path("/a/other.rs").unwrap(),
-                                    vec![lsp::TextEdit::new(
-                                        lsp::Range::new(
-                                            lsp::Position::new(0, 0),
-                                            lsp::Position::new(0, 27),
-                                        ),
-                                        "".to_string(),
-                                    )],
-                                ),
-                            ]
-                            .into_iter()
-                            .collect(),
-                        ),
-                        ..Default::default()
-                    }),
-                    data: Some(json!({
-                        "codeActionParams": {
-                            "range": {
-                                "start": {"line": 1, "column": 31},
-                                "end": {"line": 1, "column": 31},
+        fake_language_server
+            .handle_request::<lsp::request::CodeActionRequest, _>(|params| {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                );
+                assert_eq!(params.range.start, lsp::Position::new(1, 31));
+                assert_eq!(params.range.end, lsp::Position::new(1, 31));
+
+                Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                    lsp::CodeAction {
+                        title: "Inline into all callers".to_string(),
+                        edit: Some(lsp::WorkspaceEdit {
+                            changes: Some(
+                                [
+                                    (
+                                        lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                        vec![lsp::TextEdit::new(
+                                            lsp::Range::new(
+                                                lsp::Position::new(1, 22),
+                                                lsp::Position::new(1, 34),
+                                            ),
+                                            "4".to_string(),
+                                        )],
+                                    ),
+                                    (
+                                        lsp::Url::from_file_path("/a/other.rs").unwrap(),
+                                        vec![lsp::TextEdit::new(
+                                            lsp::Range::new(
+                                                lsp::Position::new(0, 0),
+                                                lsp::Position::new(0, 27),
+                                            ),
+                                            "".to_string(),
+                                        )],
+                                    ),
+                                ]
+                                .into_iter()
+                                .collect(),
+                            ),
+                            ..Default::default()
+                        }),
+                        data: Some(json!({
+                            "codeActionParams": {
+                                "range": {
+                                    "start": {"line": 1, "column": 31},
+                                    "end": {"line": 1, "column": 31},
+                                }
                             }
-                        }
-                    })),
-                    ..Default::default()
-                },
-            )])
-        });
+                        })),
+                        ..Default::default()
+                    },
+                )])
+            })
+            .next()
+            .await;
 
         // Toggle code actions and wait for them to display.
         editor_b.update(&mut cx_b, |editor, cx| {
@@ -2956,6 +2967,8 @@ mod tests {
         editor_b
             .condition(&cx_b, |editor, _| editor.context_menu_visible())
             .await;
+
+        fake_language_server.remove_request_handler::<lsp::request::CodeActionRequest>();
 
         // Confirming the code action will trigger a resolve request.
         let confirm_action = workspace_b
@@ -3594,7 +3607,24 @@ mod tests {
             .unwrap_or(10);
 
         let rng = Rc::new(RefCell::new(rng));
-        let lang_registry = Arc::new(LanguageRegistry::new());
+
+        let mut host_lang_registry = Arc::new(LanguageRegistry::new());
+        let guest_lang_registry = Arc::new(LanguageRegistry::new());
+
+        // Set up a fake language server.
+        let (language_server_config, fake_language_servers) = LanguageServerConfig::fake();
+        Arc::get_mut(&mut host_lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Rust".to_string(),
+                    path_suffixes: vec!["rs".to_string()],
+                    language_server: Some(language_server_config),
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )));
+
         let fs = Arc::new(FakeFs::new(cx.background()));
         fs.insert_tree(
             "/_collab",
@@ -3622,7 +3652,7 @@ mod tests {
             Project::local(
                 host.client.clone(),
                 host.user_store.clone(),
-                lang_registry.clone(),
+                host_lang_registry.clone(),
                 fs.clone(),
                 cx,
             )
@@ -3647,6 +3677,7 @@ mod tests {
 
         clients.push(cx.foreground().spawn(host.simulate_host(
             host_project.clone(),
+            fake_language_servers,
             operations.clone(),
             max_operations,
             rng.clone(),
@@ -3676,7 +3707,7 @@ mod tests {
                     host_project_id,
                     guest.client.clone(),
                     guest.user_store.clone(),
-                    lang_registry.clone(),
+                    guest_lang_registry.clone(),
                     fs.clone(),
                     &mut guest_cx.to_async(),
                 )
@@ -3971,6 +4002,7 @@ mod tests {
         async fn simulate_host(
             mut self,
             project: ModelHandle<Project>,
+            fake_language_servers: UnboundedReceiver<FakeLanguageServer>,
             operations: Rc<Cell<usize>>,
             max_operations: usize,
             rng: Rc<RefCell<StdRng>>,
@@ -4055,6 +4087,7 @@ mod tests {
                             let letter = rng.borrow_mut().gen_range(b'a'..=b'z');
                             path.push(std::str::from_utf8(&[letter]).unwrap());
                         }
+                        path.set_extension("rs");
                         let parent_path = path.parent().unwrap();
 
                         log::info!("Host: creating file {:?}", path);
