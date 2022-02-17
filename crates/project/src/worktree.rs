@@ -869,6 +869,10 @@ impl RemoteWorktree {
         Ok(())
     }
 
+    pub fn has_pending_updates(&self) -> bool {
+        !self.pending_updates.is_empty()
+    }
+
     pub fn update_diagnostic_summary(
         &mut self,
         path: Arc<Path>,
