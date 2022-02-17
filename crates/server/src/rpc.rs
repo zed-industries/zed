@@ -4215,6 +4215,21 @@ mod tests {
                             .await
                             .expect("completion request failed");
                     }
+                    20..=29 if buffer.read_with(&cx, |buffer, _| buffer.is_dirty()) => {
+                        let (requested_version, save) = buffer.update(&mut cx, |buffer, cx| {
+                            log::info!(
+                                "Guest {}: saving buffer {:?}",
+                                guest_id,
+                                buffer.file().unwrap().full_path(cx)
+                            );
+                            (buffer.version(), buffer.save(cx))
+                        });
+                        let (saved_version, _) = save.await.expect("completion request failed");
+                        buffer.read_with(&cx, |buffer, _| {
+                            assert!(buffer.version().observed_all(&saved_version));
+                            assert!(saved_version.observed_all(&requested_version));
+                        });
+                    }
                     _ => {
                         buffer.update(&mut cx, |buffer, cx| {
                             log::info!(

@@ -2289,11 +2289,12 @@ impl Project {
             Ok::<_, anyhow::Error>((project_id, buffer))
         })?;
 
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(requested_version)
-            })
-            .await;
+        if !buffer
+            .read_with(&cx, |buffer, _| buffer.version())
+            .observed_all(&requested_version)
+        {
+            Err(anyhow!("save request depends on unreceived edits"))?;
+        }
 
         let (saved_version, mtime) = buffer.update(&mut cx, |buffer, cx| buffer.save(cx)).await?;
         Ok(proto::BufferSaved {
