@@ -2,7 +2,7 @@ pub mod fs;
 mod ignore;
 pub mod worktree;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
@@ -1347,7 +1347,8 @@ impl Project {
                         work_done_progress_params: Default::default(),
                         partial_result_params: Default::default(),
                     })
-                    .await?;
+                    .await
+                    .context("lsp completion request failed")?;
 
                 let completions = if let Some(completions) = completions {
                     match completions {
@@ -1400,13 +1401,16 @@ impl Project {
                 position: Some(language::proto::serialize_anchor(&anchor)),
                 version: (&source_buffer.version()).into(),
             };
-            cx.spawn_weak(|_, mut cx| async move {
+            cx.spawn_weak(|_, cx| async move {
                 let response = rpc.request(message).await?;
-                source_buffer_handle
-                    .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_version(response.version.into())
-                    })
-                    .await;
+
+                if !source_buffer_handle
+                    .read_with(&cx, |buffer, _| buffer.version())
+                    .observed_all(&response.version.into())
+                {
+                    Err(anyhow!("completion response depends on unreceived edits"))?;
+                }
+
                 response
                     .completions
                     .into_iter()
@@ -2352,9 +2356,12 @@ impl Project {
                 .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })?;
-        buffer
-            .update(&mut cx, |buffer, _| buffer.wait_for_version(version))
-            .await;
+        if !buffer
+            .read_with(&cx, |buffer, _| buffer.version())
+            .observed_all(&version)
+        {
+            Err(anyhow!("completion request depends on unreceived edits"))?;
+        }
         let version = buffer.read_with(&cx, |buffer, _| buffer.version());
         let completions = this
             .update(&mut cx, |this, cx| this.completions(&buffer, position, cx))

@@ -1093,7 +1093,6 @@ mod tests {
     };
     use ::rpc::Peer;
     use collections::BTreeMap;
-    use futures::channel::mpsc::UnboundedReceiver;
     use gpui::{executor, ModelHandle, TestAppContext};
     use parking_lot::Mutex;
     use postage::{mpsc, watch};
@@ -1127,7 +1126,7 @@ mod tests {
             tree_sitter_rust, AnchorRangeExt, Diagnostic, DiagnosticEntry, Language,
             LanguageConfig, LanguageRegistry, LanguageServerConfig, Point,
         },
-        lsp::{self, FakeLanguageServer},
+        lsp,
         project::{DiagnosticSummary, Project, ProjectPath},
         workspace::{Workspace, WorkspaceParams},
     };
@@ -2218,14 +2217,14 @@ mod tests {
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Set up a fake language server.
-        let (language_server_config, mut fake_language_servers) =
-            LanguageServerConfig::fake_with_capabilities(lsp::ServerCapabilities {
-                completion_provider: Some(lsp::CompletionOptions {
-                    trigger_characters: Some(vec![".".to_string()]),
-                    ..Default::default()
-                }),
+        let (mut language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
+        language_server_config.set_fake_capabilities(lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
                 ..Default::default()
-            });
+            }),
+            ..Default::default()
+        });
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -3612,7 +3611,19 @@ mod tests {
         let guest_lang_registry = Arc::new(LanguageRegistry::new());
 
         // Set up a fake language server.
-        let (language_server_config, fake_language_servers) = LanguageServerConfig::fake();
+        let (mut language_server_config, _fake_language_servers) = LanguageServerConfig::fake();
+        language_server_config.set_fake_initializer(|fake_server| {
+            fake_server.handle_request::<lsp::request::Completion, _>(|_| {
+                Some(lsp::CompletionResponse::Array(vec![lsp::CompletionItem {
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                        new_text: "the-new-text".to_string(),
+                    })),
+                    ..Default::default()
+                }]))
+            });
+        });
+
         Arc::get_mut(&mut host_lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -3677,7 +3688,6 @@ mod tests {
 
         clients.push(cx.foreground().spawn(host.simulate_host(
             host_project.clone(),
-            fake_language_servers,
             operations.clone(),
             max_operations,
             rng.clone(),
@@ -4002,7 +4012,6 @@ mod tests {
         async fn simulate_host(
             mut self,
             project: ModelHandle<Project>,
-            fake_language_servers: UnboundedReceiver<FakeLanguageServer>,
             operations: Rc<Cell<usize>>,
             max_operations: usize,
             rng: Rc<RefCell<StdRng>>,
@@ -4158,27 +4167,43 @@ mod tests {
                         .clone()
                 };
 
-                if rng.borrow_mut().gen_bool(0.1) {
-                    cx.update(|cx| {
-                        log::info!(
-                            "Guest {}: dropping buffer {:?}",
-                            guest_id,
-                            buffer.read(cx).file().unwrap().full_path(cx)
-                        );
-                        self.buffers.remove(&buffer);
-                        drop(buffer);
-                    });
-                } else {
-                    buffer.update(&mut cx, |buffer, cx| {
-                        log::info!(
-                            "Guest {}: updating buffer {:?}",
-                            guest_id,
-                            buffer.file().unwrap().full_path(cx)
-                        );
-                        buffer.randomly_edit(&mut *rng.borrow_mut(), 5, cx)
-                    });
+                let choice = rng.borrow_mut().gen_range(0..100);
+                match choice {
+                    0..=9 => {
+                        cx.update(|cx| {
+                            log::info!(
+                                "Guest {}: dropping buffer {:?}",
+                                guest_id,
+                                buffer.read(cx).file().unwrap().full_path(cx)
+                            );
+                            self.buffers.remove(&buffer);
+                            drop(buffer);
+                        });
+                    }
+                    10..=19 => {
+                        project
+                            .update(&mut cx, |project, cx| {
+                                log::info!(
+                                    "Guest {}: requesting completions for buffer {:?}",
+                                    guest_id,
+                                    buffer.read(cx).file().unwrap().full_path(cx)
+                                );
+                                project.completions(&buffer, 0, cx)
+                            })
+                            .await
+                            .expect("completion request failed");
+                    }
+                    _ => {
+                        buffer.update(&mut cx, |buffer, cx| {
+                            log::info!(
+                                "Guest {}: updating buffer {:?}",
+                                guest_id,
+                                buffer.file().unwrap().full_path(cx)
+                            );
+                            buffer.randomly_edit(&mut *rng.borrow_mut(), 5, cx)
+                        });
+                    }
                 }
-
                 cx.background().simulate_random_delay().await;
             }
 

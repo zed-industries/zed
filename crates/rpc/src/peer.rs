@@ -265,7 +265,7 @@ impl Peer {
                 .await
                 .ok_or_else(|| anyhow!("connection was closed"))?;
             if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
-                Err(anyhow!("request failed").context(error.message.clone()))
+                Err(anyhow!("RPC request failed - {}", error.message))
             } else {
                 T::Response::from_envelope(response)
                     .ok_or_else(|| anyhow!("received response of the wrong type"))

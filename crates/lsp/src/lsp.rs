@@ -420,7 +420,9 @@ impl LanguageServer {
                 anyhow!("tried to send a request to a language server that has been shut down")
             })
             .and_then(|outbound_tx| {
-                outbound_tx.try_send(message)?;
+                outbound_tx
+                    .try_send(message)
+                    .context("failed to write to language server's stdin")?;
                 Ok(())
             });
         async move {
