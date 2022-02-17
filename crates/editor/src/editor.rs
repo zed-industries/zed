@@ -24,8 +24,9 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap::Binding,
     platform::CursorStyle,
-    text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
-    MutableAppContext, RenderContext, Task, View, ViewContext, WeakModelHandle, WeakViewHandle,
+    text_layout, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
+    ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
+    WeakModelHandle, WeakViewHandle,
 };
 use items::{BufferItemHandle, MultiBufferItemHandle};
 use itertools::Itertools as _;
@@ -40,7 +41,7 @@ pub use multi_buffer::{
 };
 use ordered_float::OrderedFloat;
 use postage::watch;
-use project::Project;
+use project::{Project, ProjectTransaction};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
@@ -117,6 +118,8 @@ action!(SelectSmallerSyntaxNode);
 action!(MoveToEnclosingBracket);
 action!(ShowNextDiagnostic);
 action!(GoToDefinition);
+action!(Rename);
+action!(ConfirmRename);
 action!(PageUp);
 action!(PageDown);
 action!(Fold);
@@ -153,6 +156,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
             ConfirmCodeAction(None),
             Some("Editor && showing_code_actions"),
         ),
+        Binding::new("enter", ConfirmRename, Some("Editor && renaming")),
         Binding::new("tab", Tab, Some("Editor")),
         Binding::new(
             "tab",
@@ -243,6 +247,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
         Binding::new("alt-down", SelectSmallerSyntaxNode, Some("Editor")),
         Binding::new("ctrl-shift-W", SelectSmallerSyntaxNode, Some("Editor")),
         Binding::new("f8", ShowNextDiagnostic, Some("Editor")),
+        Binding::new("f2", Rename, Some("Editor")),
         Binding::new("f12", GoToDefinition, Some("Editor")),
         Binding::new("ctrl-m", MoveToEnclosingBracket, Some("Editor")),
         Binding::new("pageup", PageUp, Some("Editor")),
@@ -319,6 +324,8 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_action(Editor::toggle_code_actions);
     cx.add_async_action(Editor::confirm_completion);
     cx.add_async_action(Editor::confirm_code_action);
+    cx.add_async_action(Editor::rename);
+    cx.add_async_action(Editor::confirm_rename);
 }
 
 trait SelectionExt {
@@ -2166,79 +2173,88 @@ impl Editor {
         let action = actions_menu.actions.get(action_ix)?.clone();
         let title = action.lsp_action.title.clone();
         let buffer = actions_menu.buffer;
-        let replica_id = editor.read(cx).replica_id(cx);
 
         let apply_code_actions = workspace.project().clone().update(cx, |project, cx| {
             project.apply_code_action(buffer, action, true, cx)
         });
-        Some(cx.spawn(|workspace, mut cx| async move {
+        Some(cx.spawn(|workspace, cx| async move {
             let project_transaction = apply_code_actions.await?;
+            Self::open_project_transaction(editor, workspace, project_transaction, title, cx).await
+        }))
+    }
 
-            // If the code action's edits are all contained within this editor, then
-            // avoid opening a new editor to display them.
-            let mut entries = project_transaction.0.iter();
-            if let Some((buffer, transaction)) = entries.next() {
-                if entries.next().is_none() {
-                    let excerpt = editor.read_with(&cx, |editor, cx| {
-                        editor
-                            .buffer()
-                            .read(cx)
-                            .excerpt_containing(editor.newest_anchor_selection().head(), cx)
-                    });
-                    if let Some((excerpted_buffer, excerpt_range)) = excerpt {
-                        if excerpted_buffer == *buffer {
-                            let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                            let excerpt_range = excerpt_range.to_offset(&snapshot);
-                            if snapshot
-                                .edited_ranges_for_transaction(transaction)
-                                .all(|range| {
-                                    excerpt_range.start <= range.start
-                                        && excerpt_range.end >= range.end
-                                })
-                            {
-                                return Ok(());
-                            }
+    async fn open_project_transaction(
+        this: ViewHandle<Editor>,
+        workspace: ViewHandle<Workspace>,
+        transaction: ProjectTransaction,
+        title: String,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let replica_id = this.read_with(&cx, |this, cx| this.replica_id(cx));
+
+        // If the code action's edits are all contained within this editor, then
+        // avoid opening a new editor to display them.
+        let mut entries = transaction.0.iter();
+        if let Some((buffer, transaction)) = entries.next() {
+            if entries.next().is_none() {
+                let excerpt = this.read_with(&cx, |editor, cx| {
+                    editor
+                        .buffer()
+                        .read(cx)
+                        .excerpt_containing(editor.newest_anchor_selection().head(), cx)
+                });
+                if let Some((excerpted_buffer, excerpt_range)) = excerpt {
+                    if excerpted_buffer == *buffer {
+                        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+                        let excerpt_range = excerpt_range.to_offset(&snapshot);
+                        if snapshot
+                            .edited_ranges_for_transaction(transaction)
+                            .all(|range| {
+                                excerpt_range.start <= range.start && excerpt_range.end >= range.end
+                            })
+                        {
+                            return Ok(());
                         }
                     }
                 }
             }
+        }
 
-            let mut ranges_to_highlight = Vec::new();
-            let excerpt_buffer = cx.add_model(|cx| {
-                let mut multibuffer = MultiBuffer::new(replica_id).with_title(title);
-                for (buffer, transaction) in &project_transaction.0 {
-                    let snapshot = buffer.read(cx).snapshot();
-                    ranges_to_highlight.extend(
-                        multibuffer.push_excerpts_with_context_lines(
-                            buffer.clone(),
-                            snapshot
-                                .edited_ranges_for_transaction::<usize>(transaction)
-                                .collect(),
-                            1,
-                            cx,
-                        ),
+        let mut ranges_to_highlight = Vec::new();
+        let excerpt_buffer = cx.add_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(replica_id).with_title(title);
+            for (buffer, transaction) in &transaction.0 {
+                let snapshot = buffer.read(cx).snapshot();
+                ranges_to_highlight.extend(
+                    multibuffer.push_excerpts_with_context_lines(
+                        buffer.clone(),
+                        snapshot
+                            .edited_ranges_for_transaction::<usize>(transaction)
+                            .collect(),
+                        1,
+                        cx,
+                    ),
+                );
+            }
+            multibuffer.push_transaction(&transaction.0);
+            multibuffer
+        });
+
+        workspace.update(&mut cx, |workspace, cx| {
+            let editor = workspace.open_item(MultiBufferItemHandle(excerpt_buffer), cx);
+            if let Some(editor) = editor.act_as::<Self>(cx) {
+                editor.update(cx, |editor, cx| {
+                    let settings = (editor.build_settings)(cx);
+                    editor.highlight_ranges::<Self>(
+                        ranges_to_highlight,
+                        settings.style.highlighted_line_background,
+                        cx,
                     );
-                }
-                multibuffer.push_transaction(&project_transaction.0);
-                multibuffer
-            });
+                });
+            }
+        });
 
-            workspace.update(&mut cx, |workspace, cx| {
-                let editor = workspace.open_item(MultiBufferItemHandle(excerpt_buffer), cx);
-                if let Some(editor) = editor.act_as::<Self>(cx) {
-                    editor.update(cx, |editor, cx| {
-                        let settings = (editor.build_settings)(cx);
-                        editor.highlight_ranges::<Self>(
-                            ranges_to_highlight,
-                            settings.style.highlighted_line_background,
-                            cx,
-                        );
-                    });
-                }
-            });
-
-            Ok(())
-        }))
+        Ok(())
     }
 
     fn refresh_code_actions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
@@ -4072,6 +4088,105 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
+    fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+        use language::ToOffset as _;
+
+        let project = self.project.clone()?;
+        let position = self.newest_anchor_selection().head();
+        let (buffer, buffer_position) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(position.clone(), cx)?;
+        let snapshot = buffer.read(cx).snapshot();
+        let prepare_rename = project.update(cx, |project, cx| {
+            project.prepare_rename(buffer.clone(), buffer_position.to_offset(&snapshot), cx)
+        });
+
+        Some(cx.spawn(|this, mut cx| async move {
+            if let Some(range) = prepare_rename.await? {
+                let buffer_offset_range = range.to_offset(&snapshot);
+                let buffer_offset = buffer_position.to_offset(&snapshot);
+                let lookbehind = buffer_offset.saturating_sub(buffer_offset_range.start);
+                let lookahead = buffer_offset_range.end.saturating_sub(buffer_offset);
+
+                this.update(&mut cx, |this, cx| {
+                    let buffer = this.buffer.read(cx).read(cx);
+                    let offset = position.to_offset(&buffer);
+                    let start = offset - lookbehind;
+                    let end = offset + lookahead;
+                    let highlight_range = buffer.anchor_before(start)..buffer.anchor_after(end);
+                    drop(buffer);
+
+                    this.select_ranges([start..end], None, cx);
+                    this.highlight_ranges::<Rename>(vec![highlight_range], Color::red(), cx);
+                });
+            }
+
+            Ok(())
+        }))
+    }
+
+    fn confirm_rename(
+        workspace: &mut Workspace,
+        _: &ConfirmRename,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Task<Result<()>>> {
+        let editor = workspace.active_item(cx)?.act_as::<Editor>(cx)?;
+
+        let (buffer, position, new_name) = editor.update(cx, |editor, cx| {
+            let range = editor.take_rename_range(cx)?;
+            let multibuffer = editor.buffer.read(cx);
+            let (buffer, position) =
+                multibuffer.text_anchor_for_position(range.start.clone(), cx)?;
+            let snapshot = multibuffer.read(cx);
+            let new_name = snapshot.text_for_range(range.clone()).collect::<String>();
+            Some((buffer, position, new_name))
+        })?;
+
+        let rename = workspace.project().clone().update(cx, |project, cx| {
+            project.perform_rename(buffer, position, new_name.clone(), cx)
+        });
+
+        Some(cx.spawn(|workspace, cx| async move {
+            let project_transaction = rename.await?;
+            Self::open_project_transaction(
+                editor,
+                workspace,
+                project_transaction,
+                format!("Rename: {}", new_name),
+                cx,
+            )
+            .await
+        }))
+    }
+
+    fn rename_range(&self) -> Option<&Range<Anchor>> {
+        self.highlighted_ranges_for_type::<Rename>()
+            .and_then(|(_, range)| range.last())
+    }
+
+    fn take_rename_range(&mut self, cx: &mut ViewContext<Self>) -> Option<Range<Anchor>> {
+        self.clear_highlighted_ranges::<Rename>(cx)
+            .and_then(|(_, mut ranges)| ranges.pop())
+    }
+
+    fn invalidate_rename_range(
+        &mut self,
+        buffer: &MultiBufferSnapshot,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(range) = &self.rename_range() {
+            if self.selections.len() == 1 {
+                let head = self.selections[0].head().to_offset(&buffer);
+                if range.start.to_offset(&buffer) <= head && range.end.to_offset(&buffer) >= head {
+                    return;
+                }
+            }
+            eprintln!("clearing highlight range");
+            self.clear_highlighted_ranges::<Rename>(cx);
+        }
+    }
+
     fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Editor>) {
         if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
             let buffer = self.buffer.read(cx).snapshot(cx);
@@ -4484,6 +4599,7 @@ impl Editor {
         self.select_larger_syntax_node_stack.clear();
         self.autoclose_stack.invalidate(&self.selections, &buffer);
         self.snippet_stack.invalidate(&self.selections, &buffer);
+        self.invalidate_rename_range(&buffer, cx);
 
         let new_cursor_position = self.newest_anchor_selection().head();
 
@@ -4759,9 +4875,12 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn clear_highlighted_ranges<T: 'static>(&mut self, cx: &mut ViewContext<Self>) {
-        self.highlighted_ranges.remove(&TypeId::of::<T>());
+    pub fn clear_highlighted_ranges<T: 'static>(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<(Color, Vec<Range<Anchor>>)> {
         cx.notify();
+        self.highlighted_ranges.remove(&TypeId::of::<T>())
     }
 
     #[cfg(feature = "test-support")]
@@ -5091,6 +5210,9 @@ impl View for Editor {
             EditorMode::Full => "full",
         };
         cx.map.insert("mode".into(), mode.into());
+        if self.rename_range().is_some() {
+            cx.set.insert("renaming".into());
+        }
         match self.context_menu.as_ref() {
             Some(ContextMenu::Completions(_)) => {
                 cx.set.insert("showing_completions".into());

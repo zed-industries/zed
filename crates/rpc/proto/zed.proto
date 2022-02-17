@@ -50,6 +50,10 @@ message Envelope {
         GetCodeActionsResponse get_code_actions_response = 42;
         ApplyCodeAction apply_code_action = 43;
         ApplyCodeActionResponse apply_code_action_response = 44;
+        PrepareRename prepare_rename = 58;
+        PrepareRenameResponse prepare_rename_response = 59;
+        PerformRename perform_rename = 60;
+        PerformRenameResponse perform_rename_response = 61;
 
         GetChannels get_channels = 45;
         GetChannelsResponse get_channels_response = 46;
@@ -272,6 +276,30 @@ message ApplyCodeAction {
 
 message ApplyCodeActionResponse {
     ProjectTransaction transaction = 1;
+}
+
+message PrepareRename {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+}
+
+message PrepareRenameResponse {
+    bool can_rename = 1;
+    Anchor start = 2;
+    Anchor end = 3;
+    repeated VectorClockEntry version = 4;
+}
+
+message PerformRename {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+    string new_name = 4;
+}
+
+message PerformRenameResponse {
+    ProjectTransaction transaction = 2;
 }
 
 message CodeAction {

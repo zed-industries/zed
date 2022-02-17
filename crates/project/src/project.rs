@@ -1,5 +1,6 @@
 pub mod fs;
 mod ignore;
+mod lsp_command;
 pub mod worktree;
 
 use anyhow::{anyhow, Context, Result};
@@ -15,11 +16,12 @@ use gpui::{
 use language::{
     point_from_lsp,
     proto::{deserialize_anchor, serialize_anchor},
-    range_from_lsp, AnchorRangeExt, Bias, Buffer, CodeAction, Completion, CompletionLabel,
+    range_from_lsp, Anchor, AnchorRangeExt, Bias, Buffer, CodeAction, Completion, CompletionLabel,
     Diagnostic, DiagnosticEntry, File as _, Language, LanguageRegistry, Operation, PointUtf16,
     ToLspPosition, ToOffset, ToPointUtf16, Transaction,
 };
 use lsp::{DiagnosticSeverity, LanguageServer};
+use lsp_command::*;
 use postage::{broadcast, prelude::Stream, sink::Sink, watch};
 use smol::block_on;
 use std::{
@@ -1625,7 +1627,6 @@ impl Project {
                 return Task::ready(Err(anyhow!("buffer does not have a language server")));
             };
             let range = action.range.to_point_utf16(buffer);
-            let fs = self.fs.clone();
 
             cx.spawn(|this, mut cx| async move {
                 if let Some(lsp_range) = action
@@ -1656,126 +1657,19 @@ impl Project {
                         .lsp_action;
                 }
 
-                let mut operations = Vec::new();
                 if let Some(edit) = action.lsp_action.edit {
-                    if let Some(document_changes) = edit.document_changes {
-                        match document_changes {
-                            lsp::DocumentChanges::Edits(edits) => operations
-                                .extend(edits.into_iter().map(lsp::DocumentChangeOperation::Edit)),
-                            lsp::DocumentChanges::Operations(ops) => operations = ops,
-                        }
-                    } else if let Some(changes) = edit.changes {
-                        operations.extend(changes.into_iter().map(|(uri, edits)| {
-                            lsp::DocumentChangeOperation::Edit(lsp::TextDocumentEdit {
-                                text_document: lsp::OptionalVersionedTextDocumentIdentifier {
-                                    uri,
-                                    version: None,
-                                },
-                                edits: edits.into_iter().map(lsp::OneOf::Left).collect(),
-                            })
-                        }));
-                    }
+                    Self::deserialize_workspace_edit(
+                        this,
+                        edit,
+                        push_to_history,
+                        lang_name,
+                        lang_server,
+                        &mut cx,
+                    )
+                    .await
+                } else {
+                    Ok(ProjectTransaction::default())
                 }
-
-                let mut project_transaction = ProjectTransaction::default();
-                for operation in operations {
-                    match operation {
-                        lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Create(op)) => {
-                            let abs_path = op
-                                .uri
-                                .to_file_path()
-                                .map_err(|_| anyhow!("can't convert URI to path"))?;
-
-                            if let Some(parent_path) = abs_path.parent() {
-                                fs.create_dir(parent_path).await?;
-                            }
-                            if abs_path.ends_with("/") {
-                                fs.create_dir(&abs_path).await?;
-                            } else {
-                                fs.create_file(
-                                    &abs_path,
-                                    op.options.map(Into::into).unwrap_or_default(),
-                                )
-                                .await?;
-                            }
-                        }
-                        lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(op)) => {
-                            let source_abs_path = op
-                                .old_uri
-                                .to_file_path()
-                                .map_err(|_| anyhow!("can't convert URI to path"))?;
-                            let target_abs_path = op
-                                .new_uri
-                                .to_file_path()
-                                .map_err(|_| anyhow!("can't convert URI to path"))?;
-                            fs.rename(
-                                &source_abs_path,
-                                &target_abs_path,
-                                op.options.map(Into::into).unwrap_or_default(),
-                            )
-                            .await?;
-                        }
-                        lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(op)) => {
-                            let abs_path = op
-                                .uri
-                                .to_file_path()
-                                .map_err(|_| anyhow!("can't convert URI to path"))?;
-                            let options = op.options.map(Into::into).unwrap_or_default();
-                            if abs_path.ends_with("/") {
-                                fs.remove_dir(&abs_path, options).await?;
-                            } else {
-                                fs.remove_file(&abs_path, options).await?;
-                            }
-                        }
-                        lsp::DocumentChangeOperation::Edit(op) => {
-                            let buffer_to_edit = this
-                                .update(&mut cx, |this, cx| {
-                                    this.open_local_buffer_from_lsp_path(
-                                        op.text_document.uri,
-                                        lang_name.clone(),
-                                        lang_server.clone(),
-                                        cx,
-                                    )
-                                })
-                                .await?;
-
-                            let edits = buffer_to_edit
-                                .update(&mut cx, |buffer, cx| {
-                                    let edits = op.edits.into_iter().map(|edit| match edit {
-                                        lsp::OneOf::Left(edit) => edit,
-                                        lsp::OneOf::Right(edit) => edit.text_edit,
-                                    });
-                                    buffer.edits_from_lsp(edits, op.text_document.version, cx)
-                                })
-                                .await?;
-
-                            let transaction = buffer_to_edit.update(&mut cx, |buffer, cx| {
-                                buffer.finalize_last_transaction();
-                                buffer.start_transaction();
-                                for (range, text) in edits {
-                                    buffer.edit([range], text, cx);
-                                }
-                                let transaction = if buffer.end_transaction(cx).is_some() {
-                                    let transaction =
-                                        buffer.finalize_last_transaction().unwrap().clone();
-                                    if !push_to_history {
-                                        buffer.forget_transaction(transaction.id);
-                                    }
-                                    Some(transaction)
-                                } else {
-                                    None
-                                };
-
-                                transaction
-                            });
-                            if let Some(transaction) = transaction {
-                                project_transaction.0.insert(buffer_to_edit, transaction);
-                            }
-                        }
-                    }
-                }
-
-                Ok(project_transaction)
             })
         } else if let Some(project_id) = self.remote_id() {
             let client = self.client.clone();
@@ -1798,6 +1692,194 @@ impl Project {
         } else {
             Task::ready(Err(anyhow!("project does not have a remote id")))
         }
+    }
+
+    async fn deserialize_workspace_edit(
+        this: ModelHandle<Self>,
+        edit: lsp::WorkspaceEdit,
+        push_to_history: bool,
+        language_name: String,
+        language_server: Arc<LanguageServer>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<ProjectTransaction> {
+        let fs = this.read_with(cx, |this, _| this.fs.clone());
+        let mut operations = Vec::new();
+        if let Some(document_changes) = edit.document_changes {
+            match document_changes {
+                lsp::DocumentChanges::Edits(edits) => {
+                    operations.extend(edits.into_iter().map(lsp::DocumentChangeOperation::Edit))
+                }
+                lsp::DocumentChanges::Operations(ops) => operations = ops,
+            }
+        } else if let Some(changes) = edit.changes {
+            operations.extend(changes.into_iter().map(|(uri, edits)| {
+                lsp::DocumentChangeOperation::Edit(lsp::TextDocumentEdit {
+                    text_document: lsp::OptionalVersionedTextDocumentIdentifier {
+                        uri,
+                        version: None,
+                    },
+                    edits: edits.into_iter().map(lsp::OneOf::Left).collect(),
+                })
+            }));
+        }
+
+        let mut project_transaction = ProjectTransaction::default();
+        for operation in operations {
+            match operation {
+                lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Create(op)) => {
+                    let abs_path = op
+                        .uri
+                        .to_file_path()
+                        .map_err(|_| anyhow!("can't convert URI to path"))?;
+
+                    if let Some(parent_path) = abs_path.parent() {
+                        fs.create_dir(parent_path).await?;
+                    }
+                    if abs_path.ends_with("/") {
+                        fs.create_dir(&abs_path).await?;
+                    } else {
+                        fs.create_file(&abs_path, op.options.map(Into::into).unwrap_or_default())
+                            .await?;
+                    }
+                }
+                lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(op)) => {
+                    let source_abs_path = op
+                        .old_uri
+                        .to_file_path()
+                        .map_err(|_| anyhow!("can't convert URI to path"))?;
+                    let target_abs_path = op
+                        .new_uri
+                        .to_file_path()
+                        .map_err(|_| anyhow!("can't convert URI to path"))?;
+                    fs.rename(
+                        &source_abs_path,
+                        &target_abs_path,
+                        op.options.map(Into::into).unwrap_or_default(),
+                    )
+                    .await?;
+                }
+                lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Delete(op)) => {
+                    let abs_path = op
+                        .uri
+                        .to_file_path()
+                        .map_err(|_| anyhow!("can't convert URI to path"))?;
+                    let options = op.options.map(Into::into).unwrap_or_default();
+                    if abs_path.ends_with("/") {
+                        fs.remove_dir(&abs_path, options).await?;
+                    } else {
+                        fs.remove_file(&abs_path, options).await?;
+                    }
+                }
+                lsp::DocumentChangeOperation::Edit(op) => {
+                    let buffer_to_edit = this
+                        .update(cx, |this, cx| {
+                            this.open_local_buffer_from_lsp_path(
+                                op.text_document.uri,
+                                language_name.clone(),
+                                language_server.clone(),
+                                cx,
+                            )
+                        })
+                        .await?;
+
+                    let edits = buffer_to_edit
+                        .update(cx, |buffer, cx| {
+                            let edits = op.edits.into_iter().map(|edit| match edit {
+                                lsp::OneOf::Left(edit) => edit,
+                                lsp::OneOf::Right(edit) => edit.text_edit,
+                            });
+                            buffer.edits_from_lsp(edits, op.text_document.version, cx)
+                        })
+                        .await?;
+
+                    let transaction = buffer_to_edit.update(cx, |buffer, cx| {
+                        buffer.finalize_last_transaction();
+                        buffer.start_transaction();
+                        for (range, text) in edits {
+                            buffer.edit([range], text, cx);
+                        }
+                        let transaction = if buffer.end_transaction(cx).is_some() {
+                            let transaction = buffer.finalize_last_transaction().unwrap().clone();
+                            if !push_to_history {
+                                buffer.forget_transaction(transaction.id);
+                            }
+                            Some(transaction)
+                        } else {
+                            None
+                        };
+
+                        transaction
+                    });
+                    if let Some(transaction) = transaction {
+                        project_transaction.0.insert(buffer_to_edit, transaction);
+                    }
+                }
+            }
+        }
+
+        Ok(project_transaction)
+    }
+
+    pub fn prepare_rename<T: ToPointUtf16>(
+        &self,
+        buffer: ModelHandle<Buffer>,
+        position: T,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Option<Range<Anchor>>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.request_lsp(buffer.clone(), PrepareRename { buffer, position }, cx)
+    }
+
+    pub fn perform_rename<T: ToPointUtf16>(
+        &self,
+        buffer: ModelHandle<Buffer>,
+        position: T,
+        new_name: String,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<ProjectTransaction>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        self.request_lsp(
+            buffer.clone(),
+            PerformRename {
+                buffer,
+                position,
+                new_name,
+            },
+            cx,
+        )
+    }
+
+    fn request_lsp<R: LspCommand>(
+        &self,
+        buffer_handle: ModelHandle<Buffer>,
+        request: R,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<R::Response>>
+    where
+        <R::LspRequest as lsp::request::Request>::Result: Send,
+    {
+        let buffer = buffer_handle.read(cx);
+        if self.is_local() {
+            let file = File::from_dyn(buffer.file()).and_then(File::as_local);
+            if let Some((file, language_server)) = file.zip(buffer.language_server().cloned()) {
+                let lsp_params = request.to_lsp(&file.abs_path(cx), cx);
+                return cx.spawn(|this, cx| async move {
+                    let response = language_server
+                        .request::<R::LspRequest>(lsp_params)
+                        .await
+                        .context("lsp request failed")?;
+                    request.response_from_lsp(response, this, cx).await
+                });
+            }
+        } else if let Some(project_id) = self.remote_id() {
+            let rpc = self.client.clone();
+            let message = request.to_proto(project_id, cx);
+            return cx.spawn(|this, cx| async move {
+                let response = rpc.request(message).await?;
+                request.response_from_proto(response, this, cx).await
+            });
+        }
+        Task::ready(Ok(Default::default()))
     }
 
     pub fn find_or_create_local_worktree(
@@ -4098,5 +4180,72 @@ mod tests {
                 }
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_rename(mut cx: gpui::TestAppContext) {
+        let (language_server_config, mut fake_servers) = LanguageServerConfig::fake();
+        let language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "Rust".to_string(),
+                path_suffixes: vec!["rs".to_string()],
+                language_server: Some(language_server_config),
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::language()),
+        ));
+
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), &mut cx);
+        project.update(&mut cx, |project, _| {
+            Arc::get_mut(&mut project.languages).unwrap().add(language);
+        });
+
+        let (tree, _) = project
+            .update(&mut cx, |project, cx| {
+                project.find_or_create_local_worktree("/dir", false, cx)
+            })
+            .await
+            .unwrap();
+        let worktree_id = tree.read_with(&cx, |tree, _| tree.id());
+        cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+            .await;
+
+        let buffer = project
+            .update(&mut cx, |project, cx| {
+                project.open_buffer((worktree_id, Path::new("one.rs")), cx)
+            })
+            .await
+            .unwrap();
+
+        let mut fake_server = fake_servers.next().await.unwrap();
+
+        let response = project.update(&mut cx, |project, cx| {
+            project.prepare_rename(buffer.clone(), 7, cx)
+        });
+        fake_server
+            .handle_request::<lsp::request::PrepareRenameRequest, _>(|params| {
+                assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
+                assert_eq!(params.position, lsp::Position::new(0, 7));
+                Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                    lsp::Position::new(0, 6),
+                    lsp::Position::new(0, 9),
+                )))
+            })
+            .next()
+            .await
+            .unwrap();
+        let range = response.await.unwrap().unwrap();
+        let range = buffer.read_with(&cx, |buffer, _| range.to_offset(buffer));
+        assert_eq!(range, 6..9);
     }
 }
