@@ -1,8 +1,6 @@
 use super::Workspace;
 use crate::Settings;
-use gpui::{
-    action, elements::*, platform::CursorStyle, AnyViewHandle, MutableAppContext, RenderContext,
-};
+use gpui::{action, elements::*, platform::CursorStyle, AnyViewHandle, RenderContext};
 use std::{cell::RefCell, rc::Rc};
 
 pub struct Sidebar {
@@ -126,7 +124,7 @@ impl Sidebar {
     pub fn render_active_item(
         &self,
         settings: &Settings,
-        cx: &mut MutableAppContext,
+        cx: &mut RenderContext<Workspace>,
     ) -> Option<ElementBox> {
         if let Some(active_item) = self.active_item() {
             let mut container = Flex::row();
@@ -159,11 +157,11 @@ impl Sidebar {
     fn render_resize_handle(
         &self,
         settings: &Settings,
-        mut cx: &mut MutableAppContext,
+        cx: &mut RenderContext<Workspace>,
     ) -> ElementBox {
         let width = self.width.clone();
         let side = self.side;
-        MouseEventHandler::new::<Self, _, _, _>(self.side.id(), &mut cx, |_, _| {
+        MouseEventHandler::new::<Self, _, _, _>((cx.view_id(), self.side.id()), cx, |_, _| {
             Container::new(Empty::new().boxed())
                 .with_style(self.theme(settings).resize_handle)
                 .boxed()

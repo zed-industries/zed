@@ -1252,7 +1252,7 @@ impl Workspace {
                 theme.workspace.titlebar.share_icon_color
             };
             Some(
-                MouseEventHandler::new::<Share, _, _, _>(0, cx, |_, _| {
+                MouseEventHandler::new::<Share, _, _, _>(cx.view_id(), cx, |_, _| {
                     Align::new(
                         ConstrainedBox::new(
                             Svg::new("icons/broadcast-24.svg").with_color(color).boxed(),

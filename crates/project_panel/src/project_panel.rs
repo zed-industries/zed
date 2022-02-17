@@ -476,58 +476,54 @@ impl ProjectPanel {
         cx: &mut ViewContext<Self>,
     ) -> ElementBox {
         let is_dir = details.is_dir;
-        MouseEventHandler::new::<Self, _, _, _>(
-            (entry.worktree_id.to_usize(), entry.entry_id),
-            cx,
-            |state, _| {
-                let style = match (details.is_selected, state.hovered) {
-                    (false, false) => &theme.entry,
-                    (false, true) => &theme.hovered_entry,
-                    (true, false) => &theme.selected_entry,
-                    (true, true) => &theme.hovered_selected_entry,
-                };
-                Flex::row()
-                    .with_child(
-                        ConstrainedBox::new(
-                            Align::new(
-                                ConstrainedBox::new(if is_dir {
-                                    if details.is_expanded {
-                                        Svg::new("icons/disclosure-open.svg")
-                                            .with_color(style.icon_color)
-                                            .boxed()
-                                    } else {
-                                        Svg::new("icons/disclosure-closed.svg")
-                                            .with_color(style.icon_color)
-                                            .boxed()
-                                    }
+        MouseEventHandler::new::<Self, _, _, _>((cx.view_id(), entry.entry_id), cx, |state, _| {
+            let style = match (details.is_selected, state.hovered) {
+                (false, false) => &theme.entry,
+                (false, true) => &theme.hovered_entry,
+                (true, false) => &theme.selected_entry,
+                (true, true) => &theme.hovered_selected_entry,
+            };
+            Flex::row()
+                .with_child(
+                    ConstrainedBox::new(
+                        Align::new(
+                            ConstrainedBox::new(if is_dir {
+                                if details.is_expanded {
+                                    Svg::new("icons/disclosure-open.svg")
+                                        .with_color(style.icon_color)
+                                        .boxed()
                                 } else {
-                                    Empty::new().boxed()
-                                })
-                                .with_max_width(style.icon_size)
-                                .with_max_height(style.icon_size)
-                                .boxed(),
-                            )
+                                    Svg::new("icons/disclosure-closed.svg")
+                                        .with_color(style.icon_color)
+                                        .boxed()
+                                }
+                            } else {
+                                Empty::new().boxed()
+                            })
+                            .with_max_width(style.icon_size)
+                            .with_max_height(style.icon_size)
                             .boxed(),
                         )
-                        .with_width(style.icon_size)
                         .boxed(),
                     )
-                    .with_child(
-                        Label::new(details.filename, style.text.clone())
-                            .contained()
-                            .with_margin_left(style.icon_spacing)
-                            .aligned()
-                            .left()
-                            .boxed(),
-                    )
-                    .constrained()
-                    .with_height(theme.entry.height)
-                    .contained()
-                    .with_style(style.container)
-                    .with_padding_left(theme.container.padding.left + details.depth as f32 * 20.)
-                    .boxed()
-            },
-        )
+                    .with_width(style.icon_size)
+                    .boxed(),
+                )
+                .with_child(
+                    Label::new(details.filename, style.text.clone())
+                        .contained()
+                        .with_margin_left(style.icon_spacing)
+                        .aligned()
+                        .left()
+                        .boxed(),
+                )
+                .constrained()
+                .with_height(theme.entry.height)
+                .contained()
+                .with_style(style.container)
+                .with_padding_left(theme.container.padding.left + details.depth as f32 * 20.)
+                .boxed()
+        })
         .on_click(move |cx| {
             if is_dir {
                 cx.dispatch_action(ToggleExpanded(entry))
