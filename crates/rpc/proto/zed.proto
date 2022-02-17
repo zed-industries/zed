@@ -261,6 +261,7 @@ message GetCodeActions {
 
 message GetCodeActionsResponse {
     repeated CodeAction actions = 1;
+    repeated VectorClockEntry version = 2;
 }
 
 message ApplyCodeAction {

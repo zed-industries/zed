@@ -1578,8 +1578,7 @@ impl Project {
             })
         } else if let Some(project_id) = self.remote_id() {
             let rpc = self.client.clone();
-            cx.foreground().spawn(async move {
-                let _buffer = buffer_handle.clone();
+            cx.spawn_weak(|_, mut cx| async move {
                 let response = rpc
                     .request(proto::GetCodeActions {
                         project_id,
@@ -1588,6 +1587,13 @@ impl Project {
                         end: Some(language::proto::serialize_anchor(&range.end)),
                     })
                     .await?;
+
+                buffer_handle
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_version(response.version.into())
+                    })
+                    .await;
+
                 response
                     .actions
                     .into_iter()
@@ -2448,6 +2454,7 @@ impl Project {
                 .iter()
                 .map(language::proto::serialize_code_action)
                 .collect(),
+            version: (&version).into(),
         })
     }
 

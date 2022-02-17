@@ -521,7 +521,7 @@ impl LanguageServer {
 #[cfg(any(test, feature = "test-support"))]
 impl FakeLanguageServer {
     fn new(
-        executor: Arc<gpui::executor::Background>,
+        background: Arc<gpui::executor::Background>,
         stdin: async_pipe::PipeReader,
         stdout: async_pipe::PipeWriter,
     ) -> Self {
@@ -537,11 +537,13 @@ impl FakeLanguageServer {
 
         // Receive incoming messages
         let handlers = this.handlers.clone();
-        executor
+        let executor = background.clone();
+        background
             .spawn(async move {
                 let mut buffer = Vec::new();
                 let mut stdin = smol::io::BufReader::new(stdin);
                 while Self::receive(&mut stdin, &mut buffer).await.is_ok() {
+                    executor.simulate_random_delay().await;
                     if let Ok(request) = serde_json::from_slice::<AnyRequest>(&buffer) {
                         assert_eq!(request.jsonrpc, JSON_RPC_VERSION);
 
@@ -571,7 +573,7 @@ impl FakeLanguageServer {
             .detach();
 
         // Send outgoing messages
-        executor
+        background
             .spawn(async move {
                 let mut stdout = smol::io::BufWriter::new(stdout);
                 while let Some(notification) = outgoing_rx.next().await {
