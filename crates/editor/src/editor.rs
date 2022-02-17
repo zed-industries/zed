@@ -7791,7 +7791,9 @@ mod tests {
             ],
         )
         .await;
-        editor.next_notification(&cx).await;
+        editor
+            .condition(&cx, |editor, _| editor.context_menu_visible())
+            .await;
 
         let apply_additional_edits = editor.update(&mut cx, |editor, cx| {
             editor.move_down(&MoveDown, cx);
@@ -7855,7 +7857,7 @@ mod tests {
         )
         .await;
         editor
-            .condition(&cx, |editor, _| editor.context_menu.is_some())
+            .condition(&cx, |editor, _| editor.context_menu_visible())
             .await;
 
         editor.update(&mut cx, |editor, cx| {
@@ -7873,7 +7875,9 @@ mod tests {
             ],
         )
         .await;
-        editor.next_notification(&cx).await;
+        editor
+            .condition(&cx, |editor, _| editor.context_menu_visible())
+            .await;
 
         let apply_additional_edits = editor.update(&mut cx, |editor, cx| {
             let apply_additional_edits = editor
