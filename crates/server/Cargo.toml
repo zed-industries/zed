@@ -15,7 +15,6 @@ required-features = ["seed-support"]
 [dependencies]
 collections = { path = "../collections" }
 rpc = { path = "../rpc" }
-
 anyhow = "1.0.40"
 async-std = { version = "1.8.0", features = ["attributes"] }
 async-trait = "0.1.50"
@@ -57,12 +56,12 @@ features = ["runtime-async-std-rustls", "postgres", "time", "uuid"]
 
 [dev-dependencies]
 collections = { path = "../collections", features = ["test-support"] }
-gpui = { path = "../gpui" }
+gpui = { path = "../gpui", features = ["test-support"] }
+rpc = { path = "../rpc", features = ["test-support"] }
 zed = { path = "../zed", features = ["test-support"] }
 ctor = "0.1"
 env_logger = "0.8"
 util = { path = "../util" }
-
 lazy_static = "1.4"
 serde_json = { version = "1.0.64", features = ["preserve_order"] }
 

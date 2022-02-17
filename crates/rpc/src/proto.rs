@@ -271,12 +271,19 @@ where
 {
     /// Write a given protobuf message to the stream.
     pub async fn write_message(&mut self, message: &Envelope) -> Result<(), WebSocketError> {
+        #[cfg(any(test, feature = "test-support"))]
+        const COMPRESSION_LEVEL: i32 = -7;
+
+        #[cfg(not(any(test, feature = "test-support")))]
+        const COMPRESSION_LEVEL: i32 = 4;
+
         self.encoding_buffer.resize(message.encoded_len(), 0);
         self.encoding_buffer.clear();
         message
             .encode(&mut self.encoding_buffer)
             .map_err(|err| io::Error::from(err))?;
-        let buffer = zstd::stream::encode_all(self.encoding_buffer.as_slice(), 4).unwrap();
+        let buffer =
+            zstd::stream::encode_all(self.encoding_buffer.as_slice(), COMPRESSION_LEVEL).unwrap();
         self.stream.send(WebSocketMessage::Binary(buffer)).await?;
         Ok(())
     }
