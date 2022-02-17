@@ -7,6 +7,7 @@ use std::{
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     pin::Pin,
+    sync::Arc,
     time::{Duration, SystemTime},
 };
 use text::Rope;
@@ -268,7 +269,7 @@ pub struct FakeFs {
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeFs {
-    pub fn new(executor: std::sync::Arc<gpui::executor::Background>) -> Self {
+    pub fn new(executor: std::sync::Arc<gpui::executor::Background>) -> Arc<Self> {
         let (events_tx, _) = postage::broadcast::channel(2048);
         let mut entries = std::collections::BTreeMap::new();
         entries.insert(
@@ -283,20 +284,20 @@ impl FakeFs {
                 content: None,
             },
         );
-        Self {
+        Arc::new(Self {
             executor,
             state: futures::lock::Mutex::new(FakeFsState {
                 entries,
                 next_inode: 1,
                 events_tx,
             }),
-        }
+        })
     }
 
-    pub async fn insert_dir(&self, path: impl AsRef<Path>) -> Result<()> {
+    pub async fn insert_dir(&self, path: impl AsRef<Path>) {
         let mut state = self.state.lock().await;
         let path = path.as_ref();
-        state.validate_path(path)?;
+        state.validate_path(path).unwrap();
 
         let inode = state.next_inode;
         state.next_inode += 1;
@@ -313,13 +314,12 @@ impl FakeFs {
             },
         );
         state.emit_event(&[path]).await;
-        Ok(())
     }
 
-    pub async fn insert_file(&self, path: impl AsRef<Path>, content: String) -> Result<()> {
+    pub async fn insert_file(&self, path: impl AsRef<Path>, content: String) {
         let mut state = self.state.lock().await;
         let path = path.as_ref();
-        state.validate_path(path)?;
+        state.validate_path(path).unwrap();
 
         let inode = state.next_inode;
         state.next_inode += 1;
@@ -336,7 +336,6 @@ impl FakeFs {
             },
         );
         state.emit_event(&[path]).await;
-        Ok(())
     }
 
     #[must_use]
@@ -353,7 +352,7 @@ impl FakeFs {
 
             match tree {
                 Object(map) => {
-                    self.insert_dir(path).await.unwrap();
+                    self.insert_dir(path).await;
                     for (name, contents) in map {
                         let mut path = PathBuf::from(path);
                         path.push(name);
@@ -361,10 +360,10 @@ impl FakeFs {
                     }
                 }
                 Null => {
-                    self.insert_dir(&path).await.unwrap();
+                    self.insert_dir(&path).await;
                 }
                 String(contents) => {
-                    self.insert_file(&path, contents).await.unwrap();
+                    self.insert_file(&path, contents).await;
                 }
                 _ => {
                     panic!("JSON object must contain only objects, strings, or null");

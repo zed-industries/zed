@@ -214,7 +214,7 @@ mod tests {
         });
 
         let save_task = workspace.update(&mut cx, |workspace, cx| workspace.save_active_item(cx));
-        app_state.fs.as_fake().insert_dir("/root").await.unwrap();
+        app_state.fs.as_fake().insert_dir("/root").await;
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name")));
         save_task.await.unwrap();
         editor.read_with(&cx, |editor, cx| {
@@ -348,10 +348,10 @@ mod tests {
     async fn test_open_paths(mut cx: TestAppContext) {
         let app_state = cx.update(test_app_state);
         let fs = app_state.fs.as_fake();
-        fs.insert_dir("/dir1").await.unwrap();
-        fs.insert_dir("/dir2").await.unwrap();
-        fs.insert_file("/dir1/a.txt", "".into()).await.unwrap();
-        fs.insert_file("/dir2/b.txt", "".into()).await.unwrap();
+        fs.insert_dir("/dir1").await;
+        fs.insert_dir("/dir2").await;
+        fs.insert_file("/dir1/a.txt", "".into()).await;
+        fs.insert_file("/dir2/b.txt", "".into()).await;
 
         let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (_, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
@@ -456,9 +456,7 @@ mod tests {
                 editor.handle_input(&editor::Input("x".into()), cx)
             })
         });
-        fs.insert_file("/root/a.txt", "changed".to_string())
-            .await
-            .unwrap();
+        fs.insert_file("/root/a.txt", "changed".to_string()).await;
         editor
             .condition(&cx, |editor, cx| editor.has_conflict(cx))
             .await;
@@ -476,7 +474,7 @@ mod tests {
     #[gpui::test]
     async fn test_open_and_save_new_file(mut cx: TestAppContext) {
         let app_state = cx.update(test_app_state);
-        app_state.fs.as_fake().insert_dir("/root").await.unwrap();
+        app_state.fs.as_fake().insert_dir("/root").await;
         let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
         params
@@ -576,7 +574,7 @@ mod tests {
     #[gpui::test]
     async fn test_setting_language_when_saving_as_single_file_worktree(mut cx: TestAppContext) {
         let app_state = cx.update(test_app_state);
-        app_state.fs.as_fake().insert_dir("/root").await.unwrap();
+        app_state.fs.as_fake().insert_dir("/root").await;
         let params = cx.update(|cx| WorkspaceParams::local(&app_state, cx));
         let (window_id, workspace) = cx.add_window(|cx| Workspace::new(&params, cx));
 

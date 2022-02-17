@@ -7760,8 +7760,8 @@ mod tests {
         "
         .unindent();
 
-        let fs = Arc::new(FakeFs::new(cx.background().clone()));
-        fs.insert_file("/file", text).await.unwrap();
+        let fs = FakeFs::new(cx.background().clone());
+        fs.insert_file("/file", text).await;
 
         let project = Project::test(fs, &mut cx);
 

@@ -2482,7 +2482,7 @@ mod tests {
             client,
             Arc::from(Path::new("/root")),
             false,
-            Arc::new(fs),
+            fs,
             &mut cx.to_async(),
         )
         .await

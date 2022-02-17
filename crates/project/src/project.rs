@@ -2980,13 +2980,11 @@ impl From<lsp::DeleteFileOptions> for fs::RemoveOptions {
 #[cfg(test)]
 mod tests {
     use super::{Event, *};
-    use client::test::FakeHttpClient;
     use fs::RealFs;
     use futures::StreamExt;
     use gpui::test::subscribe;
     use language::{
-        tree_sitter_rust, AnchorRangeExt, Diagnostic, LanguageConfig, LanguageRegistry,
-        LanguageServerConfig, Point,
+        tree_sitter_rust, AnchorRangeExt, Diagnostic, LanguageConfig, LanguageServerConfig, Point,
     };
     use lsp::Url;
     use serde_json::json;
@@ -3066,8 +3064,7 @@ mod tests {
             .clone()
             .unwrap();
 
-        let mut languages = LanguageRegistry::new();
-        languages.add(Arc::new(Language::new(
+        let language = Arc::new(Language::new(
             LanguageConfig {
                 name: "Rust".to_string(),
                 path_suffixes: vec!["rs".to_string()],
@@ -3075,30 +3072,26 @@ mod tests {
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        )));
+        ));
 
-        let dir = temp_tree(json!({
-            "a.rs": "fn a() { A }",
-            "b.rs": "const y: i32 = 1",
-        }));
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a.rs": "fn a() { A }",
+                "b.rs": "const y: i32 = 1",
+            }),
+        )
+        .await;
 
-        let http_client = FakeHttpClient::with_404_response();
-        let client = Client::new(http_client.clone());
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-
-        let project = cx.update(|cx| {
-            Project::local(
-                client,
-                user_store,
-                Arc::new(languages),
-                Arc::new(RealFs),
-                cx,
-            )
+        let project = Project::test(fs, &mut cx);
+        project.update(&mut cx, |project, _| {
+            Arc::get_mut(&mut project.languages).unwrap().add(language);
         });
 
         let (tree, _) = project
             .update(&mut cx, |project, cx| {
-                project.find_or_create_local_worktree(dir.path(), false, cx)
+                project.find_or_create_local_worktree("/dir", false, cx)
             })
             .await
             .unwrap();
@@ -3110,13 +3103,7 @@ mod tests {
         // Cause worktree to start the fake language server
         let _buffer = project
             .update(&mut cx, |project, cx| {
-                project.open_buffer(
-                    ProjectPath {
-                        worktree_id,
-                        path: Path::new("b.rs").into(),
-                    },
-                    cx,
-                )
+                project.open_buffer((worktree_id, Path::new("b.rs")), cx)
             })
             .await
             .unwrap();
@@ -3136,7 +3123,7 @@ mod tests {
 
         fake_server
             .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
-                uri: Url::from_file_path(dir.path().join("a.rs")).unwrap(),
+                uri: Url::from_file_path("/dir/a.rs").unwrap(),
                 version: None,
                 diagnostics: vec![lsp::Diagnostic {
                     range: lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
@@ -3148,10 +3135,7 @@ mod tests {
             .await;
         assert_eq!(
             events.next().await.unwrap(),
-            Event::DiagnosticsUpdated(ProjectPath {
-                worktree_id,
-                path: Arc::from(Path::new("a.rs"))
-            })
+            Event::DiagnosticsUpdated((worktree_id, Path::new("a.rs")).into())
         );
 
         fake_server.end_progress(&progress_token).await;
@@ -3226,9 +3210,7 @@ mod tests {
     #[gpui::test]
     async fn test_definition(mut cx: gpui::TestAppContext) {
         let (language_server_config, mut fake_servers) = LanguageServerConfig::fake();
-
-        let mut languages = LanguageRegistry::new();
-        languages.add(Arc::new(Language::new(
+        let language = Arc::new(Language::new(
             LanguageConfig {
                 name: "Rust".to_string(),
                 path_suffixes: vec!["rs".to_string()],
@@ -3236,30 +3218,26 @@ mod tests {
                 ..Default::default()
             },
             Some(tree_sitter_rust::language()),
-        )));
+        ));
 
-        let dir = temp_tree(json!({
-            "a.rs": "const fn a() { A }",
-            "b.rs": "const y: i32 = crate::a()",
-        }));
-        let dir_path = dir.path().to_path_buf();
+        let fs = FakeFs::new(cx.background());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a.rs": "const fn a() { A }",
+                "b.rs": "const y: i32 = crate::a()",
+            }),
+        )
+        .await;
 
-        let http_client = FakeHttpClient::with_404_response();
-        let client = Client::new(http_client.clone());
-        let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
-        let project = cx.update(|cx| {
-            Project::local(
-                client,
-                user_store,
-                Arc::new(languages),
-                Arc::new(RealFs),
-                cx,
-            )
+        let project = Project::test(fs, &mut cx);
+        project.update(&mut cx, |project, _| {
+            Arc::get_mut(&mut project.languages).unwrap().add(language);
         });
 
         let (tree, _) = project
             .update(&mut cx, |project, cx| {
-                project.find_or_create_local_worktree(dir.path().join("b.rs"), false, cx)
+                project.find_or_create_local_worktree("/dir/b.rs", false, cx)
             })
             .await
             .unwrap();
@@ -3285,12 +3263,12 @@ mod tests {
             let params = params.text_document_position_params;
             assert_eq!(
                 params.text_document.uri.to_file_path().unwrap(),
-                dir_path.join("b.rs")
+                Path::new("/dir/b.rs"),
             );
             assert_eq!(params.position, lsp::Position::new(0, 22));
 
             Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
-                lsp::Url::from_file_path(dir_path.join("a.rs")).unwrap(),
+                lsp::Url::from_file_path("/dir/a.rs").unwrap(),
                 lsp::Range::new(lsp::Position::new(0, 9), lsp::Position::new(0, 10)),
             )))
         });
@@ -3311,15 +3289,12 @@ mod tests {
                     .as_local()
                     .unwrap()
                     .abs_path(cx),
-                dir.path().join("a.rs")
+                Path::new("/dir/a.rs"),
             );
             assert_eq!(definition.target_range.to_offset(target_buffer), 9..10);
             assert_eq!(
                 list_worktrees(&project, cx),
-                [
-                    (dir.path().join("b.rs"), false),
-                    (dir.path().join("a.rs"), true)
-                ]
+                [("/dir/b.rs".as_ref(), false), ("/dir/a.rs".as_ref(), true)]
             );
 
             drop(definition);
@@ -3327,18 +3302,21 @@ mod tests {
         cx.read(|cx| {
             assert_eq!(
                 list_worktrees(&project, cx),
-                [(dir.path().join("b.rs"), false)]
+                [("/dir/b.rs".as_ref(), false)]
             );
         });
 
-        fn list_worktrees(project: &ModelHandle<Project>, cx: &AppContext) -> Vec<(PathBuf, bool)> {
+        fn list_worktrees<'a>(
+            project: &'a ModelHandle<Project>,
+            cx: &'a AppContext,
+        ) -> Vec<(&'a Path, bool)> {
             project
                 .read(cx)
                 .worktrees(cx)
                 .map(|worktree| {
                     let worktree = worktree.read(cx);
                     (
-                        worktree.as_local().unwrap().abs_path().to_path_buf(),
+                        worktree.as_local().unwrap().abs_path().as_ref(),
                         worktree.is_weak(),
                     )
                 })
@@ -3348,7 +3326,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_save_file(mut cx: gpui::TestAppContext) {
-        let fs = Arc::new(FakeFs::new(cx.background()));
+        let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/dir",
             json!({
@@ -3386,7 +3364,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_save_in_single_file_worktree(mut cx: gpui::TestAppContext) {
-        let fs = Arc::new(FakeFs::new(cx.background()));
+        let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/dir",
             json!({
@@ -3576,7 +3554,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_buffer_deduping(mut cx: gpui::TestAppContext) {
-        let fs = Arc::new(FakeFs::new(cx.background()));
+        let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/the-dir",
             json!({
@@ -3865,7 +3843,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_grouped_diagnostics(mut cx: gpui::TestAppContext) {
-        let fs = Arc::new(FakeFs::new(cx.background()));
+        let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/the-dir",
             json!({
