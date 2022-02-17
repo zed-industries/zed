@@ -85,7 +85,10 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                             ));
                         }
                         Some("StdRng") => {
-                            inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(seed)));
+                            inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(seed),));
+                        }
+                        Some("bool") => {
+                            inner_fn_args.extend(quote!(is_last_iteration,));
                         }
                         _ => {
                             return TokenStream::from(
@@ -115,7 +118,9 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     #num_iterations as u64,
                     #starting_seed as u64,
                     #max_retries,
-                    &mut |cx, foreground_platform, deterministic, seed| cx.foreground().run(#inner_fn_name(#inner_fn_args))
+                    &mut |cx, foreground_platform, deterministic, seed, is_last_iteration| {
+                        cx.foreground().run(#inner_fn_name(#inner_fn_args))
+                    }
                 );
             }
         }
@@ -125,8 +130,14 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
             if let FnArg::Typed(arg) = arg {
                 if let Type::Path(ty) = &*arg.ty {
                     let last_segment = ty.path.segments.last();
-                    if let Some("StdRng") = last_segment.map(|s| s.ident.to_string()).as_deref() {
-                        inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(seed),));
+                    match last_segment.map(|s| s.ident.to_string()).as_deref() {
+                        Some("StdRng") => {
+                            inner_fn_args.extend(quote!(rand::SeedableRng::seed_from_u64(seed),));
+                        }
+                        Some("bool") => {
+                            inner_fn_args.extend(quote!(is_last_iteration,));
+                        }
+                        _ => {}
                     }
                 } else {
                     inner_fn_args.extend(quote!(cx,));
@@ -147,7 +158,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
                     #num_iterations as u64,
                     #starting_seed as u64,
                     #max_retries,
-                    &mut |cx, _, _, seed| #inner_fn_name(#inner_fn_args)
+                    &mut |cx, _, _, seed, is_last_iteration| #inner_fn_name(#inner_fn_args)
                 );
             }
         }

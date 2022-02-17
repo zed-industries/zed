@@ -6,9 +6,9 @@ use crate::{
     json::{self, ToJson},
     platform::Event,
     text_layout::TextLayoutCache,
-    Action, AnyAction, AnyViewHandle, AssetCache, ElementBox, Entity, FontSystem, ModelHandle,
-    ReadModel, ReadView, Scene, UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle,
-    WeakModelHandle, WeakViewHandle,
+    Action, AnyAction, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox,
+    Entity, FontSystem, ModelHandle, ReadModel, ReadView, Scene, UpgradeModelHandle,
+    UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
@@ -62,6 +62,7 @@ impl Presenter {
     }
 
     pub fn invalidate(&mut self, mut invalidation: WindowInvalidation, cx: &mut MutableAppContext) {
+        cx.start_frame();
         for view_id in invalidation.removed {
             invalidation.updated.remove(&view_id);
             self.rendered_views.remove(&view_id);
@@ -81,6 +82,7 @@ impl Presenter {
         invalidation: Option<WindowInvalidation>,
         cx: &mut MutableAppContext,
     ) {
+        cx.start_frame();
         if let Some(invalidation) = invalidation {
             for view_id in invalidation.removed {
                 self.rendered_views.remove(&view_id);
@@ -277,6 +279,10 @@ impl<'a> UpgradeModelHandle for LayoutContext<'a> {
         handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>> {
         self.app.upgrade_model_handle(handle)
+    }
+
+    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
+        self.app.upgrade_any_model_handle(handle)
     }
 }
 

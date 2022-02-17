@@ -478,6 +478,14 @@ impl<T: Item> SumTree<T> {
     }
 }
 
+impl<T: Item + PartialEq> PartialEq for SumTree<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.iter().eq(other.iter())
+    }
+}
+
+impl<T: Item + Eq> Eq for SumTree<T> {}
+
 impl<T: KeyedItem> SumTree<T> {
     pub fn insert_or_replace(&mut self, item: T, cx: &<T::Summary as Summary>::Context) -> bool {
         let mut replaced = false;

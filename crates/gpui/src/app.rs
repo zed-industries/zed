@@ -84,6 +84,8 @@ pub trait UpgradeModelHandle {
         &self,
         handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>>;
+
+    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle>;
 }
 
 pub trait UpgradeViewHandle {
@@ -474,6 +476,10 @@ impl TestAppContext {
         self.cx.borrow().cx.font_cache.clone()
     }
 
+    pub fn foreground_platform(&self) -> Rc<platform::test::ForegroundPlatform> {
+        self.foreground_platform.clone()
+    }
+
     pub fn platform(&self) -> Arc<dyn platform::Platform> {
         self.cx.borrow().cx.platform.clone()
     }
@@ -484,6 +490,15 @@ impl TestAppContext {
 
     pub fn background(&self) -> Arc<executor::Background> {
         self.cx.borrow().background().clone()
+    }
+
+    pub fn spawn<F, Fut, T>(&self, f: F) -> Task<T>
+    where
+        F: FnOnce(AsyncAppContext) -> Fut,
+        Fut: 'static + Future<Output = T>,
+        T: 'static,
+    {
+        self.cx.borrow_mut().spawn(f)
     }
 
     pub fn simulate_new_path_selection(&self, result: impl FnOnce(PathBuf) -> Option<PathBuf>) {
@@ -566,7 +581,11 @@ impl UpgradeModelHandle for AsyncAppContext {
         &self,
         handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>> {
-        self.0.borrow_mut().upgrade_model_handle(handle)
+        self.0.borrow().upgrade_model_handle(handle)
+    }
+
+    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
+        self.0.borrow().upgrade_any_model_handle(handle)
     }
 }
 
@@ -685,6 +704,7 @@ pub struct MutableAppContext {
     next_entity_id: usize,
     next_window_id: usize,
     next_subscription_id: usize,
+    frame_count: usize,
     subscriptions: Arc<Mutex<HashMap<usize, BTreeMap<usize, SubscriptionCallback>>>>,
     observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ObservationCallback>>>>,
     release_observations: Arc<Mutex<HashMap<usize, BTreeMap<usize, ReleaseObservationCallback>>>>,
@@ -729,6 +749,7 @@ impl MutableAppContext {
             next_entity_id: 0,
             next_window_id: 0,
             next_subscription_id: 0,
+            frame_count: 0,
             subscriptions: Default::default(),
             observations: Default::default(),
             release_observations: Default::default(),
@@ -920,6 +941,7 @@ impl MutableAppContext {
         window_id: usize,
         titlebar_height: f32,
     ) -> HashMap<usize, ElementBox> {
+        self.start_frame();
         let view_ids = self
             .views
             .keys()
@@ -941,6 +963,10 @@ impl MutableAppContext {
                 )
             })
             .collect()
+    }
+
+    pub(crate) fn start_frame(&mut self) {
+        self.frame_count += 1;
     }
 
     pub fn update<T, F: FnOnce(&mut Self) -> T>(&mut self, callback: F) -> T {
@@ -1397,7 +1423,12 @@ impl MutableAppContext {
             .element_states
             .entry(key)
             .or_insert_with(|| Box::new(T::default()));
-        ElementStateHandle::new(TypeId::of::<Tag>(), id, &self.cx.ref_counts)
+        ElementStateHandle::new(
+            TypeId::of::<Tag>(),
+            id,
+            self.frame_count,
+            &self.cx.ref_counts,
+        )
     }
 
     fn remove_dropped_entities(&mut self) {
@@ -1748,6 +1779,10 @@ impl UpgradeModelHandle for MutableAppContext {
     ) -> Option<ModelHandle<T>> {
         self.cx.upgrade_model_handle(handle)
     }
+
+    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
+        self.cx.upgrade_any_model_handle(handle)
+    }
 }
 
 impl UpgradeViewHandle for MutableAppContext {
@@ -1868,6 +1903,19 @@ impl UpgradeModelHandle for AppContext {
     ) -> Option<ModelHandle<T>> {
         if self.models.contains_key(&handle.model_id) {
             Some(ModelHandle::new(handle.model_id, &self.ref_counts))
+        } else {
+            None
+        }
+    }
+
+    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
+        if self.models.contains_key(&handle.model_id) {
+            self.ref_counts.lock().inc_model(handle.model_id);
+            Some(AnyModelHandle {
+                model_id: handle.model_id,
+                model_type: handle.model_type,
+                ref_counts: self.ref_counts.clone(),
+            })
         } else {
             None
         }
@@ -2264,6 +2312,10 @@ impl<M> UpgradeModelHandle for ModelContext<'_, M> {
     ) -> Option<ModelHandle<T>> {
         self.cx.upgrade_model_handle(handle)
     }
+
+    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
+        self.cx.upgrade_any_model_handle(handle)
+    }
 }
 
 impl<M> Deref for ModelContext<'_, M> {
@@ -2593,6 +2645,10 @@ impl<V> UpgradeModelHandle for ViewContext<'_, V> {
         handle: &WeakModelHandle<T>,
     ) -> Option<ModelHandle<T>> {
         self.cx.upgrade_model_handle(handle)
+    }
+
+    fn upgrade_any_model_handle(&self, handle: &AnyWeakModelHandle) -> Option<AnyModelHandle> {
+        self.cx.upgrade_any_model_handle(handle)
     }
 }
 
@@ -3274,6 +3330,13 @@ impl AnyModelHandle {
         }
     }
 
+    pub fn downgrade(&self) -> AnyWeakModelHandle {
+        AnyWeakModelHandle {
+            model_id: self.model_id,
+            model_type: self.model_type,
+        }
+    }
+
     pub fn is<T: Entity>(&self) -> bool {
         self.model_type == TypeId::of::<T>()
     }
@@ -3290,9 +3353,31 @@ impl<T: Entity> From<ModelHandle<T>> for AnyModelHandle {
     }
 }
 
+impl Clone for AnyModelHandle {
+    fn clone(&self) -> Self {
+        self.ref_counts.lock().inc_model(self.model_id);
+        Self {
+            model_id: self.model_id,
+            model_type: self.model_type,
+            ref_counts: self.ref_counts.clone(),
+        }
+    }
+}
+
 impl Drop for AnyModelHandle {
     fn drop(&mut self) {
         self.ref_counts.lock().dec_model(self.model_id);
+    }
+}
+
+pub struct AnyWeakModelHandle {
+    model_id: usize,
+    model_type: TypeId,
+}
+
+impl AnyWeakModelHandle {
+    pub fn upgrade(&self, cx: &impl UpgradeModelHandle) -> Option<AnyModelHandle> {
+        cx.upgrade_any_model_handle(self)
     }
 }
 
@@ -3368,8 +3453,15 @@ pub struct ElementStateHandle<T> {
 }
 
 impl<T: 'static> ElementStateHandle<T> {
-    fn new(tag_type_id: TypeId, id: ElementStateId, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
-        ref_counts.lock().inc_element_state(tag_type_id, id);
+    fn new(
+        tag_type_id: TypeId,
+        id: ElementStateId,
+        frame_id: usize,
+        ref_counts: &Arc<Mutex<RefCounts>>,
+    ) -> Self {
+        ref_counts
+            .lock()
+            .inc_element_state(tag_type_id, id, frame_id);
         Self {
             value_type: PhantomData,
             tag_type_id,
@@ -3508,10 +3600,15 @@ impl Drop for Subscription {
 #[derive(Default)]
 struct RefCounts {
     entity_counts: HashMap<usize, usize>,
-    element_state_counts: HashMap<(TypeId, ElementStateId), usize>,
+    element_state_counts: HashMap<(TypeId, ElementStateId), ElementStateRefCount>,
     dropped_models: HashSet<usize>,
     dropped_views: HashSet<(usize, usize)>,
     dropped_element_states: HashSet<(TypeId, ElementStateId)>,
+}
+
+struct ElementStateRefCount {
+    ref_count: usize,
+    frame_id: usize,
 }
 
 impl RefCounts {
@@ -3537,11 +3634,21 @@ impl RefCounts {
         }
     }
 
-    fn inc_element_state(&mut self, tag_type_id: TypeId, id: ElementStateId) {
+    fn inc_element_state(&mut self, tag_type_id: TypeId, id: ElementStateId, frame_id: usize) {
         match self.element_state_counts.entry((tag_type_id, id)) {
-            Entry::Occupied(mut entry) => *entry.get_mut() += 1,
+            Entry::Occupied(mut entry) => {
+                let entry = entry.get_mut();
+                if entry.frame_id == frame_id || entry.ref_count >= 2 {
+                    panic!("used the same element state more than once in the same frame");
+                }
+                entry.ref_count += 1;
+                entry.frame_id = frame_id;
+            }
             Entry::Vacant(entry) => {
-                entry.insert(1);
+                entry.insert(ElementStateRefCount {
+                    ref_count: 1,
+                    frame_id,
+                });
                 self.dropped_element_states.remove(&(tag_type_id, id));
             }
         }
@@ -3567,9 +3674,9 @@ impl RefCounts {
 
     fn dec_element_state(&mut self, tag_type_id: TypeId, id: ElementStateId) {
         let key = (tag_type_id, id);
-        let count = self.element_state_counts.get_mut(&key).unwrap();
-        *count -= 1;
-        if *count == 0 {
+        let entry = self.element_state_counts.get_mut(&key).unwrap();
+        entry.ref_count -= 1;
+        if entry.ref_count == 0 {
             self.element_state_counts.remove(&key);
             self.dropped_element_states.insert(key);
         }

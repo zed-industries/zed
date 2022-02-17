@@ -162,7 +162,6 @@ where
                 "UniformList does not support being rendered with an unconstrained height"
             );
         }
-        let mut items = Vec::new();
 
         if self.item_count == 0 {
             return (
@@ -170,22 +169,27 @@ where
                 LayoutState {
                     item_height: 0.,
                     scroll_max: 0.,
-                    items,
+                    items: Default::default(),
                 },
             );
         }
 
+        let mut items = Vec::new();
         let mut size = constraint.max;
         let mut item_size;
-        if let Some(sample_item_ix) = self.get_width_from_item {
-            (self.append_items)(sample_item_ix..sample_item_ix + 1, &mut items, cx);
-            let sample_item = items.get_mut(0).unwrap();
+        let sample_item_ix;
+        let mut sample_item;
+        if let Some(sample_ix) = self.get_width_from_item {
+            (self.append_items)(sample_ix..sample_ix + 1, &mut items, cx);
+            sample_item_ix = sample_ix;
+            sample_item = items.pop().unwrap();
             item_size = sample_item.layout(constraint, cx);
             size.set_x(item_size.x());
         } else {
             (self.append_items)(0..1, &mut items, cx);
-            let first_item = items.first_mut().unwrap();
-            item_size = first_item.layout(
+            sample_item_ix = 0;
+            sample_item = items.pop().unwrap();
+            item_size = sample_item.layout(
                 SizeConstraint::new(
                     vec2f(constraint.max.x(), 0.0),
                     vec2f(constraint.max.x(), f32::INFINITY),
@@ -219,8 +223,21 @@ where
             self.item_count,
             start + (size.y() / item_height).ceil() as usize + 1,
         );
-        items.clear();
-        (self.append_items)(start..end, &mut items, cx);
+
+        if (start..end).contains(&sample_item_ix) {
+            if sample_item_ix > start {
+                (self.append_items)(start..sample_item_ix, &mut items, cx);
+            }
+
+            items.push(sample_item);
+
+            if sample_item_ix < end {
+                (self.append_items)(sample_item_ix + 1..end, &mut items, cx);
+            }
+        } else {
+            (self.append_items)(start..end, &mut items, cx);
+        }
+
         for item in &mut items {
             let item_size = item.layout(item_constraint, cx);
             if item_size.x() > size.x() {

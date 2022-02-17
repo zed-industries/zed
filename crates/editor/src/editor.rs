@@ -2264,7 +2264,7 @@ impl Editor {
             enum Tag {}
             let style = (self.build_settings)(cx).style;
             Some(
-                MouseEventHandler::new::<Tag, _, _, _>(0, cx, |_, _| {
+                MouseEventHandler::new::<Tag, _, _, _>(cx.view_id(), cx, |_, _| {
                     Svg::new("icons/zap.svg")
                         .with_color(style.code_actions_indicator)
                         .boxed()
@@ -5447,8 +5447,8 @@ mod tests {
     use super::*;
     use language::LanguageConfig;
     use lsp::FakeLanguageServer;
-    use postage::prelude::Stream;
     use project::{FakeFs, ProjectPath};
+    use smol::stream::StreamExt;
     use std::{cell::RefCell, rc::Rc, time::Instant};
     use text::Point;
     use unindent::Unindent;
@@ -7737,9 +7737,8 @@ mod tests {
                 }),
                 ..Default::default()
             },
-            &cx,
-        )
-        .await;
+            cx.background(),
+        );
 
         let text = "
             one
@@ -7792,7 +7791,9 @@ mod tests {
             ],
         )
         .await;
-        editor.next_notification(&cx).await;
+        editor
+            .condition(&cx, |editor, _| editor.context_menu_visible())
+            .await;
 
         let apply_additional_edits = editor.update(&mut cx, |editor, cx| {
             editor.move_down(&MoveDown, cx);
@@ -7856,7 +7857,7 @@ mod tests {
         )
         .await;
         editor
-            .condition(&cx, |editor, _| editor.context_menu.is_some())
+            .condition(&cx, |editor, _| editor.context_menu_visible())
             .await;
 
         editor.update(&mut cx, |editor, cx| {
@@ -7874,7 +7875,9 @@ mod tests {
             ],
         )
         .await;
-        editor.next_notification(&cx).await;
+        editor
+            .condition(&cx, |editor, _| editor.context_menu_visible())
+            .await;
 
         let apply_additional_edits = editor.update(&mut cx, |editor, cx| {
             let apply_additional_edits = editor
@@ -7912,7 +7915,7 @@ mod tests {
                 );
                 Some(lsp::CompletionResponse::Array(
                     completions
-                        .into_iter()
+                        .iter()
                         .map(|(range, new_text)| lsp::CompletionItem {
                             label: new_text.to_string(),
                             text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
@@ -7927,7 +7930,7 @@ mod tests {
                         .collect(),
                 ))
             })
-            .recv()
+            .next()
             .await;
         }
 
@@ -7937,7 +7940,7 @@ mod tests {
         ) {
             fake.handle_request::<lsp::request::ResolveCompletionItem, _>(move |_| {
                 lsp::CompletionItem {
-                    additional_text_edits: edit.map(|(range, new_text)| {
+                    additional_text_edits: edit.clone().map(|(range, new_text)| {
                         vec![lsp::TextEdit::new(
                             lsp::Range::new(
                                 lsp::Position::new(range.start.row, range.start.column),
@@ -7949,7 +7952,7 @@ mod tests {
                     ..Default::default()
                 }
             })
-            .recv()
+            .next()
             .await;
         }
     }

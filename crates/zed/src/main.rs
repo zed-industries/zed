@@ -53,6 +53,8 @@ fn main() {
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http.clone(), cx));
         let mut path_openers = Vec::new();
 
+        project::Project::init(&client);
+        client::Channel::init(&client);
         client::init(client.clone(), cx);
         workspace::init(cx);
         editor::init(cx, &mut path_openers);

@@ -17,9 +17,9 @@ use gpui::{
     json::{self, to_string_pretty, ToJson},
     keymap::Binding,
     platform::{CursorStyle, WindowOptions},
-    AnyModelHandle, AnyViewHandle, AppContext, ClipboardItem, Entity, ModelContext, ModelHandle,
-    MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View, ViewContext,
-    ViewHandle, WeakModelHandle, WeakViewHandle,
+    AnyModelHandle, AnyViewHandle, AppContext, ClipboardItem, Entity, ImageData, ModelContext,
+    ModelHandle, MutableAppContext, PathPromptOptions, PromptLevel, RenderContext, Task, View,
+    ViewContext, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use language::LanguageRegistry;
 use log::error;
@@ -1139,7 +1139,7 @@ impl Workspace {
                             Flex::row()
                                 .with_children(self.render_share_icon(theme, cx))
                                 .with_children(self.render_collaborators(theme, cx))
-                                .with_child(self.render_avatar(
+                                .with_child(self.render_current_user(
                                     self.user_store.read(cx).current_user().as_ref(),
                                     self.project.read(cx).replica_id(),
                                     theme,
@@ -1171,13 +1171,17 @@ impl Workspace {
         collaborators.sort_unstable_by_key(|collaborator| collaborator.replica_id);
         collaborators
             .into_iter()
-            .map(|collaborator| {
-                self.render_avatar(Some(&collaborator.user), collaborator.replica_id, theme, cx)
+            .filter_map(|collaborator| {
+                Some(self.render_avatar(
+                    collaborator.user.avatar.clone()?,
+                    collaborator.replica_id,
+                    theme,
+                ))
             })
             .collect()
     }
 
-    fn render_avatar(
+    fn render_current_user(
         &self,
         user: Option<&Arc<User>>,
         replica_id: ReplicaId,
@@ -1185,33 +1189,9 @@ impl Workspace {
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         if let Some(avatar) = user.and_then(|user| user.avatar.clone()) {
-            ConstrainedBox::new(
-                Stack::new()
-                    .with_child(
-                        ConstrainedBox::new(
-                            Image::new(avatar)
-                                .with_style(theme.workspace.titlebar.avatar)
-                                .boxed(),
-                        )
-                        .with_width(theme.workspace.titlebar.avatar_width)
-                        .aligned()
-                        .boxed(),
-                    )
-                    .with_child(
-                        AvatarRibbon::new(theme.editor.replica_selection_style(replica_id).cursor)
-                            .constrained()
-                            .with_width(theme.workspace.titlebar.avatar_ribbon.width)
-                            .with_height(theme.workspace.titlebar.avatar_ribbon.height)
-                            .aligned()
-                            .bottom()
-                            .boxed(),
-                    )
-                    .boxed(),
-            )
-            .with_width(theme.workspace.right_sidebar.width)
-            .boxed()
+            self.render_avatar(avatar, replica_id, theme)
         } else {
-            MouseEventHandler::new::<Authenticate, _, _, _>(0, cx, |state, _| {
+            MouseEventHandler::new::<Authenticate, _, _, _>(cx.view_id(), cx, |state, _| {
                 let style = if state.hovered {
                     &theme.workspace.titlebar.hovered_sign_in_prompt
                 } else {
@@ -1227,6 +1207,39 @@ impl Workspace {
             .aligned()
             .boxed()
         }
+    }
+
+    fn render_avatar(
+        &self,
+        avatar: Arc<ImageData>,
+        replica_id: ReplicaId,
+        theme: &Theme,
+    ) -> ElementBox {
+        ConstrainedBox::new(
+            Stack::new()
+                .with_child(
+                    ConstrainedBox::new(
+                        Image::new(avatar)
+                            .with_style(theme.workspace.titlebar.avatar)
+                            .boxed(),
+                    )
+                    .with_width(theme.workspace.titlebar.avatar_width)
+                    .aligned()
+                    .boxed(),
+                )
+                .with_child(
+                    AvatarRibbon::new(theme.editor.replica_selection_style(replica_id).cursor)
+                        .constrained()
+                        .with_width(theme.workspace.titlebar.avatar_ribbon.width)
+                        .with_height(theme.workspace.titlebar.avatar_ribbon.height)
+                        .aligned()
+                        .bottom()
+                        .boxed(),
+                )
+                .boxed(),
+        )
+        .with_width(theme.workspace.right_sidebar.width)
+        .boxed()
     }
 
     fn render_share_icon(&self, theme: &Theme, cx: &mut RenderContext<Self>) -> Option<ElementBox> {

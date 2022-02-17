@@ -1283,6 +1283,10 @@ impl Buffer {
         self.text.wait_for_edits(edit_ids)
     }
 
+    pub fn wait_for_version(&mut self, version: clock::Global) -> impl Future<Output = ()> {
+        self.text.wait_for_version(version)
+    }
+
     pub fn set_active_selections(
         &mut self,
         selections: Arc<[Selection<Anchor>]>,

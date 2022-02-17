@@ -12,7 +12,10 @@ use async_tungstenite::tungstenite::{
     http::{Request, StatusCode},
 };
 use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
-use gpui::{action, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task};
+use gpui::{
+    action, AnyModelHandle, AnyWeakModelHandle, AsyncAppContext, Entity, ModelContext, ModelHandle,
+    MutableAppContext, Task,
+};
 use http::HttpClient;
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -20,7 +23,7 @@ use postage::watch;
 use rand::prelude::*;
 use rpc::proto::{AnyTypedEnvelope, EntityMessage, EnvelopedMessage, RequestMessage};
 use std::{
-    any::{type_name, TypeId},
+    any::TypeId,
     collections::HashMap,
     convert::TryFrom,
     fmt::Write as _,
@@ -124,19 +127,28 @@ pub enum Status {
     ReconnectionError { next_reconnection: Instant },
 }
 
-type ModelHandler = Box<
-    dyn Send
-        + Sync
-        + FnMut(Box<dyn AnyTypedEnvelope>, &AsyncAppContext) -> LocalBoxFuture<'static, Result<()>>,
->;
-
 struct ClientState {
     credentials: Option<Credentials>,
     status: (watch::Sender<Status>, watch::Receiver<Status>),
     entity_id_extractors: HashMap<TypeId, Box<dyn Send + Sync + Fn(&dyn AnyTypedEnvelope) -> u64>>,
-    model_handlers: HashMap<(TypeId, Option<u64>), Option<ModelHandler>>,
     _maintain_connection: Option<Task<()>>,
     heartbeat_interval: Duration,
+
+    models_by_entity_type_and_remote_id: HashMap<(TypeId, u64), AnyWeakModelHandle>,
+    models_by_message_type: HashMap<TypeId, AnyModelHandle>,
+    model_types_by_message_type: HashMap<TypeId, TypeId>,
+    message_handlers: HashMap<
+        TypeId,
+        Arc<
+            dyn Send
+                + Sync
+                + Fn(
+                    AnyModelHandle,
+                    Box<dyn AnyTypedEnvelope>,
+                    AsyncAppContext,
+                ) -> LocalBoxFuture<'static, Result<()>>,
+        >,
+    >,
 }
 
 #[derive(Clone, Debug)]
@@ -151,23 +163,43 @@ impl Default for ClientState {
             credentials: None,
             status: watch::channel_with(Status::SignedOut),
             entity_id_extractors: Default::default(),
-            model_handlers: Default::default(),
             _maintain_connection: None,
             heartbeat_interval: Duration::from_secs(5),
+            models_by_message_type: Default::default(),
+            models_by_entity_type_and_remote_id: Default::default(),
+            model_types_by_message_type: Default::default(),
+            message_handlers: Default::default(),
         }
     }
 }
 
-pub struct Subscription {
-    client: Weak<Client>,
-    id: (TypeId, Option<u64>),
+pub enum Subscription {
+    Entity {
+        client: Weak<Client>,
+        id: (TypeId, u64),
+    },
+    Message {
+        client: Weak<Client>,
+        id: TypeId,
+    },
 }
 
 impl Drop for Subscription {
     fn drop(&mut self) {
-        if let Some(client) = self.client.upgrade() {
-            let mut state = client.state.write();
-            let _ = state.model_handlers.remove(&self.id).unwrap();
+        match self {
+            Subscription::Entity { client, id } => {
+                if let Some(client) = client.upgrade() {
+                    let mut state = client.state.write();
+                    let _ = state.models_by_entity_type_and_remote_id.remove(id);
+                }
+            }
+            Subscription::Message { client, id } => {
+                if let Some(client) = client.upgrade() {
+                    let mut state = client.state.write();
+                    let _ = state.model_types_by_message_type.remove(id);
+                    let _ = state.message_handlers.remove(id);
+                }
+            }
         }
     }
 }
@@ -186,6 +218,10 @@ impl Client {
             authenticate: None,
             establish_connection: None,
         })
+    }
+
+    pub fn id(&self) -> usize {
+        self.id
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -266,125 +302,118 @@ impl Client {
         }
     }
 
-    pub fn add_message_handler<T, M, F, Fut>(
+    pub fn add_model_for_remote_entity<T: Entity>(
         self: &Arc<Self>,
-        cx: &mut ModelContext<M>,
-        mut handler: F,
+        remote_id: u64,
+        cx: &mut ModelContext<T>,
+    ) -> Subscription {
+        let handle = AnyModelHandle::from(cx.handle());
+        let mut state = self.state.write();
+        let id = (TypeId::of::<T>(), remote_id);
+        state
+            .models_by_entity_type_and_remote_id
+            .insert(id, handle.downgrade());
+        Subscription::Entity {
+            client: Arc::downgrade(self),
+            id,
+        }
+    }
+
+    pub fn add_message_handler<M, E, H, F>(
+        self: &Arc<Self>,
+        model: ModelHandle<E>,
+        handler: H,
     ) -> Subscription
     where
-        T: EnvelopedMessage,
-        M: Entity,
-        F: 'static
+        M: EnvelopedMessage,
+        E: Entity,
+        H: 'static
             + Send
             + Sync
-            + FnMut(ModelHandle<M>, TypedEnvelope<T>, Arc<Self>, AsyncAppContext) -> Fut,
-        Fut: 'static + Future<Output = Result<()>>,
+            + Fn(ModelHandle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+        F: 'static + Future<Output = Result<()>>,
     {
-        let subscription_id = (TypeId::of::<T>(), None);
+        let message_type_id = TypeId::of::<M>();
+
         let client = self.clone();
         let mut state = self.state.write();
-        let model = cx.weak_handle();
-        let prev_handler = state.model_handlers.insert(
-            subscription_id,
-            Some(Box::new(move |envelope, cx| {
-                if let Some(model) = model.upgrade(cx) {
-                    let envelope = envelope.into_any().downcast::<TypedEnvelope<T>>().unwrap();
-                    handler(model, *envelope, client.clone(), cx.clone()).boxed_local()
-                } else {
-                    async move {
-                        Err(anyhow!(
-                            "received message for {:?} but model was dropped",
-                            type_name::<M>()
-                        ))
-                    }
-                    .boxed_local()
-                }
-            })),
+        state
+            .models_by_message_type
+            .insert(message_type_id, model.into());
+
+        let prev_handler = state.message_handlers.insert(
+            message_type_id,
+            Arc::new(move |handle, envelope, cx| {
+                let model = handle.downcast::<E>().unwrap();
+                let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
+                handler(model, *envelope, client.clone(), cx).boxed_local()
+            }),
         );
         if prev_handler.is_some() {
             panic!("registered handler for the same message twice");
         }
 
-        Subscription {
+        Subscription::Message {
             client: Arc::downgrade(self),
-            id: subscription_id,
+            id: message_type_id,
         }
     }
 
-    pub fn add_entity_message_handler<T, M, F, Fut>(
-        self: &Arc<Self>,
-        remote_id: u64,
-        cx: &mut ModelContext<M>,
-        mut handler: F,
-    ) -> Subscription
+    pub fn add_entity_message_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
     where
-        T: EntityMessage,
-        M: Entity,
-        F: 'static
+        M: EntityMessage,
+        E: Entity,
+        H: 'static
             + Send
             + Sync
-            + FnMut(ModelHandle<M>, TypedEnvelope<T>, Arc<Self>, AsyncAppContext) -> Fut,
-        Fut: 'static + Future<Output = Result<()>>,
+            + Fn(ModelHandle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+        F: 'static + Future<Output = Result<()>>,
     {
-        let subscription_id = (TypeId::of::<T>(), Some(remote_id));
+        let model_type_id = TypeId::of::<E>();
+        let message_type_id = TypeId::of::<M>();
+
         let client = self.clone();
         let mut state = self.state.write();
-        let model = cx.weak_handle();
+        state
+            .model_types_by_message_type
+            .insert(message_type_id, model_type_id);
         state
             .entity_id_extractors
-            .entry(subscription_id.0)
+            .entry(message_type_id)
             .or_insert_with(|| {
                 Box::new(|envelope| {
                     let envelope = envelope
                         .as_any()
-                        .downcast_ref::<TypedEnvelope<T>>()
+                        .downcast_ref::<TypedEnvelope<M>>()
                         .unwrap();
                     envelope.payload.remote_entity_id()
                 })
             });
-        let prev_handler = state.model_handlers.insert(
-            subscription_id,
-            Some(Box::new(move |envelope, cx| {
-                if let Some(model) = model.upgrade(cx) {
-                    let envelope = envelope.into_any().downcast::<TypedEnvelope<T>>().unwrap();
-                    handler(model, *envelope, client.clone(), cx.clone()).boxed_local()
-                } else {
-                    async move {
-                        Err(anyhow!(
-                            "received message for {:?} but model was dropped",
-                            type_name::<M>()
-                        ))
-                    }
-                    .boxed_local()
-                }
-            })),
+
+        let prev_handler = state.message_handlers.insert(
+            message_type_id,
+            Arc::new(move |handle, envelope, cx| {
+                let model = handle.downcast::<E>().unwrap();
+                let envelope = envelope.into_any().downcast::<TypedEnvelope<M>>().unwrap();
+                handler(model, *envelope, client.clone(), cx).boxed_local()
+            }),
         );
         if prev_handler.is_some() {
-            panic!("registered a handler for the same entity twice")
-        }
-
-        Subscription {
-            client: Arc::downgrade(self),
-            id: subscription_id,
+            panic!("registered handler for the same message twice");
         }
     }
 
-    pub fn add_entity_request_handler<T, M, F, Fut>(
-        self: &Arc<Self>,
-        remote_id: u64,
-        cx: &mut ModelContext<M>,
-        mut handler: F,
-    ) -> Subscription
+    pub fn add_entity_request_handler<M, E, H, F>(self: &Arc<Self>, handler: H)
     where
-        T: EntityMessage + RequestMessage,
-        M: Entity,
-        F: 'static
+        M: EntityMessage + RequestMessage,
+        E: Entity,
+        H: 'static
             + Send
             + Sync
-            + FnMut(ModelHandle<M>, TypedEnvelope<T>, Arc<Self>, AsyncAppContext) -> Fut,
-        Fut: 'static + Future<Output = Result<T::Response>>,
+            + Fn(ModelHandle<E>, TypedEnvelope<M>, Arc<Self>, AsyncAppContext) -> F,
+        F: 'static + Future<Output = Result<M::Response>>,
     {
-        self.add_entity_message_handler(remote_id, cx, move |model, envelope, client, cx| {
+        self.add_entity_message_handler(move |model, envelope, client, cx| {
             let receipt = envelope.receipt();
             let response = handler(model, envelope, client.clone(), cx);
             async move {
@@ -500,27 +529,45 @@ impl Client {
                     while let Some(message) = incoming.next().await {
                         let mut state = this.state.write();
                         let payload_type_id = message.payload_type_id();
-                        let entity_id = if let Some(extract_entity_id) =
-                            state.entity_id_extractors.get(&message.payload_type_id())
-                        {
-                            Some((extract_entity_id)(message.as_ref()))
-                        } else {
-                            None
-                        };
-
                         let type_name = message.payload_type_name();
 
-                        let handler_key = (payload_type_id, entity_id);
-                        if let Some(handler) = state.model_handlers.get_mut(&handler_key) {
-                            let mut handler = handler.take().unwrap();
-                            drop(state); // Avoid deadlocks if the handler interacts with rpc::Client
-                            let future = (handler)(message, &cx);
-                            {
-                                let mut state = this.state.write();
-                                if state.model_handlers.contains_key(&handler_key) {
-                                    state.model_handlers.insert(handler_key, Some(handler));
+                        let model = state
+                            .models_by_message_type
+                            .get(&payload_type_id)
+                            .cloned()
+                            .or_else(|| {
+                                let model_type_id =
+                                    *state.model_types_by_message_type.get(&payload_type_id)?;
+                                let entity_id = state
+                                    .entity_id_extractors
+                                    .get(&message.payload_type_id())
+                                    .map(|extract_entity_id| {
+                                        (extract_entity_id)(message.as_ref())
+                                    })?;
+                                let model = state
+                                    .models_by_entity_type_and_remote_id
+                                    .get(&(model_type_id, entity_id))?;
+                                if let Some(model) = model.upgrade(&cx) {
+                                    Some(model)
+                                } else {
+                                    state
+                                        .models_by_entity_type_and_remote_id
+                                        .remove(&(model_type_id, entity_id));
+                                    None
                                 }
-                            }
+                            });
+
+                        let model = if let Some(model) = model {
+                            model
+                        } else {
+                            log::info!("unhandled message {}", type_name);
+                            continue;
+                        };
+
+                        if let Some(handler) = state.message_handlers.get(&payload_type_id).cloned()
+                        {
+                            drop(state); // Avoid deadlocks if the handler interacts with rpc::Client
+                            let future = handler(model, message, cx.clone());
 
                             let client_id = this.id;
                             log::debug!(
@@ -540,7 +587,7 @@ impl Client {
                                         }
                                         Err(error) => {
                                             log::error!(
-                                                "error handling rpc message. client_id:{}, name:{}, error:{}",
+                                                "error handling message. client_id:{}, name:{}, {}",
                                                 client_id,
                                                 type_name,
                                                 error
@@ -923,39 +970,39 @@ mod tests {
         let mut client = Client::new(FakeHttpClient::with_404_response());
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
 
-        let model = cx.add_model(|_| Model { subscription: None });
-        let (mut done_tx1, mut done_rx1) = postage::oneshot::channel();
-        let (mut done_tx2, mut done_rx2) = postage::oneshot::channel();
-        let _subscription1 = model.update(&mut cx, |_, cx| {
-            client.add_entity_message_handler(
-                1,
-                cx,
-                move |_, _: TypedEnvelope<proto::UnshareProject>, _, _| {
-                    postage::sink::Sink::try_send(&mut done_tx1, ()).unwrap();
-                    async { Ok(()) }
-                },
-            )
+        let (done_tx1, mut done_rx1) = smol::channel::unbounded();
+        let (done_tx2, mut done_rx2) = smol::channel::unbounded();
+        client.add_entity_message_handler(
+            move |model: ModelHandle<Model>, _: TypedEnvelope<proto::UnshareProject>, _, cx| {
+                match model.read_with(&cx, |model, _| model.id) {
+                    1 => done_tx1.try_send(()).unwrap(),
+                    2 => done_tx2.try_send(()).unwrap(),
+                    _ => unreachable!(),
+                }
+                async { Ok(()) }
+            },
+        );
+        let model1 = cx.add_model(|_| Model {
+            id: 1,
+            subscription: None,
         });
-        let _subscription2 = model.update(&mut cx, |_, cx| {
-            client.add_entity_message_handler(
-                2,
-                cx,
-                move |_, _: TypedEnvelope<proto::UnshareProject>, _, _| {
-                    postage::sink::Sink::try_send(&mut done_tx2, ()).unwrap();
-                    async { Ok(()) }
-                },
-            )
+        let model2 = cx.add_model(|_| Model {
+            id: 2,
+            subscription: None,
+        });
+        let model3 = cx.add_model(|_| Model {
+            id: 3,
+            subscription: None,
         });
 
+        let _subscription1 =
+            model1.update(&mut cx, |_, cx| client.add_model_for_remote_entity(1, cx));
+        let _subscription2 =
+            model2.update(&mut cx, |_, cx| client.add_model_for_remote_entity(2, cx));
         // Ensure dropping a subscription for the same entity type still allows receiving of
         // messages for other entity IDs of the same type.
-        let subscription3 = model.update(&mut cx, |_, cx| {
-            client.add_entity_message_handler(
-                3,
-                cx,
-                |_, _: TypedEnvelope<proto::UnshareProject>, _, _| async { Ok(()) },
-            )
-        });
+        let subscription3 =
+            model3.update(&mut cx, |_, cx| client.add_model_for_remote_entity(3, cx));
         drop(subscription3);
 
         server.send(proto::UnshareProject { project_id: 1 });
@@ -972,22 +1019,22 @@ mod tests {
         let mut client = Client::new(FakeHttpClient::with_404_response());
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
 
-        let model = cx.add_model(|_| Model { subscription: None });
-        let (mut done_tx1, _done_rx1) = postage::oneshot::channel();
-        let (mut done_tx2, mut done_rx2) = postage::oneshot::channel();
-        let subscription1 = model.update(&mut cx, |_, cx| {
-            client.add_message_handler(cx, move |_, _: TypedEnvelope<proto::Ping>, _, _| {
-                postage::sink::Sink::try_send(&mut done_tx1, ()).unwrap();
+        let model = cx.add_model(|_| Model::default());
+        let (done_tx1, _done_rx1) = smol::channel::unbounded();
+        let (done_tx2, mut done_rx2) = smol::channel::unbounded();
+        let subscription1 = client.add_message_handler(
+            model.clone(),
+            move |_, _: TypedEnvelope<proto::Ping>, _, _| {
+                done_tx1.try_send(()).unwrap();
                 async { Ok(()) }
-            })
-        });
+            },
+        );
         drop(subscription1);
-        let _subscription2 = model.update(&mut cx, |_, cx| {
-            client.add_message_handler(cx, move |_, _: TypedEnvelope<proto::Ping>, _, _| {
-                postage::sink::Sink::try_send(&mut done_tx2, ()).unwrap();
+        let _subscription2 =
+            client.add_message_handler(model, move |_, _: TypedEnvelope<proto::Ping>, _, _| {
+                done_tx2.try_send(()).unwrap();
                 async { Ok(()) }
-            })
-        });
+            });
         server.send(proto::Ping {});
         done_rx2.next().await.unwrap();
     }
@@ -1000,23 +1047,26 @@ mod tests {
         let mut client = Client::new(FakeHttpClient::with_404_response());
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
 
-        let model = cx.add_model(|_| Model { subscription: None });
-        let (mut done_tx, mut done_rx) = postage::oneshot::channel();
-        model.update(&mut cx, |model, cx| {
-            model.subscription = Some(client.add_message_handler(
-                cx,
-                move |model, _: TypedEnvelope<proto::Ping>, _, mut cx| {
-                    model.update(&mut cx, |model, _| model.subscription.take());
-                    postage::sink::Sink::try_send(&mut done_tx, ()).unwrap();
-                    async { Ok(()) }
-                },
-            ));
+        let model = cx.add_model(|_| Model::default());
+        let (done_tx, mut done_rx) = smol::channel::unbounded();
+        let subscription = client.add_message_handler(
+            model.clone(),
+            move |model, _: TypedEnvelope<proto::Ping>, _, mut cx| {
+                model.update(&mut cx, |model, _| model.subscription.take());
+                done_tx.try_send(()).unwrap();
+                async { Ok(()) }
+            },
+        );
+        model.update(&mut cx, |model, _| {
+            model.subscription = Some(subscription);
         });
         server.send(proto::Ping {});
         done_rx.next().await.unwrap();
     }
 
+    #[derive(Default)]
     struct Model {
+        id: usize,
         subscription: Option<Subscription>,
     }
 

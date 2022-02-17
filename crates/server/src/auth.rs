@@ -234,7 +234,7 @@ async fn get_auth_callback(mut request: Request) -> tide::Result {
         let mut user_id = user.id;
         if let Some(impersonated_login) = app_sign_in_params.impersonate {
             log::info!("attempting to impersonate user @{}", impersonated_login);
-            if let Some(user) = request.db().get_users_by_ids([user_id]).await?.first() {
+            if let Some(user) = request.db().get_users_by_ids(vec![user_id]).await?.first() {
                 if user.admin {
                     user_id = request.db().create_user(&impersonated_login, false).await?;
                     log::info!("impersonating user {}", user_id.0);
@@ -244,7 +244,7 @@ async fn get_auth_callback(mut request: Request) -> tide::Result {
             }
         }
 
-        let access_token = create_access_token(request.db(), user_id).await?;
+        let access_token = create_access_token(request.db().as_ref(), user_id).await?;
         let encrypted_access_token = encrypt_access_token(
             &access_token,
             app_sign_in_params.native_app_public_key.clone(),
@@ -267,7 +267,7 @@ async fn post_sign_out(mut request: Request) -> tide::Result {
 
 const MAX_ACCESS_TOKENS_TO_STORE: usize = 8;
 
-pub async fn create_access_token(db: &db::Db, user_id: UserId) -> tide::Result<String> {
+pub async fn create_access_token(db: &dyn db::Db, user_id: UserId) -> tide::Result<String> {
     let access_token = zed_auth::random_token();
     let access_token_hash =
         hash_access_token(&access_token).context("failed to hash access token")?;

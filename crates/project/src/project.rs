@@ -2,7 +2,7 @@ pub mod fs;
 mod ignore;
 pub mod worktree;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use client::{proto, Client, PeerId, TypedEnvelope, User, UserStore};
 use clock::ReplicaId;
 use collections::{hash_map, HashMap, HashSet};
@@ -10,17 +10,17 @@ use futures::Future;
 use fuzzy::{PathMatch, PathMatchCandidate, PathMatchCandidateSet};
 use gpui::{
     AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task,
-    WeakModelHandle,
+    UpgradeModelHandle, WeakModelHandle,
 };
 use language::{
     point_from_lsp,
     proto::{deserialize_anchor, serialize_anchor},
     range_from_lsp, AnchorRangeExt, Bias, Buffer, CodeAction, Completion, CompletionLabel,
-    Diagnostic, DiagnosticEntry, File as _, Language, LanguageRegistry, PointUtf16, ToLspPosition,
-    ToOffset, ToPointUtf16, Transaction,
+    Diagnostic, DiagnosticEntry, File as _, Language, LanguageRegistry, Operation, PointUtf16,
+    ToLspPosition, ToOffset, ToPointUtf16, Transaction,
 };
 use lsp::{DiagnosticSeverity, LanguageServer};
-use postage::{prelude::Stream, watch};
+use postage::{broadcast, prelude::Stream, sink::Sink, watch};
 use smol::block_on;
 use std::{
     convert::TryInto,
@@ -46,12 +46,18 @@ pub struct Project {
     collaborators: HashMap<PeerId, Collaborator>,
     subscriptions: Vec<client::Subscription>,
     language_servers_with_diagnostics_running: isize,
-    open_buffers: HashMap<usize, WeakModelHandle<Buffer>>,
+    open_buffers: HashMap<u64, OpenBuffer>,
+    opened_buffer: broadcast::Sender<()>,
     loading_buffers: HashMap<
         ProjectPath,
         postage::watch::Receiver<Option<Result<ModelHandle<Buffer>, Arc<anyhow::Error>>>>,
     >,
     shared_buffers: HashMap<PeerId, HashMap<u64, ModelHandle<Buffer>>>,
+}
+
+enum OpenBuffer {
+    Loaded(WeakModelHandle<Buffer>),
+    Loading(Vec<Operation>),
 }
 
 enum WorktreeHandle {
@@ -155,6 +161,31 @@ pub struct ProjectEntry {
 }
 
 impl Project {
+    pub fn init(client: &Arc<Client>) {
+        client.add_entity_message_handler(Self::handle_add_collaborator);
+        client.add_entity_message_handler(Self::handle_buffer_reloaded);
+        client.add_entity_message_handler(Self::handle_buffer_saved);
+        client.add_entity_message_handler(Self::handle_close_buffer);
+        client.add_entity_message_handler(Self::handle_disk_based_diagnostics_updated);
+        client.add_entity_message_handler(Self::handle_disk_based_diagnostics_updating);
+        client.add_entity_message_handler(Self::handle_remove_collaborator);
+        client.add_entity_message_handler(Self::handle_share_worktree);
+        client.add_entity_message_handler(Self::handle_unregister_worktree);
+        client.add_entity_message_handler(Self::handle_unshare_project);
+        client.add_entity_message_handler(Self::handle_update_buffer_file);
+        client.add_entity_message_handler(Self::handle_update_buffer);
+        client.add_entity_message_handler(Self::handle_update_diagnostic_summary);
+        client.add_entity_message_handler(Self::handle_update_worktree);
+        client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
+        client.add_entity_request_handler(Self::handle_apply_code_action);
+        client.add_entity_request_handler(Self::handle_format_buffers);
+        client.add_entity_request_handler(Self::handle_get_code_actions);
+        client.add_entity_request_handler(Self::handle_get_completions);
+        client.add_entity_request_handler(Self::handle_get_definition);
+        client.add_entity_request_handler(Self::handle_open_buffer);
+        client.add_entity_request_handler(Self::handle_save_buffer);
+    }
+
     pub fn local(
         client: Arc<Client>,
         user_store: ModelHandle<UserStore>,
@@ -216,6 +247,7 @@ impl Project {
                     remote_id_rx,
                     _maintain_remote_id_task,
                 },
+                opened_buffer: broadcast::channel(1).0,
                 subscriptions: Vec::new(),
                 active_entry: None,
                 languages,
@@ -254,6 +286,34 @@ impl Project {
             load_task.detach();
         }
 
+        let this = cx.add_model(|cx| {
+            let mut this = Self {
+                worktrees: Vec::new(),
+                open_buffers: Default::default(),
+                loading_buffers: Default::default(),
+                opened_buffer: broadcast::channel(1).0,
+                shared_buffers: Default::default(),
+                active_entry: None,
+                collaborators: Default::default(),
+                languages,
+                user_store: user_store.clone(),
+                fs,
+                subscriptions: vec![client.add_model_for_remote_entity(remote_id, cx)],
+                client,
+                client_state: ProjectClientState::Remote {
+                    sharing_has_stopped: false,
+                    remote_id,
+                    replica_id,
+                },
+                language_servers_with_diagnostics_running: 0,
+                language_servers: Default::default(),
+            };
+            for worktree in worktrees {
+                this.add_worktree(&worktree, cx);
+            }
+            this
+        });
+
         let user_ids = response
             .collaborators
             .iter()
@@ -268,70 +328,11 @@ impl Project {
             collaborators.insert(collaborator.peer_id, collaborator);
         }
 
-        Ok(cx.add_model(|cx| {
-            let mut this = Self {
-                worktrees: Vec::new(),
-                open_buffers: Default::default(),
-                loading_buffers: Default::default(),
-                shared_buffers: Default::default(),
-                active_entry: None,
-                collaborators,
-                languages,
-                user_store,
-                fs,
-                subscriptions: vec![
-                    client.add_entity_message_handler(remote_id, cx, Self::handle_unshare_project),
-                    client.add_entity_message_handler(remote_id, cx, Self::handle_add_collaborator),
-                    client.add_entity_message_handler(
-                        remote_id,
-                        cx,
-                        Self::handle_remove_collaborator,
-                    ),
-                    client.add_entity_message_handler(remote_id, cx, Self::handle_share_worktree),
-                    client.add_entity_message_handler(
-                        remote_id,
-                        cx,
-                        Self::handle_unregister_worktree,
-                    ),
-                    client.add_entity_message_handler(remote_id, cx, Self::handle_update_worktree),
-                    client.add_entity_message_handler(
-                        remote_id,
-                        cx,
-                        Self::handle_update_diagnostic_summary,
-                    ),
-                    client.add_entity_message_handler(
-                        remote_id,
-                        cx,
-                        Self::handle_disk_based_diagnostics_updating,
-                    ),
-                    client.add_entity_message_handler(
-                        remote_id,
-                        cx,
-                        Self::handle_disk_based_diagnostics_updated,
-                    ),
-                    client.add_entity_message_handler(remote_id, cx, Self::handle_update_buffer),
-                    client.add_entity_message_handler(
-                        remote_id,
-                        cx,
-                        Self::handle_update_buffer_file,
-                    ),
-                    client.add_entity_message_handler(remote_id, cx, Self::handle_buffer_reloaded),
-                    client.add_entity_message_handler(remote_id, cx, Self::handle_buffer_saved),
-                ],
-                client,
-                client_state: ProjectClientState::Remote {
-                    sharing_has_stopped: false,
-                    remote_id,
-                    replica_id,
-                },
-                language_servers_with_diagnostics_running: 0,
-                language_servers: Default::default(),
-            };
-            for worktree in worktrees {
-                this.add_worktree(&worktree, cx);
-            }
-            this
-        }))
+        this.update(cx, |this, _| {
+            this.collaborators = collaborators;
+        });
+
+        Ok(this)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -343,6 +344,25 @@ impl Project {
         cx.update(|cx| Project::local(client, user_store, languages, fs, cx))
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn shared_buffer(&self, peer_id: PeerId, remote_id: u64) -> Option<ModelHandle<Buffer>> {
+        self.shared_buffers
+            .get(&peer_id)
+            .and_then(|buffers| buffers.get(&remote_id))
+            .cloned()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn has_buffered_operations(&self) -> bool {
+        self.open_buffers
+            .values()
+            .any(|buffer| matches!(buffer, OpenBuffer::Loading(_)))
+    }
+
+    pub fn fs(&self) -> &Arc<dyn Fs> {
+        &self.fs
+    }
+
     fn set_remote_id(&mut self, remote_id: Option<u64>, cx: &mut ModelContext<Self>) {
         if let ProjectClientState::Local { remote_id_tx, .. } = &mut self.client_state {
             *remote_id_tx.borrow_mut() = remote_id;
@@ -350,27 +370,8 @@ impl Project {
 
         self.subscriptions.clear();
         if let Some(remote_id) = remote_id {
-            let client = &self.client;
-            self.subscriptions.extend([
-                client.add_entity_request_handler(remote_id, cx, Self::handle_open_buffer),
-                client.add_entity_message_handler(remote_id, cx, Self::handle_close_buffer),
-                client.add_entity_message_handler(remote_id, cx, Self::handle_add_collaborator),
-                client.add_entity_message_handler(remote_id, cx, Self::handle_remove_collaborator),
-                client.add_entity_message_handler(remote_id, cx, Self::handle_update_worktree),
-                client.add_entity_message_handler(remote_id, cx, Self::handle_update_buffer),
-                client.add_entity_request_handler(remote_id, cx, Self::handle_save_buffer),
-                client.add_entity_message_handler(remote_id, cx, Self::handle_buffer_saved),
-                client.add_entity_request_handler(remote_id, cx, Self::handle_format_buffers),
-                client.add_entity_request_handler(remote_id, cx, Self::handle_get_completions),
-                client.add_entity_request_handler(
-                    remote_id,
-                    cx,
-                    Self::handle_apply_additional_edits_for_completion,
-                ),
-                client.add_entity_request_handler(remote_id, cx, Self::handle_get_code_actions),
-                client.add_entity_request_handler(remote_id, cx, Self::handle_apply_code_action),
-                client.add_entity_request_handler(remote_id, cx, Self::handle_get_definition),
-            ]);
+            self.subscriptions
+                .push(self.client.add_model_for_remote_entity(remote_id, cx));
         }
     }
 
@@ -521,6 +522,10 @@ impl Project {
         }
     }
 
+    pub fn is_remote(&self) -> bool {
+        !self.is_local()
+    }
+
     pub fn open_buffer(
         &mut self,
         path: impl Into<ProjectPath>,
@@ -560,6 +565,11 @@ impl Project {
                     *tx.borrow_mut() = Some(this.update(&mut cx, |this, _| {
                         // Record the fact that the buffer is no longer loading.
                         this.loading_buffers.remove(&project_path);
+                        if this.loading_buffers.is_empty() {
+                            this.open_buffers
+                                .retain(|_, buffer| matches!(buffer, OpenBuffer::Loaded(_)))
+                        }
+
                         let buffer = load_result.map_err(Arc::new)?;
                         Ok(buffer)
                     }));
@@ -626,6 +636,7 @@ impl Project {
                 .await?;
             let buffer = response.buffer.ok_or_else(|| anyhow!("missing buffer"))?;
             this.update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
+                .await
         })
     }
 
@@ -737,12 +748,15 @@ impl Project {
         worktree: Option<&ModelHandle<Worktree>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<()> {
-        if self
-            .open_buffers
-            .insert(buffer.read(cx).remote_id() as usize, buffer.downgrade())
-            .is_some()
-        {
-            return Err(anyhow!("registered the same buffer twice"));
+        match self.open_buffers.insert(
+            buffer.read(cx).remote_id(),
+            OpenBuffer::Loaded(buffer.downgrade()),
+        ) {
+            None => {}
+            Some(OpenBuffer::Loading(operations)) => {
+                buffer.update(cx, |buffer, cx| buffer.apply_ops(operations, cx))?
+            }
+            Some(OpenBuffer::Loaded(_)) => Err(anyhow!("registered the same buffer twice"))?,
         }
         self.assign_language_to_buffer(&buffer, worktree, cx);
         Ok(())
@@ -1263,29 +1277,27 @@ impl Project {
             };
             cx.spawn(|this, mut cx| async move {
                 let response = client.request(request).await?;
-                this.update(&mut cx, |this, cx| {
-                    let mut definitions = Vec::new();
-                    for definition in response.definitions {
-                        let target_buffer = this.deserialize_buffer(
-                            definition.buffer.ok_or_else(|| anyhow!("missing buffer"))?,
-                            cx,
-                        )?;
-                        let target_start = definition
-                            .target_start
-                            .and_then(deserialize_anchor)
-                            .ok_or_else(|| anyhow!("missing target start"))?;
-                        let target_end = definition
-                            .target_end
-                            .and_then(deserialize_anchor)
-                            .ok_or_else(|| anyhow!("missing target end"))?;
-                        definitions.push(Definition {
-                            target_buffer,
-                            target_range: target_start..target_end,
-                        })
-                    }
+                let mut definitions = Vec::new();
+                for definition in response.definitions {
+                    let buffer = definition.buffer.ok_or_else(|| anyhow!("missing buffer"))?;
+                    let target_buffer = this
+                        .update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
+                        .await?;
+                    let target_start = definition
+                        .target_start
+                        .and_then(deserialize_anchor)
+                        .ok_or_else(|| anyhow!("missing target start"))?;
+                    let target_end = definition
+                        .target_end
+                        .and_then(deserialize_anchor)
+                        .ok_or_else(|| anyhow!("missing target end"))?;
+                    definitions.push(Definition {
+                        target_buffer,
+                        target_range: target_start..target_end,
+                    })
+                }
 
-                    Ok(definitions)
-                })
+                Ok(definitions)
             })
         } else {
             Task::ready(Ok(Default::default()))
@@ -1324,18 +1336,19 @@ impl Project {
 
             cx.spawn(|_, cx| async move {
                 let completions = lang_server
-                .request::<lsp::request::Completion>(lsp::CompletionParams {
-                    text_document_position: lsp::TextDocumentPositionParams::new(
-                        lsp::TextDocumentIdentifier::new(
-                            lsp::Url::from_file_path(buffer_abs_path).unwrap(),
+                    .request::<lsp::request::Completion>(lsp::CompletionParams {
+                        text_document_position: lsp::TextDocumentPositionParams::new(
+                            lsp::TextDocumentIdentifier::new(
+                                lsp::Url::from_file_path(buffer_abs_path).unwrap(),
+                            ),
+                            position.to_lsp_position(),
                         ),
-                        position.to_lsp_position(),
-                    ),
-                    context: Default::default(),
-                    work_done_progress_params: Default::default(),
-                    partial_result_params: Default::default(),
-                })
-                .await?;
+                        context: Default::default(),
+                        work_done_progress_params: Default::default(),
+                        partial_result_params: Default::default(),
+                    })
+                    .await
+                    .context("lsp completion request failed")?;
 
                 let completions = if let Some(completions) = completions {
                     match completions {
@@ -1347,41 +1360,56 @@ impl Project {
                 };
 
                 source_buffer_handle.read_with(&cx, |this, _| {
-                    Ok(completions.into_iter().filter_map(|lsp_completion| {
-                        let (old_range, new_text) = match lsp_completion.text_edit.as_ref()? {
-                            lsp::CompletionTextEdit::Edit(edit) => (range_from_lsp(edit.range), edit.new_text.clone()),
-                            lsp::CompletionTextEdit::InsertAndReplace(_) => {
-                                log::info!("received an insert and replace completion but we don't yet support that");
-                                return None
-                            },
-                        };
+                    Ok(completions
+                        .into_iter()
+                        .filter_map(|lsp_completion| {
+                            let (old_range, new_text) = match lsp_completion.text_edit.as_ref()? {
+                                lsp::CompletionTextEdit::Edit(edit) => {
+                                    (range_from_lsp(edit.range), edit.new_text.clone())
+                                }
+                                lsp::CompletionTextEdit::InsertAndReplace(_) => {
+                                    log::info!("unsupported insert/replace completion");
+                                    return None;
+                                }
+                            };
 
-                        let clipped_start = this.clip_point_utf16(old_range.start, Bias::Left);
-                        let clipped_end = this.clip_point_utf16(old_range.end, Bias::Left) ;
-                        if clipped_start == old_range.start && clipped_end == old_range.end {
-                            Some(Completion {
-                                old_range: this.anchor_before(old_range.start)..this.anchor_after(old_range.end),
-                                new_text,
-                                label: language.as_ref().and_then(|l| l.label_for_completion(&lsp_completion)).unwrap_or_else(|| CompletionLabel::plain(&lsp_completion)),
-                                lsp_completion,
-                            })
-                        } else {
-                            None
-                        }
-                    }).collect())
+                            let clipped_start = this.clip_point_utf16(old_range.start, Bias::Left);
+                            let clipped_end = this.clip_point_utf16(old_range.end, Bias::Left);
+                            if clipped_start == old_range.start && clipped_end == old_range.end {
+                                Some(Completion {
+                                    old_range: this.anchor_before(old_range.start)
+                                        ..this.anchor_after(old_range.end),
+                                    new_text,
+                                    label: language
+                                        .as_ref()
+                                        .and_then(|l| l.label_for_completion(&lsp_completion))
+                                        .unwrap_or_else(|| CompletionLabel::plain(&lsp_completion)),
+                                    lsp_completion,
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .collect())
                 })
-
             })
         } else if let Some(project_id) = self.remote_id() {
             let rpc = self.client.clone();
-            cx.foreground().spawn(async move {
-                let response = rpc
-                    .request(proto::GetCompletions {
-                        project_id,
-                        buffer_id,
-                        position: Some(language::proto::serialize_anchor(&anchor)),
+            let message = proto::GetCompletions {
+                project_id,
+                buffer_id,
+                position: Some(language::proto::serialize_anchor(&anchor)),
+                version: (&source_buffer.version()).into(),
+            };
+            cx.spawn_weak(|_, mut cx| async move {
+                let response = rpc.request(message).await?;
+
+                source_buffer_handle
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_version(response.version.into())
                     })
-                    .await?;
+                    .await;
+
                 response
                     .completions
                     .into_iter()
@@ -1550,7 +1578,7 @@ impl Project {
             })
         } else if let Some(project_id) = self.remote_id() {
             let rpc = self.client.clone();
-            cx.foreground().spawn(async move {
+            cx.spawn_weak(|_, mut cx| async move {
                 let response = rpc
                     .request(proto::GetCodeActions {
                         project_id,
@@ -1559,6 +1587,13 @@ impl Project {
                         end: Some(language::proto::serialize_anchor(&range.end)),
                     })
                     .await?;
+
+                buffer_handle
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_version(response.version.into())
+                    })
+                    .await;
+
                 response
                     .actions
                     .into_iter()
@@ -2124,9 +2159,9 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
             if let Some(worktree) = this.worktree_for_id(worktree_id, cx) {
-                worktree.update(cx, |worktree, cx| {
+                worktree.update(cx, |worktree, _| {
                     let worktree = worktree.as_remote_mut().unwrap();
-                    worktree.update_from_remote(envelope, cx)
+                    worktree.update_from_remote(envelope)
                 })?;
             }
             Ok(())
@@ -2188,15 +2223,26 @@ impl Project {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let payload = envelope.payload.clone();
-            let buffer_id = payload.buffer_id as usize;
+            let buffer_id = payload.buffer_id;
             let ops = payload
                 .operations
                 .into_iter()
                 .map(|op| language::proto::deserialize_operation(op))
                 .collect::<Result<Vec<_>, _>>()?;
-            if let Some(buffer) = this.open_buffers.get_mut(&buffer_id) {
-                if let Some(buffer) = buffer.upgrade(cx) {
-                    buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
+            let is_remote = this.is_remote();
+            match this.open_buffers.entry(buffer_id) {
+                hash_map::Entry::Occupied(mut e) => match e.get_mut() {
+                    OpenBuffer::Loaded(buffer) => {
+                        if let Some(buffer) = buffer.upgrade(cx) {
+                            buffer.update(cx, |buffer, cx| buffer.apply_ops(ops, cx))?;
+                        }
+                    }
+                    OpenBuffer::Loading(operations) => operations.extend_from_slice(&ops),
+                },
+                hash_map::Entry::Vacant(e) => {
+                    if is_remote && this.loading_buffers.len() > 0 {
+                        e.insert(OpenBuffer::Loading(ops));
+                    }
                 }
             }
             Ok(())
@@ -2211,7 +2257,7 @@ impl Project {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             let payload = envelope.payload.clone();
-            let buffer_id = payload.buffer_id as usize;
+            let buffer_id = payload.buffer_id;
             let file = payload.file.ok_or_else(|| anyhow!("invalid file"))?;
             let worktree = this
                 .worktree_for_id(WorktreeId::from_proto(file.worktree_id), cx)
@@ -2237,21 +2283,30 @@ impl Project {
     ) -> Result<proto::BufferSaved> {
         let buffer_id = envelope.payload.buffer_id;
         let sender_id = envelope.original_sender_id()?;
-        let (project_id, save) = this.update(&mut cx, |this, cx| {
+        let requested_version = envelope.payload.version.try_into()?;
+
+        let (project_id, buffer) = this.update(&mut cx, |this, _| {
             let project_id = this.remote_id().ok_or_else(|| anyhow!("not connected"))?;
             let buffer = this
                 .shared_buffers
                 .get(&sender_id)
                 .and_then(|shared_buffers| shared_buffers.get(&buffer_id).cloned())
                 .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?;
-            Ok::<_, anyhow::Error>((project_id, buffer.update(cx, |buffer, cx| buffer.save(cx))))
+            Ok::<_, anyhow::Error>((project_id, buffer))
         })?;
 
-        let (version, mtime) = save.await?;
+        if !buffer
+            .read_with(&cx, |buffer, _| buffer.version())
+            .observed_all(&requested_version)
+        {
+            Err(anyhow!("save request depends on unreceived edits"))?;
+        }
+
+        let (saved_version, mtime) = buffer.update(&mut cx, |buffer, cx| buffer.save(cx)).await?;
         Ok(proto::BufferSaved {
             project_id,
             buffer_id,
-            version: (&version).into(),
+            version: (&saved_version).into(),
             mtime: Some(mtime.into()),
         })
     }
@@ -2301,21 +2356,30 @@ impl Project {
             .position
             .and_then(language::proto::deserialize_anchor)
             .ok_or_else(|| anyhow!("invalid position"))?;
-        let completions = this.update(&mut cx, |this, cx| {
-            let buffer = this
-                .shared_buffers
+        let version = clock::Global::from(envelope.payload.version);
+        let buffer = this.read_with(&cx, |this, _| {
+            this.shared_buffers
                 .get(&sender_id)
                 .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
-                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
-            Ok::<_, anyhow::Error>(this.completions(&buffer, position, cx))
+                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
         })?;
+        if !buffer
+            .read_with(&cx, |buffer, _| buffer.version())
+            .observed_all(&version)
+        {
+            Err(anyhow!("completion request depends on unreceived edits"))?;
+        }
+        let version = buffer.read_with(&cx, |buffer, _| buffer.version());
+        let completions = this
+            .update(&mut cx, |this, cx| this.completions(&buffer, position, cx))
+            .await?;
 
         Ok(proto::GetCompletionsResponse {
             completions: completions
-                .await?
                 .iter()
                 .map(language::proto::serialize_completion)
                 .collect(),
+            version: (&version).into(),
         })
     }
 
@@ -2370,12 +2434,17 @@ impl Project {
             .end
             .and_then(language::proto::deserialize_anchor)
             .ok_or_else(|| anyhow!("invalid end"))?;
-        let code_actions = this.update(&mut cx, |this, cx| {
-            let buffer = this
-                .shared_buffers
+        let buffer = this.update(&mut cx, |this, _| {
+            this.shared_buffers
                 .get(&sender_id)
                 .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
-                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
+                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))
+        })?;
+        let version = buffer.read_with(&cx, |buffer, _| buffer.version());
+        if !version.observed(start.timestamp) || !version.observed(end.timestamp) {
+            Err(anyhow!("code action request references unreceived edits"))?;
+        }
+        let code_actions = this.update(&mut cx, |this, cx| {
             Ok::<_, anyhow::Error>(this.code_actions(&buffer, start..end, cx))
         })?;
 
@@ -2385,6 +2454,7 @@ impl Project {
                 .iter()
                 .map(language::proto::serialize_code_action)
                 .collect(),
+            version: (&version).into(),
         })
     }
 
@@ -2516,20 +2586,15 @@ impl Project {
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ProjectTransaction>> {
-        let mut project_transaction = ProjectTransaction::default();
-        for (buffer, transaction) in message.buffers.into_iter().zip(message.transactions) {
-            let buffer = match self.deserialize_buffer(buffer, cx) {
-                Ok(buffer) => buffer,
-                Err(error) => return Task::ready(Err(error)),
-            };
-            let transaction = match language::proto::deserialize_transaction(transaction) {
-                Ok(transaction) => transaction,
-                Err(error) => return Task::ready(Err(error)),
-            };
-            project_transaction.0.insert(buffer, transaction);
-        }
-
-        cx.spawn_weak(|_, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
+            let mut project_transaction = ProjectTransaction::default();
+            for (buffer, transaction) in message.buffers.into_iter().zip(message.transactions) {
+                let buffer = this
+                    .update(&mut cx, |this, cx| this.deserialize_buffer(buffer, cx))
+                    .await?;
+                let transaction = language::proto::deserialize_transaction(transaction)?;
+                project_transaction.0.insert(buffer, transaction);
+            }
             for (buffer, transaction) in &project_transaction.0 {
                 buffer
                     .update(&mut cx, |buffer, _| {
@@ -2573,33 +2638,60 @@ impl Project {
         &mut self,
         buffer: proto::Buffer,
         cx: &mut ModelContext<Self>,
-    ) -> Result<ModelHandle<Buffer>> {
-        match buffer.variant.ok_or_else(|| anyhow!("missing buffer"))? {
-            proto::buffer::Variant::Id(id) => self
-                .open_buffers
-                .get(&(id as usize))
-                .and_then(|buffer| buffer.upgrade(cx))
-                .ok_or_else(|| anyhow!("no buffer exists for id {}", id)),
-            proto::buffer::Variant::State(mut buffer) => {
-                let mut buffer_worktree = None;
-                let mut buffer_file = None;
-                if let Some(file) = buffer.file.take() {
-                    let worktree_id = WorktreeId::from_proto(file.worktree_id);
-                    let worktree = self
-                        .worktree_for_id(worktree_id, cx)
-                        .ok_or_else(|| anyhow!("no worktree found for id {}", file.worktree_id))?;
-                    buffer_file = Some(Box::new(File::from_proto(file, worktree.clone(), cx)?)
-                        as Box<dyn language::File>);
-                    buffer_worktree = Some(worktree);
-                }
+    ) -> Task<Result<ModelHandle<Buffer>>> {
+        let replica_id = self.replica_id();
 
-                let buffer = cx.add_model(|cx| {
-                    Buffer::from_proto(self.replica_id(), buffer, buffer_file, cx).unwrap()
-                });
-                self.register_buffer(&buffer, buffer_worktree.as_ref(), cx)?;
-                Ok(buffer)
+        let mut opened_buffer_tx = self.opened_buffer.clone();
+        let mut opened_buffer_rx = self.opened_buffer.subscribe();
+        cx.spawn(|this, mut cx| async move {
+            match buffer.variant.ok_or_else(|| anyhow!("missing buffer"))? {
+                proto::buffer::Variant::Id(id) => {
+                    let buffer = loop {
+                        let buffer = this.read_with(&cx, |this, cx| {
+                            this.open_buffers
+                                .get(&id)
+                                .and_then(|buffer| buffer.upgrade(cx))
+                        });
+                        if let Some(buffer) = buffer {
+                            break buffer;
+                        }
+                        opened_buffer_rx
+                            .recv()
+                            .await
+                            .ok_or_else(|| anyhow!("project dropped while waiting for buffer"))?;
+                    };
+                    Ok(buffer)
+                }
+                proto::buffer::Variant::State(mut buffer) => {
+                    let mut buffer_worktree = None;
+                    let mut buffer_file = None;
+                    if let Some(file) = buffer.file.take() {
+                        this.read_with(&cx, |this, cx| {
+                            let worktree_id = WorktreeId::from_proto(file.worktree_id);
+                            let worktree =
+                                this.worktree_for_id(worktree_id, cx).ok_or_else(|| {
+                                    anyhow!("no worktree found for id {}", file.worktree_id)
+                                })?;
+                            buffer_file =
+                                Some(Box::new(File::from_proto(file, worktree.clone(), cx)?)
+                                    as Box<dyn language::File>);
+                            buffer_worktree = Some(worktree);
+                            Ok::<_, anyhow::Error>(())
+                        })?;
+                    }
+
+                    let buffer = cx.add_model(|cx| {
+                        Buffer::from_proto(replica_id, buffer, buffer_file, cx).unwrap()
+                    });
+                    this.update(&mut cx, |this, cx| {
+                        this.register_buffer(&buffer, buffer_worktree.as_ref(), cx)
+                    })?;
+
+                    let _ = opened_buffer_tx.send(()).await;
+                    Ok(buffer)
+                }
             }
-        }
+        })
     }
 
     async fn handle_close_buffer(
@@ -2635,7 +2727,7 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             let buffer = this
                 .open_buffers
-                .get(&(envelope.payload.buffer_id as usize))
+                .get(&envelope.payload.buffer_id)
                 .and_then(|buffer| buffer.upgrade(cx));
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
@@ -2661,7 +2753,7 @@ impl Project {
         this.update(&mut cx, |this, cx| {
             let buffer = this
                 .open_buffers
-                .get(&(payload.buffer_id as usize))
+                .get(&payload.buffer_id)
                 .and_then(|buffer| buffer.upgrade(cx));
             if let Some(buffer) = buffer {
                 buffer.update(cx, |buffer, cx| {
@@ -2715,6 +2807,15 @@ impl WorktreeHandle {
         match self {
             WorktreeHandle::Strong(handle) => Some(handle.clone()),
             WorktreeHandle::Weak(handle) => handle.upgrade(cx),
+        }
+    }
+}
+
+impl OpenBuffer {
+    pub fn upgrade(&self, cx: &impl UpgradeModelHandle) -> Option<ModelHandle<Buffer>> {
+        match self {
+            OpenBuffer::Loaded(handle) => handle.upgrade(cx),
+            OpenBuffer::Loading(_) => None,
         }
     }
 }
@@ -2959,7 +3060,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_language_server_diagnostics(mut cx: gpui::TestAppContext) {
-        let (language_server_config, mut fake_server) = LanguageServerConfig::fake(&cx).await;
+        let (language_server_config, mut fake_servers) = LanguageServerConfig::fake();
         let progress_token = language_server_config
             .disk_based_diagnostics_progress_token
             .clone()
@@ -3022,6 +3123,7 @@ mod tests {
 
         let mut events = subscribe(&project, &mut cx);
 
+        let mut fake_server = fake_servers.next().await.unwrap();
         fake_server.start_progress(&progress_token).await;
         assert_eq!(
             events.next().await.unwrap(),
@@ -3123,7 +3225,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_definition(mut cx: gpui::TestAppContext) {
-        let (language_server_config, mut fake_server) = LanguageServerConfig::fake(&cx).await;
+        let (language_server_config, mut fake_servers) = LanguageServerConfig::fake();
 
         let mut languages = LanguageRegistry::new();
         languages.add(Arc::new(Language::new(
@@ -3178,6 +3280,7 @@ mod tests {
             .await
             .unwrap();
 
+        let mut fake_server = fake_servers.next().await.unwrap();
         fake_server.handle_request::<lsp::request::GotoDefinition, _>(move |params| {
             let params = params.text_document_position_params;
             assert_eq!(
@@ -3371,7 +3474,7 @@ mod tests {
             .await;
 
         // Create a remote copy of this worktree.
-        let initial_snapshot = tree.read_with(&cx, |tree, _| tree.snapshot());
+        let initial_snapshot = tree.read_with(&cx, |tree, _| tree.as_local().unwrap().snapshot());
         let (remote, load_task) = cx.update(|cx| {
             Worktree::remote(
                 1,
@@ -3447,10 +3550,13 @@ mod tests {
         // Update the remote worktree. Check that it becomes consistent with the
         // local worktree.
         remote.update(&mut cx, |remote, cx| {
-            let update_message =
-                tree.read(cx)
-                    .snapshot()
-                    .build_update(&initial_snapshot, 1, 1, true);
+            let update_message = tree.read(cx).as_local().unwrap().snapshot().build_update(
+                &initial_snapshot,
+                1,
+                1,
+                0,
+                true,
+            );
             remote
                 .as_remote_mut()
                 .unwrap()

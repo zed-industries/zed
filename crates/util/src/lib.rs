@@ -4,13 +4,14 @@ pub mod test;
 use futures::Future;
 use std::{
     cmp::Ordering,
+    ops::AddAssign,
     pin::Pin,
     task::{Context, Poll},
 };
 
-pub fn post_inc(value: &mut usize) -> usize {
+pub fn post_inc<T: From<u8> + AddAssign<T> + Copy>(value: &mut T) -> T {
     let prev = *value;
-    *value += 1;
+    *value += T::from(1);
     prev
 }
 

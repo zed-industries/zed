@@ -43,6 +43,7 @@ pub struct ProjectShare {
 pub struct WorktreeShare {
     pub entries: HashMap<u64, proto::Entry>,
     pub diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
+    pub next_update_id: u64,
 }
 
 #[derive(Default)]
@@ -403,6 +404,7 @@ impl Store {
         connection_id: ConnectionId,
         entries: HashMap<u64, proto::Entry>,
         diagnostic_summaries: BTreeMap<PathBuf, proto::DiagnosticSummary>,
+        next_update_id: u64,
     ) -> tide::Result<SharedWorktree> {
         let project = self
             .projects
@@ -416,6 +418,7 @@ impl Store {
             worktree.share = Some(WorktreeShare {
                 entries,
                 diagnostic_summaries,
+                next_update_id,
             });
             Ok(SharedWorktree {
                 authorized_user_ids: project.authorized_user_ids(),
@@ -534,6 +537,7 @@ impl Store {
         connection_id: ConnectionId,
         project_id: u64,
         worktree_id: u64,
+        update_id: u64,
         removed_entries: &[u64],
         updated_entries: &[proto::Entry],
     ) -> tide::Result<Vec<ConnectionId>> {
@@ -545,6 +549,11 @@ impl Store {
             .share
             .as_mut()
             .ok_or_else(|| anyhow!("worktree is not shared"))?;
+        if share.next_update_id != update_id {
+            return Err(anyhow!("received worktree updates out-of-order"))?;
+        }
+
+        share.next_update_id = update_id + 1;
         for entry_id in removed_entries {
             share.entries.remove(&entry_id);
         }

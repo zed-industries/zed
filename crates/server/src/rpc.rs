@@ -9,9 +9,8 @@ use anyhow::anyhow;
 use async_std::task;
 use async_tungstenite::{tungstenite::protocol::Role, WebSocketStream};
 use collections::{HashMap, HashSet};
-use futures::{future::BoxFuture, FutureExt, StreamExt};
+use futures::{channel::mpsc, future::BoxFuture, FutureExt, SinkExt, StreamExt};
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
-use postage::{mpsc, prelude::Sink as _};
 use rpc::{
     proto::{self, AnyTypedEnvelope, EnvelopedMessage, RequestMessage},
     Connection, ConnectionId, Peer, TypedEnvelope,
@@ -38,8 +37,14 @@ pub struct Server {
     store: RwLock<Store>,
     app_state: Arc<AppState>,
     handlers: HashMap<TypeId, MessageHandler>,
-    notifications: Option<mpsc::Sender<()>>,
+    notifications: Option<mpsc::UnboundedSender<()>>,
 }
+
+pub trait Executor {
+    fn spawn_detached<F: 'static + Send + Future<Output = ()>>(&self, future: F);
+}
+
+pub struct RealExecutor;
 
 const MESSAGE_COUNT_PER_PAGE: usize = 100;
 const MAX_MESSAGE_LEN: usize = 1024;
@@ -48,7 +53,7 @@ impl Server {
     pub fn new(
         app_state: Arc<AppState>,
         peer: Arc<Peer>,
-        notifications: Option<mpsc::Sender<()>>,
+        notifications: Option<mpsc::UnboundedSender<()>>,
     ) -> Arc<Self> {
         let mut server = Self {
             peer,
@@ -69,7 +74,7 @@ impl Server {
             .add_request_handler(Server::register_worktree)
             .add_message_handler(Server::unregister_worktree)
             .add_request_handler(Server::share_worktree)
-            .add_message_handler(Server::update_worktree)
+            .add_request_handler(Server::update_worktree)
             .add_message_handler(Server::update_diagnostic_summary)
             .add_message_handler(Server::disk_based_diagnostics_updating)
             .add_message_handler(Server::disk_based_diagnostics_updated)
@@ -144,12 +149,13 @@ impl Server {
         })
     }
 
-    pub fn handle_connection(
+    pub fn handle_connection<E: Executor>(
         self: &Arc<Self>,
         connection: Connection,
         addr: String,
         user_id: UserId,
-        mut send_connection_id: Option<postage::mpsc::Sender<ConnectionId>>,
+        mut send_connection_id: Option<mpsc::Sender<ConnectionId>>,
+        executor: E,
     ) -> impl Future<Output = ()> {
         let mut this = self.clone();
         async move {
@@ -183,14 +189,23 @@ impl Server {
                             let type_name = message.payload_type_name();
                             log::info!("rpc message received. connection:{}, type:{}", connection_id, type_name);
                             if let Some(handler) = this.handlers.get(&message.payload_type_id()) {
-                                if let Err(err) = (handler)(this.clone(), message).await {
-                                    log::error!("rpc message error. connection:{}, type:{}, error:{:?}", connection_id, type_name, err);
+                                let notifications = this.notifications.clone();
+                                let is_background = message.is_background();
+                                let handle_message = (handler)(this.clone(), message);
+                                let handle_message = async move {
+                                    if let Err(err) = handle_message.await {
+                                        log::error!("rpc message error. connection:{}, type:{}, error:{:?}", connection_id, type_name, err);
+                                    } else {
+                                        log::info!("rpc message handled. connection:{}, type:{}, duration:{:?}", connection_id, type_name, start_time.elapsed());
+                                    }
+                                    if let Some(mut notifications) = notifications {
+                                        let _ = notifications.send(()).await;
+                                    }
+                                };
+                                if is_background {
+                                    executor.spawn_detached(handle_message);
                                 } else {
-                                    log::info!("rpc message handled. connection:{}, type:{}, duration:{:?}", connection_id, type_name, start_time.elapsed());
-                                }
-
-                                if let Some(mut notifications) = this.notifications.clone() {
-                                    let _ = notifications.send(()).await;
+                                    handle_message.await;
                                 }
                             } else {
                                 log::warn!("unhandled message: {}", type_name);
@@ -329,6 +344,7 @@ impl Server {
                                 .cloned()
                                 .collect(),
                             weak: worktree.weak,
+                            next_update_id: share.next_update_id as u64,
                         })
                     })
                     .collect();
@@ -467,6 +483,7 @@ impl Server {
             request.sender_id,
             entries,
             diagnostic_summaries,
+            worktree.next_update_id,
         )?;
 
         broadcast(
@@ -485,11 +502,12 @@ impl Server {
     async fn update_worktree(
         mut self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateWorktree>,
-    ) -> tide::Result<()> {
+    ) -> tide::Result<proto::Ack> {
         let connection_ids = self.state_mut().update_worktree(
             request.sender_id,
             request.payload.project_id,
             request.payload.worktree_id,
+            request.payload.id,
             &request.payload.removed_entries,
             &request.payload.updated_entries,
         )?;
@@ -499,7 +517,7 @@ impl Server {
                 .forward_send(request.sender_id, connection_id, request.payload.clone())
         })?;
 
-        Ok(())
+        Ok(proto::Ack {})
     }
 
     async fn update_diagnostic_summary(
@@ -767,7 +785,12 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::GetUsers>,
     ) -> tide::Result<proto::GetUsersResponse> {
-        let user_ids = request.payload.user_ids.into_iter().map(UserId::from_proto);
+        let user_ids = request
+            .payload
+            .user_ids
+            .into_iter()
+            .map(UserId::from_proto)
+            .collect();
         let users = self
             .app_state
             .db
@@ -966,6 +989,12 @@ impl Server {
     }
 }
 
+impl Executor for RealExecutor {
+    fn spawn_detached<F: 'static + Send + Future<Output = ()>>(&self, future: F) {
+        task::spawn(future);
+    }
+}
+
 fn broadcast<F>(
     sender_id: ConnectionId,
     receiver_ids: Vec<ConnectionId>,
@@ -1032,6 +1061,7 @@ pub fn add_routes(app: &mut tide::Server<Arc<AppState>>, rpc: &Arc<Peer>) {
                             addr,
                             user_id,
                             None,
+                            RealExecutor,
                         )
                         .await;
                 }
@@ -1066,15 +1096,17 @@ mod tests {
         github, AppState, Config,
     };
     use ::rpc::Peer;
-    use async_std::task;
+    use collections::BTreeMap;
     use gpui::{executor, ModelHandle, TestAppContext};
     use parking_lot::Mutex;
-    use postage::{mpsc, watch};
+    use postage::{sink::Sink, watch};
     use rand::prelude::*;
     use rpc::PeerId;
     use serde_json::json;
     use sqlx::types::time::OffsetDateTime;
     use std::{
+        cell::{Cell, RefCell},
+        env,
         ops::Deref,
         path::Path,
         rc::Rc,
@@ -1099,7 +1131,7 @@ mod tests {
             LanguageConfig, LanguageRegistry, LanguageServerConfig, Point,
         },
         lsp,
-        project::{worktree::WorktreeHandle, DiagnosticSummary, Project, ProjectPath},
+        project::{DiagnosticSummary, Project, ProjectPath},
         workspace::{Workspace, WorkspaceParams},
     };
 
@@ -1119,7 +1151,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground()).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1257,7 +1289,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground()).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1358,7 +1390,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 3 clients.
-        let mut server = TestServer::start(cx_a.foreground()).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
         let client_c = server.create_client(&mut cx_c, "user_c").await;
@@ -1470,11 +1502,6 @@ mod tests {
         buffer_b.read_with(&cx_b, |buf, _| assert!(!buf.is_dirty()));
         buffer_c.condition(&cx_c, |buf, _| !buf.is_dirty()).await;
 
-        // Ensure worktree observes a/file1's change event *before* the rename occurs, otherwise
-        // when interpreting the change event it will mistakenly think that the file has been
-        // deleted (because its path has changed) and will subsequently fail to detect the rename.
-        worktree_a.flush_fs_events(&cx_a).await;
-
         // Make changes on host's file system, see those changes on guest worktrees.
         fs.rename(
             "/a/file1".as_ref(),
@@ -1483,6 +1510,7 @@ mod tests {
         )
         .await
         .unwrap();
+
         fs.rename("/a/file2".as_ref(), "/a/file3".as_ref(), Default::default())
             .await
             .unwrap();
@@ -1540,7 +1568,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground()).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1590,14 +1618,12 @@ mod tests {
         )
         .await
         .unwrap();
-        let worktree_b = project_b.update(&mut cx_b, |p, cx| p.worktrees(cx).next().unwrap());
 
         // Open a buffer as client B
         let buffer_b = project_b
             .update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
             .await
             .unwrap();
-        let mtime = buffer_b.read_with(&cx_b, |buf, _| buf.file().unwrap().mtime());
 
         buffer_b.update(&mut cx_b, |buf, cx| buf.edit([0..0], "world ", cx));
         buffer_b.read_with(&cx_b, |buf, _| {
@@ -1609,13 +1635,10 @@ mod tests {
             .update(&mut cx_b, |buf, cx| buf.save(cx))
             .await
             .unwrap();
-        worktree_b
-            .condition(&cx_b, |_, cx| {
-                buffer_b.read(cx).file().unwrap().mtime() != mtime
-            })
+        buffer_b
+            .condition(&cx_b, |buffer_b, _| !buffer_b.is_dirty())
             .await;
         buffer_b.read_with(&cx_b, |buf, _| {
-            assert!(!buf.is_dirty());
             assert!(!buf.has_conflict());
         });
 
@@ -1633,7 +1656,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground()).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1718,7 +1741,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground()).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1778,10 +1801,12 @@ mod tests {
         let buffer_b = cx_b
             .background()
             .spawn(project_b.update(&mut cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx)));
-        task::yield_now().await;
 
         // Edit the buffer as client A while client B is still opening it.
-        buffer_a.update(&mut cx_a, |buf, cx| buf.edit([0..0], "z", cx));
+        cx_b.background().simulate_random_delay().await;
+        buffer_a.update(&mut cx_a, |buf, cx| buf.edit([0..0], "X", cx));
+        cx_b.background().simulate_random_delay().await;
+        buffer_a.update(&mut cx_a, |buf, cx| buf.edit([1..1], "Y", cx));
 
         let text = buffer_a.read_with(&cx_a, |buf, _| buf.text());
         let buffer_b = buffer_b.await.unwrap();
@@ -1798,7 +1823,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground()).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1873,7 +1898,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground()).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -1947,8 +1972,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Set up a fake language server.
-        let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake(&cx_a).await;
+        let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -1962,7 +1986,7 @@ mod tests {
             )));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground()).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -2017,6 +2041,7 @@ mod tests {
             .unwrap();
 
         // Simulate a language server reporting errors for a file.
+        let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server
             .notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
                 uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
@@ -2171,18 +2196,14 @@ mod tests {
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Set up a fake language server.
-        let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake_with_capabilities(
-                lsp::ServerCapabilities {
-                    completion_provider: Some(lsp::CompletionOptions {
-                        trigger_characters: Some(vec![".".to_string()]),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                },
-                &cx_a,
-            )
-            .await;
+        let (mut language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
+        language_server_config.set_fake_capabilities(lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -2196,7 +2217,7 @@ mod tests {
             )));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground()).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -2264,6 +2285,11 @@ mod tests {
             )
         });
 
+        let mut fake_language_server = fake_language_servers.next().await.unwrap();
+        buffer_b
+            .condition(&cx_b, |buffer, _| !buffer.completion_triggers().is_empty())
+            .await;
+
         // Type a completion trigger character as the guest.
         editor_b.update(&mut cx_b, |editor, cx| {
             editor.select_ranges([13..13], None, cx);
@@ -2273,45 +2299,51 @@ mod tests {
 
         // Receive a completion request as the host's language server.
         // Return some completions from the host's language server.
-        fake_language_server.handle_request::<lsp::request::Completion, _>(|params| {
-            assert_eq!(
-                params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
-            );
-            assert_eq!(
-                params.text_document_position.position,
-                lsp::Position::new(0, 14),
-            );
+        cx_a.foreground().start_waiting();
+        fake_language_server
+            .handle_request::<lsp::request::Completion, _>(|params| {
+                assert_eq!(
+                    params.text_document_position.text_document.uri,
+                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                );
+                assert_eq!(
+                    params.text_document_position.position,
+                    lsp::Position::new(0, 14),
+                );
 
-            Some(lsp::CompletionResponse::Array(vec![
-                lsp::CompletionItem {
-                    label: "first_method(…)".into(),
-                    detail: Some("fn(&mut self, B) -> C".into()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        new_text: "first_method($1)".to_string(),
-                        range: lsp::Range::new(
-                            lsp::Position::new(0, 14),
-                            lsp::Position::new(0, 14),
-                        ),
-                    })),
-                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                    ..Default::default()
-                },
-                lsp::CompletionItem {
-                    label: "second_method(…)".into(),
-                    detail: Some("fn(&mut self, C) -> D<E>".into()),
-                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                        new_text: "second_method()".to_string(),
-                        range: lsp::Range::new(
-                            lsp::Position::new(0, 14),
-                            lsp::Position::new(0, 14),
-                        ),
-                    })),
-                    insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
-                    ..Default::default()
-                },
-            ]))
-        });
+                Some(lsp::CompletionResponse::Array(vec![
+                    lsp::CompletionItem {
+                        label: "first_method(…)".into(),
+                        detail: Some("fn(&mut self, B) -> C".into()),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            new_text: "first_method($1)".to_string(),
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 14),
+                                lsp::Position::new(0, 14),
+                            ),
+                        })),
+                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                        ..Default::default()
+                    },
+                    lsp::CompletionItem {
+                        label: "second_method(…)".into(),
+                        detail: Some("fn(&mut self, C) -> D<E>".into()),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            new_text: "second_method()".to_string(),
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 14),
+                                lsp::Position::new(0, 14),
+                            ),
+                        })),
+                        insert_text_format: Some(lsp::InsertTextFormat::SNIPPET),
+                        ..Default::default()
+                    },
+                ]))
+            })
+            .next()
+            .await
+            .unwrap();
+        cx_a.foreground().finish_waiting();
 
         // Open the buffer on the host.
         let buffer_a = project_a
@@ -2325,9 +2357,10 @@ mod tests {
             .await;
 
         // Confirm a completion on the guest.
-        editor_b.next_notification(&cx_b).await;
+        editor_b
+            .condition(&cx_b, |editor, _| editor.context_menu_visible())
+            .await;
         editor_b.update(&mut cx_b, |editor, cx| {
-            assert!(editor.context_menu_visible());
             editor.confirm_completion(&ConfirmCompletion(Some(0)), cx);
             assert_eq!(editor.text(cx), "fn main() { a.first_method() }");
         });
@@ -2352,22 +2385,17 @@ mod tests {
             }
         });
 
+        // The additional edit is applied.
         buffer_a
             .condition(&cx_a, |buffer, _| {
-                buffer.text() == "fn main() { a.first_method() }"
+                buffer.text() == "use d::SomeTrait;\nfn main() { a.first_method() }"
             })
             .await;
-
-        // The additional edit is applied.
         buffer_b
             .condition(&cx_b, |buffer, _| {
                 buffer.text() == "use d::SomeTrait;\nfn main() { a.first_method() }"
             })
             .await;
-        assert_eq!(
-            buffer_a.read_with(&cx_a, |buffer, _| buffer.text()),
-            buffer_b.read_with(&cx_b, |buffer, _| buffer.text()),
-        );
     }
 
     #[gpui::test(iterations = 10)]
@@ -2377,8 +2405,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Set up a fake language server.
-        let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake(&cx_a).await;
+        let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -2392,7 +2419,7 @@ mod tests {
             )));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground()).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -2452,6 +2479,7 @@ mod tests {
             project.format(HashSet::from_iter([buffer_b.clone()]), true, cx)
         });
 
+        let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::Formatting, _>(|_| {
             Some(vec![
                 lsp::TextEdit {
@@ -2494,8 +2522,7 @@ mod tests {
         .await;
 
         // Set up a fake language server.
-        let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake(&cx_a).await;
+        let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -2509,7 +2536,7 @@ mod tests {
             )));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground()).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -2560,6 +2587,8 @@ mod tests {
 
         // Request the definition of a symbol as the guest.
         let definitions_1 = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b, 23, cx));
+
+        let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_| {
             Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
                 lsp::Url::from_file_path("/root-2/b.rs").unwrap(),
@@ -2640,8 +2669,8 @@ mod tests {
         .await;
 
         // Set up a fake language server.
-        let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake(&cx_a).await;
+        let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
+
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -2655,7 +2684,7 @@ mod tests {
             )));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground()).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -2669,6 +2698,7 @@ mod tests {
                 cx,
             )
         });
+
         let (worktree_a, _) = project_a
             .update(&mut cx_a, |p, cx| {
                 p.find_or_create_local_worktree("/root", false, cx)
@@ -2715,6 +2745,7 @@ mod tests {
             definitions = project_b.update(&mut cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
         }
 
+        let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server.handle_request::<lsp::request::GotoDefinition, _>(|_| {
             Some(lsp::GotoDefinitionResponse::Scalar(lsp::Location::new(
                 lsp::Url::from_file_path("/root/b.rs").unwrap(),
@@ -2740,14 +2771,7 @@ mod tests {
         cx_b.update(|cx| editor::init(cx, &mut path_openers_b));
 
         // Set up a fake language server.
-        let (language_server_config, mut fake_language_server) =
-            LanguageServerConfig::fake_with_capabilities(
-                lsp::ServerCapabilities {
-                    ..Default::default()
-                },
-                &cx_a,
-            )
-            .await;
+        let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
         Arc::get_mut(&mut lang_registry)
             .unwrap()
             .add(Arc::new(Language::new(
@@ -2761,7 +2785,7 @@ mod tests {
             )));
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground()).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -2827,6 +2851,8 @@ mod tests {
             .unwrap()
             .downcast::<Editor>()
             .unwrap();
+
+        let mut fake_language_server = fake_language_servers.next().await.unwrap();
         fake_language_server
             .handle_request::<lsp::request::CodeActionRequest, _>(|params| {
                 assert_eq!(
@@ -2845,58 +2871,62 @@ mod tests {
             editor.select_ranges([Point::new(1, 31)..Point::new(1, 31)], None, cx);
             cx.focus(&editor_b);
         });
-        fake_language_server.handle_request::<lsp::request::CodeActionRequest, _>(|params| {
-            assert_eq!(
-                params.text_document.uri,
-                lsp::Url::from_file_path("/a/main.rs").unwrap(),
-            );
-            assert_eq!(params.range.start, lsp::Position::new(1, 31));
-            assert_eq!(params.range.end, lsp::Position::new(1, 31));
 
-            Some(vec![lsp::CodeActionOrCommand::CodeAction(
-                lsp::CodeAction {
-                    title: "Inline into all callers".to_string(),
-                    edit: Some(lsp::WorkspaceEdit {
-                        changes: Some(
-                            [
-                                (
-                                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
-                                    vec![lsp::TextEdit::new(
-                                        lsp::Range::new(
-                                            lsp::Position::new(1, 22),
-                                            lsp::Position::new(1, 34),
-                                        ),
-                                        "4".to_string(),
-                                    )],
-                                ),
-                                (
-                                    lsp::Url::from_file_path("/a/other.rs").unwrap(),
-                                    vec![lsp::TextEdit::new(
-                                        lsp::Range::new(
-                                            lsp::Position::new(0, 0),
-                                            lsp::Position::new(0, 27),
-                                        ),
-                                        "".to_string(),
-                                    )],
-                                ),
-                            ]
-                            .into_iter()
-                            .collect(),
-                        ),
-                        ..Default::default()
-                    }),
-                    data: Some(json!({
-                        "codeActionParams": {
-                            "range": {
-                                "start": {"line": 1, "column": 31},
-                                "end": {"line": 1, "column": 31},
+        fake_language_server
+            .handle_request::<lsp::request::CodeActionRequest, _>(|params| {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                );
+                assert_eq!(params.range.start, lsp::Position::new(1, 31));
+                assert_eq!(params.range.end, lsp::Position::new(1, 31));
+
+                Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                    lsp::CodeAction {
+                        title: "Inline into all callers".to_string(),
+                        edit: Some(lsp::WorkspaceEdit {
+                            changes: Some(
+                                [
+                                    (
+                                        lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                        vec![lsp::TextEdit::new(
+                                            lsp::Range::new(
+                                                lsp::Position::new(1, 22),
+                                                lsp::Position::new(1, 34),
+                                            ),
+                                            "4".to_string(),
+                                        )],
+                                    ),
+                                    (
+                                        lsp::Url::from_file_path("/a/other.rs").unwrap(),
+                                        vec![lsp::TextEdit::new(
+                                            lsp::Range::new(
+                                                lsp::Position::new(0, 0),
+                                                lsp::Position::new(0, 27),
+                                            ),
+                                            "".to_string(),
+                                        )],
+                                    ),
+                                ]
+                                .into_iter()
+                                .collect(),
+                            ),
+                            ..Default::default()
+                        }),
+                        data: Some(json!({
+                            "codeActionParams": {
+                                "range": {
+                                    "start": {"line": 1, "column": 31},
+                                    "end": {"line": 1, "column": 31},
+                                }
                             }
-                        }
-                    })),
-                    ..Default::default()
-                },
-            )])
-        });
+                        })),
+                        ..Default::default()
+                    },
+                )])
+            })
+            .next()
+            .await;
 
         // Toggle code actions and wait for them to display.
         editor_b.update(&mut cx_b, |editor, cx| {
@@ -2905,6 +2935,8 @@ mod tests {
         editor_b
             .condition(&cx_b, |editor, _| editor.context_menu_visible())
             .await;
+
+        fake_language_server.remove_request_handler::<lsp::request::CodeActionRequest>();
 
         // Confirming the code action will trigger a resolve request.
         let confirm_action = workspace_b
@@ -2974,7 +3006,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground()).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
 
@@ -3113,7 +3145,7 @@ mod tests {
     async fn test_chat_message_validation(mut cx_a: TestAppContext) {
         cx_a.foreground().forbid_parking();
 
-        let mut server = TestServer::start(cx_a.foreground()).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
 
         let db = &server.app_state.db;
@@ -3174,7 +3206,7 @@ mod tests {
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
-        let mut server = TestServer::start(cx_a.foreground()).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
         let mut status_b = client_b.status();
@@ -3392,7 +3424,7 @@ mod tests {
         let fs = Arc::new(FakeFs::new(cx_a.background()));
 
         // Connect to a server as 3 clients.
-        let mut server = TestServer::start(cx_a.foreground()).await;
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
         let client_a = server.create_client(&mut cx_a, "user_a").await;
         let client_b = server.create_client(&mut cx_b, "user_b").await;
         let client_c = server.create_client(&mut cx_c, "user_c").await;
@@ -3523,23 +3555,269 @@ mod tests {
         }
     }
 
+    #[gpui::test(iterations = 100)]
+    async fn test_random_collaboration(cx: TestAppContext, rng: StdRng) {
+        cx.foreground().forbid_parking();
+        let max_peers = env::var("MAX_PEERS")
+            .map(|i| i.parse().expect("invalid `MAX_PEERS` variable"))
+            .unwrap_or(5);
+        let max_operations = env::var("OPERATIONS")
+            .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+            .unwrap_or(10);
+
+        let rng = Rc::new(RefCell::new(rng));
+
+        let mut host_lang_registry = Arc::new(LanguageRegistry::new());
+        let guest_lang_registry = Arc::new(LanguageRegistry::new());
+
+        // Set up a fake language server.
+        let (mut language_server_config, _fake_language_servers) = LanguageServerConfig::fake();
+        language_server_config.set_fake_initializer(|fake_server| {
+            fake_server.handle_request::<lsp::request::Completion, _>(|_| {
+                Some(lsp::CompletionResponse::Array(vec![lsp::CompletionItem {
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                        new_text: "the-new-text".to_string(),
+                    })),
+                    ..Default::default()
+                }]))
+            });
+
+            fake_server.handle_request::<lsp::request::CodeActionRequest, _>(|_| {
+                Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                    lsp::CodeAction {
+                        title: "the-code-action".to_string(),
+                        ..Default::default()
+                    },
+                )])
+            });
+        });
+
+        Arc::get_mut(&mut host_lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Rust".to_string(),
+                    path_suffixes: vec!["rs".to_string()],
+                    language_server: Some(language_server_config),
+                    ..Default::default()
+                },
+                None,
+            )));
+
+        let fs = Arc::new(FakeFs::new(cx.background()));
+        fs.insert_tree(
+            "/_collab",
+            json!({
+                ".zed.toml": r#"collaborators = ["guest-1", "guest-2", "guest-3", "guest-4", "guest-5"]"#
+            }),
+        )
+        .await;
+
+        let operations = Rc::new(Cell::new(0));
+        let mut server = TestServer::start(cx.foreground(), cx.background()).await;
+        let mut clients = Vec::new();
+
+        let mut next_entity_id = 100000;
+        let mut host_cx = TestAppContext::new(
+            cx.foreground_platform(),
+            cx.platform(),
+            cx.foreground(),
+            cx.background(),
+            cx.font_cache(),
+            next_entity_id,
+        );
+        let host = server.create_client(&mut host_cx, "host").await;
+        let host_project = host_cx.update(|cx| {
+            Project::local(
+                host.client.clone(),
+                host.user_store.clone(),
+                host_lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let host_project_id = host_project
+            .update(&mut host_cx, |p, _| p.next_remote_id())
+            .await;
+
+        let (collab_worktree, _) = host_project
+            .update(&mut host_cx, |project, cx| {
+                project.find_or_create_local_worktree("/_collab", false, cx)
+            })
+            .await
+            .unwrap();
+        collab_worktree
+            .read_with(&host_cx, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        host_project
+            .update(&mut host_cx, |project, cx| project.share(cx))
+            .await
+            .unwrap();
+
+        clients.push(cx.foreground().spawn(host.simulate_host(
+            host_project.clone(),
+            operations.clone(),
+            max_operations,
+            rng.clone(),
+            host_cx.clone(),
+        )));
+
+        while operations.get() < max_operations {
+            cx.background().simulate_random_delay().await;
+            if clients.len() < max_peers && rng.borrow_mut().gen_bool(0.05) {
+                operations.set(operations.get() + 1);
+
+                let guest_id = clients.len();
+                log::info!("Adding guest {}", guest_id);
+                next_entity_id += 100000;
+                let mut guest_cx = TestAppContext::new(
+                    cx.foreground_platform(),
+                    cx.platform(),
+                    cx.foreground(),
+                    cx.background(),
+                    cx.font_cache(),
+                    next_entity_id,
+                );
+                let guest = server
+                    .create_client(&mut guest_cx, &format!("guest-{}", guest_id))
+                    .await;
+                let guest_project = Project::remote(
+                    host_project_id,
+                    guest.client.clone(),
+                    guest.user_store.clone(),
+                    guest_lang_registry.clone(),
+                    fs.clone(),
+                    &mut guest_cx.to_async(),
+                )
+                .await
+                .unwrap();
+                clients.push(cx.foreground().spawn(guest.simulate_guest(
+                    guest_id,
+                    guest_project,
+                    operations.clone(),
+                    max_operations,
+                    rng.clone(),
+                    guest_cx,
+                )));
+
+                log::info!("Guest {} added", guest_id);
+            }
+        }
+
+        let clients = futures::future::join_all(clients).await;
+        cx.foreground().run_until_parked();
+
+        let host_worktree_snapshots = host_project.read_with(&host_cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .map(|worktree| {
+                    let snapshot = worktree.read(cx).snapshot();
+                    (snapshot.id(), snapshot)
+                })
+                .collect::<BTreeMap<_, _>>()
+        });
+
+        for (guest_client, guest_cx) in clients.iter().skip(1) {
+            let guest_id = guest_client.client.id();
+            let worktree_snapshots =
+                guest_client
+                    .project
+                    .as_ref()
+                    .unwrap()
+                    .read_with(guest_cx, |project, cx| {
+                        project
+                            .worktrees(cx)
+                            .map(|worktree| {
+                                let worktree = worktree.read(cx);
+                                assert!(
+                                    !worktree.as_remote().unwrap().has_pending_updates(),
+                                    "Guest {} worktree {:?} contains deferred updates",
+                                    guest_id,
+                                    worktree.id()
+                                );
+                                (worktree.id(), worktree.snapshot())
+                            })
+                            .collect::<BTreeMap<_, _>>()
+                    });
+
+            assert_eq!(
+                worktree_snapshots.keys().collect::<Vec<_>>(),
+                host_worktree_snapshots.keys().collect::<Vec<_>>(),
+                "guest {} has different worktrees than the host",
+                guest_id
+            );
+            for (id, host_snapshot) in &host_worktree_snapshots {
+                let guest_snapshot = &worktree_snapshots[id];
+                assert_eq!(
+                    guest_snapshot.root_name(),
+                    host_snapshot.root_name(),
+                    "guest {} has different root name than the host for worktree {}",
+                    guest_id,
+                    id
+                );
+                assert_eq!(
+                    guest_snapshot.entries(false).collect::<Vec<_>>(),
+                    host_snapshot.entries(false).collect::<Vec<_>>(),
+                    "guest {} has different snapshot than the host for worktree {}",
+                    guest_id,
+                    id
+                );
+            }
+
+            guest_client
+                .project
+                .as_ref()
+                .unwrap()
+                .read_with(guest_cx, |project, _| {
+                    assert!(
+                        !project.has_buffered_operations(),
+                        "guest {} has buffered operations ",
+                        guest_id,
+                    );
+                });
+
+            for guest_buffer in &guest_client.buffers {
+                let buffer_id = guest_buffer.read_with(guest_cx, |buffer, _| buffer.remote_id());
+                let host_buffer = host_project.read_with(&host_cx, |project, _| {
+                    project
+                        .shared_buffer(guest_client.peer_id, buffer_id)
+                        .expect(&format!(
+                            "host doest not have buffer for guest:{}, peer:{}, id:{}",
+                            guest_id, guest_client.peer_id, buffer_id
+                        ))
+                });
+                assert_eq!(
+                    guest_buffer.read_with(guest_cx, |buffer, _| buffer.text()),
+                    host_buffer.read_with(&host_cx, |buffer, _| buffer.text()),
+                    "guest {} buffer {} differs from the host's buffer",
+                    guest_id,
+                    buffer_id,
+                );
+            }
+        }
+    }
+
     struct TestServer {
         peer: Arc<Peer>,
         app_state: Arc<AppState>,
         server: Arc<Server>,
         foreground: Rc<executor::Foreground>,
-        notifications: mpsc::Receiver<()>,
+        notifications: mpsc::UnboundedReceiver<()>,
         connection_killers: Arc<Mutex<HashMap<UserId, watch::Sender<Option<()>>>>>,
         forbid_connections: Arc<AtomicBool>,
         _test_db: TestDb,
     }
 
     impl TestServer {
-        async fn start(foreground: Rc<executor::Foreground>) -> Self {
-            let test_db = TestDb::new();
+        async fn start(
+            foreground: Rc<executor::Foreground>,
+            background: Arc<executor::Background>,
+        ) -> Self {
+            let test_db = TestDb::fake(background);
             let app_state = Self::build_app_state(&test_db).await;
             let peer = Peer::new();
-            let notifications = mpsc::channel(128);
+            let notifications = mpsc::unbounded();
             let server = Server::new(app_state.clone(), peer.clone(), Some(notifications.0));
             Self {
                 peer,
@@ -3561,7 +3839,7 @@ mod tests {
             let server = self.server.clone();
             let connection_killers = self.connection_killers.clone();
             let forbid_connections = self.forbid_connections.clone();
-            let (connection_id_tx, mut connection_id_rx) = postage::mpsc::channel(16);
+            let (connection_id_tx, mut connection_id_rx) = mpsc::channel(16);
 
             Arc::get_mut(&mut client)
                 .unwrap()
@@ -3598,6 +3876,7 @@ mod tests {
                                     client_name,
                                     user_id,
                                     Some(connection_id_tx),
+                                    cx.background(),
                                 ))
                                 .detach();
                             Ok(client_conn)
@@ -3610,6 +3889,9 @@ mod tests {
                 .await
                 .unwrap();
 
+            Channel::init(&client);
+            Project::init(&client);
+
             let peer_id = PeerId(connection_id_rx.next().await.unwrap().0);
             let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http, cx));
             let mut authed_user =
@@ -3620,6 +3902,8 @@ mod tests {
                 client,
                 peer_id,
                 user_store,
+                project: Default::default(),
+                buffers: Default::default(),
             }
         }
 
@@ -3682,6 +3966,8 @@ mod tests {
         client: Arc<Client>,
         pub peer_id: PeerId,
         pub user_store: ModelHandle<UserStore>,
+        project: Option<ModelHandle<Project>>,
+        buffers: HashSet<ModelHandle<zed::language::Buffer>>,
     }
 
     impl Deref for TestClient {
@@ -3698,6 +3984,267 @@ mod tests {
                 self.user_store
                     .read_with(cx, |user_store, _| user_store.current_user().unwrap().id),
             )
+        }
+
+        async fn simulate_host(
+            mut self,
+            project: ModelHandle<Project>,
+            operations: Rc<Cell<usize>>,
+            max_operations: usize,
+            rng: Rc<RefCell<StdRng>>,
+            mut cx: TestAppContext,
+        ) -> (Self, TestAppContext) {
+            let fs = project.read_with(&cx, |project, _| project.fs().clone());
+            let mut files: Vec<PathBuf> = Default::default();
+            while operations.get() < max_operations {
+                operations.set(operations.get() + 1);
+
+                let distribution = rng.borrow_mut().gen_range(0..100);
+                match distribution {
+                    0..=20 if !files.is_empty() => {
+                        let mut path = files.choose(&mut *rng.borrow_mut()).unwrap().as_path();
+                        while let Some(parent_path) = path.parent() {
+                            path = parent_path;
+                            if rng.borrow_mut().gen() {
+                                break;
+                            }
+                        }
+
+                        log::info!("Host: find/create local worktree {:?}", path);
+                        project
+                            .update(&mut cx, |project, cx| {
+                                project.find_or_create_local_worktree(path, false, cx)
+                            })
+                            .await
+                            .unwrap();
+                    }
+                    10..=80 if !files.is_empty() => {
+                        let buffer = if self.buffers.is_empty() || rng.borrow_mut().gen() {
+                            let file = files.choose(&mut *rng.borrow_mut()).unwrap();
+                            let (worktree, path) = project
+                                .update(&mut cx, |project, cx| {
+                                    project.find_or_create_local_worktree(file, false, cx)
+                                })
+                                .await
+                                .unwrap();
+                            let project_path =
+                                worktree.read_with(&cx, |worktree, _| (worktree.id(), path));
+                            log::info!("Host: opening path {:?}", project_path);
+                            let buffer = project
+                                .update(&mut cx, |project, cx| {
+                                    project.open_buffer(project_path, cx)
+                                })
+                                .await
+                                .unwrap();
+                            self.buffers.insert(buffer.clone());
+                            buffer
+                        } else {
+                            self.buffers
+                                .iter()
+                                .choose(&mut *rng.borrow_mut())
+                                .unwrap()
+                                .clone()
+                        };
+
+                        if rng.borrow_mut().gen_bool(0.1) {
+                            cx.update(|cx| {
+                                log::info!(
+                                    "Host: dropping buffer {:?}",
+                                    buffer.read(cx).file().unwrap().full_path(cx)
+                                );
+                                self.buffers.remove(&buffer);
+                                drop(buffer);
+                            });
+                        } else {
+                            buffer.update(&mut cx, |buffer, cx| {
+                                log::info!(
+                                    "Host: updating buffer {:?}",
+                                    buffer.file().unwrap().full_path(cx)
+                                );
+                                buffer.randomly_edit(&mut *rng.borrow_mut(), 5, cx)
+                            });
+                        }
+                    }
+                    _ => loop {
+                        let path_component_count = rng.borrow_mut().gen_range(1..=5);
+                        let mut path = PathBuf::new();
+                        path.push("/");
+                        for _ in 0..path_component_count {
+                            let letter = rng.borrow_mut().gen_range(b'a'..=b'z');
+                            path.push(std::str::from_utf8(&[letter]).unwrap());
+                        }
+                        path.set_extension("rs");
+                        let parent_path = path.parent().unwrap();
+
+                        log::info!("Host: creating file {:?}", path);
+                        if fs.create_dir(&parent_path).await.is_ok()
+                            && fs.create_file(&path, Default::default()).await.is_ok()
+                        {
+                            files.push(path);
+                            break;
+                        } else {
+                            log::info!("Host: cannot create file");
+                        }
+                    },
+                }
+
+                cx.background().simulate_random_delay().await;
+            }
+
+            self.project = Some(project);
+            (self, cx)
+        }
+
+        pub async fn simulate_guest(
+            mut self,
+            guest_id: usize,
+            project: ModelHandle<Project>,
+            operations: Rc<Cell<usize>>,
+            max_operations: usize,
+            rng: Rc<RefCell<StdRng>>,
+            mut cx: TestAppContext,
+        ) -> (Self, TestAppContext) {
+            while operations.get() < max_operations {
+                let buffer = if self.buffers.is_empty() || rng.borrow_mut().gen() {
+                    let worktree = if let Some(worktree) = project.read_with(&cx, |project, cx| {
+                        project
+                            .worktrees(&cx)
+                            .filter(|worktree| {
+                                worktree.read(cx).entries(false).any(|e| e.is_file())
+                            })
+                            .choose(&mut *rng.borrow_mut())
+                    }) {
+                        worktree
+                    } else {
+                        cx.background().simulate_random_delay().await;
+                        continue;
+                    };
+
+                    operations.set(operations.get() + 1);
+                    let project_path = worktree.read_with(&cx, |worktree, _| {
+                        let entry = worktree
+                            .entries(false)
+                            .filter(|e| e.is_file())
+                            .choose(&mut *rng.borrow_mut())
+                            .unwrap();
+                        (worktree.id(), entry.path.clone())
+                    });
+                    log::info!("Guest {}: opening path {:?}", guest_id, project_path);
+                    let buffer = project
+                        .update(&mut cx, |project, cx| project.open_buffer(project_path, cx))
+                        .await
+                        .unwrap();
+                    self.buffers.insert(buffer.clone());
+                    buffer
+                } else {
+                    operations.set(operations.get() + 1);
+
+                    self.buffers
+                        .iter()
+                        .choose(&mut *rng.borrow_mut())
+                        .unwrap()
+                        .clone()
+                };
+
+                let choice = rng.borrow_mut().gen_range(0..100);
+                match choice {
+                    0..=9 => {
+                        cx.update(|cx| {
+                            log::info!(
+                                "Guest {}: dropping buffer {:?}",
+                                guest_id,
+                                buffer.read(cx).file().unwrap().full_path(cx)
+                            );
+                            self.buffers.remove(&buffer);
+                            drop(buffer);
+                        });
+                    }
+                    10..=19 => {
+                        let completions = project.update(&mut cx, |project, cx| {
+                            log::info!(
+                                "Guest {}: requesting completions for buffer {:?}",
+                                guest_id,
+                                buffer.read(cx).file().unwrap().full_path(cx)
+                            );
+                            let offset = rng.borrow_mut().gen_range(0..=buffer.read(cx).len());
+                            project.completions(&buffer, offset, cx)
+                        });
+                        let completions = cx.background().spawn(async move {
+                            completions.await.expect("completions request failed");
+                        });
+                        if rng.borrow_mut().gen_bool(0.3) {
+                            log::info!("Guest {}: detaching completions request", guest_id);
+                            completions.detach();
+                        } else {
+                            completions.await;
+                        }
+                    }
+                    20..=29 => {
+                        let code_actions = project.update(&mut cx, |project, cx| {
+                            log::info!(
+                                "Guest {}: requesting code actions for buffer {:?}",
+                                guest_id,
+                                buffer.read(cx).file().unwrap().full_path(cx)
+                            );
+                            let range =
+                                buffer.read(cx).random_byte_range(0, &mut *rng.borrow_mut());
+                            project.code_actions(&buffer, range, cx)
+                        });
+                        let code_actions = cx.background().spawn(async move {
+                            code_actions.await.expect("code actions request failed");
+                        });
+                        if rng.borrow_mut().gen_bool(0.3) {
+                            log::info!("Guest {}: detaching code actions request", guest_id);
+                            code_actions.detach();
+                        } else {
+                            code_actions.await;
+                        }
+                    }
+                    30..=39 if buffer.read_with(&cx, |buffer, _| buffer.is_dirty()) => {
+                        let (requested_version, save) = buffer.update(&mut cx, |buffer, cx| {
+                            log::info!(
+                                "Guest {}: saving buffer {:?}",
+                                guest_id,
+                                buffer.file().unwrap().full_path(cx)
+                            );
+                            (buffer.version(), buffer.save(cx))
+                        });
+                        let save = cx.spawn(|cx| async move {
+                            let (saved_version, _) = save.await.expect("save request failed");
+                            buffer.read_with(&cx, |buffer, _| {
+                                assert!(buffer.version().observed_all(&saved_version));
+                                assert!(saved_version.observed_all(&requested_version));
+                            });
+                        });
+                        if rng.borrow_mut().gen_bool(0.3) {
+                            log::info!("Guest {}: detaching save request", guest_id);
+                            save.detach();
+                        } else {
+                            save.await;
+                        }
+                    }
+                    _ => {
+                        buffer.update(&mut cx, |buffer, cx| {
+                            log::info!(
+                                "Guest {}: updating buffer {:?}",
+                                guest_id,
+                                buffer.file().unwrap().full_path(cx)
+                            );
+                            buffer.randomly_edit(&mut *rng.borrow_mut(), 5, cx)
+                        });
+                    }
+                }
+                cx.background().simulate_random_delay().await;
+            }
+
+            self.project = Some(project);
+            (self, cx)
+        }
+    }
+
+    impl Executor for Arc<gpui::executor::Background> {
+        fn spawn_detached<F: 'static + Send + Future<Output = ()>>(&self, future: F) {
+            self.spawn(future).detach();
         }
     }
 

@@ -35,6 +35,7 @@ pub struct ProjectMetadata {
 
 pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
+    update_contacts_tx: watch::Sender<Option<proto::UpdateContacts>>,
     current_user: watch::Receiver<Option<Arc<User>>>,
     contacts: Arc<[Contact]>,
     client: Arc<Client>,
@@ -56,23 +57,19 @@ impl UserStore {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let (mut current_user_tx, current_user_rx) = watch::channel();
-        let (mut update_contacts_tx, mut update_contacts_rx) =
+        let (update_contacts_tx, mut update_contacts_rx) =
             watch::channel::<Option<proto::UpdateContacts>>();
-        let update_contacts_subscription = client.add_message_handler(
-            cx,
-            move |_: ModelHandle<Self>, msg: TypedEnvelope<proto::UpdateContacts>, _, _| {
-                *update_contacts_tx.borrow_mut() = Some(msg.payload);
-                async move { Ok(()) }
-            },
-        );
+        let rpc_subscription =
+            client.add_message_handler(cx.handle(), Self::handle_update_contacts);
         Self {
             users: Default::default(),
             current_user: current_user_rx,
             contacts: Arc::from([]),
             client: client.clone(),
+            update_contacts_tx,
             http,
             _maintain_contacts: cx.spawn_weak(|this, mut cx| async move {
-                let _subscription = update_contacts_subscription;
+                let _subscription = rpc_subscription;
                 while let Some(message) = update_contacts_rx.recv().await {
                     if let Some((message, this)) = message.zip(this.upgrade(&cx)) {
                         this.update(&mut cx, |this, cx| this.update_contacts(message, cx))
@@ -102,6 +99,18 @@ impl UserStore {
                 }
             }),
         }
+    }
+
+    async fn handle_update_contacts(
+        this: ModelHandle<Self>,
+        msg: TypedEnvelope<proto::UpdateContacts>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |this, _| {
+            *this.update_contacts_tx.borrow_mut() = Some(msg.payload);
+        });
+        Ok(())
     }
 
     fn update_contacts(

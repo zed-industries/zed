@@ -7,8 +7,11 @@ use ::ignore::gitignore::{Gitignore, GitignoreBuilder};
 use anyhow::{anyhow, Result};
 use client::{proto, Client, TypedEnvelope};
 use clock::ReplicaId;
-use collections::HashMap;
-use futures::{Stream, StreamExt};
+use collections::{HashMap, VecDeque};
+use futures::{
+    channel::mpsc::{self, UnboundedSender},
+    Stream, StreamExt,
+};
 use fuzzy::CharBag;
 use gpui::{
     executor, AppContext, AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext,
@@ -18,6 +21,7 @@ use language::{Buffer, DiagnosticEntry, Operation, PointUtf16, Rope};
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use postage::{
+    oneshot,
     prelude::{Sink as _, Stream as _},
     watch,
 };
@@ -75,11 +79,13 @@ pub struct RemoteWorktree {
     project_id: u64,
     snapshot_rx: watch::Receiver<Snapshot>,
     client: Arc<Client>,
-    updates_tx: postage::mpsc::Sender<proto::UpdateWorktree>,
+    updates_tx: UnboundedSender<proto::UpdateWorktree>,
     replica_id: ReplicaId,
     queued_operations: Vec<(u64, Operation)>,
     diagnostic_summaries: TreeMap<PathKey, DiagnosticSummary>,
     weak: bool,
+    next_update_id: u64,
+    pending_updates: VecDeque<proto::UpdateWorktree>,
 }
 
 #[derive(Clone)]
@@ -208,7 +214,7 @@ impl Worktree {
             entries_by_id: Default::default(),
         };
 
-        let (updates_tx, mut updates_rx) = postage::mpsc::channel(64);
+        let (updates_tx, mut updates_rx) = mpsc::unbounded();
         let (mut snapshot_tx, snapshot_rx) = watch::channel_with(snapshot.clone());
         let worktree_handle = cx.add_model(|_: &mut ModelContext<Worktree>| {
             Worktree::Remote(RemoteWorktree {
@@ -233,6 +239,8 @@ impl Worktree {
                     }),
                 ),
                 weak,
+                next_update_id: worktree.next_update_id,
+                pending_updates: Default::default(),
             })
         });
 
@@ -276,7 +284,7 @@ impl Worktree {
 
                 cx.background()
                     .spawn(async move {
-                        while let Some(update) = updates_rx.recv().await {
+                        while let Some(update) = updates_rx.next().await {
                             let mut snapshot = snapshot_tx.borrow().clone();
                             if let Err(error) = snapshot.apply_remote_update(update) {
                                 log::error!("error applying worktree update: {}", error);
@@ -450,7 +458,7 @@ impl LocalWorktree {
         weak: bool,
         fs: Arc<dyn Fs>,
         cx: &mut AsyncAppContext,
-    ) -> Result<(ModelHandle<Worktree>, Sender<ScanState>)> {
+    ) -> Result<(ModelHandle<Worktree>, UnboundedSender<ScanState>)> {
         let abs_path = path.into();
         let path: Arc<Path> = Arc::from(Path::new(""));
         let next_entry_id = AtomicUsize::new(0);
@@ -470,7 +478,7 @@ impl LocalWorktree {
             }
         }
 
-        let (scan_states_tx, scan_states_rx) = smol::channel::unbounded();
+        let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
         let (mut last_scan_state_tx, last_scan_state_rx) = watch::channel_with(ScanState::Scanning);
         let tree = cx.add_model(move |cx: &mut ModelContext<Worktree>| {
             let mut snapshot = LocalSnapshot {
@@ -515,7 +523,7 @@ impl LocalWorktree {
             };
 
             cx.spawn_weak(|this, mut cx| async move {
-                while let Ok(scan_state) = scan_states_rx.recv().await {
+                while let Some(scan_state) = scan_states_rx.next().await {
                     if let Some(handle) = this.upgrade(&cx) {
                         let to_send = handle.update(&mut cx, |this, cx| {
                             last_scan_state_tx.blocking_send(scan_state).ok();
@@ -761,16 +769,41 @@ impl LocalWorktree {
         let worktree_id = cx.model_id() as u64;
         let (snapshots_to_send_tx, snapshots_to_send_rx) =
             smol::channel::unbounded::<LocalSnapshot>();
+        let (mut share_tx, mut share_rx) = oneshot::channel();
         let maintain_remote_snapshot = cx.background().spawn({
             let rpc = rpc.clone();
             let snapshot = snapshot.clone();
+            let diagnostic_summaries = self.diagnostic_summaries.clone();
+            let weak = self.weak;
             async move {
+                if let Err(error) = rpc
+                    .request(proto::ShareWorktree {
+                        project_id,
+                        worktree: Some(snapshot.to_proto(&diagnostic_summaries, weak)),
+                    })
+                    .await
+                {
+                    let _ = share_tx.try_send(Err(error));
+                    return;
+                } else {
+                    let _ = share_tx.try_send(Ok(()));
+                }
+
+                let mut update_id = 0;
                 let mut prev_snapshot = snapshot;
                 while let Ok(snapshot) = snapshots_to_send_rx.recv().await {
-                    let message =
-                        snapshot.build_update(&prev_snapshot, project_id, worktree_id, false);
-                    match rpc.send(message) {
-                        Ok(()) => prev_snapshot = snapshot,
+                    let message = snapshot.build_update(
+                        &prev_snapshot,
+                        project_id,
+                        worktree_id,
+                        update_id,
+                        false,
+                    );
+                    match rpc.request(message).await {
+                        Ok(_) => {
+                            prev_snapshot = snapshot;
+                            update_id += 1;
+                        }
                         Err(err) => log::error!("error sending snapshot diff {}", err),
                     }
                 }
@@ -782,18 +815,11 @@ impl LocalWorktree {
             _maintain_remote_snapshot: Some(maintain_remote_snapshot),
         });
 
-        let diagnostic_summaries = self.diagnostic_summaries.clone();
-        let weak = self.weak;
-        let share_message = cx.background().spawn(async move {
-            proto::ShareWorktree {
-                project_id,
-                worktree: Some(snapshot.to_proto(&diagnostic_summaries, weak)),
-            }
-        });
-
         cx.foreground().spawn(async move {
-            rpc.request(share_message.await).await?;
-            Ok(())
+            match share_rx.next().await {
+                Some(result) => result,
+                None => Err(anyhow!("unshared before sharing completed")),
+            }
         })
     }
 
@@ -814,17 +840,37 @@ impl RemoteWorktree {
     pub fn update_from_remote(
         &mut self,
         envelope: TypedEnvelope<proto::UpdateWorktree>,
-        cx: &mut ModelContext<Worktree>,
     ) -> Result<()> {
-        let mut tx = self.updates_tx.clone();
-        let payload = envelope.payload.clone();
-        cx.foreground()
-            .spawn(async move {
-                tx.send(payload).await.expect("receiver runs to completion");
-            })
-            .detach();
+        let update = envelope.payload;
+        if update.id > self.next_update_id {
+            let ix = match self
+                .pending_updates
+                .binary_search_by_key(&update.id, |pending| pending.id)
+            {
+                Ok(ix) | Err(ix) => ix,
+            };
+            self.pending_updates.insert(ix, update);
+        } else {
+            let tx = self.updates_tx.clone();
+            self.next_update_id += 1;
+            tx.unbounded_send(update)
+                .expect("consumer runs to completion");
+            while let Some(update) = self.pending_updates.front() {
+                if update.id == self.next_update_id {
+                    self.next_update_id += 1;
+                    tx.unbounded_send(self.pending_updates.pop_front().unwrap())
+                        .expect("consumer runs to completion");
+                } else {
+                    break;
+                }
+            }
+        }
 
         Ok(())
+    }
+
+    pub fn has_pending_updates(&self) -> bool {
+        !self.pending_updates.is_empty()
     }
 
     pub fn update_diagnostic_summary(
@@ -847,94 +893,6 @@ impl RemoteWorktree {
 impl Snapshot {
     pub fn id(&self) -> WorktreeId {
         self.id
-    }
-
-    pub(crate) fn to_proto(
-        &self,
-        diagnostic_summaries: &TreeMap<PathKey, DiagnosticSummary>,
-        weak: bool,
-    ) -> proto::Worktree {
-        let root_name = self.root_name.clone();
-        proto::Worktree {
-            id: self.id.0 as u64,
-            root_name,
-            entries: self
-                .entries_by_path
-                .iter()
-                .filter(|e| !e.is_ignored)
-                .map(Into::into)
-                .collect(),
-            diagnostic_summaries: diagnostic_summaries
-                .iter()
-                .map(|(path, summary)| summary.to_proto(path.0.clone()))
-                .collect(),
-            weak,
-        }
-    }
-
-    pub(crate) fn build_update(
-        &self,
-        other: &Self,
-        project_id: u64,
-        worktree_id: u64,
-        include_ignored: bool,
-    ) -> proto::UpdateWorktree {
-        let mut updated_entries = Vec::new();
-        let mut removed_entries = Vec::new();
-        let mut self_entries = self
-            .entries_by_id
-            .cursor::<()>()
-            .filter(|e| include_ignored || !e.is_ignored)
-            .peekable();
-        let mut other_entries = other
-            .entries_by_id
-            .cursor::<()>()
-            .filter(|e| include_ignored || !e.is_ignored)
-            .peekable();
-        loop {
-            match (self_entries.peek(), other_entries.peek()) {
-                (Some(self_entry), Some(other_entry)) => {
-                    match Ord::cmp(&self_entry.id, &other_entry.id) {
-                        Ordering::Less => {
-                            let entry = self.entry_for_id(self_entry.id).unwrap().into();
-                            updated_entries.push(entry);
-                            self_entries.next();
-                        }
-                        Ordering::Equal => {
-                            if self_entry.scan_id != other_entry.scan_id {
-                                let entry = self.entry_for_id(self_entry.id).unwrap().into();
-                                updated_entries.push(entry);
-                            }
-
-                            self_entries.next();
-                            other_entries.next();
-                        }
-                        Ordering::Greater => {
-                            removed_entries.push(other_entry.id as u64);
-                            other_entries.next();
-                        }
-                    }
-                }
-                (Some(self_entry), None) => {
-                    let entry = self.entry_for_id(self_entry.id).unwrap().into();
-                    updated_entries.push(entry);
-                    self_entries.next();
-                }
-                (None, Some(other_entry)) => {
-                    removed_entries.push(other_entry.id as u64);
-                    other_entries.next();
-                }
-                (None, None) => break,
-            }
-        }
-
-        proto::UpdateWorktree {
-            project_id,
-            worktree_id,
-            root_name: self.root_name().to_string(),
-            updated_entries,
-            removed_entries,
-        }
     }
 
     pub(crate) fn apply_remote_update(&mut self, update: proto::UpdateWorktree) -> Result<()> {
@@ -1077,6 +1035,97 @@ impl Snapshot {
 }
 
 impl LocalSnapshot {
+    pub(crate) fn to_proto(
+        &self,
+        diagnostic_summaries: &TreeMap<PathKey, DiagnosticSummary>,
+        weak: bool,
+    ) -> proto::Worktree {
+        let root_name = self.root_name.clone();
+        proto::Worktree {
+            id: self.id.0 as u64,
+            root_name,
+            entries: self
+                .entries_by_path
+                .iter()
+                .filter(|e| !e.is_ignored)
+                .map(Into::into)
+                .collect(),
+            diagnostic_summaries: diagnostic_summaries
+                .iter()
+                .map(|(path, summary)| summary.to_proto(path.0.clone()))
+                .collect(),
+            weak,
+            next_update_id: 0,
+        }
+    }
+
+    pub(crate) fn build_update(
+        &self,
+        other: &Self,
+        project_id: u64,
+        worktree_id: u64,
+        update_id: u64,
+        include_ignored: bool,
+    ) -> proto::UpdateWorktree {
+        let mut updated_entries = Vec::new();
+        let mut removed_entries = Vec::new();
+        let mut self_entries = self
+            .entries_by_id
+            .cursor::<()>()
+            .filter(|e| include_ignored || !e.is_ignored)
+            .peekable();
+        let mut other_entries = other
+            .entries_by_id
+            .cursor::<()>()
+            .filter(|e| include_ignored || !e.is_ignored)
+            .peekable();
+        loop {
+            match (self_entries.peek(), other_entries.peek()) {
+                (Some(self_entry), Some(other_entry)) => {
+                    match Ord::cmp(&self_entry.id, &other_entry.id) {
+                        Ordering::Less => {
+                            let entry = self.entry_for_id(self_entry.id).unwrap().into();
+                            updated_entries.push(entry);
+                            self_entries.next();
+                        }
+                        Ordering::Equal => {
+                            if self_entry.scan_id != other_entry.scan_id {
+                                let entry = self.entry_for_id(self_entry.id).unwrap().into();
+                                updated_entries.push(entry);
+                            }
+
+                            self_entries.next();
+                            other_entries.next();
+                        }
+                        Ordering::Greater => {
+                            removed_entries.push(other_entry.id as u64);
+                            other_entries.next();
+                        }
+                    }
+                }
+                (Some(self_entry), None) => {
+                    let entry = self.entry_for_id(self_entry.id).unwrap().into();
+                    updated_entries.push(entry);
+                    self_entries.next();
+                }
+                (None, Some(other_entry)) => {
+                    removed_entries.push(other_entry.id as u64);
+                    other_entries.next();
+                }
+                (None, None) => break,
+            }
+        }
+
+        proto::UpdateWorktree {
+            id: update_id as u64,
+            project_id,
+            worktree_id,
+            root_name: self.root_name().to_string(),
+            updated_entries,
+            removed_entries,
+        }
+    }
+
     fn insert_entry(&mut self, mut entry: Entry, fs: &dyn Fs) -> Entry {
         if !entry.is_dir() && entry.path.file_name() == Some(&GITIGNORE) {
             let abs_path = self.abs_path.join(&entry.path);
@@ -1283,13 +1332,29 @@ impl fmt::Debug for LocalWorktree {
 
 impl fmt::Debug for Snapshot {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for entry in self.entries_by_path.cursor::<()>() {
-            for _ in entry.path.ancestors().skip(1) {
-                write!(f, " ")?;
+        struct EntriesById<'a>(&'a SumTree<PathEntry>);
+        struct EntriesByPath<'a>(&'a SumTree<Entry>);
+
+        impl<'a> fmt::Debug for EntriesByPath<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_map()
+                    .entries(self.0.iter().map(|entry| (&entry.path, entry.id)))
+                    .finish()
             }
-            writeln!(f, "{:?} (inode: {})", entry.path, entry.inode)?;
         }
-        Ok(())
+
+        impl<'a> fmt::Debug for EntriesById<'a> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_list().entries(self.0.iter()).finish()
+            }
+        }
+
+        f.debug_struct("Snapshot")
+            .field("id", &self.id)
+            .field("root_name", &self.root_name)
+            .field("entries_by_path", &EntriesByPath(&self.entries_by_path))
+            .field("entries_by_id", &EntriesById(&self.entries_by_id))
+            .finish()
     }
 }
 
@@ -1322,7 +1387,9 @@ impl language::File for File {
     fn full_path(&self, cx: &AppContext) -> PathBuf {
         let mut full_path = PathBuf::new();
         full_path.push(self.worktree.read(cx).root_name());
-        full_path.push(&self.path);
+        if self.path.components().next().is_some() {
+            full_path.push(&self.path);
+        }
         full_path
     }
 
@@ -1372,6 +1439,7 @@ impl language::File for File {
                         .request(proto::SaveBuffer {
                             project_id,
                             buffer_id,
+                            version: (&version).into(),
                         })
                         .await?;
                     let version = response.version.try_into()?;
@@ -1493,7 +1561,7 @@ impl File {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
     pub id: usize,
     pub kind: EntryKind,
@@ -1504,7 +1572,7 @@ pub struct Entry {
     pub is_ignored: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EntryKind {
     PendingDir,
     Dir,
@@ -1668,14 +1736,14 @@ impl<'a> sum_tree::Dimension<'a, EntrySummary> for PathKey {
 struct BackgroundScanner {
     fs: Arc<dyn Fs>,
     snapshot: Arc<Mutex<LocalSnapshot>>,
-    notify: Sender<ScanState>,
+    notify: UnboundedSender<ScanState>,
     executor: Arc<executor::Background>,
 }
 
 impl BackgroundScanner {
     fn new(
         snapshot: Arc<Mutex<LocalSnapshot>>,
-        notify: Sender<ScanState>,
+        notify: UnboundedSender<ScanState>,
         fs: Arc<dyn Fs>,
         executor: Arc<executor::Background>,
     ) -> Self {
@@ -1696,28 +1764,27 @@ impl BackgroundScanner {
     }
 
     async fn run(mut self, events_rx: impl Stream<Item = Vec<fsevent::Event>>) {
-        if self.notify.send(ScanState::Scanning).await.is_err() {
+        if self.notify.unbounded_send(ScanState::Scanning).is_err() {
             return;
         }
 
         if let Err(err) = self.scan_dirs().await {
             if self
                 .notify
-                .send(ScanState::Err(Arc::new(err)))
-                .await
+                .unbounded_send(ScanState::Err(Arc::new(err)))
                 .is_err()
             {
                 return;
             }
         }
 
-        if self.notify.send(ScanState::Idle).await.is_err() {
+        if self.notify.unbounded_send(ScanState::Idle).is_err() {
             return;
         }
 
         futures::pin_mut!(events_rx);
         while let Some(events) = events_rx.next().await {
-            if self.notify.send(ScanState::Scanning).await.is_err() {
+            if self.notify.unbounded_send(ScanState::Scanning).is_err() {
                 break;
             }
 
@@ -1725,7 +1792,7 @@ impl BackgroundScanner {
                 break;
             }
 
-            if self.notify.send(ScanState::Idle).await.is_err() {
+            if self.notify.unbounded_send(ScanState::Idle).is_err() {
                 break;
             }
         }
@@ -2391,7 +2458,7 @@ mod tests {
         fmt::Write,
         time::{SystemTime, UNIX_EPOCH},
     };
-    use util::test::temp_tree;
+    use util::{post_inc, test::temp_tree};
 
     #[gpui::test]
     async fn test_traversal(cx: gpui::TestAppContext) {
@@ -2503,7 +2570,7 @@ mod tests {
         }
         log::info!("Generated initial tree");
 
-        let (notify_tx, _notify_rx) = smol::channel::unbounded();
+        let (notify_tx, _notify_rx) = mpsc::unbounded();
         let fs = Arc::new(RealFs);
         let next_entry_id = Arc::new(AtomicUsize::new(0));
         let mut initial_snapshot = LocalSnapshot {
@@ -2563,7 +2630,7 @@ mod tests {
         smol::block_on(scanner.process_events(events));
         scanner.snapshot().check_invariants();
 
-        let (notify_tx, _notify_rx) = smol::channel::unbounded();
+        let (notify_tx, _notify_rx) = mpsc::unbounded();
         let mut new_scanner = BackgroundScanner::new(
             Arc::new(Mutex::new(initial_snapshot)),
             notify_tx,
@@ -2576,6 +2643,7 @@ mod tests {
             new_scanner.snapshot().to_vec(true)
         );
 
+        let mut update_id = 0;
         for mut prev_snapshot in snapshots {
             let include_ignored = rng.gen::<bool>();
             if !include_ignored {
@@ -2596,9 +2664,13 @@ mod tests {
                 prev_snapshot.entries_by_id.edit(entries_by_id_edits, &());
             }
 
-            let update = scanner
-                .snapshot()
-                .build_update(&prev_snapshot, 0, 0, include_ignored);
+            let update = scanner.snapshot().build_update(
+                &prev_snapshot,
+                0,
+                0,
+                post_inc(&mut update_id),
+                include_ignored,
+            );
             prev_snapshot.apply_remote_update(update).unwrap();
             assert_eq!(
                 prev_snapshot.to_vec(true),

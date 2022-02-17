@@ -420,7 +420,9 @@ impl LanguageServer {
                 anyhow!("tried to send a request to a language server that has been shut down")
             })
             .and_then(|outbound_tx| {
-                outbound_tx.try_send(message)?;
+                outbound_tx
+                    .try_send(message)
+                    .context("failed to write to language server's stdin")?;
                 Ok(())
             });
         async move {
@@ -481,43 +483,36 @@ impl Drop for Subscription {
 
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeLanguageServer {
-    handlers: Arc<
-        Mutex<
-            HashMap<
-                &'static str,
-                Box<dyn Send + FnOnce(usize, &[u8]) -> (Vec<u8>, barrier::Sender)>,
-            >,
-        >,
-    >,
-    outgoing_tx: channel::Sender<Vec<u8>>,
-    incoming_rx: channel::Receiver<Vec<u8>>,
-    pub started: Arc<std::sync::atomic::AtomicBool>,
+    handlers:
+        Arc<Mutex<HashMap<&'static str, Box<dyn Send + Sync + FnMut(usize, &[u8]) -> Vec<u8>>>>>,
+    outgoing_tx: futures::channel::mpsc::UnboundedSender<Vec<u8>>,
+    incoming_rx: futures::channel::mpsc::UnboundedReceiver<Vec<u8>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
 impl LanguageServer {
-    pub async fn fake(cx: &gpui::TestAppContext) -> (Arc<Self>, FakeLanguageServer) {
-        Self::fake_with_capabilities(Default::default(), cx).await
+    pub fn fake(executor: Arc<gpui::executor::Background>) -> (Arc<Self>, FakeLanguageServer) {
+        Self::fake_with_capabilities(Default::default(), executor)
     }
 
-    pub async fn fake_with_capabilities(
+    pub fn fake_with_capabilities(
         capabilities: ServerCapabilities,
-        cx: &gpui::TestAppContext,
+        executor: Arc<gpui::executor::Background>,
     ) -> (Arc<Self>, FakeLanguageServer) {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
 
-        let mut fake = FakeLanguageServer::new(cx, stdin_reader, stdout_writer);
-        fake.handle_request::<request::Initialize, _>(move |_| InitializeResult {
-            capabilities,
-            ..Default::default()
+        let mut fake = FakeLanguageServer::new(executor.clone(), stdin_reader, stdout_writer);
+        fake.handle_request::<request::Initialize, _>({
+            let capabilities = capabilities.clone();
+            move |_| InitializeResult {
+                capabilities: capabilities.clone(),
+                ..Default::default()
+            }
         });
 
         let server =
-            Self::new_internal(stdin_writer, stdout_reader, Path::new("/"), cx.background())
-                .unwrap();
-        fake.receive_notification::<notification::Initialized>()
-            .await;
+            Self::new_internal(stdin_writer, stdout_reader, Path::new("/"), executor).unwrap();
 
         (server, fake)
     }
@@ -526,63 +521,59 @@ impl LanguageServer {
 #[cfg(any(test, feature = "test-support"))]
 impl FakeLanguageServer {
     fn new(
-        cx: &gpui::TestAppContext,
+        background: Arc<gpui::executor::Background>,
         stdin: async_pipe::PipeReader,
         stdout: async_pipe::PipeWriter,
     ) -> Self {
         use futures::StreamExt as _;
 
-        let (incoming_tx, incoming_rx) = channel::unbounded();
-        let (outgoing_tx, mut outgoing_rx) = channel::unbounded();
+        let (incoming_tx, incoming_rx) = futures::channel::mpsc::unbounded();
+        let (outgoing_tx, mut outgoing_rx) = futures::channel::mpsc::unbounded();
         let this = Self {
             outgoing_tx: outgoing_tx.clone(),
             incoming_rx,
             handlers: Default::default(),
-            started: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         };
 
         // Receive incoming messages
         let handlers = this.handlers.clone();
-        cx.background()
+        let executor = background.clone();
+        background
             .spawn(async move {
                 let mut buffer = Vec::new();
                 let mut stdin = smol::io::BufReader::new(stdin);
                 while Self::receive(&mut stdin, &mut buffer).await.is_ok() {
-                    if let Ok(request) = serde_json::from_slice::<AnyRequest>(&mut buffer) {
+                    executor.simulate_random_delay().await;
+                    if let Ok(request) = serde_json::from_slice::<AnyRequest>(&buffer) {
                         assert_eq!(request.jsonrpc, JSON_RPC_VERSION);
 
-                        let handler = handlers.lock().remove(request.method);
-                        if let Some(handler) = handler {
-                            let (response, sent) =
-                                handler(request.id, request.params.get().as_bytes());
+                        if let Some(handler) = handlers.lock().get_mut(request.method) {
+                            let response = handler(request.id, request.params.get().as_bytes());
                             log::debug!("handled lsp request. method:{}", request.method);
-                            outgoing_tx.send(response).await.unwrap();
-                            drop(sent);
+                            outgoing_tx.unbounded_send(response)?;
                         } else {
                             log::debug!("unhandled lsp request. method:{}", request.method);
-                            outgoing_tx
-                                .send(
-                                    serde_json::to_vec(&AnyResponse {
-                                        id: request.id,
-                                        error: Some(Error {
-                                            message: "no handler".to_string(),
-                                        }),
-                                        result: None,
-                                    })
-                                    .unwrap(),
-                                )
-                                .await
-                                .unwrap();
+                            outgoing_tx.unbounded_send(
+                                serde_json::to_vec(&AnyResponse {
+                                    id: request.id,
+                                    error: Some(Error {
+                                        message: "no handler".to_string(),
+                                    }),
+                                    result: None,
+                                })
+                                .unwrap(),
+                            )?;
                         }
                     } else {
-                        incoming_tx.send(buffer.clone()).await.unwrap();
+                        incoming_tx.unbounded_send(buffer.clone())?;
                     }
                 }
+                Ok::<_, anyhow::Error>(())
             })
             .detach();
 
         // Send outgoing messages
-        cx.background()
+        background
             .spawn(async move {
                 let mut stdout = smol::io::BufWriter::new(stdout);
                 while let Some(notification) = outgoing_rx.next().await {
@@ -595,16 +586,13 @@ impl FakeLanguageServer {
     }
 
     pub async fn notify<T: notification::Notification>(&mut self, params: T::Params) {
-        if !self.started.load(std::sync::atomic::Ordering::SeqCst) {
-            panic!("can't simulate an LSP notification before the server has been started");
-        }
         let message = serde_json::to_vec(&Notification {
             jsonrpc: JSON_RPC_VERSION,
             method: T::METHOD,
             params,
         })
         .unwrap();
-        self.outgoing_tx.send(message).await.unwrap();
+        self.outgoing_tx.unbounded_send(message).unwrap();
     }
 
     pub async fn receive_notification<T: notification::Notification>(&mut self) -> T::Params {
@@ -624,15 +612,18 @@ impl FakeLanguageServer {
         }
     }
 
-    pub fn handle_request<T, F>(&mut self, handler: F) -> barrier::Receiver
+    pub fn handle_request<T, F>(
+        &mut self,
+        mut handler: F,
+    ) -> futures::channel::mpsc::UnboundedReceiver<()>
     where
         T: 'static + request::Request,
-        F: 'static + Send + FnOnce(T::Params) -> T::Result,
+        F: 'static + Send + Sync + FnMut(T::Params) -> T::Result,
     {
-        let (responded_tx, responded_rx) = barrier::channel();
-        let prev_handler = self.handlers.lock().insert(
+        let (responded_tx, responded_rx) = futures::channel::mpsc::unbounded();
+        self.handlers.lock().insert(
             T::METHOD,
-            Box::new(|id, params| {
+            Box::new(move |id, params| {
                 let result = handler(serde_json::from_slice::<T::Params>(params).unwrap());
                 let result = serde_json::to_string(&result).unwrap();
                 let result = serde_json::from_str::<&RawValue>(&result).unwrap();
@@ -641,16 +632,18 @@ impl FakeLanguageServer {
                     error: None,
                     result: Some(result),
                 };
-                (serde_json::to_vec(&response).unwrap(), responded_tx)
+                responded_tx.unbounded_send(()).ok();
+                serde_json::to_vec(&response).unwrap()
             }),
         );
-        if prev_handler.is_some() {
-            panic!(
-                "registered a new handler for LSP method '{}' before the previous handler was called",
-                T::METHOD
-            );
-        }
         responded_rx
+    }
+
+    pub fn remove_request_handler<T>(&mut self)
+    where
+        T: 'static + request::Request,
+    {
+        self.handlers.lock().remove(T::METHOD);
     }
 
     pub async fn start_progress(&mut self, token: impl Into<String>) {
@@ -777,7 +770,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_fake(cx: TestAppContext) {
-        let (server, mut fake) = LanguageServer::fake(&cx).await;
+        let (server, mut fake) = LanguageServer::fake(cx.background());
 
         let (message_tx, message_rx) = channel::unbounded();
         let (diagnostics_tx, diagnostics_rx) = channel::unbounded();

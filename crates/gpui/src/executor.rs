@@ -370,6 +370,13 @@ impl Foreground {
         *any_value.downcast().unwrap()
     }
 
+    pub fn run_until_parked(&self) {
+        match self {
+            Self::Deterministic { executor, .. } => executor.run_until_parked(),
+            _ => panic!("this method can only be called on a deterministic executor"),
+        }
+    }
+
     pub fn parking_forbidden(&self) -> bool {
         match self {
             Self::Deterministic { executor, .. } => executor.state.lock().forbid_parking,

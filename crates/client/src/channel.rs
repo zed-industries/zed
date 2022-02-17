@@ -4,6 +4,7 @@ use super::{
     Client, Status, Subscription, TypedEnvelope,
 };
 use anyhow::{anyhow, Context, Result};
+use futures::lock::Mutex;
 use gpui::{
     AsyncAppContext, Entity, ModelContext, ModelHandle, MutableAppContext, Task, WeakModelHandle,
 };
@@ -40,6 +41,7 @@ pub struct Channel {
     next_pending_message_id: usize,
     user_store: ModelHandle<UserStore>,
     rpc: Arc<Client>,
+    outgoing_messages_lock: Arc<Mutex<()>>,
     rng: StdRng,
     _subscription: Subscription,
 }
@@ -178,14 +180,17 @@ impl Entity for Channel {
 }
 
 impl Channel {
+    pub fn init(rpc: &Arc<Client>) {
+        rpc.add_entity_message_handler(Self::handle_message_sent);
+    }
+
     pub fn new(
         details: ChannelDetails,
         user_store: ModelHandle<UserStore>,
         rpc: Arc<Client>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let _subscription =
-            rpc.add_entity_message_handler(details.id, cx, Self::handle_message_sent);
+        let _subscription = rpc.add_model_for_remote_entity(details.id, cx);
 
         {
             let user_store = user_store.clone();
@@ -214,6 +219,7 @@ impl Channel {
             details,
             user_store,
             rpc,
+            outgoing_messages_lock: Default::default(),
             messages: Default::default(),
             loaded_all_messages: false,
             next_pending_message_id: 0,
@@ -259,13 +265,16 @@ impl Channel {
         );
         let user_store = self.user_store.clone();
         let rpc = self.rpc.clone();
+        let outgoing_messages_lock = self.outgoing_messages_lock.clone();
         Ok(cx.spawn(|this, mut cx| async move {
+            let outgoing_message_guard = outgoing_messages_lock.lock().await;
             let request = rpc.request(proto::SendChannelMessage {
                 channel_id,
                 body,
                 nonce: Some(nonce.into()),
             });
             let response = request.await?;
+            drop(outgoing_message_guard);
             let message = ChannelMessage::from_proto(
                 response.message.ok_or_else(|| anyhow!("invalid message"))?,
                 &user_store,
@@ -589,10 +598,14 @@ mod tests {
 
     #[gpui::test]
     async fn test_channel_messages(mut cx: TestAppContext) {
+        cx.foreground().forbid_parking();
+
         let user_id = 5;
         let http_client = FakeHttpClient::new(|_| async move { Ok(Response::new(404)) });
         let mut client = Client::new(http_client.clone());
         let server = FakeServer::for_client(user_id, &mut client, &cx).await;
+
+        Channel::init(&client);
         let user_store = cx.add_model(|cx| UserStore::new(client.clone(), http_client, cx));
 
         let channel_list = cx.add_model(|cx| ChannelList::new(user_store, client.clone(), cx));
