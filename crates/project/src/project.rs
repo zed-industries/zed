@@ -4332,5 +4332,80 @@ mod tests {
         let range = response.await.unwrap().unwrap();
         let range = buffer.read_with(&cx, |buffer, _| range.to_offset(buffer));
         assert_eq!(range, 6..9);
+
+        let response = project.update(&mut cx, |project, cx| {
+            project.perform_rename(buffer.clone(), 7, "THREE".to_string(), true, cx)
+        });
+        fake_server
+            .handle_request::<lsp::request::Rename, _>(|params| {
+                assert_eq!(
+                    params.text_document_position.text_document.uri.as_str(),
+                    "file:///dir/one.rs"
+                );
+                assert_eq!(
+                    params.text_document_position.position,
+                    lsp::Position::new(0, 7)
+                );
+                assert_eq!(params.new_name, "THREE");
+                Some(lsp::WorkspaceEdit {
+                    changes: Some(
+                        [
+                            (
+                                lsp::Url::from_file_path("/dir/one.rs").unwrap(),
+                                vec![lsp::TextEdit::new(
+                                    lsp::Range::new(
+                                        lsp::Position::new(0, 6),
+                                        lsp::Position::new(0, 9),
+                                    ),
+                                    "THREE".to_string(),
+                                )],
+                            ),
+                            (
+                                lsp::Url::from_file_path("/dir/two.rs").unwrap(),
+                                vec![
+                                    lsp::TextEdit::new(
+                                        lsp::Range::new(
+                                            lsp::Position::new(0, 24),
+                                            lsp::Position::new(0, 27),
+                                        ),
+                                        "THREE".to_string(),
+                                    ),
+                                    lsp::TextEdit::new(
+                                        lsp::Range::new(
+                                            lsp::Position::new(0, 35),
+                                            lsp::Position::new(0, 38),
+                                        ),
+                                        "THREE".to_string(),
+                                    ),
+                                ],
+                            ),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    ..Default::default()
+                })
+            })
+            .next()
+            .await
+            .unwrap();
+        let mut transaction = response.await.unwrap().0;
+        assert_eq!(transaction.len(), 2);
+        assert_eq!(
+            transaction
+                .remove_entry(&buffer)
+                .unwrap()
+                .0
+                .read_with(&cx, |buffer, _| buffer.text()),
+            "const THREE: usize = 1;"
+        );
+        assert_eq!(
+            transaction
+                .into_keys()
+                .next()
+                .unwrap()
+                .read_with(&cx, |buffer, _| buffer.text()),
+            "const TWO: usize = one::THREE + one::THREE;"
+        );
     }
 }

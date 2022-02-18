@@ -4086,7 +4086,7 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
-    fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+    pub fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
         use language::ToOffset as _;
 
         let project = self.project.clone()?;
@@ -4130,7 +4130,7 @@ impl Editor {
         }))
     }
 
-    fn confirm_rename(
+    pub fn confirm_rename(
         workspace: &mut Workspace,
         _: &ConfirmRename,
         cx: &mut ViewContext<Workspace>,

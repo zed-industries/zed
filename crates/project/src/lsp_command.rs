@@ -4,7 +4,7 @@ use client::proto;
 use futures::{future::LocalBoxFuture, FutureExt};
 use gpui::{AppContext, AsyncAppContext, ModelHandle};
 use language::{
-    proto::deserialize_anchor, range_from_lsp, Anchor, Buffer, PointUtf16, ToLspPosition,
+    proto::deserialize_anchor, range_from_lsp, Anchor, Bias, Buffer, PointUtf16, ToLspPosition,
 };
 use std::{ops::Range, path::Path};
 
@@ -84,7 +84,13 @@ impl LspCommand for PrepareRename {
                 | lsp::PrepareRenameResponse::RangeWithPlaceholder { range, .. } => {
                     self.buffer.read_with(&cx, |buffer, _| {
                         let range = range_from_lsp(range);
-                        Some(buffer.anchor_after(range.start)..buffer.anchor_before(range.end))
+                        if buffer.clip_point_utf16(range.start, Bias::Left) == range.start
+                            && buffer.clip_point_utf16(range.end, Bias::Left) == range.end
+                        {
+                            Some(buffer.anchor_after(range.start)..buffer.anchor_before(range.end))
+                        } else {
+                            None
+                        }
                     })
                 }
                 _ => None,
