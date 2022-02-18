@@ -431,13 +431,17 @@ impl FindBar {
     }
 
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
-        for (editor, _) in self.editors_with_matches.drain() {
+        let mut active_editor_matches = None;
+        for (editor, ranges) in self.editors_with_matches.drain() {
             if let Some(editor) = editor.upgrade(cx) {
-                if Some(&editor) != self.active_editor.as_ref() {
+                if Some(&editor) == self.active_editor.as_ref() {
+                    active_editor_matches = Some((editor.downgrade(), ranges));
+                } else {
                     editor.update(cx, |editor, cx| editor.clear_highlighted_ranges::<Self>(cx));
                 }
             }
         }
+        self.editors_with_matches.extend(active_editor_matches);
     }
 
     fn update_matches(&mut self, select_closest_match: bool, cx: &mut ViewContext<Self>) {
