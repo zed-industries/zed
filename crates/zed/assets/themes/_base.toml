@@ -1,5 +1,5 @@
 [text]
-base = { family = "Inconsolata", size = 15 }
+base = { family = "Zed Sans", size = 14 }
 
 [workspace]
 background = "$surface.0"

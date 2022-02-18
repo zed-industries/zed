@@ -76,7 +76,7 @@ postage = { version = "0.4.1", features = ["futures-traits"] }
 rand = "0.8.3"
 regex = "1.5"
 rsa = "0.4"
-rust-embed = { version = "6.2", features = ["include-exclude"] }
+rust-embed = { version = "6.3", features = ["include-exclude"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1.0.64", features = ["preserve_order"] }
 serde_path_to_error = "0.1.4"
