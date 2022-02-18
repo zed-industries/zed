@@ -3,7 +3,7 @@
 
 use client::{self, http, ChannelList, UserStore};
 use fs::OpenOptions;
-use gpui::AssetSource;
+use gpui::{App, AssetSource};
 use log::LevelFilter;
 use parking_lot::Mutex;
 use simplelog::SimpleLogger;
@@ -18,16 +18,11 @@ fn main() {
     init_logger();
 
     let app = gpui::App::new(Assets).unwrap();
-    let embedded_fonts = Assets
-        .list("fonts")
-        .into_iter()
-        .map(|f| Arc::new(Assets.load(&f).unwrap().to_vec()))
-        .collect::<Vec<_>>();
-    app.platform().fonts().add_fonts(&embedded_fonts).unwrap();
+    load_embedded_fonts(&app);
 
     let themes = ThemeRegistry::new(Assets, app.font_cache());
     let theme = themes.get(DEFAULT_THEME_NAME).unwrap();
-    let settings = Settings::new("Inconsolata", &app.font_cache(), theme)
+    let settings = Settings::new("Zed Mono", &app.font_cache(), theme)
         .unwrap()
         .with_overrides(
             language::PLAIN_TEXT.name(),
@@ -146,4 +141,22 @@ fn collect_path_args() -> Vec<PathBuf> {
             }
         })
         .collect::<Vec<_>>()
+}
+
+fn load_embedded_fonts(app: &App) {
+    let font_paths = Assets.list("fonts");
+    let embedded_fonts = Mutex::new(Vec::new());
+    smol::block_on(app.background().scoped(|scope| {
+        for font_path in &font_paths {
+            scope.spawn(async {
+                let font_path = &*font_path;
+                let font_bytes = Assets.load(&font_path).unwrap().to_vec();
+                embedded_fonts.lock().push(Arc::from(font_bytes));
+            });
+        }
+    }));
+    app.platform()
+        .fonts()
+        .add_fonts(&embedded_fonts.into_inner())
+        .unwrap();
 }

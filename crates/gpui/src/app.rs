@@ -283,6 +283,10 @@ impl App {
         Ok(app)
     }
 
+    pub fn background(&self) -> Arc<executor::Background> {
+        self.0.borrow().background().clone()
+    }
+
     pub fn on_become_active<F>(self, mut callback: F) -> Self
     where
         F: 'static + FnMut(&mut MutableAppContext),

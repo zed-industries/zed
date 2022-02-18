@@ -36,7 +36,7 @@ impl Settings {
     ) -> Result<Self> {
         Ok(Self {
             buffer_font_family: font_cache.load_family(&[buffer_font_family])?,
-            buffer_font_size: 16.,
+            buffer_font_size: 15.,
             tab_size: 4,
             soft_wrap: SoftWrap::None,
             preferred_line_length: 80,
