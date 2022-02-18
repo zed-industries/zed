@@ -4146,21 +4146,49 @@ impl Editor {
     ) -> Option<Task<Result<()>>> {
         let editor = workspace.active_item(cx)?.act_as::<Editor>(cx)?;
 
-        let (buffer, position, new_name) = editor.update(cx, |editor, cx| {
+        let (buffer, range, new_name) = editor.update(cx, |editor, cx| {
             let (range, new_name) = editor.take_rename(cx)?;
-            let (buffer, position) = editor
-                .buffer
-                .read(cx)
-                .text_anchor_for_position(range.start.clone(), cx)?;
-            Some((buffer, position, new_name))
+            let buffer = editor.buffer.read(cx);
+            let (start_buffer, start) = buffer.text_anchor_for_position(range.start.clone(), cx)?;
+            let (end_buffer, end) = buffer.text_anchor_for_position(range.end.clone(), cx)?;
+            if start_buffer == end_buffer {
+                Some((start_buffer, start..end, new_name))
+            } else {
+                None
+            }
         })?;
 
         let rename = workspace.project().clone().update(cx, |project, cx| {
-            project.perform_rename(buffer, position, new_name.clone(), true, cx)
+            project.perform_rename(
+                buffer.clone(),
+                range.start.clone(),
+                new_name.clone(),
+                true,
+                cx,
+            )
         });
 
-        Some(cx.spawn(|workspace, cx| async move {
+        let transaction = buffer.update(cx, |buffer, cx| {
+            buffer.finalize_last_transaction();
+            buffer.start_transaction();
+            buffer.edit([range], &new_name, cx);
+            if buffer.end_transaction(cx).is_some() {
+                let transaction = buffer.finalize_last_transaction().unwrap().clone();
+                buffer.forget_transaction(transaction.id);
+                Some(transaction)
+            } else {
+                None
+            }
+        });
+
+        Some(cx.spawn(|workspace, mut cx| async move {
             let project_transaction = rename.await?;
+            if let Some(transaction) = transaction {
+                buffer.update(&mut cx, |buffer, cx| {
+                    buffer.push_transaction(transaction, Instant::now());
+                    buffer.undo(cx);
+                });
+            }
             Self::open_project_transaction(
                 editor,
                 workspace,

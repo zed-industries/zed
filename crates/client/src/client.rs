@@ -817,19 +817,28 @@ impl Client {
         self.peer.send(self.connection_id()?, message)
     }
 
-    pub async fn request<T: RequestMessage>(&self, request: T) -> Result<T::Response> {
+    pub fn request<T: RequestMessage>(
+        &self,
+        request: T,
+    ) -> impl Future<Output = Result<T::Response>> {
+        let client_id = self.id;
         log::debug!(
             "rpc request start. client_id: {}. name:{}",
-            self.id,
+            client_id,
             T::NAME
         );
-        let response = self.peer.request(self.connection_id()?, request).await;
-        log::debug!(
-            "rpc request finish. client_id: {}. name:{}",
-            self.id,
-            T::NAME
-        );
-        response
+        let response = self
+            .connection_id()
+            .map(|conn_id| self.peer.request(conn_id, request));
+        async move {
+            let response = response?.await;
+            log::debug!(
+                "rpc request finish. client_id: {}. name:{}",
+                client_id,
+                T::NAME
+            );
+            response
+        }
     }
 
     fn respond<T: RequestMessage>(&self, receipt: Receipt<T>, response: T::Response) -> Result<()> {
