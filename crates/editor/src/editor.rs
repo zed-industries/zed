@@ -1452,6 +1452,10 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        if self.take_rename(cx).is_some() {
+            return;
+        }
+
         if self.hide_context_menu(cx).is_some() {
             return;
         }
