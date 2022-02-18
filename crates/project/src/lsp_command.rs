@@ -1,14 +1,15 @@
 use crate::{Project, ProjectTransaction};
 use anyhow::{anyhow, Result};
-use client::proto;
+use client::{proto, PeerId};
 use futures::{future::LocalBoxFuture, FutureExt};
-use gpui::{AppContext, AsyncAppContext, ModelHandle};
+use gpui::{AppContext, AsyncAppContext, ModelContext, ModelHandle};
 use language::{
     proto::deserialize_anchor, range_from_lsp, Anchor, Bias, Buffer, PointUtf16, ToLspPosition,
+    ToPointUtf16,
 };
 use std::{ops::Range, path::Path};
 
-pub(crate) trait LspCommand: 'static {
+pub(crate) trait LspCommand: 'static + Sized {
     type Response: 'static + Default + Send;
     type LspRequest: 'static + Send + lsp::request::Request;
     type ProtoRequest: 'static + Send + proto::RequestMessage;
@@ -18,29 +19,50 @@ pub(crate) trait LspCommand: 'static {
         path: &Path,
         cx: &AppContext,
     ) -> <Self::LspRequest as lsp::request::Request>::Params;
-    fn to_proto(&self, project_id: u64, cx: &AppContext) -> Self::ProtoRequest;
     fn response_from_lsp(
         self,
         message: <Self::LspRequest as lsp::request::Request>::Result,
         project: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
         cx: AsyncAppContext,
     ) -> LocalBoxFuture<'static, Result<Self::Response>>;
+
+    fn to_proto(
+        &self,
+        project_id: u64,
+        buffer: &ModelHandle<Buffer>,
+        cx: &AppContext,
+    ) -> Self::ProtoRequest;
+    fn from_proto(
+        message: Self::ProtoRequest,
+        project: &mut Project,
+        buffer: &ModelHandle<Buffer>,
+        cx: &mut ModelContext<Project>,
+    ) -> Result<Self>;
+    fn buffer_id_from_proto(message: &Self::ProtoRequest) -> u64;
+
+    fn response_to_proto(
+        response: Self::Response,
+        project: &mut Project,
+        peer_id: PeerId,
+        buffer_version: &clock::Global,
+        cx: &mut ModelContext<Project>,
+    ) -> <Self::ProtoRequest as proto::RequestMessage>::Response;
     fn response_from_proto(
         self,
         message: <Self::ProtoRequest as proto::RequestMessage>::Response,
         project: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
         cx: AsyncAppContext,
     ) -> LocalBoxFuture<'static, Result<Self::Response>>;
 }
 
 pub(crate) struct PrepareRename {
-    pub buffer: ModelHandle<Buffer>,
     pub position: PointUtf16,
 }
 
 #[derive(Debug)]
 pub(crate) struct PerformRename {
-    pub buffer: ModelHandle<Buffer>,
     pub position: PointUtf16,
     pub new_name: String,
     pub push_to_history: bool,
@@ -60,29 +82,18 @@ impl LspCommand for PrepareRename {
         }
     }
 
-    fn to_proto(&self, project_id: u64, cx: &AppContext) -> proto::PrepareRename {
-        let buffer = &self.buffer.read(cx);
-        let buffer_id = buffer.remote_id();
-        proto::PrepareRename {
-            project_id,
-            buffer_id,
-            position: Some(language::proto::serialize_anchor(
-                &buffer.anchor_before(self.position),
-            )),
-        }
-    }
-
     fn response_from_lsp(
         self,
         message: Option<lsp::PrepareRenameResponse>,
         _: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
         cx: AsyncAppContext,
     ) -> LocalBoxFuture<'static, Result<Option<Range<Anchor>>>> {
         async move {
             Ok(message.and_then(|result| match result {
                 lsp::PrepareRenameResponse::Range(range)
-                | lsp::PrepareRenameResponse::RangeWithPlaceholder { range, .. } => {
-                    self.buffer.read_with(&cx, |buffer, _| {
+                | lsp::PrepareRenameResponse::RangeWithPlaceholder { range, .. } => buffer
+                    .read_with(&cx, |buffer, _| {
                         let range = range_from_lsp(range);
                         if buffer.clip_point_utf16(range.start, Bias::Left) == range.start
                             && buffer.clip_point_utf16(range.end, Bias::Left) == range.end
@@ -91,23 +102,80 @@ impl LspCommand for PrepareRename {
                         } else {
                             None
                         }
-                    })
-                }
+                    }),
                 _ => None,
             }))
         }
         .boxed_local()
     }
 
+    fn to_proto(
+        &self,
+        project_id: u64,
+        buffer: &ModelHandle<Buffer>,
+        cx: &AppContext,
+    ) -> proto::PrepareRename {
+        proto::PrepareRename {
+            project_id,
+            buffer_id: buffer.read(cx).remote_id(),
+            position: Some(language::proto::serialize_anchor(
+                &buffer.read(cx).anchor_before(self.position),
+            )),
+        }
+    }
+
+    fn buffer_id_from_proto(message: &proto::PrepareRename) -> u64 {
+        message.buffer_id
+    }
+
+    fn from_proto(
+        message: proto::PrepareRename,
+        _: &mut Project,
+        buffer: &ModelHandle<Buffer>,
+        cx: &mut ModelContext<Project>,
+    ) -> Result<Self> {
+        let buffer = buffer.read(cx);
+        let position = message
+            .position
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        if !buffer.can_resolve(&position) {
+            Err(anyhow!("cannot resolve position"))?;
+        }
+        Ok(Self {
+            position: position.to_point_utf16(buffer),
+        })
+    }
+
+    fn response_to_proto(
+        range: Option<Range<Anchor>>,
+        _: &mut Project,
+        _: PeerId,
+        buffer_version: &clock::Global,
+        _: &mut ModelContext<Project>,
+    ) -> proto::PrepareRenameResponse {
+        proto::PrepareRenameResponse {
+            can_rename: range.is_some(),
+            start: range
+                .as_ref()
+                .map(|range| language::proto::serialize_anchor(&range.start)),
+            end: range
+                .as_ref()
+                .map(|range| language::proto::serialize_anchor(&range.end)),
+            version: buffer_version.into(),
+        }
+    }
+
     fn response_from_proto(
         self,
         message: proto::PrepareRenameResponse,
         _: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
         mut cx: AsyncAppContext,
     ) -> LocalBoxFuture<'static, Result<Option<Range<Anchor>>>> {
         async move {
             if message.can_rename {
-                self.buffer
+                buffer
                     .update(&mut cx, |buffer, _| {
                         buffer.wait_for_version(message.version.into())
                     })
@@ -141,38 +209,25 @@ impl LspCommand for PerformRename {
         }
     }
 
-    fn to_proto(&self, project_id: u64, cx: &AppContext) -> proto::PerformRename {
-        let buffer = &self.buffer.read(cx);
-        let buffer_id = buffer.remote_id();
-        proto::PerformRename {
-            project_id,
-            buffer_id,
-            position: Some(language::proto::serialize_anchor(
-                &buffer.anchor_before(self.position),
-            )),
-            new_name: self.new_name.clone(),
-        }
-    }
-
     fn response_from_lsp(
         self,
         message: Option<lsp::WorkspaceEdit>,
         project: ModelHandle<Project>,
+        buffer: ModelHandle<Buffer>,
         mut cx: AsyncAppContext,
     ) -> LocalBoxFuture<'static, Result<ProjectTransaction>> {
         async move {
             if let Some(edit) = message {
-                let (language_name, language_server) =
-                    self.buffer.read_with(&cx, |buffer, _| {
-                        let language = buffer
-                            .language()
-                            .ok_or_else(|| anyhow!("buffer's language was removed"))?;
-                        let language_server = buffer
-                            .language_server()
-                            .cloned()
-                            .ok_or_else(|| anyhow!("buffer's language server was removed"))?;
-                        Ok::<_, anyhow::Error>((language.name().to_string(), language_server))
-                    })?;
+                let (language_name, language_server) = buffer.read_with(&cx, |buffer, _| {
+                    let language = buffer
+                        .language()
+                        .ok_or_else(|| anyhow!("buffer's language was removed"))?;
+                    let language_server = buffer
+                        .language_server()
+                        .cloned()
+                        .ok_or_else(|| anyhow!("buffer's language server was removed"))?;
+                    Ok::<_, anyhow::Error>((language.name().to_string(), language_server))
+                })?;
                 Project::deserialize_workspace_edit(
                     project,
                     edit,
@@ -189,10 +244,67 @@ impl LspCommand for PerformRename {
         .boxed_local()
     }
 
+    fn to_proto(
+        &self,
+        project_id: u64,
+        buffer: &ModelHandle<Buffer>,
+        cx: &AppContext,
+    ) -> proto::PerformRename {
+        let buffer = buffer.read(cx);
+        let buffer_id = buffer.remote_id();
+        proto::PerformRename {
+            project_id,
+            buffer_id,
+            position: Some(language::proto::serialize_anchor(
+                &buffer.anchor_before(self.position),
+            )),
+            new_name: self.new_name.clone(),
+        }
+    }
+
+    fn buffer_id_from_proto(message: &proto::PerformRename) -> u64 {
+        message.buffer_id
+    }
+
+    fn from_proto(
+        message: proto::PerformRename,
+        _: &mut Project,
+        buffer: &ModelHandle<Buffer>,
+        cx: &mut ModelContext<Project>,
+    ) -> Result<Self> {
+        let position = message
+            .position
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        let buffer = buffer.read(cx);
+        if !buffer.can_resolve(&position) {
+            Err(anyhow!("cannot resolve position"))?;
+        }
+        Ok(Self {
+            position: position.to_point_utf16(buffer),
+            new_name: message.new_name,
+            push_to_history: false,
+        })
+    }
+
+    fn response_to_proto(
+        response: ProjectTransaction,
+        project: &mut Project,
+        peer_id: PeerId,
+        _: &clock::Global,
+        cx: &mut ModelContext<Project>,
+    ) -> proto::PerformRenameResponse {
+        let transaction = project.serialize_project_transaction_for_peer(response, peer_id, cx);
+        proto::PerformRenameResponse {
+            transaction: Some(transaction),
+        }
+    }
+
     fn response_from_proto(
         self,
         message: proto::PerformRenameResponse,
         project: ModelHandle<Project>,
+        _: ModelHandle<Buffer>,
         mut cx: AsyncAppContext,
     ) -> LocalBoxFuture<'static, Result<ProjectTransaction>> {
         async move {

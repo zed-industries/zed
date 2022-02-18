@@ -184,8 +184,8 @@ impl Project {
         client.add_entity_request_handler(Self::handle_get_code_actions);
         client.add_entity_request_handler(Self::handle_get_completions);
         client.add_entity_request_handler(Self::handle_get_definition);
-        client.add_entity_request_handler(Self::handle_prepare_rename);
-        client.add_entity_request_handler(Self::handle_perform_rename);
+        client.add_entity_request_handler(Self::handle_lsp_command::<lsp_command::PrepareRename>);
+        client.add_entity_request_handler(Self::handle_lsp_command::<lsp_command::PerformRename>);
         client.add_entity_request_handler(Self::handle_open_buffer);
         client.add_entity_request_handler(Self::handle_save_buffer);
     }
@@ -1829,7 +1829,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Range<Anchor>>>> {
         let position = position.to_point_utf16(buffer.read(cx));
-        self.request_lsp(buffer.clone(), PrepareRename { buffer, position }, cx)
+        self.request_lsp(buffer, PrepareRename { position }, cx)
     }
 
     pub fn perform_rename<T: ToPointUtf16>(
@@ -1842,9 +1842,8 @@ impl Project {
     ) -> Task<Result<ProjectTransaction>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(
-            buffer.clone(),
+            buffer,
             PerformRename {
-                buffer,
                 position,
                 new_name,
                 push_to_history,
@@ -1862,8 +1861,8 @@ impl Project {
     where
         <R::LspRequest as lsp::request::Request>::Result: Send,
     {
-        let buffer = buffer_handle.read(cx);
         if self.is_local() {
+            let buffer = buffer_handle.read(cx);
             let file = File::from_dyn(buffer.file()).and_then(File::as_local);
             if let Some((file, language_server)) = file.zip(buffer.language_server().cloned()) {
                 let lsp_params = request.to_lsp(&file.abs_path(cx), cx);
@@ -1872,15 +1871,19 @@ impl Project {
                         .request::<R::LspRequest>(lsp_params)
                         .await
                         .context("lsp request failed")?;
-                    request.response_from_lsp(response, this, cx).await
+                    request
+                        .response_from_lsp(response, this, buffer_handle, cx)
+                        .await
                 });
             }
         } else if let Some(project_id) = self.remote_id() {
             let rpc = self.client.clone();
-            let message = request.to_proto(project_id, cx);
+            let message = request.to_proto(project_id, &buffer_handle, cx);
             return cx.spawn(|this, cx| async move {
                 let response = rpc.request(message).await?;
-                request.response_from_proto(response, this, cx).await
+                request
+                    .response_from_proto(response, this, buffer_handle, cx)
+                    .await
             });
         }
         Task::ready(Ok(Default::default()))
@@ -2619,84 +2622,36 @@ impl Project {
         })
     }
 
-    async fn handle_prepare_rename(
+    async fn handle_lsp_command<T: LspCommand>(
         this: ModelHandle<Self>,
-        envelope: TypedEnvelope<proto::PrepareRename>,
+        envelope: TypedEnvelope<T::ProtoRequest>,
         _: Arc<Client>,
         mut cx: AsyncAppContext,
-    ) -> Result<proto::PrepareRenameResponse> {
+    ) -> Result<<T::ProtoRequest as proto::RequestMessage>::Response>
+    where
+        <T::LspRequest as lsp::request::Request>::Result: Send,
+    {
         let sender_id = envelope.original_sender_id()?;
-        let position = envelope
-            .payload
-            .position
-            .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid position"))?;
-        let (prepare_rename, version) = this.update(&mut cx, |this, cx| {
+        let (request, buffer_version) = this.update(&mut cx, |this, cx| {
+            let buffer_id = T::buffer_id_from_proto(&envelope.payload);
             let buffer_handle = this
                 .shared_buffers
                 .get(&sender_id)
-                .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
-                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
-            let buffer = buffer_handle.read(cx);
-            let version = buffer.version();
-            if buffer.can_resolve(&position) {
-                Ok((this.prepare_rename(buffer_handle, position, cx), version))
-            } else {
-                Err(anyhow!("cannot resolve position"))
-            }
+                .and_then(|shared_buffers| shared_buffers.get(&buffer_id).cloned())
+                .ok_or_else(|| anyhow!("unknown buffer id {}", buffer_id))?;
+            let buffer_version = buffer_handle.read(cx).version();
+            let request = T::from_proto(envelope.payload, this, &buffer_handle, cx)?;
+            Ok::<_, anyhow::Error>((this.request_lsp(buffer_handle, request, cx), buffer_version))
         })?;
-
-        let range = prepare_rename.await?;
-        Ok(proto::PrepareRenameResponse {
-            can_rename: range.is_some(),
-            start: range
-                .as_ref()
-                .map(|range| language::proto::serialize_anchor(&range.start)),
-            end: range
-                .as_ref()
-                .map(|range| language::proto::serialize_anchor(&range.end)),
-            version: (&version).into(),
-        })
-    }
-
-    async fn handle_perform_rename(
-        this: ModelHandle<Self>,
-        envelope: TypedEnvelope<proto::PerformRename>,
-        _: Arc<Client>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::PerformRenameResponse> {
-        let sender_id = envelope.original_sender_id()?;
-        let position = envelope
-            .payload
-            .position
-            .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid position"))?;
-        let perform_rename = this.update(&mut cx, |this, cx| {
-            let buffer_handle = this
-                .shared_buffers
-                .get(&sender_id)
-                .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
-                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
-            let buffer = buffer_handle.read(cx);
-            if buffer.can_resolve(&position) {
-                Ok(this.perform_rename(
-                    buffer_handle,
-                    position,
-                    envelope.payload.new_name,
-                    false,
-                    cx,
-                ))
-            } else {
-                Err(anyhow!("cannot resolve position"))
-            }
-        })?;
-
-        let transaction = perform_rename.await?;
-        let transaction = this.update(&mut cx, |this, cx| {
-            this.serialize_project_transaction_for_peer(transaction, sender_id, cx)
-        });
-        Ok(proto::PerformRenameResponse {
-            transaction: Some(transaction),
+        let response = request.await?;
+        this.update(&mut cx, |this, cx| {
+            Ok(T::response_to_proto(
+                response,
+                this,
+                sender_id,
+                &buffer_version,
+                cx,
+            ))
         })
     }
 
