@@ -39,6 +39,8 @@ bad = "#b7372e"
 [state]
 active_line = "#00000008"
 highlighted_line = "#faca5033"
+deleted_line = "#dd000044"
+inserted_line = "#00dd0044"
 hover = "#0000000D"
 selected = "#0000001c"
 

@@ -188,7 +188,7 @@ corner_radius = 6
 
 [project_panel]
 extends = "$panel"
-padding.top = 6 # ($workspace.tab.height - $project_panel.entry.height) / 2
+padding.top = 6    # ($workspace.tab.height - $project_panel.entry.height) / 2
 
 [project_panel.entry]
 text = "$text.1"
@@ -248,6 +248,8 @@ gutter_background = "$surface.1"
 gutter_padding_factor = 2.5
 active_line_background = "$state.active_line"
 highlighted_line_background = "$state.highlighted_line"
+diff_background_deleted = "$state.deleted_line"
+diff_background_inserted = "$state.inserted_line"
 line_number = "$text.2.color"
 line_number_active = "$text.0.color"
 selection = "$selection.host"

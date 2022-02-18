@@ -480,7 +480,9 @@ struct SnippetState {
 
 struct RenameState {
     range: Range<Anchor>,
-    first_transaction: Option<TransactionId>,
+    old_name: String,
+    editor: ViewHandle<Editor>,
+    block_id: BlockId,
 }
 
 struct InvalidationStack<T>(Vec<T>);
@@ -3161,6 +3163,26 @@ impl Editor {
     }
 
     pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
+        if let Some((range, column, _, _)) = self.take_rename(cx) {
+            let snapshot = self.buffer.read(cx).snapshot(cx);
+            let position = snapshot.clip_point(
+                range.start.to_point(&snapshot) + Point::new(0, column),
+                Bias::Left,
+            );
+            self.update_selections(
+                vec![Selection {
+                    id: self.newest_anchor_selection().id,
+                    start: position,
+                    end: position,
+                    reversed: false,
+                    goal: SelectionGoal::None,
+                }],
+                None,
+                cx,
+            );
+            return;
+        }
+
         if let Some(context_menu) = self.context_menu.as_mut() {
             if context_menu.select_prev(cx) {
                 return;
@@ -4118,20 +4140,51 @@ impl Editor {
                     let start = offset - lookbehind;
                     let end = offset + lookahead;
                     let rename_range = buffer.anchor_before(start)..buffer.anchor_after(end);
+                    let old_name = buffer.text_for_range(start..end).collect::<String>();
                     drop(buffer);
 
-                    this.buffer
-                        .update(cx, |buffer, cx| buffer.finalize_last_transaction(cx));
-                    this.pending_rename = Some(RenameState {
-                        range: rename_range.clone(),
-                        first_transaction: None,
+                    let editor = cx.add_view(|cx| {
+                        let mut editor = Editor::single_line(this.build_settings.clone(), cx);
+                        editor
+                            .buffer
+                            .update(cx, |buffer, cx| buffer.edit([0..0], &old_name, cx));
+                        editor.select_ranges([0..old_name.len()], None, cx);
+                        editor.highlight_ranges::<Rename>(
+                            vec![Anchor::min()..Anchor::max()],
+                            settings.style.diff_background_inserted,
+                            cx,
+                        );
+                        editor
                     });
-                    this.select_ranges([start..end], None, cx);
                     this.highlight_ranges::<Rename>(
-                        vec![rename_range],
-                        settings.style.highlighted_line_background,
+                        vec![rename_range.clone()],
+                        settings.style.diff_background_deleted,
                         cx,
                     );
+                    cx.focus(&editor);
+                    let block_id = this.insert_blocks(
+                        [BlockProperties {
+                            position: rename_range.start.clone(),
+                            height: 1,
+                            render: Arc::new({
+                                let editor = editor.clone();
+                                move |cx: &BlockContext| {
+                                    ChildView::new(editor.clone())
+                                        .contained()
+                                        .with_padding_left(cx.anchor_x)
+                                        .boxed()
+                                }
+                            }),
+                            disposition: BlockDisposition::Below,
+                        }],
+                        cx,
+                    )[0];
+                    this.pending_rename = Some(RenameState {
+                        range: rename_range,
+                        old_name,
+                        editor,
+                        block_id,
+                    });
                 });
             }
 
@@ -4146,13 +4199,13 @@ impl Editor {
     ) -> Option<Task<Result<()>>> {
         let editor = workspace.active_item(cx)?.act_as::<Editor>(cx)?;
 
-        let (buffer, range, new_name) = editor.update(cx, |editor, cx| {
-            let (range, new_name) = editor.take_rename(cx)?;
+        let (buffer, range, old_name, new_name) = editor.update(cx, |editor, cx| {
+            let (range, _, old_name, new_name) = editor.take_rename(cx)?;
             let buffer = editor.buffer.read(cx);
             let (start_buffer, start) = buffer.text_anchor_for_position(range.start.clone(), cx)?;
             let (end_buffer, end) = buffer.text_anchor_for_position(range.end.clone(), cx)?;
             if start_buffer == end_buffer {
-                Some((start_buffer, start..end, new_name))
+                Some((start_buffer, start..end, old_name, new_name))
             } else {
                 None
             }
@@ -4168,55 +4221,36 @@ impl Editor {
             )
         });
 
-        let transaction = buffer.update(cx, |buffer, cx| {
-            buffer.finalize_last_transaction();
-            buffer.start_transaction();
-            buffer.edit([range], &new_name, cx);
-            if buffer.end_transaction(cx).is_some() {
-                let transaction = buffer.finalize_last_transaction().unwrap().clone();
-                buffer.forget_transaction(transaction.id);
-                Some(transaction)
-            } else {
-                None
-            }
-        });
-
-        Some(cx.spawn(|workspace, mut cx| async move {
+        Some(cx.spawn(|workspace, cx| async move {
             let project_transaction = rename.await?;
-            if let Some(transaction) = transaction {
-                buffer.update(&mut cx, |buffer, cx| {
-                    buffer.push_transaction(transaction, Instant::now());
-                    buffer.undo(cx);
-                });
-            }
             Self::open_project_transaction(
                 editor,
                 workspace,
                 project_transaction,
-                format!("Rename: {}", new_name),
+                format!("Rename: {} → {}", old_name, new_name),
                 cx,
             )
             .await
         }))
     }
 
-    fn take_rename(&mut self, cx: &mut ViewContext<Self>) -> Option<(Range<Anchor>, String)> {
+    fn take_rename(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<(Range<Anchor>, u32, String, String)> {
         let rename = self.pending_rename.take()?;
-        let new_name = self
-            .buffer
-            .read(cx)
-            .read(cx)
-            .text_for_range(rename.range.clone())
-            .collect::<String>();
-
+        let editor = rename.editor.read(cx);
+        let new_name = editor.text(cx);
+        let buffer = editor.buffer.read(cx).snapshot(cx);
+        let rename_position = editor.newest_selection::<Point>(&buffer);
+        self.remove_blocks([rename.block_id].into_iter().collect(), cx);
         self.clear_highlighted_ranges::<Rename>(cx);
-        if let Some(transaction_id) = rename.first_transaction {
-            self.buffer.update(cx, |buffer, cx| {
-                buffer.undo_to_transaction(transaction_id, false, cx)
-            });
-        }
-
-        Some((rename.range, new_name))
+        Some((
+            rename.range,
+            rename_position.head().column,
+            rename.old_name,
+            new_name,
+        ))
     }
 
     fn invalidate_rename_range(
@@ -4722,12 +4756,6 @@ impl Editor {
             .buffer
             .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
         {
-            if let Some(rename) = self.pending_rename.as_mut() {
-                if rename.first_transaction.is_none() {
-                    rename.first_transaction = Some(tx_id);
-                }
-            }
-
             if let Some((_, end_selections)) = self.selection_history.get_mut(&tx_id) {
                 *end_selections = Some(self.selections.clone());
             } else {
@@ -5146,6 +5174,8 @@ impl EditorSettings {
                     gutter_padding_factor: 2.,
                     active_line_background: Default::default(),
                     highlighted_line_background: Default::default(),
+                    diff_background_deleted: Default::default(),
+                    diff_background_inserted: Default::default(),
                     line_number: Default::default(),
                     line_number_active: Default::default(),
                     selection: Default::default(),
