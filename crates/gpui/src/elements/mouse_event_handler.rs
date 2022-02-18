@@ -5,11 +5,10 @@ use crate::{
         vector::{vec2f, Vector2F},
     },
     platform::CursorStyle,
-    CursorStyleHandle, DebugContext, Element, ElementBox, ElementStateHandle, ElementStateId,
-    Event, EventContext, LayoutContext, MutableAppContext, PaintContext, SizeConstraint,
+    CursorStyleHandle, DebugContext, Element, ElementBox, ElementStateContext, ElementStateHandle,
+    Event, EventContext, LayoutContext, PaintContext, SizeConstraint,
 };
 use serde_json::json;
-use std::ops::DerefMut;
 
 pub struct MouseEventHandler {
     state: ElementStateHandle<MouseState>,
@@ -30,14 +29,13 @@ pub struct MouseState {
 }
 
 impl MouseEventHandler {
-    pub fn new<Tag, F, C, Id>(id: Id, cx: &mut C, render_child: F) -> Self
+    pub fn new<Tag, C, F>(id: usize, cx: &mut C, render_child: F) -> Self
     where
         Tag: 'static,
+        C: ElementStateContext,
         F: FnOnce(&MouseState, &mut C) -> ElementBox,
-        C: DerefMut<Target = MutableAppContext>,
-        Id: Into<ElementStateId>,
     {
-        let state_handle = cx.element_state::<Tag, _>(id.into());
+        let state_handle = cx.element_state::<Tag, _>(id);
         let child = state_handle.update(cx, |state, cx| render_child(state, cx));
         Self {
             state: state_handle,

@@ -530,7 +530,6 @@ impl ContextMenu {
 }
 
 struct CompletionsMenu {
-    editor_id: usize,
     id: CompletionId,
     initial_position: Anchor,
     buffer: ModelHandle<Buffer>,
@@ -568,7 +567,6 @@ impl CompletionsMenu {
         let settings = build_settings(cx);
         let completions = self.completions.clone();
         let matches = self.matches.clone();
-        let editor_id = self.editor_id;
         let selected_item = self.selected_item;
         UniformList::new(self.list.clone(), matches.len(), move |range, items, cx| {
             let settings = build_settings(cx);
@@ -577,8 +575,8 @@ impl CompletionsMenu {
                 let completion = &completions[mat.candidate_id];
                 let item_ix = start_ix + ix;
                 items.push(
-                    MouseEventHandler::new::<CompletionTag, _, _, _>(
-                        (editor_id, mat.candidate_id),
+                    MouseEventHandler::new::<CompletionTag, _, _>(
+                        mat.candidate_id,
                         cx,
                         |state, _| {
                             let item_style = if item_ix == selected_item {
@@ -675,7 +673,6 @@ impl CompletionsMenu {
 
 #[derive(Clone)]
 struct CodeActionsMenu {
-    editor_id: usize,
     actions: Arc<[CodeAction]>,
     buffer: ModelHandle<Buffer>,
     selected_item: usize,
@@ -712,7 +709,6 @@ impl CodeActionsMenu {
 
         let settings = build_settings(cx);
         let actions = self.actions.clone();
-        let editor_id = self.editor_id;
         let selected_item = self.selected_item;
         let element =
             UniformList::new(self.list.clone(), actions.len(), move |range, items, cx| {
@@ -721,28 +717,21 @@ impl CodeActionsMenu {
                 for (ix, action) in actions[range].iter().enumerate() {
                     let item_ix = start_ix + ix;
                     items.push(
-                        MouseEventHandler::new::<ActionTag, _, _, _>(
-                            (editor_id, item_ix),
-                            cx,
-                            |state, _| {
-                                let item_style = if item_ix == selected_item {
-                                    settings.style.autocomplete.selected_item
-                                } else if state.hovered {
-                                    settings.style.autocomplete.hovered_item
-                                } else {
-                                    settings.style.autocomplete.item
-                                };
+                        MouseEventHandler::new::<ActionTag, _, _>(item_ix, cx, |state, _| {
+                            let item_style = if item_ix == selected_item {
+                                settings.style.autocomplete.selected_item
+                            } else if state.hovered {
+                                settings.style.autocomplete.hovered_item
+                            } else {
+                                settings.style.autocomplete.item
+                            };
 
-                                Text::new(
-                                    action.lsp_action.title.clone(),
-                                    settings.style.text.clone(),
-                                )
+                            Text::new(action.lsp_action.title.clone(), settings.style.text.clone())
                                 .with_soft_wrap(false)
                                 .contained()
                                 .with_style(item_style)
                                 .boxed()
-                            },
-                        )
+                        })
                         .with_cursor_style(CursorStyle::PointingHand)
                         .on_mouse_down(move |cx| {
                             cx.dispatch_action(ConfirmCodeAction(Some(item_ix)));
@@ -1955,7 +1944,6 @@ impl Editor {
                 }
 
                 let mut menu = CompletionsMenu {
-                    editor_id: this.id(),
                     id,
                     initial_position: position,
                     match_candidates: completions
@@ -2138,7 +2126,6 @@ impl Editor {
                         if let Some((buffer, actions)) = this.available_code_actions.clone() {
                             this.show_context_menu(
                                 ContextMenu::CodeActions(CodeActionsMenu {
-                                    editor_id: this.handle.id(),
                                     buffer,
                                     actions,
                                     selected_item: Default::default(),
@@ -2293,7 +2280,7 @@ impl Editor {
             enum Tag {}
             let style = (self.build_settings)(cx).style;
             Some(
-                MouseEventHandler::new::<Tag, _, _, _>(cx.view_id(), cx, |_, _| {
+                MouseEventHandler::new::<Tag, _, _>(0, cx, |_, _| {
                     Svg::new("icons/zap.svg")
                         .with_color(style.code_actions_indicator)
                         .boxed()

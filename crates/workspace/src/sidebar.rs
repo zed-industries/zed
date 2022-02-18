@@ -83,26 +83,22 @@ impl Sidebar {
                             &theme.item
                         };
                         enum SidebarButton {}
-                        MouseEventHandler::new::<SidebarButton, _, _, _>(
-                            item.view.id(),
-                            cx,
-                            |_, _| {
-                                ConstrainedBox::new(
-                                    Align::new(
-                                        ConstrainedBox::new(
-                                            Svg::new(item.icon_path)
-                                                .with_color(theme.icon_color)
-                                                .boxed(),
-                                        )
-                                        .with_height(theme.icon_size)
-                                        .boxed(),
+                        MouseEventHandler::new::<SidebarButton, _, _>(item.view.id(), cx, |_, _| {
+                            ConstrainedBox::new(
+                                Align::new(
+                                    ConstrainedBox::new(
+                                        Svg::new(item.icon_path)
+                                            .with_color(theme.icon_color)
+                                            .boxed(),
                                     )
+                                    .with_height(theme.icon_size)
                                     .boxed(),
                                 )
-                                .with_height(theme.height)
-                                .boxed()
-                            },
-                        )
+                                .boxed(),
+                            )
+                            .with_height(theme.height)
+                            .boxed()
+                        })
                         .with_cursor_style(CursorStyle::PointingHand)
                         .on_mouse_down(move |cx| {
                             cx.dispatch_action(ToggleSidebarItem(SidebarItemId {
@@ -161,7 +157,7 @@ impl Sidebar {
     ) -> ElementBox {
         let width = self.width.clone();
         let side = self.side;
-        MouseEventHandler::new::<Self, _, _, _>((cx.view_id(), self.side.id()), cx, |_, _| {
+        MouseEventHandler::new::<Self, _, _>(side as usize, cx, |_, _| {
             Container::new(Empty::new().boxed())
                 .with_style(self.theme(settings).resize_handle)
                 .boxed()
@@ -182,14 +178,5 @@ impl Sidebar {
             cx.notify();
         })
         .boxed()
-    }
-}
-
-impl Side {
-    fn id(self) -> usize {
-        match self {
-            Side::Left => 0,
-            Side::Right => 1,
-        }
     }
 }
