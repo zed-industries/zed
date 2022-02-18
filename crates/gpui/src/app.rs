@@ -116,6 +116,26 @@ pub trait UpdateView {
         T: View;
 }
 
+pub trait ElementStateContext: DerefMut<Target = MutableAppContext> {
+    fn current_view_id(&self) -> usize;
+
+    fn element_state<Tag: 'static, T: 'static + Default>(
+        &mut self,
+        element_id: usize,
+    ) -> ElementStateHandle<T> {
+        let id = ElementStateId {
+            view_id: self.current_view_id(),
+            element_id,
+            tag: TypeId::of::<Tag>(),
+        };
+        self.cx
+            .element_states
+            .entry(id)
+            .or_insert_with(|| Box::new(T::default()));
+        ElementStateHandle::new(id, self.frame_count, &self.cx.ref_counts)
+    }
+}
+
 pub trait Action: 'static + AnyAction {
     type Argument: 'static + Clone;
 }
@@ -1414,23 +1434,6 @@ impl MutableAppContext {
         })
     }
 
-    pub fn element_state<Tag: 'static, T: 'static + Default>(
-        &mut self,
-        id: ElementStateId,
-    ) -> ElementStateHandle<T> {
-        let key = (TypeId::of::<Tag>(), id);
-        self.cx
-            .element_states
-            .entry(key)
-            .or_insert_with(|| Box::new(T::default()));
-        ElementStateHandle::new(
-            TypeId::of::<Tag>(),
-            id,
-            self.frame_count,
-            &self.cx.ref_counts,
-        )
-    }
-
     fn remove_dropped_entities(&mut self) {
         loop {
             let (dropped_models, dropped_views, dropped_element_states) =
@@ -1850,7 +1853,7 @@ pub struct AppContext {
     models: HashMap<usize, Box<dyn AnyModel>>,
     views: HashMap<(usize, usize), Box<dyn AnyView>>,
     windows: HashMap<usize, Window>,
-    element_states: HashMap<(TypeId, ElementStateId), Box<dyn Any>>,
+    element_states: HashMap<ElementStateId, Box<dyn Any>>,
     background: Arc<executor::Background>,
     ref_counts: Arc<Mutex<RefCounts>>,
     font_cache: Arc<FontCache>,
@@ -2607,6 +2610,12 @@ impl<V: View> ReadView for RenderContext<'_, V> {
     }
 }
 
+impl<V: View> ElementStateContext for RenderContext<'_, V> {
+    fn current_view_id(&self) -> usize {
+        self.view_id
+    }
+}
+
 impl<M> AsRef<AppContext> for ViewContext<'_, M> {
     fn as_ref(&self) -> &AppContext {
         &self.app.cx
@@ -2684,6 +2693,12 @@ impl<V: View> UpdateView for ViewContext<'_, V> {
         T: View,
     {
         self.app.update_view(handle, update)
+    }
+}
+
+impl<V: View> ElementStateContext for ViewContext<'_, V> {
+    fn current_view_id(&self) -> usize {
+        self.view_id
     }
 }
 
@@ -3430,41 +3445,24 @@ impl<T> Hash for WeakViewHandle<T> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ElementStateId(usize, usize);
-
-impl From<usize> for ElementStateId {
-    fn from(id: usize) -> Self {
-        Self(id, 0)
-    }
-}
-
-impl From<(usize, usize)> for ElementStateId {
-    fn from(id: (usize, usize)) -> Self {
-        Self(id.0, id.1)
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ElementStateId {
+    view_id: usize,
+    element_id: usize,
+    tag: TypeId,
 }
 
 pub struct ElementStateHandle<T> {
     value_type: PhantomData<T>,
-    tag_type_id: TypeId,
     id: ElementStateId,
     ref_counts: Weak<Mutex<RefCounts>>,
 }
 
 impl<T: 'static> ElementStateHandle<T> {
-    fn new(
-        tag_type_id: TypeId,
-        id: ElementStateId,
-        frame_id: usize,
-        ref_counts: &Arc<Mutex<RefCounts>>,
-    ) -> Self {
-        ref_counts
-            .lock()
-            .inc_element_state(tag_type_id, id, frame_id);
+    fn new(id: ElementStateId, frame_id: usize, ref_counts: &Arc<Mutex<RefCounts>>) -> Self {
+        ref_counts.lock().inc_element_state(id, frame_id);
         Self {
             value_type: PhantomData,
-            tag_type_id,
             id,
             ref_counts: Arc::downgrade(ref_counts),
         }
@@ -3472,7 +3470,7 @@ impl<T: 'static> ElementStateHandle<T> {
 
     pub fn read<'a>(&self, cx: &'a AppContext) -> &'a T {
         cx.element_states
-            .get(&(self.tag_type_id, self.id))
+            .get(&self.id)
             .unwrap()
             .downcast_ref()
             .unwrap()
@@ -3482,17 +3480,12 @@ impl<T: 'static> ElementStateHandle<T> {
     where
         C: DerefMut<Target = MutableAppContext>,
     {
-        let mut element_state = cx
-            .deref_mut()
-            .cx
-            .element_states
-            .remove(&(self.tag_type_id, self.id))
-            .unwrap();
+        let mut element_state = cx.deref_mut().cx.element_states.remove(&self.id).unwrap();
         let result = f(element_state.downcast_mut().unwrap(), cx);
         cx.deref_mut()
             .cx
             .element_states
-            .insert((self.tag_type_id, self.id), element_state);
+            .insert(self.id, element_state);
         result
     }
 }
@@ -3500,9 +3493,7 @@ impl<T: 'static> ElementStateHandle<T> {
 impl<T> Drop for ElementStateHandle<T> {
     fn drop(&mut self) {
         if let Some(ref_counts) = self.ref_counts.upgrade() {
-            ref_counts
-                .lock()
-                .dec_element_state(self.tag_type_id, self.id);
+            ref_counts.lock().dec_element_state(self.id);
         }
     }
 }
@@ -3600,10 +3591,10 @@ impl Drop for Subscription {
 #[derive(Default)]
 struct RefCounts {
     entity_counts: HashMap<usize, usize>,
-    element_state_counts: HashMap<(TypeId, ElementStateId), ElementStateRefCount>,
+    element_state_counts: HashMap<ElementStateId, ElementStateRefCount>,
     dropped_models: HashSet<usize>,
     dropped_views: HashSet<(usize, usize)>,
-    dropped_element_states: HashSet<(TypeId, ElementStateId)>,
+    dropped_element_states: HashSet<ElementStateId>,
 }
 
 struct ElementStateRefCount {
@@ -3634,8 +3625,8 @@ impl RefCounts {
         }
     }
 
-    fn inc_element_state(&mut self, tag_type_id: TypeId, id: ElementStateId, frame_id: usize) {
-        match self.element_state_counts.entry((tag_type_id, id)) {
+    fn inc_element_state(&mut self, id: ElementStateId, frame_id: usize) {
+        match self.element_state_counts.entry(id) {
             Entry::Occupied(mut entry) => {
                 let entry = entry.get_mut();
                 if entry.frame_id == frame_id || entry.ref_count >= 2 {
@@ -3649,7 +3640,7 @@ impl RefCounts {
                     ref_count: 1,
                     frame_id,
                 });
-                self.dropped_element_states.remove(&(tag_type_id, id));
+                self.dropped_element_states.remove(&id);
             }
         }
     }
@@ -3672,13 +3663,12 @@ impl RefCounts {
         }
     }
 
-    fn dec_element_state(&mut self, tag_type_id: TypeId, id: ElementStateId) {
-        let key = (tag_type_id, id);
-        let entry = self.element_state_counts.get_mut(&key).unwrap();
+    fn dec_element_state(&mut self, id: ElementStateId) {
+        let entry = self.element_state_counts.get_mut(&id).unwrap();
         entry.ref_count -= 1;
         if entry.ref_count == 0 {
-            self.element_state_counts.remove(&key);
-            self.dropped_element_states.insert(key);
+            self.element_state_counts.remove(&id);
+            self.dropped_element_states.insert(id);
         }
     }
 
@@ -3691,7 +3681,7 @@ impl RefCounts {
     ) -> (
         HashSet<usize>,
         HashSet<(usize, usize)>,
-        HashSet<(TypeId, ElementStateId)>,
+        HashSet<ElementStateId>,
     ) {
         (
             std::mem::take(&mut self.dropped_models),

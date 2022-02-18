@@ -227,7 +227,7 @@ impl FindBar {
     ) -> ElementBox {
         let theme = &self.settings.borrow().theme.find;
         let is_active = self.is_mode_enabled(mode);
-        MouseEventHandler::new::<Self, _, _, _>((cx.view_id(), mode as usize), cx, |state, _| {
+        MouseEventHandler::new::<Self, _, _>(mode as usize, cx, |state, _| {
             let style = match (is_active, state.hovered) {
                 (false, false) => &theme.mode_button,
                 (false, true) => &theme.hovered_mode_button,
@@ -251,21 +251,18 @@ impl FindBar {
         cx: &mut RenderContext<Self>,
     ) -> ElementBox {
         let theme = &self.settings.borrow().theme.find;
-        MouseEventHandler::new::<Self, _, _, _>(
-            (cx.view_id(), 10 + direction as usize),
-            cx,
-            |state, _| {
-                let style = if state.hovered {
-                    &theme.hovered_mode_button
-                } else {
-                    &theme.mode_button
-                };
-                Label::new(icon.to_string(), style.text.clone())
-                    .contained()
-                    .with_style(style.container)
-                    .boxed()
-            },
-        )
+        enum NavButton {}
+        MouseEventHandler::new::<NavButton, _, _>(direction as usize, cx, |state, _| {
+            let style = if state.hovered {
+                &theme.hovered_mode_button
+            } else {
+                &theme.mode_button
+            };
+            Label::new(icon.to_string(), style.text.clone())
+                .contained()
+                .with_style(style.container)
+                .boxed()
+        })
         .on_click(move |cx| cx.dispatch_action(GoToMatch(direction)))
         .with_cursor_style(CursorStyle::PointingHand)
         .boxed()

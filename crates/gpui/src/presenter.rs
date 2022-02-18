@@ -7,8 +7,8 @@ use crate::{
     platform::Event,
     text_layout::TextLayoutCache,
     Action, AnyAction, AnyModelHandle, AnyViewHandle, AnyWeakModelHandle, AssetCache, ElementBox,
-    Entity, FontSystem, ModelHandle, ReadModel, ReadView, Scene, UpgradeModelHandle,
-    UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
+    ElementStateContext, Entity, FontSystem, ModelHandle, ReadModel, ReadView, Scene,
+    UpgradeModelHandle, UpgradeViewHandle, View, ViewHandle, WeakModelHandle, WeakViewHandle,
 };
 use pathfinder_geometry::vector::{vec2f, Vector2F};
 use serde_json::json;
@@ -289,6 +289,12 @@ impl<'a> UpgradeModelHandle for LayoutContext<'a> {
 impl<'a> UpgradeViewHandle for LayoutContext<'a> {
     fn upgrade_view_handle<T: View>(&self, handle: &WeakViewHandle<T>) -> Option<ViewHandle<T>> {
         self.app.upgrade_view_handle(handle)
+    }
+}
+
+impl<'a> ElementStateContext for LayoutContext<'a> {
+    fn current_view_id(&self) -> usize {
+        *self.view_stack.last().unwrap()
     }
 }
 

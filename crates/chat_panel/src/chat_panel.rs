@@ -325,21 +325,17 @@ impl ChatPanel {
         enum SignInPromptLabel {}
 
         Align::new(
-            MouseEventHandler::new::<SignInPromptLabel, _, _, _>(
-                cx.view_id(),
-                cx,
-                |mouse_state, _| {
-                    Label::new(
-                        "Sign in to use chat".to_string(),
-                        if mouse_state.hovered {
-                            theme.chat_panel.hovered_sign_in_prompt.clone()
-                        } else {
-                            theme.chat_panel.sign_in_prompt.clone()
-                        },
-                    )
-                    .boxed()
-                },
-            )
+            MouseEventHandler::new::<SignInPromptLabel, _, _>(0, cx, |mouse_state, _| {
+                Label::new(
+                    "Sign in to use chat".to_string(),
+                    if mouse_state.hovered {
+                        theme.chat_panel.hovered_sign_in_prompt.clone()
+                    } else {
+                        theme.chat_panel.sign_in_prompt.clone()
+                    },
+                )
+                .boxed()
+            })
             .with_cursor_style(CursorStyle::PointingHand)
             .on_click(move |cx| {
                 let rpc = rpc.clone();

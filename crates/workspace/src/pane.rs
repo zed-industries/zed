@@ -466,7 +466,7 @@ impl Pane {
         let theme = &settings.theme;
 
         enum Tabs {}
-        let tabs = MouseEventHandler::new::<Tabs, _, _, _>(cx.view_id(), cx, |mouse_state, cx| {
+        let tabs = MouseEventHandler::new::<Tabs, _, _>(0, cx, |mouse_state, cx| {
             let mut row = Flex::row();
             for (ix, (_, item_view)) in self.item_views.iter().enumerate() {
                 let is_active = ix == self.active_item_index;
@@ -543,7 +543,7 @@ impl Pane {
                                             let item_id = item_view.id();
                                             enum TabCloseButton {}
                                             let icon = Svg::new("icons/x.svg");
-                                            MouseEventHandler::new::<TabCloseButton, _, _, _>(
+                                            MouseEventHandler::new::<TabCloseButton, _, _>(
                                                 item_id,
                                                 cx,
                                                 |mouse_state, _| {

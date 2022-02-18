@@ -476,7 +476,7 @@ impl ProjectPanel {
         cx: &mut ViewContext<Self>,
     ) -> ElementBox {
         let is_dir = details.is_dir;
-        MouseEventHandler::new::<Self, _, _, _>((cx.view_id(), entry.entry_id), cx, |state, _| {
+        MouseEventHandler::new::<Self, _, _>(entry.entry_id, cx, |state, _| {
             let style = match (details.is_selected, state.hovered) {
                 (false, false) => &theme.entry,
                 (false, true) => &theme.hovered_entry,
