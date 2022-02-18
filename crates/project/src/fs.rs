@@ -7,7 +7,6 @@ use std::{
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::Arc,
     time::{Duration, SystemTime},
 };
 use text::Rope;
@@ -269,7 +268,7 @@ pub struct FakeFs {
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeFs {
-    pub fn new(executor: std::sync::Arc<gpui::executor::Background>) -> Arc<Self> {
+    pub fn new(executor: std::sync::Arc<gpui::executor::Background>) -> std::sync::Arc<Self> {
         let (events_tx, _) = postage::broadcast::channel(2048);
         let mut entries = std::collections::BTreeMap::new();
         entries.insert(
@@ -284,7 +283,7 @@ impl FakeFs {
                 content: None,
             },
         );
-        Arc::new(Self {
+        std::sync::Arc::new(Self {
             executor,
             state: futures::lock::Mutex::new(FakeFsState {
                 entries,
