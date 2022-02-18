@@ -239,6 +239,7 @@ entity_messages!(
     JoinProject,
     LeaveProject,
     OpenBuffer,
+    PerformRename,
     PrepareRename,
     RemoveProjectCollaborator,
     SaveBuffer,

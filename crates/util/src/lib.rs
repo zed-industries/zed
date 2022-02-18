@@ -3,8 +3,9 @@ pub mod test;
 
 use futures::Future;
 use std::{
+    borrow::{Borrow, BorrowMut},
     cmp::Ordering,
-    ops::AddAssign,
+    ops::{AddAssign, Deref, DerefMut},
     pin::Pin,
     task::{Context, Poll},
 };
@@ -119,6 +120,38 @@ where
                 }
             }),
             Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+pub enum CowMut<'a, T: ?Sized + ToOwned> {
+    Borrowed(&'a mut T),
+    Owned(T::Owned),
+}
+
+impl<'a, T> Deref for CowMut<'a, T>
+where
+    T: ?Sized + ToOwned,
+{
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            CowMut::Borrowed(value) => value,
+            CowMut::Owned(value) => value.borrow(),
+        }
+    }
+}
+
+impl<'a, T> DerefMut for CowMut<'a, T>
+where
+    T: ?Sized + ToOwned,
+    T::Owned: BorrowMut<T>,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            CowMut::Borrowed(value) => value,
+            CowMut::Owned(value) => value.borrow_mut(),
         }
     }
 }

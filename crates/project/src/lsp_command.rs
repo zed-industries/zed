@@ -43,6 +43,7 @@ pub(crate) struct PerformRename {
     pub buffer: ModelHandle<Buffer>,
     pub position: PointUtf16,
     pub new_name: String,
+    pub push_to_history: bool,
 }
 
 impl LspCommand for PrepareRename {
@@ -60,11 +61,14 @@ impl LspCommand for PrepareRename {
     }
 
     fn to_proto(&self, project_id: u64, cx: &AppContext) -> proto::PrepareRename {
-        let buffer_id = self.buffer.read(cx).remote_id();
+        let buffer = &self.buffer.read(cx);
+        let buffer_id = buffer.remote_id();
         proto::PrepareRename {
             project_id,
             buffer_id,
-            position: None,
+            position: Some(language::proto::serialize_anchor(
+                &buffer.anchor_before(self.position),
+            )),
         }
     }
 
@@ -93,10 +97,15 @@ impl LspCommand for PrepareRename {
         self,
         message: proto::PrepareRenameResponse,
         _: ModelHandle<Project>,
-        _: AsyncAppContext,
+        mut cx: AsyncAppContext,
     ) -> LocalBoxFuture<'static, Result<Option<Range<Anchor>>>> {
         async move {
             if message.can_rename {
+                self.buffer
+                    .update(&mut cx, |buffer, _| {
+                        buffer.wait_for_version(message.version.into())
+                    })
+                    .await;
                 let start = message.start.and_then(deserialize_anchor);
                 let end = message.end.and_then(deserialize_anchor);
                 Ok(start.zip(end).map(|(start, end)| start..end))
@@ -127,11 +136,14 @@ impl LspCommand for PerformRename {
     }
 
     fn to_proto(&self, project_id: u64, cx: &AppContext) -> proto::PerformRename {
-        let buffer_id = self.buffer.read(cx).remote_id();
+        let buffer = &self.buffer.read(cx);
+        let buffer_id = buffer.remote_id();
         proto::PerformRename {
             project_id,
             buffer_id,
-            position: None,
+            position: Some(language::proto::serialize_anchor(
+                &buffer.anchor_before(self.position),
+            )),
             new_name: self.new_name.clone(),
         }
     }
@@ -158,7 +170,7 @@ impl LspCommand for PerformRename {
                 Project::deserialize_workspace_edit(
                     project,
                     edit,
-                    false,
+                    self.push_to_history,
                     language_name,
                     language_server,
                     &mut cx,
@@ -183,7 +195,7 @@ impl LspCommand for PerformRename {
                 .ok_or_else(|| anyhow!("missing transaction"))?;
             project
                 .update(&mut cx, |project, cx| {
-                    project.deserialize_project_transaction(message, false, cx)
+                    project.deserialize_project_transaction(message, self.push_to_history, cx)
                 })
                 .await
         }

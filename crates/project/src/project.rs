@@ -184,6 +184,8 @@ impl Project {
         client.add_entity_request_handler(Self::handle_get_code_actions);
         client.add_entity_request_handler(Self::handle_get_completions);
         client.add_entity_request_handler(Self::handle_get_definition);
+        client.add_entity_request_handler(Self::handle_prepare_rename);
+        client.add_entity_request_handler(Self::handle_perform_rename);
         client.add_entity_request_handler(Self::handle_open_buffer);
         client.add_entity_request_handler(Self::handle_save_buffer);
     }
@@ -1835,6 +1837,7 @@ impl Project {
         buffer: ModelHandle<Buffer>,
         position: T,
         new_name: String,
+        push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ProjectTransaction>> {
         let position = position.to_point_utf16(buffer.read(cx));
@@ -1844,6 +1847,7 @@ impl Project {
                 buffer,
                 position,
                 new_name,
+                push_to_history,
             },
             cx,
         )
@@ -2612,6 +2616,87 @@ impl Project {
                 });
             }
             Ok(response)
+        })
+    }
+
+    async fn handle_prepare_rename(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::PrepareRename>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::PrepareRenameResponse> {
+        let sender_id = envelope.original_sender_id()?;
+        let position = envelope
+            .payload
+            .position
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        let (prepare_rename, version) = this.update(&mut cx, |this, cx| {
+            let buffer_handle = this
+                .shared_buffers
+                .get(&sender_id)
+                .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
+                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
+            let buffer = buffer_handle.read(cx);
+            let version = buffer.version();
+            if buffer.can_resolve(&position) {
+                Ok((this.prepare_rename(buffer_handle, position, cx), version))
+            } else {
+                Err(anyhow!("cannot resolve position"))
+            }
+        })?;
+
+        let range = prepare_rename.await?;
+        Ok(proto::PrepareRenameResponse {
+            can_rename: range.is_some(),
+            start: range
+                .as_ref()
+                .map(|range| language::proto::serialize_anchor(&range.start)),
+            end: range
+                .as_ref()
+                .map(|range| language::proto::serialize_anchor(&range.end)),
+            version: (&version).into(),
+        })
+    }
+
+    async fn handle_perform_rename(
+        this: ModelHandle<Self>,
+        envelope: TypedEnvelope<proto::PerformRename>,
+        _: Arc<Client>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::PerformRenameResponse> {
+        let sender_id = envelope.original_sender_id()?;
+        let position = envelope
+            .payload
+            .position
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        let perform_rename = this.update(&mut cx, |this, cx| {
+            let buffer_handle = this
+                .shared_buffers
+                .get(&sender_id)
+                .and_then(|shared_buffers| shared_buffers.get(&envelope.payload.buffer_id).cloned())
+                .ok_or_else(|| anyhow!("unknown buffer id {}", envelope.payload.buffer_id))?;
+            let buffer = buffer_handle.read(cx);
+            if buffer.can_resolve(&position) {
+                Ok(this.perform_rename(
+                    buffer_handle,
+                    position,
+                    envelope.payload.new_name,
+                    false,
+                    cx,
+                ))
+            } else {
+                Err(anyhow!("cannot resolve position"))
+            }
+        })?;
+
+        let transaction = perform_rename.await?;
+        let transaction = this.update(&mut cx, |this, cx| {
+            this.serialize_project_transaction_for_peer(transaction, sender_id, cx)
+        });
+        Ok(proto::PerformRenameResponse {
+            transaction: Some(transaction),
         })
     }
 

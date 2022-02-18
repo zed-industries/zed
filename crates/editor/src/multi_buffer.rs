@@ -27,6 +27,7 @@ use text::{
     AnchorRangeExt as _, Edit, Point, PointUtf16, TextSummary,
 };
 use theme::SyntaxTheme;
+use util::CowMut;
 
 const NEWLINES: &'static [u8] = &[b'\n'; u8::MAX as usize];
 
@@ -58,6 +59,7 @@ pub enum CharKind {
     Word,
 }
 
+#[derive(Clone)]
 struct Transaction {
     id: TransactionId,
     buffer_transactions: HashMap<usize, text::TransactionId>,
@@ -564,7 +566,7 @@ impl MultiBuffer {
                         if let Some(entry) = buffer.peek_undo_stack() {
                             *buffer_transaction_id = entry.transaction_id();
                         }
-                        buffer.undo_to_transaction(undo_to, cx)
+                        buffer.undo_to_transaction(undo_to, true, cx)
                     });
                 }
             }
@@ -575,6 +577,35 @@ impl MultiBuffer {
         }
 
         None
+    }
+
+    pub fn undo_to_transaction(
+        &mut self,
+        transaction_id: TransactionId,
+        push_redo: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> bool {
+        if let Some(buffer) = self.as_singleton() {
+            return buffer.update(cx, |buffer, cx| {
+                buffer.undo_to_transaction(transaction_id, push_redo, cx)
+            });
+        }
+
+        let mut undone = false;
+        for transaction in &mut *self.history.remove_from_undo(transaction_id, push_redo) {
+            for (buffer_id, buffer_transaction_id) in &mut transaction.buffer_transactions {
+                if let Some(BufferState { buffer, .. }) = self.buffers.borrow().get(&buffer_id) {
+                    undone |= buffer.update(cx, |buffer, cx| {
+                        let undo_to = *buffer_transaction_id;
+                        if let Some(entry) = buffer.peek_undo_stack() {
+                            *buffer_transaction_id = entry.transaction_id();
+                        }
+                        buffer.undo_to_transaction(undo_to, true, cx)
+                    });
+                }
+            }
+        }
+        undone
     }
 
     pub fn redo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
@@ -591,7 +622,7 @@ impl MultiBuffer {
                         if let Some(entry) = buffer.peek_redo_stack() {
                             *buffer_transaction_id = entry.transaction_id();
                         }
-                        buffer.redo_to_transaction(redo_to, cx)
+                        buffer.redo_to_transaction(redo_to, true, cx)
                     });
                 }
             }
@@ -2311,6 +2342,31 @@ impl History {
             self.redo_stack.last_mut()
         } else {
             None
+        }
+    }
+
+    fn remove_from_undo(
+        &mut self,
+        transaction_id: TransactionId,
+        push_redo: bool,
+    ) -> CowMut<[Transaction]> {
+        assert_eq!(self.transaction_depth, 0);
+
+        if let Some(entry_ix) = self
+            .undo_stack
+            .iter()
+            .rposition(|transaction| transaction.id == transaction_id)
+        {
+            let transactions = self.undo_stack.drain(entry_ix..).rev();
+            if push_redo {
+                let redo_stack_start_len = self.redo_stack.len();
+                self.redo_stack.extend(transactions);
+                CowMut::Borrowed(&mut self.redo_stack[redo_stack_start_len..])
+            } else {
+                CowMut::Owned(transactions.collect())
+            }
+        } else {
+            CowMut::Owned(Default::default())
         }
     }
 

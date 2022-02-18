@@ -1738,12 +1738,13 @@ impl Buffer {
     pub fn undo_to_transaction(
         &mut self,
         transaction_id: TransactionId,
+        push_redo: bool,
         cx: &mut ModelContext<Self>,
     ) -> bool {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
-        let operations = self.text.undo_to_transaction(transaction_id);
+        let operations = self.text.undo_to_transaction(transaction_id, push_redo);
         let undone = !operations.is_empty();
         for operation in operations {
             self.send_operation(Operation::Buffer(operation), cx);
@@ -1770,12 +1771,13 @@ impl Buffer {
     pub fn redo_to_transaction(
         &mut self,
         transaction_id: TransactionId,
+        push_undo: bool,
         cx: &mut ModelContext<Self>,
     ) -> bool {
         let was_dirty = self.is_dirty();
         let old_version = self.version.clone();
 
-        let operations = self.text.redo_to_transaction(transaction_id);
+        let operations = self.text.redo_to_transaction(transaction_id, push_undo);
         let redone = !operations.is_empty();
         for operation in operations {
             self.send_operation(Operation::Buffer(operation), cx);

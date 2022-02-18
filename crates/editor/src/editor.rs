@@ -439,6 +439,7 @@ pub struct Editor {
     next_completion_id: CompletionId,
     available_code_actions: Option<(ModelHandle<Buffer>, Arc<[CodeAction]>)>,
     code_actions_task: Option<Task<()>>,
+    pending_rename: Option<RenameState>,
 }
 
 pub struct EditorSnapshot {
@@ -475,6 +476,11 @@ struct BracketPairState {
 struct SnippetState {
     ranges: Vec<Vec<Range<Anchor>>>,
     active_index: usize,
+}
+
+struct RenameState {
+    range: Range<Anchor>,
+    first_transaction: Option<TransactionId>,
 }
 
 struct InvalidationStack<T>(Vec<T>);
@@ -892,6 +898,7 @@ impl Editor {
             next_completion_id: 0,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
+            pending_rename: Default::default(),
         };
         this.end_selection(cx);
         this
@@ -1913,6 +1920,10 @@ impl Editor {
     }
 
     fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
+        if self.pending_rename.is_some() {
+            return;
+        }
+
         let project = if let Some(project) = self.project.clone() {
             project
         } else {
@@ -4101,11 +4112,17 @@ impl Editor {
                     let offset = position.to_offset(&buffer);
                     let start = offset - lookbehind;
                     let end = offset + lookahead;
-                    let highlight_range = buffer.anchor_before(start)..buffer.anchor_after(end);
+                    let rename_range = buffer.anchor_before(start)..buffer.anchor_after(end);
                     drop(buffer);
 
+                    this.buffer
+                        .update(cx, |buffer, cx| buffer.finalize_last_transaction(cx));
+                    this.pending_rename = Some(RenameState {
+                        range: rename_range.clone(),
+                        first_transaction: None,
+                    });
                     this.select_ranges([start..end], None, cx);
-                    this.highlight_ranges::<Rename>(vec![highlight_range], Color::red(), cx);
+                    this.highlight_ranges::<Rename>(vec![rename_range], Color::red(), cx);
                 });
             }
 
@@ -4121,17 +4138,16 @@ impl Editor {
         let editor = workspace.active_item(cx)?.act_as::<Editor>(cx)?;
 
         let (buffer, position, new_name) = editor.update(cx, |editor, cx| {
-            let range = editor.take_rename_range(cx)?;
-            let multibuffer = editor.buffer.read(cx);
-            let (buffer, position) =
-                multibuffer.text_anchor_for_position(range.start.clone(), cx)?;
-            let snapshot = multibuffer.read(cx);
-            let new_name = snapshot.text_for_range(range.clone()).collect::<String>();
+            let (range, new_name) = editor.take_rename(cx)?;
+            let (buffer, position) = editor
+                .buffer
+                .read(cx)
+                .text_anchor_for_position(range.start.clone(), cx)?;
             Some((buffer, position, new_name))
         })?;
 
         let rename = workspace.project().clone().update(cx, |project, cx| {
-            project.perform_rename(buffer, position, new_name.clone(), cx)
+            project.perform_rename(buffer, position, new_name.clone(), true, cx)
         });
 
         Some(cx.spawn(|workspace, cx| async move {
@@ -4147,14 +4163,23 @@ impl Editor {
         }))
     }
 
-    fn rename_range(&self) -> Option<&Range<Anchor>> {
-        self.highlighted_ranges_for_type::<Rename>()
-            .and_then(|(_, range)| range.last())
-    }
+    fn take_rename(&mut self, cx: &mut ViewContext<Self>) -> Option<(Range<Anchor>, String)> {
+        let rename = self.pending_rename.take()?;
+        let new_name = self
+            .buffer
+            .read(cx)
+            .read(cx)
+            .text_for_range(rename.range.clone())
+            .collect::<String>();
 
-    fn take_rename_range(&mut self, cx: &mut ViewContext<Self>) -> Option<Range<Anchor>> {
-        self.clear_highlighted_ranges::<Rename>(cx)
-            .and_then(|(_, mut ranges)| ranges.pop())
+        self.clear_highlighted_ranges::<Rename>(cx);
+        if let Some(transaction_id) = rename.first_transaction {
+            self.buffer.update(cx, |buffer, cx| {
+                buffer.undo_to_transaction(transaction_id, false, cx)
+            });
+        }
+
+        Some((rename.range, new_name))
     }
 
     fn invalidate_rename_range(
@@ -4162,15 +4187,16 @@ impl Editor {
         buffer: &MultiBufferSnapshot,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(range) = &self.rename_range() {
+        if let Some(rename) = self.pending_rename.as_ref() {
             if self.selections.len() == 1 {
-                let head = self.selections[0].head().to_offset(&buffer);
-                if range.start.to_offset(&buffer) <= head && range.end.to_offset(&buffer) >= head {
+                let head = self.selections[0].head().to_offset(buffer);
+                let range = rename.range.to_offset(buffer).to_inclusive();
+                if range.contains(&head) {
                     return;
                 }
             }
-            eprintln!("clearing highlight range");
-            self.clear_highlighted_ranges::<Rename>(cx);
+
+            self.take_rename(cx);
         }
     }
 
@@ -4659,6 +4685,12 @@ impl Editor {
             .buffer
             .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
         {
+            if let Some(rename) = self.pending_rename.as_mut() {
+                if rename.first_transaction.is_none() {
+                    rename.first_transaction = Some(tx_id);
+                }
+            }
+
             if let Some((_, end_selections)) = self.selection_history.get_mut(&tx_id) {
                 *end_selections = Some(self.selections.clone());
             } else {
@@ -5197,7 +5229,7 @@ impl View for Editor {
             EditorMode::Full => "full",
         };
         cx.map.insert("mode".into(), mode.into());
-        if self.rename_range().is_some() {
+        if self.pending_rename.is_some() {
             cx.set.insert("renaming".into());
         }
         match self.context_menu.as_ref() {

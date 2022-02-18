@@ -91,6 +91,8 @@ impl Server {
             .add_request_handler(Server::apply_additional_edits_for_completion)
             .add_request_handler(Server::get_code_actions)
             .add_request_handler(Server::apply_code_action)
+            .add_request_handler(Server::prepare_rename)
+            .add_request_handler(Server::perform_rename)
             .add_request_handler(Server::get_channels)
             .add_request_handler(Server::get_users)
             .add_request_handler(Server::join_channel)
@@ -698,6 +700,34 @@ impl Server {
         self: Arc<Server>,
         request: TypedEnvelope<proto::ApplyCodeAction>,
     ) -> tide::Result<proto::ApplyCodeActionResponse> {
+        let host = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)?
+            .host_connection_id;
+        Ok(self
+            .peer
+            .forward_request(request.sender_id, host, request.payload.clone())
+            .await?)
+    }
+
+    async fn prepare_rename(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::PrepareRename>,
+    ) -> tide::Result<proto::PrepareRenameResponse> {
+        let host = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)?
+            .host_connection_id;
+        Ok(self
+            .peer
+            .forward_request(request.sender_id, host, request.payload.clone())
+            .await?)
+    }
+
+    async fn perform_rename(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::PerformRename>,
+    ) -> tide::Result<proto::PerformRenameResponse> {
         let host = self
             .state()
             .read_project(request.payload.project_id, request.sender_id)?
