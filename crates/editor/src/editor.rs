@@ -4108,6 +4108,7 @@ impl Editor {
                 let lookahead = buffer_offset_range.end.saturating_sub(buffer_offset);
 
                 this.update(&mut cx, |this, cx| {
+                    let settings = (this.build_settings)(cx);
                     let buffer = this.buffer.read(cx).read(cx);
                     let offset = position.to_offset(&buffer);
                     let start = offset - lookbehind;
@@ -4122,7 +4123,11 @@ impl Editor {
                         first_transaction: None,
                     });
                     this.select_ranges([start..end], None, cx);
-                    this.highlight_ranges::<Rename>(vec![rename_range], Color::red(), cx);
+                    this.highlight_ranges::<Rename>(
+                        vec![rename_range],
+                        settings.style.highlighted_line_background,
+                        cx,
+                    );
                 });
             }
 
