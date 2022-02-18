@@ -19,7 +19,7 @@ extends = "_base"
 0 = "#0000000D"
 
 [selection]
-host = { selection = "#3B57BC33", cursor = "$text.0.color" }
+host = { selection = "#3B57BC55", cursor = "$text.0.color" }
 guests = [
   { selection = "#D0453B33", cursor = "#D0453B" },
   { selection = "#3B874B33", cursor = "#3B874B" },
@@ -39,8 +39,8 @@ bad = "#b7372e"
 [state]
 active_line = "#00000008"
 highlighted_line = "#faca5033"
-deleted_line = "#dd000044"
-inserted_line = "#00dd0044"
+deleted_line = "#dd000036"
+inserted_line = "#00dd0036"
 hover = "#0000000D"
 selected = "#0000001c"
 

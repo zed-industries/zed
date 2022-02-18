@@ -478,10 +478,10 @@ struct SnippetState {
     active_index: usize,
 }
 
-struct RenameState {
-    range: Range<Anchor>,
-    old_name: String,
-    editor: ViewHandle<Editor>,
+pub struct RenameState {
+    pub range: Range<Anchor>,
+    pub old_name: String,
+    pub editor: ViewHandle<Editor>,
     block_id: BlockId,
 }
 
@@ -3163,23 +3163,7 @@ impl Editor {
     }
 
     pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
-        if let Some((range, column, _, _)) = self.take_rename(cx) {
-            let snapshot = self.buffer.read(cx).snapshot(cx);
-            let position = snapshot.clip_point(
-                range.start.to_point(&snapshot) + Point::new(0, column),
-                Bias::Left,
-            );
-            self.update_selections(
-                vec![Selection {
-                    id: self.newest_anchor_selection().id,
-                    start: position,
-                    end: position,
-                    reversed: false,
-                    goal: SelectionGoal::None,
-                }],
-                None,
-                cx,
-            );
+        if self.take_rename(cx).is_some() {
             return;
         }
 
@@ -3227,6 +3211,8 @@ impl Editor {
     }
 
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
+        self.take_rename(cx);
+
         if let Some(context_menu) = self.context_menu.as_mut() {
             if context_menu.select_next(cx) {
                 return;
@@ -4116,39 +4102,57 @@ impl Editor {
         use language::ToOffset as _;
 
         let project = self.project.clone()?;
-        let position = self.newest_anchor_selection().head();
-        let (buffer, buffer_position) = self
+        let selection = self.newest_anchor_selection().clone();
+        let (cursor_buffer, cursor_buffer_position) = self
             .buffer
             .read(cx)
-            .text_anchor_for_position(position.clone(), cx)?;
-        let snapshot = buffer.read(cx).snapshot();
+            .text_anchor_for_position(selection.head(), cx)?;
+        let (tail_buffer, tail_buffer_position) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(selection.tail(), cx)?;
+        if tail_buffer != cursor_buffer {
+            return None;
+        }
+
+        let snapshot = cursor_buffer.read(cx).snapshot();
+        let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
+        let tail_buffer_offset = tail_buffer_position.to_offset(&snapshot);
         let prepare_rename = project.update(cx, |project, cx| {
-            project.prepare_rename(buffer.clone(), buffer_position.to_offset(&snapshot), cx)
+            project.prepare_rename(cursor_buffer, cursor_buffer_offset, cx)
         });
 
         Some(cx.spawn(|this, mut cx| async move {
-            if let Some(range) = prepare_rename.await? {
-                let buffer_offset_range = range.to_offset(&snapshot);
-                let buffer_offset = buffer_position.to_offset(&snapshot);
-                let lookbehind = buffer_offset.saturating_sub(buffer_offset_range.start);
-                let lookahead = buffer_offset_range.end.saturating_sub(buffer_offset);
+            if let Some(rename_range) = prepare_rename.await? {
+                let rename_buffer_range = rename_range.to_offset(&snapshot);
+                let cursor_offset_in_rename_range =
+                    cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
+                let tail_offset_in_rename_range =
+                    tail_buffer_offset.saturating_sub(rename_buffer_range.start);
 
                 this.update(&mut cx, |this, cx| {
                     let settings = (this.build_settings)(cx);
                     let buffer = this.buffer.read(cx).read(cx);
-                    let offset = position.to_offset(&buffer);
-                    let start = offset - lookbehind;
-                    let end = offset + lookahead;
-                    let rename_range = buffer.anchor_before(start)..buffer.anchor_after(end);
-                    let old_name = buffer.text_for_range(start..end).collect::<String>();
+                    let cursor_offset = selection.head().to_offset(&buffer);
+                    let rename_start = cursor_offset.saturating_sub(cursor_offset_in_rename_range);
+                    let rename_end = rename_start + rename_buffer_range.len();
+                    let range = buffer.anchor_before(rename_start)..buffer.anchor_after(rename_end);
+                    let old_name = buffer
+                        .text_for_range(rename_start..rename_end)
+                        .collect::<String>();
                     drop(buffer);
 
-                    let editor = cx.add_view(|cx| {
+                    // Position the selection in the rename editor so that it matches the current selection.
+                    let rename_editor = cx.add_view(|cx| {
                         let mut editor = Editor::single_line(this.build_settings.clone(), cx);
                         editor
                             .buffer
                             .update(cx, |buffer, cx| buffer.edit([0..0], &old_name, cx));
-                        editor.select_ranges([0..old_name.len()], None, cx);
+                        editor.select_ranges(
+                            [tail_offset_in_rename_range..cursor_offset_in_rename_range],
+                            None,
+                            cx,
+                        );
                         editor.highlight_ranges::<Rename>(
                             vec![Anchor::min()..Anchor::max()],
                             settings.style.diff_background_inserted,
@@ -4157,17 +4161,28 @@ impl Editor {
                         editor
                     });
                     this.highlight_ranges::<Rename>(
-                        vec![rename_range.clone()],
+                        vec![range.clone()],
                         settings.style.diff_background_deleted,
                         cx,
                     );
-                    cx.focus(&editor);
+                    this.update_selections(
+                        vec![Selection {
+                            id: selection.id,
+                            start: rename_end,
+                            end: rename_end,
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        }],
+                        None,
+                        cx,
+                    );
+                    cx.focus(&rename_editor);
                     let block_id = this.insert_blocks(
                         [BlockProperties {
-                            position: rename_range.start.clone(),
+                            position: range.start.clone(),
                             height: 1,
                             render: Arc::new({
-                                let editor = editor.clone();
+                                let editor = rename_editor.clone();
                                 move |cx: &BlockContext| {
                                     ChildView::new(editor.clone())
                                         .contained()
@@ -4180,9 +4195,9 @@ impl Editor {
                         cx,
                     )[0];
                     this.pending_rename = Some(RenameState {
-                        range: rename_range,
+                        range,
                         old_name,
-                        editor,
+                        editor: rename_editor,
                         block_id,
                     });
                 });
@@ -4200,12 +4215,15 @@ impl Editor {
         let editor = workspace.active_item(cx)?.act_as::<Editor>(cx)?;
 
         let (buffer, range, old_name, new_name) = editor.update(cx, |editor, cx| {
-            let (range, _, old_name, new_name) = editor.take_rename(cx)?;
+            let rename = editor.take_rename(cx)?;
             let buffer = editor.buffer.read(cx);
-            let (start_buffer, start) = buffer.text_anchor_for_position(range.start.clone(), cx)?;
-            let (end_buffer, end) = buffer.text_anchor_for_position(range.end.clone(), cx)?;
+            let (start_buffer, start) =
+                buffer.text_anchor_for_position(rename.range.start.clone(), cx)?;
+            let (end_buffer, end) =
+                buffer.text_anchor_for_position(rename.range.end.clone(), cx)?;
             if start_buffer == end_buffer {
-                Some((start_buffer, start..end, old_name, new_name))
+                let new_name = rename.editor.read(cx).text(cx);
+                Some((start_buffer, start..end, rename.old_name, new_name))
             } else {
                 None
             }
@@ -4234,23 +4252,38 @@ impl Editor {
         }))
     }
 
-    fn take_rename(
-        &mut self,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<(Range<Anchor>, u32, String, String)> {
+    fn take_rename(&mut self, cx: &mut ViewContext<Self>) -> Option<RenameState> {
         let rename = self.pending_rename.take()?;
-        let editor = rename.editor.read(cx);
-        let new_name = editor.text(cx);
-        let buffer = editor.buffer.read(cx).snapshot(cx);
-        let rename_position = editor.newest_selection::<Point>(&buffer);
         self.remove_blocks([rename.block_id].into_iter().collect(), cx);
         self.clear_highlighted_ranges::<Rename>(cx);
-        Some((
-            rename.range,
-            rename_position.head().column,
-            rename.old_name,
-            new_name,
-        ))
+
+        let editor = rename.editor.read(cx);
+        let buffer = editor.buffer.read(cx).snapshot(cx);
+        let selection = editor.newest_selection::<usize>(&buffer);
+
+        // Update the selection to match the position of the selection inside
+        // the rename editor.
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let rename_range = rename.range.to_offset(&snapshot);
+        let start = snapshot
+            .clip_offset(rename_range.start + selection.start, Bias::Left)
+            .min(rename_range.end);
+        let end = snapshot
+            .clip_offset(rename_range.start + selection.end, Bias::Left)
+            .min(rename_range.end);
+        self.update_selections(
+            vec![Selection {
+                id: self.newest_anchor_selection().id,
+                start,
+                end,
+                reversed: selection.reversed,
+                goal: SelectionGoal::None,
+            }],
+            None,
+            cx,
+        );
+
+        Some(rename)
     }
 
     fn invalidate_rename_range(
@@ -4266,9 +4299,15 @@ impl Editor {
                     return;
                 }
             }
-
-            self.take_rename(cx);
+            let rename = self.pending_rename.take().unwrap();
+            self.remove_blocks([rename.block_id].into_iter().collect(), cx);
+            self.clear_highlighted_ranges::<Rename>(cx);
         }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn pending_rename(&self) -> Option<&RenameState> {
+        self.pending_rename.as_ref()
     }
 
     fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Editor>) {

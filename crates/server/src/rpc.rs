@@ -1153,7 +1153,7 @@ mod tests {
         },
         editor::{
             self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, EditorSettings,
-            Input, MultiBuffer, Redo, Rename, ToggleCodeActions, Undo,
+            Input, MultiBuffer, Redo, Rename, ToOffset, ToggleCodeActions, Undo,
         },
         fs::{FakeFs, Fs as _},
         language::{
@@ -3140,12 +3140,17 @@ mod tests {
             .unwrap();
         prepare_rename.await.unwrap();
         editor_b.update(&mut cx_b, |editor, cx| {
-            assert_eq!(editor.selected_ranges(cx), [6..9]);
-            editor.handle_input(&Input("T".to_string()), cx);
-            editor.handle_input(&Input("H".to_string()), cx);
-            editor.handle_input(&Input("R".to_string()), cx);
-            editor.handle_input(&Input("E".to_string()), cx);
-            editor.handle_input(&Input("E".to_string()), cx);
+            let rename = editor.pending_rename().unwrap();
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            assert_eq!(
+                rename.range.start.to_offset(&buffer)..rename.range.end.to_offset(&buffer),
+                6..9
+            );
+            rename.editor.update(cx, |rename_editor, cx| {
+                rename_editor.buffer().update(cx, |rename_buffer, cx| {
+                    rename_buffer.edit([0..3], "THREE", cx);
+                });
+            });
         });
 
         let confirm_rename = workspace_b.update(&mut cx_b, |workspace, cx| {
