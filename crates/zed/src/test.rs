@@ -52,11 +52,9 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
 fn build_settings(cx: &gpui::AppContext) -> Settings {
     lazy_static::lazy_static! {
         static ref DEFAULT_THEME: parking_lot::Mutex<Option<Arc<Theme>>> = Default::default();
-        static ref FONTS: Vec<Arc<Vec<u8>>> = Assets
-            .list("fonts")
-            .into_iter()
-            .map(|f| Arc::new(Assets.load(&f).unwrap().to_vec()))
-            .collect();
+        static ref FONTS: Vec<Arc<Vec<u8>>> = vec![
+            Assets.load("fonts/zed-sans/zed-sans-regular.ttf").unwrap().to_vec().into()
+        ];
     }
 
     cx.platform().fonts().add_fonts(&FONTS).unwrap();
@@ -72,5 +70,5 @@ fn build_settings(cx: &gpui::AppContext) -> Settings {
         theme
     };
 
-    Settings::new("Inconsolata", cx.font_cache(), theme).unwrap()
+    Settings::new("Zed Sans", cx.font_cache(), theme).unwrap()
 }
