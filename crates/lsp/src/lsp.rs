@@ -102,6 +102,7 @@ struct Error {
 impl LanguageServer {
     pub fn new(
         binary_path: &Path,
+        options: Option<Value>,
         root_path: &Path,
         background: Arc<executor::Background>,
     ) -> Result<Arc<Self>> {
@@ -112,12 +113,13 @@ impl LanguageServer {
             .spawn()?;
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
-        Self::new_internal(stdin, stdout, root_path, background)
+        Self::new_internal(stdin, stdout, options, root_path, background)
     }
 
     fn new_internal<Stdin, Stdout>(
         stdin: Stdin,
         stdout: Stdout,
+        options: Option<Value>,
         root_path: &Path,
         executor: Arc<executor::Background>,
     ) -> Result<Arc<Self>>
@@ -225,7 +227,7 @@ impl LanguageServer {
             .spawn({
                 let this = this.clone();
                 async move {
-                    if let Some(capabilities) = this.init(root_uri).log_err().await {
+                    if let Some(capabilities) = this.init(root_uri, options).log_err().await {
                         *capabilities_tx.borrow_mut() = Some(capabilities);
                     }
 
@@ -237,13 +239,17 @@ impl LanguageServer {
         Ok(this)
     }
 
-    async fn init(self: Arc<Self>, root_uri: Url) -> Result<ServerCapabilities> {
+    async fn init(
+        self: Arc<Self>,
+        root_uri: Url,
+        options: Option<Value>,
+    ) -> Result<ServerCapabilities> {
         #[allow(deprecated)]
         let params = InitializeParams {
             process_id: Default::default(),
             root_path: Default::default(),
             root_uri: Some(root_uri),
-            initialization_options: Default::default(),
+            initialization_options: options,
             capabilities: ClientCapabilities {
                 text_document: Some(TextDocumentClientCapabilities {
                     definition: Some(GotoCapability {
@@ -512,7 +518,8 @@ impl LanguageServer {
         });
 
         let server =
-            Self::new_internal(stdin_writer, stdout_reader, Path::new("/"), executor).unwrap();
+            Self::new_internal(stdin_writer, stdout_reader, None, Path::new("/"), executor)
+                .unwrap();
 
         (server, fake)
     }
@@ -731,9 +738,13 @@ mod tests {
         }));
         let lib_file_uri = Url::from_file_path(root_dir.path().join("src/lib.rs")).unwrap();
 
-        let server =
-            LanguageServer::new(Path::new("rust-analyzer"), root_dir.path(), cx.background())
-                .unwrap();
+        let server = LanguageServer::new(
+            Path::new("rust-analyzer"),
+            None,
+            root_dir.path(),
+            cx.background(),
+        )
+        .unwrap();
         server.next_idle_notification().await;
 
         server

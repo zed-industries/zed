@@ -13,6 +13,7 @@ use highlight_map::HighlightMap;
 use lazy_static::lazy_static;
 use parking_lot::Mutex;
 use serde::Deserialize;
+use serde_json::Value;
 use std::{cell::RefCell, ops::Range, path::Path, str, sync::Arc};
 use theme::SyntaxTheme;
 use tree_sitter::{self, Query};
@@ -80,6 +81,7 @@ pub struct LanguageServerConfig {
     pub binary: String,
     pub disk_based_diagnostic_sources: HashSet<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
+    pub initialization_options: Option<Value>,
     #[cfg(any(test, feature = "test-support"))]
     #[serde(skip)]
     fake_config: Option<FakeLanguageServerConfig>,
@@ -265,7 +267,13 @@ impl Language {
             } else {
                 Path::new(&config.binary).to_path_buf()
             };
-            lsp::LanguageServer::new(&binary_path, root_path, cx.background().clone()).map(Some)
+            lsp::LanguageServer::new(
+                &binary_path,
+                config.initialization_options.clone(),
+                root_path,
+                cx.background().clone(),
+            )
+            .map(Some)
         } else {
             Ok(None)
         }
