@@ -42,7 +42,7 @@ pub fn test_app_state(cx: &mut MutableAppContext) -> Arc<AppState> {
         channel_list: cx.add_model(|cx| ChannelList::new(user_store.clone(), client.clone(), cx)),
         client,
         user_store,
-        fs: Arc::new(FakeFs::new(cx.background().clone())),
+        fs: FakeFs::new(cx.background().clone()),
         path_openers: Arc::from(path_openers),
         build_window_options: &build_window_options,
         build_workspace: &build_workspace,

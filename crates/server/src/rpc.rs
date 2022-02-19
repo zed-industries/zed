@@ -91,6 +91,8 @@ impl Server {
             .add_request_handler(Server::apply_additional_edits_for_completion)
             .add_request_handler(Server::get_code_actions)
             .add_request_handler(Server::apply_code_action)
+            .add_request_handler(Server::prepare_rename)
+            .add_request_handler(Server::perform_rename)
             .add_request_handler(Server::get_channels)
             .add_request_handler(Server::get_users)
             .add_request_handler(Server::join_channel)
@@ -708,6 +710,34 @@ impl Server {
             .await?)
     }
 
+    async fn prepare_rename(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::PrepareRename>,
+    ) -> tide::Result<proto::PrepareRenameResponse> {
+        let host = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)?
+            .host_connection_id;
+        Ok(self
+            .peer
+            .forward_request(request.sender_id, host, request.payload.clone())
+            .await?)
+    }
+
+    async fn perform_rename(
+        self: Arc<Server>,
+        request: TypedEnvelope<proto::PerformRename>,
+    ) -> tide::Result<proto::PerformRenameResponse> {
+        let host = self
+            .state()
+            .read_project(request.payload.project_id, request.sender_id)?
+            .host_connection_id;
+        Ok(self
+            .peer
+            .forward_request(request.sender_id, host, request.payload.clone())
+            .await?)
+    }
+
     async fn update_buffer(
         self: Arc<Server>,
         request: TypedEnvelope<proto::UpdateBuffer>,
@@ -1122,8 +1152,8 @@ mod tests {
             EstablishConnectionError, UserStore,
         },
         editor::{
-            self, ConfirmCodeAction, ConfirmCompletion, Editor, EditorSettings, Input, MultiBuffer,
-            Redo, ToggleCodeActions, Undo,
+            self, ConfirmCodeAction, ConfirmCompletion, ConfirmRename, Editor, EditorSettings,
+            Input, MultiBuffer, Redo, Rename, ToOffset, ToggleCodeActions, Undo,
         },
         fs::{FakeFs, Fs as _},
         language::{
@@ -1147,7 +1177,7 @@ mod tests {
     async fn test_share_project(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         let (window_b, _) = cx_b.add_window(|_| EmptyView);
         let lang_registry = Arc::new(LanguageRegistry::new());
-        let fs = Arc::new(FakeFs::new(cx_a.background()));
+        let fs = FakeFs::new(cx_a.background());
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
@@ -1285,7 +1315,7 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_unshare_project(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         let lang_registry = Arc::new(LanguageRegistry::new());
-        let fs = Arc::new(FakeFs::new(cx_a.background()));
+        let fs = FakeFs::new(cx_a.background());
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 2 clients.
@@ -1386,7 +1416,7 @@ mod tests {
         mut cx_c: TestAppContext,
     ) {
         let lang_registry = Arc::new(LanguageRegistry::new());
-        let fs = Arc::new(FakeFs::new(cx_a.background()));
+        let fs = FakeFs::new(cx_a.background());
         cx_a.foreground().forbid_parking();
 
         // Connect to a server as 3 clients.
@@ -1514,9 +1544,7 @@ mod tests {
         fs.rename("/a/file2".as_ref(), "/a/file3".as_ref(), Default::default())
             .await
             .unwrap();
-        fs.insert_file(Path::new("/a/file4"), "4".into())
-            .await
-            .unwrap();
+        fs.insert_file(Path::new("/a/file4"), "4".into()).await;
 
         worktree_a
             .condition(&cx_a, |tree, _| {
@@ -1565,7 +1593,7 @@ mod tests {
     async fn test_buffer_conflict_after_save(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
-        let fs = Arc::new(FakeFs::new(cx_a.background()));
+        let fs = FakeFs::new(cx_a.background());
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -1653,7 +1681,7 @@ mod tests {
     async fn test_buffer_reloading(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
-        let fs = Arc::new(FakeFs::new(cx_a.background()));
+        let fs = FakeFs::new(cx_a.background());
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -1738,7 +1766,7 @@ mod tests {
     ) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
-        let fs = Arc::new(FakeFs::new(cx_a.background()));
+        let fs = FakeFs::new(cx_a.background());
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -1820,7 +1848,7 @@ mod tests {
     ) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
-        let fs = Arc::new(FakeFs::new(cx_a.background()));
+        let fs = FakeFs::new(cx_a.background());
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -1895,7 +1923,7 @@ mod tests {
     async fn test_peer_disconnection(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
-        let fs = Arc::new(FakeFs::new(cx_a.background()));
+        let fs = FakeFs::new(cx_a.background());
 
         // Connect to a server as 2 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -1969,7 +1997,7 @@ mod tests {
     ) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
-        let fs = Arc::new(FakeFs::new(cx_a.background()));
+        let fs = FakeFs::new(cx_a.background());
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
@@ -2193,7 +2221,7 @@ mod tests {
     ) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
-        let fs = Arc::new(FakeFs::new(cx_a.background()));
+        let fs = FakeFs::new(cx_a.background());
 
         // Set up a fake language server.
         let (mut language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
@@ -2402,7 +2430,7 @@ mod tests {
     async fn test_formatting_buffer(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
-        let fs = Arc::new(FakeFs::new(cx_a.background()));
+        let fs = FakeFs::new(cx_a.background());
 
         // Set up a fake language server.
         let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
@@ -2504,7 +2532,7 @@ mod tests {
     async fn test_definition(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
-        let fs = Arc::new(FakeFs::new(cx_a.background()));
+        let fs = FakeFs::new(cx_a.background());
         fs.insert_tree(
             "/root-1",
             json!({
@@ -2657,7 +2685,7 @@ mod tests {
     ) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
-        let fs = Arc::new(FakeFs::new(cx_a.background()));
+        let fs = FakeFs::new(cx_a.background());
         fs.insert_tree(
             "/root",
             json!({
@@ -2766,7 +2794,7 @@ mod tests {
     ) {
         cx_a.foreground().forbid_parking();
         let mut lang_registry = Arc::new(LanguageRegistry::new());
-        let fs = Arc::new(FakeFs::new(cx_a.background()));
+        let fs = FakeFs::new(cx_a.background());
         let mut path_openers_b = Vec::new();
         cx_b.update(|cx| editor::init(cx, &mut path_openers_b));
 
@@ -2999,6 +3027,223 @@ mod tests {
             editor.redo(&Redo, cx);
             assert_eq!(editor.text(cx), "\nmod other;\nfn main() { let foo = 4; }");
         });
+    }
+
+    #[gpui::test(iterations = 10)]
+    async fn test_collaborating_with_renames(mut cx_a: TestAppContext, mut cx_b: TestAppContext) {
+        cx_a.foreground().forbid_parking();
+        let mut lang_registry = Arc::new(LanguageRegistry::new());
+        let fs = FakeFs::new(cx_a.background());
+        let mut path_openers_b = Vec::new();
+        cx_b.update(|cx| editor::init(cx, &mut path_openers_b));
+
+        // Set up a fake language server.
+        let (language_server_config, mut fake_language_servers) = LanguageServerConfig::fake();
+        Arc::get_mut(&mut lang_registry)
+            .unwrap()
+            .add(Arc::new(Language::new(
+                LanguageConfig {
+                    name: "Rust".to_string(),
+                    path_suffixes: vec!["rs".to_string()],
+                    language_server: Some(language_server_config),
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::language()),
+            )));
+
+        // Connect to a server as 2 clients.
+        let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
+        let client_a = server.create_client(&mut cx_a, "user_a").await;
+        let client_b = server.create_client(&mut cx_b, "user_b").await;
+
+        // Share a project as client A
+        fs.insert_tree(
+            "/dir",
+            json!({
+                ".zed.toml": r#"collaborators = ["user_b"]"#,
+                "one.rs": "const ONE: usize = 1;",
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;"
+            }),
+        )
+        .await;
+        let project_a = cx_a.update(|cx| {
+            Project::local(
+                client_a.clone(),
+                client_a.user_store.clone(),
+                lang_registry.clone(),
+                fs.clone(),
+                cx,
+            )
+        });
+        let (worktree_a, _) = project_a
+            .update(&mut cx_a, |p, cx| {
+                p.find_or_create_local_worktree("/dir", false, cx)
+            })
+            .await
+            .unwrap();
+        worktree_a
+            .read_with(&cx_a, |tree, _| tree.as_local().unwrap().scan_complete())
+            .await;
+        let project_id = project_a.update(&mut cx_a, |p, _| p.next_remote_id()).await;
+        let worktree_id = worktree_a.read_with(&cx_a, |tree, _| tree.id());
+        project_a
+            .update(&mut cx_a, |p, cx| p.share(cx))
+            .await
+            .unwrap();
+
+        // Join the worktree as client B.
+        let project_b = Project::remote(
+            project_id,
+            client_b.clone(),
+            client_b.user_store.clone(),
+            lang_registry.clone(),
+            fs.clone(),
+            &mut cx_b.to_async(),
+        )
+        .await
+        .unwrap();
+        let mut params = cx_b.update(WorkspaceParams::test);
+        params.languages = lang_registry.clone();
+        params.client = client_b.client.clone();
+        params.user_store = client_b.user_store.clone();
+        params.project = project_b;
+        params.path_openers = path_openers_b.into();
+
+        let (_window_b, workspace_b) = cx_b.add_window(|cx| Workspace::new(&params, cx));
+        let editor_b = workspace_b
+            .update(&mut cx_b, |workspace, cx| {
+                workspace.open_path((worktree_id, "one.rs").into(), cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+        let mut fake_language_server = fake_language_servers.next().await.unwrap();
+
+        // Move cursor to a location that can be renamed.
+        let prepare_rename = editor_b.update(&mut cx_b, |editor, cx| {
+            editor.select_ranges([7..7], None, cx);
+            editor.rename(&Rename, cx).unwrap()
+        });
+
+        fake_language_server
+            .handle_request::<lsp::request::PrepareRenameRequest, _>(|params| {
+                assert_eq!(params.text_document.uri.as_str(), "file:///dir/one.rs");
+                assert_eq!(params.position, lsp::Position::new(0, 7));
+                Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                    lsp::Position::new(0, 6),
+                    lsp::Position::new(0, 9),
+                )))
+            })
+            .next()
+            .await
+            .unwrap();
+        prepare_rename.await.unwrap();
+        editor_b.update(&mut cx_b, |editor, cx| {
+            let rename = editor.pending_rename().unwrap();
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            assert_eq!(
+                rename.range.start.to_offset(&buffer)..rename.range.end.to_offset(&buffer),
+                6..9
+            );
+            rename.editor.update(cx, |rename_editor, cx| {
+                rename_editor.buffer().update(cx, |rename_buffer, cx| {
+                    rename_buffer.edit([0..3], "THREE", cx);
+                });
+            });
+        });
+
+        let confirm_rename = workspace_b.update(&mut cx_b, |workspace, cx| {
+            Editor::confirm_rename(workspace, &ConfirmRename, cx).unwrap()
+        });
+        fake_language_server
+            .handle_request::<lsp::request::Rename, _>(|params| {
+                assert_eq!(
+                    params.text_document_position.text_document.uri.as_str(),
+                    "file:///dir/one.rs"
+                );
+                assert_eq!(
+                    params.text_document_position.position,
+                    lsp::Position::new(0, 6)
+                );
+                assert_eq!(params.new_name, "THREE");
+                Some(lsp::WorkspaceEdit {
+                    changes: Some(
+                        [
+                            (
+                                lsp::Url::from_file_path("/dir/one.rs").unwrap(),
+                                vec![lsp::TextEdit::new(
+                                    lsp::Range::new(
+                                        lsp::Position::new(0, 6),
+                                        lsp::Position::new(0, 9),
+                                    ),
+                                    "THREE".to_string(),
+                                )],
+                            ),
+                            (
+                                lsp::Url::from_file_path("/dir/two.rs").unwrap(),
+                                vec![
+                                    lsp::TextEdit::new(
+                                        lsp::Range::new(
+                                            lsp::Position::new(0, 24),
+                                            lsp::Position::new(0, 27),
+                                        ),
+                                        "THREE".to_string(),
+                                    ),
+                                    lsp::TextEdit::new(
+                                        lsp::Range::new(
+                                            lsp::Position::new(0, 35),
+                                            lsp::Position::new(0, 38),
+                                        ),
+                                        "THREE".to_string(),
+                                    ),
+                                ],
+                            ),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                    ..Default::default()
+                })
+            })
+            .next()
+            .await
+            .unwrap();
+        confirm_rename.await.unwrap();
+
+        let rename_editor = workspace_b.read_with(&cx_b, |workspace, cx| {
+            workspace
+                .active_item(cx)
+                .unwrap()
+                .downcast::<Editor>()
+                .unwrap()
+        });
+        rename_editor.update(&mut cx_b, |editor, cx| {
+            assert_eq!(
+                editor.text(cx),
+                "const TWO: usize = one::THREE + one::THREE;\nconst THREE: usize = 1;"
+            );
+            editor.undo(&Undo, cx);
+            assert_eq!(
+                editor.text(cx),
+                "const TWO: usize = one::ONE + one::ONE;\nconst ONE: usize = 1;"
+            );
+            editor.redo(&Redo, cx);
+            assert_eq!(
+                editor.text(cx),
+                "const TWO: usize = one::THREE + one::THREE;\nconst THREE: usize = 1;"
+            );
+        });
+
+        // Ensure temporary rename edits cannot be undone/redone.
+        editor_b.update(&mut cx_b, |editor, cx| {
+            editor.undo(&Undo, cx);
+            assert_eq!(editor.text(cx), "const ONE: usize = 1;");
+            editor.undo(&Undo, cx);
+            assert_eq!(editor.text(cx), "const ONE: usize = 1;");
+            editor.redo(&Redo, cx);
+            assert_eq!(editor.text(cx), "const THREE: usize = 1;");
+        })
     }
 
     #[gpui::test(iterations = 10)]
@@ -3421,7 +3666,7 @@ mod tests {
     ) {
         cx_a.foreground().forbid_parking();
         let lang_registry = Arc::new(LanguageRegistry::new());
-        let fs = Arc::new(FakeFs::new(cx_a.background()));
+        let fs = FakeFs::new(cx_a.background());
 
         // Connect to a server as 3 clients.
         let mut server = TestServer::start(cx_a.foreground(), cx_a.background()).await;
@@ -3591,6 +3836,13 @@ mod tests {
                     },
                 )])
             });
+
+            fake_server.handle_request::<lsp::request::PrepareRenameRequest, _>(|params| {
+                Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
+                    params.position,
+                    params.position,
+                )))
+            });
         });
 
         Arc::get_mut(&mut host_lang_registry)
@@ -3605,7 +3857,7 @@ mod tests {
                 None,
             )));
 
-        let fs = Arc::new(FakeFs::new(cx.background()));
+        let fs = FakeFs::new(cx.background());
         fs.insert_tree(
             "/_collab",
             json!({
@@ -4221,6 +4473,26 @@ mod tests {
                             save.detach();
                         } else {
                             save.await;
+                        }
+                    }
+                    40..=45 => {
+                        let prepare_rename = project.update(&mut cx, |project, cx| {
+                            log::info!(
+                                "Guest {}: preparing rename for buffer {:?}",
+                                guest_id,
+                                buffer.read(cx).file().unwrap().full_path(cx)
+                            );
+                            let offset = rng.borrow_mut().gen_range(0..=buffer.read(cx).len());
+                            project.prepare_rename(buffer, offset, cx)
+                        });
+                        let prepare_rename = cx.background().spawn(async move {
+                            prepare_rename.await.expect("prepare rename request failed");
+                        });
+                        if rng.borrow_mut().gen_bool(0.3) {
+                            log::info!("Guest {}: detaching prepare rename request", guest_id);
+                            prepare_rename.detach();
+                        } else {
+                            prepare_rename.await;
                         }
                     }
                     _ => {

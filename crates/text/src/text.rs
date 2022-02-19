@@ -1222,7 +1222,6 @@ impl Buffer {
             .iter()
             .map(|entry| entry.transaction.clone())
             .collect::<Vec<_>>();
-
         transactions
             .into_iter()
             .map(|transaction| self.undo_or_redo(transaction).unwrap())
@@ -1251,7 +1250,6 @@ impl Buffer {
             .iter()
             .map(|entry| entry.transaction.clone())
             .collect::<Vec<_>>();
-
         transactions
             .into_iter()
             .map(|transaction| self.undo_or_redo(transaction).unwrap())

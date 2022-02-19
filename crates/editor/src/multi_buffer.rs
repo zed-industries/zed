@@ -58,6 +58,7 @@ pub enum CharKind {
     Word,
 }
 
+#[derive(Clone)]
 struct Transaction {
     id: TransactionId,
     buffer_transactions: HashMap<usize, text::TransactionId>,

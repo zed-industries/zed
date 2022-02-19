@@ -24,8 +24,9 @@ use gpui::{
     geometry::vector::{vec2f, Vector2F},
     keymap::Binding,
     platform::CursorStyle,
-    text_layout, AppContext, ClipboardItem, Element, ElementBox, Entity, ModelHandle,
-    MutableAppContext, RenderContext, Task, View, ViewContext, WeakModelHandle, WeakViewHandle,
+    text_layout, AppContext, AsyncAppContext, ClipboardItem, Element, ElementBox, Entity,
+    ModelHandle, MutableAppContext, RenderContext, Task, View, ViewContext, ViewHandle,
+    WeakModelHandle, WeakViewHandle,
 };
 use items::{BufferItemHandle, MultiBufferItemHandle};
 use itertools::Itertools as _;
@@ -40,7 +41,7 @@ pub use multi_buffer::{
 };
 use ordered_float::OrderedFloat;
 use postage::watch;
-use project::Project;
+use project::{Project, ProjectTransaction};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use smol::Timer;
@@ -117,6 +118,8 @@ action!(SelectSmallerSyntaxNode);
 action!(MoveToEnclosingBracket);
 action!(ShowNextDiagnostic);
 action!(GoToDefinition);
+action!(Rename);
+action!(ConfirmRename);
 action!(PageUp);
 action!(PageDown);
 action!(Fold);
@@ -153,6 +156,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
             ConfirmCodeAction(None),
             Some("Editor && showing_code_actions"),
         ),
+        Binding::new("enter", ConfirmRename, Some("Editor && renaming")),
         Binding::new("tab", Tab, Some("Editor")),
         Binding::new(
             "tab",
@@ -243,6 +247,7 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
         Binding::new("alt-down", SelectSmallerSyntaxNode, Some("Editor")),
         Binding::new("ctrl-shift-W", SelectSmallerSyntaxNode, Some("Editor")),
         Binding::new("f8", ShowNextDiagnostic, Some("Editor")),
+        Binding::new("f2", Rename, Some("Editor")),
         Binding::new("f12", GoToDefinition, Some("Editor")),
         Binding::new("ctrl-m", MoveToEnclosingBracket, Some("Editor")),
         Binding::new("pageup", PageUp, Some("Editor")),
@@ -319,6 +324,8 @@ pub fn init(cx: &mut MutableAppContext, path_openers: &mut Vec<Box<dyn PathOpene
     cx.add_action(Editor::toggle_code_actions);
     cx.add_async_action(Editor::confirm_completion);
     cx.add_async_action(Editor::confirm_code_action);
+    cx.add_async_action(Editor::rename);
+    cx.add_async_action(Editor::confirm_rename);
 }
 
 trait SelectionExt {
@@ -432,6 +439,7 @@ pub struct Editor {
     next_completion_id: CompletionId,
     available_code_actions: Option<(ModelHandle<Buffer>, Arc<[CodeAction]>)>,
     code_actions_task: Option<Task<()>>,
+    pending_rename: Option<RenameState>,
 }
 
 pub struct EditorSnapshot {
@@ -468,6 +476,13 @@ struct BracketPairState {
 struct SnippetState {
     ranges: Vec<Vec<Range<Anchor>>>,
     active_index: usize,
+}
+
+pub struct RenameState {
+    pub range: Range<Anchor>,
+    pub old_name: String,
+    pub editor: ViewHandle<Editor>,
+    block_id: BlockId,
 }
 
 struct InvalidationStack<T>(Vec<T>);
@@ -885,6 +900,7 @@ impl Editor {
             next_completion_id: 0,
             available_code_actions: Default::default(),
             code_actions_task: Default::default(),
+            pending_rename: Default::default(),
         };
         this.end_selection(cx);
         this
@@ -1438,6 +1454,10 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        if self.take_rename(cx).is_some() {
+            return;
+        }
+
         if self.hide_context_menu(cx).is_some() {
             return;
         }
@@ -1906,6 +1926,10 @@ impl Editor {
     }
 
     fn show_completions(&mut self, _: &ShowCompletions, cx: &mut ViewContext<Self>) {
+        if self.pending_rename.is_some() {
+            return;
+        }
+
         let project = if let Some(project) = self.project.clone() {
             project
         } else {
@@ -2153,79 +2177,88 @@ impl Editor {
         let action = actions_menu.actions.get(action_ix)?.clone();
         let title = action.lsp_action.title.clone();
         let buffer = actions_menu.buffer;
-        let replica_id = editor.read(cx).replica_id(cx);
 
         let apply_code_actions = workspace.project().clone().update(cx, |project, cx| {
             project.apply_code_action(buffer, action, true, cx)
         });
-        Some(cx.spawn(|workspace, mut cx| async move {
+        Some(cx.spawn(|workspace, cx| async move {
             let project_transaction = apply_code_actions.await?;
+            Self::open_project_transaction(editor, workspace, project_transaction, title, cx).await
+        }))
+    }
 
-            // If the code action's edits are all contained within this editor, then
-            // avoid opening a new editor to display them.
-            let mut entries = project_transaction.0.iter();
-            if let Some((buffer, transaction)) = entries.next() {
-                if entries.next().is_none() {
-                    let excerpt = editor.read_with(&cx, |editor, cx| {
-                        editor
-                            .buffer()
-                            .read(cx)
-                            .excerpt_containing(editor.newest_anchor_selection().head(), cx)
-                    });
-                    if let Some((excerpted_buffer, excerpt_range)) = excerpt {
-                        if excerpted_buffer == *buffer {
-                            let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
-                            let excerpt_range = excerpt_range.to_offset(&snapshot);
-                            if snapshot
-                                .edited_ranges_for_transaction(transaction)
-                                .all(|range| {
-                                    excerpt_range.start <= range.start
-                                        && excerpt_range.end >= range.end
-                                })
-                            {
-                                return Ok(());
-                            }
+    async fn open_project_transaction(
+        this: ViewHandle<Editor>,
+        workspace: ViewHandle<Workspace>,
+        transaction: ProjectTransaction,
+        title: String,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let replica_id = this.read_with(&cx, |this, cx| this.replica_id(cx));
+
+        // If the code action's edits are all contained within this editor, then
+        // avoid opening a new editor to display them.
+        let mut entries = transaction.0.iter();
+        if let Some((buffer, transaction)) = entries.next() {
+            if entries.next().is_none() {
+                let excerpt = this.read_with(&cx, |editor, cx| {
+                    editor
+                        .buffer()
+                        .read(cx)
+                        .excerpt_containing(editor.newest_anchor_selection().head(), cx)
+                });
+                if let Some((excerpted_buffer, excerpt_range)) = excerpt {
+                    if excerpted_buffer == *buffer {
+                        let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot());
+                        let excerpt_range = excerpt_range.to_offset(&snapshot);
+                        if snapshot
+                            .edited_ranges_for_transaction(transaction)
+                            .all(|range| {
+                                excerpt_range.start <= range.start && excerpt_range.end >= range.end
+                            })
+                        {
+                            return Ok(());
                         }
                     }
                 }
             }
+        }
 
-            let mut ranges_to_highlight = Vec::new();
-            let excerpt_buffer = cx.add_model(|cx| {
-                let mut multibuffer = MultiBuffer::new(replica_id).with_title(title);
-                for (buffer, transaction) in &project_transaction.0 {
-                    let snapshot = buffer.read(cx).snapshot();
-                    ranges_to_highlight.extend(
-                        multibuffer.push_excerpts_with_context_lines(
-                            buffer.clone(),
-                            snapshot
-                                .edited_ranges_for_transaction::<usize>(transaction)
-                                .collect(),
-                            1,
-                            cx,
-                        ),
+        let mut ranges_to_highlight = Vec::new();
+        let excerpt_buffer = cx.add_model(|cx| {
+            let mut multibuffer = MultiBuffer::new(replica_id).with_title(title);
+            for (buffer, transaction) in &transaction.0 {
+                let snapshot = buffer.read(cx).snapshot();
+                ranges_to_highlight.extend(
+                    multibuffer.push_excerpts_with_context_lines(
+                        buffer.clone(),
+                        snapshot
+                            .edited_ranges_for_transaction::<usize>(transaction)
+                            .collect(),
+                        1,
+                        cx,
+                    ),
+                );
+            }
+            multibuffer.push_transaction(&transaction.0);
+            multibuffer
+        });
+
+        workspace.update(&mut cx, |workspace, cx| {
+            let editor = workspace.open_item(MultiBufferItemHandle(excerpt_buffer), cx);
+            if let Some(editor) = editor.act_as::<Self>(cx) {
+                editor.update(cx, |editor, cx| {
+                    let settings = (editor.build_settings)(cx);
+                    editor.highlight_ranges::<Self>(
+                        ranges_to_highlight,
+                        settings.style.highlighted_line_background,
+                        cx,
                     );
-                }
-                multibuffer.push_transaction(&project_transaction.0);
-                multibuffer
-            });
+                });
+            }
+        });
 
-            workspace.update(&mut cx, |workspace, cx| {
-                let editor = workspace.open_item(MultiBufferItemHandle(excerpt_buffer), cx);
-                if let Some(editor) = editor.act_as::<Self>(cx) {
-                    editor.update(cx, |editor, cx| {
-                        let settings = (editor.build_settings)(cx);
-                        editor.highlight_ranges::<Self>(
-                            ranges_to_highlight,
-                            settings.style.highlighted_line_background,
-                            cx,
-                        );
-                    });
-                }
-            });
-
-            Ok(())
-        }))
+        Ok(())
     }
 
     fn refresh_code_actions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
@@ -3130,6 +3163,10 @@ impl Editor {
     }
 
     pub fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
+        if self.take_rename(cx).is_some() {
+            return;
+        }
+
         if let Some(context_menu) = self.context_menu.as_mut() {
             if context_menu.select_prev(cx) {
                 return;
@@ -3174,6 +3211,8 @@ impl Editor {
     }
 
     pub fn move_down(&mut self, _: &MoveDown, cx: &mut ViewContext<Self>) {
+        self.take_rename(cx);
+
         if let Some(context_menu) = self.context_menu.as_mut() {
             if context_menu.select_next(cx) {
                 return;
@@ -4059,6 +4098,219 @@ impl Editor {
         .detach_and_log_err(cx);
     }
 
+    pub fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) -> Option<Task<Result<()>>> {
+        use language::ToOffset as _;
+
+        let project = self.project.clone()?;
+        let selection = self.newest_anchor_selection().clone();
+        let (cursor_buffer, cursor_buffer_position) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(selection.head(), cx)?;
+        let (tail_buffer, tail_buffer_position) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(selection.tail(), cx)?;
+        if tail_buffer != cursor_buffer {
+            return None;
+        }
+
+        let snapshot = cursor_buffer.read(cx).snapshot();
+        let cursor_buffer_offset = cursor_buffer_position.to_offset(&snapshot);
+        let tail_buffer_offset = tail_buffer_position.to_offset(&snapshot);
+        let prepare_rename = project.update(cx, |project, cx| {
+            project.prepare_rename(cursor_buffer, cursor_buffer_offset, cx)
+        });
+
+        Some(cx.spawn(|this, mut cx| async move {
+            if let Some(rename_range) = prepare_rename.await? {
+                let rename_buffer_range = rename_range.to_offset(&snapshot);
+                let cursor_offset_in_rename_range =
+                    cursor_buffer_offset.saturating_sub(rename_buffer_range.start);
+                let tail_offset_in_rename_range =
+                    tail_buffer_offset.saturating_sub(rename_buffer_range.start);
+
+                this.update(&mut cx, |this, cx| {
+                    this.take_rename(cx);
+                    let settings = (this.build_settings)(cx);
+                    let buffer = this.buffer.read(cx).read(cx);
+                    let cursor_offset = selection.head().to_offset(&buffer);
+                    let rename_start = cursor_offset.saturating_sub(cursor_offset_in_rename_range);
+                    let rename_end = rename_start + rename_buffer_range.len();
+                    let range = buffer.anchor_before(rename_start)..buffer.anchor_after(rename_end);
+                    let old_name = buffer
+                        .text_for_range(rename_start..rename_end)
+                        .collect::<String>();
+                    drop(buffer);
+
+                    // Position the selection in the rename editor so that it matches the current selection.
+                    let rename_editor = cx.add_view(|cx| {
+                        let mut editor = Editor::single_line(this.build_settings.clone(), cx);
+                        editor
+                            .buffer
+                            .update(cx, |buffer, cx| buffer.edit([0..0], &old_name, cx));
+                        editor.select_ranges(
+                            [tail_offset_in_rename_range..cursor_offset_in_rename_range],
+                            None,
+                            cx,
+                        );
+                        editor.highlight_ranges::<Rename>(
+                            vec![Anchor::min()..Anchor::max()],
+                            settings.style.diff_background_inserted,
+                            cx,
+                        );
+                        editor
+                    });
+                    this.highlight_ranges::<Rename>(
+                        vec![range.clone()],
+                        settings.style.diff_background_deleted,
+                        cx,
+                    );
+                    this.update_selections(
+                        vec![Selection {
+                            id: selection.id,
+                            start: rename_end,
+                            end: rename_end,
+                            reversed: false,
+                            goal: SelectionGoal::None,
+                        }],
+                        None,
+                        cx,
+                    );
+                    cx.focus(&rename_editor);
+                    let block_id = this.insert_blocks(
+                        [BlockProperties {
+                            position: range.start.clone(),
+                            height: 1,
+                            render: Arc::new({
+                                let editor = rename_editor.clone();
+                                move |cx: &BlockContext| {
+                                    ChildView::new(editor.clone())
+                                        .contained()
+                                        .with_padding_left(cx.anchor_x)
+                                        .boxed()
+                                }
+                            }),
+                            disposition: BlockDisposition::Below,
+                        }],
+                        cx,
+                    )[0];
+                    this.pending_rename = Some(RenameState {
+                        range,
+                        old_name,
+                        editor: rename_editor,
+                        block_id,
+                    });
+                });
+            }
+
+            Ok(())
+        }))
+    }
+
+    pub fn confirm_rename(
+        workspace: &mut Workspace,
+        _: &ConfirmRename,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<Task<Result<()>>> {
+        let editor = workspace.active_item(cx)?.act_as::<Editor>(cx)?;
+
+        let (buffer, range, old_name, new_name) = editor.update(cx, |editor, cx| {
+            let rename = editor.take_rename(cx)?;
+            let buffer = editor.buffer.read(cx);
+            let (start_buffer, start) =
+                buffer.text_anchor_for_position(rename.range.start.clone(), cx)?;
+            let (end_buffer, end) =
+                buffer.text_anchor_for_position(rename.range.end.clone(), cx)?;
+            if start_buffer == end_buffer {
+                let new_name = rename.editor.read(cx).text(cx);
+                Some((start_buffer, start..end, rename.old_name, new_name))
+            } else {
+                None
+            }
+        })?;
+
+        let rename = workspace.project().clone().update(cx, |project, cx| {
+            project.perform_rename(
+                buffer.clone(),
+                range.start.clone(),
+                new_name.clone(),
+                true,
+                cx,
+            )
+        });
+
+        Some(cx.spawn(|workspace, cx| async move {
+            let project_transaction = rename.await?;
+            Self::open_project_transaction(
+                editor,
+                workspace,
+                project_transaction,
+                format!("Rename: {} → {}", old_name, new_name),
+                cx,
+            )
+            .await
+        }))
+    }
+
+    fn take_rename(&mut self, cx: &mut ViewContext<Self>) -> Option<RenameState> {
+        let rename = self.pending_rename.take()?;
+        self.remove_blocks([rename.block_id].into_iter().collect(), cx);
+        self.clear_highlighted_ranges::<Rename>(cx);
+
+        let editor = rename.editor.read(cx);
+        let buffer = editor.buffer.read(cx).snapshot(cx);
+        let selection = editor.newest_selection::<usize>(&buffer);
+
+        // Update the selection to match the position of the selection inside
+        // the rename editor.
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let rename_range = rename.range.to_offset(&snapshot);
+        let start = snapshot
+            .clip_offset(rename_range.start + selection.start, Bias::Left)
+            .min(rename_range.end);
+        let end = snapshot
+            .clip_offset(rename_range.start + selection.end, Bias::Left)
+            .min(rename_range.end);
+        self.update_selections(
+            vec![Selection {
+                id: self.newest_anchor_selection().id,
+                start,
+                end,
+                reversed: selection.reversed,
+                goal: SelectionGoal::None,
+            }],
+            None,
+            cx,
+        );
+
+        Some(rename)
+    }
+
+    fn invalidate_rename_range(
+        &mut self,
+        buffer: &MultiBufferSnapshot,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(rename) = self.pending_rename.as_ref() {
+            if self.selections.len() == 1 {
+                let head = self.selections[0].head().to_offset(buffer);
+                let range = rename.range.to_offset(buffer).to_inclusive();
+                if range.contains(&head) {
+                    return;
+                }
+            }
+            let rename = self.pending_rename.take().unwrap();
+            self.remove_blocks([rename.block_id].into_iter().collect(), cx);
+            self.clear_highlighted_ranges::<Rename>(cx);
+        }
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn pending_rename(&self) -> Option<&RenameState> {
+        self.pending_rename.as_ref()
+    }
+
     fn refresh_active_diagnostics(&mut self, cx: &mut ViewContext<Editor>) {
         if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
             let buffer = self.buffer.read(cx).snapshot(cx);
@@ -4471,6 +4723,7 @@ impl Editor {
         self.select_larger_syntax_node_stack.clear();
         self.autoclose_stack.invalidate(&self.selections, &buffer);
         self.snippet_stack.invalidate(&self.selections, &buffer);
+        self.invalidate_rename_range(&buffer, cx);
 
         let new_cursor_position = self.newest_anchor_selection().head();
 
@@ -4746,9 +4999,12 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn clear_highlighted_ranges<T: 'static>(&mut self, cx: &mut ViewContext<Self>) {
-        self.highlighted_ranges.remove(&TypeId::of::<T>());
+    pub fn clear_highlighted_ranges<T: 'static>(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<(Color, Vec<Range<Anchor>>)> {
         cx.notify();
+        self.highlighted_ranges.remove(&TypeId::of::<T>())
     }
 
     #[cfg(feature = "test-support")]
@@ -4958,6 +5214,8 @@ impl EditorSettings {
                     gutter_padding_factor: 2.,
                     active_line_background: Default::default(),
                     highlighted_line_background: Default::default(),
+                    diff_background_deleted: Default::default(),
+                    diff_background_inserted: Default::default(),
                     line_number: Default::default(),
                     line_number_active: Default::default(),
                     selection: Default::default(),
@@ -5078,6 +5336,9 @@ impl View for Editor {
             EditorMode::Full => "full",
         };
         cx.map.insert("mode".into(), mode.into());
+        if self.pending_rename.is_some() {
+            cx.set.insert("renaming".into());
+        }
         match self.context_menu.as_ref() {
             Some(ContextMenu::Completions(_)) => {
                 cx.set.insert("showing_completions".into());
@@ -7747,8 +8008,8 @@ mod tests {
         "
         .unindent();
 
-        let fs = Arc::new(FakeFs::new(cx.background().clone()));
-        fs.insert_file("/file", text).await.unwrap();
+        let fs = FakeFs::new(cx.background().clone());
+        fs.insert_file("/file", text).await;
 
         let project = Project::test(fs, &mut cx);
 

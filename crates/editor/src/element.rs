@@ -299,7 +299,7 @@ impl EditorElement {
         if let Some((row, indicator)) = layout.code_actions_indicator.as_mut() {
             let mut x = bounds.width() - layout.gutter_padding;
             let mut y = *row as f32 * layout.line_height - scroll_top;
-            x += ((layout.gutter_padding + layout.text_offset.x()) - indicator.size().x()) / 2.;
+            x += ((layout.gutter_padding + layout.gutter_margin) - indicator.size().x()) / 2.;
             y += (layout.line_height - indicator.size().y()) / 2.;
             indicator.paint(bounds.origin() + vec2f(x, y), visible_bounds, cx);
         }
@@ -321,7 +321,7 @@ impl EditorElement {
         let end_row = ((scroll_top + bounds.height()) / layout.line_height).ceil() as u32 + 1; // Add 1 to ensure selections bleed off screen
         let max_glyph_width = layout.em_width;
         let scroll_left = scroll_position.x() * max_glyph_width;
-        let content_origin = bounds.origin() + layout.text_offset;
+        let content_origin = bounds.origin() + layout.gutter_margin;
 
         cx.scene.push_layer(Some(bounds));
 
@@ -776,22 +776,24 @@ impl Element for EditorElement {
 
         let gutter_padding;
         let gutter_width;
+        let gutter_margin;
         if snapshot.mode == EditorMode::Full {
             gutter_padding = style.text.em_width(cx.font_cache) * style.gutter_padding_factor;
             gutter_width = self.max_line_number_width(&snapshot, cx) + gutter_padding * 2.0;
+            gutter_margin = -style.text.descent(cx.font_cache);
         } else {
             gutter_padding = 0.0;
-            gutter_width = 0.0
+            gutter_width = 0.0;
+            gutter_margin = 0.0;
         };
 
         let text_width = size.x() - gutter_width;
-        let text_offset = vec2f(-style.text.descent(cx.font_cache), 0.);
         let em_width = style.text.em_width(cx.font_cache);
         let em_advance = style.text.em_advance(cx.font_cache);
         let overscroll = vec2f(em_width, 0.);
         let wrap_width = match self.settings.soft_wrap {
             SoftWrap::None => None,
-            SoftWrap::EditorWidth => Some(text_width - text_offset.x() - overscroll.x() - em_width),
+            SoftWrap::EditorWidth => Some(text_width - gutter_margin - overscroll.x() - em_width),
             SoftWrap::Column(column) => Some(column as f32 * em_advance),
         };
         let snapshot = self.update_view(cx.app, |view, cx| {
@@ -991,7 +993,7 @@ impl Element for EditorElement {
             gutter_padding,
             gutter_width,
             em_width,
-            gutter_width + text_offset.x(),
+            gutter_width + gutter_margin,
             line_height,
             &style,
             &line_layouts,
@@ -1006,7 +1008,7 @@ impl Element for EditorElement {
                 gutter_size,
                 gutter_padding,
                 text_size,
-                text_offset,
+                gutter_margin,
                 snapshot,
                 active_rows,
                 highlighted_rows,
@@ -1080,6 +1082,12 @@ impl Element for EditorElement {
             }
         }
 
+        for (_, block) in &mut layout.blocks {
+            if block.dispatch_event(event, cx) {
+                return true;
+            }
+        }
+
         match event {
             Event::LeftMouseDown {
                 position,
@@ -1123,6 +1131,7 @@ pub struct LayoutState {
     scroll_max: Vector2F,
     gutter_size: Vector2F,
     gutter_padding: f32,
+    gutter_margin: f32,
     text_size: Vector2F,
     snapshot: EditorSnapshot,
     active_rows: BTreeMap<u32, bool>,
@@ -1135,7 +1144,6 @@ pub struct LayoutState {
     em_advance: f32,
     highlighted_ranges: Vec<(Range<DisplayPoint>, Color)>,
     selections: HashMap<ReplicaId, Vec<text::Selection<DisplayPoint>>>,
-    text_offset: Vector2F,
     context_menu: Option<(DisplayPoint, ElementBox)>,
     code_actions_indicator: Option<(u32, ElementBox)>,
 }
