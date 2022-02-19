@@ -4131,6 +4131,7 @@ impl Editor {
                     tail_buffer_offset.saturating_sub(rename_buffer_range.start);
 
                 this.update(&mut cx, |this, cx| {
+                    this.take_rename(cx);
                     let settings = (this.build_settings)(cx);
                     let buffer = this.buffer.read(cx).read(cx);
                     let cursor_offset = selection.head().to_offset(&buffer);
